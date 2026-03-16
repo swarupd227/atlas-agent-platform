@@ -17991,8 +17991,15 @@ async def init_mcp_clients():${serverInits}
     mcpServers?: Array<{ name: string; url: string | null; transportType: string }>,
     opts?: { hasKnowledge?: boolean; hasPolicies?: boolean; hasGraph?: boolean }
   ): string {
+    const toolTypeImports = tools.map(t => {
+      const iName = t.name.charAt(0).toUpperCase() + t.name.slice(1) + "Args";
+      return `import type { ${iName} } from "../tools/${t.name}";`;
+    }).join("\n");
     const toolImports = tools.map(t => `import { ${t.name} } from "../tools/${t.name}";`).join("\n");
-    const toolMap = tools.map(t => `  "${t.name}": ${t.name},`).join("\n");
+    const toolMapEntries = tools.map(t => {
+      const iName = t.name.charAt(0).toUpperCase() + t.name.slice(1) + "Args";
+      return `  "${t.name}": (args: ${iName}) => ${t.name}(args),`;
+    }).join("\n");
     const toolRegistryEntries = tools.map(t => {
       const schema = (t.parameters && typeof t.parameters === "object" && Object.keys(t.parameters).length > 0)
         ? t.parameters
@@ -18002,7 +18009,6 @@ async def init_mcp_clients():${serverInits}
     const mcpBlock = mcpServers && mcpServers.length > 0 ? generateTsMcpClientBlock(mcpServers) : "";
     const mcpInitCall = mcpServers && mcpServers.length > 0 ? `\n  await initMcpClients();` : "";
     const knowledgeImport = opts?.hasKnowledge ? `import { retrieve } from "../agent/knowledge";\n` : "";
-    const policyImport = opts?.hasPolicies ? `import { onBeforeToolCall, onBeforeResponse } from "./policy";\n` : "";
     const graphImport = opts?.hasGraph ? `import { transition, getEntryNode } from "../agent/graph";\n` : "";
     const knowledgeBlock = opts?.hasKnowledge ? `
   const retrievedCtx = await retrieve(task);
@@ -18016,7 +18022,9 @@ async def init_mcp_clients():${serverInits}
 import * as fs from "fs";
 import * as yaml from "js-yaml";
 ${toolImports}
-${policyImport}${knowledgeImport}${graphImport}${mcpBlock}
+${toolTypeImports}
+import { onBeforeToolCall, onBeforeResponse } from "./policy";
+${knowledgeImport}${graphImport}${mcpBlock}
 const config = yaml.load(fs.readFileSync("agent.yaml", "utf8")) as any;
 const client = new OpenAI();
 
@@ -18024,7 +18032,7 @@ const stopConditions: string[] = config.stop_conditions || [];
 const forbiddenOutputs: string[] = config.forbidden_outputs || [];
 
 const toolAdapters: Record<string, (args: any) => Promise<any>> = {
-${toolMap}
+${toolMapEntries}
 };
 
 const TOOL_REGISTRY: Record<string, { description: string; parameters: any }> = {
@@ -18053,8 +18061,7 @@ function checkGuardrails(content: string): { stopped: boolean; reason?: string }
 }
 
 async function main() {${mcpInitCall}
-  const streaming = process.argv.includes("--stream");
-  const task = process.argv.find(a => a !== "--stream" && process.argv.indexOf(a) > 1) || "Hello, agent!";
+  const task = process.argv.find(a => process.argv.indexOf(a) > 1) || "Hello, agent!";
 ${knowledgeBlock}
   let messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: config.system_prompt },
@@ -18067,7 +18074,7 @@ ${knowledgeBlock}
 ${opts?.hasGraph ? `  let currentNodeId = getEntryNode()?.id || "start";\n` : ""}
   for (let i = 0; i < maxIter; i++) {
     console.log(\`[iteration \${i + 1}/\${maxIter}]\`);
-
+${opts?.hasGraph ? `    const node = (await import("../agent/graph")).getNode(currentNodeId);\n    if (node?.type === "exit") { console.log("[graph] reached exit node"); break; }\n` : ""}
     if (messages.length > ctxLimit + 1) {
       messages = [messages[0], ...messages.slice(-(ctxLimit))];
     }
@@ -18089,11 +18096,15 @@ ${opts?.hasGraph ? `  let currentNodeId = getEntryNode()?.id || "start";\n` : ""
         console.log(\`[guardrail] \${guard.reason}\`);
         return;
       }
-${opts?.hasPolicies ? `      const policyCheck = await onBeforeResponse(msg.content);
-      if (!policyCheck.allowed) {
-        console.log(\`[policy] Response blocked: \${policyCheck.reason}\`);
-        return;
-      }\n` : ""}
+      try {
+        const policyCheck = await onBeforeResponse(msg.content);
+        if (!policyCheck.allowed) {
+          console.log(\`[policy] Response blocked: \${policyCheck.reason}\`);
+          return;
+        }
+      } catch (pe) {
+        console.log(\`[policy] Error evaluating response policy: \${pe}\`);
+      }
       if (msg.content.includes(promise)) {
         console.log("[completed] Agent returned completion promise.");
         console.log(msg.content);
@@ -18110,19 +18121,20 @@ ${opts?.hasPolicies ? `      const policyCheck = await onBeforeResponse(msg.cont
     for (const tc of msg.tool_calls) {
       const fn = tc.function;
       console.log(\`  [tool] \${fn.name}(\${fn.arguments})\`);
-${opts?.hasPolicies ? `      try {
-        const toolPolicy = await onBeforeToolCall(fn.name, JSON.parse(fn.arguments));
+      let parsedArgs: any;
+      try { parsedArgs = JSON.parse(fn.arguments); } catch { parsedArgs = {}; }
+      try {
+        const toolPolicy = await onBeforeToolCall(fn.name, parsedArgs);
         if (!toolPolicy.allowed) {
           console.log(\`  [policy] Tool call blocked: \${toolPolicy.reason}\`);
           messages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify({ error: \`Policy blocked: \${toolPolicy.reason}\` }) });
           continue;
         }
-      } catch (policyErr: any) { console.log(\`  [policy] Error evaluating policy: \${policyErr.message}\`); }\n` : ""}
+      } catch (policyErr: any) { console.log(\`  [policy] Error evaluating: \${policyErr.message}\`); }
       const adapter = toolAdapters[fn.name];
       let result: any;
       try {
-        const args = JSON.parse(fn.arguments);
-        result = adapter ? await adapter(args) : { error: \`Unknown tool: \${fn.name}\` };
+        result = adapter ? await adapter(parsedArgs) : { error: \`Unknown tool: \${fn.name}\` };
       } catch (err: any) {
         result = { error: err.message };
       }
@@ -18145,8 +18157,15 @@ main().catch(console.error);
     mcpServers?: Array<{ name: string; url: string | null; transportType: string }>,
     opts?: { hasKnowledge?: boolean; hasPolicies?: boolean; hasGraph?: boolean }
   ): string {
+    const toolTypeImports = tools.map(t => {
+      const iName = t.name.charAt(0).toUpperCase() + t.name.slice(1) + "Args";
+      return `import type { ${iName} } from "../tools/${t.name}";`;
+    }).join("\n");
     const toolImports = tools.map(t => `import { ${t.name} } from "../tools/${t.name}";`).join("\n");
-    const toolMap = tools.map(t => `  "${t.name}": ${t.name},`).join("\n");
+    const toolMapEntries = tools.map(t => {
+      const iName = t.name.charAt(0).toUpperCase() + t.name.slice(1) + "Args";
+      return `  "${t.name}": (args: ${iName}) => ${t.name}(args),`;
+    }).join("\n");
     const toolRegistryEntries = tools.map(t => {
       const schema = (t.parameters && typeof t.parameters === "object" && Object.keys(t.parameters).length > 0)
         ? t.parameters
@@ -18156,7 +18175,6 @@ main().catch(console.error);
     const mcpBlock = mcpServers && mcpServers.length > 0 ? generateTsMcpClientBlock(mcpServers) : "";
     const mcpInitCall = mcpServers && mcpServers.length > 0 ? `\n  await initMcpClients();` : "";
     const knowledgeImport = opts?.hasKnowledge ? `import { retrieve } from "../agent/knowledge";\n` : "";
-    const policyImport = opts?.hasPolicies ? `import { onBeforeToolCall, onBeforeResponse } from "./policy";\n` : "";
     const graphImport = opts?.hasGraph ? `import { transition, getEntryNode } from "../agent/graph";\n` : "";
     const knowledgeBlock = opts?.hasKnowledge ? `
   const retrievedCtx = await retrieve(task);
@@ -18170,7 +18188,9 @@ main().catch(console.error);
 import * as fs from "fs";
 import * as yaml from "js-yaml";
 ${toolImports}
-${policyImport}${knowledgeImport}${graphImport}${mcpBlock}
+${toolTypeImports}
+import { onBeforeToolCall, onBeforeResponse } from "./policy";
+${knowledgeImport}${graphImport}${mcpBlock}
 const config = yaml.load(fs.readFileSync("agent.yaml", "utf8")) as any;
 const client = new Anthropic();
 
@@ -18178,7 +18198,7 @@ const stopConditions: string[] = config.stop_conditions || [];
 const forbiddenOutputs: string[] = config.forbidden_outputs || [];
 
 const toolAdapters: Record<string, (args: any) => Promise<any>> = {
-${toolMap}
+${toolMapEntries}
 };
 
 const TOOL_REGISTRY: Record<string, { description: string; input_schema: any }> = {
@@ -18220,7 +18240,7 @@ ${knowledgeBlock}
 ${opts?.hasGraph ? `  let currentNodeId = getEntryNode()?.id || "start";\n` : ""}
   for (let i = 0; i < maxIter; i++) {
     console.log(\`[iteration \${i + 1}/\${maxIter}]\`);
-
+${opts?.hasGraph ? `    const node = (await import("../agent/graph")).getNode(currentNodeId);\n    if (node?.type === "exit") { console.log("[graph] reached exit node"); break; }\n` : ""}
     if (messages.length > ctxLimit) {
       messages = messages.slice(-(ctxLimit));
     }
@@ -18243,11 +18263,15 @@ ${opts?.hasGraph ? `  let currentNodeId = getEntryNode()?.id || "start";\n` : ""
         console.log(\`[guardrail] \${guard.reason}\`);
         return;
       }
-${opts?.hasPolicies ? `      const policyCheck = await onBeforeResponse(textContent);
-      if (!policyCheck.allowed) {
-        console.log(\`[policy] Response blocked: \${policyCheck.reason}\`);
-        return;
-      }\n` : ""}
+      try {
+        const policyCheck = await onBeforeResponse(textContent);
+        if (!policyCheck.allowed) {
+          console.log(\`[policy] Response blocked: \${policyCheck.reason}\`);
+          return;
+        }
+      } catch (pe) {
+        console.log(\`[policy] Error evaluating response policy: \${pe}\`);
+      }
       if (textContent.includes(promise)) {
         console.log("[completed] Agent returned completion promise.");
         console.log(textContent);
@@ -18265,12 +18289,14 @@ ${opts?.hasPolicies ? `      const policyCheck = await onBeforeResponse(textCont
     const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const tu of toolUseBlocks) {
       console.log(\`  [tool] \${tu.name}(\${JSON.stringify(tu.input)})\`);
-${opts?.hasPolicies ? `      const toolPolicy = await onBeforeToolCall(tu.name, tu.input as Record<string, any>);
-      if (!toolPolicy.allowed) {
-        console.log(\`  [policy] Tool call blocked: \${toolPolicy.reason}\`);
-        toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify({ error: \`Policy blocked: \${toolPolicy.reason}\` }) });
-        continue;
-      }\n` : ""}
+      try {
+        const toolPolicy = await onBeforeToolCall(tu.name, tu.input as Record<string, any>);
+        if (!toolPolicy.allowed) {
+          console.log(\`  [policy] Tool call blocked: \${toolPolicy.reason}\`);
+          toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify({ error: \`Policy blocked: \${toolPolicy.reason}\` }) });
+          continue;
+        }
+      } catch (policyErr: any) { console.log(\`  [policy] Error evaluating: \${policyErr.message}\`); }
       const adapter = toolAdapters[tu.name];
       let result: any;
       try {
@@ -18295,7 +18321,8 @@ main().catch(console.error);
     tools: Array<{ name: string; description?: string; parameters?: any }>,
     maxIterations: number,
     completionPromise: string,
-    mcpServers?: Array<{ name: string; url: string | null; transportType: string }>
+    mcpServers?: Array<{ name: string; url: string | null; transportType: string }>,
+    opts?: { hasKnowledge?: boolean; hasPolicies?: boolean; hasGraph?: boolean }
   ): string {
     const toolImports = tools.map(t => `from tools.${t.name} import ${t.name}`).join("\n");
     const toolMap = tools.map(t => `    "${t.name}": ${t.name},`).join("\n");
@@ -18307,16 +18334,32 @@ main().catch(console.error);
     }).join(",\n");
     const mcpBlock = mcpServers && mcpServers.length > 0 ? generatePyMcpClientBlock(mcpServers) : "";
     const mcpInitCall = mcpServers && mcpServers.length > 0 ? `\n    import asyncio\n    asyncio.run(init_mcp_clients())` : "";
+    const knowledgeImport = opts?.hasKnowledge ? `from agent.knowledge import retrieve\n` : "";
+    const graphImport = opts?.hasGraph ? `from agent.graph import transition, get_entry_node, get_node\n` : "";
+    const knowledgeBlock = opts?.hasKnowledge ? `
+    retrieved_ctx = retrieve(task)
+    if retrieved_ctx:
+        context_block = "[CONTEXT]\\n" + "\\n---\\n".join(r["content"] for r in retrieved_ctx) + "\\n[/CONTEXT]\\n\\n"
+    else:
+        context_block = ""
+    user_message = context_block + task` : `
+    user_message = task`;
+
     return `import json
+import re
 import sys
 import yaml
 from openai import OpenAI
 ${toolImports}
-${mcpBlock}
+from runtime.policy import on_before_tool_call, on_before_response
+${knowledgeImport}${graphImport}${mcpBlock}
 with open("agent.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 client = OpenAI()
+
+stop_conditions = config.get("stop_conditions", [])
+forbidden_outputs = config.get("forbidden_outputs", [])
 
 tool_adapters = {
 ${toolMap}
@@ -18339,23 +18382,35 @@ tool_definitions = [
 ]
 
 
+def check_guardrails(content):
+    for pattern in forbidden_outputs:
+        try:
+            if re.search(pattern, content, re.IGNORECASE):
+                return True, f"Response matched forbidden output pattern: {pattern}"
+        except re.error:
+            pass
+    for cond in stop_conditions:
+        if cond in content:
+            return True, f"Stop condition met: {cond}"
+    return False, None
+
+
 def main():
-    streaming = "--stream" in sys.argv
     args = [a for a in sys.argv[1:] if a != "--stream"]
     task = args[0] if args else "Hello, agent!"${mcpInitCall}
+${knowledgeBlock}
     messages = [
         {"role": "system", "content": config["system_prompt"]},
-        {"role": "user", "content": task},
+        {"role": "user", "content": user_message},
     ]
 
     max_iter = config.get("max_iterations", ${maxIterations})
     promise = config.get("completion_promise", "${completionPromise}")
     ctx_limit = config.get("context_window_limit", 40)
-
+${opts?.hasGraph ? `    current_node_id = get_entry_node().get("id", "start") if get_entry_node() else "start"\n` : ""}
     for i in range(max_iter):
         print(f"[iteration {i + 1}/{max_iter}]")
-
-        # Trim message history to avoid context overflow, preserving system message
+${opts?.hasGraph ? `        node = get_node(current_node_id)\n        if node and node.get("type") == "exit":\n            print("[graph] reached exit node")\n            break\n` : ""}
         if len(messages) > ctx_limit + 1:
             messages = [messages[0]] + messages[-(ctx_limit):]
 
@@ -18367,73 +18422,59 @@ def main():
             kwargs["tools"] = tool_definitions
             kwargs["tool_choice"] = "auto"
 
-        if streaming:
-            kwargs["stream"] = True
-            stream = client.chat.completions.create(**kwargs)
-            content = ""
-            tool_calls_map = {}
-            for chunk in stream:
-                delta = chunk.choices[0].delta if chunk.choices else None
-                if delta and delta.content:
-                    print(delta.content, end="", flush=True)
-                    content += delta.content
-                if delta and delta.tool_calls:
-                    for tc in delta.tool_calls:
-                        existing = tool_calls_map.get(tc.index, {"id": "", "name": "", "arguments": ""})
-                        if tc.id:
-                            existing["id"] = tc.id
-                        if tc.function and tc.function.name:
-                            existing["name"] = tc.function.name
-                        if tc.function and tc.function.arguments:
-                            existing["arguments"] += tc.function.arguments
-                        tool_calls_map[tc.index] = existing
-            if content:
-                print()
-            if content and promise in content:
-                print("[completed]")
-                return
-            if not tool_calls_map:
-                print("[done]")
-                return
-            for tc in tool_calls_map.values():
-                print(f"  [tool] {tc['name']}({tc['arguments']})")
-                adapter = tool_adapters.get(tc["name"])
-                try:
-                    result = adapter(json.loads(tc["arguments"])) if adapter else {"error": f"Unknown tool: {tc['name']}"}
-                except Exception as e:
-                    result = {"error": str(e)}
-                messages.append({"role": "tool", "tool_call_id": tc["id"], "content": json.dumps(result)})
-        else:
-            response = client.chat.completions.create(**kwargs)
-            choice = response.choices[0]
-            msg = choice.message
-            messages.append(msg)
+        response = client.chat.completions.create(**kwargs)
+        choice = response.choices[0]
+        msg = choice.message
+        messages.append(msg)
 
-            if msg.content and promise in msg.content:
+        if msg.content:
+            stopped, reason = check_guardrails(msg.content)
+            if stopped:
+                print(f"[guardrail] {reason}")
+                return
+            try:
+                policy_check = on_before_response(msg.content)
+                if not policy_check.get("allowed", True):
+                    print(f"[policy] Response blocked: {policy_check.get('reason', '')}")
+                    return
+            except Exception as pe:
+                print(f"[policy] Error evaluating response policy: {pe}")
+            if promise in msg.content:
                 print("[completed] Agent returned completion promise.")
                 print(msg.content)
                 return
 
-            if not msg.tool_calls:
-                print("[done] No tool calls, final output:")
-                print(msg.content or "")
-                return
+        if not msg.tool_calls:
+            print("[done] No tool calls, final output:")
+            print(msg.content or "")
+            return
 
-            for tc in msg.tool_calls:
-                fn = tc.function
-                print(f"  [tool] {fn.name}({fn.arguments})")
-                adapter = tool_adapters.get(fn.name)
-                try:
-                    args = json.loads(fn.arguments)
-                    result = adapter(args) if adapter else {"error": f"Unknown tool: {fn.name}"}
-                except Exception as e:
-                    result = {"error": str(e)}
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": json.dumps(result),
-                })
-
+        for tc in msg.tool_calls:
+            fn = tc.function
+            print(f"  [tool] {fn.name}({fn.arguments})")
+            try:
+                parsed_args = json.loads(fn.arguments)
+            except Exception:
+                parsed_args = {}
+            try:
+                tool_policy = on_before_tool_call(fn.name, parsed_args)
+                if not tool_policy.get("allowed", True):
+                    print(f"  [policy] Tool call blocked: {tool_policy.get('reason', '')}")
+                    messages.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps({"error": f"Policy blocked: {tool_policy.get('reason', '')}"})})
+                    continue
+            except Exception as pe:
+                print(f"  [policy] Error evaluating: {pe}")
+            adapter = tool_adapters.get(fn.name)
+            try:
+                result = adapter(parsed_args) if adapter else {"error": f"Unknown tool: {fn.name}"}
+            except Exception as e:
+                result = {"error": str(e)}
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": json.dumps(result),
+            })
+${opts?.hasGraph ? `            current_node_id = transition(current_node_id, result)\n            print(f"  [graph] transitioned to node: {current_node_id}")\n` : ""}
     print("[max iterations reached]")
 
 
@@ -18446,7 +18487,8 @@ if __name__ == "__main__":
     tools: Array<{ name: string; description?: string; parameters?: any }>,
     maxIterations: number,
     completionPromise: string,
-    mcpServers?: Array<{ name: string; url: string | null; transportType: string }>
+    mcpServers?: Array<{ name: string; url: string | null; transportType: string }>,
+    opts?: { hasKnowledge?: boolean; hasPolicies?: boolean; hasGraph?: boolean }
   ): string {
     const toolImports = tools.map(t => `from tools.${t.name} import ${t.name}`).join("\n");
     const toolMap = tools.map(t => `    "${t.name}": ${t.name},`).join("\n");
@@ -18458,16 +18500,32 @@ if __name__ == "__main__":
     }).join(",\n");
     const mcpBlock = mcpServers && mcpServers.length > 0 ? generatePyMcpClientBlock(mcpServers) : "";
     const mcpInitCall = mcpServers && mcpServers.length > 0 ? `\n    import asyncio\n    asyncio.run(init_mcp_clients())` : "";
+    const knowledgeImport = opts?.hasKnowledge ? `from agent.knowledge import retrieve\n` : "";
+    const graphImport = opts?.hasGraph ? `from agent.graph import transition, get_entry_node, get_node\n` : "";
+    const knowledgeBlock = opts?.hasKnowledge ? `
+    retrieved_ctx = retrieve(task)
+    if retrieved_ctx:
+        context_block = "[CONTEXT]\\n" + "\\n---\\n".join(r["content"] for r in retrieved_ctx) + "\\n[/CONTEXT]\\n\\n"
+    else:
+        context_block = ""
+    user_message = context_block + task` : `
+    user_message = task`;
+
     return `import json
+import re
 import sys
 import yaml
 import anthropic
 ${toolImports}
-${mcpBlock}
+from runtime.policy import on_before_tool_call, on_before_response
+${knowledgeImport}${graphImport}${mcpBlock}
 with open("agent.yaml", "r") as f:
     config = yaml.safe_load(f)
 
 client = anthropic.Anthropic()
+
+stop_conditions = config.get("stop_conditions", [])
+forbidden_outputs = config.get("forbidden_outputs", [])
 
 tool_adapters = {
 ${toolMap}
@@ -18487,22 +18545,34 @@ tool_definitions = [
 ]
 
 
+def check_guardrails(content):
+    for pattern in forbidden_outputs:
+        try:
+            if re.search(pattern, content, re.IGNORECASE):
+                return True, f"Response matched forbidden output pattern: {pattern}"
+        except re.error:
+            pass
+    for cond in stop_conditions:
+        if cond in content:
+            return True, f"Stop condition met: {cond}"
+    return False, None
+
+
 def main():
-    streaming = "--stream" in sys.argv
     args = [a for a in sys.argv[1:] if a != "--stream"]
     task = args[0] if args else "Hello, agent!"${mcpInitCall}
+${knowledgeBlock}
     messages = [
-        {"role": "user", "content": task},
+        {"role": "user", "content": user_message},
     ]
 
     max_iter = config.get("max_iterations", ${maxIterations})
     promise = config.get("completion_promise", "${completionPromise}")
     ctx_limit = config.get("context_window_limit", 40)
-
+${opts?.hasGraph ? `    current_node_id = get_entry_node().get("id", "start") if get_entry_node() else "start"\n` : ""}
     for i in range(max_iter):
         print(f"[iteration {i + 1}/{max_iter}]")
-
-        # Trim message history to avoid context overflow
+${opts?.hasGraph ? `        node = get_node(current_node_id)\n        if node and node.get("type") == "exit":\n            print("[graph] reached exit node")\n            break\n` : ""}
         if len(messages) > ctx_limit:
             messages = messages[-(ctx_limit):]
 
@@ -18515,68 +18585,58 @@ def main():
         if tool_definitions:
             kwargs["tools"] = tool_definitions
 
-        if streaming:
-            text_content = ""
-            tool_blocks = []
-            with client.messages.stream(**kwargs) as stream:
-                for text in stream.text_stream:
-                    print(text, end="", flush=True)
-                    text_content += text
-                response = stream.get_final_message()
-                tool_blocks = [b for b in response.content if b.type == "tool_use"]
-            if text_content:
-                print()
-            if promise in text_content:
-                print("[completed]")
-                return
-            if not tool_blocks:
-                print("[done]")
-                return
-            messages.append({"role": "assistant", "content": response.content})
-            tool_results = []
-            for tu in tool_blocks:
-                print(f"  [tool] {tu.name}({json.dumps(tu.input)})")
-                adapter = tool_adapters.get(tu.name)
-                try:
-                    result = adapter(tu.input) if adapter else {"error": f"Unknown tool: {tu.name}"}
-                except Exception as e:
-                    result = {"error": str(e)}
-                tool_results.append({"type": "tool_result", "tool_use_id": tu.id, "content": json.dumps(result)})
-            messages.append({"role": "user", "content": tool_results})
-        else:
-            response = client.messages.create(**kwargs)
+        response = client.messages.create(**kwargs)
 
-            text_blocks = [b for b in response.content if b.type == "text"]
-            tool_blocks = [b for b in response.content if b.type == "tool_use"]
-            text_content = "\\n".join(b.text for b in text_blocks)
+        text_blocks = [b for b in response.content if b.type == "text"]
+        tool_blocks = [b for b in response.content if b.type == "tool_use"]
+        text_content = "\\n".join(b.text for b in text_blocks)
 
+        if text_content:
+            stopped, reason = check_guardrails(text_content)
+            if stopped:
+                print(f"[guardrail] {reason}")
+                return
+            try:
+                policy_check = on_before_response(text_content)
+                if not policy_check.get("allowed", True):
+                    print(f"[policy] Response blocked: {policy_check.get('reason', '')}")
+                    return
+            except Exception as pe:
+                print(f"[policy] Error evaluating response policy: {pe}")
             if promise in text_content:
                 print("[completed] Agent returned completion promise.")
                 print(text_content)
                 return
 
-            if not tool_blocks:
-                print("[done] No tool calls, final output:")
-                print(text_content)
-                return
+        if not tool_blocks:
+            print("[done] No tool calls, final output:")
+            print(text_content)
+            return
 
-            messages.append({"role": "assistant", "content": response.content})
-
-            tool_results = []
-            for tu in tool_blocks:
-                print(f"  [tool] {tu.name}({json.dumps(tu.input)})")
-                adapter = tool_adapters.get(tu.name)
-                try:
-                    result = adapter(tu.input) if adapter else {"error": f"Unknown tool: {tu.name}"}
-                except Exception as e:
-                    result = {"error": str(e)}
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tu.id,
-                    "content": json.dumps(result),
-                })
-
-            messages.append({"role": "user", "content": tool_results})
+        messages.append({"role": "assistant", "content": response.content})
+        tool_results = []
+        for tu in tool_blocks:
+            print(f"  [tool] {tu.name}({json.dumps(tu.input)})")
+            try:
+                tool_policy = on_before_tool_call(tu.name, tu.input)
+                if not tool_policy.get("allowed", True):
+                    print(f"  [policy] Tool call blocked: {tool_policy.get('reason', '')}")
+                    tool_results.append({"type": "tool_result", "tool_use_id": tu.id, "content": json.dumps({"error": f"Policy blocked: {tool_policy.get('reason', '')}"})})
+                    continue
+            except Exception as pe:
+                print(f"  [policy] Error evaluating: {pe}")
+            adapter = tool_adapters.get(tu.name)
+            try:
+                result = adapter(tu.input) if adapter else {"error": f"Unknown tool: {tu.name}"}
+            except Exception as e:
+                result = {"error": str(e)}
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tu.id,
+                "content": json.dumps(result),
+            })
+${opts?.hasGraph ? `            current_node_id = transition(current_node_id, result)\n            print(f"  [graph] transitioned to node: {current_node_id}")\n` : ""}
+        messages.append({"role": "user", "content": tool_results})
 
     print("[max iterations reached]")
 
@@ -19284,8 +19344,8 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
           files["package.json"] = JSON.stringify({ name: agentSlug, version: agentVersion, private: true, scripts: { start: "ts-node src/runtime/orchestrator.ts", test: "ts-node tests/eval_smoke.test.ts" }, dependencies: deps }, null, 2);
         } else {
           files["src/runtime/orchestrator.py"] = aiResult?.entrypoint || (llmProvider === "openai"
-            ? generatePyEntrypointOpenAI(tools, maxIterations, completionPromise, mcpServerDetails)
-            : generatePyEntrypointAnthropic(tools, maxIterations, completionPromise, mcpServerDetails));
+            ? generatePyEntrypointOpenAI(tools, maxIterations, completionPromise, mcpServerDetails, entrypointOpts)
+            : generatePyEntrypointAnthropic(tools, maxIterations, completionPromise, mcpServerDetails, entrypointOpts));
 
           files["src/tools/__init__.py"] = generatePyToolsInit(tools);
           for (const tool of tools) {
@@ -19304,11 +19364,15 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
             files["src/runtime/tracing.py"] = `# ATLAS-generated: Tracing no-op stub (OpenTelemetry disabled)\n# Set otelEnabled=true during export to generate full tracing setup\n\nSPAN_GRANULARITY = "none"\n\n\ndef start_agent_span(name: str):\n    return None\n\n\ndef start_tool_span(name: str):\n    return None\n\n\ntracer = None\n`;
           }
 
-          const blueprintNodes = Array.isArray(blueprintJson.nodes) ? blueprintJson.nodes as Array<{ id?: string; type?: string; label?: string }> : [];
-          const nodesLiteral = blueprintNodes.length > 0
-            ? blueprintNodes.map(n => `    {"id": ${JSON.stringify(n.id || "")}, "type": ${JSON.stringify(n.type || "")}, "label": ${JSON.stringify(n.label || "")}}`).join(",\n")
+          const pyBlueprintNodes = Array.isArray(blueprintJson.nodes) ? blueprintJson.nodes as Array<{ id?: string; type?: string; label?: string }> : [];
+          const pyBlueprintEdges = Array.isArray(blueprintJson.edges) ? blueprintJson.edges as Array<{ source?: string; target?: string; condition?: string }> : [];
+          const pyNodesLiteral = pyBlueprintNodes.length > 0
+            ? pyBlueprintNodes.map(n => `    {"id": ${JSON.stringify(n.id || "")}, "type": ${JSON.stringify(n.type || "")}, "label": ${JSON.stringify(n.label || "")}}`).join(",\n")
             : `    {"id": "start", "type": "entry", "label": "Start"},\n    {"id": "agent_loop", "type": "agent", "label": "Agent Loop"},\n    {"id": "end", "type": "exit", "label": "End"}`;
-          files["src/agent/graph.py"] = `# ATLAS-generated: Graph construction from blueprint configuration\n\nAGENT_NAME = ${JSON.stringify(agent.name)}\nMAX_ITERATIONS = ${maxIterations}\nCOMPLETION_PROMISE = ${JSON.stringify(completionPromise)}\n\nNODES = [\n${nodesLiteral}\n]\n\n\ndef get_node(node_id: str):\n    return next((n for n in NODES if n["id"] == node_id), None)\n\n\ndef get_entry_node():\n    entry = next((n for n in NODES if n["type"] == "entry"), None)\n    return entry or (NODES[0] if NODES else None)\n`;
+          const pyEdgesLiteral = pyBlueprintEdges.length > 0
+            ? pyBlueprintEdges.map(e => `    {"source": ${JSON.stringify(e.source || "")}, "target": ${JSON.stringify(e.target || "")}, "condition": ${JSON.stringify(e.condition || null)}}`).join(",\n")
+            : `    {"source": "start", "target": "agent_loop", "condition": null},\n    {"source": "agent_loop", "target": "end", "condition": null}`;
+          files["src/agent/graph.py"] = `# ATLAS-generated: Graph construction from blueprint configuration\nimport re\n\nAGENT_NAME = ${JSON.stringify(agent.name)}\nMAX_ITERATIONS = ${maxIterations}\nCOMPLETION_PROMISE = ${JSON.stringify(completionPromise)}\n\nNODES = [\n${pyNodesLiteral}\n]\n\nEDGES = [\n${pyEdgesLiteral}\n]\n\n\ndef get_node(node_id: str):\n    return next((n for n in NODES if n["id"] == node_id), None)\n\n\ndef get_entry_node():\n    entry = next((n for n in NODES if n["type"] == "entry"), None)\n    return entry or (NODES[0] if NODES else None)\n\n\ndef get_outgoing_edges(node_id: str):\n    return [e for e in EDGES if e["source"] == node_id]\n\n\ndef evaluate_condition(condition, ctx):\n    if not condition or not ctx:\n        return False\n    if condition.startswith("ctx.") or condition.startswith("ctx["):\n        match = re.split(r"\\s*(===|!==|==|!=|>=|<=|>|<)\\s*", condition)\n        if len(match) == 3:\n            left, op, right = match\n            parts = left.replace("ctx.", "").replace("ctx[", "").replace("]", "").split(".")\n            val = ctx\n            for p in parts:\n                if isinstance(val, dict):\n                    val = val.get(p)\n                else:\n                    return False\n            right = right.strip().strip("\\'\\"")\n            if op in ("===", "=="):\n                return str(val) == right\n            if op in ("!==", "!="):\n                return str(val) != right\n            try:\n                if op == ">":\n                    return float(val) > float(right)\n                if op == "<":\n                    return float(val) < float(right)\n                if op == ">=":\n                    return float(val) >= float(right)\n                if op == "<=":\n                    return float(val) <= float(right)\n            except (ValueError, TypeError):\n                return False\n    return False\n\n\ndef transition(current_node_id: str, context=None):\n    outgoing = get_outgoing_edges(current_node_id)\n    if not outgoing:\n        return current_node_id\n    for edge in outgoing:\n        if not edge["condition"]:\n            return edge["target"]\n        try:\n            if evaluate_condition(edge["condition"], context):\n                return edge["target"]\n        except Exception:\n            continue\n    return outgoing[0]["target"]\n`;
 
           if (kbDetails.length > 0) {
             const kbConfigPy = kbDetails.map(kb => `    {"name": ${JSON.stringify(kb.name)}, "embedding_model": ${JSON.stringify(kb.embeddingModel)}, "chunk_size": ${kb.chunkSize || "None"}, "chunk_overlap": ${kb.chunkOverlap || "None"}}`).join(",\n");
