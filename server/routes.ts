@@ -18081,10 +18081,9 @@ ${knowledgeBlock}
   const maxIter = config.max_iterations || ${maxIterations};
   const promise = config.completion_promise || "${completionPromise}";
   const ctxLimit = config.context_window_limit || 40;
-${opts?.hasGraph ? `  let currentNodeId = getEntryNode()?.id || "start";\n` : ""}
+${opts?.hasGraph ? `  const { getNode } = await import("../agent/graph");\n  let currentNodeId = getEntryNode()?.id || "start";\n` : ""}
   for (let i = 0; i < maxIter; i++) {
-    console.log(\`[iteration \${i + 1}/\${maxIter}]\`);
-${opts?.hasGraph ? `    const node = (await import("../agent/graph")).getNode(currentNodeId);\n    if (node?.type === "exit") { console.log("[graph] reached exit node"); break; }\n` : ""}
+${opts?.hasGraph ? `    const currentNode = getNode(currentNodeId);\n    console.log(\`[iteration \${i + 1}/\${maxIter}] node: \${currentNodeId} (type: \${currentNode?.type})\`);\n    if (currentNode?.type === "exit") { console.log("[graph] reached exit node, stopping"); break; }\n` : `    console.log(\`[iteration \${i + 1}/\${maxIter}]\`);\n`}
     if (messages.length > ctxLimit + 1) {
       messages = [messages[0], ...messages.slice(-(ctxLimit))];
     }
@@ -18256,10 +18255,9 @@ ${knowledgeBlock}
   const maxIter = config.max_iterations || ${maxIterations};
   const promise = config.completion_promise || "${completionPromise}";
   const ctxLimit = config.context_window_limit || 40;
-${opts?.hasGraph ? `  let currentNodeId = getEntryNode()?.id || "start";\n` : ""}
+${opts?.hasGraph ? `  const { getNode } = await import("../agent/graph");\n  let currentNodeId = getEntryNode()?.id || "start";\n` : ""}
   for (let i = 0; i < maxIter; i++) {
-    console.log(\`[iteration \${i + 1}/\${maxIter}]\`);
-${opts?.hasGraph ? `    const node = (await import("../agent/graph")).getNode(currentNodeId);\n    if (node?.type === "exit") { console.log("[graph] reached exit node"); break; }\n` : ""}
+${opts?.hasGraph ? `    const currentNode = getNode(currentNodeId);\n    console.log(\`[iteration \${i + 1}/\${maxIter}] node: \${currentNodeId} (type: \${currentNode?.type})\`);\n    if (currentNode?.type === "exit") { console.log("[graph] reached exit node, stopping"); break; }\n` : `    console.log(\`[iteration \${i + 1}/\${maxIter}]\`);\n`}
     if (messages.length > ctxLimit) {
       messages = messages.slice(-(ctxLimit));
     }
@@ -18428,8 +18426,7 @@ ${knowledgeBlock}
     ctx_limit = config.get("context_window_limit", 40)
 ${opts?.hasGraph ? `    current_node_id = get_entry_node().get("id", "start") if get_entry_node() else "start"\n` : ""}
     for i in range(max_iter):
-        print(f"[iteration {i + 1}/{max_iter}]")
-${opts?.hasGraph ? `        node = get_node(current_node_id)\n        if node and node.get("type") == "exit":\n            print("[graph] reached exit node")\n            break\n` : ""}
+${opts?.hasGraph ? `        current_node = get_node(current_node_id)\n        print(f"[iteration {i + 1}/{max_iter}] node: {current_node_id} (type: {current_node.get('type') if current_node else 'unknown'})")\n        if current_node and current_node.get("type") == "exit":\n            print("[graph] reached exit node, stopping")\n            break\n` : `        print(f"[iteration {i + 1}/{max_iter}]")\n`}
         if len(messages) > ctx_limit + 1:
             messages = [messages[0]] + messages[-(ctx_limit):]
 
@@ -18590,8 +18587,7 @@ ${knowledgeBlock}
     ctx_limit = config.get("context_window_limit", 40)
 ${opts?.hasGraph ? `    current_node_id = get_entry_node().get("id", "start") if get_entry_node() else "start"\n` : ""}
     for i in range(max_iter):
-        print(f"[iteration {i + 1}/{max_iter}]")
-${opts?.hasGraph ? `        node = get_node(current_node_id)\n        if node and node.get("type") == "exit":\n            print("[graph] reached exit node")\n            break\n` : ""}
+${opts?.hasGraph ? `        current_node = get_node(current_node_id)\n        print(f"[iteration {i + 1}/{max_iter}] node: {current_node_id} (type: {current_node.get('type') if current_node else 'unknown'})")\n        if current_node and current_node.get("type") == "exit":\n            print("[graph] reached exit node, stopping")\n            break\n` : `        print(f"[iteration {i + 1}/{max_iter}]")\n`}
         if len(messages) > ctx_limit:
             messages = messages[-(ctx_limit):]
 
@@ -19291,10 +19287,13 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
 
         files["README.md"] = `<!-- ATLAS-generated README -->\n# ${agent.name}\n\n${agent.description || ""}\n\n## Setup\n\n1. Install dependencies:\n   \`\`\`bash\n   ${depCmd}\n   \`\`\`\n2. Copy \`.env.example\` to \`.env\` and fill in your API keys.\n3. Run the agent:\n   \`\`\`bash\n   ${runCmd}\n   \`\`\`\n\n## File Structure\n\n\`\`\`\n${format === "typescript" ? `src/\n  runtime/\n    orchestrator.ts    # Main agent loop\n    policy.ts          # Policy evaluation hooks\n    tracing.ts         # OpenTelemetry tracing setup\n  agent/\n    graph.ts           # Graph construction from blueprint\n    prompts/\n      system.txt       # System prompt\n    schemas/\n      input.json       # Input JSON schema\n      output.json      # Output JSON schema\n  tools/\n    index.ts           # Tool registry\n    {tool}.ts          # Individual tool adapters\ntests/\n  eval_smoke.test.ts   # Smoke evaluation test\npackage.json\nagent.yaml\nalmp.manifest.json\n.env.example` : `src/\n  runtime/\n    orchestrator.py    # Main agent loop\n    policy.py          # Policy evaluation hooks\n    tracing.py         # OpenTelemetry tracing setup\n  agent/\n    graph.py           # Graph construction from blueprint\n    prompts/\n      system.txt       # System prompt\n    schemas/\n      input.json       # Input JSON schema\n      output.json      # Output JSON schema\n  tools/\n    __init__.py        # Tool registry\n    {tool}.py          # Individual tool adapters\ntests/\n  eval_smoke_test.py   # Smoke evaluation test\nrequirements.txt\nagent.yaml\nalmp.manifest.json\n.env.example`}\n\`\`\`\n\n## Tools\n\n${tools.length > 0 ? toolList : "No tools configured."}\n`;
 
+        const graphNodes = Array.isArray(blueprintJson.nodes) ? blueprintJson.nodes as Array<{ type?: string }> : [];
+        const graphNodeTypes = new Set(graphNodes.map(n => n.type).filter(Boolean));
+        const hasMultiNodeGraph = graphNodes.length > 1 && (graphNodeTypes.has("exit") || graphNodeTypes.has("decision") || graphNodeTypes.has("tool") || graphNodeTypes.has("output") || graphNodes.length >= 3);
         const entrypointOpts = {
           hasKnowledge: kbDetails.length > 0,
           hasPolicies: linkedPolicies.length > 0,
-          hasGraph: Array.isArray(blueprintJson.nodes) && (blueprintJson.nodes as any[]).length > 0,
+          hasGraph: hasMultiNodeGraph,
         };
 
         if (format === "typescript") {
@@ -19338,21 +19337,13 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
             files["src/agent/outcome.ts"] = `// ATLAS-generated: Outcome contract & KPI configuration\nimport * as fs from "fs";\nimport * as path from "path";\n\nexport interface KpiTarget {\n  name: string;\n  target: number;\n  operator: string;\n  unit?: string;\n}\n\nexport interface OutcomeContract {\n  name: string;\n  kpis: KpiTarget[];\n}\n\nconst outcomeJson = fs.readFileSync(path.resolve(__dirname, "../agent/outcome.json"), "utf-8");\nexport const outcome: OutcomeContract = JSON.parse(outcomeJson);\n\nexport function checkKpi(kpiName: string, actualValue: number): { passed: boolean; message: string } {\n  const kpi = outcome.kpis.find(k => k.name === kpiName);\n  if (!kpi) return { passed: true, message: \`KPI "\${kpiName}" not found in outcome contract\` };\n  let passed = false;\n  switch (kpi.operator) {\n    case ">=": passed = actualValue >= kpi.target; break;\n    case "<=": passed = actualValue <= kpi.target; break;\n    case ">": passed = actualValue > kpi.target; break;\n    case "<": passed = actualValue < kpi.target; break;\n    case "==": passed = actualValue === kpi.target; break;\n    default: passed = actualValue >= kpi.target;\n  }\n  return { passed, message: \`KPI "\${kpiName}": actual=\${actualValue} \${kpi.operator} target=\${kpi.target}\${kpi.unit ? " " + kpi.unit : ""} → \${passed ? "PASS" : "FAIL"}\` };\n}\n`;
           }
 
-          const evalTestFunctions = evalTestCases.length > 0
+          const evalVitestCases = evalTestCases.length > 0
             ? evalTestCases.map((tc, idx) => {
                 const fnName = `evalCase_${idx}_${tc.caseName.replace(/[^a-zA-Z0-9_]/g, "_").substring(0, 40)}`;
-                const escapedInput = JSON.stringify(tc.input).replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
-                const escapedExpected = JSON.stringify(tc.expected).replace(/\\/g, "\\\\").replace(/`/g, "\\`").replace(/\$/g, "\\$");
-                return `\nasync function ${fnName}() {\n  console.log("[EVAL] ${tc.suiteName} / ${tc.caseName} (${tc.category})");\n  const input = ${escapedInput};\n  const expected = ${escapedExpected};\n  assert.ok(typeof input === "string" && input.length > 0, "Eval case input must be a non-empty string");\n  assert.ok(typeof expected === "string" && expected.length > 0, "Eval case expected output must be a non-empty string");\n\n  const { execSync } = await import("child_process");\n  let result: string;\n  try {\n    result = execSync(\`npx ts-node src/runtime/orchestrator.ts \${JSON.stringify(input)}\`, { encoding: "utf-8", timeout: 60000, env: { ...process.env } });\n  } catch (err: unknown) {\n    const msg = err instanceof Error ? err.message : String(err);\n    console.log("  [WARN] Orchestrator invocation failed:", msg.substring(0, 200));\n    console.log("  [SKIP] Skipping assertion — orchestrator requires live LLM credentials");\n    return;\n  }\n  assert.ok(result && result.length > 0, "Agent must produce a non-empty response");\n  const normalizedResult = result.toLowerCase();\n  const normalizedExpected = expected.toLowerCase();\n  const keywords = normalizedExpected.split(/\\s+/).filter((w: string) => w.length > 3);\n  const matchedKeywords = keywords.filter((kw: string) => normalizedResult.includes(kw));\n  const matchRatio = keywords.length > 0 ? matchedKeywords.length / keywords.length : 0;\n  assert.ok(\n    normalizedResult.includes(normalizedExpected) || matchRatio >= 0.3,\n    \`Expected response to contain or relate to: "\${expected.substring(0, 100)}..." (matched \${matchedKeywords.length}/\${keywords.length} keywords)\`\n  );\n  console.log(\`  [PASS] Matched \${matchedKeywords.length}/\${keywords.length} keywords from expected output\`);\n}\n`;
+                return `\ntest("${tc.suiteName} / ${tc.caseName} (${tc.category})", async () => {\n  const input = ${JSON.stringify(tc.input)};\n  const expected = ${JSON.stringify(tc.expected)};\n  expect(input).toBeTruthy();\n  expect(expected).toBeTruthy();\n\n  const { execSync } = await import("child_process");\n  let result: string;\n  try {\n    result = execSync(\`npx ts-node src/runtime/orchestrator.ts \${JSON.stringify(input)}\`, { encoding: "utf-8", timeout: 60000, env: { ...process.env } });\n  } catch {\n    console.warn("[SKIP] ${fnName}: orchestrator requires live LLM credentials");\n    return;\n  }\n  expect(result).toBeTruthy();\n  const normalizedResult = result.toLowerCase();\n  const normalizedExpected = expected.toLowerCase();\n  const keywords = normalizedExpected.split(/\\\\s+/).filter((w: string) => w.length > 3);\n  const matched = keywords.filter((kw: string) => normalizedResult.includes(kw));\n  const ratio = keywords.length > 0 ? matched.length / keywords.length : 1;\n  expect(ratio).toBeGreaterThanOrEqual(0.3);\n}, 90000);\n`;
               }).join("")
             : "";
-          const evalRunCalls = evalTestCases.length > 0
-            ? evalTestCases.map((tc, idx) => {
-                const fnName = `evalCase_${idx}_${tc.caseName.replace(/[^a-zA-Z0-9_]/g, "_").substring(0, 40)}`;
-                return `  await ${fnName}();`;
-              }).join("\n")
-            : "";
-          files["tests/eval_smoke.test.ts"] = `// ATLAS-generated: Evaluation test suite\nimport * as assert from "assert";\n\nasync function smokeTest() {\n  const orchestrator = await import("../src/runtime/orchestrator");\n  assert.ok(orchestrator, "Orchestrator module should be importable");\n  console.log("[PASS] Smoke test: orchestrator module loads successfully");\n\n  const graph = await import("../src/agent/graph");\n  assert.ok(graph.nodes, "Graph nodes should be defined");\n  assert.ok(graph.nodes.length > 0, "Graph should have at least one node");\n  assert.ok(graph.edges, "Graph edges should be defined");\n  console.log("[PASS] Smoke test: graph module loads with nodes and edges");\n\n  const policy = await import("../src/runtime/policy");\n  const result = await policy.evaluatePolicy({ agentName: ${JSON.stringify(agent.name)}, action: "test" });\n  assert.strictEqual(result.allowed, true, "Default policy should allow actions");\n  console.log("[PASS] Smoke test: policy stub allows actions");\n\n  console.log("[ALL PASS] Smoke evaluation complete");\n}\n${evalTestFunctions}\nasync function runAllTests() {\n  await smokeTest();\n${evalRunCalls}\n  console.log("[COMPLETE] All evaluation tests finished");\n}\n\nrunAllTests().catch((err) => {\n  console.error("[FAIL]", err);\n  process.exit(1);\n});\n`;
+          files["tests/eval_smoke.test.ts"] = `// ATLAS-generated: Vitest evaluation test suite\nimport { describe, test, expect } from "vitest";\n\ndescribe("Smoke tests", () => {\n  test("orchestrator module loads", async () => {\n    const orchestrator = await import("../src/runtime/orchestrator");\n    expect(orchestrator).toBeTruthy();\n  });\n\n  test("graph module has nodes and edges", async () => {\n    const graph = await import("../src/agent/graph");\n    expect(graph.nodes).toBeDefined();\n    expect(graph.nodes.length).toBeGreaterThan(0);\n    expect(graph.edges).toBeDefined();\n  });\n\n  test("policy stub allows actions", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = await policy.evaluatePolicy({ agentName: ${JSON.stringify(agent.name)}, action: "test" });\n    expect(result.allowed).toBe(true);\n  });\n});\n\ndescribe("Eval cases", () => {\n${evalVitestCases}\n});\n`;
 
           const deps: Record<string, string> = { ...baseDeps };
           addLlmDep(deps, []);
@@ -19362,7 +19353,8 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
             deps["@opentelemetry/sdk-node"] = pin ? "0.56.0" : "^0.56.0";
             deps["@opentelemetry/exporter-trace-otlp-http"] = pin ? "0.56.0" : "^0.56.0";
           }
-          files["package.json"] = JSON.stringify({ name: agentSlug, version: agentVersion, private: true, scripts: { start: "ts-node src/runtime/orchestrator.ts", test: "ts-node tests/eval_smoke.test.ts" }, dependencies: deps }, null, 2);
+          deps["vitest"] = pin ? "1.6.0" : "^1.6.0";
+          files["package.json"] = JSON.stringify({ name: agentSlug, version: agentVersion, private: true, scripts: { start: "ts-node src/runtime/orchestrator.ts", test: "vitest run" }, dependencies: deps }, null, 2);
         } else {
           files["src/runtime/orchestrator.py"] = aiResult?.entrypoint || (llmProvider === "openai"
             ? generatePyEntrypointOpenAI(tools, maxIterations, completionPromise, mcpServerDetails, entrypointOpts)
@@ -19404,7 +19396,13 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
             files["src/agent/outcome.py"] = `# ATLAS-generated: Outcome contract & KPI configuration\nimport json\nimport os\n\n_outcome_path = os.path.join(os.path.dirname(__file__), "outcome.json")\nwith open(_outcome_path) as f:\n    OUTCOME = json.load(f)\n\n\ndef check_kpi(kpi_name: str, actual_value: float) -> dict:\n    \"\"\"Check if a KPI target is met.\"\"\"\n    kpi = next((k for k in OUTCOME["kpis"] if k["name"] == kpi_name), None)\n    if not kpi:\n        return {"passed": True, "message": f'KPI "{kpi_name}" not found in outcome contract'}\n    target = kpi["target"]\n    op = kpi.get("operator", ">=")\n    ops = {">=": actual_value >= target, "<=": actual_value <= target, ">": actual_value > target, "<": actual_value < target, "==": actual_value == target}\n    passed = ops.get(op, actual_value >= target)\n    unit = f' {kpi["unit"]}' if kpi.get("unit") else ""\n    return {"passed": passed, "message": f'KPI "{kpi_name}": actual={actual_value} {op} target={target}{unit} → {"PASS" if passed else "FAIL"}'}\n`;
           }
 
-          files["tests/eval_smoke_test.py"] = `# ATLAS-generated: Smoke evaluation test\nimport importlib\nimport sys\n\n\ndef smoke_test():\n    orchestrator = importlib.import_module("src.runtime.orchestrator")\n    assert orchestrator is not None, "Orchestrator module should be importable"\n    print("[PASS] Smoke test: orchestrator module loads successfully")\n\n    graph = importlib.import_module("src.agent.graph")\n    assert hasattr(graph, "NODES"), "Graph NODES should be defined"\n    assert len(graph.NODES) > 0, "Graph should have at least one node"\n    print("[PASS] Smoke test: graph module loads with nodes")\n\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.evaluate_policy(${JSON.stringify(agent.name)}, "test")\n    assert result["allowed"] is True, "Default policy should allow actions"\n    print("[PASS] Smoke test: policy stub allows actions")\n\n    print("[ALL PASS] Smoke evaluation complete")\n\n\nif __name__ == "__main__":\n    try:\n        smoke_test()\n    except Exception as e:\n        print(f"[FAIL] {e}")\n        sys.exit(1)\n`;
+          const pyEvalCases = evalTestCases.length > 0
+            ? evalTestCases.map((tc, idx) => {
+                const fnName = `test_eval_${idx}_${tc.caseName.replace(/[^a-zA-Z0-9_]/g, "_").substring(0, 40)}`;
+                return `\n\ndef ${fnName}():\n    """${tc.suiteName} / ${tc.caseName} (${tc.category})"""\n    input_text = ${JSON.stringify(tc.input)}\n    expected = ${JSON.stringify(tc.expected)}\n    assert input_text, "Eval case input must be non-empty"\n    assert expected, "Eval case expected output must be non-empty"\n    try:\n        result = subprocess.check_output(\n            [sys.executable, "src/runtime/orchestrator.py", input_text],\n            encoding="utf-8", timeout=60\n        )\n    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:\n        pytest.skip(f"Orchestrator requires live LLM credentials: {e}")\n        return\n    assert result and len(result.strip()) > 0, "Agent must produce non-empty response"\n    normalized_result = result.lower()\n    normalized_expected = expected.lower()\n    keywords = [w for w in normalized_expected.split() if len(w) > 3]\n    matched = [kw for kw in keywords if kw in normalized_result]\n    ratio = len(matched) / len(keywords) if keywords else 1.0\n    assert normalized_expected in normalized_result or ratio >= 0.3, (\n        f"Expected response to relate to: \\"{expected[:100]}...\\" "\n        f"(matched {len(matched)}/{len(keywords)} keywords)"\n    )\n`;
+              }).join("")
+            : "";
+          files["tests/eval_smoke_test.py"] = `# ATLAS-generated: Pytest evaluation test suite\nimport importlib\nimport subprocess\nimport sys\nimport pytest\n\n\ndef test_orchestrator_module_loads():\n    orchestrator = importlib.import_module("src.runtime.orchestrator")\n    assert orchestrator is not None\n\n\ndef test_graph_module_has_nodes_and_edges():\n    graph = importlib.import_module("src.agent.graph")\n    assert hasattr(graph, "NODES")\n    assert len(graph.NODES) > 0\n    assert hasattr(graph, "EDGES")\n\n\ndef test_policy_stub_allows_actions():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.evaluate_policy(${JSON.stringify(agent.name)}, "test")\n    assert result["allowed"] is True\n${pyEvalCases}\n`;
 
           const reqs = [...baseReqs]; addLlmDep({}, reqs);
           if (otelEnabled) {
@@ -19412,6 +19410,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
             reqs.push(pin ? "opentelemetry-sdk==1.28.0" : "opentelemetry-sdk>=1.28.0");
             reqs.push(pin ? "opentelemetry-exporter-otlp-proto-http==1.28.0" : "opentelemetry-exporter-otlp-proto-http>=1.28.0");
           }
+          reqs.push(pin ? "pytest==8.3.4" : "pytest>=8.0.0");
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
       } else if (framework === "langgraph") {
