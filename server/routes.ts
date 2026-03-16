@@ -18275,7 +18275,7 @@ ${opts?.hasGraph ? `    const currentNode = getNode(currentNodeId);\n    console
 
     const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
     const toolUseBlocks = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-    const textContent = textBlocks.map(b => b.text).join("\\n");
+    let textContent = textBlocks.map(b => b.text).join("\\n");
 
     if (textContent) {
       const guard = checkGuardrails(textContent);
@@ -19838,6 +19838,12 @@ export async function evaluatePolicy(ctx: PolicyContext): Promise<PolicyResult> 
       console.log(JSON.stringify(event));
       return { allowed: false, reason: \\\`Action "\\\${ctx.action}" requires approval per policy "\\\${policy.name}"\\\`, policyName: policy.name, event: "APPROVAL_REQUIRED" };
     }
+    const sc = rules.stopConditions || rules.stop_conditions || [];
+    for (const cond of sc) {
+      if (ctx.action === cond || (ctx.responseContent && ctx.responseContent.includes(cond))) {
+        return { allowed: false, reason: \\\`Stop condition "\\\${cond}" triggered by policy "\\\${policy.name}"\\\`, policyName: policy.name };
+      }
+    }
   }
   return { allowed: true };
 }
@@ -19907,7 +19913,7 @@ export function listPolicies(): Array<{ name: string; domain: string | null }> {
             const hasForbiddenPatterns = policyForbiddenOutputs.length > 0;
             const hasStopConds = policyStopConditions.length > 0;
             const policyEnforcementTests = linkedPolicies.length > 0
-              ? `\n  test("listPolicies returns populated array", async () => {\n    const policy = await import("../src/runtime/policy");\n    const policies = policy.listPolicies();\n    expect(Array.isArray(policies)).toBe(true);\n    expect(policies.length).toBeGreaterThan(0);\n  });\n\n  test("evaluatePolicy blocks tool in blockedTools when configured", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = await policy.evaluatePolicy({ agentName: "test", action: "tool_call", toolName: "__nonexistent_safe_tool__" });\n    expect(result.allowed).toBe(true);\n  });\n`
+              ? `\n  test("listPolicies returns populated array", async () => {\n    const policy = await import("../src/runtime/policy");\n    const policies = policy.listPolicies();\n    expect(Array.isArray(policies)).toBe(true);\n    expect(policies.length).toBeGreaterThan(0);\n  });\n\n  test("evaluatePolicy allows unlisted tool call", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = await policy.evaluatePolicy({ agentName: "test", action: "tool_call", toolName: "__safe_unlisted_tool__" });\n    expect(result.allowed).toBe(true);\n  });\n\n  test("onBeforeToolCall blocks tool if in blockedTools list", async () => {\n    const fs = await import("fs");\n    const path = await import("path");\n    const raw = fs.readFileSync(path.resolve(__dirname, "../src/agent/policies.json"), "utf-8");\n    const policies = JSON.parse(raw);\n    const blockedTool = policies.flatMap((p: any) => (p.rules?.blockedTools || [])).find(Boolean);\n    if (!blockedTool) return;\n    const policy = await import("../src/runtime/policy");\n    const result = await policy.onBeforeToolCall(blockedTool, {});\n    expect(result.allowed).toBe(false);\n    expect(result.reason).toContain("blocked");\n  });\n`
               : "";
             const forbiddenOutputTests = hasForbiddenPatterns
               ? `\n  test("checkForbiddenOutputs blocks matching forbidden pattern", async () => {\n    const policy = await import("../src/runtime/policy");\n    // Use the first configured forbidden pattern to verify blocking\n    const testInput = ${JSON.stringify(policyForbiddenOutputs[0] || "BLOCKED")};\n    const result = policy.checkForbiddenOutputs(testInput);\n    expect(result.allowed).toBe(false);\n    expect(result.reason).toBeDefined();\n  });\n`
@@ -20025,6 +20031,9 @@ def evaluate_policy(agent_name: str, action: str, tool_name: Optional[str] = Non
             event = {"event": "APPROVAL_REQUIRED", "action": action, "agentName": agent_name, "policyName": policy["name"], "toolName": tool_name}
             print(json.dumps(event))
             return {"allowed": False, "reason": f'Action "{action}" requires approval per policy "{policy["name"]}"', "policyName": policy["name"], "event": "APPROVAL_REQUIRED"}
+        for cond in (rules.get("stopConditions") or rules.get("stop_conditions") or []):
+            if action == cond:
+                return {"allowed": False, "reason": f'Stop condition "{cond}" triggered by policy "{policy["name"]}"', "policyName": policy["name"]}
     return {"allowed": True}
 
 
@@ -20094,7 +20103,7 @@ def list_policies():
             const pyHasForbiddenPatterns = policyForbiddenOutputs.length > 0;
             const pyHasStopConds = policyStopConditions.length > 0;
             const pyPolicyEnforcementTests = linkedPolicies.length > 0
-              ? `\n\ndef test_list_policies_returns_populated_array():\n    policy = importlib.import_module("src.runtime.policy")\n    policies = policy.list_policies()\n    assert isinstance(policies, list)\n    assert len(policies) > 0\n`
+              ? `\n\ndef test_list_policies_returns_populated_array():\n    policy = importlib.import_module("src.runtime.policy")\n    policies = policy.list_policies()\n    assert isinstance(policies, list)\n    assert len(policies) > 0\n\n\ndef test_evaluate_policy_allows_unlisted_tool():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.evaluate_policy("test", "tool_call", tool_name="__safe_unlisted_tool__")\n    assert result["allowed"] is True\n\n\ndef test_on_before_tool_call_blocks_listed_tool():\n    import json as _json\n    import os as _os\n    _pp = _os.path.join(_os.path.dirname(__file__), "..", "src", "agent", "policies.json")\n    try:\n        with open(_pp) as _f:\n            _policies = _json.load(_f)\n    except FileNotFoundError:\n        return\n    blocked = None\n    for p in _policies:\n        rules = p.get("rules") or {}\n        bt = rules.get("blockedTools") or []\n        if bt:\n            blocked = bt[0]\n            break\n    if not blocked:\n        return\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.on_before_tool_call(blocked, {})\n    assert result["allowed"] is False\n    assert "blocked" in result["reason"].lower()\n`
               : "";
             const pyForbiddenOutputTests = pyHasForbiddenPatterns
               ? `\n\ndef test_check_forbidden_outputs_blocks_matching_pattern():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.check_forbidden_outputs(${JSON.stringify(policyForbiddenOutputs[0] || "BLOCKED")})\n    assert result["allowed"] is False\n    assert "reason" in result\n`
