@@ -19092,6 +19092,42 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
             evalTestCases.push({ suiteName: suite.name, caseName: tc.name, input: tc.inputScenario, expected: tc.expectedBehavior, category: tc.scenarioCategory });
           }
         }
+        const suiteThresholdConfig = suite.thresholdConfig as Record<string, unknown> | null;
+        if (suiteThresholdConfig && Array.isArray(suiteThresholdConfig.testCases)) {
+          for (const tc of (suiteThresholdConfig.testCases as Array<Record<string, unknown>>).slice(0, 10)) {
+            evalTestCases.push({
+              suiteName: suite.name,
+              caseName: String(tc.name || tc.caseName || `case_${evalTestCases.length}`),
+              input: String(tc.input || tc.inputScenario || ""),
+              expected: String(tc.expected || tc.expectedBehavior || ""),
+              category: String(tc.category || tc.scenarioCategory || "inline"),
+            });
+          }
+        }
+        const suiteScorer = suite.scorerConfig as Record<string, unknown> | null;
+        if (suiteScorer && Array.isArray(suiteScorer.evalCases)) {
+          for (const tc of (suiteScorer.evalCases as Array<Record<string, unknown>>).slice(0, 10)) {
+            evalTestCases.push({
+              suiteName: suite.name,
+              caseName: String(tc.name || tc.caseName || `scored_case_${evalTestCases.length}`),
+              input: String(tc.input || tc.query || ""),
+              expected: String(tc.expected || tc.expectedOutput || ""),
+              category: String(tc.category || "scored"),
+            });
+          }
+        }
+      }
+      const inlineEvalConfig = (rtConfig as Record<string, unknown>).evalSuiteConfig as Record<string, unknown> | undefined;
+      if (inlineEvalConfig && Array.isArray(inlineEvalConfig.cases)) {
+        for (const tc of (inlineEvalConfig.cases as Array<Record<string, unknown>>).slice(0, 10)) {
+          evalTestCases.push({
+            suiteName: String(inlineEvalConfig.name || "inline"),
+            caseName: String(tc.name || `inline_case_${evalTestCases.length}`),
+            input: String(tc.input || ""),
+            expected: String(tc.expected || ""),
+            category: String(tc.category || "inline"),
+          });
+        }
       }
 
       const allContextProfiles = await storage.getContextProfiles();
@@ -19118,8 +19154,8 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
         contextProfileName: contextProfile?.name || null,
         memoryProfileName: memoryProfile?.name || null,
         mcpServers: mcpServerDetails,
-        stopConditions: Array.isArray(rtConfig.stopConditions) ? rtConfig.stopConditions : [],
-        forbiddenOutputs: Array.isArray(rtConfig.forbiddenOutputs) ? rtConfig.forbiddenOutputs : [],
+        stopConditions: Array.isArray(rtConfig.stopConditions) ? rtConfig.stopConditions as string[] : (Array.isArray((blueprintJson as Record<string, unknown>).stopConditions) ? (blueprintJson as Record<string, unknown>).stopConditions as string[] : []),
+        forbiddenOutputs: Array.isArray(rtConfig.forbiddenOutputs) ? rtConfig.forbiddenOutputs as string[] : (Array.isArray((blueprintJson as Record<string, unknown>).forbiddenOutputs) ? (blueprintJson as Record<string, unknown>).forbiddenOutputs as string[] : []),
       };
 
       const agentYaml = generateAgentYaml(agent, tools, systemPrompt, maxIterations, completionPromise, yamlExtras);
@@ -19297,8 +19333,19 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
           hasGraph: hasMultiNodeGraph,
         };
 
+        function validateAiEntrypoint(code: string, opts: typeof entrypointOpts): boolean {
+          if (!code || code.length < 200) return false;
+          if (opts.hasPolicies && !code.includes("policy")) return false;
+          if (opts.hasGraph && !code.includes("transition")) return false;
+          if (opts.hasKnowledge && !code.includes("retrieve")) return false;
+          if (!code.includes("checkGuardrails") && !code.includes("check_guardrails")) return false;
+          return true;
+        }
+
+        const aiEntrypoint = aiResult?.entrypoint && validateAiEntrypoint(aiResult.entrypoint, entrypointOpts) ? aiResult.entrypoint : null;
+
         if (format === "typescript") {
-          files["src/runtime/orchestrator.ts"] = aiResult?.entrypoint || (llmProvider === "openai"
+          files["src/runtime/orchestrator.ts"] = aiEntrypoint || (llmProvider === "openai"
             ? generateTsEntrypointOpenAI(tools, maxIterations, completionPromise, mcpServerDetails, entrypointOpts)
             : generateTsEntrypointAnthropic(tools, maxIterations, completionPromise, mcpServerDetails, entrypointOpts));
 
@@ -19357,7 +19404,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
           deps["vitest"] = pin ? "1.6.0" : "^1.6.0";
           files["package.json"] = JSON.stringify({ name: agentSlug, version: agentVersion, private: true, scripts: { start: "ts-node src/runtime/orchestrator.ts", test: "vitest run" }, dependencies: deps }, null, 2);
         } else {
-          files["src/runtime/orchestrator.py"] = aiResult?.entrypoint || (llmProvider === "openai"
+          files["src/runtime/orchestrator.py"] = aiEntrypoint || (llmProvider === "openai"
             ? generatePyEntrypointOpenAI(tools, maxIterations, completionPromise, mcpServerDetails, entrypointOpts)
             : generatePyEntrypointAnthropic(tools, maxIterations, completionPromise, mcpServerDetails, entrypointOpts));
 
