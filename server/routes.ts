@@ -17200,7 +17200,7 @@ Eval Suites: ${evalSuites.length} configured`,
       }
 
       let userMessage = "";
-      let senderInfo: any = {};
+      let senderInfo: Record<string, unknown> = {};
 
       switch (platform) {
         case "slack": {
@@ -17854,7 +17854,7 @@ Eval Suites: ${evalSuites.length} configured`,
 
   function generateAgentYaml(
     agent: { name: string; description: string | null; modelProvider: string | null; modelName: string | null },
-    tools: Array<{ name: string; description?: string; parameters?: any }>,
+    tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>,
     systemPrompt: string,
     maxIterations: number,
     completionPromise: string,
@@ -17985,7 +17985,7 @@ async def init_mcp_clients():${serverInits}
   }
 
   function generateTsEntrypointOpenAI(
-    tools: Array<{ name: string; description?: string; parameters?: any }>,
+    tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>,
     maxIterations: number,
     completionPromise: string,
     mcpServers?: Array<{ name: string; url: string | null; transportType: string }>,
@@ -18045,13 +18045,13 @@ ${toolDispatchCases}
 
 const TOOL_NAMES = [${tools.map(t => `"${t.name}"`).join(", ")}] as const;
 
-const TOOL_REGISTRY: Record<string, { description: string; parameters: any }> = {
+const TOOL_REGISTRY: Record<string, { description: string; parameters: Record<string, unknown> }> = {
 ${toolRegistryEntries}
 };
 
 const toolDefinitions: OpenAI.Chat.Completions.ChatCompletionTool[] = Object.entries(TOOL_REGISTRY).map(([name, schema]) => ({
   type: "function" as const,
-  function: { name, description: schema.description, parameters: schema.parameters },
+  function: { name, description: schema.description, parameters: schema.parameters as OpenAI.FunctionParameters },
 }));
 
 function checkGuardrails(content: string): { stopped: boolean; reason?: string } {
@@ -18159,7 +18159,7 @@ main().catch(console.error);
   }
 
   function generateTsEntrypointAnthropic(
-    tools: Array<{ name: string; description?: string; parameters?: any }>,
+    tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>,
     maxIterations: number,
     completionPromise: string,
     mcpServers?: Array<{ name: string; url: string | null; transportType: string }>,
@@ -18219,14 +18219,14 @@ ${toolDispatchCases}
 
 const TOOL_NAMES = [${tools.map(t => `"${t.name}"`).join(", ")}] as const;
 
-const TOOL_REGISTRY: Record<string, { description: string; input_schema: any }> = {
+const TOOL_REGISTRY: Record<string, { description: string; input_schema: Record<string, unknown> }> = {
 ${toolRegistryEntries}
 };
 
 const toolDefinitions: Anthropic.Tool[] = Object.entries(TOOL_REGISTRY).map(([name, schema]) => ({
   name,
   description: schema.description,
-  input_schema: schema.input_schema,
+  input_schema: schema.input_schema as Anthropic.Tool.InputSchema,
 }));
 
 function checkGuardrails(content: string): { stopped: boolean; reason?: string } {
@@ -18335,7 +18335,7 @@ main().catch(console.error);
   }
 
   function generatePyEntrypointOpenAI(
-    tools: Array<{ name: string; description?: string; parameters?: any }>,
+    tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>,
     maxIterations: number,
     completionPromise: string,
     mcpServers?: Array<{ name: string; url: string | null; transportType: string }>,
@@ -18500,7 +18500,7 @@ if __name__ == "__main__":
   }
 
   function generatePyEntrypointAnthropic(
-    tools: Array<{ name: string; description?: string; parameters?: any }>,
+    tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>,
     maxIterations: number,
     completionPromise: string,
     mcpServers?: Array<{ name: string; url: string | null; transportType: string }>,
@@ -18661,34 +18661,39 @@ if __name__ == "__main__":
 `;
   }
 
-  function jsonSchemaToTsInterface(name: string, schema: any): string {
+  function jsonSchemaToTsInterface(name: string, schema: Record<string, unknown>): string {
     const lines: string[] = [];
     lines.push(`export interface ${name} {`);
-    const props = schema?.properties || {};
-    const required = new Set(Array.isArray(schema?.required) ? schema.required : []);
-    for (const [key, val] of Object.entries(props)) {
-      const v = val as any;
+    const props = (schema?.properties || {}) as Record<string, Record<string, unknown>>;
+    const required = new Set(Array.isArray(schema?.required) ? schema.required as string[] : []);
+    for (const [key, v] of Object.entries(props)) {
       const opt = required.has(key) ? "" : "?";
-      let tsType = "any";
-      if (v.type === "string") tsType = v.enum ? v.enum.map((e: string) => JSON.stringify(e)).join(" | ") : "string";
+      let tsType = "unknown";
+      if (v.type === "string") tsType = Array.isArray(v.enum) ? (v.enum as string[]).map((e: string) => JSON.stringify(e)).join(" | ") : "string";
       else if (v.type === "number" || v.type === "integer") tsType = "number";
       else if (v.type === "boolean") tsType = "boolean";
-      else if (v.type === "array") tsType = v.items?.type === "string" ? "string[]" : v.items?.type === "number" ? "number[]" : "any[]";
-      else if (v.type === "object") tsType = "Record<string, any>";
+      else if (v.type === "array") {
+        const items = v.items as Record<string, unknown> | undefined;
+        tsType = items?.type === "string" ? "string[]" : items?.type === "number" ? "number[]" : items?.type === "boolean" ? "boolean[]" : "unknown[]";
+      }
+      else if (v.type === "object") {
+        const nestedProps = v.properties as Record<string, unknown> | undefined;
+        tsType = nestedProps ? "Record<string, unknown>" : "Record<string, unknown>";
+      }
       const desc = v.description ? ` // ${v.description}` : "";
       lines.push(`  ${key}${opt}: ${tsType};${desc}`);
     }
     if (Object.keys(props).length === 0) {
-      lines.push(`  [key: string]: any;`);
+      lines.push(`  [key: string]: unknown;`);
     }
     lines.push(`}`);
     return lines.join("\n");
   }
 
-  function generateTsToolAdapter(tool: { name: string; description?: string; parameters?: any }, adapterType: "builtin" | "customer" | "stub" = "builtin"): string {
+  function generateTsToolAdapter(tool: { name: string; description?: string; parameters?: Record<string, unknown> }, adapterType: "builtin" | "customer" | "stub" = "builtin"): string {
     const interfaceName = tool.name.charAt(0).toUpperCase() + tool.name.slice(1) + "Args";
     const hasParams = tool.parameters && typeof tool.parameters === "object" && Object.keys(tool.parameters).length > 0;
-    const interfaceBlock = hasParams ? jsonSchemaToTsInterface(interfaceName, tool.parameters) + "\n\n" : `export interface ${interfaceName} {\n  [key: string]: any;\n}\n\n`;
+    const interfaceBlock = hasParams ? jsonSchemaToTsInterface(interfaceName, tool.parameters) + "\n\n" : `export interface ${interfaceName} {\n  [key: string]: unknown;\n}\n\n`;
     const argType = interfaceName;
 
     if (adapterType === "stub") {
@@ -18696,7 +18701,7 @@ if __name__ == "__main__":
 // Status: Stub — replace with actual implementation before deployment
 // Description: ${tool.description || "No description provided"}
 
-${interfaceBlock}export async function ${tool.name}(args: ${argType}): Promise<any> {
+${interfaceBlock}export async function ${tool.name}(args: ${argType}): Promise<Record<string, unknown>> {
   throw new Error(
     "[STUB] Tool '${tool.name}' has no implementation. " +
     "Replace this stub with your actual adapter code."
@@ -18711,9 +18716,7 @@ export default ${tool.name};
 // Status: Customer adapter required — provide your own implementation
 // Description: ${tool.description || "No description provided"}
 
-${interfaceBlock}export async function ${tool.name}(args: ${argType}): Promise<any> {
-  // TODO: Implement your adapter for ${tool.name}
-  // This tool requires a customer-provided implementation
+${interfaceBlock}export async function ${tool.name}(args: ${argType}): Promise<Record<string, unknown>> {
   console.log("[${tool.name}] called with:", args);
   return { status: "needs_implementation", tool: "${tool.name}", args };
 }
@@ -18725,9 +18728,8 @@ export default ${tool.name};
 // Status: Scaffold generated — replace the body with your actual implementation
 // Description: ${tool.description || "No description provided"}
 
-${interfaceBlock}export async function ${tool.name}(args: ${argType}): Promise<any> {
+${interfaceBlock}export async function ${tool.name}(args: ${argType}): Promise<Record<string, unknown>> {
   console.log("[${tool.name}] called with:", JSON.stringify(args, null, 2));
-  // TODO: Implement this tool adapter.
   throw new Error("[${tool.name}] Not implemented. Replace this with your adapter logic.");
 }
 
@@ -18735,19 +18737,18 @@ export default ${tool.name};
 `;
   }
 
-  function jsonSchemaToDataclass(name: string, schema: any): string {
+  function jsonSchemaToDataclass(name: string, schema: Record<string, unknown>): string {
     const lines: string[] = [];
     lines.push(`@dataclass`);
     lines.push(`class ${name}:`);
-    const props = schema?.properties || {};
-    const required = new Set(Array.isArray(schema?.required) ? schema.required : []);
+    const props = (schema?.properties || {}) as Record<string, Record<string, unknown>>;
+    const required = new Set(Array.isArray(schema?.required) ? schema.required as string[] : []);
     const entries = Object.entries(props);
     if (entries.length === 0) {
       lines.push(`    pass`);
     } else {
-      for (const [key, val] of entries) {
-        const v = val as any;
-        let pyType = "Any";
+      for (const [key, v] of entries) {
+        let pyType = "object";
         if (v.type === "string") pyType = "str";
         else if (v.type === "number" || v.type === "integer") pyType = v.type === "integer" ? "int" : "float";
         else if (v.type === "boolean") pyType = "bool";
@@ -18762,7 +18763,7 @@ export default ${tool.name};
     return lines.join("\n");
   }
 
-  function generatePyToolAdapter(tool: { name: string; description?: string; parameters?: any }, adapterType: "builtin" | "customer" | "stub" = "builtin"): string {
+  function generatePyToolAdapter(tool: { name: string; description?: string; parameters?: Record<string, unknown> }, adapterType: "builtin" | "customer" | "stub" = "builtin"): string {
     const className = tool.name.charAt(0).toUpperCase() + tool.name.slice(1) + "Args";
     const hasParams = tool.parameters && typeof tool.parameters === "object" && Object.keys(tool.parameters).length > 0;
     const dataclassBlock = hasParams ? jsonSchemaToDataclass(className, tool.parameters) + "\n\n" : `@dataclass\nclass ${className}:\n    pass\n\n`;
@@ -18826,7 +18827,7 @@ def ${tool.name}(args: ${className}) -> dict:
     agentName: string;
     agentDescription: string;
     systemPrompt: string;
-    tools: Array<{ name: string; description?: string; parameters?: any }>;
+    tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>;
     format: "typescript" | "python";
     llmProvider: "openai" | "anthropic";
     maxIterations: number;
@@ -19038,15 +19039,15 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
         || `You are ${agent.name}. ${agent.description || ""}`;
 
       const rawTools = Array.isArray(agent.toolsConfig) ? agent.toolsConfig : [];
-      const tools: Array<{ name: string; description?: string; parameters?: any }> = rawTools.map((t: any) => ({
-        name: (t.name || "unnamed_tool").replace(/[^a-zA-Z0-9_]/g, "_"),
-        description: t.description || "",
-        parameters: t.parameters || {},
+      const tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }> = rawTools.map((t: Record<string, unknown>) => ({
+        name: (String(t.name || "unnamed_tool")).replace(/[^a-zA-Z0-9_]/g, "_"),
+        description: String(t.description || ""),
+        parameters: (t.parameters || {}) as Record<string, unknown>,
       }));
 
-      const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
-      const matchedSkills: Array<{ name: string; executionOrder?: number }> = Array.isArray(rtConfig.matchedSkills)
-        ? rtConfig.matchedSkills.map((s: any) => ({ name: s.name || s, executionOrder: s.executionOrder }))
+      const rtConfig = (agent.runtimeConfig as Record<string, unknown>) || {};
+      const matchedSkills: Array<{ name: string; executionOrder?: number }> = Array.isArray((rtConfig as Record<string, unknown>).matchedSkills)
+        ? ((rtConfig as Record<string, unknown>).matchedSkills as Array<Record<string, unknown>>).map((s) => ({ name: String(s.name || s), executionOrder: s.executionOrder as number | undefined }))
         : [];
 
       const agentKbLinks = await storage.getAgentKnowledgeBases(agent.id);
@@ -19071,11 +19072,11 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
       const ontologyTags = (agent.ontologyTags || []) as Array<{ conceptId: string; conceptLabel: string }>;
       const permissionsConfig = agent.permissionsConfig || {};
 
-      let linkedPolicies: Array<{ id: string; name: string; domain: string | null; policyJson: any }> = [];
-      const agentPolicyBindings = (agent.policyBindings || []) as any[];
+      let linkedPolicies: Array<{ id: string; name: string; domain: string | null; policyJson: unknown }> = [];
+      const agentPolicyBindings = ((agent.policyBindings || []) as Array<Record<string, unknown>>);
       if (agentPolicyBindings.length > 0) {
         const allPolicies = await storage.getPolicies();
-        const policyIds = new Set(agentPolicyBindings.map((b: any) => b.policyId || b.id).filter(Boolean));
+        const policyIds = new Set(agentPolicyBindings.map((b) => String(b.policyId || b.id || "")).filter(Boolean));
         linkedPolicies = allPolicies
           .filter(p => policyIds.has(p.id))
           .map(p => ({ id: p.id, name: p.name, domain: p.domain, policyJson: p.policyJson }));
@@ -19158,8 +19159,8 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
       const getAdapterType = (toolName: string): "builtin" | "customer" | "stub" => {
         if (!toolAdapters || Object.keys(toolAdapters).length === 0) return "builtin";
         if (toolAdapters[toolName]) return toolAdapters[toolName];
-        const originalTool = rawTools.find((t: any) => (t.name || "unnamed_tool").replace(/[^a-zA-Z0-9_]/g, "_") === toolName);
-        if (originalTool && toolAdapters[(originalTool as any).name]) return toolAdapters[(originalTool as any).name];
+        const originalTool = rawTools.find((t: Record<string, unknown>) => (String(t.name || "unnamed_tool")).replace(/[^a-zA-Z0-9_]/g, "_") === toolName);
+        if (originalTool && toolAdapters[String((originalTool as Record<string, unknown>).name)]) return toolAdapters[String((originalTool as Record<string, unknown>).name)];
         const normalizedTarget = normalizeForMatch(toolName);
         const matchKey = Object.keys(toolAdapters).find(k => normalizeForMatch(k) === normalizedTarget);
         if (matchKey) return toolAdapters[matchKey];
@@ -19199,7 +19200,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
         const generatedAt = new Date().toISOString();
         const agentVersion = agent.currentVersion || "1.0.0";
 
-        const manifestData: Record<string, any> = {
+        const manifestData: Record<string, unknown> = {
           name: agent.name,
           description: agent.description || "",
           version: agentVersion,
@@ -19217,7 +19218,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
         if (outcomeData) manifestData.outcome = outcomeData;
         if (ontologyTags.length > 0) manifestData.ontologyTags = ontologyTags;
         if (linkedPolicies.length > 0) manifestData.policies = linkedPolicies.map(p => ({ name: p.name, domain: p.domain }));
-        if (permissionsConfig && Object.keys(permissionsConfig as any).length > 0) manifestData.permissions = permissionsConfig;
+        if (permissionsConfig && typeof permissionsConfig === "object" && Object.keys(permissionsConfig as Record<string, unknown>).length > 0) manifestData.permissions = permissionsConfig;
         if (contextProfile) manifestData.contextProfile = { name: contextProfile.name, version: contextProfile.version };
         if (memoryProfile) manifestData.memoryProfile = { name: memoryProfile.name, version: memoryProfile.version };
 
@@ -19326,7 +19327,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
           const edgesLiteral = blueprintEdges.length > 0
             ? blueprintEdges.map(e => `  { source: ${JSON.stringify(e.source || "")}, target: ${JSON.stringify(e.target || "")}, condition: ${JSON.stringify(e.condition || null)} }`).join(",\n")
             : `  { source: "start", target: "agent_loop", condition: null },\n  { source: "agent_loop", target: "end", condition: null }`;
-          files["src/agent/graph.ts"] = `// ATLAS-generated: Graph construction from blueprint configuration\n\nexport interface GraphNode {\n  id: string;\n  type: string;\n  label: string;\n}\n\nexport interface GraphEdge {\n  source: string;\n  target: string;\n  condition: string | null;\n}\n\nexport const agentName = ${JSON.stringify(agent.name)};\nexport const maxIterations = ${maxIterations};\nexport const completionPromise = ${JSON.stringify(completionPromise)};\n\nexport const nodes: GraphNode[] = [\n${nodesLiteral}\n];\n\nexport const edges: GraphEdge[] = [\n${edgesLiteral}\n];\n\nexport function getNode(id: string): GraphNode | undefined {\n  return nodes.find(n => n.id === id);\n}\n\nexport function getEntryNode(): GraphNode | undefined {\n  return nodes.find(n => n.type === "entry") || nodes[0];\n}\n\nexport function getOutgoingEdges(nodeId: string): GraphEdge[] {\n  return edges.filter(e => e.source === nodeId);\n}\n\nfunction evaluateCondition(condition: string, ctx: any): boolean {\n  if (!condition || !ctx) return false;\n  if (condition.startsWith("ctx.") || condition.startsWith("ctx[")) {\n    const parts = condition.split(/\\s*(===|!==|==|!=|>=|<=|>|<)\\s*/);\n    if (parts.length === 3) {\n      const [left, op, right] = parts;\n      const lval = left.split(".").reduce((o: any, k: string) => o?.[k], { ctx });\n      const rval = right.replace(/^["']|["']$/g, "");\n      switch (op) {\n        case "===": case "==": return String(lval) === rval;\n        case "!==": case "!=": return String(lval) !== rval;\n        case ">": return Number(lval) > Number(rval);\n        case "<": return Number(lval) < Number(rval);\n        case ">=": return Number(lval) >= Number(rval);\n        case "<=": return Number(lval) <= Number(rval);\n        default: return false;\n      }\n    }\n  }\n  return false;\n}\n\nexport function transition(currentNodeId: string, context?: any): string {\n  const outgoing = getOutgoingEdges(currentNodeId);\n  if (outgoing.length === 0) return currentNodeId;\n  for (const edge of outgoing) {\n    if (!edge.condition) return edge.target;\n    try {\n      if (evaluateCondition(edge.condition, context)) return edge.target;\n    } catch { continue; }\n  }\n  return outgoing[0].target;\n}\n`;
+          files["src/agent/graph.ts"] = `// ATLAS-generated: Graph construction from blueprint configuration\n\nexport interface GraphNode {\n  id: string;\n  type: string;\n  label: string;\n}\n\nexport interface GraphEdge {\n  source: string;\n  target: string;\n  condition: string | null;\n}\n\nexport const agentName = ${JSON.stringify(agent.name)};\nexport const maxIterations = ${maxIterations};\nexport const completionPromise = ${JSON.stringify(completionPromise)};\n\nexport const nodes: GraphNode[] = [\n${nodesLiteral}\n];\n\nexport const edges: GraphEdge[] = [\n${edgesLiteral}\n];\n\nexport function getNode(id: string): GraphNode | undefined {\n  return nodes.find(n => n.id === id);\n}\n\nexport function getEntryNode(): GraphNode | undefined {\n  return nodes.find(n => n.type === "entry") || nodes[0];\n}\n\nexport function getOutgoingEdges(nodeId: string): GraphEdge[] {\n  return edges.filter(e => e.source === nodeId);\n}\n\nfunction resolvePath(obj: Record<string, unknown>, path: string): unknown {\n  return path.split(".").reduce<unknown>((acc, key) => {\n    if (acc && typeof acc === "object" && key in (acc as Record<string, unknown>)) {\n      return (acc as Record<string, unknown>)[key];\n    }\n    return undefined;\n  }, obj);\n}\n\nfunction evaluateCondition(condition: string, ctx: Record<string, unknown>): boolean {\n  if (!condition || !ctx) return false;\n  if (condition.startsWith("ctx.") || condition.startsWith("ctx[")) {\n    const parts = condition.split(/\\s*(===|!==|==|!=|>=|<=|>|<)\\s*/);\n    if (parts.length === 3) {\n      const [left, op, right] = parts;\n      const lval = resolvePath({ ctx }, left);\n      const rval = right.replace(/^["']|["']$/g, "");\n      switch (op) {\n        case "===": case "==": return String(lval) === rval;\n        case "!==": case "!=": return String(lval) !== rval;\n        case ">": return Number(lval) > Number(rval);\n        case "<": return Number(lval) < Number(rval);\n        case ">=": return Number(lval) >= Number(rval);\n        case "<=": return Number(lval) <= Number(rval);\n        default: return false;\n      }\n    }\n  }\n  return false;\n}\n\nexport function transition(currentNodeId: string, context?: Record<string, unknown>): string {\n  const outgoing = getOutgoingEdges(currentNodeId);\n  if (outgoing.length === 0) return currentNodeId;\n  for (const edge of outgoing) {\n    if (!edge.condition) return edge.target;\n    try {\n      if (evaluateCondition(edge.condition, context || {})) return edge.target;\n    } catch { continue; }\n  }\n  return outgoing[0].target;\n}\n`;
 
           if (kbDetails.length > 0) {
             const kbConfigJson = JSON.stringify(kbDetails.map(kb => ({ name: kb.name, embeddingModel: kb.embeddingModel, chunkSize: kb.chunkSize, chunkOverlap: kb.chunkOverlap })), null, 2);
@@ -19789,10 +19790,10 @@ spec:
         || `You are ${agent.name}. ${agent.description || ""}`;
 
       const rawTools = Array.isArray(agent.toolsConfig) ? agent.toolsConfig : [];
-      const tools: Array<{ name: string; description?: string; parameters?: any }> = rawTools.map((t: any) => ({
-        name: (t.name || "unnamed_tool").replace(/[^a-zA-Z0-9_]/g, "_"),
-        description: t.description || "",
-        parameters: t.parameters || {},
+      const tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }> = rawTools.map((t: Record<string, unknown>) => ({
+        name: (String(t.name || "unnamed_tool")).replace(/[^a-zA-Z0-9_]/g, "_"),
+        description: String(t.description || ""),
+        parameters: (t.parameters || {}) as Record<string, unknown>,
       }));
 
       let content = "";
