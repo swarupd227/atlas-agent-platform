@@ -19698,37 +19698,6 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
           })), null, 2) + "\n";
         }
 
-        if (matchedSkills.length > 0) {
-          if (format === "typescript") {
-            const skillEntries = matchedSkills.map(s => {
-              const safeName = s.name.replace(/[^a-zA-Z0-9_]/g, "_");
-              return `  "${safeName}": {\n    name: "${s.name.replace(/"/g, '\\"')}",\n    domain: "${s.domain}",\n    description: "${s.description.replace(/"/g, '\\"').replace(/\n/g, " ")}",\n    executionOrder: ${s.executionOrder ?? 0},\n    required: ${s.required},\n  }`;
-            }).join(",\n");
-            const skillStubs = matchedSkills.map(s => {
-              const safeName = s.name.replace(/[^a-zA-Z0-9_ ]/g, "").replace(/\s+/g, "_").replace(/_+/g, "_");
-              return `\n/** Skill: ${s.name}\n * Domain: ${s.domain}\n * ${s.description.replace(/\n/g, " ").slice(0, 120)}\n */\nfunction execute_${safeName}(input: Record<string, unknown>): Record<string, unknown> {\n  // TODO: Implement ${s.name} skill logic\n  return { status: "not_implemented", skillName: "${s.name.replace(/"/g, '\\"')}" };\n}`;
-            }).join("\n");
-            const dispatchCases = matchedSkills.map(s => {
-              const safeName = s.name.replace(/[^a-zA-Z0-9_ ]/g, "").replace(/\s+/g, "_").replace(/_+/g, "_");
-              return `    case "${s.name.replace(/"/g, '\\"')}": return execute_${safeName}(input);`;
-            }).join("\n");
-            files["src/agent/skills.ts"] = `// ATLAS-generated: Skills catalog for ${agent.name}\n\nexport interface SkillMeta {\n  name: string;\n  domain: string;\n  description: string;\n  executionOrder: number;\n  required: boolean;\n}\n\nexport const SKILL_CATALOG: Record<string, SkillMeta> = {\n${skillEntries}\n};\n\nexport function listSkills(): SkillMeta[] {\n  return Object.values(SKILL_CATALOG).sort((a, b) => a.executionOrder - b.executionOrder);\n}\n${skillStubs}\n\nexport function executeSkill(name: string, input: Record<string, unknown>): Record<string, unknown> {\n  switch (name) {\n${dispatchCases}\n    default:\n      throw new Error(\`Unknown skill: \${name}\`);\n  }\n}\n`;
-          } else {
-            const pySkillEntries = matchedSkills.map(s => {
-              return `    "${s.name.replace(/"/g, '\\"')}": {\n        "name": "${s.name.replace(/"/g, '\\"')}",\n        "domain": "${s.domain}",\n        "description": "${s.description.replace(/"/g, '\\"').replace(/\n/g, " ")}",\n        "execution_order": ${s.executionOrder ?? 0},\n        "required": ${s.required ? "True" : "False"},\n    }`;
-            }).join(",\n");
-            const pySkillStubs = matchedSkills.map(s => {
-              const safeName = s.name.replace(/[^a-zA-Z0-9_ ]/g, "").replace(/\s+/g, "_").replace(/_+/g, "_").toLowerCase();
-              return `\ndef execute_${safeName}(input_data: dict) -> dict:\n    """Skill: ${s.name}\n    Domain: ${s.domain}\n    ${s.description.replace(/\n/g, " ").slice(0, 120)}\n    """\n    # TODO: Implement ${s.name} skill logic\n    return {"status": "not_implemented", "skill_name": "${s.name.replace(/"/g, '\\"')}"}`;
-            }).join("\n\n");
-            const pyDispatchCases = matchedSkills.map(s => {
-              const safeName = s.name.replace(/[^a-zA-Z0-9_ ]/g, "").replace(/\s+/g, "_").replace(/_+/g, "_").toLowerCase();
-              return `    "${s.name.replace(/"/g, '\\"')}": execute_${safeName}`;
-            }).join(",\n");
-            files["src/agent/skills.py"] = `# ATLAS-generated: Skills catalog for ${agent.name}\nfrom typing import Any\n\n\nSKILL_CATALOG: dict[str, dict[str, Any]] = {\n${pySkillEntries}\n}\n\n\ndef list_skills() -> list[dict[str, Any]]:\n    return sorted(SKILL_CATALOG.values(), key=lambda s: s["execution_order"])\n${pySkillStubs}\n\n\n_SKILL_DISPATCH: dict[str, Any] = {\n${pyDispatchCases}\n}\n\n\ndef execute_skill(name: str, input_data: dict) -> dict:\n    handler = _SKILL_DISPATCH.get(name)\n    if not handler:\n        raise ValueError(f"Unknown skill: {name}")\n    return handler(input_data)\n`;
-          }
-        }
-
         if (outcomeData) {
           files["src/agent/outcome.json"] = JSON.stringify({
             name: outcomeData.name,
@@ -20449,13 +20418,13 @@ def list_policies():
         }
       }
 
-      if (matchedSkills.length > 0 && framework !== "generic") {
+      if (matchedSkills.length > 0) {
         const skillFileExt = format === "typescript" ? "ts" : "py";
         if (!files[`src/agent/skills.${skillFileExt}`]) {
           if (format === "typescript") {
             const skillEntries = matchedSkills.map(s => {
-              const safeName = s.name.replace(/[^a-zA-Z0-9_]/g, "_");
-              return `  "${safeName}": {\n    name: "${s.name.replace(/"/g, '\\"')}",\n    domain: "${s.domain}",\n    description: "${s.description.replace(/"/g, '\\"').replace(/\n/g, " ")}",\n    executionOrder: ${s.executionOrder ?? 0},\n    required: ${s.required},\n  }`;
+              const escapedName = s.name.replace(/"/g, '\\"');
+              return `  "${escapedName}": {\n    name: "${escapedName}",\n    domain: "${s.domain}",\n    description: "${s.description.replace(/"/g, '\\"').replace(/\n/g, " ")}",\n    executionOrder: ${s.executionOrder ?? 0},\n    required: ${s.required},\n  }`;
             }).join(",\n");
             const skillStubs = matchedSkills.map(s => {
               const safeName = s.name.replace(/[^a-zA-Z0-9_ ]/g, "").replace(/\s+/g, "_").replace(/_+/g, "_");
