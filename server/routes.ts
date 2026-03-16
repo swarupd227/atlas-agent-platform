@@ -19565,13 +19565,27 @@ spec:
           blueprintJson,
           singleFile: filePath,
         });
-        if (aiResult?.entrypoint && filePath.includes("orchestrator")) {
-          content = aiResult.entrypoint;
-        } else if (aiResult?.frameworkFiles?.[filePath]) {
-          content = aiResult.frameworkFiles[filePath];
-        } else if (aiResult?.toolAdapters) {
-          const toolName = filePath.split("/").pop()?.replace(/\.(ts|py)$/, "") || "";
-          if (aiResult.toolAdapters[toolName]) content = aiResult.toolAdapters[toolName];
+        if (aiResult) {
+          const isEntrypoint = /orchestrator|entrypoint|graph|crew|agent_node/i.test(filePath);
+          if (isEntrypoint && aiResult.entrypoint) {
+            content = aiResult.entrypoint;
+          }
+          if (!content && aiResult.frameworkFiles?.[filePath]) {
+            content = aiResult.frameworkFiles[filePath];
+          }
+          if (!content && aiResult.frameworkFiles) {
+            const baseName = filePath.split("/").pop() || "";
+            for (const [key, val] of Object.entries(aiResult.frameworkFiles)) {
+              if (key.endsWith(baseName) || key.split("/").pop() === baseName) {
+                content = val;
+                break;
+              }
+            }
+          }
+          if (!content && aiResult.toolAdapters) {
+            const toolName = filePath.split("/").pop()?.replace(/\.(ts|py)$/, "") || "";
+            if (aiResult.toolAdapters[toolName]) content = aiResult.toolAdapters[toolName];
+          }
         }
       } catch { /* AI unavailable */ }
 

@@ -560,7 +560,7 @@ export default function AgentExport() {
                         const fileName = fp.split("/").pop() || fp;
                         const isActive = fp === exportPreviewFile;
                         const isRegenerating = regeneratingFile === fp;
-                        const canRegen = fp.includes("orchestrator") || fp.includes("entrypoint") || fp.includes("tools/") || fp.includes("adapters/") || fp.includes("graph") || fp.includes("crew") || fp.includes("agent_node");
+                        const canRegen = /orchestrator|entrypoint|tools\/|adapters\/|graph|crew|agent_node/i.test(fp);
                         return (
                           <div key={fp} className={`flex items-center gap-1 group ${isActive ? "bg-primary/10" : "hover:bg-muted/60"}`}>
                             <button
