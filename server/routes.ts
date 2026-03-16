@@ -19421,6 +19421,23 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
           .map(p => ({ id: p.id, name: p.name, domain: p.domain, policyJson: p.policyJson }));
       }
 
+      const hasRegulatedPolicy = linkedPolicies.some(p => {
+        const name = (p.name || "").toUpperCase();
+        const domain = (p.domain || "").toUpperCase();
+        return name.includes("HIPAA") || name.includes("GDPR") || name.includes("PHI") || name.includes("PII")
+          || domain.includes("HIPAA") || domain.includes("GDPR");
+      });
+
+      const policyStopConditions: string[] = [];
+      const policyForbiddenOutputs: string[] = [];
+      for (const p of linkedPolicies) {
+        const rules = (p.policyJson || {}) as Record<string, unknown>;
+        if (Array.isArray(rules.stopConditions)) policyStopConditions.push(...(rules.stopConditions as string[]));
+        if (Array.isArray(rules.stop_conditions)) policyStopConditions.push(...(rules.stop_conditions as string[]));
+        if (Array.isArray(rules.forbiddenOutputs)) policyForbiddenOutputs.push(...(rules.forbiddenOutputs as string[]));
+        if (Array.isArray(rules.forbidden_outputs)) policyForbiddenOutputs.push(...(rules.forbidden_outputs as string[]));
+      }
+
       const allEvalSuites = await storage.getEvalSuites();
       const agentEvalSuites = allEvalSuites.filter(s => s.agentId === agent.id);
       let evalTestCases: Array<{ suiteName: string; caseName: string; input: string; expected: string; category: string }> = [];
@@ -19693,10 +19710,152 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
             files[`src/tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name));
           }
 
-          if (linkedPolicies.length > 0) {
-            files["src/runtime/policy.ts"] = `// ATLAS-generated: Policy evaluation hooks (data-driven)\nimport * as fs from "fs";\nimport * as path from "path";\n\nexport interface PolicyContext {\n  agentName: string;\n  action: string;\n  toolName?: string;\n  input?: Record<string, any>;\n}\n\nexport interface PolicyResult {\n  allowed: boolean;\n  reason?: string;\n  policyName?: string;\n}\n\ninterface PolicyRule {\n  id: string;\n  name: string;\n  domain: string | null;\n  rules: any;\n}\n\nlet policies: PolicyRule[] = [];\ntry {\n  const raw = fs.readFileSync(path.resolve(__dirname, "../agent/policies.json"), "utf-8");\n  policies = JSON.parse(raw);\n} catch { /* no policies file */ }\n\nexport async function evaluatePolicy(ctx: PolicyContext): Promise<PolicyResult> {\n  for (const policy of policies) {\n    const rules = policy.rules;\n    if (!rules) continue;\n    if (rules.blockedTools && ctx.toolName && rules.blockedTools.includes(ctx.toolName)) {\n      return { allowed: false, reason: \`Tool "\${ctx.toolName}" blocked by policy "\${policy.name}"\`, policyName: policy.name };\n    }\n    if (rules.blockedActions && rules.blockedActions.includes(ctx.action)) {\n      return { allowed: false, reason: \`Action "\${ctx.action}" blocked by policy "\${policy.name}"\`, policyName: policy.name };\n    }\n    if (rules.requireApproval && rules.requireApproval.includes(ctx.action)) {\n      return { allowed: false, reason: \`Action "\${ctx.action}" requires approval per policy "\${policy.name}"\`, policyName: policy.name };\n    }\n  }\n  return { allowed: true };\n}\n\nexport async function onBeforeToolCall(toolName: string, args: Record<string, any>): Promise<PolicyResult> {\n  return evaluatePolicy({ agentName: "${agent.name}", action: "tool_call", toolName, input: args });\n}\n\nexport async function onBeforeResponse(response: string): Promise<PolicyResult> {\n  return evaluatePolicy({ agentName: "${agent.name}", action: "respond" });\n}\n\nexport function listPolicies(): Array<{ name: string; domain: string | null }> {\n  return policies.map(p => ({ name: p.name, domain: p.domain }));\n}\n`;
-          } else {
-            files["src/runtime/policy.ts"] = `// ATLAS-generated: Policy evaluation hooks (stub)\n// Replace with your policy enforcement logic\n\nexport interface PolicyContext {\n  agentName: string;\n  action: string;\n  toolName?: string;\n  input?: Record<string, any>;\n}\n\nexport interface PolicyResult {\n  allowed: boolean;\n  reason?: string;\n}\n\nexport async function evaluatePolicy(ctx: PolicyContext): Promise<PolicyResult> {\n  // Stub: allow all actions by default\n  return { allowed: true };\n}\n\nexport async function onBeforeToolCall(toolName: string, args: Record<string, any>): Promise<PolicyResult> {\n  return evaluatePolicy({ agentName: "${agent.name}", action: "tool_call", toolName, input: args });\n}\n\nexport async function onBeforeResponse(response: string): Promise<PolicyResult> {\n  return evaluatePolicy({ agentName: "${agent.name}", action: "respond" });\n}\n`;
+          {
+            const piiRedactBlock = hasRegulatedPolicy ? `
+const PII_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
+  { name: "email", pattern: /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}/g },
+  { name: "ssn", pattern: /\\b\\d{3}-\\d{2}-\\d{4}\\b/g },
+  { name: "phone", pattern: /\\b(?:\\+1[-.\\s]?)?\\(?\\d{3}\\)?[-.\\s]?\\d{3}[-.\\s]?\\d{4}\\b/g },
+  { name: "credit_card", pattern: /\\b\\d{4}[-.\\s]?\\d{4}[-.\\s]?\\d{4}[-.\\s]?\\d{4}\\b/g },
+];
+
+export function redactPii(text: string): { redacted: string; found: string[] } {
+  let redacted = text;
+  const found: string[] = [];
+  for (const { name, pattern } of PII_PATTERNS) {
+    const matches = redacted.match(pattern);
+    if (matches) {
+      found.push(...matches.map(m => \`\${name}: \${m}\`));
+      redacted = redacted.replace(pattern, \`[REDACTED_\${name.toUpperCase()}]\`);
+    }
+  }
+  return { redacted, found };
+}
+` : "";
+            const stopConditionsJson = JSON.stringify(policyStopConditions);
+            const forbiddenOutputsJson = JSON.stringify(policyForbiddenOutputs);
+
+            const tsPolicyDataDriven = `// ATLAS-generated: Policy evaluation hooks (data-driven)
+import * as fs from "fs";
+import * as path from "path";
+
+export interface PolicyContext {
+  agentName: string;
+  action: string;
+  toolName?: string;
+  input?: Record<string, any>;
+  responseContent?: string;
+}
+
+export interface PolicyResult {
+  allowed: boolean;
+  reason?: string;
+  policyName?: string;
+  event?: string;
+}
+
+interface PolicyRule {
+  id: string;
+  name: string;
+  domain: string | null;
+  rules: any;
+}
+
+let policies: PolicyRule[] = [];
+try {
+  const raw = fs.readFileSync(path.resolve(__dirname, "../agent/policies.json"), "utf-8");
+  policies = JSON.parse(raw);
+} catch { /* no policies file */ }
+
+const STOP_CONDITIONS: string[] = ${stopConditionsJson};
+const FORBIDDEN_OUTPUTS: string[] = ${forbiddenOutputsJson};
+${piiRedactBlock}
+export function checkStopConditions(content: string): PolicyResult {
+  for (const cond of STOP_CONDITIONS) {
+    if (content.includes(cond)) {
+      return { allowed: false, reason: \\\`Stop condition met: \\\${cond}\\\` };
+    }
+  }
+  for (const policy of policies) {
+    const rules = policy.rules;
+    if (!rules) continue;
+    const sc = rules.stopConditions || rules.stop_conditions || [];
+    for (const cond of sc) {
+      if (content.includes(cond)) {
+        return { allowed: false, reason: \\\`Stop condition "\\\${cond}" triggered by policy "\\\${policy.name}"\\\`, policyName: policy.name };
+      }
+    }
+  }
+  return { allowed: true };
+}
+
+export function checkForbiddenOutputs(content: string): PolicyResult {
+  for (const pattern of FORBIDDEN_OUTPUTS) {
+    try {
+      if (content.match(new RegExp(pattern, "i"))) {
+        return { allowed: false, reason: \\\`Response matched forbidden output pattern: \\\${pattern}\\\` };
+      }
+    } catch { /* invalid regex */ }
+  }
+  for (const policy of policies) {
+    const rules = policy.rules;
+    if (!rules) continue;
+    const fo = rules.forbiddenOutputs || rules.forbidden_outputs || [];
+    for (const pattern of fo) {
+      try {
+        if (content.match(new RegExp(pattern, "i"))) {
+          return { allowed: false, reason: \\\`Forbidden output pattern "\\\${pattern}" matched per policy "\\\${policy.name}"\\\`, policyName: policy.name };
+        }
+      } catch { /* invalid regex */ }
+    }
+  }
+  return { allowed: true };
+}
+
+export async function evaluatePolicy(ctx: PolicyContext): Promise<PolicyResult> {
+  for (const policy of policies) {
+    const rules = policy.rules;
+    if (!rules) continue;
+    if (rules.blockedTools && ctx.toolName && rules.blockedTools.includes(ctx.toolName)) {
+      return { allowed: false, reason: \\\`Tool "\\\${ctx.toolName}" blocked by policy "\\\${policy.name}"\\\`, policyName: policy.name };
+    }
+    if (rules.blockedActions && rules.blockedActions.includes(ctx.action)) {
+      return { allowed: false, reason: \\\`Action "\\\${ctx.action}" blocked by policy "\\\${policy.name}"\\\`, policyName: policy.name };
+    }
+    if (rules.requireApproval && rules.requireApproval.includes(ctx.action)) {
+      const event = { event: "APPROVAL_REQUIRED", action: ctx.action, agentName: ctx.agentName, policyName: policy.name, toolName: ctx.toolName || null };
+      console.log(JSON.stringify(event));
+      return { allowed: false, reason: \\\`Action "\\\${ctx.action}" requires approval per policy "\\\${policy.name}"\\\`, policyName: policy.name, event: "APPROVAL_REQUIRED" };
+    }
+  }
+  return { allowed: true };
+}
+
+export async function onBeforeToolCall(toolName: string, args: Record<string, any>): Promise<PolicyResult> {
+  return evaluatePolicy({ agentName: "${agent.name}", action: "tool_call", toolName, input: args });
+}
+
+export async function onBeforeResponse(response: string): Promise<PolicyResult> {
+  const stopCheck = checkStopConditions(response);
+  if (!stopCheck.allowed) return stopCheck;
+  const forbiddenCheck = checkForbiddenOutputs(response);
+  if (!forbiddenCheck.allowed) return forbiddenCheck;
+${hasRegulatedPolicy ? `  const { redacted, found } = redactPii(response);
+  if (found.length > 0) {
+    console.log(\\\`[policy] PII detected and redacted: \\\${found.join(", ")}\\\`);
+  }
+` : ""}  return evaluatePolicy({ agentName: "${agent.name}", action: "respond", responseContent: response });
+}
+
+export function listPolicies(): Array<{ name: string; domain: string | null }> {
+  return policies.map(p => ({ name: p.name, domain: p.domain }));
+}
+`;
+            if (linkedPolicies.length > 0) {
+              files["src/runtime/policy.ts"] = tsPolicyDataDriven;
+            } else {
+              files["src/runtime/policy.ts"] = `// ATLAS-generated: Policy evaluation hooks (stub)\n// Replace with your policy enforcement logic\n\nexport interface PolicyContext {\n  agentName: string;\n  action: string;\n  toolName?: string;\n  input?: Record<string, any>;\n  responseContent?: string;\n}\n\nexport interface PolicyResult {\n  allowed: boolean;\n  reason?: string;\n  event?: string;\n}\n\nexport function checkStopConditions(_content: string): PolicyResult {\n  return { allowed: true };\n}\n\nexport function checkForbiddenOutputs(_content: string): PolicyResult {\n  return { allowed: true };\n}\n\nexport async function evaluatePolicy(ctx: PolicyContext): Promise<PolicyResult> {\n  return { allowed: true };\n}\n\nexport async function onBeforeToolCall(toolName: string, args: Record<string, any>): Promise<PolicyResult> {\n  return evaluatePolicy({ agentName: "${agent.name}", action: "tool_call", toolName, input: args });\n}\n\nexport async function onBeforeResponse(response: string): Promise<PolicyResult> {\n  return evaluatePolicy({ agentName: "${agent.name}", action: "respond", responseContent: response });\n}\n`;
+            }
           }
 
           if (otelEnabled) {
@@ -19730,7 +19889,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
                 return `\ntest("${tc.suiteName} / ${tc.caseName} (${tc.category})", async (ctx) => {\n  const input = ${JSON.stringify(tc.input)};\n  const expected = ${JSON.stringify(tc.expected)};\n  expect(input).toBeTruthy();\n  expect(expected).toBeTruthy();\n\n  const { execSync } = await import("child_process");\n  let result: string;\n  try {\n    result = execSync(\`npx ts-node src/runtime/orchestrator.ts \${JSON.stringify(input)}\`, { encoding: "utf-8", timeout: 60000, env: { ...process.env } });\n  } catch {\n    ctx.skip();\n    return;\n  }\n  expect(result).toBeTruthy();\n  const normalizedResult = result.toLowerCase();\n  const normalizedExpected = expected.toLowerCase();\n  const keywords = normalizedExpected.split(/\\\\s+/).filter((w: string) => w.length > 3);\n  if (keywords.length === 0) {\n    expect(result.length).toBeGreaterThan(0);\n    return;\n  }\n  const matched = keywords.filter((kw: string) => normalizedResult.includes(kw));\n  const ratio = matched.length / keywords.length;\n  expect(ratio).toBeGreaterThanOrEqual(0.3);\n}, 90000);\n`;
               }).join("")
             : "";
-          files["tests/eval_smoke.test.ts"] = `// ATLAS-generated: Vitest evaluation test suite\nimport { describe, test, expect } from "vitest";\n\ndescribe("Smoke tests", () => {\n  test("orchestrator module loads", async () => {\n    const orchestrator = await import("../src/runtime/orchestrator");\n    expect(orchestrator).toBeTruthy();\n  });\n\n  test("graph module has nodes and edges", async () => {\n    const graph = await import("../src/agent/graph");\n    expect(graph.nodes).toBeDefined();\n    expect(graph.nodes.length).toBeGreaterThan(0);\n    expect(graph.edges).toBeDefined();\n  });\n\n  test("policy stub allows actions", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = await policy.evaluatePolicy({ agentName: ${JSON.stringify(agent.name)}, action: "test" });\n    expect(result.allowed).toBe(true);\n  });\n});\n\ndescribe("Eval cases", () => {\n${evalVitestCases}\n});\n`;
+          files["tests/eval_smoke.test.ts"] = `// ATLAS-generated: Vitest evaluation test suite\nimport { describe, test, expect } from "vitest";\n\ndescribe("Smoke tests", () => {\n  test("orchestrator module loads", async () => {\n    const orchestrator = await import("../src/runtime/orchestrator");\n    expect(orchestrator).toBeTruthy();\n  });\n\n  test("graph module has nodes and edges", async () => {\n    const graph = await import("../src/agent/graph");\n    expect(graph.nodes).toBeDefined();\n    expect(graph.nodes.length).toBeGreaterThan(0);\n    expect(graph.edges).toBeDefined();\n  });\n\n  test("policy stub allows actions", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = await policy.evaluatePolicy({ agentName: ${JSON.stringify(agent.name)}, action: "test" });\n    expect(result.allowed).toBe(true);\n  });\n});\n\ndescribe("Policy enforcement", () => {\n  test("checkStopConditions returns allowed for normal content", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = policy.checkStopConditions("normal output text");\n    expect(result.allowed).toBe(true);\n  });\n\n  test("checkForbiddenOutputs returns allowed for clean content", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = policy.checkForbiddenOutputs("clean response text");\n    expect(result.allowed).toBe(true);\n  });\n\n  test("onBeforeResponse passes clean content", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = await policy.onBeforeResponse("Hello, how can I help?");\n    expect(result.allowed).toBe(true);\n  });\n${linkedPolicies.length > 0 ? `\n  test("evaluatePolicy blocks actions in blockedActions", async () => {\n    const policy = await import("../src/runtime/policy");\n    const policies = policy.listPolicies();\n    expect(Array.isArray(policies)).toBe(true);\n  });\n` : ""}\n});\n\ndescribe("Eval cases", () => {\n${evalVitestCases}\n});\n`;
 
           const deps: Record<string, string> = { ...baseDeps };
           addLlmDep(deps, []);
@@ -19752,10 +19911,118 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
             files[`src/tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name));
           }
 
-          if (linkedPolicies.length > 0) {
-            files["src/runtime/policy.py"] = `# ATLAS-generated: Policy evaluation hooks (data-driven)\nimport json\nimport os\nfrom typing import Optional\n\nPOLICIES = []\ntry:\n    _policy_path = os.path.join(os.path.dirname(__file__), "..", "agent", "policies.json")\n    with open(_policy_path) as f:\n        POLICIES = json.load(f)\nexcept FileNotFoundError:\n    pass\n\n\ndef evaluate_policy(agent_name: str, action: str, tool_name: Optional[str] = None, input_data: Optional[dict] = None) -> dict:\n    for policy in POLICIES:\n        rules = policy.get("rules") or {}\n        if rules.get("blockedTools") and tool_name in rules["blockedTools"]:\n            return {"allowed": False, "reason": f'Tool "{tool_name}" blocked by policy "{policy["name"]}"', "policyName": policy["name"]}\n        if rules.get("blockedActions") and action in rules["blockedActions"]:\n            return {"allowed": False, "reason": f'Action "{action}" blocked by policy "{policy["name"]}"', "policyName": policy["name"]}\n        if rules.get("requireApproval") and action in rules["requireApproval"]:\n            return {"allowed": False, "reason": f'Action "{action}" requires approval per policy "{policy["name"]}"', "policyName": policy["name"]}\n    return {"allowed": True}\n\n\ndef on_before_tool_call(tool_name: str, args: dict) -> dict:\n    return evaluate_policy("${agent.name}", "tool_call", tool_name=tool_name, input_data=args)\n\n\ndef on_before_response(response: str) -> dict:\n    return evaluate_policy("${agent.name}", "respond")\n\n\ndef list_policies():\n    return [{"name": p["name"], "domain": p.get("domain")} for p in POLICIES]\n`;
-          } else {
-            files["src/runtime/policy.py"] = `# ATLAS-generated: Policy evaluation hooks (stub)\n# Replace with your policy enforcement logic\n\nfrom typing import Optional\n\n\ndef evaluate_policy(agent_name: str, action: str, tool_name: Optional[str] = None, input_data: Optional[dict] = None) -> dict:\n    \"\"\"Evaluate whether an action is allowed by policy. Stub: allows all.\"\"\"\n    return {"allowed": True}\n\n\ndef on_before_tool_call(tool_name: str, args: dict) -> dict:\n    return evaluate_policy("${agent.name}", "tool_call", tool_name=tool_name, input_data=args)\n\n\ndef on_before_response(response: str) -> dict:\n    return evaluate_policy("${agent.name}", "respond")\n`;
+          {
+            const pyPiiRedactBlock = hasRegulatedPolicy ? `
+import re as _re_module
+
+PII_PATTERNS = [
+    ("email", r"[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[a-zA-Z]{2,}"),
+    ("ssn", r"\\b\\d{3}-\\d{2}-\\d{4}\\b"),
+    ("phone", r"\\b(?:\\+1[\\-.\\s]?)?\\(?\\d{3}\\)?[\\-.\\s]?\\d{3}[\\-.\\s]?\\d{4}\\b"),
+    ("credit_card", r"\\b\\d{4}[\\-.\\s]?\\d{4}[\\-.\\s]?\\d{4}[\\-.\\s]?\\d{4}\\b"),
+]
+
+
+def redact_pii(text: str) -> dict:
+    redacted = text
+    found = []
+    for name, pattern in PII_PATTERNS:
+        matches = _re_module.findall(pattern, redacted)
+        if matches:
+            found.extend([f"{name}: {m}" for m in matches])
+            redacted = _re_module.sub(pattern, f"[REDACTED_{name.upper()}]", redacted)
+    return {"redacted": redacted, "found": found}
+` : "";
+            const pyStopConditionsJson = JSON.stringify(policyStopConditions);
+            const pyForbiddenOutputsJson = JSON.stringify(policyForbiddenOutputs);
+
+            const pyPolicyDataDriven = `# ATLAS-generated: Policy evaluation hooks (data-driven)
+import json
+import os
+import re
+from typing import Optional
+
+POLICIES = []
+try:
+    _policy_path = os.path.join(os.path.dirname(__file__), "..", "agent", "policies.json")
+    with open(_policy_path) as f:
+        POLICIES = json.load(f)
+except FileNotFoundError:
+    pass
+
+STOP_CONDITIONS: list = ${pyStopConditionsJson}
+FORBIDDEN_OUTPUTS: list = ${pyForbiddenOutputsJson}
+${pyPiiRedactBlock}
+
+def check_stop_conditions(content: str) -> dict:
+    for cond in STOP_CONDITIONS:
+        if cond in content:
+            return {"allowed": False, "reason": f'Stop condition met: {cond}'}
+    for policy in POLICIES:
+        rules = policy.get("rules") or {}
+        for cond in (rules.get("stopConditions") or rules.get("stop_conditions") or []):
+            if cond in content:
+                return {"allowed": False, "reason": f'Stop condition "{cond}" triggered by policy "{policy["name"]}"', "policyName": policy["name"]}
+    return {"allowed": True}
+
+
+def check_forbidden_outputs(content: str) -> dict:
+    for pattern in FORBIDDEN_OUTPUTS:
+        try:
+            if re.search(pattern, content, re.IGNORECASE):
+                return {"allowed": False, "reason": f'Response matched forbidden output pattern: {pattern}'}
+        except re.error:
+            pass
+    for policy in POLICIES:
+        rules = policy.get("rules") or {}
+        for pattern in (rules.get("forbiddenOutputs") or rules.get("forbidden_outputs") or []):
+            try:
+                if re.search(pattern, content, re.IGNORECASE):
+                    return {"allowed": False, "reason": f'Forbidden output pattern "{pattern}" matched per policy "{policy["name"]}"', "policyName": policy["name"]}
+            except re.error:
+                pass
+    return {"allowed": True}
+
+
+def evaluate_policy(agent_name: str, action: str, tool_name: Optional[str] = None, input_data: Optional[dict] = None) -> dict:
+    for policy in POLICIES:
+        rules = policy.get("rules") or {}
+        if rules.get("blockedTools") and tool_name in rules["blockedTools"]:
+            return {"allowed": False, "reason": f'Tool "{tool_name}" blocked by policy "{policy["name"]}"', "policyName": policy["name"]}
+        if rules.get("blockedActions") and action in rules["blockedActions"]:
+            return {"allowed": False, "reason": f'Action "{action}" blocked by policy "{policy["name"]}"', "policyName": policy["name"]}
+        if rules.get("requireApproval") and action in rules["requireApproval"]:
+            event = {"event": "APPROVAL_REQUIRED", "action": action, "agentName": agent_name, "policyName": policy["name"], "toolName": tool_name}
+            print(json.dumps(event))
+            return {"allowed": False, "reason": f'Action "{action}" requires approval per policy "{policy["name"]}"', "policyName": policy["name"], "event": "APPROVAL_REQUIRED"}
+    return {"allowed": True}
+
+
+def on_before_tool_call(tool_name: str, args: dict) -> dict:
+    return evaluate_policy("${agent.name}", "tool_call", tool_name=tool_name, input_data=args)
+
+
+def on_before_response(response: str) -> dict:
+    stop_check = check_stop_conditions(response)
+    if not stop_check["allowed"]:
+        return stop_check
+    forbidden_check = check_forbidden_outputs(response)
+    if not forbidden_check["allowed"]:
+        return forbidden_check
+${hasRegulatedPolicy ? `    result = redact_pii(response)
+    if result["found"]:
+        print(f'[policy] PII detected and redacted: {", ".join(result["found"])}')
+` : ""}    return evaluate_policy("${agent.name}", "respond")
+
+
+def list_policies():
+    return [{"name": p["name"], "domain": p.get("domain")} for p in POLICIES]
+`;
+            if (linkedPolicies.length > 0) {
+              files["src/runtime/policy.py"] = pyPolicyDataDriven;
+            } else {
+              files["src/runtime/policy.py"] = `# ATLAS-generated: Policy evaluation hooks (stub)\n# Replace with your policy enforcement logic\n\nfrom typing import Optional\n\n\ndef check_stop_conditions(content: str) -> dict:\n    return {"allowed": True}\n\n\ndef check_forbidden_outputs(content: str) -> dict:\n    return {"allowed": True}\n\n\ndef evaluate_policy(agent_name: str, action: str, tool_name: Optional[str] = None, input_data: Optional[dict] = None) -> dict:\n    \"\"\"Evaluate whether an action is allowed by policy. Stub: allows all.\"\"\"\n    return {"allowed": True}\n\n\ndef on_before_tool_call(tool_name: str, args: dict) -> dict:\n    return evaluate_policy("${agent.name}", "tool_call", tool_name=tool_name, input_data=args)\n\n\ndef on_before_response(response: str) -> dict:\n    return evaluate_policy("${agent.name}", "respond")\n`;
+            }
           }
 
           if (otelEnabled) {
@@ -19789,7 +20056,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
                 return `\n\ndef ${fnName}():\n    """${tc.suiteName} / ${tc.caseName} (${tc.category})"""\n    input_text = ${JSON.stringify(tc.input)}\n    expected = ${JSON.stringify(tc.expected)}\n    assert input_text, "Eval case input must be non-empty"\n    assert expected, "Eval case expected output must be non-empty"\n    try:\n        result = subprocess.check_output(\n            [sys.executable, "src/runtime/orchestrator.py", input_text],\n            encoding="utf-8", timeout=60\n        )\n    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:\n        pytest.skip(f"Orchestrator requires live LLM credentials: {e}")\n        return\n    assert result and len(result.strip()) > 0, "Agent must produce non-empty response"\n    normalized_result = result.lower()\n    normalized_expected = expected.lower()\n    keywords = [w for w in normalized_expected.split() if len(w) > 3]\n    matched = [kw for kw in keywords if kw in normalized_result]\n    ratio = len(matched) / len(keywords) if keywords else 1.0\n    assert normalized_expected in normalized_result or ratio >= 0.3, (\n        f"Expected response to relate to: \\"{expected[:100]}...\\" "\n        f"(matched {len(matched)}/{len(keywords)} keywords)"\n    )\n`;
               }).join("")
             : "";
-          files["tests/eval_smoke_test.py"] = `# ATLAS-generated: Pytest evaluation test suite\nimport importlib\nimport subprocess\nimport sys\nimport pytest\n\n\ndef test_orchestrator_module_loads():\n    orchestrator = importlib.import_module("src.runtime.orchestrator")\n    assert orchestrator is not None\n\n\ndef test_graph_module_has_nodes_and_edges():\n    graph = importlib.import_module("src.agent.graph")\n    assert hasattr(graph, "NODES")\n    assert len(graph.NODES) > 0\n    assert hasattr(graph, "EDGES")\n\n\ndef test_policy_stub_allows_actions():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.evaluate_policy(${JSON.stringify(agent.name)}, "test")\n    assert result["allowed"] is True\n${pyEvalCases}\n`;
+          files["tests/eval_smoke_test.py"] = `# ATLAS-generated: Pytest evaluation test suite\nimport importlib\nimport subprocess\nimport sys\nimport pytest\n\n\ndef test_orchestrator_module_loads():\n    orchestrator = importlib.import_module("src.runtime.orchestrator")\n    assert orchestrator is not None\n\n\ndef test_graph_module_has_nodes_and_edges():\n    graph = importlib.import_module("src.agent.graph")\n    assert hasattr(graph, "NODES")\n    assert len(graph.NODES) > 0\n    assert hasattr(graph, "EDGES")\n\n\ndef test_policy_stub_allows_actions():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.evaluate_policy(${JSON.stringify(agent.name)}, "test")\n    assert result["allowed"] is True\n\n\ndef test_check_stop_conditions_allows_normal():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.check_stop_conditions("normal output text")\n    assert result["allowed"] is True\n\n\ndef test_check_forbidden_outputs_allows_clean():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.check_forbidden_outputs("clean response text")\n    assert result["allowed"] is True\n\n\ndef test_on_before_response_passes_clean():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.on_before_response("Hello, how can I help?")\n    assert result["allowed"] is True\n${linkedPolicies.length > 0 ? `\n\ndef test_list_policies_returns_array():\n    policy = importlib.import_module("src.runtime.policy")\n    policies = policy.list_policies()\n    assert isinstance(policies, list)\n` : ""}${pyEvalCases}\n`;
 
           const reqs = [...baseReqs]; addLlmDep({}, reqs);
           if (otelEnabled) {
