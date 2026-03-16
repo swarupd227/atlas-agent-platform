@@ -35,7 +35,7 @@ The Nous Agent Orchestrator uses a modern web stack: React, Vite, Tailwind CSS, 
 - **Configurable Tool Iterations**: Per-agent `maxToolIterations` setting.
 - **Deployment Activation Flow**: Pending/inactive deployments can be activated directly from the release detail page.
 - **Product Intelligence in Code Generation**: Exported code now incorporates all Product Intelligence data, including `maxIterations`, matched skills, KB retrieval config, outcome contract, policy module, and agent metadata.
-- **Full-Screen Export Page**: Dedicated full-screen page for agent code export with a three-step flow: Configure, Preview, and Deliver.
+- **Full-Screen Export Page**: Dedicated full-screen page for agent code export with a three-step flow: Configure, Preview, and Deliver. Includes file search palette (Cmd+P), per-file regeneration, diff view toggle, dynamic deployment checklist, export presets (localStorage), and CI/CD manifest generation.
 - **Table-Aware Document Chunking**: Knowledge base ingestion preserves tabular data structure from Word documents and HTML web crawls, converting tables to Markdown.
 - **Eval Dataset Transformation**: Renamed "Golden Dataset" to "Eval Dataset," with support for structured Data Records, AI-generated evaluation data, and performance benchmarks.
 - **LLM Provider Abstraction Layer**: Multi-provider LLM support (OpenAI, Anthropic) for uniform interfaces and per-agent provider selection.

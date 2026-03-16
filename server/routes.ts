@@ -19414,6 +19414,92 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
         files[".env.example"] = envExample;
       }
 
+      if (["generic", "langgraph", "crewai"].includes(framework)) {
+        const isTs = format === "typescript";
+        const installCmd = isTs ? "npm ci" : "pip install -r requirements.txt";
+        const testCmd = isTs ? "npm test" : "python -m pytest tests/";
+        const buildCmd = isTs ? `docker build -t ${agentSlug}:$\\{\\{ github.sha \\}\\} .` : `docker build -t ${agentSlug}:$\\{\\{ github.sha \\}\\} .`;
+        const dockerFile = isTs ? "Dockerfile" : "Dockerfile";
+
+        files[".github/workflows/deploy.yml"] = `name: Deploy Agent
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: ${installCmd}
+
+      - name: Run tests
+        run: ${testCmd}
+
+      - name: Build Docker image
+        run: docker build -t ${agentSlug}:\${{ github.sha }} .
+
+      - name: Push to registry
+        if: github.ref == 'refs/heads/main'
+        run: |
+          echo "Push ${agentSlug}:\${{ github.sha }} to your container registry"
+          # docker tag ${agentSlug}:\${{ github.sha }} \${{ secrets.REGISTRY }}/${agentSlug}:\${{ github.sha }}
+          # docker push \${{ secrets.REGISTRY }}/${agentSlug}:\${{ github.sha }}
+`;
+
+        files["k8s/deployment.yaml"] = `apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${agentSlug}
+  labels:
+    app: ${agentSlug}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ${agentSlug}
+  template:
+    metadata:
+      labels:
+        app: ${agentSlug}
+    spec:
+      containers:
+        - name: ${agentSlug}
+          image: ${agentSlug}:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: ${isTs && llmProvider === "openai" ? "OPENAI_API_KEY" : isTs ? "ANTHROPIC_API_KEY" : llmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"}
+              valueFrom:
+                secretKeyRef:
+                  name: ${agentSlug}-secrets
+                  key: api-key
+          resources:
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${agentSlug}
+spec:
+  selector:
+    app: ${agentSlug}
+  ports:
+    - port: 80
+      targetPort: 8080
+  type: ClusterIP
+`;
+      }
+
       res.json({
         files,
         metadata: {
@@ -19433,6 +19519,73 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
       if (e instanceof ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
       console.error("[export-code] Error:", e);
       res.status(500).json({ message: "Failed to generate code package" });
+    }
+  });
+
+  app.post("/api/agents/:id/export-code/regen-file", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id);
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const regenSchema = z.object({
+        filePath: z.string().min(1),
+        format: z.enum(["typescript", "python"]).default("typescript"),
+        llmProvider: z.enum(["openai", "anthropic"]).default("openai"),
+        framework: z.enum(["generic", "langgraph", "crewai", "foundry", "bedrock", "n8n", "vertex", "databricks"]).default("generic"),
+      });
+      const { filePath, format, llmProvider, framework } = regenSchema.parse(req.body || {});
+
+      const blueprintJson = (agent.blueprintJson && typeof agent.blueprintJson === "object")
+        ? agent.blueprintJson as Record<string, unknown>
+        : {};
+      const systemPrompt = (blueprintJson.systemPrompt as string)
+        || (blueprintJson.system_prompt as string)
+        || (blueprintJson.prompt as string)
+        || `You are ${agent.name}. ${agent.description || ""}`;
+
+      const rawTools = Array.isArray(agent.toolsConfig) ? agent.toolsConfig : [];
+      const tools: Array<{ name: string; description?: string; parameters?: any }> = rawTools.map((t: any) => ({
+        name: (t.name || "unnamed_tool").replace(/[^a-zA-Z0-9_]/g, "_"),
+        description: t.description || "",
+        parameters: t.parameters || {},
+      }));
+
+      let content = "";
+      try {
+        const aiResult = await generateAgentCodeWithAI({
+          agentName: agent.name,
+          agentDescription: agent.description || "",
+          systemPrompt,
+          tools,
+          format,
+          llmProvider,
+          maxIterations: agent.maxToolIterations || 5,
+          completionPromise: "TASK_COMPLETE",
+          framework,
+          blueprintJson,
+          singleFile: filePath,
+        });
+        if (aiResult?.entrypoint && filePath.includes("orchestrator")) {
+          content = aiResult.entrypoint;
+        } else if (aiResult?.frameworkFiles?.[filePath]) {
+          content = aiResult.frameworkFiles[filePath];
+        } else if (aiResult?.toolAdapters) {
+          const toolName = filePath.split("/").pop()?.replace(/\.(ts|py)$/, "") || "";
+          if (aiResult.toolAdapters[toolName]) content = aiResult.toolAdapters[toolName];
+        }
+      } catch { /* AI unavailable */ }
+
+      if (!content) {
+        const isPython = format === "python" || filePath.endsWith(".py");
+        const comment = isPython ? "#" : "//";
+        content = `${comment} Regenerated stub for ${filePath}\n${comment} AI generation was not available. Edit this file manually.\n`;
+      }
+
+      res.json({ filePath, content });
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
+      console.error("[regen-file] Error:", e);
+      res.status(500).json({ message: "Failed to regenerate file" });
     }
   });
 

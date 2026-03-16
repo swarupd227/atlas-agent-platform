@@ -35,6 +35,14 @@ import {
   Copy,
   GripVertical,
   Info,
+  Search,
+  RefreshCw,
+  GitCompare,
+  Save,
+  FolderOpen,
+  Square,
+  CheckSquare,
+  Bookmark,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -46,9 +54,42 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Checkbox } from "@/components/ui/checkbox";
 import type { Agent, ToolConnector } from "@shared/schema";
 import { FileTree } from "@/components/file-tree";
-import Editor from "@monaco-editor/react";
+import Editor, { DiffEditor } from "@monaco-editor/react";
+
+interface ExportPreset {
+  name: string;
+  framework: string;
+  format: string;
+  llmProvider: string;
+  pinVersions: boolean;
+  otelEnabled: boolean;
+  spanGranularity: string;
+  maxIterations: number;
+  savedAt: string;
+}
+
+function getPresets(agentId: string): ExportPreset[] {
+  try {
+    const raw = localStorage.getItem(`atlas-export-presets-${agentId}`);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function savePreset(agentId: string, preset: ExportPreset) {
+  const existing = getPresets(agentId);
+  const idx = existing.findIndex(p => p.name === preset.name);
+  if (idx >= 0) existing[idx] = preset;
+  else existing.push(preset);
+  localStorage.setItem(`atlas-export-presets-${agentId}`, JSON.stringify(existing));
+}
+
+function deletePreset(agentId: string, name: string) {
+  const existing = getPresets(agentId).filter(p => p.name !== name);
+  localStorage.setItem(`atlas-export-presets-${agentId}`, JSON.stringify(existing));
+}
 
 export default function AgentExport() {
   const [, params] = useRoute("/agents/:id/export");
@@ -94,6 +135,13 @@ export default function AgentExport() {
   const [evalOutput, setEvalOutput] = useState<string>("");
   const [fileTreeCollapsed, setFileTreeCollapsed] = useState(false);
   const [fileTreeWidth, setFileTreeWidth] = useState(240);
+  const [showFileSearch, setShowFileSearch] = useState(false);
+  const [fileSearchQuery, setFileSearchQuery] = useState("");
+  const [showDiffView, setShowDiffView] = useState(false);
+  const [originalFiles, setOriginalFiles] = useState<Record<string, string>>({});
+  const [regeneratingFile, setRegeneratingFile] = useState<string | null>(null);
+  const [checklistState, setChecklistState] = useState<Record<string, boolean>>({});
+  const fileSearchInputRef = useRef<HTMLInputElement>(null);
   const resizingRef = useRef(false);
   const startXRef = useRef(0);
   const startWidthRef = useRef(240);
@@ -122,6 +170,88 @@ export default function AgentExport() {
     toast({ title: "Copied to clipboard", description: text.length > 60 ? text.substring(0, 60) + "..." : text });
   }, [toast]);
 
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "p" && exportStep === "preview") {
+        e.preventDefault();
+        setShowFileSearch(true);
+        setFileSearchQuery("");
+        setTimeout(() => fileSearchInputRef.current?.focus(), 50);
+      }
+      if (e.key === "Escape" && showFileSearch) {
+        setShowFileSearch(false);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [exportStep, showFileSearch]);
+
+  const filteredSearchFiles = useMemo(() => {
+    if (!fileSearchQuery.trim()) return editedFilePaths;
+    const q = fileSearchQuery.toLowerCase();
+    return editedFilePaths.filter(f => {
+      const name = f.toLowerCase();
+      let qi = 0;
+      for (let i = 0; i < name.length && qi < q.length; i++) {
+        if (name[i] === q[qi]) qi++;
+      }
+      return qi === q.length;
+    });
+  }, [fileSearchQuery, editedFilePaths]);
+
+  const handleRegenFile = useCallback(async (filePath: string) => {
+    if (!agentId) return;
+    setRegeneratingFile(filePath);
+    try {
+      const res = await apiRequest("POST", `/api/agents/${agentId}/export-code/regen-file`, {
+        filePath,
+        format: exportFormat,
+        llmProvider: exportLlmProvider,
+        framework: exportFramework,
+      });
+      const data = await res.json();
+      if (data.content) {
+        setEditedFiles(prev => ({ ...prev, [filePath]: data.content }));
+        toast({ title: "File regenerated", description: filePath });
+      }
+    } catch {
+      toast({ title: "Regeneration failed", description: `Could not regenerate ${filePath}`, variant: "destructive" });
+    } finally {
+      setRegeneratingFile(null);
+    }
+  }, [agentId, exportFormat, exportLlmProvider, exportFramework, toast]);
+
+  const deploymentChecklist = useMemo(() => {
+    const items: Array<{ id: string; label: string; detail: string }> = [];
+    items.push({ id: "env-keys", label: "Configure API keys", detail: `Set ${exportLlmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"} in .env` });
+    items.push({ id: "install-deps", label: "Install dependencies", detail: exportFormat === "typescript" ? "Run npm install" : "Run pip install -r requirements.txt" });
+
+    const stubCount = Object.values(toolAdapterOverrides).filter(v => v === "stub").length;
+    if (stubCount > 0) {
+      items.push({ id: "impl-stubs", label: `Implement ${stubCount} tool stub${stubCount > 1 ? "s" : ""}`, detail: "Replace stub tool adapters with real implementations" });
+    }
+
+    if (otelEnabled) {
+      items.push({ id: "otel-endpoint", label: "Configure OTEL endpoint", detail: "Set OTEL_EXPORTER_OTLP_ENDPOINT in .env" });
+    }
+
+    items.push({ id: "docker", label: "Docker installed", detail: "Ensure Docker is available for container builds" });
+    items.push({ id: "run-tests", label: "Run test suite", detail: exportFormat === "typescript" ? "Run npm test" : "Run python -m pytest tests/" });
+    items.push({ id: "review-code", label: "Review generated code", detail: "Check tool adapters and orchestrator logic for correctness" });
+
+    if (exportFramework === "bedrock") {
+      items.push({ id: "aws-creds", label: "Configure AWS credentials", detail: "Set AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION" });
+    }
+    if (exportFramework === "vertex") {
+      items.push({ id: "gcp-creds", label: "Configure GCP credentials", detail: "Set GOOGLE_APPLICATION_CREDENTIALS path" });
+    }
+    if (exportFramework === "databricks") {
+      items.push({ id: "dbx-creds", label: "Configure Databricks credentials", detail: "Set DATABRICKS_HOST and DATABRICKS_TOKEN" });
+    }
+
+    return items;
+  }, [exportFormat, exportLlmProvider, exportFramework, otelEnabled, toolAdapterOverrides]);
+
   const exportCodeMutation = useMutation({
     mutationFn: async (params: { format: string; llmProvider: string; maxIterations: number; completionPromise: string; framework?: string; toolAdapters?: Record<string, string>; pinVersions?: boolean; otelEnabled?: boolean; spanGranularity?: string }) => {
       const res = await apiRequest("POST", `/api/agents/${agentId}/export-code`, params);
@@ -131,10 +261,12 @@ export default function AgentExport() {
       setExportPreview(data);
       const newFiles = data.files || {};
       setEditedFiles({ ...newFiles });
+      setOriginalFiles({ ...newFiles });
       setEditedFilePaths(Object.keys(newFiles));
       const fileNames = Object.keys(newFiles);
       if (fileNames.length > 0) setExportPreviewFile(fileNames.find((f: string) => f.includes("entrypoint") || f.includes("orchestrator")) || fileNames[0]);
       setExportStep("preview");
+      setShowDiffView(false);
       if (data.metadata && !data.metadata.aiGenerated) {
         toast({ title: "AI generation unavailable", description: "Code was generated using templates. AI-powered generation was not available or failed.", variant: "default" });
       }
@@ -362,7 +494,49 @@ export default function AgentExport() {
         )}
 
         {exportStep === "preview" && (
-          <div className="flex h-full">
+          <div className="flex h-full relative">
+            {showFileSearch && (
+              <div className="absolute inset-0 z-50 flex items-start justify-center pt-20 bg-black/40" onClick={() => setShowFileSearch(false)} data-testid="file-search-overlay">
+                <div className="w-full max-w-md bg-background border rounded-lg shadow-2xl" onClick={e => e.stopPropagation()} data-testid="file-search-palette">
+                  <div className="flex items-center gap-2 px-3 py-2 border-b">
+                    <Search className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <input
+                      ref={fileSearchInputRef}
+                      type="text"
+                      className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                      placeholder="Search files... (fuzzy)"
+                      value={fileSearchQuery}
+                      onChange={e => setFileSearchQuery(e.target.value)}
+                      onKeyDown={e => {
+                        if (e.key === "Enter" && filteredSearchFiles.length > 0) {
+                          setExportPreviewFile(filteredSearchFiles[0]);
+                          setShowFileSearch(false);
+                        }
+                      }}
+                      data-testid="input-file-search"
+                    />
+                    <Badge variant="outline" className="text-[10px] shrink-0">{filteredSearchFiles.length}</Badge>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto">
+                    {filteredSearchFiles.map(fp => (
+                      <button
+                        key={fp}
+                        className={`flex items-center gap-2 w-full text-left px-3 py-1.5 text-xs hover:bg-muted/60 transition-colors ${fp === exportPreviewFile ? "bg-primary/10 text-primary" : ""}`}
+                        onClick={() => { setExportPreviewFile(fp); setShowFileSearch(false); }}
+                        data-testid={`file-search-result-${fp.replace(/[/.]/g, "-")}`}
+                      >
+                        <FileCode className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                        <span className="truncate font-mono">{fp}</span>
+                      </button>
+                    ))}
+                    {filteredSearchFiles.length === 0 && (
+                      <div className="px-3 py-4 text-xs text-muted-foreground text-center">No matching files</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {!fileTreeCollapsed && (
               <div className="shrink-0 border-r bg-muted/20 flex flex-col" style={{ width: fileTreeWidth }} data-testid="preview-file-tree-panel">
                 <div className="flex items-center justify-between px-3 py-2 border-b">
@@ -376,11 +550,35 @@ export default function AgentExport() {
                 </div>
                 <div className="flex-1 overflow-y-auto">
                   {editedFilePaths.length > 0 && (
-                    <FileTree
-                      filePaths={editedFilePaths}
-                      activeFile={exportPreviewFile}
-                      onFileSelect={(path) => setExportPreviewFile(path)}
-                    />
+                    <div className="flex flex-col py-1">
+                      {editedFilePaths.map(fp => {
+                        const fileName = fp.split("/").pop() || fp;
+                        const isActive = fp === exportPreviewFile;
+                        const isRegenerating = regeneratingFile === fp;
+                        return (
+                          <div key={fp} className={`flex items-center gap-1 group ${isActive ? "bg-primary/10" : "hover:bg-muted/60"}`}>
+                            <button
+                              className="flex-1 flex items-center gap-1.5 px-2 py-1 text-xs text-left min-w-0"
+                              onClick={() => setExportPreviewFile(fp)}
+                            >
+                              <FileCode className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                              <span className={`truncate ${isActive ? "text-primary font-medium" : "text-foreground/80"}`}>{fileName}</span>
+                            </button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mr-1"
+                              disabled={isRegenerating}
+                              onClick={(e) => { e.stopPropagation(); handleRegenFile(fp); }}
+                              title="Regenerate this file"
+                              data-testid={`button-regen-file-${fp.replace(/[/.]/g, "-")}`}
+                            >
+                              {isRegenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3 text-muted-foreground" />}
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
                   )}
                 </div>
               </div>
@@ -404,42 +602,109 @@ export default function AgentExport() {
                   </Button>
                 )}
                 <code className="text-xs text-muted-foreground font-mono flex-1 truncate" data-testid="text-current-file">{exportPreviewFile || "No file selected"}</code>
+                <div className="flex items-center gap-1 shrink-0">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0"
+                    onClick={() => { setShowFileSearch(true); setFileSearchQuery(""); setTimeout(() => fileSearchInputRef.current?.focus(), 50); }}
+                    title="Search files (Ctrl+P)"
+                    data-testid="button-file-search"
+                  >
+                    <Search className="w-3.5 h-3.5 text-muted-foreground" />
+                  </Button>
+                  <Button
+                    variant={showDiffView ? "default" : "ghost"}
+                    size="sm"
+                    className="h-6 px-1.5 text-[10px] gap-1"
+                    onClick={() => setShowDiffView(!showDiffView)}
+                    disabled={!originalFiles[exportPreviewFile]}
+                    title="Toggle diff view"
+                    data-testid="button-toggle-diff"
+                  >
+                    <GitCompare className="w-3 h-3" />
+                    {showDiffView ? "Editor" : "Diff"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 w-6 p-0"
+                    onClick={() => copyToClipboard(editedFiles[exportPreviewFile] || "")}
+                    title="Copy file contents"
+                    data-testid="button-copy-file"
+                  >
+                    <Copy className="w-3.5 h-3.5 text-muted-foreground" />
+                  </Button>
+                </div>
               </div>
               <div className="flex-1 min-h-0" data-testid="preview-editor-panel">
-                <Editor
-                  height="100%"
-                  language={(() => {
-                    const ext = exportPreviewFile.split(".").pop()?.toLowerCase() || "";
-                    if (["ts", "tsx"].includes(ext)) return "typescript";
-                    if (["js", "jsx"].includes(ext)) return "javascript";
-                    if (ext === "py") return "python";
-                    if (ext === "json") return "json";
-                    if (["yaml", "yml"].includes(ext)) return "yaml";
-                    if (ext === "md") return "markdown";
-                    if (["sh", "bash"].includes(ext)) return "shell";
-                    if (ext === "toml") return "ini";
-                    if (ext === "dockerfile" || exportPreviewFile.toLowerCase().includes("dockerfile")) return "dockerfile";
-                    return "plaintext";
-                  })()}
-                  value={editedFiles[exportPreviewFile] || ""}
-                  onChange={(value) => {
-                    if (value !== undefined) {
-                      setEditedFiles((prev) => ({ ...prev, [exportPreviewFile]: value }));
-                    }
-                  }}
-                  theme="vs-dark"
-                  options={{
-                    minimap: { enabled: editedFilePaths.length > 0 },
-                    fontSize: 13,
-                    lineNumbers: "on",
-                    scrollBeyondLastLine: false,
-                    wordWrap: "on",
-                    automaticLayout: true,
-                    padding: { top: 8 },
-                    readOnly: false,
-                    renderLineHighlight: "all",
-                  }}
-                />
+                {showDiffView && originalFiles[exportPreviewFile] ? (
+                  <DiffEditor
+                    key={`diff-${exportPreviewFile}`}
+                    height="100%"
+                    original={originalFiles[exportPreviewFile] || ""}
+                    modified={editedFiles[exportPreviewFile] || ""}
+                    language={(() => {
+                      const ext = exportPreviewFile.split(".").pop()?.toLowerCase() || "";
+                      if (["ts", "tsx"].includes(ext)) return "typescript";
+                      if (["js", "jsx"].includes(ext)) return "javascript";
+                      if (ext === "py") return "python";
+                      if (ext === "json") return "json";
+                      if (["yaml", "yml"].includes(ext)) return "yaml";
+                      if (ext === "md") return "markdown";
+                      return "plaintext";
+                    })()}
+                    theme="vs-dark"
+                    options={{
+                      renderSideBySide: true,
+                      readOnly: false,
+                      automaticLayout: true,
+                      fontSize: 13,
+                    }}
+                    onMount={(editor) => {
+                      const modifiedEditor = editor.getModifiedEditor();
+                      modifiedEditor.onDidChangeModelContent(() => {
+                        const val = modifiedEditor.getValue();
+                        setEditedFiles(prev => ({ ...prev, [exportPreviewFile]: val }));
+                      });
+                    }}
+                  />
+                ) : (
+                  <Editor
+                    height="100%"
+                    language={(() => {
+                      const ext = exportPreviewFile.split(".").pop()?.toLowerCase() || "";
+                      if (["ts", "tsx"].includes(ext)) return "typescript";
+                      if (["js", "jsx"].includes(ext)) return "javascript";
+                      if (ext === "py") return "python";
+                      if (ext === "json") return "json";
+                      if (["yaml", "yml"].includes(ext)) return "yaml";
+                      if (ext === "md") return "markdown";
+                      if (["sh", "bash"].includes(ext)) return "shell";
+                      if (ext === "toml") return "ini";
+                      if (ext === "dockerfile" || exportPreviewFile.toLowerCase().includes("dockerfile")) return "dockerfile";
+                      return "plaintext";
+                    })()}
+                    value={editedFiles[exportPreviewFile] || ""}
+                    onChange={(value) => {
+                      if (value !== undefined) {
+                        setEditedFiles((prev) => ({ ...prev, [exportPreviewFile]: value }));
+                      }
+                    }}
+                    theme="vs-dark"
+                    options={{
+                      minimap: { enabled: editedFilePaths.length > 0 },
+                      fontSize: 13,
+                      lineNumbers: "on",
+                      scrollBeyondLastLine: false,
+                      wordWrap: "on",
+                      automaticLayout: true,
+                      padding: { top: 8 },
+                      readOnly: false,
+                      renderLineHighlight: "all",
+                    }}
+                  />
+                )}
               </div>
             </div>
 
@@ -594,29 +859,35 @@ export default function AgentExport() {
               <Card>
                 <CardContent className="pt-4 pb-3">
                   <div className="flex flex-col gap-2">
-                    <span className="text-sm font-medium">Getting Started</span>
-                    <div className="flex flex-col gap-1.5">
-                      {(deliveryTarget === "replit" ? [
-                        "Push source package to a GitHub repository",
-                        "Navigate to replit.com \u2192 Create Repl \u2192 Import from GitHub",
-                        "Select the repository and click Import",
-                        "Configure Secrets in your Repl\u2019s Secrets tab",
-                        "Click Publish to deploy",
-                      ] : [
-                        `Install dependencies: ${exportFormat === "typescript" ? "npm install" : "pip install -r requirements.txt"}`,
-                        "Copy .env.example to .env and fill in your API keys",
-                        `Run the agent: ${exportFormat === "typescript" ? "npm start" : "python src/runtime/orchestrator.py"}`,
-                        `Run tests: ${exportFormat === "typescript" ? "npm test" : "python -m pytest tests/"}`,
-                      ]).map((step, i) => (
-                        <div key={i} className="flex items-start gap-2 group" data-testid={`checklist-step-${i}`}>
-                          <span className="flex items-center justify-center w-5 h-5 rounded-full bg-muted text-[10px] font-medium shrink-0 mt-0.5">{i + 1}</span>
-                          <span className="text-sm flex-1">{step}</span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Deployment Checklist</span>
+                      <Badge variant="outline" className="text-[10px]">
+                        {deploymentChecklist.filter(item => checklistState[item.id]).length}/{deploymentChecklist.length} complete
+                      </Badge>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      {deploymentChecklist.map((item) => (
+                        <div
+                          key={item.id}
+                          className="flex items-start gap-2.5 p-2 rounded-md hover:bg-muted/40 transition-colors group"
+                          data-testid={`checklist-item-${item.id}`}
+                        >
+                          <Checkbox
+                            checked={!!checklistState[item.id]}
+                            onCheckedChange={(checked) => setChecklistState(prev => ({ ...prev, [item.id]: !!checked }))}
+                            className="mt-0.5"
+                            data-testid={`checkbox-${item.id}`}
+                          />
+                          <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                            <span className={`text-sm ${checklistState[item.id] ? "line-through text-muted-foreground" : ""}`}>{item.label}</span>
+                            <span className="text-[11px] text-muted-foreground">{item.detail}</span>
+                          </div>
                           <Button
                             variant="ghost"
                             size="sm"
                             className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5"
-                            onClick={() => copyToClipboard(step)}
-                            data-testid={`button-copy-step-${i}`}
+                            onClick={() => copyToClipboard(item.detail)}
+                            data-testid={`button-copy-checklist-${item.id}`}
                           >
                             <Copy className="w-3 h-3 text-muted-foreground" />
                           </Button>
@@ -627,13 +898,15 @@ export default function AgentExport() {
                 </CardContent>
               </Card>
 
-              <div className="flex items-start gap-2 p-3 rounded-md bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/40" data-testid="notice-export-complete">
-                <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Export Complete</span>
-                  <span className="text-xs text-emerald-600 dark:text-emerald-400">Your agent source package is ready for deployment.</span>
+              {deploymentChecklist.every(item => checklistState[item.id]) && deploymentChecklist.length > 0 && (
+                <div className="flex items-start gap-2 p-3 rounded-md bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/40" data-testid="notice-export-complete">
+                  <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400 mt-0.5 shrink-0" />
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Ready to Deploy</span>
+                    <span className="text-xs text-emerald-600 dark:text-emerald-400">All checklist items complete. Your agent source package is ready for deployment.</span>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           </div>
         )}
@@ -775,9 +1048,25 @@ function ConfigureStep({
   return (
     <div className="h-full overflow-y-auto">
       <div className="max-w-4xl mx-auto p-6 flex flex-col gap-6" data-testid="step-configure">
-        <div>
-          <h2 className="text-lg font-semibold mb-1">Configure Source Export</h2>
-          <p className="text-sm text-muted-foreground">Configure source files for standalone deployment via your CI/CD pipeline.</p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-semibold mb-1">Configure Source Export</h2>
+            <p className="text-sm text-muted-foreground">Configure source files for standalone deployment via your CI/CD pipeline.</p>
+          </div>
+          <PresetControls
+            agentId={agentId}
+            currentConfig={{ framework: exportFramework, format: exportFormat, llmProvider: exportLlmProvider, pinVersions, otelEnabled, spanGranularity, maxIterations: exportMaxIterations }}
+            onLoadPreset={(preset) => {
+              setExportFramework(preset.framework);
+              setExportFormat(preset.format);
+              setExportLlmProvider(preset.llmProvider);
+              setPinVersions(preset.pinVersions);
+              setOtelEnabled(preset.otelEnabled);
+              setSpanGranularity(preset.spanGranularity);
+              setExportMaxIterations(preset.maxIterations);
+              toast({ title: "Preset loaded", description: `"${preset.name}" configuration applied` });
+            }}
+          />
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1073,6 +1362,92 @@ function ConfigureStep({
           </AccordionItem>
         </Accordion>
       </div>
+    </div>
+  );
+}
+
+function PresetControls({
+  agentId,
+  currentConfig,
+  onLoadPreset,
+}: {
+  agentId: string;
+  currentConfig: { framework: string; format: string; llmProvider: string; pinVersions: boolean; otelEnabled: boolean; spanGranularity: string; maxIterations: number };
+  onLoadPreset: (preset: ExportPreset) => void;
+}) {
+  const { toast } = useToast();
+  const [presets, setPresets] = useState<ExportPreset[]>(() => getPresets(agentId));
+  const [showSave, setShowSave] = useState(false);
+  const [presetName, setPresetName] = useState("");
+
+  useEffect(() => { setPresets(getPresets(agentId)); }, [agentId]);
+
+  const refreshPresets = () => setPresets(getPresets(agentId));
+
+  const handleSave = () => {
+    if (!presetName.trim()) return;
+    const preset: ExportPreset = {
+      name: presetName.trim(),
+      ...currentConfig,
+      savedAt: new Date().toISOString(),
+    };
+    savePreset(agentId, preset);
+    refreshPresets();
+    setShowSave(false);
+    setPresetName("");
+    toast({ title: "Preset saved", description: `"${preset.name}" saved` });
+  };
+
+  const handleDelete = (name: string) => {
+    deletePreset(agentId, name);
+    refreshPresets();
+    toast({ title: "Preset deleted" });
+  };
+
+  return (
+    <div className="flex items-center gap-2 shrink-0" data-testid="preset-controls">
+      {presets.length > 0 && (
+        <Select
+          onValueChange={(name) => {
+            const preset = presets.find(p => p.name === name);
+            if (preset) onLoadPreset(preset);
+          }}
+        >
+          <SelectTrigger className="h-8 w-[160px] text-xs" data-testid="select-preset">
+            <Bookmark className="w-3 h-3 mr-1 text-muted-foreground" />
+            <SelectValue placeholder="Load preset..." />
+          </SelectTrigger>
+          <SelectContent>
+            {presets.map(p => (
+              <SelectItem key={p.name} value={p.name} className="text-xs">{p.name}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+      {showSave ? (
+        <div className="flex items-center gap-1">
+          <Input
+            className="h-8 w-[140px] text-xs"
+            placeholder="Preset name..."
+            value={presetName}
+            onChange={e => setPresetName(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter") handleSave(); if (e.key === "Escape") setShowSave(false); }}
+            autoFocus
+            data-testid="input-preset-name"
+          />
+          <Button variant="default" size="sm" className="h-8 px-2" onClick={handleSave} disabled={!presetName.trim()} data-testid="button-save-preset-confirm">
+            <Check className="w-3 h-3" />
+          </Button>
+          <Button variant="ghost" size="sm" className="h-8 px-2" onClick={() => setShowSave(false)} data-testid="button-save-preset-cancel">
+            <XOctagon className="w-3 h-3" />
+          </Button>
+        </div>
+      ) : (
+        <Button variant="outline" size="sm" className="h-8 text-xs gap-1" onClick={() => setShowSave(true)} data-testid="button-save-preset">
+          <Save className="w-3 h-3" />
+          Save Preset
+        </Button>
+      )}
     </div>
   );
 }
