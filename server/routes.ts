@@ -17840,7 +17840,7 @@ Eval Suites: ${evalSuites.length} configured`,
     industry?: string | null;
     autonomyMode?: string | null;
     riskTier?: string | null;
-    skills?: Array<{ name: string; executionOrder?: number }>;
+    skills?: Array<{ name: string; domain?: string; executionOrder?: number; required?: boolean }>;
     knowledgeBases?: Array<{ name: string; embeddingModel?: string | null }>;
     outcomeContract?: { name: string; kpis: Array<{ name: string; target: number; operator: string; unit?: string | null }> } | null;
     ontologyTags?: Array<{ conceptId: string; conceptLabel: string }>;
@@ -17892,7 +17892,7 @@ Eval Suites: ${evalSuites.length} configured`,
     );
     if (extras?.skills && extras.skills.length > 0) {
       lines.push(`skills:`);
-      for (const s of extras.skills) lines.push(`  - name: "${s.name}"${(s as any).domain ? `\n    domain: "${(s as any).domain}"` : ""}${s.executionOrder != null ? `\n    execution_order: ${s.executionOrder}` : ""}${(s as any).required != null ? `\n    required: ${(s as any).required}` : ""}`);
+      for (const s of extras.skills) lines.push(`  - name: "${s.name}"${s.domain ? `\n    domain: "${s.domain}"` : ""}${s.executionOrder != null ? `\n    execution_order: ${s.executionOrder}` : ""}${s.required != null ? `\n    required: ${s.required}` : ""}`);
     }
     if (extras?.knowledgeBases && extras.knowledgeBases.length > 0) {
       lines.push(`knowledge_bases:`);
@@ -19419,14 +19419,20 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
 
       const allSkillsDb = await storage.getSkills();
       const skillLookup = new Map(allSkillsDb.map(s => [s.name.toLowerCase(), s]));
+      const rtRequiredSkills: Array<Record<string, unknown>> = Array.isArray((rtConfig as Record<string, unknown>).requiredSkills) ? (rtConfig as Record<string, unknown>).requiredSkills as Array<Record<string, unknown>> : [];
+      const rtOptionalSkills: Array<Record<string, unknown>> = Array.isArray((rtConfig as Record<string, unknown>).optionalSkills) ? (rtConfig as Record<string, unknown>).optionalSkills as Array<Record<string, unknown>> : [];
+      const requiredSkillNames = new Set(rtRequiredSkills.map(s => String(s.skillName || s.name || "").toLowerCase()));
+      const optionalSkillNames = new Set(rtOptionalSkills.map(s => String(s.skillName || s.name || "").toLowerCase()));
       const matchedSkills: Array<{ name: string; domain: string; description: string; executionOrder?: number; required: boolean }> = rawMatchedSkills.map((ms, idx) => {
         const dbSkill = skillLookup.get(ms.name.toLowerCase());
+        const isRequired = requiredSkillNames.has(ms.name.toLowerCase());
+        const isOptional = optionalSkillNames.has(ms.name.toLowerCase());
         return {
           name: ms.name,
           domain: dbSkill?.domain || "general",
           description: dbSkill?.description || "",
           executionOrder: ms.executionOrder ?? (idx + 1),
-          required: idx < Math.max(2, Math.ceil(rawMatchedSkills.length * 0.5)),
+          required: isRequired ? true : isOptional ? false : true,
         };
       });
 
@@ -20414,6 +20420,33 @@ def list_policies():
 
       if (!files[".env.example"]) {
         files[".env.example"] = envExample;
+      }
+
+      if (matchedSkills.length > 0) {
+        if (files["src/agent/prompts/system.txt"] && !files["src/agent/prompts/system.txt"].includes("Authorized Skills")) {
+          const skillPromptLines = matchedSkills
+            .sort((a, b) => (a.executionOrder ?? 0) - (b.executionOrder ?? 0))
+            .map(s => `- ${s.name} [${s.domain}]${s.required ? " (required)" : " (optional)"}: ${s.description.replace(/\n/g, " ").slice(0, 200)}`);
+          files["src/agent/prompts/system.txt"] += `\n\n## Authorized Skills\n\nYou are authorized to apply the following skills when relevant to the task:\n\n${skillPromptLines.join("\n")}\n`;
+        }
+
+        if (!files["almp.manifest.json"]) {
+          const skillManifest = { skills: matchedSkills.map(s => ({ name: s.name, domain: s.domain, description: s.description, executionOrder: s.executionOrder, required: s.required })) };
+          files["almp.manifest.json"] = JSON.stringify({ name: agent.name, ...skillManifest }, null, 2) + "\n";
+        } else if (!files["almp.manifest.json"].includes('"skills"')) {
+          const existingManifest = JSON.parse(files["almp.manifest.json"]);
+          existingManifest.skills = matchedSkills.map(s => ({ name: s.name, domain: s.domain, description: s.description, executionOrder: s.executionOrder, required: s.required }));
+          files["almp.manifest.json"] = JSON.stringify(existingManifest, null, 2) + "\n";
+        }
+
+        if (files["README.md"] && !files["README.md"].includes("## Skills")) {
+          const fileExt2 = format === "typescript" ? "ts" : "py";
+          const skillsTable = matchedSkills
+            .sort((a, b) => (a.executionOrder ?? 0) - (b.executionOrder ?? 0))
+            .map(s => `| ${s.name} | ${s.domain} | ${s.required ? "Required" : "Optional"} |`)
+            .join("\n");
+          files["README.md"] += `\n## Skills\n\n| Skill | Domain | Status |\n|-------|--------|--------|\n${skillsTable}\n\nSkill stubs are in \`src/agent/skills.${fileExt2}\`. Implement each \`execute_*\` function to activate skill behavior.\n`;
+        }
       }
 
       if (matchedSkills.length > 0 && framework !== "generic") {
