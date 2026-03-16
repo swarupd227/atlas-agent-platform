@@ -18031,6 +18031,23 @@ ${knowledgeImport}${graphImport}${mcpBlock}
 const config = yaml.load(fs.readFileSync("agent.yaml", "utf8")) as any;
 const client = new OpenAI();
 
+const ATLAS_MAX_RETRIES = parseInt(process.env.ATLAS_MAX_RETRIES || "3", 10);
+const ATLAS_RETRY_BASE_MS = parseInt(process.env.ATLAS_RETRY_BASE_MS || "500", 10);
+
+async function withRetry<T>(fn: () => Promise<T>, maxAttempts = ATLAS_MAX_RETRIES, baseDelayMs = ATLAS_RETRY_BASE_MS): Promise<T> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      if (attempt === maxAttempts) throw err;
+      const delay = baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * baseDelayMs;
+      console.log(\`[retry] Attempt \${attempt}/\${maxAttempts} failed: \${err instanceof Error ? err.message : err}. Retrying in \${Math.round(delay)}ms...\`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw new Error("withRetry: unreachable");
+}
+
 const stopConditions: string[] = config.stop_conditions || [];
 const forbiddenOutputs: string[] = config.forbidden_outputs || [];
 
@@ -18088,12 +18105,12 @@ ${opts?.hasGraph ? `    const currentNode = getNode(currentNodeId);\n    console
       messages = [messages[0], ...messages.slice(-(ctxLimit))];
     }
 
-    const response = await client.chat.completions.create({
+    const response = await withRetry(() => client.chat.completions.create({
       model: config.model.name,
       messages,
       tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
       tool_choice: toolDefinitions.length > 0 ? "auto" : undefined,
-    });
+    }));
 
     const choice = response.choices[0];
     const msg = choice.message;
@@ -18213,6 +18230,23 @@ ${knowledgeImport}${graphImport}${mcpBlock}
 const config = yaml.load(fs.readFileSync("agent.yaml", "utf8")) as any;
 const client = new Anthropic();
 
+const ATLAS_MAX_RETRIES = parseInt(process.env.ATLAS_MAX_RETRIES || "3", 10);
+const ATLAS_RETRY_BASE_MS = parseInt(process.env.ATLAS_RETRY_BASE_MS || "500", 10);
+
+async function withRetry<T>(fn: () => Promise<T>, maxAttempts = ATLAS_MAX_RETRIES, baseDelayMs = ATLAS_RETRY_BASE_MS): Promise<T> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err: unknown) {
+      if (attempt === maxAttempts) throw err;
+      const delay = baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * baseDelayMs;
+      console.log(\`[retry] Attempt \${attempt}/\${maxAttempts} failed: \${err instanceof Error ? err.message : err}. Retrying in \${Math.round(delay)}ms...\`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw new Error("withRetry: unreachable");
+}
+
 const stopConditions: string[] = config.stop_conditions || [];
 const forbiddenOutputs: string[] = config.forbidden_outputs || [];
 
@@ -18270,13 +18304,13 @@ ${opts?.hasGraph ? `    const currentNode = getNode(currentNodeId);\n    console
       messages = messages.slice(-(ctxLimit));
     }
 
-    const response = await client.messages.create({
+    const response = await withRetry(() => client.messages.create({
       model: config.model.name,
       max_tokens: 4096,
       system: config.system_prompt,
       messages,
       tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
-    });
+    }));
 
     const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
     const toolUseBlocks = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
@@ -18391,6 +18425,28 @@ with open("agent.yaml", "r") as f:
 
 client = OpenAI()
 
+import os
+import time
+import random
+
+ATLAS_MAX_RETRIES = int(os.environ.get("ATLAS_MAX_RETRIES", "3"))
+ATLAS_RETRY_BASE_MS = int(os.environ.get("ATLAS_RETRY_BASE_MS", "500"))
+
+
+def with_retry(fn, max_attempts=None, base_delay_ms=None):
+    _max = max_attempts if max_attempts is not None else ATLAS_MAX_RETRIES
+    _base = base_delay_ms if base_delay_ms is not None else ATLAS_RETRY_BASE_MS
+    for attempt in range(1, _max + 1):
+        try:
+            return fn()
+        except Exception as err:
+            if attempt == _max:
+                raise
+            delay = (_base * (2 ** (attempt - 1)) + random.random() * _base) / 1000.0
+            print(f"[retry] Attempt {attempt}/{_max} failed: {err}. Retrying in {int(delay * 1000)}ms...")
+            time.sleep(delay)
+
+
 stop_conditions = config.get("stop_conditions", [])
 forbidden_outputs = config.get("forbidden_outputs", [])
 
@@ -18454,7 +18510,7 @@ ${opts?.hasGraph ? `        current_node = get_node(current_node_id)\n        pr
             kwargs["tools"] = tool_definitions
             kwargs["tool_choice"] = "auto"
 
-        response = client.chat.completions.create(**kwargs)
+        response = with_retry(lambda: client.chat.completions.create(**kwargs))
         choice = response.choices[0]
         msg = choice.message
         messages.append(msg)
@@ -18562,6 +18618,28 @@ with open("agent.yaml", "r") as f:
 
 client = anthropic.Anthropic()
 
+import os
+import time
+import random
+
+ATLAS_MAX_RETRIES = int(os.environ.get("ATLAS_MAX_RETRIES", "3"))
+ATLAS_RETRY_BASE_MS = int(os.environ.get("ATLAS_RETRY_BASE_MS", "500"))
+
+
+def with_retry(fn, max_attempts=None, base_delay_ms=None):
+    _max = max_attempts if max_attempts is not None else ATLAS_MAX_RETRIES
+    _base = base_delay_ms if base_delay_ms is not None else ATLAS_RETRY_BASE_MS
+    for attempt in range(1, _max + 1):
+        try:
+            return fn()
+        except Exception as err:
+            if attempt == _max:
+                raise
+            delay = (_base * (2 ** (attempt - 1)) + random.random() * _base) / 1000.0
+            print(f"[retry] Attempt {attempt}/{_max} failed: {err}. Retrying in {int(delay * 1000)}ms...")
+            time.sleep(delay)
+
+
 stop_conditions = config.get("stop_conditions", [])
 forbidden_outputs = config.get("forbidden_outputs", [])
 
@@ -18622,7 +18700,7 @@ ${opts?.hasGraph ? `        current_node = get_node(current_node_id)\n        pr
         if tool_definitions:
             kwargs["tools"] = tool_definitions
 
-        response = client.messages.create(**kwargs)
+        response = with_retry(lambda: client.messages.create(**kwargs))
 
         text_blocks = [b for b in response.content if b.type == "text"]
         tool_blocks = [b for b in response.content if b.type == "tool_use"]
@@ -20535,6 +20613,39 @@ spec:
     - port: 80
       targetPort: 8080
   type: ClusterIP
+`;
+      }
+
+      {
+        const isTs = format === "typescript";
+        const runCmd = isTs ? "npx ts-node src/runtime/orchestrator.ts" : "python src/runtime/orchestrator.py";
+        const testCmd = isTs ? "npx jest --verbose" : "python -m pytest tests/ -v";
+        const lintCmd = isTs ? "npx tsc --noEmit" : "pylint src/ --disable=C,R";
+        const installCmd = isTs ? "npm ci" : "pip install -r requirements.txt";
+        const cleanTargets = isTs ? "rm -rf dist/ node_modules/.cache coverage/" : "find . -type d -name __pycache__ -exec rm -rf {} + && rm -rf .pytest_cache/ .mypy_cache/ dist/";
+        files["Makefile"] = `.PHONY: run test lint docker clean install
+
+# ATLAS Agent Makefile — generated by ATLAS export
+# Retry configuration: set ATLAS_MAX_RETRIES (default 3) and ATLAS_RETRY_BASE_MS (default 500)
+
+install:
+\t${installCmd}
+
+run:
+\t${runCmd}
+
+test:
+\t${testCmd}
+
+lint:
+\t${lintCmd}
+
+docker:
+\tdocker build -t ${agentSlug} .
+\tdocker run --rm --env-file .env ${agentSlug}
+
+clean:
+\t${cleanTargets}
 `;
       }
 
