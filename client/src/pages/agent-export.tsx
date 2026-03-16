@@ -124,7 +124,7 @@ export default function AgentExport() {
   const [exportStep, setExportStep] = useState<"configure" | "preview" | "download">("configure");
   const [exportApprovalSubmitted, setExportApprovalSubmitted] = useState(false);
   const [exportApprovalId, setExportApprovalId] = useState<string | null>(null);
-  const [deliveryTarget, setDeliveryTarget] = useState<"zip" | "git" | "replit">("zip");
+  const [deliveryTarget, setDeliveryTarget] = useState<"zip" | "git" | "clipboard">("zip");
   const [gitRepoUrl, setGitRepoUrl] = useState("");
   const [toolAdapterOverrides, setToolAdapterOverrides] = useState<Record<string, "builtin" | "customer" | "stub">>({});
   const [pinVersions, setPinVersions] = useState(true);
@@ -343,7 +343,7 @@ export default function AgentExport() {
         if (err instanceof Error) detail = err.message;
         toast({ title: "Git push failed", description: detail, variant: "destructive" });
       }
-    } else if (deliveryTarget === "replit") {
+    } else if (deliveryTarget === "clipboard") {
       const files = Object.keys(editedFiles).length > 0 ? editedFiles : exportPreview?.files || {};
       const json = JSON.stringify({ files, metadata: exportPreview?.metadata }, null, 2);
       try {
@@ -833,8 +833,8 @@ export default function AgentExport() {
                     </CardContent>
                   </Card>
                   <Card
-                    className={`cursor-pointer hover:border-primary/50 transition-colors ${deliveryTarget === "replit" ? "border-primary ring-1 ring-primary/20" : ""}`}
-                    onClick={() => setDeliveryTarget("replit")}
+                    className={`cursor-pointer hover:border-primary/50 transition-colors ${deliveryTarget === "clipboard" ? "border-primary ring-1 ring-primary/20" : ""}`}
+                    onClick={() => setDeliveryTarget("clipboard")}
                     data-testid="card-delivery-clipboard"
                   >
                     <CardContent className="pt-4 pb-3">
@@ -842,7 +842,7 @@ export default function AgentExport() {
                         <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary/10"><Copy className="w-5 h-5 text-primary" /></div>
                         <span className="text-sm font-medium">Copy to Clipboard</span>
                         <span className="text-[11px] text-muted-foreground">Copy all files as JSON to paste anywhere.</span>
-                        {deliveryTarget === "replit" && <CheckCircle className="w-4 h-4 text-primary" />}
+                        {deliveryTarget === "clipboard" && <CheckCircle className="w-4 h-4 text-primary" />}
                       </div>
                     </CardContent>
                   </Card>
