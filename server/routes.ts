@@ -20650,9 +20650,19 @@ spec:
 
       {
         const isTs = format === "typescript";
-        const runCmd = isTs ? "npx ts-node src/runtime/orchestrator.ts" : "python src/runtime/orchestrator.py";
+        const entryMap: Record<string, { ts: string; py: string }> = {
+          generic:   { ts: "npx ts-node src/runtime/orchestrator.ts", py: "python src/runtime/orchestrator.py" },
+          langgraph: { ts: "npx ts-node graph.ts", py: "python graph.py" },
+          crewai:    { ts: "npx ts-node crew.ts", py: "python crew.py" },
+          foundry:   { ts: "npx ts-node entrypoint.ts", py: "python entrypoint.py" },
+          bedrock:   { ts: "npx ts-node lambda/handler.ts", py: "python lambda/handler.py" },
+          n8n:       { ts: "npx ts-node nodes/AgentNode.ts", py: "python nodes/agent_node.py" },
+          vertex:    { ts: "npx ts-node entrypoint.ts", py: "python entrypoint.py" },
+        };
+        const entry = entryMap[framework] || entryMap.generic;
+        const runCmd = isTs ? entry.ts : entry.py;
         const testCmd = isTs ? "npm test" : "python -m pytest tests/ -v";
-        const lintCmd = isTs ? "npx tsc --noEmit" : "pylint src/ --disable=C,R";
+        const lintCmd = isTs ? "npx tsc --noEmit" : "pylint src/ tools/ --disable=C,R";
         const installCmd = isTs ? "npm ci" : "pip install -r requirements.txt";
         const cleanTargets = isTs ? "rm -rf dist/ node_modules/.cache coverage/" : "find . -type d -name __pycache__ -exec rm -rf {} + && rm -rf .pytest_cache/ .mypy_cache/ dist/";
         files["Makefile"] = `.PHONY: run test lint docker clean install
