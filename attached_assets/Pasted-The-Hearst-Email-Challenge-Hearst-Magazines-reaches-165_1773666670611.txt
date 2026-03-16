@@ -1,0 +1,12 @@
+The Hearst Email Challenge
+
+Hearst Magazines reaches 165 million consumers monthly across 200+ brand editions in 47 markets. The email channel is critical: newsletters drive website traffic, subscription conversions, advertiser engagement, and e-commerce revenue. But the scale creates a unique orchestration challenge:
+
+The Multi-Brand Problem: A single subscriber may have opted into newsletters from Cosmopolitan, Elle, Harper’s Bazaar, Esquire, Good Housekeeping, and Runner’s World. Without cross-brand orchestration, they receive 6+ emails per day from Hearst — causing fatigue, unsubscribes, and spam complaints that damage deliverability for all brands.
+The Personalization Gap: Each brand’s email team operates independently: Cosmo sends beauty tips to everyone, Elle sends fashion alerts to everyone. But the subscriber data shows that a specific reader engages with Cosmo’s wellness content and Elle’s career articles — not beauty or fashion. Today’s emails are brand-first, not reader-first.
+The Timing Chaos: Brands send when their editorial calendar dictates, not when each subscriber is most likely to open. A reader in London and a reader in LA both get the same 9 AM ET send from Harper’s Bazaar — one at 2 PM local (good), the other at 6 AM (inbox buried by noon).
+The Revenue Blindspot: Email is a major driver of subscription conversions and e-commerce (affiliate) revenue. But the email team can’t see which sends drive revenue vs. which are just generating opens. A Cosmo email with a 40% open rate may generate $0 in revenue, while a Country Living email with a 15% open rate drives $12K in furniture affiliate revenue. Without this visibility, resources are misallocated.
+
+THE ATLAS OPPORTUNITY
+Atlas orchestrates an AI agent team that sits above all brand email teams, making real-time decisions about: WHICH email to send each subscriber (from across all opted-in brands), WHEN to send it (personalized send time per subscriber), WHAT content to feature (matched to individual content affinity, not brand-default), and WHETHER to send at all (fatigue protection that preserves long-term subscriber value over short-term opens). The result: higher engagement, lower unsubscribes, better deliverability, and measurable revenue lift — with full transparency into why each decision was made.
+ 
