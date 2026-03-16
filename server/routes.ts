@@ -18695,17 +18695,24 @@ if __name__ == "__main__":
     const hasParams = tool.parameters && typeof tool.parameters === "object" && Object.keys(tool.parameters).length > 0;
     const interfaceBlock = hasParams ? jsonSchemaToTsInterface(interfaceName, tool.parameters) + "\n\n" : `export interface ${interfaceName} {\n  [key: string]: unknown;\n}\n\n`;
     const argType = interfaceName;
+    const schemaJson = JSON.stringify(tool.parameters || {}, null, 2);
 
     if (adapterType === "stub") {
       return `// STUB: Auto-generated placeholder for "${tool.name}"
 // Status: Stub — replace with actual implementation before deployment
 // Description: ${tool.description || "No description provided"}
 
-${interfaceBlock}export async function ${tool.name}(args: ${argType}): Promise<Record<string, unknown>> {
+${interfaceBlock}export const inputSchema = ${schemaJson};
+
+export async function _execute(args: ${argType}): Promise<Record<string, unknown>> {
   throw new Error(
     "[STUB] Tool '${tool.name}' has no implementation. " +
     "Replace this stub with your actual adapter code."
   );
+}
+
+export async function ${tool.name}(args: ${argType}): Promise<Record<string, unknown>> {
+  return _execute(args);
 }
 
 export default ${tool.name};
@@ -18716,9 +18723,15 @@ export default ${tool.name};
 // Status: Customer adapter required — provide your own implementation
 // Description: ${tool.description || "No description provided"}
 
-${interfaceBlock}export async function ${tool.name}(args: ${argType}): Promise<Record<string, unknown>> {
+${interfaceBlock}export const inputSchema = ${schemaJson};
+
+export async function _execute(args: ${argType}): Promise<Record<string, unknown>> {
   console.log("[${tool.name}] called with:", args);
   return { status: "needs_implementation", tool: "${tool.name}", args };
+}
+
+export async function ${tool.name}(args: ${argType}): Promise<Record<string, unknown>> {
+  return _execute(args);
 }
 
 export default ${tool.name};
@@ -18728,9 +18741,15 @@ export default ${tool.name};
 // Status: Scaffold generated — replace the body with your actual implementation
 // Description: ${tool.description || "No description provided"}
 
-${interfaceBlock}export async function ${tool.name}(args: ${argType}): Promise<Record<string, unknown>> {
+${interfaceBlock}export const inputSchema = ${schemaJson};
+
+export async function _execute(args: ${argType}): Promise<Record<string, unknown>> {
   console.log("[${tool.name}] called with:", JSON.stringify(args, null, 2));
   throw new Error("[${tool.name}] Not implemented. Replace this with your adapter logic.");
+}
+
+export async function ${tool.name}(args: ${argType}): Promise<Record<string, unknown>> {
+  return _execute(args);
 }
 
 export default ${tool.name};
@@ -18768,18 +18787,27 @@ export default ${tool.name};
     const hasParams = tool.parameters && typeof tool.parameters === "object" && Object.keys(tool.parameters).length > 0;
     const dataclassBlock = hasParams ? jsonSchemaToDataclass(className, tool.parameters) + "\n\n" : `@dataclass\nclass ${className}:\n    pass\n\n`;
     const dataclassImport = `from dataclasses import dataclass\nfrom typing import Any, Optional\n\n`;
+    const schemaDict = JSON.stringify(tool.parameters || {}, null, 2);
 
     if (adapterType === "stub") {
       return `# STUB: Auto-generated placeholder for "${tool.name}"
 # Status: Stub — replace with actual implementation before deployment
 # Description: ${tool.description || "No description provided"}
 ${dataclassImport}${dataclassBlock}
-def ${tool.name}(args: ${className}) -> dict:
-    """STUB: ${tool.description || "No description provided"}"""
+INPUT_SCHEMA = ${schemaDict}
+
+
+def _execute(args: ${className}) -> dict:
+    """Internal execution — mock this in tests."""
     raise NotImplementedError(
         "[STUB] Tool '${tool.name}' has no implementation. "
         "Replace this stub with your actual adapter code."
     )
+
+
+def ${tool.name}(args: ${className}) -> dict:
+    """STUB: ${tool.description || "No description provided"}"""
+    return _execute(args)
 `;
     }
     if (adapterType === "customer") {
@@ -18787,29 +18815,36 @@ def ${tool.name}(args: ${className}) -> dict:
 # Status: Customer adapter required — provide your own implementation
 # Description: ${tool.description || "No description provided"}
 ${dataclassImport}${dataclassBlock}
+INPUT_SCHEMA = ${schemaDict}
+
+
+def _execute(args: ${className}) -> dict:
+    """Internal execution — mock this in tests."""
+    print(f"[${tool.name}] called with: {args}")
+    return {"status": "needs_implementation", "tool": "${tool.name}"}
+
+
 def ${tool.name}(args: ${className}) -> dict:
     """Customer adapter: ${tool.description || "No description provided"}"""
-    # TODO: Implement your adapter for ${tool.name}
-    print(f"[${tool.name}] called with: {args}")
-    return {"status": "needs_implementation", "tool": "${tool.name}", "args": args}
+    return _execute(args)
 `;
     }
-    const pyParamSchema = (tool.parameters && typeof tool.parameters === "object" && Object.keys(tool.parameters).length > 0)
-      ? JSON.stringify(tool.parameters, null, 2).split("\n").map((l: string) => `# ${l}`).join("\n")
-      : `# Parameters: {}`;
     return `# REQUIRES IMPLEMENTATION: "${tool.name}"
 # Status: Scaffold generated — replace the body with your actual implementation
 # Description: ${tool.description || "No description provided"}
-# Parameter schema:
-${pyParamSchema}
 ${dataclassImport}${dataclassBlock}
-def ${tool.name}(args: ${className}) -> dict:
-    """TODO: Implement this tool adapter.
-    The parameter schema above shows what arguments this tool expects.
-    ${tool.description || ""}
-    """
+INPUT_SCHEMA = ${schemaDict}
+
+
+def _execute(args: ${className}) -> dict:
+    """Internal execution — mock this in tests."""
     print(f"[${tool.name}] called with: {args}")
     raise NotImplementedError("[${tool.name}] Not implemented. Replace this with your adapter logic.")
+
+
+def ${tool.name}(args: ${className}) -> dict:
+    """TODO: Implement this tool adapter. ${tool.description || ""}"""
+    return _execute(args)
 `;
   }
 
@@ -18878,16 +18913,20 @@ import { describe, test, expect, vi, beforeEach } from "vitest";
 import * as toolModule from "${importPath}";
 import type { ${interfaceName} } from "${importPath}";
 
-const TOOL_SCHEMA = ${schemaSpec} as const;
-
-function validateArgsAgainstSchema(args: Record<string, unknown>): string[] {
+function validateAgainstInputSchema(
+  schema: Record<string, unknown>,
+  args: Record<string, unknown>
+): string[] {
   const errors: string[] = [];
-  for (const [key, spec] of Object.entries(TOOL_SCHEMA)) {
-    const s = spec as { type: string; required: boolean };
-    if (s.required && !(key in args)) errors.push(\`missing required field: \${key}\`);
+  const props = (schema.properties || {}) as Record<string, Record<string, unknown>>;
+  const req = new Set(Array.isArray(schema.required) ? schema.required as string[] : []);
+  for (const key of req) {
+    if (!(key in args)) errors.push(\`missing required field: \${key}\`);
+  }
+  for (const [key, spec] of Object.entries(props)) {
     if (key in args && args[key] !== undefined && args[key] !== null) {
       const actual = Array.isArray(args[key]) ? "array" : typeof args[key];
-      const expected = s.type === "integer" ? "number" : s.type;
+      const expected = spec.type === "integer" ? "number" : spec.type as string;
       if (actual !== expected) errors.push(\`\${key}: expected \${expected}, got \${actual}\`);
     }
   }
@@ -18899,41 +18938,67 @@ describe("Tool: ${fnName}", () => {
     vi.restoreAllMocks();
   });
 
+  test("exports inputSchema object", () => {
+    expect(toolModule.inputSchema).toBeDefined();
+    expect(typeof toolModule.inputSchema).toBe("object");
+  });
+
   test("function is exported and callable", () => {
     expect(typeof toolModule.${fnName}).toBe("function");
   });
 
-  test("schema — valid args pass runtime validation", () => {
+  test("schema — valid args pass inputSchema validation", () => {
     const validArgs: ${interfaceName} = ${validArgsBlock};
-    const errors = validateArgsAgainstSchema(validArgs as unknown as Record<string, unknown>);
+    const errors = validateAgainstInputSchema(
+      toolModule.inputSchema as Record<string, unknown>,
+      validArgs as unknown as Record<string, unknown>
+    );
     expect(errors).toEqual([]);
 ${schemaChecks || '    expect(validArgs).toBeDefined();'}
   });
 
-  test("schema — invalid arg types fail runtime validation", () => {
+  test("schema — invalid arg types fail inputSchema validation", () => {
     const badArgs = ${invalidArgsBlock};
-    const errors = validateArgsAgainstSchema(badArgs as unknown as Record<string, unknown>);
+    const errors = validateAgainstInputSchema(
+      toolModule.inputSchema as Record<string, unknown>,
+      badArgs as unknown as Record<string, unknown>
+    );
 ${schemaKeys.length > 0 ? '    expect(errors.length).toBeGreaterThan(0);' : '    expect(errors).toEqual([]);'}
   });
 
-${requiredKeys.length > 0 ? `  test("schema — missing required fields detected", () => {
-    const errors = validateArgsAgainstSchema({});
+${requiredKeys.length > 0 ? `  test("schema — missing required fields detected via inputSchema", () => {
+    const errors = validateAgainstInputSchema(
+      toolModule.inputSchema as Record<string, unknown>,
+      {}
+    );
     const missingErrors = errors.filter(e => e.startsWith("missing required"));
     expect(missingErrors.length).toBeGreaterThanOrEqual(${requiredKeys.length});
   });
 ` : ''}
-  test("adapter — real call with valid args", async () => {
+  test("adapter — happy path with mocked _execute", async () => {
+    const mockResult = { status: "ok", tool: "${fnName}", data: {} };
+    const executeSpy = vi.spyOn(toolModule, "_execute").mockResolvedValue(mockResult);
+    const validArgs: ${interfaceName} = ${validArgsBlock};
+    const result = await toolModule.${fnName}(validArgs);
+    expect(result).toEqual(mockResult);
+    expect(executeSpy).toHaveBeenCalledWith(validArgs);
+    executeSpy.mockRestore();
+  });
+
+  test("adapter — error propagation through _execute", async () => {
+    const executeSpy = vi.spyOn(toolModule, "_execute").mockRejectedValue(
+      new Error("connection refused")
+    );
+    const validArgs: ${interfaceName} = ${validArgsBlock};
+    await expect(toolModule.${fnName}(validArgs)).rejects.toThrow("connection refused");
+    executeSpy.mockRestore();
+  });
+
+  test("adapter — real call with valid args (unmocked)", async () => {
     const validArgs: ${interfaceName} = ${validArgsBlock};
     ${isStub
       ? `await expect(toolModule.${fnName}(validArgs)).rejects.toThrow();`
       : `const result = await toolModule.${fnName}(validArgs);\n    expect(result).toBeDefined();\n    expect(typeof result === "object" || typeof result === "string").toBe(true);`}
-  });
-
-  test("adapter — error propagation via spy", async () => {
-    const spy = vi.spyOn(toolModule, "${fnName}").mockRejectedValue(new Error("connection refused"));
-    const validArgs: ${interfaceName} = ${validArgsBlock};
-    await expect(toolModule.${fnName}(validArgs)).rejects.toThrow("connection refused");
-    spy.mockRestore();
   });
 });
 `;
@@ -18988,7 +19053,24 @@ ${requiredKeys.length > 0 ? `  test("schema — missing required fields detected
     return `# ATLAS-generated: Unit tests for tool "${fnName}"
 import pytest
 from unittest.mock import patch, MagicMock
-from ${toolsModule}.${fnName} import ${fnName}, ${className}
+from ${toolsModule}.${fnName} import ${fnName}, ${className}, INPUT_SCHEMA, _execute
+
+
+def validate_against_input_schema(schema: dict, args: dict) -> list:
+    """Validate args dict against the adapter's exported INPUT_SCHEMA."""
+    errors = []
+    props = schema.get("properties", {})
+    required = set(schema.get("required", []))
+    for key in required:
+        if key not in args:
+            errors.append(f"missing required field: {key}")
+    type_map = {"string": str, "number": (int, float), "integer": int, "boolean": bool, "array": list, "object": dict}
+    for key, spec in props.items():
+        if key in args and args[key] is not None:
+            expected_type = type_map.get(spec.get("type", ""), object)
+            if not isinstance(args[key], expected_type):
+                errors.append(f"{key}: expected {spec.get('type')}, got {type(args[key]).__name__}")
+    return errors
 
 
 class TestTool${className.replace("Args", "")}:
@@ -18997,34 +19079,46 @@ class TestTool${className.replace("Args", "")}:
     def test_is_callable(self):
         assert callable(${fnName})
 
+    def test_exports_input_schema(self):
+        """Adapter exports INPUT_SCHEMA for runtime validation."""
+        assert isinstance(INPUT_SCHEMA, dict)
+
     def test_schema_valid_args_accepted(self):
-        """Schema validation: valid args construct and match expected types."""
+        """Schema validation: valid args pass INPUT_SCHEMA validation."""
         args = ${validArgsConstruction}
         assert isinstance(args, ${className})
-${schemaChecks || '        pass'}
+        args_dict = {k: v for k, v in args.__dict__.items() if v is not None}
+        errors = validate_against_input_schema(INPUT_SCHEMA, args_dict)
+        assert errors == [], f"Valid args should pass schema: {errors}"
+${schemaChecks || ''}
 
     def test_schema_invalid_arg_types_rejected(self):
-        """Schema validation: invalid arg types cause error or are caught."""
-        with pytest.raises((TypeError, ValueError, Exception)):
-            bad_args = ${invalidArgsConstruction}
-            ${fnName}(bad_args)
+        """Schema validation: invalid arg types fail INPUT_SCHEMA validation."""
+        bad_args = {${Object.entries(props).map(([k, v]) => {
+          if (v.type === "string") return `"${k}": 12345`;
+          if (v.type === "number" || v.type === "integer") return `"${k}": "not_a_number"`;
+          if (v.type === "boolean") return `"${k}": "not_a_bool"`;
+          return `"${k}": None`;
+        }).join(", ")}}
+        errors = validate_against_input_schema(INPUT_SCHEMA, bad_args)
+${Object.keys(props).length > 0 ? '        assert len(errors) > 0, "Invalid args should fail schema validation"' : '        assert errors == []'}
 ${missingRequiredTest}
-    @patch("${toolsModule}.${fnName}.${fnName}")
-    def test_adapter_happy_path(self, mock_fn: MagicMock):
-        """Adapter mock: happy-path returns expected shape via mocked adapter."""
-        mock_fn.return_value = {"status": "ok", "tool": "${fnName}"}
+    @patch("${toolsModule}.${fnName}._execute")
+    def test_adapter_happy_path_with_mocked_execute(self, mock_exec: MagicMock):
+        """Adapter: happy-path calls _execute and returns its result."""
+        mock_exec.return_value = {"status": "ok", "tool": "${fnName}"}
         args = ${validArgsConstruction}
-        result = mock_fn(args)
+        result = ${fnName}(args)
         assert result == {"status": "ok", "tool": "${fnName}"}
-        mock_fn.assert_called_once_with(args)
+        mock_exec.assert_called_once_with(args)
 
-    @patch("${toolsModule}.${fnName}.${fnName}")
-    def test_adapter_error_propagation(self, mock_fn: MagicMock):
-        """Adapter mock: errors propagate correctly."""
-        mock_fn.side_effect = RuntimeError("connection refused")
+    @patch("${toolsModule}.${fnName}._execute")
+    def test_adapter_error_propagation_through_execute(self, mock_exec: MagicMock):
+        """Adapter: errors from _execute propagate through ${fnName}."""
+        mock_exec.side_effect = RuntimeError("connection refused")
         args = ${validArgsConstruction}
         with pytest.raises(RuntimeError, match="connection refused"):
-            mock_fn(args)
+            ${fnName}(args)
 `;
   }
 
