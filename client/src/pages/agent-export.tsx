@@ -209,6 +209,11 @@ export default function AgentExport() {
         llmProvider: exportLlmProvider,
         framework: exportFramework,
       });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Unknown error" }));
+        toast({ title: "Regeneration failed", description: err.reason || err.message || `Could not regenerate ${filePath}`, variant: "destructive" });
+        return;
+      }
       const data = await res.json();
       if (data.content) {
         setEditedFiles(prev => ({ ...prev, [filePath]: data.content }));
@@ -555,6 +560,7 @@ export default function AgentExport() {
                         const fileName = fp.split("/").pop() || fp;
                         const isActive = fp === exportPreviewFile;
                         const isRegenerating = regeneratingFile === fp;
+                        const canRegen = fp.includes("orchestrator") || fp.includes("entrypoint") || fp.includes("tools/") || fp.includes("adapters/") || fp.includes("graph") || fp.includes("crew") || fp.includes("agent_node");
                         return (
                           <div key={fp} className={`flex items-center gap-1 group ${isActive ? "bg-primary/10" : "hover:bg-muted/60"}`}>
                             <button
@@ -564,17 +570,19 @@ export default function AgentExport() {
                               <FileCode className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                               <span className={`truncate ${isActive ? "text-primary font-medium" : "text-foreground/80"}`}>{fileName}</span>
                             </button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mr-1"
-                              disabled={isRegenerating}
-                              onClick={(e) => { e.stopPropagation(); handleRegenFile(fp); }}
-                              title="Regenerate this file"
-                              data-testid={`button-regen-file-${fp.replace(/[/.]/g, "-")}`}
-                            >
-                              {isRegenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3 text-muted-foreground" />}
-                            </Button>
+                            {canRegen && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mr-1"
+                                disabled={isRegenerating}
+                                onClick={(e) => { e.stopPropagation(); handleRegenFile(fp); }}
+                                title="Regenerate this file"
+                                data-testid={`button-regen-file-${fp.replace(/[/.]/g, "-")}`}
+                              >
+                                {isRegenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3 text-muted-foreground" />}
+                              </Button>
+                            )}
                           </div>
                         );
                       })}

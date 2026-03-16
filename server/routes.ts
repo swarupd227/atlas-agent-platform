@@ -19576,9 +19576,7 @@ spec:
       } catch { /* AI unavailable */ }
 
       if (!content) {
-        const isPython = format === "python" || filePath.endsWith(".py");
-        const comment = isPython ? "#" : "//";
-        content = `${comment} Regenerated stub for ${filePath}\n${comment} AI generation was not available. Edit this file manually.\n`;
+        return res.status(422).json({ message: "Cannot regenerate this file", filePath, reason: "AI generation was not available or file type is not supported for regeneration" });
       }
 
       res.json({ filePath, content });
