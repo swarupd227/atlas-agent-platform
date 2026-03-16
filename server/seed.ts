@@ -3546,9 +3546,12 @@ export async function seedDatabase() {
   await db.insert(billingDisputes).values(disputeData);
 
   // Agent Templates (80 templates across 8 industries)
-  const allTemplates = [...batch1Templates, ...batch2Templates, ...teamTemplates];
-  for (let i = 0; i < allTemplates.length; i += 10) {
-    await db.insert(agentTemplates).values(allTemplates.slice(i, i + 10) as any);
+  const existingTemplates = await db.select({ id: agentTemplates.id }).from(agentTemplates).limit(1);
+  if (existingTemplates.length === 0) {
+    const allTemplates = [...batch1Templates, ...batch2Templates, ...teamTemplates];
+    for (let i = 0; i < allTemplates.length; i += 10) {
+      await db.insert(agentTemplates).values(allTemplates.slice(i, i + 10) as any);
+    }
   }
 
   // Eval Test Cases and Runs for existing eval suites
