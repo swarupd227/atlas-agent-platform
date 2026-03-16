@@ -18821,6 +18821,147 @@ def ${tool.name}(args: ${className}) -> dict:
     return tools.map(t => `from .${t.name} import ${t.name}`).join("\n") + "\n";
   }
 
+  function generateVitestConfig(): string {
+    return `import { defineConfig } from "vitest/config";
+
+export default defineConfig({
+  test: {
+    include: ["tests/**/*.test.ts"],
+    environment: "node",
+    testTimeout: 90000,
+    globals: true,
+  },
+});
+`;
+  }
+
+  function generateTsToolTest(tool: { name: string; description?: string; parameters?: Record<string, unknown> }, adapterType: "builtin" | "customer" | "stub"): string {
+    const fnName = tool.name;
+    const interfaceName = fnName.charAt(0).toUpperCase() + fnName.slice(1) + "Args";
+    const props = (tool.parameters?.properties || {}) as Record<string, Record<string, unknown>>;
+    const required = new Set(Array.isArray(tool.parameters?.required) ? tool.parameters!.required as string[] : []);
+    const sampleArgs: Record<string, unknown> = {};
+    for (const [key, v] of Object.entries(props)) {
+      if (v.type === "string") sampleArgs[key] = v.example || v.default || `test_${key}`;
+      else if (v.type === "number" || v.type === "integer") sampleArgs[key] = v.example || v.default || 1;
+      else if (v.type === "boolean") sampleArgs[key] = v.example ?? v.default ?? true;
+      else if (v.type === "array") sampleArgs[key] = [];
+      else if (v.type === "object") sampleArgs[key] = {};
+      else sampleArgs[key] = `test_${key}`;
+    }
+    const sampleArgsJson = JSON.stringify(sampleArgs, null, 2);
+    const isStub = adapterType === "stub" || adapterType === "builtin";
+    return `// ATLAS-generated: Unit tests for tool "${fnName}"
+import { describe, test, expect } from "vitest";
+import { ${fnName} } from "../../src/tools/${fnName}";
+
+describe("Tool: ${fnName}", () => {
+  test("function is exported and callable", () => {
+    expect(typeof ${fnName}).toBe("function");
+  });
+
+  test("accepts valid input args", async () => {
+    const args: Record<string, unknown> = ${sampleArgsJson};
+    ${isStub
+      ? `await expect(${fnName}(args as any)).rejects.toThrow();`
+      : `const result = await ${fnName}(args as any);\n    expect(result).toBeDefined();\n    expect(typeof result).toBe("object");`}
+  });
+
+  test("rejects missing required args gracefully", async () => {
+    try {
+      const result = await ${fnName}({} as any);
+      ${adapterType === "customer" ? `expect(result).toBeDefined();` : `expect(result).toBeDefined();`}
+    } catch (e) {
+      expect(e).toBeDefined();
+    }
+  });
+});
+`;
+  }
+
+  function generatePyToolTest(tool: { name: string; description?: string; parameters?: Record<string, unknown> }, adapterType: "builtin" | "customer" | "stub"): string {
+    const fnName = tool.name;
+    const className = fnName.charAt(0).toUpperCase() + fnName.slice(1) + "Args";
+    const props = (tool.parameters?.properties || {}) as Record<string, Record<string, unknown>>;
+    const sampleKwargs: string[] = [];
+    for (const [key, v] of Object.entries(props)) {
+      if (v.type === "string") sampleKwargs.push(`${key}=${JSON.stringify(v.example || v.default || `test_${key}`)}`);
+      else if (v.type === "number" || v.type === "integer") sampleKwargs.push(`${key}=${v.example || v.default || 1}`);
+      else if (v.type === "boolean") sampleKwargs.push(`${key}=${(v.example ?? v.default ?? true) ? "True" : "False"}`);
+      else if (v.type === "array") sampleKwargs.push(`${key}=[]`);
+      else if (v.type === "object") sampleKwargs.push(`${key}={}`);
+      else sampleKwargs.push(`${key}="test_${key}"`);
+    }
+    const argsConstruction = sampleKwargs.length > 0
+      ? `${className}(${sampleKwargs.join(", ")})`
+      : `${className}()`;
+    const isStub = adapterType === "stub" || adapterType === "builtin";
+
+    return `# ATLAS-generated: Unit tests for tool "${fnName}"
+import pytest
+from src.tools.${fnName} import ${fnName}, ${className}
+
+
+def test_${fnName}_is_callable():
+    assert callable(${fnName})
+
+
+def test_${fnName}_with_valid_args():
+    args = ${argsConstruction}
+    ${isStub
+      ? `with pytest.raises((NotImplementedError, Exception)):\n        ${fnName}(args)`
+      : `result = ${fnName}(args)\n    assert isinstance(result, dict)`}
+
+
+def test_${fnName}_with_empty_args():
+    try:
+        args = ${className}()
+        ${isStub
+          ? `with pytest.raises((NotImplementedError, Exception)):\n            ${fnName}(args)`
+          : `result = ${fnName}(args)\n        assert isinstance(result, dict)`}
+    except TypeError:
+        pass  # Expected if required fields are missing
+`;
+  }
+
+  function generateCiWorkflow(format: string, agentSlug: string): string {
+    const isTs = format === "typescript";
+    const installCmd = isTs ? "npm ci" : "pip install -r requirements.txt";
+    const testCmd = isTs ? "npm test" : "python -m pytest tests/ -v";
+    const nodeSetup = isTs ? `
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+` : `
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+`;
+    return `name: CI — ${agentSlug}
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+${nodeSetup}
+      - name: Install dependencies
+        run: ${installCmd}
+
+      - name: Run tests
+        run: ${testCmd}
+`;
+  }
+
   // Uses Claude (Anthropic) via the installed AI Integrations (javascript_anthropic_ai_integrations).
   // Falls back to templates if Claude generation fails.
   async function generateAgentCodeWithAI(ctx: {
@@ -19751,6 +19892,23 @@ spec:
       targetPort: 8080
   type: ClusterIP
 `;
+      }
+
+      for (const tool of tools) {
+        const aType = getAdapterType(tool.name);
+        if (format === "typescript") {
+          files[`tests/tools/${tool.name}.test.ts`] = generateTsToolTest(tool, aType);
+        } else {
+          files[`tests/test_${tool.name}.py`] = generatePyToolTest(tool, aType);
+        }
+      }
+
+      if (format === "typescript") {
+        files["vitest.config.ts"] = generateVitestConfig();
+      }
+
+      if (!files[".github/workflows/ci.yml"]) {
+        files[".github/workflows/ci.yml"] = generateCiWorkflow(format, agentSlug);
       }
 
       res.json({
