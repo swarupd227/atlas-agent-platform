@@ -17892,7 +17892,7 @@ Eval Suites: ${evalSuites.length} configured`,
     );
     if (extras?.skills && extras.skills.length > 0) {
       lines.push(`skills:`);
-      for (const s of extras.skills) lines.push(`  - name: "${s.name}"${s.executionOrder != null ? `\n    execution_order: ${s.executionOrder}` : ""}`);
+      for (const s of extras.skills) lines.push(`  - name: "${s.name}"${(s as any).domain ? `\n    domain: "${(s as any).domain}"` : ""}${s.executionOrder != null ? `\n    execution_order: ${s.executionOrder}` : ""}${(s as any).required != null ? `\n    required: ${(s as any).required}` : ""}`);
     }
     if (extras?.knowledgeBases && extras.knowledgeBases.length > 0) {
       lines.push(`knowledge_bases:`);
@@ -19413,9 +19413,22 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
       }));
 
       const rtConfig = (agent.runtimeConfig as Record<string, unknown>) || {};
-      const matchedSkills: Array<{ name: string; executionOrder?: number }> = Array.isArray((rtConfig as Record<string, unknown>).matchedSkills)
+      const rawMatchedSkills: Array<{ name: string; executionOrder?: number }> = Array.isArray((rtConfig as Record<string, unknown>).matchedSkills)
         ? ((rtConfig as Record<string, unknown>).matchedSkills as Array<Record<string, unknown>>).map((s) => ({ name: String(s.name || s), executionOrder: s.executionOrder as number | undefined }))
         : [];
+
+      const allSkillsDb = await storage.getSkills();
+      const skillLookup = new Map(allSkillsDb.map(s => [s.name.toLowerCase(), s]));
+      const matchedSkills: Array<{ name: string; domain: string; description: string; executionOrder?: number; required: boolean }> = rawMatchedSkills.map((ms, idx) => {
+        const dbSkill = skillLookup.get(ms.name.toLowerCase());
+        return {
+          name: ms.name,
+          domain: dbSkill?.domain || "general",
+          description: dbSkill?.description || "",
+          executionOrder: ms.executionOrder ?? (idx + 1),
+          required: idx < Math.max(2, Math.ceil(rawMatchedSkills.length * 0.5)),
+        };
+      });
 
       const agentKbLinks = await storage.getAgentKnowledgeBases(agent.id);
       const kbDetails: Array<{ name: string; embeddingModel: string | null; chunkSize: number | null; chunkOverlap: number | null }> = [];
@@ -19604,7 +19617,20 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
         });
       } catch { /* swallow — templates handle fallback */ }
 
-      if (aiResult?.agentYaml) files["agent.yaml"] = aiResult.agentYaml;
+      if (aiResult?.agentYaml) {
+        let mergedYaml = aiResult.agentYaml;
+        if (matchedSkills.length > 0 && !mergedYaml.includes("skills:")) {
+          const skillYamlLines = ["skills:"];
+          for (const s of matchedSkills) {
+            skillYamlLines.push(`  - name: "${s.name}"`);
+            if (s.domain) skillYamlLines.push(`    domain: "${s.domain}"`);
+            if (s.executionOrder != null) skillYamlLines.push(`    execution_order: ${s.executionOrder}`);
+            if (s.required != null) skillYamlLines.push(`    required: ${s.required}`);
+          }
+          mergedYaml = mergedYaml.trimEnd() + "\n" + skillYamlLines.join("\n") + "\n";
+        }
+        files["agent.yaml"] = mergedYaml;
+      }
       if (aiResult?.frameworkFiles) {
         const allowedPrefixes = ["config/", "manifests/", "workflows/", "pipelines/"];
         for (const [fpath, content] of Object.entries(aiResult.frameworkFiles)) {
@@ -19633,7 +19659,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
           autonomyMode: agent.autonomyMode || null,
           riskTier: agent.riskTier || null,
         };
-        if (matchedSkills.length > 0) manifestData.skills = matchedSkills;
+        if (matchedSkills.length > 0) manifestData.skills = matchedSkills.map(s => ({ name: s.name, domain: s.domain, description: s.description, executionOrder: s.executionOrder, required: s.required }));
         if (kbDetails.length > 0) manifestData.knowledgeBases = kbDetails.map(kb => ({ name: kb.name, embeddingModel: kb.embeddingModel }));
         if (outcomeData) manifestData.outcome = outcomeData;
         if (ontologyTags.length > 0) manifestData.ontologyTags = ontologyTags;
@@ -19646,7 +19672,14 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
 
         files["almp.manifest.json"] = `${manifestJson}\n`;
 
-        files["src/agent/prompts/system.txt"] = systemPrompt;
+        let enrichedSystemPrompt = systemPrompt;
+        if (matchedSkills.length > 0) {
+          const skillLines = matchedSkills
+            .sort((a, b) => (a.executionOrder ?? 0) - (b.executionOrder ?? 0))
+            .map(s => `- ${s.name} [${s.domain}]${s.required ? " (required)" : " (optional)"}: ${s.description.replace(/\n/g, " ").slice(0, 200)}`);
+          enrichedSystemPrompt += `\n\n## Authorized Skills\n\nYou are authorized to apply the following skills when relevant to the task:\n\n${skillLines.join("\n")}\n`;
+        }
+        files["src/agent/prompts/system.txt"] = enrichedSystemPrompt;
 
         const inputSchema = { type: "object", properties: { input: { type: "string", description: "Primary input for the agent" } }, required: ["input"] };
         const outputSchema = { type: "object", properties: { output: { type: "string", description: "Agent response output" }, status: { type: "string", enum: ["success", "error"] } }, required: ["output", "status"] };
@@ -19657,6 +19690,37 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
           files["src/agent/policies.json"] = JSON.stringify(linkedPolicies.map(p => ({
             id: p.id, name: p.name, domain: p.domain, rules: p.policyJson,
           })), null, 2) + "\n";
+        }
+
+        if (matchedSkills.length > 0) {
+          if (format === "typescript") {
+            const skillEntries = matchedSkills.map(s => {
+              const safeName = s.name.replace(/[^a-zA-Z0-9_]/g, "_");
+              return `  "${safeName}": {\n    name: "${s.name.replace(/"/g, '\\"')}",\n    domain: "${s.domain}",\n    description: "${s.description.replace(/"/g, '\\"').replace(/\n/g, " ")}",\n    executionOrder: ${s.executionOrder ?? 0},\n    required: ${s.required},\n  }`;
+            }).join(",\n");
+            const skillStubs = matchedSkills.map(s => {
+              const safeName = s.name.replace(/[^a-zA-Z0-9_ ]/g, "").replace(/\s+/g, "_").replace(/_+/g, "_");
+              return `\n/** Skill: ${s.name}\n * Domain: ${s.domain}\n * ${s.description.replace(/\n/g, " ").slice(0, 120)}\n */\nfunction execute_${safeName}(input: Record<string, unknown>): Record<string, unknown> {\n  // TODO: Implement ${s.name} skill logic\n  return { status: "not_implemented", skillName: "${s.name.replace(/"/g, '\\"')}" };\n}`;
+            }).join("\n");
+            const dispatchCases = matchedSkills.map(s => {
+              const safeName = s.name.replace(/[^a-zA-Z0-9_ ]/g, "").replace(/\s+/g, "_").replace(/_+/g, "_");
+              return `    case "${s.name.replace(/"/g, '\\"')}": return execute_${safeName}(input);`;
+            }).join("\n");
+            files["src/agent/skills.ts"] = `// ATLAS-generated: Skills catalog for ${agent.name}\n\nexport interface SkillMeta {\n  name: string;\n  domain: string;\n  description: string;\n  executionOrder: number;\n  required: boolean;\n}\n\nexport const SKILL_CATALOG: Record<string, SkillMeta> = {\n${skillEntries}\n};\n\nexport function listSkills(): SkillMeta[] {\n  return Object.values(SKILL_CATALOG).sort((a, b) => a.executionOrder - b.executionOrder);\n}\n${skillStubs}\n\nexport function executeSkill(name: string, input: Record<string, unknown>): Record<string, unknown> {\n  switch (name) {\n${dispatchCases}\n    default:\n      throw new Error(\`Unknown skill: \${name}\`);\n  }\n}\n`;
+          } else {
+            const pySkillEntries = matchedSkills.map(s => {
+              return `    "${s.name.replace(/"/g, '\\"')}": {\n        "name": "${s.name.replace(/"/g, '\\"')}",\n        "domain": "${s.domain}",\n        "description": "${s.description.replace(/"/g, '\\"').replace(/\n/g, " ")}",\n        "execution_order": ${s.executionOrder ?? 0},\n        "required": ${s.required ? "True" : "False"},\n    }`;
+            }).join(",\n");
+            const pySkillStubs = matchedSkills.map(s => {
+              const safeName = s.name.replace(/[^a-zA-Z0-9_ ]/g, "").replace(/\s+/g, "_").replace(/_+/g, "_").toLowerCase();
+              return `\ndef execute_${safeName}(input_data: dict) -> dict:\n    """Skill: ${s.name}\n    Domain: ${s.domain}\n    ${s.description.replace(/\n/g, " ").slice(0, 120)}\n    """\n    # TODO: Implement ${s.name} skill logic\n    return {"status": "not_implemented", "skill_name": "${s.name.replace(/"/g, '\\"')}"}`;
+            }).join("\n\n");
+            const pyDispatchCases = matchedSkills.map(s => {
+              const safeName = s.name.replace(/[^a-zA-Z0-9_ ]/g, "").replace(/\s+/g, "_").replace(/_+/g, "_").toLowerCase();
+              return `    "${s.name.replace(/"/g, '\\"')}": execute_${safeName}`;
+            }).join(",\n");
+            files["src/agent/skills.py"] = `# ATLAS-generated: Skills catalog for ${agent.name}\nfrom typing import Any\n\n\nSKILL_CATALOG: dict[str, dict[str, Any]] = {\n${pySkillEntries}\n}\n\n\ndef list_skills() -> list[dict[str, Any]]:\n    return sorted(SKILL_CATALOG.values(), key=lambda s: s["execution_order"])\n${pySkillStubs}\n\n\n_SKILL_DISPATCH: dict[str, Any] = {\n${pyDispatchCases}\n}\n\n\ndef execute_skill(name: str, input_data: dict) -> dict:\n    handler = _SKILL_DISPATCH.get(name)\n    if not handler:\n        raise ValueError(f"Unknown skill: {name}")\n    return handler(input_data)\n`;
+          }
         }
 
         if (outcomeData) {
@@ -19706,7 +19770,13 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
         const depCmd = format === "typescript" ? "npm install" : "pip install -r requirements.txt";
         const runCmd = format === "typescript" ? "npm start" : "python src/runtime/orchestrator.py";
 
-        files["README.md"] = `<!-- ATLAS-generated README -->\n# ${agent.name}\n\n${agent.description || ""}\n\n## Setup\n\n1. Install dependencies:\n   \`\`\`bash\n   ${depCmd}\n   \`\`\`\n2. Copy \`.env.example\` to \`.env\` and fill in your API keys.\n3. Run the agent:\n   \`\`\`bash\n   ${runCmd}\n   \`\`\`\n\n## File Structure\n\n\`\`\`\n${format === "typescript" ? `src/\n  runtime/\n    orchestrator.ts    # Main agent loop\n    policy.ts          # Policy evaluation hooks\n    tracing.ts         # OpenTelemetry tracing setup\n  agent/\n    graph.ts           # Graph construction from blueprint\n    prompts/\n      system.txt       # System prompt\n    schemas/\n      input.json       # Input JSON schema\n      output.json      # Output JSON schema\n  tools/\n    index.ts           # Tool registry\n    {tool}.ts          # Individual tool adapters\ntests/\n  eval_smoke.test.ts   # Smoke evaluation test\npackage.json\nagent.yaml\nalmp.manifest.json\n.env.example` : `src/\n  runtime/\n    orchestrator.py    # Main agent loop\n    policy.py          # Policy evaluation hooks\n    tracing.py         # OpenTelemetry tracing setup\n  agent/\n    graph.py           # Graph construction from blueprint\n    prompts/\n      system.txt       # System prompt\n    schemas/\n      input.json       # Input JSON schema\n      output.json      # Output JSON schema\n  tools/\n    __init__.py        # Tool registry\n    {tool}.py          # Individual tool adapters\ntests/\n  eval_smoke_test.py   # Smoke evaluation test\nrequirements.txt\nagent.yaml\nalmp.manifest.json\n.env.example`}\n\`\`\`\n\n## Tools\n\n${tools.length > 0 ? toolList : "No tools configured."}\n`;
+        const skillsReadmeSection = matchedSkills.length > 0
+          ? `\n## Skills\n\n| Skill | Domain | Status |\n|-------|--------|--------|\n${matchedSkills.sort((a, b) => (a.executionOrder ?? 0) - (b.executionOrder ?? 0)).map(s => `| ${s.name} | ${s.domain} | ${s.required ? "Required" : "Optional"} |`).join("\n")}\n\nSkill stubs are in \`src/agent/skills.${fileExt}\`. Implement each \`execute_*\` function to activate skill behavior.\n`
+          : "";
+
+        const skillsFileEntry = matchedSkills.length > 0 ? `\n    skills.${fileExt}          # Skills catalog and stubs` : "";
+
+        files["README.md"] = `<!-- ATLAS-generated README -->\n# ${agent.name}\n\n${agent.description || ""}\n\n## Setup\n\n1. Install dependencies:\n   \`\`\`bash\n   ${depCmd}\n   \`\`\`\n2. Copy \`.env.example\` to \`.env\` and fill in your API keys.\n3. Run the agent:\n   \`\`\`bash\n   ${runCmd}\n   \`\`\`\n\n## File Structure\n\n\`\`\`\n${format === "typescript" ? `src/\n  runtime/\n    orchestrator.ts    # Main agent loop\n    policy.ts          # Policy evaluation hooks\n    tracing.ts         # OpenTelemetry tracing setup\n  agent/\n    graph.ts           # Graph construction from blueprint\n    prompts/\n      system.txt       # System prompt\n    schemas/\n      input.json       # Input JSON schema\n      output.json      # Output JSON schema${skillsFileEntry}\n  tools/\n    index.ts           # Tool registry\n    {tool}.ts          # Individual tool adapters\ntests/\n  eval_smoke.test.ts   # Smoke evaluation test\npackage.json\nagent.yaml\nalmp.manifest.json\n.env.example` : `src/\n  runtime/\n    orchestrator.py    # Main agent loop\n    policy.py          # Policy evaluation hooks\n    tracing.py         # OpenTelemetry tracing setup\n  agent/\n    graph.py           # Graph construction from blueprint\n    prompts/\n      system.txt       # System prompt\n    schemas/\n      input.json       # Input JSON schema\n      output.json      # Output JSON schema${skillsFileEntry}\n  tools/\n    __init__.py        # Tool registry\n    {tool}.py          # Individual tool adapters\ntests/\n  eval_smoke_test.py   # Smoke evaluation test\nrequirements.txt\nagent.yaml\nalmp.manifest.json\n.env.example`}\n\`\`\`\n\n## Tools\n\n${tools.length > 0 ? toolList : "No tools configured."}\n${skillsReadmeSection}`;
 
         const graphNodes = Array.isArray(blueprintJson.nodes) ? blueprintJson.nodes as Array<{ type?: string }> : [];
         const graphNodeTypes = new Set(graphNodes.map(n => n.type).filter(Boolean));
@@ -20344,6 +20414,40 @@ def list_policies():
 
       if (!files[".env.example"]) {
         files[".env.example"] = envExample;
+      }
+
+      if (matchedSkills.length > 0 && framework !== "generic") {
+        const skillFileExt = format === "typescript" ? "ts" : "py";
+        if (!files[`src/agent/skills.${skillFileExt}`]) {
+          if (format === "typescript") {
+            const skillEntries = matchedSkills.map(s => {
+              const safeName = s.name.replace(/[^a-zA-Z0-9_]/g, "_");
+              return `  "${safeName}": {\n    name: "${s.name.replace(/"/g, '\\"')}",\n    domain: "${s.domain}",\n    description: "${s.description.replace(/"/g, '\\"').replace(/\n/g, " ")}",\n    executionOrder: ${s.executionOrder ?? 0},\n    required: ${s.required},\n  }`;
+            }).join(",\n");
+            const skillStubs = matchedSkills.map(s => {
+              const safeName = s.name.replace(/[^a-zA-Z0-9_ ]/g, "").replace(/\s+/g, "_").replace(/_+/g, "_");
+              return `\n/** Skill: ${s.name}\n * Domain: ${s.domain}\n * ${s.description.replace(/\n/g, " ").slice(0, 120)}\n */\nfunction execute_${safeName}(input: Record<string, unknown>): Record<string, unknown> {\n  return { status: "not_implemented", skillName: "${s.name.replace(/"/g, '\\"')}" };\n}`;
+            }).join("\n");
+            const dispatchCases = matchedSkills.map(s => {
+              const safeName = s.name.replace(/[^a-zA-Z0-9_ ]/g, "").replace(/\s+/g, "_").replace(/_+/g, "_");
+              return `    case "${s.name.replace(/"/g, '\\"')}": return execute_${safeName}(input);`;
+            }).join("\n");
+            files["src/agent/skills.ts"] = `// ATLAS-generated: Skills catalog for ${agent.name}\n\nexport interface SkillMeta {\n  name: string;\n  domain: string;\n  description: string;\n  executionOrder: number;\n  required: boolean;\n}\n\nexport const SKILL_CATALOG: Record<string, SkillMeta> = {\n${skillEntries}\n};\n\nexport function listSkills(): SkillMeta[] {\n  return Object.values(SKILL_CATALOG).sort((a, b) => a.executionOrder - b.executionOrder);\n}\n${skillStubs}\n\nexport function executeSkill(name: string, input: Record<string, unknown>): Record<string, unknown> {\n  switch (name) {\n${dispatchCases}\n    default:\n      throw new Error(\`Unknown skill: \${name}\`);\n  }\n}\n`;
+          } else {
+            const pySkillEntries = matchedSkills.map(s => {
+              return `    "${s.name.replace(/"/g, '\\"')}": {\n        "name": "${s.name.replace(/"/g, '\\"')}",\n        "domain": "${s.domain}",\n        "description": "${s.description.replace(/"/g, '\\"').replace(/\n/g, " ")}",\n        "execution_order": ${s.executionOrder ?? 0},\n        "required": ${s.required ? "True" : "False"},\n    }`;
+            }).join(",\n");
+            const pySkillStubs = matchedSkills.map(s => {
+              const safeName = s.name.replace(/[^a-zA-Z0-9_ ]/g, "").replace(/\s+/g, "_").replace(/_+/g, "_").toLowerCase();
+              return `\ndef execute_${safeName}(input_data: dict) -> dict:\n    """Skill: ${s.name}\n    Domain: ${s.domain}\n    ${s.description.replace(/\n/g, " ").slice(0, 120)}\n    """\n    return {"status": "not_implemented", "skill_name": "${s.name.replace(/"/g, '\\"')}"}`;
+            }).join("\n\n");
+            const pyDispatchCases = matchedSkills.map(s => {
+              const safeName = s.name.replace(/[^a-zA-Z0-9_ ]/g, "").replace(/\s+/g, "_").replace(/_+/g, "_").toLowerCase();
+              return `    "${s.name.replace(/"/g, '\\"')}": execute_${safeName}`;
+            }).join(",\n");
+            files["src/agent/skills.py"] = `# ATLAS-generated: Skills catalog for ${agent.name}\nfrom typing import Any\n\n\nSKILL_CATALOG: dict[str, dict[str, Any]] = {\n${pySkillEntries}\n}\n\n\ndef list_skills() -> list[dict[str, Any]]:\n    return sorted(SKILL_CATALOG.values(), key=lambda s: s["execution_order"])\n${pySkillStubs}\n\n\n_SKILL_DISPATCH: dict[str, Any] = {\n${pyDispatchCases}\n}\n\n\ndef execute_skill(name: str, input_data: dict) -> dict:\n    handler = _SKILL_DISPATCH.get(name)\n    if not handler:\n        raise ValueError(f"Unknown skill: {name}")\n    return handler(input_data)\n`;
+          }
+        }
       }
 
       if (["generic", "langgraph", "crewai"].includes(framework)) {
