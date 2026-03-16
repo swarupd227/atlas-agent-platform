@@ -18111,6 +18111,9 @@ ${opts?.hasGraph ? `    const currentNode = getNode(currentNodeId);\n    console
           console.log(\`[policy] Response blocked: \${policyCheck.reason}\`);
           return;
         }
+        if (policyCheck.content) {
+          msg.content = policyCheck.content;
+        }
       } catch (pe) {
         console.log(\`[policy] Error evaluating response policy: \${pe}\`);
       }
@@ -18286,6 +18289,9 @@ ${opts?.hasGraph ? `    const currentNode = getNode(currentNodeId);\n    console
           console.log(\`[policy] Response blocked: \${policyCheck.reason}\`);
           return;
         }
+        if (policyCheck.content) {
+          textContent = policyCheck.content;
+        }
       } catch (pe) {
         console.log(\`[policy] Error evaluating response policy: \${pe}\`);
       }
@@ -18453,6 +18459,8 @@ ${opts?.hasGraph ? `        current_node = get_node(current_node_id)\n        pr
                 if not policy_check.get("allowed", True):
                     print(f"[policy] Response blocked: {policy_check.get('reason', '')}")
                     return
+                if policy_check.get("content"):
+                    msg.content = policy_check["content"]
             except Exception as pe:
                 print(f"[policy] Error evaluating response policy: {pe}")
             if promise in msg.content:
@@ -18616,6 +18624,8 @@ ${opts?.hasGraph ? `        current_node = get_node(current_node_id)\n        pr
                 if not policy_check.get("allowed", True):
                     print(f"[policy] Response blocked: {policy_check.get('reason', '')}")
                     return
+                if policy_check.get("content"):
+                    text_content = policy_check["content"]
             except Exception as pe:
                 print(f"[policy] Error evaluating response policy: {pe}")
             if promise in text_content:
@@ -19843,7 +19853,8 @@ export async function onBeforeResponse(response: string): Promise<PolicyResult> 
   if (!forbiddenCheck.allowed) return forbiddenCheck;
 ${hasRegulatedPolicy ? `  const { redacted, found } = redactPii(response);
   if (found.length > 0) {
-    console.log(\\\`[policy] PII detected and redacted: \\\${found.join(", ")}\\\`);
+    const piiTypes = [...new Set(found.map(f => f.split(":")[0].trim()))];
+    console.log(JSON.stringify({ event: "PII_REDACTED", types: piiTypes, count: found.length }));
     const result = await evaluatePolicy({ agentName: "${agent.name}", action: "respond", responseContent: redacted });
     return { ...result, content: redacted };
   }
@@ -19893,13 +19904,21 @@ export function listPolicies(): Array<{ name: string; domain: string | null }> {
               }).join("")
             : "";
           {
+            const hasForbiddenPatterns = policyForbiddenOutputs.length > 0;
+            const hasStopConds = policyStopConditions.length > 0;
             const policyEnforcementTests = linkedPolicies.length > 0
-              ? `\n  test("evaluatePolicy blocks a tool in blockedTools", async () => {\n    const policy = await import("../src/runtime/policy");\n    const policies = policy.listPolicies();\n    expect(Array.isArray(policies)).toBe(true);\n    expect(policies.length).toBeGreaterThan(0);\n  });\n\n  test("checkForbiddenOutputs blocks matching patterns", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = policy.checkForbiddenOutputs("SYSTEM_OVERRIDE_TOKEN_12345");\n    // If no forbidden patterns are configured, this passes; if configured, it blocks\n    expect(typeof result.allowed).toBe("boolean");\n  });\n\n  test("onBeforeResponse blocks forbidden content", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = await policy.onBeforeResponse("SYSTEM_OVERRIDE_TOKEN_12345");\n    expect(typeof result.allowed).toBe("boolean");\n  });\n`
+              ? `\n  test("listPolicies returns populated array", async () => {\n    const policy = await import("../src/runtime/policy");\n    const policies = policy.listPolicies();\n    expect(Array.isArray(policies)).toBe(true);\n    expect(policies.length).toBeGreaterThan(0);\n  });\n\n  test("evaluatePolicy blocks tool in blockedTools when configured", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = await policy.evaluatePolicy({ agentName: "test", action: "tool_call", toolName: "__nonexistent_safe_tool__" });\n    expect(result.allowed).toBe(true);\n  });\n`
+              : "";
+            const forbiddenOutputTests = hasForbiddenPatterns
+              ? `\n  test("checkForbiddenOutputs blocks matching forbidden pattern", async () => {\n    const policy = await import("../src/runtime/policy");\n    // Use the first configured forbidden pattern to verify blocking\n    const testInput = ${JSON.stringify(policyForbiddenOutputs[0] || "BLOCKED")};\n    const result = policy.checkForbiddenOutputs(testInput);\n    expect(result.allowed).toBe(false);\n    expect(result.reason).toBeDefined();\n  });\n`
+              : `\n  test("checkForbiddenOutputs allows content when no patterns configured", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = policy.checkForbiddenOutputs("any content at all");\n    expect(result.allowed).toBe(true);\n  });\n`;
+            const stopConditionTests = hasStopConds
+              ? `\n  test("checkStopConditions blocks matching stop condition", async () => {\n    const policy = await import("../src/runtime/policy");\n    const testContent = ${JSON.stringify(policyStopConditions[0])};\n    const result = policy.checkStopConditions(testContent);\n    expect(result.allowed).toBe(false);\n    expect(result.reason).toContain("Stop condition");\n  });\n`
               : "";
             const piiTests = hasRegulatedPolicy
-              ? `\n  test("onBeforeResponse redacts PII from response content", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = await policy.onBeforeResponse("Contact john@example.com or call 555-123-4567");\n    expect(result.content).toBeDefined();\n    expect(result.content).not.toContain("john@example.com");\n    expect(result.content).toContain("[REDACTED_EMAIL]");\n  });\n`
+              ? `\n  test("onBeforeResponse redacts PII and returns redacted content", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = await policy.onBeforeResponse("Contact john@example.com or call 555-123-4567");\n    expect(result.content).toBeDefined();\n    expect(result.content).not.toContain("john@example.com");\n    expect(result.content).toContain("[REDACTED_EMAIL]");\n    expect(result.content).not.toContain("555-123-4567");\n  });\n`
               : "";
-            files["tests/eval_smoke.test.ts"] = `// ATLAS-generated: Vitest evaluation test suite\nimport { describe, test, expect } from "vitest";\n\ndescribe("Smoke tests", () => {\n  test("orchestrator module loads", async () => {\n    const orchestrator = await import("../src/runtime/orchestrator");\n    expect(orchestrator).toBeTruthy();\n  });\n\n  test("graph module has nodes and edges", async () => {\n    const graph = await import("../src/agent/graph");\n    expect(graph.nodes).toBeDefined();\n    expect(graph.nodes.length).toBeGreaterThan(0);\n    expect(graph.edges).toBeDefined();\n  });\n\n  test("policy stub allows actions", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = await policy.evaluatePolicy({ agentName: ${JSON.stringify(agent.name)}, action: "test" });\n    expect(result.allowed).toBe(true);\n  });\n});\n\ndescribe("Policy enforcement", () => {\n  test("checkStopConditions returns allowed for normal content", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = policy.checkStopConditions("normal output text");\n    expect(result.allowed).toBe(true);\n  });\n\n  test("checkStopConditions blocks matching stop condition content", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = policy.checkStopConditions("normal output text");\n    expect(result.allowed).toBe(true);\n    // Verify the function returns allowed:false structure when content matches\n    expect(typeof result.allowed).toBe("boolean");\n    expect(result.reason === undefined || typeof result.reason === "string").toBe(true);\n  });\n\n  test("checkForbiddenOutputs returns allowed for clean content", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = policy.checkForbiddenOutputs("clean response text");\n    expect(result.allowed).toBe(true);\n  });\n\n  test("onBeforeResponse chains stop, forbidden, and policy checks", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = await policy.onBeforeResponse("Hello, how can I help?");\n    expect(result.allowed).toBe(true);\n  });\n${policyEnforcementTests}${piiTests}\n});\n\ndescribe("Eval cases", () => {\n${evalVitestCases}\n});\n`;
+            files["tests/eval_smoke.test.ts"] = `// ATLAS-generated: Vitest evaluation test suite\nimport { describe, test, expect } from "vitest";\n\ndescribe("Smoke tests", () => {\n  test("orchestrator module loads", async () => {\n    const orchestrator = await import("../src/runtime/orchestrator");\n    expect(orchestrator).toBeTruthy();\n  });\n\n  test("graph module has nodes and edges", async () => {\n    const graph = await import("../src/agent/graph");\n    expect(graph.nodes).toBeDefined();\n    expect(graph.nodes.length).toBeGreaterThan(0);\n    expect(graph.edges).toBeDefined();\n  });\n\n  test("policy stub allows actions", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = await policy.evaluatePolicy({ agentName: ${JSON.stringify(agent.name)}, action: "test" });\n    expect(result.allowed).toBe(true);\n  });\n});\n\ndescribe("Policy enforcement", () => {\n  test("checkStopConditions returns allowed for normal content", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = policy.checkStopConditions("normal output text");\n    expect(result.allowed).toBe(true);\n  });\n\n  test("checkForbiddenOutputs returns allowed for clean content", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = policy.checkForbiddenOutputs("clean response text");\n    expect(result.allowed).toBe(true);\n  });\n\n  test("onBeforeResponse chains stop, forbidden, and policy checks", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = await policy.onBeforeResponse("Hello, how can I help?");\n    expect(result.allowed).toBe(true);\n  });\n${stopConditionTests}${forbiddenOutputTests}${policyEnforcementTests}${piiTests}\n});\n\ndescribe("Eval cases", () => {\n${evalVitestCases}\n});\n`;
           }
 
           const deps: Record<string, string> = { ...baseDeps };
@@ -20022,7 +20041,8 @@ def on_before_response(response: str) -> dict:
         return forbidden_check
 ${hasRegulatedPolicy ? `    pii_result = redact_pii(response)
     if pii_result["found"]:
-        print(f'[policy] PII detected and redacted: {", ".join(pii_result["found"])}')
+        pii_types = list(set(f.split(":")[0].strip() for f in pii_result["found"]))
+        print(json.dumps({"event": "PII_REDACTED", "types": pii_types, "count": len(pii_result["found"])}))
         policy_result = evaluate_policy("${agent.name}", "respond")
         policy_result["content"] = pii_result["redacted"]
         return policy_result
@@ -20071,13 +20091,21 @@ def list_policies():
               }).join("")
             : "";
           {
+            const pyHasForbiddenPatterns = policyForbiddenOutputs.length > 0;
+            const pyHasStopConds = policyStopConditions.length > 0;
             const pyPolicyEnforcementTests = linkedPolicies.length > 0
-              ? `\n\ndef test_list_policies_returns_populated_array():\n    policy = importlib.import_module("src.runtime.policy")\n    policies = policy.list_policies()\n    assert isinstance(policies, list)\n    assert len(policies) > 0\n\n\ndef test_check_forbidden_outputs_validates_patterns():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.check_forbidden_outputs("SYSTEM_OVERRIDE_TOKEN_12345")\n    assert isinstance(result["allowed"], bool)\n\n\ndef test_on_before_response_chains_all_checks():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.on_before_response("SYSTEM_OVERRIDE_TOKEN_12345")\n    assert isinstance(result["allowed"], bool)\n`
+              ? `\n\ndef test_list_policies_returns_populated_array():\n    policy = importlib.import_module("src.runtime.policy")\n    policies = policy.list_policies()\n    assert isinstance(policies, list)\n    assert len(policies) > 0\n`
+              : "";
+            const pyForbiddenOutputTests = pyHasForbiddenPatterns
+              ? `\n\ndef test_check_forbidden_outputs_blocks_matching_pattern():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.check_forbidden_outputs(${JSON.stringify(policyForbiddenOutputs[0] || "BLOCKED")})\n    assert result["allowed"] is False\n    assert "reason" in result\n`
+              : `\n\ndef test_check_forbidden_outputs_allows_when_no_patterns():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.check_forbidden_outputs("any content at all")\n    assert result["allowed"] is True\n`;
+            const pyStopConditionTests = pyHasStopConds
+              ? `\n\ndef test_check_stop_conditions_blocks_matching_condition():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.check_stop_conditions(${JSON.stringify(policyStopConditions[0])})\n    assert result["allowed"] is False\n    assert "Stop condition" in result["reason"]\n`
               : "";
             const pyPiiTests = hasRegulatedPolicy
-              ? `\n\ndef test_on_before_response_redacts_pii():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.on_before_response("Contact john@example.com or call 555-123-4567")\n    assert "content" in result\n    assert "john@example.com" not in result["content"]\n    assert "[REDACTED_EMAIL]" in result["content"]\n`
+              ? `\n\ndef test_on_before_response_redacts_pii_and_returns_content():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.on_before_response("Contact john@example.com or call 555-123-4567")\n    assert "content" in result\n    assert "john@example.com" not in result["content"]\n    assert "[REDACTED_EMAIL]" in result["content"]\n    assert "555-123-4567" not in result["content"]\n`
               : "";
-            files["tests/eval_smoke_test.py"] = `# ATLAS-generated: Pytest evaluation test suite\nimport importlib\nimport subprocess\nimport sys\nimport pytest\n\n\ndef test_orchestrator_module_loads():\n    orchestrator = importlib.import_module("src.runtime.orchestrator")\n    assert orchestrator is not None\n\n\ndef test_graph_module_has_nodes_and_edges():\n    graph = importlib.import_module("src.agent.graph")\n    assert hasattr(graph, "NODES")\n    assert len(graph.NODES) > 0\n    assert hasattr(graph, "EDGES")\n\n\ndef test_policy_stub_allows_actions():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.evaluate_policy(${JSON.stringify(agent.name)}, "test")\n    assert result["allowed"] is True\n\n\ndef test_check_stop_conditions_allows_normal():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.check_stop_conditions("normal output text")\n    assert result["allowed"] is True\n\n\ndef test_check_stop_conditions_validates_structure():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.check_stop_conditions("normal output text")\n    assert isinstance(result["allowed"], bool)\n    assert "reason" not in result or isinstance(result.get("reason"), str)\n\n\ndef test_check_forbidden_outputs_allows_clean():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.check_forbidden_outputs("clean response text")\n    assert result["allowed"] is True\n\n\ndef test_on_before_response_chains_checks():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.on_before_response("Hello, how can I help?")\n    assert result["allowed"] is True\n${pyPolicyEnforcementTests}${pyPiiTests}${pyEvalCases}\n`;
+            files["tests/eval_smoke_test.py"] = `# ATLAS-generated: Pytest evaluation test suite\nimport importlib\nimport subprocess\nimport sys\nimport pytest\n\n\ndef test_orchestrator_module_loads():\n    orchestrator = importlib.import_module("src.runtime.orchestrator")\n    assert orchestrator is not None\n\n\ndef test_graph_module_has_nodes_and_edges():\n    graph = importlib.import_module("src.agent.graph")\n    assert hasattr(graph, "NODES")\n    assert len(graph.NODES) > 0\n    assert hasattr(graph, "EDGES")\n\n\ndef test_policy_stub_allows_actions():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.evaluate_policy(${JSON.stringify(agent.name)}, "test")\n    assert result["allowed"] is True\n\n\ndef test_check_stop_conditions_allows_normal():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.check_stop_conditions("normal output text")\n    assert result["allowed"] is True\n\n\ndef test_check_stop_conditions_validates_structure():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.check_stop_conditions("normal output text")\n    assert isinstance(result["allowed"], bool)\n    assert "reason" not in result or isinstance(result.get("reason"), str)\n\n\ndef test_check_forbidden_outputs_allows_clean():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.check_forbidden_outputs("clean response text")\n    assert result["allowed"] is True\n\n\ndef test_on_before_response_chains_checks():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.on_before_response("Hello, how can I help?")\n    assert result["allowed"] is True\n${pyStopConditionTests}${pyForbiddenOutputTests}${pyPolicyEnforcementTests}${pyPiiTests}${pyEvalCases}\n`;
           }
 
           const reqs = [...baseReqs]; addLlmDep({}, reqs);
