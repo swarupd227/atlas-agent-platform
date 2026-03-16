@@ -340,9 +340,7 @@ export default function AgentExport() {
         toast({ title: "Pushed to Git", description: `Commit: ${(data.commitSha || "").substring(0, 8)}` });
       } catch (err: unknown) {
         let detail = "Could not push code to the repository.";
-        try {
-          if (err && typeof err === "object" && "message" in err) detail = String((err as any).message);
-        } catch {}
+        if (err instanceof Error) detail = err.message;
         toast({ title: "Git push failed", description: detail, variant: "destructive" });
       }
     } else if (deliveryTarget === "replit") {
