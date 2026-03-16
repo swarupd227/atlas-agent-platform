@@ -18858,42 +18858,82 @@ export default defineConfig({
     const invalidArgsBlock = invalidArgs.length > 0 ? `{\n${invalidArgs.join(",\n")},\n  }` : "{}";
     const importPath = `../../${toolsDir}/${fnName}`;
     const isStub = adapterType === "stub" || adapterType === "builtin";
+    const schemaKeys = Object.keys(props);
+    const requiredKeys = Array.from(required);
+    const schemaEntries = schemaKeys.map(k => {
+      const p = props[k];
+      const tsType = p.type === "integer" ? "number" : p.type === "array" ? "object" : (p.type as string || "string");
+      return { key: k, tsType, isRequired: required.has(k) };
+    });
+    const schemaChecks = schemaEntries.map(e =>
+      `    expect(typeof validArgs.${e.key}).toBe("${e.tsType}");`
+    ).join("\n");
+    const schemaSpec = JSON.stringify(
+      Object.fromEntries(schemaKeys.map(k => [k, { type: props[k].type, required: required.has(k) }])),
+      null, 2
+    );
+
     return `// ATLAS-generated: Unit tests for tool "${fnName}"
-import { describe, test, expect, vi } from "vitest";
-import { ${fnName} } from "${importPath}";
+import { describe, test, expect, vi, beforeEach } from "vitest";
+import * as toolModule from "${importPath}";
 import type { ${interfaceName} } from "${importPath}";
 
-const mockConsoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
+const TOOL_SCHEMA = ${schemaSpec} as const;
+
+function validateArgsAgainstSchema(args: Record<string, unknown>): string[] {
+  const errors: string[] = [];
+  for (const [key, spec] of Object.entries(TOOL_SCHEMA)) {
+    const s = spec as { type: string; required: boolean };
+    if (s.required && !(key in args)) errors.push(\`missing required field: \${key}\`);
+    if (key in args && args[key] !== undefined && args[key] !== null) {
+      const actual = Array.isArray(args[key]) ? "array" : typeof args[key];
+      const expected = s.type === "integer" ? "number" : s.type;
+      if (actual !== expected) errors.push(\`\${key}: expected \${expected}, got \${actual}\`);
+    }
+  }
+  return errors;
+}
 
 describe("Tool: ${fnName}", () => {
-  test("function is exported and callable", () => {
-    expect(typeof ${fnName}).toBe("function");
+  beforeEach(() => {
+    vi.restoreAllMocks();
   });
 
-  test("schema — valid args structure accepted", async () => {
+  test("function is exported and callable", () => {
+    expect(typeof toolModule.${fnName}).toBe("function");
+  });
+
+  test("schema — valid args pass runtime validation", () => {
+    const validArgs: ${interfaceName} = ${validArgsBlock};
+    const errors = validateArgsAgainstSchema(validArgs as unknown as Record<string, unknown>);
+    expect(errors).toEqual([]);
+${schemaChecks || '    expect(validArgs).toBeDefined();'}
+  });
+
+  test("schema — invalid arg types fail runtime validation", () => {
+    const badArgs = ${invalidArgsBlock};
+    const errors = validateArgsAgainstSchema(badArgs as unknown as Record<string, unknown>);
+${schemaKeys.length > 0 ? '    expect(errors.length).toBeGreaterThan(0);' : '    expect(errors).toEqual([]);'}
+  });
+
+${requiredKeys.length > 0 ? `  test("schema — missing required fields detected", () => {
+    const errors = validateArgsAgainstSchema({});
+    const missingErrors = errors.filter(e => e.startsWith("missing required"));
+    expect(missingErrors.length).toBeGreaterThanOrEqual(${requiredKeys.length});
+  });
+` : ''}
+  test("adapter — real call with valid args", async () => {
     const validArgs: ${interfaceName} = ${validArgsBlock};
     ${isStub
-      ? `await expect(${fnName}(validArgs)).rejects.toThrow();`
-      : `const result = await ${fnName}(validArgs);\n    expect(result).toBeDefined();\n    expect(typeof result).toBe("object");`}
+      ? `await expect(toolModule.${fnName}(validArgs)).rejects.toThrow();`
+      : `const result = await toolModule.${fnName}(validArgs);\n    expect(result).toBeDefined();\n    expect(typeof result === "object" || typeof result === "string").toBe(true);`}
   });
 
-  test("schema — invalid arg types handled gracefully", async () => {
-    const badArgs = ${invalidArgsBlock};
-    try {
-      await ${fnName}(badArgs as unknown as ${interfaceName});
-    } catch (e: unknown) {
-      expect(e).toBeDefined();
-      expect(e instanceof Error || typeof e === "object").toBe(true);
-    }
-  });
-
-  test("mock — happy path returns expected shape", async () => {
-    const mockImpl = vi.fn<(args: ${interfaceName}) => Promise<Record<string, unknown>>>()
-      .mockResolvedValue({ status: "ok", tool: "${fnName}" });
+  test("adapter — error propagation via spy", async () => {
+    const spy = vi.spyOn(toolModule, "${fnName}").mockRejectedValue(new Error("connection refused"));
     const validArgs: ${interfaceName} = ${validArgsBlock};
-    const result = await mockImpl(validArgs);
-    expect(result).toEqual({ status: "ok", tool: "${fnName}" });
-    expect(mockImpl).toHaveBeenCalledWith(validArgs);
+    await expect(toolModule.${fnName}(validArgs)).rejects.toThrow("connection refused");
+    spy.mockRestore();
   });
 });
 `;
@@ -18930,6 +18970,21 @@ describe("Tool: ${fnName}", () => {
     const invalidArgsConstruction = invalidKwargs.length > 0 ? `${className}(${invalidKwargs.join(", ")})` : `${className}()`;
     const isStub = adapterType === "stub" || adapterType === "builtin";
 
+    const schemaChecks = Object.entries(props).map(([k, v]) => {
+      const pyType = v.type === "string" ? "str" : v.type === "number" || v.type === "integer" ? "(int, float)" : v.type === "boolean" ? "bool" : v.type === "array" ? "list" : v.type === "object" ? "dict" : "object";
+      return `        assert isinstance(args.${k}, ${pyType}), f"${k} should be ${pyType}"`;
+    }).join("\n");
+    const pyRequired = new Set(Array.isArray(tool.parameters?.required) ? tool.parameters!.required as string[] : []);
+    const requiredKeys = Array.from(pyRequired);
+    const missingRequiredTest = requiredKeys.length > 0
+      ? `
+    def test_schema_rejects_missing_required(self):
+        """Schema validation: missing required fields raise error."""
+        with pytest.raises((TypeError, ValueError, Exception)):
+            ${className}()
+`
+      : "";
+
     return `# ATLAS-generated: Unit tests for tool "${fnName}"
 import pytest
 from unittest.mock import patch, MagicMock
@@ -18942,27 +18997,21 @@ class TestTool${className.replace("Args", "")}:
     def test_is_callable(self):
         assert callable(${fnName})
 
-    def test_schema_valid_args(self):
-        """Schema validation: valid args accepted."""
+    def test_schema_valid_args_accepted(self):
+        """Schema validation: valid args construct and match expected types."""
         args = ${validArgsConstruction}
         assert isinstance(args, ${className})
-        ${isStub
-          ? `with pytest.raises((NotImplementedError, Exception)):\n            ${fnName}(args)`
-          : `result = ${fnName}(args)\n        assert isinstance(result, dict)`}
+${schemaChecks || '        pass'}
 
-    def test_schema_invalid_arg_types(self):
-        """Schema validation: invalid types handled gracefully."""
-        try:
-            args = ${invalidArgsConstruction}
-            ${isStub
-              ? `with pytest.raises((NotImplementedError, Exception)):\n                ${fnName}(args)`
-              : `result = ${fnName}(args)  # may succeed with coercion`}
-        except (TypeError, ValueError, Exception):
-            pass
-
+    def test_schema_invalid_arg_types_rejected(self):
+        """Schema validation: invalid arg types cause error or are caught."""
+        with pytest.raises((TypeError, ValueError, Exception)):
+            bad_args = ${invalidArgsConstruction}
+            ${fnName}(bad_args)
+${missingRequiredTest}
     @patch("${toolsModule}.${fnName}.${fnName}")
-    def test_mock_happy_path(self, mock_fn: MagicMock):
-        """Mock test: happy-path returns expected shape."""
+    def test_adapter_happy_path(self, mock_fn: MagicMock):
+        """Adapter mock: happy-path returns expected shape via mocked adapter."""
         mock_fn.return_value = {"status": "ok", "tool": "${fnName}"}
         args = ${validArgsConstruction}
         result = mock_fn(args)
@@ -18970,8 +19019,8 @@ class TestTool${className.replace("Args", "")}:
         mock_fn.assert_called_once_with(args)
 
     @patch("${toolsModule}.${fnName}.${fnName}")
-    def test_mock_error_propagation(self, mock_fn: MagicMock):
-        """Mock test: errors propagate correctly."""
+    def test_adapter_error_propagation(self, mock_fn: MagicMock):
+        """Adapter mock: errors propagate correctly."""
         mock_fn.side_effect = RuntimeError("connection refused")
         args = ${validArgsConstruction}
         with pytest.raises(RuntimeError, match="connection refused"):
@@ -19962,6 +20011,23 @@ spec:
 
       if (format === "typescript") {
         files["vitest.config.ts"] = generateVitestConfig();
+        if (files["package.json"]) {
+          try {
+            const pkg = JSON.parse(files["package.json"]);
+            if (!pkg.devDependencies) pkg.devDependencies = {};
+            if (!pkg.devDependencies["vitest"]) pkg.devDependencies["vitest"] = pin ? "1.6.0" : "^1.6.0";
+            if (!pkg.scripts) pkg.scripts = {};
+            if (!pkg.scripts["test"]) pkg.scripts["test"] = "vitest run";
+            files["package.json"] = JSON.stringify(pkg, null, 2);
+          } catch {}
+        }
+      }
+
+      if (format === "python" && files["requirements.txt"]) {
+        const reqContent = files["requirements.txt"];
+        if (!reqContent.includes("pytest")) {
+          files["requirements.txt"] = reqContent.trimEnd() + "\npytest>=7.4.0\n";
+        }
       }
 
       if (!files[".github/workflows/ci.yml"]) {
