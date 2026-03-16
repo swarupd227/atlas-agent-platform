@@ -66,8 +66,6 @@ function getFileIcon(name: string) {
   return <File className="w-3.5 h-3.5 text-muted-foreground shrink-0" />;
 }
 
-const REGEN_PATTERN = /orchestrator|entrypoint|tools\/|adapters\/|graph|crew|agent_node/i;
-
 function TreeItem({
   node,
   depth,
@@ -89,7 +87,7 @@ function TreeItem({
 }) {
   const isExpanded = expandedDirs.has(node.path);
   const isActive = !node.isDir && node.path === activeFile;
-  const canRegen = !node.isDir && onRegenFile && REGEN_PATTERN.test(node.path);
+  const showRegen = !node.isDir && !!onRegenFile;
   const isRegenerating = regeneratingFile === node.path;
 
   return (
@@ -124,7 +122,7 @@ function TreeItem({
           )}
           <span className="truncate">{node.name}</span>
         </button>
-        {canRegen && (
+        {showRegen && (
           <button
             className="h-5 w-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mr-1 rounded hover:bg-muted"
             disabled={isRegenerating}
