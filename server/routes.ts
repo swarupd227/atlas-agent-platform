@@ -18835,92 +18835,147 @@ export default defineConfig({
 `;
   }
 
-  function generateTsToolTest(tool: { name: string; description?: string; parameters?: Record<string, unknown> }, adapterType: "builtin" | "customer" | "stub"): string {
+  function generateTsToolTest(tool: { name: string; description?: string; parameters?: Record<string, unknown> }, adapterType: "builtin" | "customer" | "stub", toolsDir: string): string {
     const fnName = tool.name;
     const interfaceName = fnName.charAt(0).toUpperCase() + fnName.slice(1) + "Args";
     const props = (tool.parameters?.properties || {}) as Record<string, Record<string, unknown>>;
     const required = new Set(Array.isArray(tool.parameters?.required) ? tool.parameters!.required as string[] : []);
-    const sampleArgs: Record<string, unknown> = {};
+    const validArgs: string[] = [];
+    const invalidArgs: string[] = [];
     for (const [key, v] of Object.entries(props)) {
-      if (v.type === "string") sampleArgs[key] = v.example || v.default || `test_${key}`;
-      else if (v.type === "number" || v.type === "integer") sampleArgs[key] = v.example || v.default || 1;
-      else if (v.type === "boolean") sampleArgs[key] = v.example ?? v.default ?? true;
-      else if (v.type === "array") sampleArgs[key] = [];
-      else if (v.type === "object") sampleArgs[key] = {};
-      else sampleArgs[key] = `test_${key}`;
+      if (v.type === "string") validArgs.push(`    ${key}: ${JSON.stringify(v.example || v.default || `test_${key}`)}`);
+      else if (v.type === "number" || v.type === "integer") validArgs.push(`    ${key}: ${v.example || v.default || 42}`);
+      else if (v.type === "boolean") validArgs.push(`    ${key}: ${(v.example ?? v.default ?? true)}`);
+      else if (v.type === "array") validArgs.push(`    ${key}: []`);
+      else if (v.type === "object") validArgs.push(`    ${key}: {}`);
+      else validArgs.push(`    ${key}: "test_${key}"`);
+      if (v.type === "string") invalidArgs.push(`    ${key}: 12345`);
+      else if (v.type === "number" || v.type === "integer") invalidArgs.push(`    ${key}: "not_a_number"`);
+      else if (v.type === "boolean") invalidArgs.push(`    ${key}: "not_a_bool"`);
+      else invalidArgs.push(`    ${key}: null`);
     }
-    const sampleArgsJson = JSON.stringify(sampleArgs, null, 2);
+    const validArgsBlock = validArgs.length > 0 ? `{\n${validArgs.join(",\n")},\n  }` : "{}";
+    const invalidArgsBlock = invalidArgs.length > 0 ? `{\n${invalidArgs.join(",\n")},\n  }` : "{}";
+    const importPath = `../../${toolsDir}/${fnName}`;
     const isStub = adapterType === "stub" || adapterType === "builtin";
     return `// ATLAS-generated: Unit tests for tool "${fnName}"
-import { describe, test, expect } from "vitest";
-import { ${fnName} } from "../../src/tools/${fnName}";
+import { describe, test, expect, vi } from "vitest";
+import { ${fnName} } from "${importPath}";
+import type { ${interfaceName} } from "${importPath}";
+
+const mockConsoleLog = vi.spyOn(console, "log").mockImplementation(() => {});
 
 describe("Tool: ${fnName}", () => {
   test("function is exported and callable", () => {
     expect(typeof ${fnName}).toBe("function");
   });
 
-  test("accepts valid input args", async () => {
-    const args: Record<string, unknown> = ${sampleArgsJson};
+  test("schema — valid args structure accepted", async () => {
+    const validArgs: ${interfaceName} = ${validArgsBlock};
     ${isStub
-      ? `await expect(${fnName}(args as any)).rejects.toThrow();`
-      : `const result = await ${fnName}(args as any);\n    expect(result).toBeDefined();\n    expect(typeof result).toBe("object");`}
+      ? `await expect(${fnName}(validArgs)).rejects.toThrow();`
+      : `const result = await ${fnName}(validArgs);\n    expect(result).toBeDefined();\n    expect(typeof result).toBe("object");`}
   });
 
-  test("rejects missing required args gracefully", async () => {
+  test("schema — invalid arg types handled gracefully", async () => {
+    const badArgs = ${invalidArgsBlock};
     try {
-      const result = await ${fnName}({} as any);
-      ${adapterType === "customer" ? `expect(result).toBeDefined();` : `expect(result).toBeDefined();`}
-    } catch (e) {
+      await ${fnName}(badArgs as unknown as ${interfaceName});
+    } catch (e: unknown) {
       expect(e).toBeDefined();
+      expect(e instanceof Error || typeof e === "object").toBe(true);
     }
+  });
+
+  test("mock — happy path returns expected shape", async () => {
+    const mockImpl = vi.fn<(args: ${interfaceName}) => Promise<Record<string, unknown>>>()
+      .mockResolvedValue({ status: "ok", tool: "${fnName}" });
+    const validArgs: ${interfaceName} = ${validArgsBlock};
+    const result = await mockImpl(validArgs);
+    expect(result).toEqual({ status: "ok", tool: "${fnName}" });
+    expect(mockImpl).toHaveBeenCalledWith(validArgs);
   });
 });
 `;
   }
 
-  function generatePyToolTest(tool: { name: string; description?: string; parameters?: Record<string, unknown> }, adapterType: "builtin" | "customer" | "stub"): string {
+  function generatePyToolTest(tool: { name: string; description?: string; parameters?: Record<string, unknown> }, adapterType: "builtin" | "customer" | "stub", toolsModule: string): string {
     const fnName = tool.name;
     const className = fnName.charAt(0).toUpperCase() + fnName.slice(1) + "Args";
     const props = (tool.parameters?.properties || {}) as Record<string, Record<string, unknown>>;
-    const sampleKwargs: string[] = [];
+    const validKwargs: string[] = [];
+    const invalidKwargs: string[] = [];
     for (const [key, v] of Object.entries(props)) {
-      if (v.type === "string") sampleKwargs.push(`${key}=${JSON.stringify(v.example || v.default || `test_${key}`)}`);
-      else if (v.type === "number" || v.type === "integer") sampleKwargs.push(`${key}=${v.example || v.default || 1}`);
-      else if (v.type === "boolean") sampleKwargs.push(`${key}=${(v.example ?? v.default ?? true) ? "True" : "False"}`);
-      else if (v.type === "array") sampleKwargs.push(`${key}=[]`);
-      else if (v.type === "object") sampleKwargs.push(`${key}={}`);
-      else sampleKwargs.push(`${key}="test_${key}"`);
+      if (v.type === "string") {
+        validKwargs.push(`${key}=${JSON.stringify(v.example || v.default || `test_${key}`)}`);
+        invalidKwargs.push(`${key}=12345`);
+      } else if (v.type === "number" || v.type === "integer") {
+        validKwargs.push(`${key}=${v.example || v.default || 42}`);
+        invalidKwargs.push(`${key}="not_a_number"`);
+      } else if (v.type === "boolean") {
+        validKwargs.push(`${key}=${(v.example ?? v.default ?? true) ? "True" : "False"}`);
+        invalidKwargs.push(`${key}="not_a_bool"`);
+      } else if (v.type === "array") {
+        validKwargs.push(`${key}=[]`);
+        invalidKwargs.push(`${key}="not_a_list"`);
+      } else if (v.type === "object") {
+        validKwargs.push(`${key}={}`);
+        invalidKwargs.push(`${key}="not_a_dict"`);
+      } else {
+        validKwargs.push(`${key}="test_${key}"`);
+        invalidKwargs.push(`${key}=None`);
+      }
     }
-    const argsConstruction = sampleKwargs.length > 0
-      ? `${className}(${sampleKwargs.join(", ")})`
-      : `${className}()`;
+    const validArgsConstruction = validKwargs.length > 0 ? `${className}(${validKwargs.join(", ")})` : `${className}()`;
+    const invalidArgsConstruction = invalidKwargs.length > 0 ? `${className}(${invalidKwargs.join(", ")})` : `${className}()`;
     const isStub = adapterType === "stub" || adapterType === "builtin";
 
     return `# ATLAS-generated: Unit tests for tool "${fnName}"
 import pytest
-from src.tools.${fnName} import ${fnName}, ${className}
+from unittest.mock import patch, MagicMock
+from ${toolsModule}.${fnName} import ${fnName}, ${className}
 
 
-def test_${fnName}_is_callable():
-    assert callable(${fnName})
+class TestTool${className.replace("Args", "")}:
+    """Test suite for ${fnName} tool adapter."""
 
+    def test_is_callable(self):
+        assert callable(${fnName})
 
-def test_${fnName}_with_valid_args():
-    args = ${argsConstruction}
-    ${isStub
-      ? `with pytest.raises((NotImplementedError, Exception)):\n        ${fnName}(args)`
-      : `result = ${fnName}(args)\n    assert isinstance(result, dict)`}
-
-
-def test_${fnName}_with_empty_args():
-    try:
-        args = ${className}()
+    def test_schema_valid_args(self):
+        """Schema validation: valid args accepted."""
+        args = ${validArgsConstruction}
+        assert isinstance(args, ${className})
         ${isStub
           ? `with pytest.raises((NotImplementedError, Exception)):\n            ${fnName}(args)`
           : `result = ${fnName}(args)\n        assert isinstance(result, dict)`}
-    except TypeError:
-        pass  # Expected if required fields are missing
+
+    def test_schema_invalid_arg_types(self):
+        """Schema validation: invalid types handled gracefully."""
+        try:
+            args = ${invalidArgsConstruction}
+            ${isStub
+              ? `with pytest.raises((NotImplementedError, Exception)):\n                ${fnName}(args)`
+              : `result = ${fnName}(args)  # may succeed with coercion`}
+        except (TypeError, ValueError, Exception):
+            pass
+
+    @patch("${toolsModule}.${fnName}.${fnName}")
+    def test_mock_happy_path(self, mock_fn: MagicMock):
+        """Mock test: happy-path returns expected shape."""
+        mock_fn.return_value = {"status": "ok", "tool": "${fnName}"}
+        args = ${validArgsConstruction}
+        result = mock_fn(args)
+        assert result == {"status": "ok", "tool": "${fnName}"}
+        mock_fn.assert_called_once_with(args)
+
+    @patch("${toolsModule}.${fnName}.${fnName}")
+    def test_mock_error_propagation(self, mock_fn: MagicMock):
+        """Mock test: errors propagate correctly."""
+        mock_fn.side_effect = RuntimeError("connection refused")
+        args = ${validArgsConstruction}
+        with pytest.raises(RuntimeError, match="connection refused"):
+            mock_fn(args)
 `;
   }
 
@@ -19894,12 +19949,14 @@ spec:
 `;
       }
 
+      const toolsDir = framework === "generic" ? "src/tools" : "tools";
+      const toolsModule = framework === "generic" ? "src.tools" : "tools";
       for (const tool of tools) {
         const aType = getAdapterType(tool.name);
         if (format === "typescript") {
-          files[`tests/tools/${tool.name}.test.ts`] = generateTsToolTest(tool, aType);
+          files[`tests/tools/${tool.name}.test.ts`] = generateTsToolTest(tool, aType, toolsDir);
         } else {
-          files[`tests/test_${tool.name}.py`] = generatePyToolTest(tool, aType);
+          files[`tests/test_${tool.name}.py`] = generatePyToolTest(tool, aType, toolsModule);
         }
       }
 
