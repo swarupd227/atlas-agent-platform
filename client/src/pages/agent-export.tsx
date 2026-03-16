@@ -1026,7 +1026,7 @@ function ConfigureStep({
   const stubCount = resolvedTools.filter(t => t.status === "stub").length;
   const builtinCount = resolvedTools.filter(t => t.status === "builtin").length;
   const customerCount = resolvedTools.filter(t => t.status === "customer").length;
-  const depCount = Object.keys(depData.deps).length;
+  const depCount = depData.deps ? Object.keys(depData.deps).length : 0;
 
   return (
     <div className="h-full overflow-y-auto">
@@ -1167,9 +1167,13 @@ function ConfigureStep({
                 <Badge variant="outline" className="text-[10px]">{depCount} packages</Badge>
               </div>
               <div className="flex flex-wrap gap-1.5">
-                {Object.entries(depData.deps).map(([name, ver]) => (
-                  <Badge key={name} variant="secondary" className="text-[10px] font-mono">{name}@{ver}</Badge>
-                ))}
+                {Object.entries(depData.deps || {}).map(([name, ver]) => {
+                  const isPython = exportFormat === "python";
+                  const sep = isPython ? (ver.startsWith(">=") || ver.startsWith("~=") ? "" : "==") : "@";
+                  return (
+                    <Badge key={name} variant="secondary" className="text-[10px] font-mono" data-testid={`dep-badge-${name}`}>{name}{sep}{ver}</Badge>
+                  );
+                })}
               </div>
             </div>
 
