@@ -18138,6 +18138,11 @@ ${opts?.hasGraph ? `    const currentNode = getNode(currentNodeId);\n    console
       try {
         const toolPolicy = await onBeforeToolCall(fn.name, parsedArgs as Record<string, unknown>);
         if (!toolPolicy.allowed) {
+          if (toolPolicy.event === "APPROVAL_REQUIRED") {
+            console.log(JSON.stringify({ event: "APPROVAL_REQUIRED", action: "tool_call", toolName: fn.name, agentName: config.name, reason: toolPolicy.reason }));
+            console.log("[halted] Orchestrator paused: approval required for tool call");
+            return;
+          }
           console.log(\`  [policy] Tool call blocked: \${toolPolicy.reason}\`);
           messages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify({ error: \`Policy blocked: \${toolPolicy.reason}\` }) });
           continue;
@@ -18316,6 +18321,11 @@ ${opts?.hasGraph ? `    const currentNode = getNode(currentNodeId);\n    console
       try {
         const toolPolicy = await onBeforeToolCall(tu.name, tu.input as Record<string, unknown>);
         if (!toolPolicy.allowed) {
+          if (toolPolicy.event === "APPROVAL_REQUIRED") {
+            console.log(JSON.stringify({ event: "APPROVAL_REQUIRED", action: "tool_call", toolName: tu.name, agentName: config.name, reason: toolPolicy.reason }));
+            console.log("[halted] Orchestrator paused: approval required for tool call");
+            return;
+          }
           console.log(\`  [policy] Tool call blocked: \${toolPolicy.reason}\`);
           toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify({ error: \`Policy blocked: \${toolPolicy.reason}\` }) });
           continue;
@@ -18483,6 +18493,10 @@ ${opts?.hasGraph ? `        current_node = get_node(current_node_id)\n        pr
             try:
                 tool_policy = on_before_tool_call(fn.name, parsed_args)
                 if not tool_policy.get("allowed", True):
+                    if tool_policy.get("event") == "APPROVAL_REQUIRED":
+                        print(json.dumps({"event": "APPROVAL_REQUIRED", "action": "tool_call", "toolName": fn.name, "agentName": config["name"], "reason": tool_policy.get("reason", "")}))
+                        print("[halted] Orchestrator paused: approval required for tool call")
+                        return
                     print(f"  [policy] Tool call blocked: {tool_policy.get('reason', '')}")
                     messages.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps({"error": f"Policy blocked: {tool_policy.get('reason', '')}"})})
                     continue
@@ -18645,6 +18659,10 @@ ${opts?.hasGraph ? `        current_node = get_node(current_node_id)\n        pr
             try:
                 tool_policy = on_before_tool_call(tu.name, tu.input)
                 if not tool_policy.get("allowed", True):
+                    if tool_policy.get("event") == "APPROVAL_REQUIRED":
+                        print(json.dumps({"event": "APPROVAL_REQUIRED", "action": "tool_call", "toolName": tu.name, "agentName": config["name"], "reason": tool_policy.get("reason", "")}))
+                        print("[halted] Orchestrator paused: approval required for tool call")
+                        return
                     print(f"  [policy] Tool call blocked: {tool_policy.get('reason', '')}")
                     tool_results.append({"type": "tool_result", "tool_use_id": tu.id, "content": json.dumps({"error": f"Policy blocked: {tool_policy.get('reason', '')}"})})
                     continue
@@ -19919,7 +19937,7 @@ export function listPolicies(): Array<{ name: string; domain: string | null }> {
               ? `\n  test("checkForbiddenOutputs blocks matching forbidden pattern", async () => {\n    const policy = await import("../src/runtime/policy");\n    // Use the first configured forbidden pattern to verify blocking\n    const testInput = ${JSON.stringify(policyForbiddenOutputs[0] || "BLOCKED")};\n    const result = policy.checkForbiddenOutputs(testInput);\n    expect(result.allowed).toBe(false);\n    expect(result.reason).toBeDefined();\n  });\n`
               : `\n  test("checkForbiddenOutputs allows content when no patterns configured", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = policy.checkForbiddenOutputs("any content at all");\n    expect(result.allowed).toBe(true);\n  });\n`;
             const stopConditionTests = hasStopConds
-              ? `\n  test("checkStopConditions blocks matching stop condition", async () => {\n    const policy = await import("../src/runtime/policy");\n    const testContent = ${JSON.stringify(policyStopConditions[0])};\n    const result = policy.checkStopConditions(testContent);\n    expect(result.allowed).toBe(false);\n    expect(result.reason).toContain("Stop condition");\n  });\n`
+              ? `\n  test("checkStopConditions blocks matching stop condition", async () => {\n    const policy = await import("../src/runtime/policy");\n    const testContent = ${JSON.stringify(policyStopConditions[0])};\n    const result = policy.checkStopConditions(testContent);\n    expect(result.allowed).toBe(false);\n    expect(result.reason).toContain("Stop condition");\n  });\n\n  test("orchestrator halts on stop condition in response (integration)", async () => {\n    // Integration test: the orchestrator calls onBeforeResponse(content)\n    // and returns early (halts the loop) when allowed is false.\n    // This proves the full pipeline: content -> onBeforeResponse -> checkStopConditions -> halt.\n    const policy = await import("../src/runtime/policy");\n    const haltContent = ${JSON.stringify(policyStopConditions[0])};\n    const result = await policy.onBeforeResponse(haltContent);\n    expect(result.allowed).toBe(false);\n    expect(result.reason).toBeDefined();\n    // Normal content must pass through (loop continues)\n    const safeResult = await policy.onBeforeResponse("normal content without triggers");\n    expect(safeResult.allowed).toBe(true);\n  });\n`
               : "";
             const piiTests = hasRegulatedPolicy
               ? `\n  test("onBeforeResponse redacts PII and returns redacted content", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = await policy.onBeforeResponse("Contact john@example.com or call 555-123-4567");\n    expect(result.content).toBeDefined();\n    expect(result.content).not.toContain("john@example.com");\n    expect(result.content).toContain("[REDACTED_EMAIL]");\n    expect(result.content).not.toContain("555-123-4567");\n  });\n`
@@ -20109,7 +20127,7 @@ def list_policies():
               ? `\n\ndef test_check_forbidden_outputs_blocks_matching_pattern():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.check_forbidden_outputs(${JSON.stringify(policyForbiddenOutputs[0] || "BLOCKED")})\n    assert result["allowed"] is False\n    assert "reason" in result\n`
               : `\n\ndef test_check_forbidden_outputs_allows_when_no_patterns():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.check_forbidden_outputs("any content at all")\n    assert result["allowed"] is True\n`;
             const pyStopConditionTests = pyHasStopConds
-              ? `\n\ndef test_check_stop_conditions_blocks_matching_condition():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.check_stop_conditions(${JSON.stringify(policyStopConditions[0])})\n    assert result["allowed"] is False\n    assert "Stop condition" in result["reason"]\n`
+              ? `\n\ndef test_check_stop_conditions_blocks_matching_condition():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.check_stop_conditions(${JSON.stringify(policyStopConditions[0])})\n    assert result["allowed"] is False\n    assert "Stop condition" in result["reason"]\n\n\ndef test_orchestrator_halts_on_stop_condition_in_response():\n    """Integration test: simulates orchestrator loop behavior.\n    The orchestrator calls on_before_response(content) and returns early if not allowed.\n    This test proves that pipeline halts when stop condition is in response content.\n    """\n    policy = importlib.import_module("src.runtime.policy")\n    halt_content = ${JSON.stringify(policyStopConditions[0])}\n    result = policy.on_before_response(halt_content)\n    assert result["allowed"] is False, "on_before_response must block content matching stop condition"\n    assert "reason" in result, "Must include reason for halt"\n    safe_result = policy.on_before_response("normal content without triggers")\n    assert safe_result["allowed"] is True, "Normal content must pass through"\n`
               : "";
             const pyPiiTests = hasRegulatedPolicy
               ? `\n\ndef test_on_before_response_redacts_pii_and_returns_content():\n    policy = importlib.import_module("src.runtime.policy")\n    result = policy.on_before_response("Contact john@example.com or call 555-123-4567")\n    assert "content" in result\n    assert "john@example.com" not in result["content"]\n    assert "[REDACTED_EMAIL]" in result["content"]\n    assert "555-123-4567" not in result["content"]\n`
