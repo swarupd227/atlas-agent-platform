@@ -1,0 +1,20 @@
+Redesigned Agentic Workflow
+A single trigger — “Prepare credit assessment package for [Issuer]” — activates a coordinated team of 6 agents that execute all 8 steps simultaneously, delivering a complete, review-ready assessment package in 15–20 minutes.
+
+Agent 1: Financial Data Collector & Spreader
+Ingests the issuer’s latest financial statements (from EDGAR, issuer IR portal, or Moody’s data estate), spreads them into Moody’s Chart of Accounts, and computes all sector-specific credit metrics. Handles both IFRS and US GAAP with automatic standard detection. Flags any data quality anomalies (restatements, non-recurring items, accounting policy changes). Output: Standardized financial summary with 8 quarters of trend data, all ratios computed, anomalies flagged.
+
+Agent 2: Earnings & Management Signal Analyzer
+Pulls the latest 2–4 earnings call transcripts and investor presentations. Extracts: management tone on credit-relevant topics (leverage targets, capex plans, M&A appetite, liquidity management), forward guidance that affects credit assumptions, and sector-specific risk signals. Produces a structured sentiment analysis per call, with quarter-over-quarter tone shift detection. Highlights specific management quotes that the analyst should review. Output: Earnings intelligence brief with sentiment scores, key quotes, and guidance summary.
+
+Agent 3: Peer Comparison Builder
+Identifies the appropriate peer group (using Moody’s sector and sub-sector classifications), pulls comparable financial data for 5–10 peers, and constructs a peer comparison matrix across all key credit metrics. Ranks the subject issuer within the peer group on each dimension. Highlights where the issuer is an outlier (significantly above or below peer median). Output: Peer comparison matrix with rankings, outlier flags, and visual positioning charts.
+
+Agent 4: ESG & Sustainability Profile Agent
+Pulls the issuer’s current ESG IPS scores (Environmental, Social, Governance Issuer Profile Scores), CIS score (Credit Impact Score), and relevant sustainability data. Checks for ESG-related news events, regulatory actions, or controversies since the last review. Flags any ESG factor that may have a material credit impact. Output: ESG summary card with current scores, recent changes, and credit-relevant ESG factors.
+
+Agent 5: News & Event Scanner
+Scans news sources, regulatory filings, legal databases, and market data for events affecting the issuer since the last review: material litigation, regulatory actions, M&A announcements, management changes, debt issuance, covenant breaches, or sector-wide disruptions. Classifies each event by credit relevance (material/contextual/informational) and potential rating impact direction. Output: Event timeline with classified entries and credit impact assessment per event.
+
+Agent 6: Scorecard Pre-Population Agent
+Using the outputs from Agents 1–5, pre-populates the sector-specific Moody’s rating scorecard with all quantitative inputs. For qualitative factors (business profile, competitive position, governance), the agent proposes draft assessments based on the assembled evidence, clearly marked as AI-suggested. Computes the scorecard-indicated rating outcome and compares it to the current assigned rating. Output: Pre-populated scorecard with all inputs sourced and cited, scorecard-indicated outcome, and gap analysis to current rating.
