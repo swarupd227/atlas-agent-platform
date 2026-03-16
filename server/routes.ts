@@ -18034,6 +18034,9 @@ const client = new OpenAI();
 const ATLAS_MAX_RETRIES = parseInt(process.env.ATLAS_MAX_RETRIES || "3", 10);
 const ATLAS_RETRY_BASE_MS = parseInt(process.env.ATLAS_RETRY_BASE_MS || "500", 10);
 
+let otelTrace: any;
+try { otelTrace = require("@opentelemetry/api"); } catch { otelTrace = null; }
+
 async function withRetry<T>(fn: () => Promise<T>, maxAttempts = ATLAS_MAX_RETRIES, baseDelayMs = ATLAS_RETRY_BASE_MS): Promise<T> {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -18042,6 +18045,10 @@ async function withRetry<T>(fn: () => Promise<T>, maxAttempts = ATLAS_MAX_RETRIE
       if (attempt === maxAttempts) throw err;
       const delay = baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * baseDelayMs;
       console.log(\`[retry] Attempt \${attempt}/\${maxAttempts} failed: \${err instanceof Error ? err.message : err}. Retrying in \${Math.round(delay)}ms...\`);
+      if (otelTrace) {
+        const span = otelTrace.trace.getActiveSpan?.();
+        if (span) span.addEvent("retry_attempt", { attempt, maxAttempts, delayMs: Math.round(delay), error: err instanceof Error ? err.message : String(err) });
+      }
       await new Promise(r => setTimeout(r, delay));
     }
   }
@@ -18233,6 +18240,9 @@ const client = new Anthropic();
 const ATLAS_MAX_RETRIES = parseInt(process.env.ATLAS_MAX_RETRIES || "3", 10);
 const ATLAS_RETRY_BASE_MS = parseInt(process.env.ATLAS_RETRY_BASE_MS || "500", 10);
 
+let otelTrace: any;
+try { otelTrace = require("@opentelemetry/api"); } catch { otelTrace = null; }
+
 async function withRetry<T>(fn: () => Promise<T>, maxAttempts = ATLAS_MAX_RETRIES, baseDelayMs = ATLAS_RETRY_BASE_MS): Promise<T> {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -18241,6 +18251,10 @@ async function withRetry<T>(fn: () => Promise<T>, maxAttempts = ATLAS_MAX_RETRIE
       if (attempt === maxAttempts) throw err;
       const delay = baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * baseDelayMs;
       console.log(\`[retry] Attempt \${attempt}/\${maxAttempts} failed: \${err instanceof Error ? err.message : err}. Retrying in \${Math.round(delay)}ms...\`);
+      if (otelTrace) {
+        const span = otelTrace.trace.getActiveSpan?.();
+        if (span) span.addEvent("retry_attempt", { attempt, maxAttempts, delayMs: Math.round(delay), error: err instanceof Error ? err.message : String(err) });
+      }
       await new Promise(r => setTimeout(r, delay));
     }
   }
@@ -18432,6 +18446,11 @@ import random
 ATLAS_MAX_RETRIES = int(os.environ.get("ATLAS_MAX_RETRIES", "3"))
 ATLAS_RETRY_BASE_MS = int(os.environ.get("ATLAS_RETRY_BASE_MS", "500"))
 
+try:
+    from opentelemetry import trace as otel_trace
+except ImportError:
+    otel_trace = None
+
 
 def with_retry(fn, max_attempts=None, base_delay_ms=None):
     _max = max_attempts if max_attempts is not None else ATLAS_MAX_RETRIES
@@ -18444,6 +18463,10 @@ def with_retry(fn, max_attempts=None, base_delay_ms=None):
                 raise
             delay = (_base * (2 ** (attempt - 1)) + random.random() * _base) / 1000.0
             print(f"[retry] Attempt {attempt}/{_max} failed: {err}. Retrying in {int(delay * 1000)}ms...")
+            if otel_trace:
+                span = otel_trace.get_current_span()
+                if span:
+                    span.add_event("retry_attempt", {"attempt": attempt, "max_attempts": _max, "delay_ms": int(delay * 1000), "error": str(err)})
             time.sleep(delay)
 
 
@@ -18625,6 +18648,11 @@ import random
 ATLAS_MAX_RETRIES = int(os.environ.get("ATLAS_MAX_RETRIES", "3"))
 ATLAS_RETRY_BASE_MS = int(os.environ.get("ATLAS_RETRY_BASE_MS", "500"))
 
+try:
+    from opentelemetry import trace as otel_trace
+except ImportError:
+    otel_trace = None
+
 
 def with_retry(fn, max_attempts=None, base_delay_ms=None):
     _max = max_attempts if max_attempts is not None else ATLAS_MAX_RETRIES
@@ -18637,6 +18665,10 @@ def with_retry(fn, max_attempts=None, base_delay_ms=None):
                 raise
             delay = (_base * (2 ** (attempt - 1)) + random.random() * _base) / 1000.0
             print(f"[retry] Attempt {attempt}/{_max} failed: {err}. Retrying in {int(delay * 1000)}ms...")
+            if otel_trace:
+                span = otel_trace.get_current_span()
+                if span:
+                    span.add_event("retry_attempt", {"attempt": attempt, "max_attempts": _max, "delay_ms": int(delay * 1000), "error": str(err)})
             time.sleep(delay)
 
 
@@ -20619,7 +20651,7 @@ spec:
       {
         const isTs = format === "typescript";
         const runCmd = isTs ? "npx ts-node src/runtime/orchestrator.ts" : "python src/runtime/orchestrator.py";
-        const testCmd = isTs ? "npx jest --verbose" : "python -m pytest tests/ -v";
+        const testCmd = isTs ? "npm test" : "python -m pytest tests/ -v";
         const lintCmd = isTs ? "npx tsc --noEmit" : "pylint src/ --disable=C,R";
         const installCmd = isTs ? "npm ci" : "pip install -r requirements.txt";
         const cleanTargets = isTs ? "rm -rf dist/ node_modules/.cache coverage/" : "find . -type d -name __pycache__ -exec rm -rf {} + && rm -rf .pytest_cache/ .mypy_cache/ dist/";
