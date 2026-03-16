@@ -1023,7 +1023,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getAgentTemplates() {
-    return db.select().from(agentTemplates);
+    return db.select().from(agentTemplates).orderBy(desc(agentTemplates.createdAt));
   }
 
   async getAgentTemplate(id: string) {

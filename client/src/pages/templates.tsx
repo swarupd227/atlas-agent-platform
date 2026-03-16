@@ -281,13 +281,13 @@ export default function Templates() {
     const matchesType = typeFilter === "all" || 
       (typeFilter === "team" ? t.category === "team_workflow" : t.category !== "team_workflow");
     return matchesSearch && matchesCategory && matchesIndustry && matchesType;
-  });
+  })?.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
 
-  const recommendedTemplates = templates?.filter((t) => {
+  const recommendedTemplates = (templates?.filter((t) => {
     if (!industry) return false;
     if (industry.id === "custom") return t.industry === "cross_industry";
     return t.industry === industry.id || t.industry === "cross_industry";
-  }) || [];
+  }) || []).sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
 
   const showRecommended = industry && recommendedTemplates.length > 0 && industryFilter === "all" && !searchQuery;
 
