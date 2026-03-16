@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
-import { ChevronRight, ChevronDown, FileCode, FileText, Folder, FolderOpen, File } from "lucide-react";
+import { ChevronRight, ChevronDown, FileCode, FileText, Folder, FolderOpen, File, RefreshCw, Loader2 } from "lucide-react";
 
 interface TreeNode {
   name: string;
@@ -66,6 +66,8 @@ function getFileIcon(name: string) {
   return <File className="w-3.5 h-3.5 text-muted-foreground shrink-0" />;
 }
 
+const REGEN_PATTERN = /orchestrator|entrypoint|tools\/|adapters\/|graph|crew|agent_node/i;
+
 function TreeItem({
   node,
   depth,
@@ -73,6 +75,8 @@ function TreeItem({
   expandedDirs,
   onFileClick,
   onToggleDir,
+  onRegenFile,
+  regeneratingFile,
 }: {
   node: TreeNode;
   depth: number;
@@ -80,41 +84,58 @@ function TreeItem({
   expandedDirs: Set<string>;
   onFileClick: (path: string) => void;
   onToggleDir: (path: string) => void;
+  onRegenFile?: (path: string) => void;
+  regeneratingFile?: string | null;
 }) {
   const isExpanded = expandedDirs.has(node.path);
   const isActive = !node.isDir && node.path === activeFile;
+  const canRegen = !node.isDir && onRegenFile && REGEN_PATTERN.test(node.path);
+  const isRegenerating = regeneratingFile === node.path;
 
   return (
     <>
-      <button
-        className={`flex items-center gap-1.5 w-full text-left py-1 px-2 text-xs rounded-sm transition-colors hover:bg-muted/60 ${
-          isActive ? "bg-primary/10 text-primary font-medium" : "text-foreground/80"
-        }`}
-        style={{ paddingLeft: `${depth * 12 + 8}px` }}
-        onClick={() => (node.isDir ? onToggleDir(node.path) : onFileClick(node.path))}
-        data-testid={node.isDir ? `tree-dir-${node.path.replace(/[/.]/g, "-")}` : `tree-file-${node.path.replace(/[/.]/g, "-")}`}
-      >
-        {node.isDir ? (
-          <>
-            {isExpanded ? (
-              <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0" />
-            ) : (
-              <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />
-            )}
-            {isExpanded ? (
-              <FolderOpen className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-            ) : (
-              <Folder className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-            )}
-          </>
-        ) : (
-          <>
-            <span className="w-3 shrink-0" />
-            {getFileIcon(node.name)}
-          </>
+      <div className="flex items-center group">
+        <button
+          className={`flex items-center gap-1.5 flex-1 text-left py-1 px-2 text-xs rounded-sm transition-colors hover:bg-muted/60 min-w-0 ${
+            isActive ? "bg-primary/10 text-primary font-medium" : "text-foreground/80"
+          }`}
+          style={{ paddingLeft: `${depth * 12 + 8}px` }}
+          onClick={() => (node.isDir ? onToggleDir(node.path) : onFileClick(node.path))}
+          data-testid={node.isDir ? `tree-dir-${node.path.replace(/[/.]/g, "-")}` : `tree-file-${node.path.replace(/[/.]/g, "-")}`}
+        >
+          {node.isDir ? (
+            <>
+              {isExpanded ? (
+                <ChevronDown className="w-3 h-3 text-muted-foreground shrink-0" />
+              ) : (
+                <ChevronRight className="w-3 h-3 text-muted-foreground shrink-0" />
+              )}
+              {isExpanded ? (
+                <FolderOpen className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              ) : (
+                <Folder className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+              )}
+            </>
+          ) : (
+            <>
+              <span className="w-3 shrink-0" />
+              {getFileIcon(node.name)}
+            </>
+          )}
+          <span className="truncate">{node.name}</span>
+        </button>
+        {canRegen && (
+          <button
+            className="h-5 w-5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mr-1 rounded hover:bg-muted"
+            disabled={isRegenerating}
+            onClick={(e) => { e.stopPropagation(); onRegenFile!(node.path); }}
+            title="Regenerate this file"
+            data-testid={`button-regen-file-${node.path.replace(/[/.]/g, "-")}`}
+          >
+            {isRegenerating ? <Loader2 className="w-3 h-3 animate-spin text-muted-foreground" /> : <RefreshCw className="w-3 h-3 text-muted-foreground" />}
+          </button>
         )}
-        <span className="truncate">{node.name}</span>
-      </button>
+      </div>
       {node.isDir && isExpanded &&
         node.children.map((child) => (
           <TreeItem
@@ -125,6 +146,8 @@ function TreeItem({
             expandedDirs={expandedDirs}
             onFileClick={onFileClick}
             onToggleDir={onToggleDir}
+            onRegenFile={onRegenFile}
+            regeneratingFile={regeneratingFile}
           />
         ))}
     </>
@@ -135,10 +158,14 @@ export function FileTree({
   filePaths,
   activeFile,
   onFileSelect,
+  onRegenFile,
+  regeneratingFile,
 }: {
   filePaths: string[];
   activeFile: string;
   onFileSelect: (path: string) => void;
+  onRegenFile?: (path: string) => void;
+  regeneratingFile?: string | null;
 }) {
   const tree = useMemo(() => buildTree(filePaths), [filePaths]);
 
@@ -174,6 +201,8 @@ export function FileTree({
           expandedDirs={expandedDirs}
           onFileClick={onFileSelect}
           onToggleDir={onToggleDir}
+          onRegenFile={onRegenFile}
+          regeneratingFile={regeneratingFile}
         />
       ))}
     </div>

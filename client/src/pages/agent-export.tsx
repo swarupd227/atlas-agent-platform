@@ -555,38 +555,13 @@ export default function AgentExport() {
                 </div>
                 <div className="flex-1 overflow-y-auto">
                   {editedFilePaths.length > 0 && (
-                    <div className="flex flex-col py-1">
-                      {editedFilePaths.map(fp => {
-                        const fileName = fp.split("/").pop() || fp;
-                        const isActive = fp === exportPreviewFile;
-                        const isRegenerating = regeneratingFile === fp;
-                        const canRegen = /orchestrator|entrypoint|tools\/|adapters\/|graph|crew|agent_node/i.test(fp);
-                        return (
-                          <div key={fp} className={`flex items-center gap-1 group ${isActive ? "bg-primary/10" : "hover:bg-muted/60"}`}>
-                            <button
-                              className="flex-1 flex items-center gap-1.5 px-2 py-1 text-xs text-left min-w-0"
-                              onClick={() => setExportPreviewFile(fp)}
-                            >
-                              <FileCode className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                              <span className={`truncate ${isActive ? "text-primary font-medium" : "text-foreground/80"}`}>{fileName}</span>
-                            </button>
-                            {canRegen && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-5 w-5 p-0 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mr-1"
-                                disabled={isRegenerating}
-                                onClick={(e) => { e.stopPropagation(); handleRegenFile(fp); }}
-                                title="Regenerate this file"
-                                data-testid={`button-regen-file-${fp.replace(/[/.]/g, "-")}`}
-                              >
-                                {isRegenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3 text-muted-foreground" />}
-                              </Button>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
+                    <FileTree
+                      filePaths={editedFilePaths}
+                      activeFile={exportPreviewFile}
+                      onFileSelect={(path) => setExportPreviewFile(path)}
+                      onRegenFile={handleRegenFile}
+                      regeneratingFile={regeneratingFile}
+                    />
                   )}
                 </div>
               </div>
