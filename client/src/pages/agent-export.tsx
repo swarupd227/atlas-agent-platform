@@ -58,6 +58,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import type { Agent, ToolConnector } from "@shared/schema";
 import { FileTree } from "@/components/file-tree";
 import Editor, { DiffEditor } from "@monaco-editor/react";
+import JSZip from "jszip";
 
 interface ExportPreset {
   name: string;
@@ -281,17 +282,18 @@ export default function AgentExport() {
     },
   });
 
-  function downloadExportPackage() {
+  async function downloadExportPackage() {
     if (!exportPreview) return;
     const files = Object.keys(editedFiles).length > 0 ? editedFiles : exportPreview.files;
-    const blob = new Blob(
-      [JSON.stringify({ files, metadata: exportPreview.metadata }, null, 2)],
-      { type: "application/json" }
-    );
+    const zip = new JSZip();
+    for (const [filePath, content] of Object.entries(files)) {
+      zip.file(filePath, content);
+    }
+    const blob = await zip.generateAsync({ type: "blob" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${agent?.name || "agent"}-export.json`;
+    a.download = `${(agent?.name || "agent").replace(/[^a-zA-Z0-9_-]/g, "-")}-export.zip`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -321,8 +323,12 @@ export default function AgentExport() {
 
   async function handleDeliver() {
     if (deliveryTarget === "zip") {
-      downloadExportPackage();
+      await downloadExportPackage();
     } else if (deliveryTarget === "git") {
+      if (!gitRepoUrl.trim()) {
+        toast({ title: "Repository URL required", description: "Enter a GitHub repository URL before pushing.", variant: "destructive" });
+        return;
+      }
       try {
         const files = Object.keys(editedFiles).length > 0 ? editedFiles : exportPreview?.files || {};
         const res = await apiRequest("POST", `/api/agents/${agentId}/export-code/git-push`, {
@@ -332,8 +338,21 @@ export default function AgentExport() {
         });
         const data = await res.json();
         toast({ title: "Pushed to Git", description: `Commit: ${(data.commitSha || "").substring(0, 8)}` });
+      } catch (err: unknown) {
+        let detail = "Could not push code to the repository.";
+        try {
+          if (err && typeof err === "object" && "message" in err) detail = String((err as any).message);
+        } catch {}
+        toast({ title: "Git push failed", description: detail, variant: "destructive" });
+      }
+    } else if (deliveryTarget === "replit") {
+      const files = Object.keys(editedFiles).length > 0 ? editedFiles : exportPreview?.files || {};
+      const json = JSON.stringify({ files, metadata: exportPreview?.metadata }, null, 2);
+      try {
+        await navigator.clipboard.writeText(json);
+        toast({ title: "Copied to clipboard", description: `${Object.keys(files).length} files copied as JSON. Paste into Replit or any editor.` });
       } catch {
-        toast({ title: "Git push failed", description: "Could not push code to the repository. Check your GitHub token and repo URL.", variant: "destructive" });
+        toast({ title: "Copy failed", description: "Could not copy to clipboard. Try downloading as ZIP instead.", variant: "destructive" });
       }
     }
   }
@@ -453,7 +472,7 @@ export default function AgentExport() {
                 disabled={deliveryTarget === "git" && !gitRepoUrl.trim()}
                 data-testid="button-export-deliver"
               >
-                {deliveryTarget === "zip" ? <><Download className="w-3.5 h-3.5 mr-1.5" />Download</> : deliveryTarget === "git" ? <><GitBranch className="w-3.5 h-3.5 mr-1.5" />Push</> : <>Done</>}
+                {deliveryTarget === "zip" ? <><Download className="w-3.5 h-3.5 mr-1.5" />Download ZIP</> : deliveryTarget === "git" ? <><GitBranch className="w-3.5 h-3.5 mr-1.5" />Push</> : <><Copy className="w-3.5 h-3.5 mr-1.5" />Copy to Clipboard</>}
               </Button>
             </>
           )}
@@ -818,13 +837,13 @@ export default function AgentExport() {
                   <Card
                     className={`cursor-pointer hover:border-primary/50 transition-colors ${deliveryTarget === "replit" ? "border-primary ring-1 ring-primary/20" : ""}`}
                     onClick={() => setDeliveryTarget("replit")}
-                    data-testid="card-delivery-replit"
+                    data-testid="card-delivery-clipboard"
                   >
                     <CardContent className="pt-4 pb-3">
                       <div className="flex flex-col items-center gap-2 text-center">
-                        <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary/10"><Globe className="w-5 h-5 text-primary" /></div>
-                        <span className="text-sm font-medium">Replit via GitHub</span>
-                        <span className="text-[11px] text-muted-foreground">Import into Replit for instant hosting.</span>
+                        <div className="flex items-center justify-center w-10 h-10 rounded-md bg-primary/10"><Copy className="w-5 h-5 text-primary" /></div>
+                        <span className="text-sm font-medium">Copy to Clipboard</span>
+                        <span className="text-[11px] text-muted-foreground">Copy all files as JSON to paste anywhere.</span>
                         {deliveryTarget === "replit" && <CheckCircle className="w-4 h-4 text-primary" />}
                       </div>
                     </CardContent>
