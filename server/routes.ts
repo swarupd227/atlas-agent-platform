@@ -17848,6 +17848,8 @@ Eval Suites: ${evalSuites.length} configured`,
     contextProfileName?: string | null;
     memoryProfileName?: string | null;
     mcpServers?: Array<{ name: string; url: string | null; transportType: string; description?: string | null }>;
+    stopConditions?: string[];
+    forbiddenOutputs?: string[];
   }
 
   function generateAgentYaml(
@@ -17922,6 +17924,14 @@ Eval Suites: ${evalSuites.length} configured`,
         if (s.description) lines.push(`    description: "${s.description.replace(/"/g, '\\"').replace(/\n/g, " ")}"`);
       }
     }
+    if (extras?.stopConditions && extras.stopConditions.length > 0) {
+      lines.push(`stop_conditions:`);
+      for (const sc of extras.stopConditions) lines.push(`  - "${sc.replace(/"/g, '\\"')}"`);
+    }
+    if (extras?.forbiddenOutputs && extras.forbiddenOutputs.length > 0) {
+      lines.push(`forbidden_outputs:`);
+      for (const fo of extras.forbiddenOutputs) lines.push(`  - "${fo.replace(/"/g, '\\"')}"`);
+    }
     return lines.join("\n");
   }
 
@@ -17978,9 +17988,10 @@ async def init_mcp_clients():${serverInits}
     tools: Array<{ name: string; description?: string; parameters?: any }>,
     maxIterations: number,
     completionPromise: string,
-    mcpServers?: Array<{ name: string; url: string | null; transportType: string }>
+    mcpServers?: Array<{ name: string; url: string | null; transportType: string }>,
+    opts?: { hasKnowledge?: boolean; hasPolicies?: boolean; hasGraph?: boolean }
   ): string {
-    const toolImports = tools.map(t => `import { ${t.name} } from "./tools/${t.name}";`).join("\n");
+    const toolImports = tools.map(t => `import { ${t.name} } from "../tools/${t.name}";`).join("\n");
     const toolMap = tools.map(t => `  "${t.name}": ${t.name},`).join("\n");
     const toolRegistryEntries = tools.map(t => {
       const schema = (t.parameters && typeof t.parameters === "object" && Object.keys(t.parameters).length > 0)
@@ -17990,13 +18001,27 @@ async def init_mcp_clients():${serverInits}
     }).join(",\n");
     const mcpBlock = mcpServers && mcpServers.length > 0 ? generateTsMcpClientBlock(mcpServers) : "";
     const mcpInitCall = mcpServers && mcpServers.length > 0 ? `\n  await initMcpClients();` : "";
+    const knowledgeImport = opts?.hasKnowledge ? `import { retrieve } from "../agent/knowledge";\n` : "";
+    const policyImport = opts?.hasPolicies ? `import { onBeforeToolCall, onBeforeResponse } from "./policy";\n` : "";
+    const graphImport = opts?.hasGraph ? `import { transition, getEntryNode } from "../agent/graph";\n` : "";
+    const knowledgeBlock = opts?.hasKnowledge ? `
+  const retrievedCtx = await retrieve(task);
+  const contextBlock = retrievedCtx.length > 0
+    ? "[CONTEXT]\\n" + retrievedCtx.map(r => r.content).join("\\n---\\n") + "\\n[/CONTEXT]\\n\\n"
+    : "";
+  const userMessage = contextBlock + task;` : `
+  const userMessage = task;`;
+
     return `import OpenAI from "openai";
 import * as fs from "fs";
 import * as yaml from "js-yaml";
 ${toolImports}
-${mcpBlock}
+${policyImport}${knowledgeImport}${graphImport}${mcpBlock}
 const config = yaml.load(fs.readFileSync("agent.yaml", "utf8")) as any;
 const client = new OpenAI();
+
+const stopConditions: string[] = config.stop_conditions || [];
+const forbiddenOutputs: string[] = config.forbidden_outputs || [];
 
 const toolAdapters: Record<string, (args: any) => Promise<any>> = {
 ${toolMap}
@@ -18011,105 +18036,98 @@ const toolDefinitions: OpenAI.Chat.Completions.ChatCompletionTool[] = Object.ent
   function: { name, description: schema.description, parameters: schema.parameters },
 }));
 
+function checkGuardrails(content: string): { stopped: boolean; reason?: string } {
+  for (const pattern of forbiddenOutputs) {
+    try {
+      if (content.match(new RegExp(pattern, "i"))) {
+        return { stopped: true, reason: \`Response matched forbidden output pattern: \${pattern}\` };
+      }
+    } catch { /* invalid regex pattern, skip */ }
+  }
+  for (const cond of stopConditions) {
+    if (content.includes(cond)) {
+      return { stopped: true, reason: \`Stop condition met: \${cond}\` };
+    }
+  }
+  return { stopped: false };
+}
+
 async function main() {${mcpInitCall}
   const streaming = process.argv.includes("--stream");
   const task = process.argv.find(a => a !== "--stream" && process.argv.indexOf(a) > 1) || "Hello, agent!";
+${knowledgeBlock}
   let messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: config.system_prompt },
-    { role: "user", content: task },
+    { role: "user", content: userMessage },
   ];
 
   const maxIter = config.max_iterations || ${maxIterations};
   const promise = config.completion_promise || "${completionPromise}";
   const ctxLimit = config.context_window_limit || 40;
-
+${opts?.hasGraph ? `  let currentNodeId = getEntryNode()?.id || "start";\n` : ""}
   for (let i = 0; i < maxIter; i++) {
     console.log(\`[iteration \${i + 1}/\${maxIter}]\`);
 
-    // Trim message history to avoid context overflow, preserving system message
     if (messages.length > ctxLimit + 1) {
       messages = [messages[0], ...messages.slice(-(ctxLimit))];
     }
 
-    if (streaming) {
-      const stream = await client.chat.completions.create({
-        model: config.model.name,
-        messages,
-        tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
-        tool_choice: toolDefinitions.length > 0 ? "auto" : undefined,
-        stream: true,
-      });
-      let content = "";
-      const toolCalls: Map<number, { id: string; name: string; arguments: string }> = new Map();
-      for await (const chunk of stream) {
-        const delta = chunk.choices[0]?.delta;
-        if (delta?.content) { process.stdout.write(delta.content); content += delta.content; }
-        if (delta?.tool_calls) {
-          for (const tc of delta.tool_calls) {
-            const existing = toolCalls.get(tc.index) || { id: "", name: "", arguments: "" };
-            if (tc.id) existing.id = tc.id;
-            if (tc.function?.name) existing.name = tc.function.name;
-            if (tc.function?.arguments) existing.arguments += tc.function.arguments;
-            toolCalls.set(tc.index, existing);
-          }
-        }
+    const response = await client.chat.completions.create({
+      model: config.model.name,
+      messages,
+      tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
+      tool_choice: toolDefinitions.length > 0 ? "auto" : undefined,
+    });
+
+    const choice = response.choices[0];
+    const msg = choice.message;
+    messages.push(msg);
+
+    if (msg.content) {
+      const guard = checkGuardrails(msg.content);
+      if (guard.stopped) {
+        console.log(\`[guardrail] \${guard.reason}\`);
+        return;
       }
-      if (content) process.stdout.write("\\n");
-      const msg: any = { role: "assistant", content: content || null };
-      if (toolCalls.size > 0) msg.tool_calls = [...toolCalls.values()].map(tc => ({ id: tc.id, type: "function", function: { name: tc.name, arguments: tc.arguments } }));
-      messages.push(msg);
-
-      if (content && content.includes(promise)) { console.log("[completed]"); return; }
-      if (toolCalls.size === 0) { console.log("[done]"); return; }
-
-      for (const tc of toolCalls.values()) {
-        console.log(\`  [tool] \${tc.name}(\${tc.arguments})\`);
-        const adapter = toolAdapters[tc.name];
-        let result: any;
-        try { result = adapter ? await adapter(JSON.parse(tc.arguments)) : { error: \`Unknown tool: \${tc.name}\` }; } catch (err: any) { result = { error: err.message }; }
-        messages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(result) });
-      }
-    } else {
-      const response = await client.chat.completions.create({
-        model: config.model.name,
-        messages,
-        tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
-        tool_choice: toolDefinitions.length > 0 ? "auto" : undefined,
-      });
-
-      const choice = response.choices[0];
-      const msg = choice.message;
-      messages.push(msg);
-
-      if (msg.content && msg.content.includes(promise)) {
+${opts?.hasPolicies ? `      const policyCheck = await onBeforeResponse(msg.content);
+      if (!policyCheck.allowed) {
+        console.log(\`[policy] Response blocked: \${policyCheck.reason}\`);
+        return;
+      }\n` : ""}
+      if (msg.content.includes(promise)) {
         console.log("[completed] Agent returned completion promise.");
         console.log(msg.content);
         return;
       }
+    }
 
-      if (!msg.tool_calls || msg.tool_calls.length === 0) {
-        console.log("[done] No tool calls, final output:");
-        console.log(msg.content || "");
-        return;
-      }
+    if (!msg.tool_calls || msg.tool_calls.length === 0) {
+      console.log("[done] No tool calls, final output:");
+      console.log(msg.content || "");
+      return;
+    }
 
-      for (const tc of msg.tool_calls) {
-        const fn = tc.function;
-        console.log(\`  [tool] \${fn.name}(\${fn.arguments})\`);
-        const adapter = toolAdapters[fn.name];
-        let result: any;
-        try {
-          const args = JSON.parse(fn.arguments);
-          result = adapter ? await adapter(args) : { error: \`Unknown tool: \${fn.name}\` };
-        } catch (err: any) {
-          result = { error: err.message };
+    for (const tc of msg.tool_calls) {
+      const fn = tc.function;
+      console.log(\`  [tool] \${fn.name}(\${fn.arguments})\`);
+${opts?.hasPolicies ? `      try {
+        const toolPolicy = await onBeforeToolCall(fn.name, JSON.parse(fn.arguments));
+        if (!toolPolicy.allowed) {
+          console.log(\`  [policy] Tool call blocked: \${toolPolicy.reason}\`);
+          messages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify({ error: \`Policy blocked: \${toolPolicy.reason}\` }) });
+          continue;
         }
-        messages.push({
-          role: "tool",
-          tool_call_id: tc.id,
-          content: JSON.stringify(result),
-        });
+      } catch (policyErr: any) { console.log(\`  [policy] Error evaluating policy: \${policyErr.message}\`); }\n` : ""}
+      const adapter = toolAdapters[fn.name];
+      let result: any;
+      try {
+        const args = JSON.parse(fn.arguments);
+        result = adapter ? await adapter(args) : { error: \`Unknown tool: \${fn.name}\` };
+      } catch (err: any) {
+        result = { error: err.message };
       }
+      messages.push({ role: "tool", tool_call_id: tc.id, content: JSON.stringify(result) });
+${opts?.hasGraph ? `      currentNodeId = transition(currentNodeId, result);\n      console.log(\`  [graph] transitioned to node: \${currentNodeId}\`);\n` : ""}
     }
   }
 
@@ -18124,9 +18142,10 @@ main().catch(console.error);
     tools: Array<{ name: string; description?: string; parameters?: any }>,
     maxIterations: number,
     completionPromise: string,
-    mcpServers?: Array<{ name: string; url: string | null; transportType: string }>
+    mcpServers?: Array<{ name: string; url: string | null; transportType: string }>,
+    opts?: { hasKnowledge?: boolean; hasPolicies?: boolean; hasGraph?: boolean }
   ): string {
-    const toolImports = tools.map(t => `import { ${t.name} } from "./tools/${t.name}";`).join("\n");
+    const toolImports = tools.map(t => `import { ${t.name} } from "../tools/${t.name}";`).join("\n");
     const toolMap = tools.map(t => `  "${t.name}": ${t.name},`).join("\n");
     const toolRegistryEntries = tools.map(t => {
       const schema = (t.parameters && typeof t.parameters === "object" && Object.keys(t.parameters).length > 0)
@@ -18136,13 +18155,27 @@ main().catch(console.error);
     }).join(",\n");
     const mcpBlock = mcpServers && mcpServers.length > 0 ? generateTsMcpClientBlock(mcpServers) : "";
     const mcpInitCall = mcpServers && mcpServers.length > 0 ? `\n  await initMcpClients();` : "";
+    const knowledgeImport = opts?.hasKnowledge ? `import { retrieve } from "../agent/knowledge";\n` : "";
+    const policyImport = opts?.hasPolicies ? `import { onBeforeToolCall, onBeforeResponse } from "./policy";\n` : "";
+    const graphImport = opts?.hasGraph ? `import { transition, getEntryNode } from "../agent/graph";\n` : "";
+    const knowledgeBlock = opts?.hasKnowledge ? `
+  const retrievedCtx = await retrieve(task);
+  const contextBlock = retrievedCtx.length > 0
+    ? "[CONTEXT]\\n" + retrievedCtx.map(r => r.content).join("\\n---\\n") + "\\n[/CONTEXT]\\n\\n"
+    : "";
+  const userMessage = contextBlock + task;` : `
+  const userMessage = task;`;
+
     return `import Anthropic from "@anthropic-ai/sdk";
 import * as fs from "fs";
 import * as yaml from "js-yaml";
 ${toolImports}
-${mcpBlock}
+${policyImport}${knowledgeImport}${graphImport}${mcpBlock}
 const config = yaml.load(fs.readFileSync("agent.yaml", "utf8")) as any;
 const client = new Anthropic();
+
+const stopConditions: string[] = config.stop_conditions || [];
+const forbiddenOutputs: string[] = config.forbidden_outputs || [];
 
 const toolAdapters: Record<string, (args: any) => Promise<any>> = {
 ${toolMap}
@@ -18158,99 +18191,97 @@ const toolDefinitions: Anthropic.Tool[] = Object.entries(TOOL_REGISTRY).map(([na
   input_schema: schema.input_schema,
 }));
 
+function checkGuardrails(content: string): { stopped: boolean; reason?: string } {
+  for (const pattern of forbiddenOutputs) {
+    try {
+      if (content.match(new RegExp(pattern, "i"))) {
+        return { stopped: true, reason: \`Response matched forbidden output pattern: \${pattern}\` };
+      }
+    } catch { /* invalid regex pattern, skip */ }
+  }
+  for (const cond of stopConditions) {
+    if (content.includes(cond)) {
+      return { stopped: true, reason: \`Stop condition met: \${cond}\` };
+    }
+  }
+  return { stopped: false };
+}
+
 async function main() {${mcpInitCall}
-  const streaming = process.argv.includes("--stream");
-  const task = process.argv.find(a => a !== "--stream" && process.argv.indexOf(a) > 1) || "Hello, agent!";
+  const task = process.argv.find(a => process.argv.indexOf(a) > 1) || "Hello, agent!";
+${knowledgeBlock}
   let messages: Anthropic.MessageParam[] = [
-    { role: "user", content: task },
+    { role: "user", content: userMessage },
   ];
 
   const maxIter = config.max_iterations || ${maxIterations};
   const promise = config.completion_promise || "${completionPromise}";
   const ctxLimit = config.context_window_limit || 40;
-
+${opts?.hasGraph ? `  let currentNodeId = getEntryNode()?.id || "start";\n` : ""}
   for (let i = 0; i < maxIter; i++) {
     console.log(\`[iteration \${i + 1}/\${maxIter}]\`);
 
-    // Trim message history to avoid context overflow
     if (messages.length > ctxLimit) {
       messages = messages.slice(-(ctxLimit));
     }
 
-    if (streaming) {
-      const stream = client.messages.stream({
-        model: config.model.name,
-        max_tokens: 4096,
-        system: config.system_prompt,
-        messages,
-        tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
-      });
-      let textContent = "";
-      stream.on("text", (text: string) => { process.stdout.write(text); textContent += text; });
-      const finalMessage = await stream.finalMessage();
-      if (textContent) process.stdout.write("\\n");
-      const toolUseBlocks = finalMessage.content.filter((b: any) => b.type === "tool_use");
+    const response = await client.messages.create({
+      model: config.model.name,
+      max_tokens: 4096,
+      system: config.system_prompt,
+      messages,
+      tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
+    });
 
-      if (textContent.includes(promise)) { console.log("[completed]"); return; }
-      if (toolUseBlocks.length === 0) { console.log("[done]"); return; }
+    const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
+    const toolUseBlocks = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+    const textContent = textBlocks.map(b => b.text).join("\\n");
 
-      messages.push({ role: "assistant", content: finalMessage.content });
-      const toolResults: Anthropic.ToolResultBlockParam[] = [];
-      for (const tu of toolUseBlocks) {
-        console.log(\`  [tool] \${tu.name}(\${JSON.stringify(tu.input)})\`);
-        const adapter = toolAdapters[tu.name];
-        let result: any;
-        try { result = adapter ? await adapter(tu.input) : { error: \`Unknown tool: \${tu.name}\` }; } catch (err: any) { result = { error: err.message }; }
-        toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(result) });
+    if (textContent) {
+      const guard = checkGuardrails(textContent);
+      if (guard.stopped) {
+        console.log(\`[guardrail] \${guard.reason}\`);
+        return;
       }
-      messages.push({ role: "user", content: toolResults });
-    } else {
-      const response = await client.messages.create({
-        model: config.model.name,
-        max_tokens: 4096,
-        system: config.system_prompt,
-        messages,
-        tools: toolDefinitions.length > 0 ? toolDefinitions : undefined,
-      });
-
-      const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
-      const toolUseBlocks = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-
-      const textContent = textBlocks.map(b => b.text).join("\\n");
-
+${opts?.hasPolicies ? `      const policyCheck = await onBeforeResponse(textContent);
+      if (!policyCheck.allowed) {
+        console.log(\`[policy] Response blocked: \${policyCheck.reason}\`);
+        return;
+      }\n` : ""}
       if (textContent.includes(promise)) {
         console.log("[completed] Agent returned completion promise.");
         console.log(textContent);
         return;
       }
-
-      if (toolUseBlocks.length === 0) {
-        console.log("[done] No tool calls, final output:");
-        console.log(textContent);
-        return;
-      }
-
-      messages.push({ role: "assistant", content: response.content });
-
-      const toolResults: Anthropic.ToolResultBlockParam[] = [];
-      for (const tu of toolUseBlocks) {
-        console.log(\`  [tool] \${tu.name}(\${JSON.stringify(tu.input)})\`);
-        const adapter = toolAdapters[tu.name];
-        let result: any;
-        try {
-          result = adapter ? await adapter(tu.input) : { error: \`Unknown tool: \${tu.name}\` };
-        } catch (err: any) {
-          result = { error: err.message };
-        }
-        toolResults.push({
-          type: "tool_result",
-          tool_use_id: tu.id,
-          content: JSON.stringify(result),
-        });
-      }
-
-      messages.push({ role: "user", content: toolResults });
     }
+
+    if (toolUseBlocks.length === 0) {
+      console.log("[done] No tool calls, final output:");
+      console.log(textContent);
+      return;
+    }
+
+    messages.push({ role: "assistant", content: response.content });
+    const toolResults: Anthropic.ToolResultBlockParam[] = [];
+    for (const tu of toolUseBlocks) {
+      console.log(\`  [tool] \${tu.name}(\${JSON.stringify(tu.input)})\`);
+${opts?.hasPolicies ? `      const toolPolicy = await onBeforeToolCall(tu.name, tu.input as Record<string, any>);
+      if (!toolPolicy.allowed) {
+        console.log(\`  [policy] Tool call blocked: \${toolPolicy.reason}\`);
+        toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify({ error: \`Policy blocked: \${toolPolicy.reason}\` }) });
+        continue;
+      }\n` : ""}
+      const adapter = toolAdapters[tu.name];
+      let result: any;
+      try {
+        result = adapter ? await adapter(tu.input) : { error: \`Unknown tool: \${tu.name}\` };
+      } catch (err: any) {
+        result = { error: err.message };
+      }
+      toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: JSON.stringify(result) });
+${opts?.hasGraph ? `      currentNodeId = transition(currentNodeId, result);\n      console.log(\`  [graph] transitioned to node: \${currentNodeId}\`);\n` : ""}
+    }
+    messages.push({ role: "user", content: toolResults });
   }
 
   console.log("[max iterations reached]");
@@ -18555,13 +18586,42 @@ if __name__ == "__main__":
 `;
   }
 
+  function jsonSchemaToTsInterface(name: string, schema: any): string {
+    const lines: string[] = [];
+    lines.push(`export interface ${name} {`);
+    const props = schema?.properties || {};
+    const required = new Set(Array.isArray(schema?.required) ? schema.required : []);
+    for (const [key, val] of Object.entries(props)) {
+      const v = val as any;
+      const opt = required.has(key) ? "" : "?";
+      let tsType = "any";
+      if (v.type === "string") tsType = v.enum ? v.enum.map((e: string) => JSON.stringify(e)).join(" | ") : "string";
+      else if (v.type === "number" || v.type === "integer") tsType = "number";
+      else if (v.type === "boolean") tsType = "boolean";
+      else if (v.type === "array") tsType = v.items?.type === "string" ? "string[]" : v.items?.type === "number" ? "number[]" : "any[]";
+      else if (v.type === "object") tsType = "Record<string, any>";
+      const desc = v.description ? ` // ${v.description}` : "";
+      lines.push(`  ${key}${opt}: ${tsType};${desc}`);
+    }
+    if (Object.keys(props).length === 0) {
+      lines.push(`  [key: string]: any;`);
+    }
+    lines.push(`}`);
+    return lines.join("\n");
+  }
+
   function generateTsToolAdapter(tool: { name: string; description?: string; parameters?: any }, adapterType: "builtin" | "customer" | "stub" = "builtin"): string {
+    const interfaceName = tool.name.charAt(0).toUpperCase() + tool.name.slice(1) + "Args";
+    const hasParams = tool.parameters && typeof tool.parameters === "object" && Object.keys(tool.parameters).length > 0;
+    const interfaceBlock = hasParams ? jsonSchemaToTsInterface(interfaceName, tool.parameters) + "\n\n" : `export interface ${interfaceName} {\n  [key: string]: any;\n}\n\n`;
+    const argType = interfaceName;
+
     if (adapterType === "stub") {
       return `// STUB: Auto-generated placeholder for "${tool.name}"
 // Status: Stub — replace with actual implementation before deployment
 // Description: ${tool.description || "No description provided"}
 
-export async function ${tool.name}(args: Record<string, any>): Promise<any> {
+${interfaceBlock}export async function ${tool.name}(args: ${argType}): Promise<any> {
   throw new Error(
     "[STUB] Tool '${tool.name}' has no implementation. " +
     "Replace this stub with your actual adapter code."
@@ -18576,7 +18636,7 @@ export default ${tool.name};
 // Status: Customer adapter required — provide your own implementation
 // Description: ${tool.description || "No description provided"}
 
-export async function ${tool.name}(args: Record<string, any>): Promise<any> {
+${interfaceBlock}export async function ${tool.name}(args: ${argType}): Promise<any> {
   // TODO: Implement your adapter for ${tool.name}
   // This tool requires a customer-provided implementation
   console.log("[${tool.name}] called with:", args);
@@ -18586,19 +18646,13 @@ export async function ${tool.name}(args: Record<string, any>): Promise<any> {
 export default ${tool.name};
 `;
     }
-    const paramSchema = (tool.parameters && typeof tool.parameters === "object" && Object.keys(tool.parameters).length > 0)
-      ? JSON.stringify(tool.parameters, null, 2).split("\n").map((l: string) => `// ${l}`).join("\n")
-      : `// Parameters: {}`;
     return `// REQUIRES IMPLEMENTATION: "${tool.name}"
 // Status: Scaffold generated — replace the body with your actual implementation
 // Description: ${tool.description || "No description provided"}
-// Parameter schema:
-${paramSchema}
 
-export async function ${tool.name}(args: Record<string, any>): Promise<any> {
+${interfaceBlock}export async function ${tool.name}(args: ${argType}): Promise<any> {
   console.log("[${tool.name}] called with:", JSON.stringify(args, null, 2));
   // TODO: Implement this tool adapter.
-  // The parameter schema above shows what arguments this tool expects.
   throw new Error("[${tool.name}] Not implemented. Replace this with your adapter logic.");
 }
 
@@ -18606,13 +18660,45 @@ export default ${tool.name};
 `;
   }
 
+  function jsonSchemaToDataclass(name: string, schema: any): string {
+    const lines: string[] = [];
+    lines.push(`@dataclass`);
+    lines.push(`class ${name}:`);
+    const props = schema?.properties || {};
+    const required = new Set(Array.isArray(schema?.required) ? schema.required : []);
+    const entries = Object.entries(props);
+    if (entries.length === 0) {
+      lines.push(`    pass`);
+    } else {
+      for (const [key, val] of entries) {
+        const v = val as any;
+        let pyType = "Any";
+        if (v.type === "string") pyType = "str";
+        else if (v.type === "number" || v.type === "integer") pyType = v.type === "integer" ? "int" : "float";
+        else if (v.type === "boolean") pyType = "bool";
+        else if (v.type === "array") pyType = "list";
+        else if (v.type === "object") pyType = "dict";
+        const opt = required.has(key) ? "" : " = None";
+        const typeAnnotation = required.has(key) ? pyType : `Optional[${pyType}]`;
+        const desc = v.description ? `  # ${v.description}` : "";
+        lines.push(`    ${key}: ${typeAnnotation}${opt}${desc}`);
+      }
+    }
+    return lines.join("\n");
+  }
+
   function generatePyToolAdapter(tool: { name: string; description?: string; parameters?: any }, adapterType: "builtin" | "customer" | "stub" = "builtin"): string {
+    const className = tool.name.charAt(0).toUpperCase() + tool.name.slice(1) + "Args";
+    const hasParams = tool.parameters && typeof tool.parameters === "object" && Object.keys(tool.parameters).length > 0;
+    const dataclassBlock = hasParams ? jsonSchemaToDataclass(className, tool.parameters) + "\n\n" : `@dataclass\nclass ${className}:\n    pass\n\n`;
+    const dataclassImport = `from dataclasses import dataclass\nfrom typing import Any, Optional\n\n`;
+
     if (adapterType === "stub") {
       return `# STUB: Auto-generated placeholder for "${tool.name}"
 # Status: Stub — replace with actual implementation before deployment
 # Description: ${tool.description || "No description provided"}
-
-def ${tool.name}(args: dict) -> dict:
+${dataclassImport}${dataclassBlock}
+def ${tool.name}(args: ${className}) -> dict:
     """STUB: ${tool.description || "No description provided"}"""
     raise NotImplementedError(
         "[STUB] Tool '${tool.name}' has no implementation. "
@@ -18624,8 +18710,8 @@ def ${tool.name}(args: dict) -> dict:
       return `# CUSTOMER ADAPTER REQUIRED: "${tool.name}"
 # Status: Customer adapter required — provide your own implementation
 # Description: ${tool.description || "No description provided"}
-
-def ${tool.name}(args: dict) -> dict:
+${dataclassImport}${dataclassBlock}
+def ${tool.name}(args: ${className}) -> dict:
     """Customer adapter: ${tool.description || "No description provided"}"""
     # TODO: Implement your adapter for ${tool.name}
     print(f"[${tool.name}] called with: {args}")
@@ -18640,9 +18726,8 @@ def ${tool.name}(args: dict) -> dict:
 # Description: ${tool.description || "No description provided"}
 # Parameter schema:
 ${pyParamSchema}
-
-
-def ${tool.name}(args: dict) -> dict:
+${dataclassImport}${dataclassBlock}
+def ${tool.name}(args: ${className}) -> dict:
     """TODO: Implement this tool adapter.
     The parameter schema above shows what arguments this tool expects.
     ${tool.description || ""}
@@ -18921,6 +19006,18 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
           .map(p => ({ id: p.id, name: p.name, domain: p.domain, policyJson: p.policyJson }));
       }
 
+      const allEvalSuites = await storage.getEvalSuites();
+      const agentEvalSuites = allEvalSuites.filter(s => s.agentId === agent.id);
+      let evalTestCases: Array<{ suiteName: string; caseName: string; input: string; expected: string; category: string }> = [];
+      for (const suite of agentEvalSuites) {
+        if (suite.goldenDatasetId) {
+          const cases = await storage.getGoldenTestCases(suite.goldenDatasetId);
+          for (const tc of cases.slice(0, 10)) {
+            evalTestCases.push({ suiteName: suite.name, caseName: tc.name, input: tc.inputScenario, expected: tc.expectedBehavior, category: tc.scenarioCategory });
+          }
+        }
+      }
+
       const allContextProfiles = await storage.getContextProfiles();
       const contextProfile = allContextProfiles.find(cp => cp.agentId === agent.id) || null;
       const allMemoryProfiles = await storage.getMemoryProfiles();
@@ -18945,6 +19042,8 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
         contextProfileName: contextProfile?.name || null,
         memoryProfileName: memoryProfile?.name || null,
         mcpServers: mcpServerDetails,
+        stopConditions: Array.isArray(rtConfig.stopConditions) ? rtConfig.stopConditions : [],
+        forbiddenOutputs: Array.isArray(rtConfig.forbiddenOutputs) ? rtConfig.forbiddenOutputs : [],
       };
 
       const agentYaml = generateAgentYaml(agent, tools, systemPrompt, maxIterations, completionPromise, yamlExtras);
@@ -19113,10 +19212,16 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
 
         files["README.md"] = `<!-- ATLAS-generated README -->\n# ${agent.name}\n\n${agent.description || ""}\n\n## Setup\n\n1. Install dependencies:\n   \`\`\`bash\n   ${depCmd}\n   \`\`\`\n2. Copy \`.env.example\` to \`.env\` and fill in your API keys.\n3. Run the agent:\n   \`\`\`bash\n   ${runCmd}\n   \`\`\`\n\n## File Structure\n\n\`\`\`\n${format === "typescript" ? `src/\n  runtime/\n    orchestrator.ts    # Main agent loop\n    policy.ts          # Policy evaluation hooks\n    tracing.ts         # OpenTelemetry tracing setup\n  agent/\n    graph.ts           # Graph construction from blueprint\n    prompts/\n      system.txt       # System prompt\n    schemas/\n      input.json       # Input JSON schema\n      output.json      # Output JSON schema\n  tools/\n    index.ts           # Tool registry\n    {tool}.ts          # Individual tool adapters\ntests/\n  eval_smoke.test.ts   # Smoke evaluation test\npackage.json\nagent.yaml\nalmp.manifest.json\n.env.example` : `src/\n  runtime/\n    orchestrator.py    # Main agent loop\n    policy.py          # Policy evaluation hooks\n    tracing.py         # OpenTelemetry tracing setup\n  agent/\n    graph.py           # Graph construction from blueprint\n    prompts/\n      system.txt       # System prompt\n    schemas/\n      input.json       # Input JSON schema\n      output.json      # Output JSON schema\n  tools/\n    __init__.py        # Tool registry\n    {tool}.py          # Individual tool adapters\ntests/\n  eval_smoke_test.py   # Smoke evaluation test\nrequirements.txt\nagent.yaml\nalmp.manifest.json\n.env.example`}\n\`\`\`\n\n## Tools\n\n${tools.length > 0 ? toolList : "No tools configured."}\n`;
 
+        const entrypointOpts = {
+          hasKnowledge: kbDetails.length > 0,
+          hasPolicies: linkedPolicies.length > 0,
+          hasGraph: Array.isArray(blueprintJson.nodes) && (blueprintJson.nodes as any[]).length > 0,
+        };
+
         if (format === "typescript") {
           files["src/runtime/orchestrator.ts"] = aiResult?.entrypoint || (llmProvider === "openai"
-            ? generateTsEntrypointOpenAI(tools, maxIterations, completionPromise, mcpServerDetails)
-            : generateTsEntrypointAnthropic(tools, maxIterations, completionPromise, mcpServerDetails));
+            ? generateTsEntrypointOpenAI(tools, maxIterations, completionPromise, mcpServerDetails, entrypointOpts)
+            : generateTsEntrypointAnthropic(tools, maxIterations, completionPromise, mcpServerDetails, entrypointOpts));
 
           files["src/tools/index.ts"] = generateTsToolsIndex(tools);
           for (const tool of tools) {
@@ -19136,10 +19241,14 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
           }
 
           const blueprintNodes = Array.isArray(blueprintJson.nodes) ? blueprintJson.nodes as Array<{ id?: string; type?: string; label?: string }> : [];
+          const blueprintEdges = Array.isArray(blueprintJson.edges) ? blueprintJson.edges as Array<{ source?: string; target?: string; condition?: string }> : [];
           const nodesLiteral = blueprintNodes.length > 0
             ? blueprintNodes.map(n => `  { id: ${JSON.stringify(n.id || "")}, type: ${JSON.stringify(n.type || "")}, label: ${JSON.stringify(n.label || "")} }`).join(",\n")
             : `  { id: "start", type: "entry", label: "Start" },\n  { id: "agent_loop", type: "agent", label: "Agent Loop" },\n  { id: "end", type: "exit", label: "End" }`;
-          files["src/agent/graph.ts"] = `// ATLAS-generated: Graph construction from blueprint configuration\n\nexport interface GraphNode {\n  id: string;\n  type: string;\n  label: string;\n}\n\nexport const agentName = ${JSON.stringify(agent.name)};\nexport const maxIterations = ${maxIterations};\nexport const completionPromise = ${JSON.stringify(completionPromise)};\n\nexport const nodes: GraphNode[] = [\n${nodesLiteral}\n];\n\nexport function getNode(id: string): GraphNode | undefined {\n  return nodes.find(n => n.id === id);\n}\n\nexport function getEntryNode(): GraphNode | undefined {\n  return nodes.find(n => n.type === "entry") || nodes[0];\n}\n`;
+          const edgesLiteral = blueprintEdges.length > 0
+            ? blueprintEdges.map(e => `  { source: ${JSON.stringify(e.source || "")}, target: ${JSON.stringify(e.target || "")}, condition: ${JSON.stringify(e.condition || null)} }`).join(",\n")
+            : `  { source: "start", target: "agent_loop", condition: null },\n  { source: "agent_loop", target: "end", condition: null }`;
+          files["src/agent/graph.ts"] = `// ATLAS-generated: Graph construction from blueprint configuration\n\nexport interface GraphNode {\n  id: string;\n  type: string;\n  label: string;\n}\n\nexport interface GraphEdge {\n  source: string;\n  target: string;\n  condition: string | null;\n}\n\nexport const agentName = ${JSON.stringify(agent.name)};\nexport const maxIterations = ${maxIterations};\nexport const completionPromise = ${JSON.stringify(completionPromise)};\n\nexport const nodes: GraphNode[] = [\n${nodesLiteral}\n];\n\nexport const edges: GraphEdge[] = [\n${edgesLiteral}\n];\n\nexport function getNode(id: string): GraphNode | undefined {\n  return nodes.find(n => n.id === id);\n}\n\nexport function getEntryNode(): GraphNode | undefined {\n  return nodes.find(n => n.type === "entry") || nodes[0];\n}\n\nexport function getOutgoingEdges(nodeId: string): GraphEdge[] {\n  return edges.filter(e => e.source === nodeId);\n}\n\nfunction evaluateCondition(condition: string, ctx: any): boolean {\n  if (!condition || !ctx) return false;\n  if (condition.startsWith("ctx.") || condition.startsWith("ctx[")) {\n    const parts = condition.split(/\\s*(===|!==|==|!=|>=|<=|>|<)\\s*/);\n    if (parts.length === 3) {\n      const [left, op, right] = parts;\n      const lval = left.split(".").reduce((o: any, k: string) => o?.[k], { ctx });\n      const rval = right.replace(/^["']|["']$/g, "");\n      switch (op) {\n        case "===": case "==": return String(lval) === rval;\n        case "!==": case "!=": return String(lval) !== rval;\n        case ">": return Number(lval) > Number(rval);\n        case "<": return Number(lval) < Number(rval);\n        case ">=": return Number(lval) >= Number(rval);\n        case "<=": return Number(lval) <= Number(rval);\n        default: return false;\n      }\n    }\n  }\n  return false;\n}\n\nexport function transition(currentNodeId: string, context?: any): string {\n  const outgoing = getOutgoingEdges(currentNodeId);\n  if (outgoing.length === 0) return currentNodeId;\n  for (const edge of outgoing) {\n    if (!edge.condition) return edge.target;\n    try {\n      if (evaluateCondition(edge.condition, context)) return edge.target;\n    } catch { continue; }\n  }\n  return outgoing[0].target;\n}\n`;
 
           if (kbDetails.length > 0) {
             const kbConfigJson = JSON.stringify(kbDetails.map(kb => ({ name: kb.name, embeddingModel: kb.embeddingModel, chunkSize: kb.chunkSize, chunkOverlap: kb.chunkOverlap })), null, 2);
@@ -19150,7 +19259,19 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
             files["src/agent/outcome.ts"] = `// ATLAS-generated: Outcome contract & KPI configuration\nimport * as fs from "fs";\nimport * as path from "path";\n\nexport interface KpiTarget {\n  name: string;\n  target: number;\n  operator: string;\n  unit?: string;\n}\n\nexport interface OutcomeContract {\n  name: string;\n  kpis: KpiTarget[];\n}\n\nconst outcomeJson = fs.readFileSync(path.resolve(__dirname, "../agent/outcome.json"), "utf-8");\nexport const outcome: OutcomeContract = JSON.parse(outcomeJson);\n\nexport function checkKpi(kpiName: string, actualValue: number): { passed: boolean; message: string } {\n  const kpi = outcome.kpis.find(k => k.name === kpiName);\n  if (!kpi) return { passed: true, message: \`KPI "\${kpiName}" not found in outcome contract\` };\n  let passed = false;\n  switch (kpi.operator) {\n    case ">=": passed = actualValue >= kpi.target; break;\n    case "<=": passed = actualValue <= kpi.target; break;\n    case ">": passed = actualValue > kpi.target; break;\n    case "<": passed = actualValue < kpi.target; break;\n    case "==": passed = actualValue === kpi.target; break;\n    default: passed = actualValue >= kpi.target;\n  }\n  return { passed, message: \`KPI "\${kpiName}": actual=\${actualValue} \${kpi.operator} target=\${kpi.target}\${kpi.unit ? " " + kpi.unit : ""} → \${passed ? "PASS" : "FAIL"}\` };\n}\n`;
           }
 
-          files["tests/eval_smoke.test.ts"] = `// ATLAS-generated: Smoke evaluation test\nimport * as assert from "assert";\n\nasync function smokeTest() {\n  const orchestrator = await import("../src/runtime/orchestrator");\n  assert.ok(orchestrator, "Orchestrator module should be importable");\n  console.log("[PASS] Smoke test: orchestrator module loads successfully");\n\n  const graph = await import("../src/agent/graph");\n  assert.ok(graph.nodes, "Graph nodes should be defined");\n  assert.ok(graph.nodes.length > 0, "Graph should have at least one node");\n  console.log("[PASS] Smoke test: graph module loads with nodes");\n\n  const policy = await import("../src/runtime/policy");\n  const result = await policy.evaluatePolicy({ agentName: ${JSON.stringify(agent.name)}, action: "test" });\n  assert.strictEqual(result.allowed, true, "Default policy should allow actions");\n  console.log("[PASS] Smoke test: policy stub allows actions");\n\n  console.log("[ALL PASS] Smoke evaluation complete");\n}\n\nsmokeTest().catch((err) => {\n  console.error("[FAIL]", err);\n  process.exit(1);\n});\n`;
+          const evalTestFunctions = evalTestCases.length > 0
+            ? evalTestCases.map((tc, idx) => {
+                const fnName = `evalCase_${idx}_${tc.caseName.replace(/[^a-zA-Z0-9_]/g, "_").substring(0, 40)}`;
+                return `\nasync function ${fnName}() {\n  console.log("[EVAL] ${tc.suiteName} / ${tc.caseName} (${tc.category})");\n  const input = ${JSON.stringify(tc.input)};\n  const expected = ${JSON.stringify(tc.expected)};\n  // TODO: Replace stub with actual orchestrator invocation\n  // const result = await runAgent(input);\n  // assert.ok(result, "Agent should produce a response");\n  // Validate expected behavior:\n  // assert.ok(result.includes(expected) || matchesCriteria(result, expected), \`Expected behavior: \${expected}\`);\n  console.log("  Input:", input.substring(0, 80) + "...");\n  console.log("  Expected:", expected.substring(0, 80) + "...");\n  console.log("[PENDING] ${fnName} — implement assertion logic");\n}\n`;
+              }).join("")
+            : "";
+          const evalRunCalls = evalTestCases.length > 0
+            ? evalTestCases.map((tc, idx) => {
+                const fnName = `evalCase_${idx}_${tc.caseName.replace(/[^a-zA-Z0-9_]/g, "_").substring(0, 40)}`;
+                return `  await ${fnName}();`;
+              }).join("\n")
+            : "";
+          files["tests/eval_smoke.test.ts"] = `// ATLAS-generated: Evaluation test suite\nimport * as assert from "assert";\n\nasync function smokeTest() {\n  const orchestrator = await import("../src/runtime/orchestrator");\n  assert.ok(orchestrator, "Orchestrator module should be importable");\n  console.log("[PASS] Smoke test: orchestrator module loads successfully");\n\n  const graph = await import("../src/agent/graph");\n  assert.ok(graph.nodes, "Graph nodes should be defined");\n  assert.ok(graph.nodes.length > 0, "Graph should have at least one node");\n  assert.ok(graph.edges, "Graph edges should be defined");\n  console.log("[PASS] Smoke test: graph module loads with nodes and edges");\n\n  const policy = await import("../src/runtime/policy");\n  const result = await policy.evaluatePolicy({ agentName: ${JSON.stringify(agent.name)}, action: "test" });\n  assert.strictEqual(result.allowed, true, "Default policy should allow actions");\n  console.log("[PASS] Smoke test: policy stub allows actions");\n\n  console.log("[ALL PASS] Smoke evaluation complete");\n}\n${evalTestFunctions}\nasync function runAllTests() {\n  await smokeTest();\n${evalRunCalls}\n  console.log("[COMPLETE] All evaluation tests finished");\n}\n\nrunAllTests().catch((err) => {\n  console.error("[FAIL]", err);\n  process.exit(1);\n});\n`;
 
           const deps: Record<string, string> = { ...baseDeps };
           addLlmDep(deps, []);
