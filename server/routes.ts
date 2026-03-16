@@ -19852,8 +19852,6 @@ export async function evaluatePolicy(ctx: PolicyContext): Promise<PolicyResult> 
       return { allowed: false, reason: \\\`Action "\\\${ctx.action}" blocked by policy "\\\${policy.name}"\\\`, policyName: policy.name };
     }
     if (rules.requireApproval && rules.requireApproval.includes(ctx.action)) {
-      const event = { event: "APPROVAL_REQUIRED", action: ctx.action, agentName: ctx.agentName, policyName: policy.name, toolName: ctx.toolName || null };
-      console.log(JSON.stringify(event));
       return { allowed: false, reason: \\\`Action "\\\${ctx.action}" requires approval per policy "\\\${policy.name}"\\\`, policyName: policy.name, event: "APPROVAL_REQUIRED" };
     }
     const sc = rules.stopConditions || rules.stop_conditions || [];
@@ -20046,8 +20044,6 @@ def evaluate_policy(agent_name: str, action: str, tool_name: Optional[str] = Non
         if rules.get("blockedActions") and action in rules["blockedActions"]:
             return {"allowed": False, "reason": f'Action "{action}" blocked by policy "{policy["name"]}"', "policyName": policy["name"]}
         if rules.get("requireApproval") and action in rules["requireApproval"]:
-            event = {"event": "APPROVAL_REQUIRED", "action": action, "agentName": agent_name, "policyName": policy["name"], "toolName": tool_name}
-            print(json.dumps(event))
             return {"allowed": False, "reason": f'Action "{action}" requires approval per policy "{policy["name"]}"', "policyName": policy["name"], "event": "APPROVAL_REQUIRED"}
         for cond in (rules.get("stopConditions") or rules.get("stop_conditions") or []):
             if action == cond:
