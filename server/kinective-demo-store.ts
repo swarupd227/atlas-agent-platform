@@ -180,6 +180,7 @@ export function finalizeKinectiveSystemUpdates(scenario: KinectiveScenario): voi
   }
 
   if (scenario === "system_failure") {
+    const now = new Date().toISOString();
     for (const su of state.systemUpdates) {
       const name = su.system.toLowerCase();
       if (name.includes("card")) {
@@ -189,7 +190,10 @@ export function finalizeKinectiveSystemUpdates(scenario: KinectiveScenario): voi
       } else if (name.includes("loan") || name.includes("crm") || name.includes("salesforce")) {
         su.status = "rolled_back";
         su.confirmationId = null;
-        if (!su.rolledBackAt) su.rolledBackAt = new Date().toISOString();
+        if (!su.rolledBackAt) su.rolledBackAt = now;
+        if (!state.rollbackLog.find((r) => r.system === su.system)) {
+          state.rollbackLog.push({ system: su.system, status: "rolled_back", rolledBackAt: now });
+        }
       } else if (
         name.includes("bill") ||
         name.includes("fraud") ||
@@ -202,6 +206,11 @@ export function finalizeKinectiveSystemUpdates(scenario: KinectiveScenario): voi
       ) {
         su.status = "skipped";
         su.confirmationId = null;
+      } else {
+        if (su.status === "pending") {
+          su.status = "success";
+          su.confirmationId = confId();
+        }
       }
     }
     if (!state.auditLog.find((e) => e.action === "PARTIAL_FAILURE")) {

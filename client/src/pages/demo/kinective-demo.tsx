@@ -223,6 +223,7 @@ function MemberCard({
       return res.json();
     },
     onSuccess: () => {
+      onTriggerComplete();
       setShowTrigger(true);
     },
     onError: (err: any) => {
@@ -239,7 +240,6 @@ function MemberCard({
   const handleTriggerComplete = () => {
     setDialogOpen(false);
     setShowTrigger(false);
-    onTriggerComplete();
   };
 
   return (
@@ -295,7 +295,7 @@ function MemberCard({
         </CardContent>
       </Card>
 
-      <Dialog open={dialogOpen} onOpenChange={(open) => { if (!showTrigger) setDialogOpen(open); }}>
+      <Dialog open={dialogOpen} onOpenChange={(open) => { if (!showTrigger && !submitCoa.isPending) setDialogOpen(open); }}>
         <DialogContent className="bg-zinc-900 border-zinc-700 text-white max-w-md" data-testid="coa-dialog">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
