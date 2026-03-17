@@ -236,6 +236,7 @@ export default function MoodysDemo() {
       {/* STEP 1 — TRIGGER                                                 */}
       {/* ══════════════════════════════════════════════════════════════════ */}
       {view === "trigger" && (
+        <div className="space-y-4">
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           {/* Request form */}
           <Card className="border-border/60">
@@ -509,6 +510,7 @@ export default function MoodysDemo() {
             </div>
           </CardContent>
         </Card>
+        </div>
       )}
 
       {/* ══════════════════════════════════════════════════════════════════ */}
