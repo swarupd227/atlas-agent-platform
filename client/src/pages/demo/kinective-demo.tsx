@@ -759,8 +759,11 @@ function ValidationPanel({ scenario, hasRun }: { scenario: Scenario; hasRun: boo
   );
 }
 
-function SystemUpdatesPanel({ scenario, updates }: { scenario: Scenario; updates: SystemUpdate[] }) {
-  const statusIcon = (s: SystemUpdate["status"]) => {
+function SystemUpdatesPanel({ scenario, updates, running }: { scenario: Scenario; updates: SystemUpdate[]; running: boolean }) {
+  const statusIcon = (s: SystemUpdate["status"], idx: number) => {
+    if (s === "pending" && running) {
+      return <Loader2 className="w-3.5 h-3.5 text-blue-400 animate-spin" style={{ animationDelay: `${idx * 120}ms` }} />;
+    }
     switch (s) {
       case "success": return <CheckCircle2 className="w-3.5 h-3.5 text-green-400" />;
       case "failed": return <XCircle className="w-3.5 h-3.5 text-red-400" />;
@@ -770,7 +773,14 @@ function SystemUpdatesPanel({ scenario, updates }: { scenario: Scenario; updates
     }
   };
 
-  const statusBadge = (s: SystemUpdate["status"]) => {
+  const statusBadge = (s: SystemUpdate["status"], idx: number) => {
+    if (s === "pending" && running) {
+      return (
+        <Badge variant="outline" className="bg-blue-500/10 text-blue-400 border-blue-500/30 text-[10px] animate-pulse" style={{ animationDelay: `${idx * 120}ms` }}>
+          PROCESSING…
+        </Badge>
+      );
+    }
     const colors: Record<string, string> = {
       success: "bg-green-500/20 text-green-400 border-green-500/30",
       failed: "bg-red-500/20 text-red-400 border-red-500/30",
@@ -794,6 +804,7 @@ function SystemUpdatesPanel({ scenario, updates }: { scenario: Scenario; updates
 
   const successCount = updates.filter((u) => u.status === "success").length;
   const total = updates.length;
+  const allPending = updates.every((u) => u.status === "pending");
 
   return (
     <Card className="bg-zinc-900 border-zinc-800" data-testid="system-updates-panel">
@@ -801,24 +812,34 @@ function SystemUpdatesPanel({ scenario, updates }: { scenario: Scenario; updates
         <CardTitle className="text-sm font-semibold flex items-center gap-2">
           <Building2 className="w-4 h-4 text-emerald-400" />
           System Updates
-          {scenario === "happy" && successCount === total && (
+          {running && (
+            <Badge variant="outline" className="ml-auto bg-blue-500/10 text-blue-400 border-blue-500/30 text-[10px] animate-pulse">
+              AGENT RUNNING…
+            </Badge>
+          )}
+          {!running && scenario === "happy" && successCount === total && !allPending && (
             <Badge variant="outline" className="ml-auto bg-green-500/20 text-green-400 border-green-500/30 text-[10px]">
               {successCount}/{total} COMPLETE
             </Badge>
           )}
-          {scenario === "happy" && successCount < total && (
+          {!running && scenario === "happy" && successCount < total && !allPending && (
             <Badge variant="outline" className="ml-auto bg-zinc-500/20 text-zinc-400 border-zinc-500/30 text-[10px]">
               {successCount}/{total} updated
             </Badge>
           )}
-          {scenario === "invalid_address" && (
+          {!running && scenario === "invalid_address" && !allPending && (
             <Badge variant="outline" className="ml-auto bg-zinc-500/20 text-zinc-500 border-zinc-500/30 text-[10px]">
               BLOCKED — USPS GATE
             </Badge>
           )}
-          {scenario === "system_failure" && (
+          {!running && scenario === "system_failure" && !allPending && (
             <Badge variant="outline" className="ml-auto bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-[10px]">
               PARTIAL — ROLLBACK
+            </Badge>
+          )}
+          {!running && allPending && (
+            <Badge variant="outline" className="ml-auto bg-zinc-700/40 text-zinc-500 border-zinc-700 text-[10px]">
+              AWAITING RUN
             </Badge>
           )}
         </CardTitle>
@@ -828,12 +849,14 @@ function SystemUpdatesPanel({ scenario, updates }: { scenario: Scenario; updates
           {updates.map((u, i) => (
             <div
               key={i}
-              className="flex items-center justify-between py-1.5 px-2 rounded text-xs hover:bg-zinc-800/50"
+              className={`flex items-center justify-between py-1.5 px-2 rounded text-xs hover:bg-zinc-800/50 transition-colors ${
+                u.status === "pending" && running ? "bg-blue-500/5" : ""
+              }`}
               data-testid={`system-update-${i}`}
             >
               <div className="flex items-center gap-2">
-                {statusIcon(u.status)}
-                <span className="text-zinc-300">{u.system}</span>
+                {statusIcon(u.status, i)}
+                <span className={u.status === "pending" && running ? "text-blue-300/80" : "text-zinc-300"}>{u.system}</span>
               </div>
               <div className="flex items-center gap-2">
                 {u.confirmationId && (
@@ -842,7 +865,7 @@ function SystemUpdatesPanel({ scenario, updates }: { scenario: Scenario; updates
                 {u.error && (
                   <span className="text-red-400/70 text-[10px] max-w-[200px] truncate">{u.error}</span>
                 )}
-                {statusBadge(u.status)}
+                {statusBadge(u.status, i)}
               </div>
             </div>
           ))}
@@ -1152,8 +1175,14 @@ export default function KinectiveDemo() {
               key={s}
               variant={scenario === s ? "default" : "outline"}
               size="sm"
-              onClick={() => {
+              onClick={async () => {
+                if (s === scenario) return;
                 setScenario(s);
+                try {
+                  await apiRequest("POST", "/demo-api/kinective/full-reset", {});
+                  invalidateAll();
+                  setRunning(false);
+                } catch (_) {}
               }}
               className={
                 scenario === s
@@ -1216,7 +1245,7 @@ export default function KinectiveDemo() {
             />
             <SignedFormPanel scenario={scenario} hasRun={hasRun} />
             <ValidationPanel scenario={scenario} hasRun={hasRun} />
-            <SystemUpdatesPanel scenario={scenario} updates={systemUpdates} />
+            <SystemUpdatesPanel scenario={scenario} updates={systemUpdates} running={running} />
             {(scenario === "system_failure" || scenario === "invalid_address") && <RollbackPanel entries={rollbackEntries} scenario={scenario} />}
             <NotificationPanel scenario={scenario} hasRun={hasRun} />
           </div>
