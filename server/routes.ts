@@ -35261,6 +35261,7 @@ Log every action.`;
       if (!agent) return res.status(404).json({ error: "Kinective Change of Address Agent not found" });
 
       resetKinectiveDemo(selectedScenario);
+      setKinectiveRunning(true);
       const thisGeneration = getRunGeneration();
 
       const allDeployments = await storage.getDeployments();
