@@ -5,6 +5,16 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Collapsible,
   CollapsibleContent,
@@ -28,6 +38,11 @@ import {
   Shield,
   Bell,
   Play,
+  User,
+  Settings,
+  Send,
+  Webhook,
+  Zap,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { KINECTIVE_AGENT, KINECTIVE_MCP_SERVERS, KINECTIVE_SKILLS, KINECTIVE_CONFIG } from "./kinective-constants";
@@ -60,12 +75,12 @@ const SCENARIO_LABELS: Record<Scenario, { label: string; description: string; co
   },
   invalid_address: {
     label: "Invalid Address",
-    description: "USPS validation fails \u2192 human review",
+    description: "USPS validation fails → human review",
     color: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
   },
   system_failure: {
     label: "System Failure + Rollback",
-    description: "Card timeout \u2192 automated rollback",
+    description: "Card timeout → automated rollback",
     color: "bg-red-500/20 text-red-400 border-red-500/30",
   },
 };
@@ -85,6 +100,468 @@ const SYSTEM_COLORS: Record<string, string> = {
   ATLAS: "bg-orange-500",
 };
 
+const SCENARIO_PREFILL: Record<Scenario, { street: string; city: string; state: string; zip: string }> = {
+  happy: { street: "1847 Lakewood Drive", city: "Austin", state: "TX", zip: "78701" },
+  invalid_address: { street: "1847 Lakewod Drve", city: "Austin", state: "TX", zip: "" },
+  system_failure: { street: "1847 Lakewood Drive", city: "Austin", state: "TX", zip: "78701" },
+};
+
+// ── Trigger Sequence Step ──────────────────────────────────────────────────
+interface TriggerStep {
+  label: string;
+  detail: string;
+  icon: React.ElementType;
+  delayMs: number;
+}
+
+const TRIGGER_STEPS: TriggerStep[] = [
+  { label: "Member submits via Alkami portal", detail: "Digital banking address form submitted", icon: User, delayMs: 0 },
+  { label: "SignPlus generates & e-signs COA form", detail: "Form COA-2026-00412 auto-signed", icon: FileText, delayMs: 800 },
+  { label: "Webhook fired to ATLAS", detail: "POST /webhooks/coa-submitted → 200 OK", icon: Webhook, delayMs: 1600 },
+  { label: "Change of Address Agent started", detail: "Processing 11 downstream systems…", icon: Zap, delayMs: 2400 },
+];
+
+function TriggerSequence({ onComplete }: { onComplete: () => void }) {
+  const [step, setStep] = useState(-1);
+
+  useEffect(() => {
+    let timeout: ReturnType<typeof setTimeout>;
+    TRIGGER_STEPS.forEach((s, i) => {
+      timeout = setTimeout(() => {
+        setStep(i);
+        if (i === TRIGGER_STEPS.length - 1) {
+          setTimeout(onComplete, 800);
+        }
+      }, s.delayMs + 400);
+    });
+    return () => clearTimeout(timeout);
+  }, [onComplete]);
+
+  return (
+    <div className="mt-4 space-y-2" data-testid="trigger-sequence">
+      {TRIGGER_STEPS.map((s, i) => {
+        const Icon = s.icon;
+        const done = step >= i;
+        const active = step === i;
+        return (
+          <div
+            key={i}
+            className={`flex items-center gap-3 py-2 px-3 rounded-lg border transition-all duration-500 ${
+              done
+                ? i < TRIGGER_STEPS.length - 1
+                  ? "bg-green-500/10 border-green-500/30"
+                  : "bg-orange-500/10 border-orange-500/30"
+                : "bg-zinc-800/40 border-zinc-700/50 opacity-40"
+            }`}
+          >
+            <div className={`w-6 h-6 rounded-full flex items-center justify-center shrink-0 ${
+              done
+                ? i < TRIGGER_STEPS.length - 1
+                  ? "bg-green-500/20 text-green-400"
+                  : "bg-orange-500/20 text-orange-400"
+                : "bg-zinc-700 text-zinc-500"
+            }`}>
+              {active && i === TRIGGER_STEPS.length - 1 ? (
+                <Loader2 className="w-3 h-3 animate-spin" />
+              ) : done ? (
+                i < TRIGGER_STEPS.length - 1 ? (
+                  <CheckCircle2 className="w-3 h-3" />
+                ) : (
+                  <Icon className="w-3 h-3" />
+                )
+              ) : (
+                <Icon className="w-3 h-3" />
+              )}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className={`text-xs font-medium ${done ? (i < TRIGGER_STEPS.length - 1 ? "text-zinc-200" : "text-orange-300") : "text-zinc-500"}`}>
+                {s.label}
+              </div>
+              {done && (
+                <div className={`text-[10px] font-mono ${i < TRIGGER_STEPS.length - 1 ? "text-green-500/70" : "text-orange-500/70"}`}>
+                  {s.detail}
+                </div>
+              )}
+            </div>
+            <div className="text-[10px] font-mono shrink-0">
+              {done ? (
+                <Badge variant="outline" className={`${i < TRIGGER_STEPS.length - 1 ? "bg-green-500/20 text-green-400 border-green-500/30" : "bg-orange-500/20 text-orange-400 border-orange-500/30"} text-[9px]`}>
+                  {i < TRIGGER_STEPS.length - 1 ? "✓" : "→"}
+                </Badge>
+              ) : null}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Member Card + Change Address Dialog ────────────────────────────────────
+function MemberCard({
+  scenario,
+  running,
+  onTriggerComplete,
+}: {
+  scenario: Scenario;
+  running: boolean;
+  onTriggerComplete: () => void;
+}) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [showTrigger, setShowTrigger] = useState(false);
+  const prefill = SCENARIO_PREFILL[scenario];
+  const [form, setForm] = useState(prefill);
+  const { toast } = useToast();
+
+  useEffect(() => {
+    setForm(SCENARIO_PREFILL[scenario]);
+  }, [scenario]);
+
+  const submitCoa = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/demo-api/kinective/submit-coa", { scenario });
+      return res.json();
+    },
+    onSuccess: () => {
+      setShowTrigger(true);
+    },
+    onError: (err: any) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+      setDialogOpen(false);
+    },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    submitCoa.mutate();
+  };
+
+  const handleTriggerComplete = () => {
+    setDialogOpen(false);
+    setShowTrigger(false);
+    onTriggerComplete();
+  };
+
+  return (
+    <>
+      <Card className="bg-zinc-900 border-zinc-800" data-testid="member-card">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <User className="w-4 h-4 text-cyan-400" />
+            Member Profile
+            <Badge variant="outline" className="ml-auto bg-cyan-500/20 text-cyan-400 border-cyan-500/30 text-[10px]">
+              Alkami Digital Banking
+            </Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-500 to-emerald-500 flex items-center justify-center text-white font-bold text-sm shrink-0">
+              SM
+            </div>
+            <div>
+              <div className="text-sm font-semibold text-zinc-100">Sarah Mitchell</div>
+              <div className="text-xs text-zinc-500 font-mono">MBR-2026-84291</div>
+            </div>
+            <Badge variant="outline" className="ml-auto text-[10px] bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
+              Active Member
+            </Badge>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 text-xs border-t border-zinc-800 pt-3">
+            <div>
+              <span className="text-zinc-500">Member Since:</span>
+              <div className="text-zinc-300">March 2018</div>
+            </div>
+            <div>
+              <span className="text-zinc-500">Account Type:</span>
+              <div className="text-zinc-300">Regular Shares + Auto Loan</div>
+            </div>
+            <div className="col-span-2">
+              <span className="text-zinc-500">Current Address:</span>
+              <div className="text-zinc-300">420 Elm St, Springfield, IL 62701</div>
+            </div>
+          </div>
+
+          <Button
+            className="w-full bg-cyan-600 hover:bg-cyan-700 text-white text-sm"
+            onClick={() => setDialogOpen(true)}
+            disabled={running}
+            data-testid="change-address-button"
+          >
+            <MapPin className="w-4 h-4 mr-2" />
+            Change Address
+          </Button>
+        </CardContent>
+      </Card>
+
+      <Dialog open={dialogOpen} onOpenChange={(open) => { if (!showTrigger) setDialogOpen(open); }}>
+        <DialogContent className="bg-zinc-900 border-zinc-700 text-white max-w-md" data-testid="coa-dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MapPin className="w-4 h-4 text-cyan-400" />
+              Change of Address
+            </DialogTitle>
+            <DialogDescription className="text-zinc-400 text-xs">
+              Sarah Mitchell · MBR-2026-84291 · Alkami Digital Banking
+            </DialogDescription>
+          </DialogHeader>
+
+          {!showTrigger ? (
+            <form onSubmit={handleSubmit} className="space-y-4" data-testid="coa-form">
+              <div className="bg-zinc-800/50 rounded-lg p-3 text-xs text-zinc-400 border border-zinc-700">
+                <span className="text-zinc-500">Current address:</span>{" "}
+                <span className="text-zinc-300">420 Elm St, Springfield, IL 62701</span>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <Label className="text-xs text-zinc-400">Street Address</Label>
+                  <Input
+                    value={form.street}
+                    onChange={(e) => setForm({ ...form, street: e.target.value })}
+                    className="bg-zinc-800 border-zinc-700 text-zinc-100 text-sm mt-1"
+                    placeholder="Street address"
+                    data-testid="input-street"
+                  />
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div className="col-span-1">
+                    <Label className="text-xs text-zinc-400">City</Label>
+                    <Input
+                      value={form.city}
+                      onChange={(e) => setForm({ ...form, city: e.target.value })}
+                      className="bg-zinc-800 border-zinc-700 text-zinc-100 text-sm mt-1"
+                      placeholder="City"
+                      data-testid="input-city"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs text-zinc-400">State</Label>
+                    <Input
+                      value={form.state}
+                      onChange={(e) => setForm({ ...form, state: e.target.value })}
+                      className="bg-zinc-800 border-zinc-700 text-zinc-100 text-sm mt-1"
+                      placeholder="ST"
+                      maxLength={2}
+                      data-testid="input-state"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs text-zinc-400">ZIP</Label>
+                    <Input
+                      value={form.zip}
+                      onChange={(e) => setForm({ ...form, zip: e.target.value })}
+                      className="bg-zinc-800 border-zinc-700 text-zinc-100 text-sm mt-1"
+                      placeholder="ZIP"
+                      data-testid="input-zip"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {scenario === "invalid_address" && (
+                <div className="flex items-start gap-2 text-xs bg-yellow-500/10 border border-yellow-500/20 rounded-lg p-2">
+                  <AlertTriangle className="w-3.5 h-3.5 text-yellow-400 shrink-0 mt-0.5" />
+                  <span className="text-yellow-400">Address contains errors — USPS validation will fail and route to human review.</span>
+                </div>
+              )}
+
+              <div className="flex gap-2 pt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="flex-1 border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+                  onClick={() => setDialogOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  className="flex-1 bg-cyan-600 hover:bg-cyan-700 text-white"
+                  disabled={submitCoa.isPending}
+                  data-testid="submit-coa-button"
+                >
+                  {submitCoa.isPending ? (
+                    <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  ) : (
+                    <Send className="w-4 h-4 mr-2" />
+                  )}
+                  Submit Change
+                </Button>
+              </div>
+            </form>
+          ) : (
+            <div data-testid="trigger-sequence-container">
+              <div className="text-xs text-zinc-400 mb-1">Initiating COA pipeline…</div>
+              <TriggerSequence onComplete={handleTriggerComplete} />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+// ── System Configuration Panel ─────────────────────────────────────────────
+const ALL_SYSTEMS = [
+  "Kinective Gateway (Core Banking)",
+  "Digital Banking (Alkami)",
+  "Statement Vendor (Doxim)",
+  "Card Management (PSCU)",
+  "Loan Origination",
+  "CRM (Salesforce)",
+  "Bill Pay",
+  "Fraud Detection",
+  "BSA/AML Compliance",
+  "SignPlus Archive",
+  "Member Notification",
+];
+
+const SYSTEM_TOOLS_MAP: Record<string, string[]> = {
+  "Kinective Gateway (Core Banking)": ["update_member_address", "get_member_profile"],
+  "Digital Banking (Alkami)": ["update_digital_address", "notify_digital_banking"],
+  "Statement Vendor (Doxim)": ["update_statement_address"],
+  "Card Management (PSCU)": ["update_card_address"],
+  "Loan Origination": ["update_loan_address"],
+  "CRM (Salesforce)": ["update_crm_contact", "create_interaction_record"],
+  "Bill Pay": ["update_bill_pay_address"],
+  "Fraud Detection": ["flag_address_change"],
+  "BSA/AML Compliance": ["log_bsa_event", "create_compliance_record"],
+  "SignPlus Archive": ["archive_signed_document"],
+  "Member Notification": ["notify_digital_banking"],
+};
+
+function SystemConfigPanel() {
+  const [open, setOpen] = useState(false);
+  const { toast } = useToast();
+
+  const configQuery = useQuery<{ enabledSystems: string[]; allSystems: string[] }>({
+    queryKey: ["/demo-api/kinective/config"],
+  });
+
+  const enabledSystems = configQuery.data?.enabledSystems ?? ALL_SYSTEMS;
+  const enabledCount = enabledSystems.length;
+
+  const configMutation = useMutation({
+    mutationFn: async (systems: string[]) => {
+      const res = await apiRequest("POST", "/demo-api/kinective/config", { enabledSystems: systems });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/config"] });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to update system config", variant: "destructive" });
+    },
+  });
+
+  const toggle = (system: string) => {
+    const current = enabledSystems;
+    const next = current.includes(system)
+      ? current.filter((s) => s !== system)
+      : [...current, system];
+    configMutation.mutate(next);
+  };
+
+  const enableAll = () => configMutation.mutate([...ALL_SYSTEMS]);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <Card className="bg-zinc-900 border-zinc-800" data-testid="system-config-panel">
+        <CollapsibleTrigger className="w-full text-left">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm font-semibold flex items-center gap-2">
+              {open ? (
+                <ChevronDown className="w-4 h-4 text-zinc-400" />
+              ) : (
+                <ChevronRight className="w-4 h-4 text-zinc-400" />
+              )}
+              <Settings className="w-3.5 h-3.5 text-zinc-400" />
+              System Configuration
+              <Badge
+                variant="outline"
+                className={`ml-auto text-[10px] ${
+                  enabledCount === ALL_SYSTEMS.length
+                    ? "bg-green-500/20 text-green-400 border-green-500/30"
+                    : "bg-yellow-500/20 text-yellow-400 border-yellow-500/30"
+                }`}
+                data-testid="enabled-count-badge"
+              >
+                {enabledCount} of {ALL_SYSTEMS.length} enabled
+              </Badge>
+            </CardTitle>
+          </CardHeader>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <CardContent className="pt-0 space-y-1">
+            <div className="text-[10px] text-zinc-500 mb-3">
+              Toggle systems to include or exclude them from the next pipeline run. Disabled systems will be marked as "skipped".
+            </div>
+            {ALL_SYSTEMS.map((system) => {
+              const enabled = enabledSystems.includes(system);
+              const tools = SYSTEM_TOOLS_MAP[system] || [];
+              return (
+                <div
+                  key={system}
+                  className={`flex items-center gap-3 py-2 px-2 rounded-lg border transition-colors ${
+                    enabled
+                      ? "bg-zinc-800/30 border-zinc-700/50"
+                      : "bg-zinc-900/50 border-zinc-800/50 opacity-60"
+                  }`}
+                  data-testid={`system-config-row-${system.replace(/[^a-z0-9]/gi, "-").toLowerCase()}`}
+                >
+                  <Switch
+                    checked={enabled}
+                    onCheckedChange={() => toggle(system)}
+                    className="data-[state=checked]:bg-emerald-600 shrink-0"
+                    data-testid={`system-toggle-${system.replace(/[^a-z0-9]/gi, "-").toLowerCase()}`}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className={`text-xs font-medium ${enabled ? "text-zinc-200" : "text-zinc-500"}`}>
+                      {system}
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-0.5">
+                      {tools.map((t) => (
+                        <span
+                          key={t}
+                          className={`text-[9px] font-mono px-1 rounded ${
+                            enabled ? "bg-zinc-700 text-zinc-400" : "bg-zinc-800 text-zinc-600"
+                          }`}
+                        >
+                          {t}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  {!enabled && (
+                    <Badge variant="outline" className="text-[9px] bg-zinc-800 text-zinc-500 border-zinc-700 shrink-0">
+                      skipped
+                    </Badge>
+                  )}
+                </div>
+              );
+            })}
+
+            {enabledCount < ALL_SYSTEMS.length && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full mt-2 border-zinc-700 text-zinc-400 hover:bg-zinc-800 text-xs"
+                onClick={enableAll}
+                data-testid="enable-all-button"
+              >
+                Enable All Systems
+              </Button>
+            )}
+          </CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
+  );
+}
+
+// ── Pipeline Banner ────────────────────────────────────────────────────────
 function PipelineBanner({ scenario, running }: { scenario: Scenario; running: boolean }) {
   const nodes = [
     { label: "SignPlus", icon: FileText },
@@ -278,15 +755,23 @@ function SystemUpdatesPanel({ scenario, updates }: { scenario: Scenario; updates
     );
   };
 
+  const successCount = updates.filter((u) => u.status === "success").length;
+  const total = updates.length;
+
   return (
     <Card className="bg-zinc-900 border-zinc-800" data-testid="system-updates-panel">
       <CardHeader className="pb-3">
         <CardTitle className="text-sm font-semibold flex items-center gap-2">
           <Building2 className="w-4 h-4 text-emerald-400" />
           System Updates
-          {scenario === "happy" && (
+          {scenario === "happy" && successCount === total && (
             <Badge variant="outline" className="ml-auto bg-green-500/20 text-green-400 border-green-500/30 text-[10px]">
-              11/11 COMPLETE
+              {successCount}/{total} COMPLETE
+            </Badge>
+          )}
+          {scenario === "happy" && successCount < total && (
+            <Badge variant="outline" className="ml-auto bg-zinc-500/20 text-zinc-400 border-zinc-500/30 text-[10px]">
+              {successCount}/{total} updated
             </Badge>
           )}
           {scenario === "invalid_address" && (
@@ -455,7 +940,7 @@ function ActivityFeed({ entries }: { entries: AuditEntry[] }) {
         <div className="space-y-1 max-h-[400px] overflow-y-auto">
           {entries.length === 0 && (
             <div className="text-zinc-500 text-xs py-4 text-center">
-              No activity yet. Run a scenario to see live agent traces.
+              No activity yet. Use "Change Address" to trigger the pipeline.
             </div>
           )}
           {[...entries].reverse().map((entry) => {
@@ -517,6 +1002,14 @@ export default function KinectiveDemo() {
     }
   }, [traceQuery.data, running]);
 
+  const invalidateAll = () => {
+    queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/audit-log"] });
+    queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/trace-id"] });
+    queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/system-updates"] });
+    queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/rollback-log"] });
+    queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/config"] });
+  };
+
   const runPipeline = useMutation({
     mutationFn: async (s: Scenario) => {
       const res = await apiRequest("POST", "/demo-api/kinective/run-pipeline", { scenario: s });
@@ -524,10 +1017,7 @@ export default function KinectiveDemo() {
     },
     onSuccess: () => {
       setRunning(true);
-      queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/audit-log"] });
-      queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/trace-id"] });
-      queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/system-updates"] });
-      queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/rollback-log"] });
+      invalidateAll();
       toast({ title: "Pipeline Started", description: `Running scenario: ${SCENARIO_LABELS[scenario].label}` });
     },
     onError: (err: any) => {
@@ -537,17 +1027,21 @@ export default function KinectiveDemo() {
 
   const resetMutation = useMutation({
     mutationFn: async () => {
-      const res = await apiRequest("POST", "/demo-api/kinective/reset", { scenario });
+      const res = await apiRequest("POST", "/demo-api/kinective/full-reset", {});
       return res.json();
     },
     onSuccess: () => {
       setRunning(false);
-      queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/audit-log"] });
-      queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/trace-id"] });
-      queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/system-updates"] });
-      queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/rollback-log"] });
+      setScenario("happy");
+      invalidateAll();
+      toast({ title: "Demo Reset", description: "Demo reset — ready for next run" });
     },
   });
+
+  const handlePipelineStarted = () => {
+    setRunning(true);
+    invalidateAll();
+  };
 
   const entries = auditQuery.data?.entries || [];
   const systemUpdates = systemUpdatesQuery.data?.updates || [];
@@ -579,11 +1073,16 @@ export default function KinectiveDemo() {
                 variant="outline"
                 size="sm"
                 onClick={() => resetMutation.mutate()}
-                className="border-zinc-700 text-zinc-300 hover:bg-zinc-800"
+                disabled={resetMutation.isPending}
+                className="border-zinc-600 text-zinc-200 hover:bg-zinc-800 hover:border-zinc-500"
                 data-testid="reset-demo-button"
               >
-                <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
-                Reset
+                {resetMutation.isPending ? (
+                  <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                ) : (
+                  <RotateCcw className="w-3.5 h-3.5 mr-1.5" />
+                )}
+                Reset Demo
               </Button>
               <Link href={`/agents/${KINECTIVE_AGENT.id}`}>
                 <Button variant="outline" size="sm" className="border-zinc-700 text-zinc-300 hover:bg-zinc-800" data-testid="view-agent-button">
@@ -601,7 +1100,7 @@ export default function KinectiveDemo() {
       </div>
 
       <div className="max-w-7xl mx-auto px-6 py-6">
-        <div className="flex items-center gap-3 mb-6">
+        <div className="flex items-center gap-3 mb-4">
           <span className="text-sm text-zinc-400 font-medium">Scenario:</span>
           {(Object.keys(SCENARIO_LABELS) as Scenario[]).map((s) => (
             <Button
@@ -610,7 +1109,6 @@ export default function KinectiveDemo() {
               size="sm"
               onClick={() => {
                 setScenario(s);
-                resetMutation.mutate();
               }}
               className={
                 scenario === s
@@ -640,7 +1138,9 @@ export default function KinectiveDemo() {
             <Button
               onClick={() => runPipeline.mutate(scenario)}
               disabled={running || runPipeline.isPending}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+              variant="outline"
+              size="sm"
+              className="border-zinc-600 text-zinc-300 hover:bg-zinc-800"
               data-testid="run-scenario-button"
             >
               {running || runPipeline.isPending ? (
@@ -658,8 +1158,17 @@ export default function KinectiveDemo() {
           </div>
         </div>
 
+        <div className="mb-4">
+          <SystemConfigPanel />
+        </div>
+
         <div className="grid grid-cols-12 gap-6">
           <div className="col-span-7 space-y-4">
+            <MemberCard
+              scenario={scenario}
+              running={running}
+              onTriggerComplete={handlePipelineStarted}
+            />
             <SignedFormPanel scenario={scenario} />
             <ValidationPanel scenario={scenario} />
             <SystemUpdatesPanel scenario={scenario} updates={systemUpdates} />

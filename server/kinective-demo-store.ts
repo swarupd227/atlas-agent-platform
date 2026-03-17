@@ -29,11 +29,12 @@ export interface KinectiveDemoState {
     errorMessage: string | null;
   } | null;
   rollbackLog: { system: string; status: string; rolledBackAt: string }[];
+  enabledSystems: string[];
 }
 
 let auditCounter = 0;
 
-const SYSTEMS = [
+export const SYSTEMS = [
   "Kinective Gateway (Core Banking)",
   "Digital Banking (Alkami)",
   "Statement Vendor (Doxim)",
@@ -46,6 +47,20 @@ const SYSTEMS = [
   "SignPlus Archive",
   "Member Notification",
 ];
+
+export const SYSTEM_TOOLS: Record<string, string[]> = {
+  "Kinective Gateway (Core Banking)": ["update_member_address", "get_member_profile"],
+  "Digital Banking (Alkami)": ["update_digital_address", "notify_digital_banking"],
+  "Statement Vendor (Doxim)": ["update_statement_address"],
+  "Card Management (PSCU)": ["update_card_address"],
+  "Loan Origination": ["update_loan_address"],
+  "CRM (Salesforce)": ["update_crm_contact", "create_interaction_record"],
+  "Bill Pay": ["update_bill_pay_address"],
+  "Fraud Detection": ["flag_address_change"],
+  "BSA/AML Compliance": ["log_bsa_event", "create_compliance_record"],
+  "SignPlus Archive": ["archive_signed_document"],
+  "Member Notification": ["notify_digital_banking"],
+};
 
 function createInitialState(): KinectiveDemoState {
   return {
@@ -62,6 +77,7 @@ function createInitialState(): KinectiveDemoState {
     })),
     validationResult: null,
     rollbackLog: [],
+    enabledSystems: [...SYSTEMS],
   };
 }
 
@@ -72,10 +88,22 @@ export function getKinectiveState(): KinectiveDemoState {
 }
 
 export function resetKinectiveDemo(scenario: KinectiveScenario = "happy"): void {
+  const enabledSystems = [...state.enabledSystems];
   auditCounter = 0;
   state = createInitialState();
   state.scenario = scenario;
   state.running = true;
+  state.enabledSystems = enabledSystems;
+  for (const su of state.systemUpdates) {
+    if (!enabledSystems.includes(su.system)) {
+      su.status = "skipped";
+    }
+  }
+}
+
+export function fullResetKinectiveDemo(): void {
+  auditCounter = 0;
+  state = createInitialState();
 }
 
 export function setKinectiveTraceId(traceId: string): void {
@@ -85,6 +113,14 @@ export function setKinectiveTraceId(traceId: string): void {
 
 export function setKinectiveRunning(running: boolean): void {
   state.running = running;
+}
+
+export function getEnabledSystems(): string[] {
+  return state.enabledSystems;
+}
+
+export function setEnabledSystems(systems: string[]): void {
+  state.enabledSystems = systems;
 }
 
 export function addKinectiveAudit(action: string, system: string, details: string): KinectiveAuditEntry {
@@ -109,6 +145,11 @@ function updateSystemStatus(systemSubstr: string, status: SystemUpdateStatus["st
     if (error) item.error = error;
     if (status === "rolled_back") item.rolledBackAt = new Date().toISOString();
   }
+}
+
+function isSystemEnabled(systemKey: string): boolean {
+  const normalize = (s: string) => s.toLowerCase().replace(/[-_]/g, " ");
+  return state.enabledSystems.some((s) => normalize(s).includes(normalize(systemKey)));
 }
 
 export function getScenarioFormData(): Record<string, any> {
@@ -182,6 +223,13 @@ export function getScenarioSystemUpdate(system: string): Record<string, any> {
 
   if (state.scenario === "invalid_address") {
     return { success: false, error: "Address validation failed. System update blocked." };
+  }
+
+  if (!isSystemEnabled(system)) {
+    const normalize = (s: string) => s.toLowerCase().replace(/[-_]/g, " ");
+    const item = state.systemUpdates.find((s) => normalize(s.system).includes(normalize(system)));
+    if (item && item.status !== "skipped") item.status = "skipped";
+    return { success: false, skipped: true, reason: "System disabled in configuration" };
   }
 
   if (state.scenario === "system_failure" && system.toLowerCase().includes("card")) {

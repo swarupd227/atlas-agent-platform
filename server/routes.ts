@@ -35158,26 +35158,56 @@ Return ONLY valid JSON array, no explanation.`;
 
       const KINECTIVE_AGENT_ID = "c4b3099f-dfd8-4cce-9cf4-0cbb031f7f73";
 
-      const { resetKinectiveDemo, setKinectiveTraceId, setKinectiveRunning } = await import("./kinective-demo-store");
+      const { resetKinectiveDemo, setKinectiveTraceId, setKinectiveRunning, getEnabledSystems } = await import("./kinective-demo-store");
+
+      const enabledSystems = getEnabledSystems();
+      const isEnabled = (key: string) => enabledSystems.some((s) => s.toLowerCase().includes(key.toLowerCase()));
+
+      const happySteps: string[] = [
+        `1. Call get_form_data with form_id "COA-2026-00412" to retrieve the signed form`,
+        `2. Call validate_address with street "1847 Lakewood Drive", city "Austin", state "TX", zip "78701"`,
+      ];
+      let stepNum = 3;
+      if (isEnabled("Gateway") || isEnabled("Core Banking")) {
+        happySteps.push(`${stepNum++}. Call update_member_address with member_id "MBR-2026-84291" and the new address`);
+      }
+      if (isEnabled("Digital Banking") || isEnabled("Alkami")) {
+        happySteps.push(`${stepNum++}. Call update_digital_address with member_id "MBR-2026-84291" and the new address`);
+      }
+      if (isEnabled("Statement")) {
+        happySteps.push(`${stepNum++}. Call update_statement_address with member_id "MBR-2026-84291" and the new address`);
+      }
+      if (isEnabled("Card")) {
+        happySteps.push(`${stepNum++}. Call update_card_address with member_id "MBR-2026-84291" and the new address`);
+      }
+      if (isEnabled("Loan")) {
+        happySteps.push(`${stepNum++}. Call update_loan_address with member_id "MBR-2026-84291" and the new address`);
+      }
+      if (isEnabled("CRM") || isEnabled("Salesforce")) {
+        happySteps.push(`${stepNum++}. Call update_crm_contact with member_id "MBR-2026-84291" and the new address`);
+      }
+      if (isEnabled("Bill Pay")) {
+        happySteps.push(`${stepNum++}. Call update_bill_pay_address with member_id "MBR-2026-84291" and the new address`);
+      }
+      if (isEnabled("Fraud")) {
+        happySteps.push(`${stepNum++}. Call flag_address_change with member_id "MBR-2026-84291", old and new addresses`);
+      }
+      if (isEnabled("BSA") || isEnabled("Compliance") || isEnabled("AML")) {
+        happySteps.push(`${stepNum++}. Call log_bsa_event with member_id "MBR-2026-84291", event_type "address_change"`);
+        happySteps.push(`${stepNum++}. Call create_compliance_record with member_id "MBR-2026-84291", status "complete"`);
+      }
+      if (isEnabled("SignPlus")) {
+        happySteps.push(`${stepNum++}. Call archive_signed_document with form_id "COA-2026-00412" and member_id "MBR-2026-84291"`);
+      }
+      if (isEnabled("Notification") || isEnabled("Member Notification")) {
+        happySteps.push(`${stepNum++}. Call notify_digital_banking with member_id "MBR-2026-84291" and confirmation message`);
+      }
 
       const HAPPY_PROMPT = `You are the Change of Address Agent for Kinective. Process form COA-2026-00412 for member Sarah Mitchell.
 
 Execute these steps in order. Call each tool exactly once:
 
-1. Call get_form_data with form_id "COA-2026-00412" to retrieve the signed form
-2. Call validate_address with street "1847 Lakewood Drive", city "Austin", state "TX", zip "78701"
-3. Call update_member_address with member_id "MBR-2026-84291" and the new address
-4. Call update_digital_address with member_id "MBR-2026-84291" and the new address
-5. Call update_statement_address with member_id "MBR-2026-84291" and the new address
-6. Call update_card_address with member_id "MBR-2026-84291" and the new address
-7. Call update_loan_address with member_id "MBR-2026-84291" and the new address
-8. Call update_crm_contact with member_id "MBR-2026-84291" and the new address
-9. Call update_bill_pay_address with member_id "MBR-2026-84291" and the new address
-10. Call flag_address_change with member_id "MBR-2026-84291", old and new addresses
-11. Call log_bsa_event with member_id "MBR-2026-84291", event_type "address_change"
-12. Call create_compliance_record with member_id "MBR-2026-84291", status "complete"
-13. Call archive_signed_document with form_id "COA-2026-00412" and member_id "MBR-2026-84291"
-14. Call notify_digital_banking with member_id "MBR-2026-84291" and confirmation message
+${happySteps.join("\n")}
 
 Complete all steps. Log every action.`;
 
@@ -35278,6 +35308,44 @@ Log every action.`;
     } catch (err: any) {
       console.error("[demo-api/kinective/run-pipeline]", err);
       return res.status(500).json({ error: err.message || "Failed to run Kinective pipeline" });
+    }
+  });
+
+  // ── Kinective Demo: submit-coa (member-initiated COA with trigger sequence) ──
+  app.post("/demo-api/kinective/submit-coa", async (req, res) => {
+    try {
+      const { scenario } = req.body || {};
+      const validScenarios = ["happy", "invalid_address", "system_failure"];
+      const selectedScenario = validScenarios.includes(scenario) ? scenario : "happy";
+
+      const result = await fetch(`http://localhost:${process.env.PORT || 5000}/demo-api/kinective/run-pipeline`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scenario: selectedScenario }),
+      });
+      const data = await result.json();
+
+      return res.json({
+        ...data,
+        formId: "COA-2026-00412",
+        webhookId: `WH-${Date.now().toString(36).toUpperCase()}`,
+        memberId: "MBR-2026-84291",
+        memberName: "Sarah Mitchell",
+      });
+    } catch (err: any) {
+      console.error("[demo-api/kinective/submit-coa]", err);
+      return res.status(500).json({ error: err.message || "Failed to submit COA" });
+    }
+  });
+
+  // ── Kinective Demo: full demo reset ─────────────────────────────────────────
+  app.post("/demo-api/kinective/full-reset", async (_req, res) => {
+    try {
+      const { fullResetKinectiveDemo } = await import("./kinective-demo-store");
+      fullResetKinectiveDemo();
+      res.json({ success: true, scenario: "happy" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
     }
   });
 

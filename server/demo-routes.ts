@@ -22,6 +22,7 @@ import {
 import {
   getKinectiveState,
   resetKinectiveDemo,
+  fullResetKinectiveDemo,
   addKinectiveAudit,
   getScenarioFormData,
   getScenarioValidation,
@@ -30,6 +31,10 @@ import {
   getScenarioFraudScore,
   setKinectiveTraceId,
   setKinectiveRunning,
+  getEnabledSystems,
+  setEnabledSystems,
+  SYSTEMS,
+  SYSTEM_TOOLS,
   type KinectiveScenario,
 } from "./kinective-demo-store";
 import type { IStorage } from "./storage";
@@ -541,6 +546,29 @@ demoRouter.post("/kinective/reset", (req: Request, res: Response) => {
   const scenario = (req.body.scenario || "happy") as KinectiveScenario;
   resetKinectiveDemo(scenario);
   res.json({ success: true, scenario });
+});
+
+demoRouter.post("/kinective/full-reset", (_req: Request, res: Response) => {
+  fullResetKinectiveDemo();
+  res.json({ success: true, scenario: "happy" });
+});
+
+demoRouter.get("/kinective/config", (_req: Request, res: Response) => {
+  res.json({
+    enabledSystems: getEnabledSystems(),
+    allSystems: SYSTEMS,
+    systemTools: SYSTEM_TOOLS,
+  });
+});
+
+demoRouter.post("/kinective/config", (req: Request, res: Response) => {
+  const { enabledSystems } = req.body;
+  if (!Array.isArray(enabledSystems)) {
+    return res.status(400).json({ error: "enabledSystems must be an array" });
+  }
+  const valid = enabledSystems.filter((s: string) => SYSTEMS.includes(s));
+  setEnabledSystems(valid);
+  res.json({ success: true, enabledSystems: valid });
 });
 
 const BASE_URL = `http://localhost:${process.env.PORT || 5000}`;
