@@ -599,8 +599,6 @@ function PipelineBanner({ scenario, running }: { scenario: Scenario; running: bo
                   ? "bg-blue-500/20 border-blue-400 text-blue-300 shadow-[0_0_8px_rgba(59,130,246,0.4)]"
                   : isPast
                   ? "bg-green-500/15 border-green-600 text-green-400"
-                  : node.isEngine
-                  ? "bg-orange-500/20 border-orange-500 text-orange-400"
                   : "bg-zinc-800/80 border-zinc-700 text-zinc-400"
               }`}
             >
