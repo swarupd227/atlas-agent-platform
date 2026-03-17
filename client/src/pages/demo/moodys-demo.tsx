@@ -240,26 +240,106 @@ export default function MoodysDemo() {
           <Card className="border-border/60">
             <CardHeader className="pb-3">
               <CardTitle className="text-sm flex items-center gap-2">
-                <FileText className="w-4 h-4 text-muted-foreground" /> New Assessment Package Request
+                <FileText className="w-4 h-4 text-muted-foreground" /> Assessment Package Request
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-3 text-sm">
-              {[
-                { label: "Issuer", value: "Ford Motor Company" },
-                { label: "Ticker", value: "F" },
-                { label: "Assessment Type", value: "Annual Review" },
-                { label: "Methodology", value: "Automobile Manufacturer Methodology (v2.1, March 2024)" },
-                { label: "Peer Group", value: "GM, Stellantis, Toyota, VW, Hyundai" },
-                { label: "Requested By", value: "Senior Analyst, North America Corporates" },
-                { label: "Current Rating", value: "Ba1, Outlook: Stable" },
-              ].map(({ label, value }) => (
-                <div key={label} className="flex items-start gap-2">
-                  <span className="text-muted-foreground w-36 shrink-0">{label}</span>
-                  <span className="font-medium">{value}</span>
+            <CardContent className="space-y-3">
+              {/* Row: Issuer + Ticker */}
+              <div className="grid grid-cols-3 gap-2">
+                <div className="col-span-2 space-y-1">
+                  <label className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Issuer</label>
+                  <input
+                    className="w-full bg-muted/20 border border-border/60 rounded-md px-3 py-1.5 text-sm font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                    defaultValue="Ford Motor Company"
+                    data-testid="input-issuer"
+                  />
                 </div>
-              ))}
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Ticker</label>
+                  <input
+                    className="w-full bg-muted/20 border border-border/60 rounded-md px-3 py-1.5 text-sm font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                    defaultValue="F"
+                    data-testid="input-ticker"
+                  />
+                </div>
+              </div>
 
-              <div className="pt-2 border-t border-border/40">
+              {/* Assessment Type */}
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Assessment Type</label>
+                <select
+                  className="w-full bg-muted/20 border border-border/60 rounded-md px-3 py-1.5 text-sm font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-ring appearance-none"
+                  defaultValue="annual"
+                  data-testid="select-assessment-type"
+                >
+                  <option value="annual">Annual Review</option>
+                  <option value="rating-review">Rating Review</option>
+                  <option value="new-rating">New Rating</option>
+                  <option value="watch">Rating Watch</option>
+                </select>
+              </div>
+
+              {/* Methodology */}
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Methodology</label>
+                <select
+                  className="w-full bg-muted/20 border border-border/60 rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring appearance-none"
+                  defaultValue="auto-mfr"
+                  data-testid="select-methodology"
+                >
+                  <option value="auto-mfr">Automobile Manufacturer (v2.1, March 2024)</option>
+                  <option value="auto-supplier">Automotive Supplier (v1.4, June 2023)</option>
+                  <option value="industrials">Industrials — General (v3.0, Jan 2024)</option>
+                </select>
+              </div>
+
+              {/* Peer Group */}
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Peer Group</label>
+                <div className="bg-muted/20 border border-border/60 rounded-md px-3 py-2 flex flex-wrap gap-1.5" data-testid="peer-group-display">
+                  {["GM", "Stellantis", "Toyota", "VW", "Hyundai"].map(p => (
+                    <span key={p} className="bg-muted/40 border border-border/50 text-xs px-2 py-0.5 rounded-full text-foreground">{p}</span>
+                  ))}
+                  <span className="text-xs text-muted-foreground self-center ml-1">— auto-selected by methodology</span>
+                </div>
+              </div>
+
+              {/* Row: Current Rating + Outlook */}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Current Rating</label>
+                  <input
+                    className="w-full bg-muted/20 border border-border/60 rounded-md px-3 py-1.5 text-sm font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                    defaultValue="Ba1"
+                    data-testid="input-current-rating"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Outlook</label>
+                  <select
+                    className="w-full bg-muted/20 border border-border/60 rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring appearance-none"
+                    defaultValue="stable"
+                    data-testid="select-outlook"
+                  >
+                    <option value="stable">Stable</option>
+                    <option value="positive">Positive</option>
+                    <option value="negative">Negative</option>
+                    <option value="developing">Developing</option>
+                  </select>
+                </div>
+              </div>
+
+              {/* Requested By */}
+              <div className="space-y-1">
+                <label className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Requested By</label>
+                <input
+                  className="w-full bg-muted/20 border border-border/60 rounded-md px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                  defaultValue="Senior Analyst, North America Corporates"
+                  data-testid="input-requested-by"
+                />
+              </div>
+
+              <div className="pt-1 border-t border-border/40">
                 <div className="bg-amber-500/10 border border-amber-500/30 rounded-md px-3 py-2 text-xs text-amber-300 flex items-start gap-2">
                   <ShieldAlert className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                   <span><strong>P4 — Information Barrier:</strong> This package uses public information only. Confidential issuer information must be incorporated during analyst review.</span>
