@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -330,7 +330,35 @@ function SystemUpdatesPanel({ scenario, updates }: { scenario: Scenario; updates
   );
 }
 
-function RollbackPanel({ entries }: { entries: { system: string; status: string; rolledBackAt: string }[] }) {
+function RollbackPanel({ entries, scenario }: { entries: { system: string; status: string; rolledBackAt: string }[]; scenario: Scenario }) {
+  if (scenario === "invalid_address") {
+    return (
+      <Card className="bg-zinc-900 border-zinc-800" data-testid="rollback-panel">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <Undo2 className="w-4 h-4 text-zinc-500" />
+            Rollback Log
+            <Badge variant="outline" className="ml-auto bg-zinc-700/30 text-zinc-400 border-zinc-600 text-[10px]">
+              NO ROLLBACK NEEDED
+            </Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-3 py-2 px-3 rounded bg-yellow-500/5 border border-yellow-500/20">
+            <AlertTriangle className="w-4 h-4 text-yellow-400 shrink-0" />
+            <div className="text-xs">
+              <span className="text-yellow-400 font-semibold">Routed to Human Review</span>
+              <span className="text-zinc-400 ml-2">No systems were modified — address validation failed before propagation.</span>
+            </div>
+            <Badge variant="outline" className="ml-auto bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-[10px] shrink-0">
+              COA-REVIEW-00412
+            </Badge>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   if (entries.length === 0) return null;
 
   return (
@@ -483,9 +511,11 @@ export default function KinectiveDemo() {
     refetchInterval: running ? POLL_INTERVAL : false,
   });
 
-  if (traceQuery.data && traceQuery.data.traceId && running) {
-    setRunning(false);
-  }
+  useEffect(() => {
+    if (traceQuery.data && traceQuery.data.running === false && running) {
+      setRunning(false);
+    }
+  }, [traceQuery.data, running]);
 
   const runPipeline = useMutation({
     mutationFn: async (s: Scenario) => {
@@ -633,7 +663,7 @@ export default function KinectiveDemo() {
             <SignedFormPanel scenario={scenario} />
             <ValidationPanel scenario={scenario} />
             <SystemUpdatesPanel scenario={scenario} updates={systemUpdates} />
-            {scenario === "system_failure" && <RollbackPanel entries={rollbackEntries} />}
+            {(scenario === "system_failure" || scenario === "invalid_address") && <RollbackPanel entries={rollbackEntries} scenario={scenario} />}
             <NotificationPanel scenario={scenario} />
           </div>
 
