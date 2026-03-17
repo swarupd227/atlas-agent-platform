@@ -25,6 +25,7 @@ import {
   ChevronRight,
   Activity,
   Zap,
+  Database,
 } from "lucide-react";
 
 const POLL = 2500;
@@ -423,6 +424,91 @@ export default function MoodysDemo() {
             </CardContent>
           </Card>
         </div>
+
+        {/* ─── Data Sources Panel ──────────────────────────────────────────── */}
+        <Card className="border-border/60">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm flex items-center gap-2">
+              <Database className="w-4 h-4 text-muted-foreground" />
+              Data Sources — What Each Agent Pulls
+              <span className="ml-auto text-xs font-normal text-muted-foreground">Triggered automatically from the issuer name, assessment type &amp; methodology selection above</span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {[
+                {
+                  agent: "Agent 1 — Financial Data Collector",
+                  color: "blue",
+                  sources: [
+                    { icon: "📄", label: "SEC EDGAR", detail: "10-K (FY2025), 10-Q (Q3 & Q2 2025) — public annual & quarterly filings" },
+                    { icon: "🏦", label: "Internal Financial Data Estate", detail: "8 quarters of pre-loaded, standardised financial data for rated issuers" },
+                    { icon: "📊", label: "Chart of Accounts Spreader", detail: "Maps 247 raw line items to US-GAAP standard; flags non-recurring items & segment reclassifications" },
+                  ],
+                },
+                {
+                  agent: "Agent 2 — Earnings Analyzer",
+                  color: "violet",
+                  sources: [
+                    { icon: "📄", label: "SEC EDGAR 8-K Filings", detail: "Earnings press releases for Q3 & Q4 2025" },
+                    { icon: "🎙️", label: "Earnings Call Transcript Database", detail: "Full Q&A transcripts — management tone & forward guidance extracted" },
+                    { icon: "📑", label: "Investor Presentation Library", detail: "Q4 2025 earnings deck; supplemental slides" },
+                  ],
+                },
+                {
+                  agent: "Agent 3 — Peer Comparison Builder",
+                  color: "cyan",
+                  sources: [
+                    { icon: "🏭", label: "Methodology Peer Registry", detail: "Auto-selects peer group from Automobile Manufacturer v2.1 methodology definition" },
+                    { icon: "🏦", label: "Internal Financial Data Estate", detail: "Same standardised 6-metric dataset pulled for GM, Stellantis, Toyota, VW, Hyundai" },
+                  ],
+                },
+                {
+                  agent: "Agent 4 — ESG Profile Agent",
+                  color: "green",
+                  sources: [
+                    { icon: "🌱", label: "ESG IPS Score Database", detail: "Internal database of issuer-level Environmental, Social & Governance Issuer Profile Scores" },
+                    { icon: "📉", label: "Credit Impact Score (CIS) Database", detail: "Aggregated ESG credit impact score — quantifies ESG drag or lift on the rating" },
+                    { icon: "📰", label: "Regulatory & ESG News Feed", detail: "Scans last 180 days for regulatory filings, sustainability disclosures, ESG-linked events" },
+                  ],
+                },
+                {
+                  agent: "Agent 5 — News & Event Scanner",
+                  color: "orange",
+                  sources: [
+                    { icon: "📰", label: "Global News Aggregator", detail: "Reuters, Bloomberg, Dow Jones — credit-relevant events from last 365 days" },
+                    { icon: "⚖️", label: "Legal & Litigation Database", detail: "Active litigation, regulatory actions, product liability cases and estimated exposure" },
+                    { icon: "📈", label: "Market Data Feed", detail: "5-year credit spreads (185 bps), CDS mid-spread (142 bps), senior unsecured yield (6.24%)" },
+                  ],
+                },
+                {
+                  agent: "Agent 6 — Scorecard Pre-Population",
+                  color: "purple",
+                  sources: [
+                    { icon: "📋", label: "Scorecard Template Library", detail: "Retrieves the Automobile Manufacturer v2.1 scorecard template — quantitative & qualitative factor weights" },
+                    { icon: "🏷️", label: "Current Rating Registry", detail: "Existing assigned rating (Ba1, Stable) and rating date — used to compute model vs. current gap" },
+                    { icon: "🔗", label: "Outputs from Agents 1–5", detail: "Synthesises all upstream outputs — financial metrics, peer ranks, ESG, sentiment, news — into a single scorecard" },
+                  ],
+                },
+              ].map(({ agent, color, sources }) => (
+                <div key={agent} className={`border rounded-lg p-3 ${COLOR_MAP[color]}`}>
+                  <p className="text-xs font-semibold mb-2.5">{agent}</p>
+                  <div className="space-y-2">
+                    {sources.map(({ icon, label, detail }) => (
+                      <div key={label} className="flex items-start gap-2">
+                        <span className="text-sm shrink-0 mt-0.5">{icon}</span>
+                        <div>
+                          <p className="text-xs font-medium leading-snug">{label}</p>
+                          <p className="text-[11px] opacity-70 leading-snug mt-0.5">{detail}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
       )}
 
       {/* ══════════════════════════════════════════════════════════════════ */}
