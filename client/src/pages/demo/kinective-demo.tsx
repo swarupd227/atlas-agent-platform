@@ -561,65 +561,6 @@ function SystemConfigPanel() {
   );
 }
 
-// ── Pipeline Banner ────────────────────────────────────────────────────────
-function PipelineBanner({ scenario, running }: { scenario: Scenario; running: boolean }) {
-  const nodes = [
-    { label: "SignPlus", icon: FileText },
-    { label: "ATLAS Engine", icon: Play, isEngine: true },
-    { label: "USPS Validation", icon: MapPin },
-    { label: "System Updates", icon: Building2 },
-    { label: "Compliance", icon: Shield },
-    { label: "Notification", icon: Bell },
-  ];
-
-  const [activeStep, setActiveStep] = useState(0);
-
-  useEffect(() => {
-    if (!running) {
-      setActiveStep(0);
-      return;
-    }
-    const id = setInterval(() => {
-      setActiveStep((prev) => (prev + 1) % nodes.length);
-    }, 2200);
-    return () => clearInterval(id);
-  }, [running]);
-
-  return (
-    <div className="flex items-center justify-center gap-1 py-3 px-4" data-testid="kinective-pipeline-banner">
-      {nodes.map((node, i) => {
-        const Icon = node.icon;
-        const isActive = running && i === activeStep;
-        const isPast = running && i < activeStep;
-        return (
-          <div key={node.label} className="flex items-center gap-1">
-            <div
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-500 border ${
-                isActive
-                  ? "bg-blue-500/20 border-blue-400 text-blue-300 shadow-[0_0_8px_rgba(59,130,246,0.4)]"
-                  : isPast
-                  ? "bg-green-500/15 border-green-600 text-green-400"
-                  : "bg-zinc-800/80 border-zinc-700 text-zinc-400"
-              }`}
-            >
-              {isActive ? (
-                <Loader2 className="w-3 h-3 animate-spin" />
-              ) : isPast ? (
-                <CheckCircle2 className="w-3 h-3" />
-              ) : (
-                <Icon className="w-3 h-3" />
-              )}
-              {node.label}
-            </div>
-            {i < nodes.length - 1 && (
-              <ArrowRight className={`w-3 h-3 transition-colors duration-500 ${isPast || (running && i < activeStep) ? "text-green-600" : "text-zinc-600"}`} />
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 function SignedFormPanel({ scenario, hasRun }: { scenario: Scenario; hasRun: boolean }) {
   const formData = scenario === "invalid_address"
@@ -1184,9 +1125,6 @@ export default function KinectiveDemo() {
         </div>
       </div>
 
-      <div className="border-b border-zinc-800 bg-zinc-950/50">
-        <PipelineBanner scenario={scenario} running={running} />
-      </div>
 
       <div className="max-w-7xl mx-auto px-6 py-6">
         <div className="flex items-center gap-3 mb-4">
