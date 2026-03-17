@@ -35337,6 +35337,10 @@ Log every action.`;
       });
       const data = await result.json();
 
+      if (!result.ok) {
+        return res.status(result.status).json(data);
+      }
+
       return res.json({
         ...data,
         formId: "COA-2026-00412",

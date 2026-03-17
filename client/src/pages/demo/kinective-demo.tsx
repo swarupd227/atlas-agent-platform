@@ -227,6 +227,11 @@ function MemberCard({
       setShowTrigger(true);
     },
     onError: (err: any) => {
+      if (err?.message?.startsWith("409")) {
+        onTriggerComplete();
+        setShowTrigger(true);
+        return;
+      }
       toast({ title: "Error", description: err.message, variant: "destructive" });
       setDialogOpen(false);
     },
@@ -1050,6 +1055,11 @@ export default function KinectiveDemo() {
       toast({ title: "Pipeline Started", description: `Running scenario: ${SCENARIO_LABELS[scenario].label}` });
     },
     onError: (err: any) => {
+      if (err?.message?.startsWith("409")) {
+        setRunning(true);
+        invalidateAll();
+        return;
+      }
       toast({ title: "Pipeline Error", description: err.message, variant: "destructive" });
     },
   });
