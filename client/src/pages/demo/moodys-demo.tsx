@@ -278,9 +278,18 @@ export default function MoodysDemo() {
                 </div>
               )}
               {pipelineStatus === "complete" && (
-                <div className="flex items-center gap-2 text-xs text-green-400 pt-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>All 6 agents complete — assessment package ready for review</span>
+                <div className="space-y-2 pt-1">
+                  <div className="flex items-center gap-2 text-xs text-green-400">
+                    <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                    <span>All 6 agents complete — assessment package ready</span>
+                  </div>
+                  <Button
+                    className="w-full bg-green-600 hover:bg-green-500 text-white font-semibold"
+                    onClick={() => setView("review")}
+                    data-testid="button-review-package-form"
+                  >
+                    View Assessment Package <ChevronRight className="w-4 h-4 ml-1" />
+                  </Button>
                 </div>
               )}
             </CardContent>
@@ -303,10 +312,19 @@ export default function MoodysDemo() {
               ))}
 
               {pipelineStatus === "complete" && (
-                <div className="mt-3 p-3 bg-green-500/10 border border-green-500/30 rounded-lg text-xs text-green-300 text-center">
-                  <CheckCircle2 className="w-4 h-4 mx-auto mb-1" />
-                  <p className="font-semibold">Assembly complete in ~3 min 47 sec</p>
-                  <p className="text-green-400/70 mt-0.5">vs. 4–5 hours manually — 94% time reduction</p>
+                <div className="mt-3 p-4 bg-green-500/10 border border-green-500/30 rounded-lg text-green-300 text-center space-y-3">
+                  <div>
+                    <CheckCircle2 className="w-5 h-5 mx-auto mb-1" />
+                    <p className="font-semibold text-sm">Assembly complete in ~3 min 47 sec</p>
+                    <p className="text-green-400/70 text-xs mt-0.5">vs. 4–5 hours manually — 94% time reduction</p>
+                  </div>
+                  <Button
+                    className="w-full bg-green-600 hover:bg-green-500 text-white font-semibold"
+                    onClick={() => setView("review")}
+                    data-testid="button-review-package-inline"
+                  >
+                    View Assessment Package <ChevronRight className="w-4 h-4 ml-1" />
+                  </Button>
                 </div>
               )}
 
