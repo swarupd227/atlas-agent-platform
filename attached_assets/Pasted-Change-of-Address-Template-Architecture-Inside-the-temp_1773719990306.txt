@@ -1,0 +1,38 @@
+Change of Address — Template Architecture
+Inside the template: how skills, MCP servers, and governance connect.
+
+TRIGGER
+SignPlus Gateway webhook → form signed event
+Kinective's SignPlus fires a webhook when a customer signs a Change of Address form. ATLAS listens for this event.
+↓
+ATLAS ORCHESTRATION ENGINE (Proprietary)
+LLM Reasoning Layer — determines skill sequence
+Governance Gate — checks compliance rules before each action
+Adaptive Autonomy — scales human oversight by risk level
+Audit Trail — hash-chained, immutable record of every decision
+This is our core IP. The engine decides WHAT to do, in WHAT order, with WHAT safeguards. No third-party tool provides this.
+↓
+SKILLS (Reusable Business Logic)
+Address Extraction — parse signed form data
+USPS Validation — standardize address, ZIP+4
+System Orchestrator — identify & update downstream systems
+Rollback Handler — undo on failure for data consistency
+Compliance Logger — BSA/AML event recording, EDD checks
+Notification Manager — customer & ops staff alerts
+Skills are decoupled from vendors. The 'System Orchestrator' skill calls abstract tools — MCP servers route to the correct vendor API.
+↓
+MCP SERVERS (API Connectors — Open Standard Protocol)
+kinective-signplus — SignPlus form data & archival
+kinective-gateway-core — 40+ core banking systems via Gateway™
+usps-address-validation — USPS Address API
+digital-banking-connector — Alkami / Q2 / NCR / Banno
+statement-vendor-connector — Doxim / Nordis / Messagepoint
+card-management-connector — PSCU / Co-op / Fiserv Card
+...and 5 more for loans, CRM, bill pay, fraud, compliance
+MCP is an open standard (by Anthropic). The servers themselves are built by us. Each wraps a Kinective API or 3rd-party API. Built once, reused by all templates and all customers.
+↓
+KINECTIVE APIs + 3RD PARTY APIS (The actual systems)
+Kinective Gateway™ → Fiserv / Jack Henry / FIS / 40+ cores
+Kinective SignPlus™ → eSignature & workflow
+3rd Party: USPS, statement vendors, card processors, CRM, fraud systems
+These are the systems being updated. ATLAS connects to them through MCP servers — Kinective doesn't need to change any of its existing APIs.
