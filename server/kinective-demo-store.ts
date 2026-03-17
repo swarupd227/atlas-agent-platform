@@ -164,19 +164,22 @@ export function finalizeKinectiveSystemUpdates(scenario: KinectiveScenario): voi
 
   if (scenario === "system_failure") {
     for (const su of state.systemUpdates) {
-      if (su.status === "pending") {
-        const name = su.system.toLowerCase();
-        if (name.includes("card")) {
-          su.status = "failed";
-          su.error = "TIMEOUT: Connection to PSCU card management timed out after 3 retries";
-        } else if (name.includes("loan") || name.includes("crm")) {
-          su.status = "rolled_back";
-          su.rolledBackAt = new Date().toISOString();
-        } else {
-          su.status = "success";
-          su.confirmationId = confId();
-        }
+      const name = su.system.toLowerCase();
+      if (name.includes("card")) {
+        su.status = "failed";
+        su.error = "TIMEOUT: Connection to PSCU card management timed out after 3 retries";
+        su.confirmationId = null;
+      } else if (name.includes("loan") || name.includes("crm") || name.includes("salesforce")) {
+        su.status = "rolled_back";
+        su.confirmationId = null;
+        if (!su.rolledBackAt) su.rolledBackAt = new Date().toISOString();
+      } else if (su.status === "pending") {
+        su.status = "success";
+        su.confirmationId = confId();
       }
+    }
+    if (!state.auditLog.find((e) => e.action === "PARTIAL_FAILURE")) {
+      addKinectiveAudit("PARTIAL_FAILURE", "ATLAS Engine", "Card Management (PSCU) failure triggered rollback for Loan Origination and CRM. COA-2026-00412 marked partial failure — compliance record filed.");
     }
     return;
   }
@@ -186,6 +189,9 @@ export function finalizeKinectiveSystemUpdates(scenario: KinectiveScenario): voi
       su.status = "success";
       su.confirmationId = confId();
     }
+  }
+  if (!state.auditLog.find((e) => e.action === "COA_COMPLETE")) {
+    addKinectiveAudit("COA_COMPLETE", "ATLAS Engine", "COA-2026-00412 complete. All 11 systems synchronized successfully. Member notified via email and SMS. Signed form archived in SignPlus.");
   }
 }
 

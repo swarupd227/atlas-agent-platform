@@ -572,27 +572,50 @@ function PipelineBanner({ scenario, running }: { scenario: Scenario; running: bo
     { label: "Notification", icon: Bell },
   ];
 
+  const [activeStep, setActiveStep] = useState(0);
+
+  useEffect(() => {
+    if (!running) {
+      setActiveStep(0);
+      return;
+    }
+    const id = setInterval(() => {
+      setActiveStep((prev) => (prev + 1) % nodes.length);
+    }, 2200);
+    return () => clearInterval(id);
+  }, [running]);
+
   return (
     <div className="flex items-center justify-center gap-1 py-3 px-4" data-testid="kinective-pipeline-banner">
       {nodes.map((node, i) => {
         const Icon = node.icon;
+        const isActive = running && i === activeStep;
+        const isPast = running && i < activeStep;
         return (
           <div key={node.label} className="flex items-center gap-1">
             <div
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all border ${
-                node.isEngine
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-500 border ${
+                isActive
+                  ? "bg-blue-500/20 border-blue-400 text-blue-300 shadow-[0_0_8px_rgba(59,130,246,0.4)]"
+                  : isPast
+                  ? "bg-green-500/15 border-green-600 text-green-400"
+                  : node.isEngine
                   ? "bg-orange-500/20 border-orange-500 text-orange-400"
-                  : "bg-zinc-800/80 border-zinc-700 text-zinc-300"
+                  : "bg-zinc-800/80 border-zinc-700 text-zinc-400"
               }`}
             >
-              {running && node.isEngine ? (
+              {isActive ? (
                 <Loader2 className="w-3 h-3 animate-spin" />
+              ) : isPast ? (
+                <CheckCircle2 className="w-3 h-3" />
               ) : (
                 <Icon className="w-3 h-3" />
               )}
               {node.label}
             </div>
-            {i < nodes.length - 1 && <ArrowRight className="w-3 h-3 text-zinc-600" />}
+            {i < nodes.length - 1 && (
+              <ArrowRight className={`w-3 h-3 transition-colors duration-500 ${isPast || (running && i < activeStep) ? "text-green-600" : "text-zinc-600"}`} />
+            )}
           </div>
         );
       })}
