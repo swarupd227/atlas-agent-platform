@@ -35553,6 +35553,150 @@ Your task is post-provisioning behavioral monitoring — not standard certificat
     }
   });
 
+  // ── Moody's Credit Assessment Demo Pipeline ──────────────────────────────
+  app.post("/demo-api/moodys/run", async (_req, res) => {
+    try {
+      const {
+        getMoodysState,
+        setMoodysPipelineStatus,
+        setMoodysAgentStatus,
+        resetMoodysState,
+      } = await import("./moodys-demo-store");
+
+      const current = getMoodysState();
+      if (current.status === "running") {
+        return res.status(409).json({ error: "Pipeline already running." });
+      }
+      if (current.status === "complete") {
+        resetMoodysState();
+      }
+
+      setMoodysPipelineStatus("running");
+      res.json({ started: true, message: "Assessment package assembly started. 6 agents activated." });
+
+      const DEP = {
+        financialDataCollector: "6066aa6a-f1d4-4d05-b7fd-da2be493e4b7",
+        earningsAnalyzer:       "f4bea6d9-e5d5-45de-a2b5-7e841ddeea28",
+        peerComparisonBuilder:  "347d49a5-4124-41d1-96cd-06d2016b2d84",
+        esgProfileAgent:        "cf00b760-cf41-4bb9-892e-b5cca3afffaa",
+        newsEventScanner:       "88738a00-7523-43ff-86c6-8e6d9d007bac",
+        scorecardPrePopulation: "baaaeebf-2b3e-490c-8e41-1b5a440cb857",
+      } as const;
+
+      const PROMPTS = {
+        financialDataCollector: `You are the Financial Data Collector & Spreader for a credit assessment of Ford Motor Company (ticker: F).
+
+Execute these steps in order — call each tool exactly once:
+1. Call get_edgar_filings with issuer "Ford Motor Company", ticker "F", filing_types ["10-K","10-Q"], periods ["FY2025","Q3-2025","Q2-2025"]
+2. Call get_moody_financials with issuer_id "F", periods 8
+3. Call spread_to_chart_of_accounts with issuer_id "F", source "EDGAR", standard "US-GAAP", periods 8
+4. Call compute_credit_metrics with issuer_id "F", sector "Automotive", metrics_set "standard_24"
+
+Complete all 4 steps. This is the financial data gathering and spreading phase.`,
+
+        earningsAnalyzer: `You are the Earnings & Management Signal Analyzer for a credit assessment of Ford Motor Company (ticker: F).
+
+Execute these steps in order — call each tool exactly once:
+1. Call get_edgar_filings with issuer "Ford Motor Company", ticker "F", filing_types ["8-K"], periods ["Q4-2025","Q3-2025"]
+2. Call get_earnings_transcripts with issuer_id "F", quarters ["Q4-2025","Q3-2025"]
+3. Call get_investor_presentations with issuer_id "F", event_type "earnings_call", periods ["Q4-2025","Q3-2025"]
+
+Complete all 3 steps. Extract management tone, forward guidance, and credit-relevant signals.`,
+
+        peerComparisonBuilder: `You are the Peer Comparison Builder for a credit assessment of Ford Motor Company (ticker: F).
+
+Execute these steps in order — call each tool exactly once:
+1. Call get_peer_group with issuer_id "F", sector "Automobile_Manufacturer", methodology_version "v2.1"
+2. Call get_peer_financials with peer_ids ["GM","Stellantis","Toyota","VW","Hyundai"], metrics ["debt_ebitda","ebit_interest","fcf_debt","revenue","ebitda_margin","current_rating"]
+
+Complete both steps and build the peer comparison matrix.`,
+
+        esgProfileAgent: `You are the ESG & Sustainability Profile Agent for a credit assessment of Ford Motor Company (ticker: F).
+
+Execute these steps in order — call each tool exactly once:
+1. Call get_esg_ips_scores with issuer_id "F"
+2. Call get_cis_score with issuer_id "F"
+3. Call scan_credit_news with issuer_id "F", categories ["ESG","regulatory","sustainability"], lookback_days 180
+
+Complete all 3 steps. Flag any ESG factors with material credit impact.`,
+
+        newsEventScanner: `You are the News & Event Scanner for a credit assessment of Ford Motor Company (ticker: F).
+
+Execute these steps in order — call each tool exactly once:
+1. Call scan_credit_news with issuer_id "F", categories ["credit_event","earnings","M&A","litigation","regulatory"], lookback_days 365
+2. Call get_legal_database with issuer_id "F", case_types ["litigation","regulatory_action"], open_only false
+3. Call get_market_data with issuer_id "F", data_types ["credit_spreads","CDS","bond_yields"]
+
+Complete all 3 steps. Classify events by credit relevance (material/contextual/informational).`,
+
+        scorecardPrePopulation: `You are the Scorecard Pre-Population Agent. Pre-populate the Automobile Manufacturer rating scorecard for Ford Motor Company (ticker: F).
+
+Execute these steps in order — call each tool exactly once:
+1. Call get_rating_scorecard_template with sector "Automobile_Manufacturer", methodology_version "v2.1", methodology_date "2024-03"
+2. Call get_current_rating with issuer_id "F"
+3. Call get_moody_financials with issuer_id "F", periods 8
+
+Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rating. All output is model-indicated only — not a rating opinion.`,
+      } as const;
+
+      (async () => {
+        try {
+          const parallelAgents: (keyof typeof DEP)[] = [
+            "financialDataCollector",
+            "earningsAnalyzer",
+            "peerComparisonBuilder",
+            "esgProfileAgent",
+            "newsEventScanner",
+          ];
+
+          const now = () => new Date().toISOString();
+
+          parallelAgents.forEach((key) =>
+            setMoodysAgentStatus(key, { status: "running", startedAt: now() })
+          );
+
+          await Promise.all(
+            parallelAgents.map(async (key) => {
+              try {
+                await runAgentOnce(DEP[key], PROMPTS[key], 8);
+                setMoodysAgentStatus(key, {
+                  status: "complete",
+                  completedAt: now(),
+                  durationSec: Math.round((Date.now() - new Date(getMoodysState().agents[key].startedAt!).getTime()) / 1000),
+                });
+              } catch (e: any) {
+                console.error(`[moodys-pipeline] ${key} error:`, e.message);
+                setMoodysAgentStatus(key, { status: "error", completedAt: now() });
+              }
+            })
+          );
+
+          setMoodysAgentStatus("scorecardPrePopulation", { status: "running", startedAt: now() });
+          try {
+            await runAgentOnce(DEP.scorecardPrePopulation, PROMPTS.scorecardPrePopulation, 6);
+            setMoodysAgentStatus("scorecardPrePopulation", {
+              status: "complete",
+              completedAt: now(),
+              durationSec: Math.round((Date.now() - new Date(getMoodysState().agents.scorecardPrePopulation.startedAt!).getTime()) / 1000),
+            });
+          } catch (e: any) {
+            console.error(`[moodys-pipeline] scorecardPrePopulation error:`, e.message);
+            setMoodysAgentStatus("scorecardPrePopulation", { status: "error", completedAt: now() });
+          }
+
+          setMoodysPipelineStatus("complete");
+          console.log("[moodys-pipeline] All 6 agents complete.");
+        } catch (err: any) {
+          console.error("[moodys-pipeline] Fatal error:", err.message);
+          setMoodysPipelineStatus("complete");
+        }
+      })();
+    } catch (err: any) {
+      console.error("[demo-api/moodys/run]", err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
   // Start the job worker
   startWorker();
 

@@ -91,6 +91,7 @@ import DeveloperPortal from "@/pages/developer-portal";
 import AgentExport from "@/pages/agent-export";
 import BlackRockDemo from "@/pages/demo/blackrock-demo";
 import KinectiveDemo from "@/pages/demo/kinective-demo";
+import MoodysDemo from "@/pages/demo/moodys-demo";
 import { Shield, LogOut } from "lucide-react";
 
 function HeaderControls() {
@@ -209,6 +210,7 @@ function DashboardRouter() {
       <Route path="/demo/blackrock" component={BlackRockDemo} />
       <Route path="/demo/kinective-coa" component={KinectiveDemo} />
       <Route path="/demo/kinective" component={KinectiveDemo} />
+      <Route path="/demo/moodys" component={MoodysDemo} />
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>

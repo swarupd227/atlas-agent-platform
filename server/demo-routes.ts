@@ -20,6 +20,13 @@ import {
   resolvePrivEsc,
 } from "./demo-store";
 import {
+  getMoodysState,
+  resetMoodysState,
+  addMoodysOverride,
+  confirmMoodysPackage,
+  logMoodysToolCall,
+} from "./moodys-demo-store";
+import {
   getKinectiveState,
   resetKinectiveDemo,
   fullResetKinectiveDemo,
@@ -879,3 +886,181 @@ export async function seedWorkerMcpEndpoints(storage: IStorage): Promise<void> {
     } catch {}
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MOODYS CREDIT ASSESSMENT DEMO — Tool endpoints + state
+// ─────────────────────────────────────────────────────────────────────────────
+
+demoRouter.get("/moodys/state", (_req: Request, res: Response) => {
+  res.json(getMoodysState());
+});
+
+demoRouter.post("/moodys/reset", (_req: Request, res: Response) => {
+  resetMoodysState();
+  res.json({ ok: true });
+});
+
+demoRouter.post("/moodys/override", (req: Request, res: Response) => {
+  const { field, agentValue, analystValue, note, type } = req.body;
+  const entry = addMoodysOverride({
+    field,
+    agentValue,
+    analystValue: analystValue ?? agentValue,
+    note: note ?? "",
+    type: type ?? "overridden",
+    timestamp: new Date().toISOString(),
+  });
+  res.json(entry);
+});
+
+demoRouter.post("/moodys/confirm", (_req: Request, res: Response) => {
+  confirmMoodysPackage();
+  res.json({ ok: true, confirmedAt: new Date().toISOString() });
+});
+
+// ─── Tool simulation endpoints ────────────────────────────────────────────────
+const FORD_EDGAR = {
+  issuer: "Ford Motor Company", ticker: "F",
+  filings: [
+    { type: "10-K", period: "FY2025", filed: "2026-02-04", url: "https://www.sec.gov/Archives/edgar/data/37996/000003799626000001/f-20251231.htm", pages: 182 },
+    { type: "10-Q", period: "Q3-2025", filed: "2025-11-04", url: "https://www.sec.gov/Archives/edgar/data/37996/000003799625000041/f-20250930.htm", pages: 74 },
+    { type: "10-Q", period: "Q2-2025", filed: "2025-07-29", url: "https://www.sec.gov/Archives/edgar/data/37996/000003799625000028/f-20250630.htm", pages: 71 },
+  ],
+  status: "retrieved",
+};
+
+const FORD_COA = {
+  issuer: "Ford Motor Company", standard: "US-GAAP",
+  quarters: ["Q4-2023","Q1-2024","Q2-2024","Q3-2024","Q4-2024","Q1-2025","Q2-2025","Q3-2025"],
+  lineItemsMapped: 247,
+  anomalies: [
+    { type: "non_recurring", description: "Non-recurring restructuring charge of $1.2B in Q4 2024 — EV segment right-sizing. Excluded from adjusted EBITDA calculation.", severity: "yellow" },
+    { type: "segment_reclass", description: "Ford Pro segment reclassified in Q1 2025; prior periods restated.", severity: "yellow" },
+  ],
+  status: "complete",
+};
+
+const FORD_METRICS = {
+  issuer: "Ford Motor Company",
+  metrics: [
+    { name: "Debt/EBITDA", value: 3.2, trend: "down", prior: 3.8, unit: "x", direction: "improving", category: "Leverage" },
+    { name: "EBIT/Interest", value: 4.1, trend: "up", prior: 3.5, unit: "x", direction: "improving", category: "Coverage" },
+    { name: "FCF/Debt", value: 12.4, trend: "stable", prior: 12.1, unit: "%", direction: "stable", category: "Cash Flow" },
+    { name: "FFO/Debt", value: 18.2, trend: "up", prior: 16.4, unit: "%", direction: "improving", category: "Cash Flow" },
+    { name: "Revenue Growth YoY", value: 4.2, trend: "up", prior: 1.8, unit: "%", direction: "improving", category: "Scale" },
+    { name: "EBITDA Margin", value: 8.8, trend: "up", prior: 7.9, unit: "%", direction: "improving", category: "Profitability" },
+    { name: "Revenue", value: 178.0, trend: "up", prior: 176.2, unit: "$B", direction: "improving", category: "Scale" },
+    { name: "EBITDA", value: 15.7, trend: "up", prior: 13.9, unit: "$B", direction: "improving", category: "Profitability" },
+    { name: "Adjusted Debt", value: 50.3, trend: "stable", prior: 53.2, unit: "$B", direction: "improving", category: "Leverage" },
+    { name: "Cash & Equivalents", value: 29.0, trend: "up", prior: 25.8, unit: "$B", direction: "improving", category: "Liquidity" },
+    { name: "Capex/Revenue", value: 4.8, trend: "up", prior: 4.2, unit: "%", direction: "neutral", category: "Investment" },
+    { name: "Gross Margin", value: 11.2, trend: "stable", prior: 11.5, unit: "%", direction: "stable", category: "Profitability" },
+  ],
+  status: "complete",
+};
+
+const FORD_TRANSCRIPTS = {
+  issuer: "Ford Motor Company",
+  quarters: ["Q4-2025", "Q3-2025"],
+  overallSentiment: 0.3,
+  sentimentByTopic: [
+    { topic: "Leverage targets", score: 0.6, label: "Positive", keyQuote: "CFO: 'We remain firmly committed to our 2.5–3.0x net leverage target. Q4 free cash flow was strong and we expect to remain within that range through 2026.'" },
+    { topic: "EV investment", score: 0.0, label: "Neutral", keyQuote: "CEO: 'We're right-sizing our EV capacity investment. The $1.2B restructuring reflects disciplined capital allocation, not a retreat from electrification.'" },
+    { topic: "Liquidity", score: 0.5, label: "Positive", keyQuote: "CFO: 'Cash and liquidity position of $29B provides significant buffer. We have no near-term debt maturities of concern.'" },
+    { topic: "ICE profitability", score: 0.4, label: "Positive", keyQuote: "CFO: 'F-150 and Super Duty continue to generate industry-leading margins. Ford Pro EBIT margin was 12.4% in Q4 — best ever.'" },
+  ],
+  creditAnalystQuote: { text: "We expect Ford's EBITDA margin to improve modestly in 2026, supported by Ford Pro growth and ICE pricing strength, partially offset by ongoing EV investment losses.", speaker: "Ford CFO", context: "Q4 2025 Earnings Call, Feb 2026", creditRelevance: "HIGH" },
+  status: "complete",
+};
+
+const FORD_PEERS = {
+  issuer: "Ford Motor Company",
+  methodology: "Automobile Manufacturer v2.1",
+  peers: ["GM", "Stellantis", "Toyota", "VW", "Hyundai"],
+  matrix: [
+    { metric: "Debt/EBITDA (x)", ford: 3.2, gm: 2.1, stellantis: 1.8, toyota: 1.2, vw: 2.4, hyundai: 1.9, fordRank: 5, median: 2.1 },
+    { metric: "EBIT/Interest (x)", ford: 4.1, gm: 5.8, stellantis: 6.2, toyota: 8.4, vw: 4.4, hyundai: 5.1, fordRank: 5, median: 5.5 },
+    { metric: "EBITDA Margin (%)", ford: 8.8, gm: 10.4, stellantis: 11.2, toyota: 13.1, vw: 9.8, hyundai: 10.2, fordRank: 6, median: 10.3 },
+    { metric: "FCF/Debt (%)", ford: 12.4, gm: 10.2, stellantis: 14.8, toyota: 22.1, vw: 8.4, hyundai: 11.8, fordRank: 3, median: 11.0 },
+    { metric: "Revenue ($B)", ford: 178.0, gm: 187.3, stellantis: 189.2, toyota: 274.5, vw: 298.4, hyundai: 112.4, fordRank: 4, median: 187.3 },
+    { metric: "Current Rating", ford: "Ba1", gm: "Baa3", stellantis: "Ba1", toyota: "A1", vw: "A3", hyundai: "Baa1", fordRank: 5, median: "Baa3" },
+  ],
+  outlierFlags: [
+    "Ford EBITDA margin (8.8%) is 140bps below peer median (10.2%) and 320bps below Toyota.",
+    "Ford FCF/Debt (12.4%) is above peer median — strong cash conversion despite margin headwinds.",
+    "Ford is the only issuer in the peer group with EV segment losses exceeding $2B annually.",
+  ],
+  status: "complete",
+};
+
+const FORD_ESG = {
+  issuer: "Ford Motor Company",
+  esgIpsScores: { environmental: "E-3", social: "S-2", governance: "G-2", overall: "E-3" },
+  cisScore: { score: "CIS-3", label: "Moderately negative", rationale: "EV transition investment risk and regulatory compliance costs are credit-negative, partially offset by strong governance and improving social metrics." },
+  materialFactors: [
+    { factor: "EV transition capital intensity", direction: "negative", creditRelevance: "HIGH" },
+    { factor: "California ZEV regulatory requirements", direction: "negative", creditRelevance: "MEDIUM" },
+    { factor: "Supply chain decarbonization costs", direction: "negative", creditRelevance: "LOW" },
+  ],
+  status: "complete",
+};
+
+const FORD_NEWS = {
+  issuer: "Ford Motor Company",
+  events: [
+    { date: "2026-01-15", type: "rating_relevant", headline: "Ford Pro commercial vehicle unit reports record Q4 margin of 12.4%", source: "Reuters", direction: "positive", relevance: "MATERIAL" },
+    { date: "2025-12-08", type: "credit_event", headline: "Ford announces $1.2B EV restructuring charge, reduces planned EV production by 20%", source: "Bloomberg", direction: "neutral", relevance: "MATERIAL" },
+    { date: "2025-11-22", type: "regulatory", headline: "EPA issues final rule on Phase 3 fuel economy standards; Ford faces incremental compliance costs", source: "Dow Jones", direction: "negative", relevance: "CONTEXTUAL" },
+  ],
+  legalItems: [
+    { case: "In re Ford F-150 Lightning Recall", type: "product_liability", status: "active", exposure: "< $500M", creditImpact: "LOW" },
+  ],
+  marketData: { creditSpread5Y: 185, cdsMidspread: 142, seniorUnsecuredYield: 6.24, unit: "bps/%" },
+  status: "complete",
+};
+
+const FORD_SCORECARD = {
+  issuer: "Ford Motor Company",
+  methodology: "Automobile Manufacturer Methodology v2.1 (March 2024)",
+  quantitative: [
+    { factor: "Scale (Revenue)", value: "$178B", scorecardInput: "$178B", mappedCategory: "Aaa", source: "Agent 1: compute_credit_metrics" },
+    { factor: "Profitability (EBITDA Margin)", value: "8.8%", scorecardInput: "8.8%", mappedCategory: "Ba", source: "Agent 1: compute_credit_metrics" },
+    { factor: "Leverage (Debt/EBITDA)", value: "3.2x", scorecardInput: "3.2x", mappedCategory: "Ba", source: "Agent 1: compute_credit_metrics" },
+    { factor: "Coverage (EBIT/Interest)", value: "4.1x", scorecardInput: "4.1x", mappedCategory: "Baa", source: "Agent 1: compute_credit_metrics" },
+    { factor: "Cash Flow (FCF/Debt)", value: "12.4%", scorecardInput: "12.4%", mappedCategory: "Baa", source: "Agent 1: compute_credit_metrics" },
+  ],
+  qualitative: [
+    { factor: "Business Profile", agentSuggestion: "Baa", agentRationale: "Global scale and brand strength offset by high EV transition risk and below-peer EBITDA margin.", confidence: 0.72 },
+    { factor: "Competitive Position", agentSuggestion: "Ba", agentRationale: "Ford's EV market share (~4%) significantly below BYD (20%) and Tesla (18%). ICE strength in F-150 and Super Duty is strong but structural.", confidence: 0.81 },
+    { factor: "Financial Policy", agentSuggestion: "Baa", agentRationale: "Management has reaffirmed 2.5–3.0x leverage target. Capital allocation discipline improving post-restructuring.", confidence: 0.68 },
+    { factor: "Management Quality", agentSuggestion: "Baa", agentRationale: "CFO demonstrated clear leverage target discipline; EV restructuring reflects pragmatic strategic pivot.", confidence: 0.65 },
+  ],
+  modelIndicatedOutcome: "Baa3",
+  currentRating: "Ba1",
+  currentOutlook: "Stable",
+  gapAnalysis: { notches: 1, direction: "model above current", interpretation: "Model indicates one notch above current rating. Gap likely explained by EV loss trajectory uncertainty and below-peer margins — both require analyst qualitative judgment." },
+  status: "complete",
+};
+
+function mkToolHandler(agent: string, tool: string, summary: string, data: any) {
+  return (_req: Request, res: Response) => {
+    logMoodysToolCall(agent, tool, summary);
+    res.json({ ok: true, agent, tool, ...data });
+  };
+}
+
+demoRouter.post("/moodys/tools/get_edgar_filings", mkToolHandler("earningsAnalyzer", "get_edgar_filings", "Retrieved Ford 10-K (FY2025) and 10-Q filings from SEC EDGAR", FORD_EDGAR));
+demoRouter.post("/moodys/tools/get_moody_financials", mkToolHandler("financialDataCollector", "get_moody_financials", "Retrieved Ford standardized financials from internal data estate (8 quarters)", { issuer: "Ford Motor Company", periods: 8, lineItems: 247 }));
+demoRouter.post("/moodys/tools/spread_to_chart_of_accounts", mkToolHandler("financialDataCollector", "spread_to_chart_of_accounts", "Spread Ford financials to Chart of Accounts — 247 line items mapped, 2 anomalies flagged", FORD_COA));
+demoRouter.post("/moodys/tools/compute_credit_metrics", mkToolHandler("financialDataCollector", "compute_credit_metrics", "Computed 12 credit metrics across 8 quarters for Ford Motor Company", FORD_METRICS));
+demoRouter.post("/moodys/tools/get_earnings_transcripts", mkToolHandler("earningsAnalyzer", "get_earnings_transcripts", "Retrieved Q3 and Q4 2025 earnings call transcripts for Ford", FORD_TRANSCRIPTS));
+demoRouter.post("/moodys/tools/get_investor_presentations", mkToolHandler("earningsAnalyzer", "get_investor_presentations", "Retrieved Ford Q4 2025 investor day presentation", { issuer: "Ford Motor Company", events: ["Q4-2025 Earnings Deck", "2026 Investor Day Preview"], status: "retrieved" }));
+demoRouter.post("/moodys/tools/get_peer_group", mkToolHandler("peerComparisonBuilder", "get_peer_group", "Identified 5 peers: GM, Stellantis, Toyota, VW, Hyundai", { peers: FORD_PEERS.peers, methodology: FORD_PEERS.methodology }));
+demoRouter.post("/moodys/tools/get_peer_financials", mkToolHandler("peerComparisonBuilder", "get_peer_financials", "Retrieved 6-metric peer comparison matrix for 5 issuers", FORD_PEERS));
+demoRouter.post("/moodys/tools/get_esg_ips_scores", mkToolHandler("esgProfileAgent", "get_esg_ips_scores", "Retrieved Ford ESG IPS scores: E-3, S-2, G-2", FORD_ESG));
+demoRouter.post("/moodys/tools/get_cis_score", mkToolHandler("esgProfileAgent", "get_cis_score", "Retrieved Ford CIS-3 (Moderately negative ESG credit impact)", { cisScore: FORD_ESG.cisScore }));
+demoRouter.post("/moodys/tools/scan_credit_news", mkToolHandler("newsEventScanner", "scan_credit_news", "Scanned news — 3 material events found (Ford Pro record margin, EV restructuring, EPA rule)", FORD_NEWS));
+demoRouter.post("/moodys/tools/get_legal_database", mkToolHandler("newsEventScanner", "get_legal_database", "Retrieved Ford legal database — 1 active case, low credit impact", { legalItems: FORD_NEWS.legalItems }));
+demoRouter.post("/moodys/tools/get_market_data", mkToolHandler("newsEventScanner", "get_market_data", "Retrieved Ford credit spreads: 5Y spread 185bps, CDS 142bps", { marketData: FORD_NEWS.marketData }));
+demoRouter.post("/moodys/tools/get_rating_scorecard_template", mkToolHandler("scorecardPrePopulation", "get_rating_scorecard_template", "Retrieved Automobile Manufacturer scorecard template v2.1", { methodology: FORD_SCORECARD.methodology, factors: 9, quantitative: 5, qualitative: 4 }));
+demoRouter.post("/moodys/tools/get_current_rating", mkToolHandler("scorecardPrePopulation", "get_current_rating", "Retrieved Ford current rating: Ba1, Outlook Stable", { currentRating: "Ba1", outlook: "Stable", ratingDate: "2024-09-18" }));

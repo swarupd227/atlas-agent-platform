@@ -1,0 +1,49 @@
+Step-by-Step Demo Walkthrough
+
+Step 1: Trigger Assessment Package
+ALMP SCREEN:  Main Nav → Workflows → Credit Assessment → New Package
+Enter the assessment request:
+▸ Issuer: Ford Motor Company (Moody’s: Ba1, Outlook Stable)
+▸ Assessment Type: Annual Review
+▸ Methodology: Automobile Manufacturer Methodology (v2.1, March 2024)
+▸ Peer Group: Global Auto Manufacturers (GM, Stellantis, Toyota, VW, Hyundai)
+▸ Requested By: Senior Analyst, North America Corporates
+
+Click “Generate Assessment Package.” The system activates all 6 agents in parallel.
+
+ON SCREEN
+Pipeline execution view: 6 agents activate simultaneously. Real-time progress: Agent 1 (Financials): Pulling Ford 10-K (Feb 2026), 10-Q (Q3 2025), 10-Q (Q2 2025)... Spreading to Chart of Accounts... Computing 24 credit metrics... [COMPLETE in 2 min 14 sec]. Agent 2 (Earnings): Processing Q3 2025 and Q4 2025 earnings calls... Sentiment scoring... Key quote extraction... [COMPLETE in 1 min 48 sec]. Agent 3 (Peers): Pulling comparable data for GM, Stellantis, Toyota, VW, Hyundai... Building comparison matrix... [COMPLETE in 2 min 32 sec]. Agent 4 (ESG): Pulling IPS scores (E-3, S-3, G-3), CIS-3... Checking recent ESG events... [COMPLETE in 45 sec]. Agent 5 (Events): Scanning news, filings, market data since last review... 14 events found, 3 classified material... [COMPLETE in 1 min 22 sec]. Agent 6 (Scorecard): Pre-populating Automobile Manufacturer scorecard... Computing indicated outcome... [COMPLETE in 1 min 05 sec]. Total package generation time: 3 min 47 sec.
+
+TALK TRACK
+Three minutes and 47 seconds. That’s the entire data gathering, financial spreading, peer comparison, ESG review, event scan, and scorecard pre-population for a full annual credit review of Ford Motor Company. Currently this takes an analyst 4–5 hours. We just gave your analyst 4 hours back to spend on what they’re best at: analytical judgment.
+
+Step 2: Review the Assessment Package
+ALMP SCREEN:  Assessment Package → Ford Motor Company → Review
+
+Tab 1: Financial Summary
+ON SCREEN
+Standardized financial summary for Ford: 8 quarters of income statement, balance sheet, and cash flow data spread to Moody’s Chart of Accounts. Credit Metrics panel showing 24 ratios with trend arrows: Debt/EBITDA: 3.2x (↓ from 3.8x, improving). EBIT/Interest: 4.1x (↑ from 3.5x, improving). FCF/Debt: 12.4% (stable). FFO/Debt: 18.2% (↑). Revenue trend: +4.2% YoY. EBITDA margin: 8.8% (↑ from 7.9%). Anomaly flag (yellow): "Non-recurring restructuring charge of $1.2B in Q4 2025 related to EV division reorganization. Adjusted EBITDA excludes this charge. Analyst should verify treatment is consistent with methodology." All financial data points linked to specific 10-K/10-Q line items (click to view source).
+
+Tab 2: Earnings Intelligence
+ON SCREEN
+Earnings sentiment analysis for Q3 and Q4 2025 calls: Overall Credit Sentiment: +0.3 (slightly positive, stable QoQ). Management Tone by Topic: Leverage targets: Positive (+0.6) — CFO reaffirmed 2.5–3.0x target range. EV investment: Neutral (0.0) — restructuring announced but positioned as "right-sizing." Liquidity: Positive (+0.5) — $29B cash position highlighted. ICE profitability: Positive (+0.4) — F-150 and Super Duty margins strong. Key Analyst-Relevant Quote (highlighted): Q4 call, CFO: "We expect to maintain our investment-grade trajectory while managing the EV transition. Our near-term priority is free cash flow generation from our ICE franchise." [Transcript timestamp: 34:12]. Forward Guidance Summary: FY2026 revenue guidance: $176–182B. EBITDA margin target: 8–10%. Capex: $8–9B (split ICE 55%, EV 45%).
+
+Tab 3: Peer Comparison
+ON SCREEN
+Peer matrix with 6 issuers and 12 key metrics. Ford is highlighted. Color coding: green (above median), red (below median). Ford positioning: Debt/EBITDA: 3.2x (Rank: 4 of 6, below median of 2.8x). EBIT/Interest: 4.1x (Rank: 3 of 6, near median). Revenue size: $178B (Rank: 3 of 6). EBITDA margin: 8.8% (Rank: 5 of 6, below peer median of 10.2%). FCF/Debt: 12.4% (Rank: 2 of 6, above median). Outlier flags: Ford’s EBITDA margin is 140bps below peer median and 320bps below Toyota. Ford’s EV losses are the highest in the peer group as a percentage of total EBITDA.
+
+Tab 4: Pre-Populated Scorecard
+ON SCREEN
+Automobile Manufacturer Scorecard for Ford: QUANTITATIVE FACTORS (pre-populated from Agent 1 data): Scale (Revenue): $178B → Aaa category. Profitability (EBITDA Margin): 8.8% → Ba category. Leverage (Debt/EBITDA): 3.2x → Ba category. Coverage (EBIT/Interest): 4.1x → Baa category. Cash Flow (FCF/Debt): 12.4% → Baa category. QUALITATIVE FACTORS (AI-suggested, marked with ⚠️): Business Profile: Baa (suggested) — "Global scale and brand strength offset by high EV transition uncertainty." Competitive Position: Ba (suggested) — "Strong ICE franchise but lagging in EV market share vs. peers." Financial Policy: Baa (suggested) — "Commitment to deleveraging demonstrated but EV capex creates medium-term risk." SCORECARD-INDICATED OUTCOME: Baa3 (investment grade, low end). CURRENT MOODY’S RATING: Ba1 (highest speculative grade). GAP ANALYSIS: Scorecard indicates 1 notch above current rating. Possible factors: Ford’s qualitative assessment may warrant more conservative positioning given EV execution risk, or the rating may incorporate a negative qualitative adjustment not fully captured by the scorecard. Disclaimer: “This scorecard-indicated outcome is a model output and does NOT constitute a Moody’s rating opinion. The rating committee determines all ratings.”
+
+TALK TRACK
+Look at that scorecard gap analysis. The model-indicated outcome is Baa3, but Ford is currently rated Ba1 — one notch apart. The agent isn’t saying the rating is wrong. It’s saying: here’s what the numbers point to, here’s the gap, and here are the factors that might explain it. The analyst’s job is to apply judgment on exactly those factors. That’s what Moody’s analysts should be spending their time on — not pulling data and computing ratios.
+
+Step 3: Analyst Interaction
+Demonstrate the analyst reviewing and modifying the package:
+ALMP SCREEN:  Assessment Package → Ford → Scorecard → Edit Qualitative Factors
+ON SCREEN
+Analyst clicks on the “Competitive Position: Ba” suggestion and changes it to “Ba (confirm)” with a note: “Agree with Ba assessment. Ford’s EV market share is approximately 4% vs. 20% for BYD and 18% for Tesla globally. ICE strength does not fully compensate.” The system logs: Override: None (confirmed AI suggestion). Analyst then clicks “Financial Policy: Baa” and overrides to “Ba” with note: “Downgrading financial policy assessment. $1.2B EV restructuring charge + ongoing EV cash burn creates more financial policy risk than the pure leverage numbers suggest.” The system logs: Override: Baa → Ba. Reason: EV cash burn risk. Scorecard-indicated outcome recalculates: Ba1 (matching current rating). The package is marked “Analyst Reviewed – Ready for Committee Preparation.”
+
+TALK TRACK
+The analyst spent 12 minutes reviewing and adjusting a package that took the system 4 minutes to assemble. Total time: 16 minutes vs. the previous 4–5 hours. That’s a 94% time reduction on the data gathering and preparation phases. And notice — the analyst’s overrides are logged and fed back into the self-healing loop. Over time, the qualitative assessment model learns from these corrections.

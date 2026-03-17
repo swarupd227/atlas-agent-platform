@@ -252,6 +252,14 @@ export function AppSidebar() {
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild data-active={location.startsWith("/demo/moodys")}>
+                      <Link href="/demo/moodys" data-testid="link-nav-moodys-demo">
+                        <FileText className="w-4 h-4" />
+                        <span>Credit Assessment Package</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
                 </SidebarMenu>
               </SidebarGroupContent>
             </CollapsibleContent>
