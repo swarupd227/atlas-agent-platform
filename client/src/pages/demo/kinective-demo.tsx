@@ -1,4 +1,4 @@
-import { useState, useEffect, type ComponentType, type FormEvent } from "react";
+import { useState, useEffect, useRef, type ComponentType, type FormEvent } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -1008,6 +1008,7 @@ export default function KinectiveDemo() {
   const [scenario, setScenario] = useState<Scenario>("happy");
   const [running, setRunning] = useState(false);
   const [agentTeamOpen, setAgentTeamOpen] = useState(false);
+  const lastStartedAt = useRef<number>(0);
   const { toast } = useToast();
 
   const auditQuery = useQuery<{ entries: AuditEntry[] }>({
@@ -1030,12 +1031,6 @@ export default function KinectiveDemo() {
     refetchInterval: running ? POLL_INTERVAL : false,
   });
 
-  useEffect(() => {
-    if (traceQuery.data && traceQuery.data.running === false && running) {
-      setRunning(false);
-    }
-  }, [traceQuery.data, running]);
-
   const invalidateAll = () => {
     queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/audit-log"] });
     queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/trace-id"] });
@@ -1044,20 +1039,35 @@ export default function KinectiveDemo() {
     queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/config"] });
   };
 
+  const startRunning = () => {
+    lastStartedAt.current = Date.now();
+    setRunning(true);
+    invalidateAll();
+  };
+
+  useEffect(() => {
+    if (
+      traceQuery.data &&
+      traceQuery.data.running === false &&
+      running &&
+      traceQuery.dataUpdatedAt > lastStartedAt.current
+    ) {
+      setRunning(false);
+    }
+  }, [traceQuery.data, traceQuery.dataUpdatedAt, running]);
+
   const runPipeline = useMutation({
     mutationFn: async (s: Scenario) => {
       const res = await apiRequest("POST", "/demo-api/kinective/run-pipeline", { scenario: s });
       return res.json();
     },
     onSuccess: () => {
-      setRunning(true);
-      invalidateAll();
+      startRunning();
       toast({ title: "Pipeline Started", description: `Running scenario: ${SCENARIO_LABELS[scenario].label}` });
     },
     onError: (err: any) => {
       if (err?.message?.startsWith("409")) {
-        setRunning(true);
-        invalidateAll();
+        startRunning();
         return;
       }
       toast({ title: "Pipeline Error", description: err.message, variant: "destructive" });
@@ -1078,8 +1088,7 @@ export default function KinectiveDemo() {
   });
 
   const handlePipelineStarted = () => {
-    setRunning(true);
-    invalidateAll();
+    startRunning();
   };
 
   const entries = auditQuery.data?.entries || [];
