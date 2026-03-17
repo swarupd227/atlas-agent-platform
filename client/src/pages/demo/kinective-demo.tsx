@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ComponentType, type FormEvent } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -110,7 +110,7 @@ const SCENARIO_PREFILL: Record<Scenario, { street: string; city: string; state: 
 interface TriggerStep {
   label: string;
   detail: string;
-  icon: React.ElementType;
+  icon: ComponentType<{ className?: string }>;
   delayMs: number;
 }
 
@@ -231,7 +231,7 @@ function MemberCard({
     },
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
     submitCoa.mutate();
   };
