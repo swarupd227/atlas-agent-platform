@@ -148,8 +148,45 @@ function updateSystemStatus(systemSubstr: string, status: SystemUpdateStatus["st
 }
 
 function isSystemEnabled(systemKey: string): boolean {
-  const normalize = (s: string) => s.toLowerCase().replace(/[-_]/g, " ");
+  const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
   return state.enabledSystems.some((s) => normalize(s).includes(normalize(systemKey)));
+}
+
+export function finalizeKinectiveSystemUpdates(scenario: KinectiveScenario): void {
+  const confId = () => `CONF-${Date.now().toString(36).toUpperCase()}-AUTO`;
+
+  if (scenario === "invalid_address") {
+    for (const su of state.systemUpdates) {
+      if (su.status === "pending") su.status = "skipped";
+    }
+    return;
+  }
+
+  if (scenario === "system_failure") {
+    for (const su of state.systemUpdates) {
+      if (su.status === "pending") {
+        const name = su.system.toLowerCase();
+        if (name.includes("card")) {
+          su.status = "failed";
+          su.error = "TIMEOUT: Connection to PSCU card management timed out after 3 retries";
+        } else if (name.includes("loan") || name.includes("crm")) {
+          su.status = "rolled_back";
+          su.rolledBackAt = new Date().toISOString();
+        } else {
+          su.status = "success";
+          su.confirmationId = confId();
+        }
+      }
+    }
+    return;
+  }
+
+  for (const su of state.systemUpdates) {
+    if (su.status === "pending") {
+      su.status = "success";
+      su.confirmationId = confId();
+    }
+  }
 }
 
 export function getScenarioFormData(): Record<string, any> {

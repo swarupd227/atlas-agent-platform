@@ -35158,7 +35158,7 @@ Return ONLY valid JSON array, no explanation.`;
 
       const KINECTIVE_AGENT_ID = "c4b3099f-dfd8-4cce-9cf4-0cbb031f7f73";
 
-      const { resetKinectiveDemo, setKinectiveTraceId, setKinectiveRunning, getEnabledSystems } = await import("./kinective-demo-store");
+      const { resetKinectiveDemo, setKinectiveTraceId, setKinectiveRunning, getEnabledSystems, finalizeKinectiveSystemUpdates } = await import("./kinective-demo-store");
 
       const enabledSystems = getEnabledSystems();
       const isEnabled = (key: string) => enabledSystems.some((s) => s.toLowerCase().includes(key.toLowerCase()));
@@ -35284,6 +35284,8 @@ Log every action.`;
           console.log(`[kinective-pipeline] Starting COA agent (scenario=${selectedScenario})`);
           const result = await runAgentOnce(deployment!.id, selectedPrompt, maxSteps);
           console.log(`[kinective-pipeline] Agent complete.`);
+
+          finalizeKinectiveSystemUpdates(selectedScenario as any);
 
           const traces = await storage.getTracesByAgent(KINECTIVE_AGENT_ID);
           if (traces.length > 0) {
