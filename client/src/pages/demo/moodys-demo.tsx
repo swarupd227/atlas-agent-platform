@@ -140,7 +140,13 @@ export default function MoodysDemo() {
       queryClient.invalidateQueries({ predicate: q => typeof q.queryKey[0] === "string" && q.queryKey[0].startsWith("/demo-api/moodys") });
       toast({ title: "Pipeline started", description: "6 agents activated — retrieving data in parallel." });
     },
-    onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
+    onError: (e: any) => {
+      if (e?.message?.startsWith("409")) {
+        queryClient.invalidateQueries({ predicate: q => typeof q.queryKey[0] === "string" && q.queryKey[0].startsWith("/demo-api/moodys") });
+        return;
+      }
+      toast({ title: "Error", description: e.message, variant: "destructive" });
+    },
   });
 
   const resetMutation = useMutation({

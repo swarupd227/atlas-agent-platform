@@ -35564,10 +35564,14 @@ Your task is post-provisioning behavioral monitoring — not standard certificat
       } = await import("./moodys-demo-store");
 
       const current = getMoodysState();
-      if (current.status === "running") {
+      const STALE_MS = 8 * 60 * 1000;
+      const startedAtMs = current.startedAt ? new Date(current.startedAt).getTime() : 0;
+      const isStale = current.status === "running" && (Date.now() - startedAtMs > STALE_MS);
+
+      if (current.status === "running" && !isStale) {
         return res.status(409).json({ error: "Pipeline already running." });
       }
-      if (current.status === "complete") {
+      if (current.status !== "idle") {
         resetMoodysState();
       }
 
