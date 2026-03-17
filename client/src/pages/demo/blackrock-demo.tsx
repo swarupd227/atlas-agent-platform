@@ -148,7 +148,7 @@ interface PrivEscState {
 
 const POLL_INTERVAL = 3000;
 
-const SYSTEM_PROMPT = `You are the Atlas Synthetic Worker Orchestrator for BlackRock. You replace the manual analyst workflow with governed automation inside the same Aquera \u2192 SailPoint \u2192 Brainwave/RadiantOne governance pipeline.
+const SYSTEM_PROMPT = `You are the Atlas Synthetic Worker Orchestrator for AIM. You replace the manual analyst workflow with governed automation inside the same Aquera \u2192 SailPoint \u2192 Brainwave/RadiantOne governance pipeline.
 
 Every time you run, execute the full 7-step Atlas pipeline:
 
@@ -253,11 +253,11 @@ function SetupGuide() {
   const [open, setOpen] = useState(false);
 
   const agentRows = [
-    { ...AGENTS.orchestrator, type: "Orchestrator", mcp: "BlackRock Synthetic Worker MCP", badge: "bg-orange-500/20 text-orange-400 border-orange-500/30" },
-    { ...AGENTS.aquera,       type: "Worker",       mcp: "Aquera SCIM MCP Server + BlackRock MCP", badge: "bg-blue-500/20 text-blue-400 border-blue-500/30" },
-    { ...AGENTS.sailpoint,    type: "Worker",       mcp: "SailPoint IdentityIQ MCP + BlackRock MCP", badge: "bg-blue-500/20 text-blue-400 border-blue-500/30" },
-    { ...AGENTS.radiantone,   type: "Worker",       mcp: "RadiantOne Identity MCP + BlackRock MCP", badge: "bg-cyan-500/20 text-cyan-400 border-cyan-500/30" },
-    { ...AGENTS.brainwave,    type: "Worker",       mcp: "Brainwave Access Intelligence MCP + BlackRock MCP", badge: "bg-purple-500/20 text-purple-400 border-purple-500/30" },
+    { ...AGENTS.orchestrator, type: "Orchestrator", mcp: "AIM Synthetic Worker MCP", badge: "bg-orange-500/20 text-orange-400 border-orange-500/30" },
+    { ...AGENTS.aquera,       type: "Worker",       mcp: "Aquera SCIM MCP Server + AIM MCP", badge: "bg-blue-500/20 text-blue-400 border-blue-500/30" },
+    { ...AGENTS.sailpoint,    type: "Worker",       mcp: "SailPoint IdentityIQ MCP + AIM MCP", badge: "bg-blue-500/20 text-blue-400 border-blue-500/30" },
+    { ...AGENTS.radiantone,   type: "Worker",       mcp: "RadiantOne Identity MCP + AIM MCP", badge: "bg-cyan-500/20 text-cyan-400 border-cyan-500/30" },
+    { ...AGENTS.brainwave,    type: "Worker",       mcp: "Brainwave Access Intelligence MCP + AIM MCP", badge: "bg-purple-500/20 text-purple-400 border-purple-500/30" },
   ];
 
   return (
@@ -369,7 +369,7 @@ function ServiceNowScreen() {
       <div className="bg-green-800/20 border border-green-700/40 rounded-lg px-4 py-2 flex items-center gap-3">
         <span className="text-lg font-bold text-green-400">ServiceNow</span>
         <span className="text-green-300/70 text-sm">IT Service Management</span>
-        <span className="ml-auto text-sm text-green-300/70">BlackRock Enterprise</span>
+        <span className="ml-auto text-sm text-green-300/70">AIM Enterprise</span>
       </div>
 
       <div className="flex items-center gap-2">
@@ -581,7 +581,7 @@ function SailPointScreen() {
       <div className="bg-blue-800/20 border border-blue-700/40 rounded-lg px-4 py-2 flex items-center gap-3">
         <span className="text-lg font-bold text-blue-400">SailPoint IdentityIQ</span>
         <span className="text-blue-300/70 text-sm">Identity Governance</span>
-        <span className="ml-auto text-sm text-blue-300/70">BlackRock Enterprise</span>
+        <span className="ml-auto text-sm text-blue-300/70">AIM Enterprise</span>
       </div>
 
       <div className="flex gap-6">
@@ -954,7 +954,7 @@ function SodContextView({ onTrigger, isPending }: { onTrigger: () => void; isPen
       <div className="bg-green-900/20 border border-green-700/40 rounded-lg px-4 py-2 flex items-center gap-3">
         <span className="text-lg font-bold text-green-400">ServiceNow</span>
         <span className="text-green-300/70 text-sm">IT Service Management</span>
-        <span className="ml-auto text-sm text-green-300/70">BlackRock Enterprise</span>
+        <span className="ml-auto text-sm text-green-300/70">AIM Enterprise</span>
       </div>
 
       {/* Ticket summary */}
@@ -2274,8 +2274,8 @@ export default function BlackRockDemo() {
     <div className="p-6 space-y-4 max-w-[1400px] mx-auto" data-testid="page-blackrock-demo">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold" data-testid="text-demo-title">BlackRock Synthetic Worker Demo</h1>
-          <p className="text-sm text-muted-foreground">Governed Identity Automation | BlackRock Enterprise</p>
+          <h1 className="text-2xl font-bold" data-testid="text-demo-title">AIM Synthetic Worker Demo</h1>
+          <p className="text-sm text-muted-foreground">Governed Identity Automation | AIM</p>
         </div>
         <div className="flex items-center gap-3">
           {activeScenario === "scenario1" && (
