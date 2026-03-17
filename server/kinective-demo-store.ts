@@ -86,6 +86,11 @@ function createInitialState(): KinectiveDemoState {
 }
 
 let state: KinectiveDemoState = createInitialState();
+let runGeneration = 0;
+
+export function getRunGeneration(): number {
+  return runGeneration;
+}
 
 export function getKinectiveState(): KinectiveDemoState {
   return state;
@@ -94,6 +99,7 @@ export function getKinectiveState(): KinectiveDemoState {
 export function resetKinectiveDemo(scenario: KinectiveScenario = "happy"): void {
   const enabledSystems = [...state.enabledSystems];
   auditCounter = 0;
+  runGeneration++;
   state = createInitialState();
   state.scenario = scenario;
   state.running = true;
@@ -108,6 +114,7 @@ export function resetKinectiveDemo(scenario: KinectiveScenario = "happy"): void 
 
 export function fullResetKinectiveDemo(): void {
   auditCounter = 0;
+  runGeneration++;
   state = createInitialState();
 }
 
@@ -207,14 +214,16 @@ export function finalizeKinectiveSystemUpdates(scenario: KinectiveScenario): voi
         su.status = "skipped";
         su.confirmationId = null;
       } else {
-        if (su.status === "pending") {
-          su.status = "success";
-          su.confirmationId = confId();
+        su.status = "rolled_back";
+        su.confirmationId = null;
+        if (!su.rolledBackAt) su.rolledBackAt = now;
+        if (!state.rollbackLog.find((r) => r.system === su.system)) {
+          state.rollbackLog.push({ system: su.system, status: "rolled_back", rolledBackAt: now });
         }
       }
     }
     if (!state.auditLog.find((e) => e.action === "PARTIAL_FAILURE")) {
-      addKinectiveAudit("PARTIAL_FAILURE", "ATLAS Engine", "Card Management (PSCU) failure triggered rollback for Loan Origination and CRM. Remaining systems not reached — agent halted. COA-2026-00412 marked partial failure.");
+      addKinectiveAudit("PARTIAL_FAILURE", "ATLAS Engine", "Card Management (PSCU) failure triggered full rollback of all updated systems (Gateway, Digital Banking, Statement Vendor, Loan Origination, CRM). COA-2026-00412 marked partial failure and reverted to consistent state.");
     }
     state.finalized = true;
     return;

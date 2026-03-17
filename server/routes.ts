@@ -35158,7 +35158,7 @@ Return ONLY valid JSON array, no explanation.`;
 
       const KINECTIVE_AGENT_ID = "c4b3099f-dfd8-4cce-9cf4-0cbb031f7f73";
 
-      const { resetKinectiveDemo, setKinectiveTraceId, setKinectiveRunning, isKinectiveRunning, getEnabledSystems, finalizeKinectiveSystemUpdates } = await import("./kinective-demo-store");
+      const { resetKinectiveDemo, setKinectiveTraceId, setKinectiveRunning, isKinectiveRunning, getEnabledSystems, finalizeKinectiveSystemUpdates, getRunGeneration } = await import("./kinective-demo-store");
 
       if (isKinectiveRunning()) {
         return res.status(409).json({ error: "Pipeline already running. Please wait for current run to complete." });
@@ -35261,6 +35261,7 @@ Log every action.`;
       if (!agent) return res.status(404).json({ error: "Kinective Change of Address Agent not found" });
 
       resetKinectiveDemo(selectedScenario);
+      const thisGeneration = getRunGeneration();
 
       const allDeployments = await storage.getDeployments();
       let deployment = allDeployments.find(
@@ -35289,6 +35290,11 @@ Log every action.`;
           const result = await runAgentOnce(deployment!.id, selectedPrompt, maxSteps);
           console.log(`[kinective-pipeline] Agent complete.`);
 
+          if (getRunGeneration() !== thisGeneration) {
+            console.log(`[kinective-pipeline] Run superseded by reset — discarding results`);
+            return;
+          }
+
           finalizeKinectiveSystemUpdates(selectedScenario as any);
 
           const traces = await storage.getTracesByAgent(KINECTIVE_AGENT_ID);
@@ -35301,7 +35307,7 @@ Log every action.`;
           setKinectiveRunning(false);
         } catch (err: any) {
           console.error("[kinective-pipeline] Error:", err.message);
-          setKinectiveRunning(false);
+          if (getRunGeneration() === thisGeneration) setKinectiveRunning(false);
         }
       })();
 
