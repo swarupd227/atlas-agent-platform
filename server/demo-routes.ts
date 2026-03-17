@@ -19,6 +19,19 @@ import {
   triggerPrivEsc,
   resolvePrivEsc,
 } from "./demo-store";
+import {
+  getKinectiveState,
+  resetKinectiveDemo,
+  addKinectiveAudit,
+  getScenarioFormData,
+  getScenarioValidation,
+  getScenarioSystemUpdate,
+  getScenarioRollback,
+  getScenarioFraudScore,
+  setKinectiveTraceId,
+  setKinectiveRunning,
+  type KinectiveScenario,
+} from "./kinective-demo-store";
 import type { IStorage } from "./storage";
 
 export const demoRouter = Router();
@@ -372,6 +385,162 @@ demoRouter.get("/audit-log", (_req: Request, res: Response) => {
 demoRouter.post("/reset", (_req: Request, res: Response) => {
   resetDemo();
   res.json({ success: true, message: "Demo state reset" });
+});
+
+// ── Kinective: Change of Address tool endpoints ──────────────────────────────
+
+demoRouter.get("/kinective/signplus/form/:form_id", (_req: Request, res: Response) => {
+  res.json(getScenarioFormData());
+});
+
+demoRouter.post("/kinective/signplus/archive", (_req: Request, res: Response) => {
+  addKinectiveAudit("DOCUMENT_ARCHIVED", "SignPlus", "Signed COA form archived to permanent storage");
+  getScenarioSystemUpdate("archive");
+  res.json({ success: true, archive_id: `ARC-${Date.now().toString(36).toUpperCase()}` });
+});
+
+demoRouter.get("/kinective/signplus/status/:form_id", (_req: Request, res: Response) => {
+  res.json({ form_id: _req.params.form_id, status: "SIGNED", signed_at: new Date().toISOString() });
+});
+
+demoRouter.post("/kinective/usps/validate", (req: Request, res: Response) => {
+  const result = getScenarioValidation();
+  addKinectiveAudit(
+    result.valid ? "ADDRESS_VALIDATED" : "VALIDATION_FAILED",
+    "USPS",
+    result.valid
+      ? `Address standardized: ${result.standardized_address}`
+      : `Validation failed: ${result.error_message}`
+  );
+  res.json(result);
+});
+
+demoRouter.post("/kinective/gateway/update-address", (req: Request, res: Response) => {
+  const result = getScenarioSystemUpdate("gateway");
+  if (result.success) addKinectiveAudit("CORE_UPDATED", "Kinective Gateway", `Core banking address updated. Confirmation: ${result.confirmation_id}`);
+  res.json(result);
+});
+
+demoRouter.get("/kinective/gateway/member/:member_id", (_req: Request, res: Response) => {
+  const form = getScenarioFormData();
+  res.json({ member_id: _req.params.member_id, name: form.member_name, dob: form.member_dob, current_address: form.old_address });
+});
+
+demoRouter.post("/kinective/digital-banking/update-address", (req: Request, res: Response) => {
+  const result = getScenarioSystemUpdate("digital");
+  if (result.success) addKinectiveAudit("DIGITAL_UPDATED", "Digital Banking", `Digital banking address updated. Confirmation: ${result.confirmation_id}`);
+  res.json(result);
+});
+
+demoRouter.post("/kinective/digital-banking/notify", (req: Request, res: Response) => {
+  addKinectiveAudit("MEMBER_NOTIFIED", "Digital Banking", req.body.message || "Member notified via digital banking app");
+  getScenarioSystemUpdate("notification");
+  res.json({ success: true, notification_id: `NOTIF-${Date.now().toString(36).toUpperCase()}` });
+});
+
+demoRouter.post("/kinective/statement/update-address", (req: Request, res: Response) => {
+  const result = getScenarioSystemUpdate("statement");
+  if (result.success) addKinectiveAudit("STATEMENT_UPDATED", "Statement Vendor", `Statement delivery address updated. Confirmation: ${result.confirmation_id}`);
+  res.json(result);
+});
+
+demoRouter.post("/kinective/card/update-address", (req: Request, res: Response) => {
+  const result = getScenarioSystemUpdate("card");
+  if (result.success) {
+    addKinectiveAudit("CARD_UPDATED", "Card Management", `Cardholder address updated. Confirmation: ${result.confirmation_id}`);
+  } else {
+    addKinectiveAudit("CARD_FAILED", "Card Management", result.error || "Card management system timeout");
+  }
+  if (!result.success) return res.status(504).json(result);
+  res.json(result);
+});
+
+demoRouter.post("/kinective/loan/update-address", (req: Request, res: Response) => {
+  const result = getScenarioSystemUpdate("loan");
+  if (result.success) addKinectiveAudit("LOAN_UPDATED", "Loan Origination", `Loan address updated across all active loans. Confirmation: ${result.confirmation_id}`);
+  res.json(result);
+});
+
+demoRouter.post("/kinective/crm/update-contact", (req: Request, res: Response) => {
+  const result = getScenarioSystemUpdate("crm");
+  if (result.success) addKinectiveAudit("CRM_UPDATED", "CRM", `CRM contact record updated. Confirmation: ${result.confirmation_id}`);
+  res.json(result);
+});
+
+demoRouter.post("/kinective/crm/interaction", (req: Request, res: Response) => {
+  res.json({ success: true, interaction_id: `INT-${Date.now().toString(36).toUpperCase()}` });
+});
+
+demoRouter.post("/kinective/billpay/update-address", (req: Request, res: Response) => {
+  const result = getScenarioSystemUpdate("billpay");
+  if (result.success) addKinectiveAudit("BILLPAY_UPDATED", "Bill Pay", `Bill pay address updated for all active payees. Confirmation: ${result.confirmation_id}`);
+  res.json(result);
+});
+
+demoRouter.post("/kinective/fraud/flag-change", (req: Request, res: Response) => {
+  const result = getScenarioFraudScore();
+  getScenarioSystemUpdate("fraud");
+  addKinectiveAudit("FRAUD_CHECKED", "Fraud Detection", `Fraud score: ${result.risk_score}/100. Assessment: ${result.assessment}`);
+  res.json(result);
+});
+
+demoRouter.post("/kinective/compliance/bsa-event", (req: Request, res: Response) => {
+  getScenarioSystemUpdate("bsa");
+  addKinectiveAudit("BSA_LOGGED", "Compliance", `BSA/AML event logged: ${req.body.event_type || "address_change"}`);
+  res.json({ success: true, event_id: `BSA-${Date.now().toString(36).toUpperCase()}` });
+});
+
+demoRouter.post("/kinective/compliance/record", (req: Request, res: Response) => {
+  addKinectiveAudit("COMPLIANCE_RECORD", "Compliance", `Compliance record created. Status: ${req.body.status || "complete"}`);
+  res.json({ success: true, record_id: `COMP-${Date.now().toString(36).toUpperCase()}` });
+});
+
+demoRouter.post("/kinective/audit-log", (req: Request, res: Response) => {
+  const { action, system, details } = req.body;
+  const entry = addKinectiveAudit(
+    String(action || "unknown").slice(0, 200),
+    String(system || "unknown").slice(0, 50),
+    String(details || "").slice(0, 500)
+  );
+  res.json(entry);
+});
+
+demoRouter.post("/kinective/rollback", (req: Request, res: Response) => {
+  const { system, reason } = req.body;
+  const result = getScenarioRollback(system || "unknown");
+  addKinectiveAudit("ROLLBACK", system || "unknown", `Address update rolled back: ${reason || "system failure"}`);
+  res.json(result);
+});
+
+demoRouter.get("/kinective/audit-log", (_req: Request, res: Response) => {
+  res.json({ entries: getKinectiveState().auditLog });
+});
+
+demoRouter.get("/kinective/trace-id", (_req: Request, res: Response) => {
+  const s = getKinectiveState();
+  res.json({ traceId: s.traceId, running: s.running });
+});
+
+demoRouter.get("/kinective/signed-form", (_req: Request, res: Response) => {
+  res.json(getScenarioFormData());
+});
+
+demoRouter.get("/kinective/validation-result", (_req: Request, res: Response) => {
+  res.json(getKinectiveState().validationResult || { pending: true });
+});
+
+demoRouter.get("/kinective/system-updates", (_req: Request, res: Response) => {
+  res.json({ updates: getKinectiveState().systemUpdates });
+});
+
+demoRouter.get("/kinective/rollback-log", (_req: Request, res: Response) => {
+  res.json({ entries: getKinectiveState().rollbackLog });
+});
+
+demoRouter.post("/kinective/reset", (req: Request, res: Response) => {
+  const scenario = (req.body.scenario || "happy") as KinectiveScenario;
+  resetKinectiveDemo(scenario);
+  res.json({ success: true, scenario });
 });
 
 const BASE_URL = `http://localhost:${process.env.PORT || 5000}`;

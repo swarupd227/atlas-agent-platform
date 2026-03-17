@@ -42,6 +42,7 @@ The Nous Agent Orchestrator uses a modern web stack: React, Vite, Tailwind CSS, 
 - **SSE Streaming for Agent Runtime**: Real-time progress streaming of agent execution via Server-Sent Events.
 - **Agentic Chat Widget**: Embeddable chat widget with SSE streaming, real-time status indicators, markdown rendering, AI-generated suggested actions, and configurable greetings.
 - **BlackRock Synthetic Worker Demo**: Self-contained demo environment showcasing autonomous agent orchestration across multiple mock systems.
+- **Kinective Change of Address Demo**: End-to-end COA workflow demo with 11 MCP servers (SignPlus, USPS, Gateway, Digital Banking, Statement, Card, Loan, CRM, Bill Pay, Fraud, Compliance), 6 skills, 1 agent, and 3 scenarios (happy path, invalid address, system failure + rollback). Real agent execution via `runAgentOnce`, live traces in ATLAS, in-memory state in `server/kinective-demo-store.ts`, tool routes in `server/demo-routes.ts`, pipeline endpoint in `server/routes.ts`, frontend at `/demo/kinective-coa`.
 
 ## External Dependencies
 - **OpenAI**: Primary LLM provider for agent runtime, evaluations, AI enhancements, and embeddings.

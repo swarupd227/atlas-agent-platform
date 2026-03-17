@@ -35149,6 +35149,138 @@ Return ONLY valid JSON array, no explanation.`;
     }
   });
 
+  // ── Kinective Demo: one-click COA pipeline run ──────────────────────────────
+  app.post("/demo-api/kinective/run-pipeline", async (req, res) => {
+    try {
+      const { scenario } = req.body || {};
+      const validScenarios = ["happy", "invalid_address", "system_failure"];
+      const selectedScenario = validScenarios.includes(scenario) ? scenario : "happy";
+
+      const KINECTIVE_AGENT_ID = "c4b3099f-dfd8-4cce-9cf4-0cbb031f7f73";
+
+      const { resetKinectiveDemo, setKinectiveTraceId, setKinectiveRunning } = await import("./kinective-demo-store");
+
+      const HAPPY_PROMPT = `You are the Change of Address Agent for Kinective. Process form COA-2026-00412 for member Sarah Mitchell.
+
+Execute these steps in order. Call each tool exactly once:
+
+1. Call get_form_data with form_id "COA-2026-00412" to retrieve the signed form
+2. Call validate_address with street "1847 Lakewood Drive", city "Austin", state "TX", zip "78701"
+3. Call update_member_address with member_id "MBR-2026-84291" and the new address
+4. Call update_digital_address with member_id "MBR-2026-84291" and the new address
+5. Call update_statement_address with member_id "MBR-2026-84291" and the new address
+6. Call update_card_address with member_id "MBR-2026-84291" and the new address
+7. Call update_loan_address with member_id "MBR-2026-84291" and the new address
+8. Call update_crm_contact with member_id "MBR-2026-84291" and the new address
+9. Call update_bill_pay_address with member_id "MBR-2026-84291" and the new address
+10. Call flag_address_change with member_id "MBR-2026-84291", old and new addresses
+11. Call log_bsa_event with member_id "MBR-2026-84291", event_type "address_change"
+12. Call create_compliance_record with member_id "MBR-2026-84291", status "complete"
+13. Call archive_signed_document with form_id "COA-2026-00412" and member_id "MBR-2026-84291"
+14. Call notify_digital_banking with member_id "MBR-2026-84291" and confirmation message
+
+Complete all steps. Log every action.`;
+
+      const INVALID_ADDRESS_PROMPT = `You are the Change of Address Agent for Kinective. Process form COA-2026-00412 for member Sarah Mitchell.
+
+Execute these steps:
+
+1. Call get_form_data with form_id "COA-2026-00412" to retrieve the signed form
+2. Call validate_address with street "1847 Lakewod Drve", city "Austin", state "TX", zip ""
+3. The validation will return valid=false. When it does:
+   - Call log_action with action "VALIDATION_FAILED", system "USPS", details "Address not found in USPS database. Routing to human review."
+   - Call create_compliance_record with member_id "MBR-2026-84291", status "pending_review", details "USPS validation failed. Address change routed to manual review."
+   - STOP. Do NOT call any system update tools. The member address must remain unchanged.
+
+Log every action.`;
+
+      const SYSTEM_FAILURE_PROMPT = `You are the Change of Address Agent for Kinective. Process form COA-2026-00412 for member Sarah Mitchell.
+
+Execute these steps in order:
+
+1. Call get_form_data with form_id "COA-2026-00412"
+2. Call validate_address with street "1847 Lakewood Drive", city "Austin", state "TX", zip "78701"
+3. Call update_member_address with member_id "MBR-2026-84291" — success
+4. Call update_digital_address with member_id "MBR-2026-84291" — success
+5. Call update_statement_address with member_id "MBR-2026-84291" — success
+6. Call update_bill_pay_address with member_id "MBR-2026-84291" — success
+7. Call update_loan_address with member_id "MBR-2026-84291" — success
+8. Call update_crm_contact with member_id "MBR-2026-84291" — success
+9. Call flag_address_change with member_id "MBR-2026-84291"
+10. Call update_card_address with member_id "MBR-2026-84291" — this will return a TIMEOUT error
+11. The card update failed. Now initiate rollback:
+    - Call log_action with action "SYSTEM_FAILURE", system "Card Management", details "PSCU card management timeout after 3 retries. Initiating rollback for data consistency."
+    - Call rollback_address_update with member_id "MBR-2026-84291", system "loan-origination", reason "Card management failure — rolling back for data consistency"
+    - Call rollback_address_update with member_id "MBR-2026-84291", system "crm", reason "Card management failure — rolling back for data consistency"
+12. Call create_compliance_record with member_id "MBR-2026-84291", status "partial_failure"
+13. Call log_action with action "RETRY_SCHEDULED", system "ATLAS", details "Card management retry scheduled for next maintenance window. Ops ticket opened."
+
+Log every action.`;
+
+      const prompts: Record<string, string> = {
+        happy: HAPPY_PROMPT,
+        invalid_address: INVALID_ADDRESS_PROMPT,
+        system_failure: SYSTEM_FAILURE_PROMPT,
+      };
+
+      const agent = await storage.getAgent(KINECTIVE_AGENT_ID);
+      if (!agent) return res.status(404).json({ error: "Kinective Change of Address Agent not found" });
+
+      resetKinectiveDemo(selectedScenario);
+
+      const allDeployments = await storage.getDeployments();
+      let deployment = allDeployments.find(
+        (d) => d.agentId === KINECTIVE_AGENT_ID && d.environment === "staging" && d.status !== "rolled_back"
+      );
+      if (!deployment) {
+        deployment = await storage.createDeployment({
+          agentId: KINECTIVE_AGENT_ID,
+          environment: "staging",
+          version: "1.0.0",
+          status: "active",
+          rolloutStrategy: "direct",
+          trafficPercentage: 100,
+        });
+      }
+      if (isRuntimeActive(deployment.id)) {
+        stopAgentRuntime(deployment.id);
+      }
+
+      const selectedPrompt = prompts[selectedScenario];
+      const maxSteps = selectedScenario === "invalid_address" ? 10 : 25;
+
+      (async () => {
+        try {
+          console.log(`[kinective-pipeline] Starting COA agent (scenario=${selectedScenario})`);
+          const result = await runAgentOnce(deployment!.id, selectedPrompt, maxSteps);
+          console.log(`[kinective-pipeline] Agent complete.`);
+
+          const traces = await storage.getTracesByAgent(KINECTIVE_AGENT_ID);
+          if (traces.length > 0) {
+            const sorted = [...traces].sort((a, b) =>
+              new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()
+            );
+            setKinectiveTraceId(sorted[0].id);
+          }
+          setKinectiveRunning(false);
+        } catch (err: any) {
+          console.error("[kinective-pipeline] Error:", err.message);
+          setKinectiveRunning(false);
+        }
+      })();
+
+      return res.json({
+        started: true,
+        deploymentId: deployment.id,
+        scenario: selectedScenario,
+        message: `Kinective COA pipeline started (scenario: ${selectedScenario}). Agent is processing form COA-2026-00412.`,
+      });
+    } catch (err: any) {
+      console.error("[demo-api/kinective/run-pipeline]", err);
+      return res.status(500).json({ error: err.message || "Failed to run Kinective pipeline" });
+    }
+  });
+
   // ── BlackRock Demo: one-click full pipeline run ─────────────────────────────
   app.post("/demo-api/run-pipeline", async (req, res) => {
     try {
