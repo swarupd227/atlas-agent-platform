@@ -35158,11 +35158,7 @@ Return ONLY valid JSON array, no explanation.`;
 
       const KINECTIVE_AGENT_ID = "c4b3099f-dfd8-4cce-9cf4-0cbb031f7f73";
 
-      const { resetKinectiveDemo, setKinectiveTraceId, setKinectiveRunning, isKinectiveRunning, getEnabledSystems, finalizeKinectiveSystemUpdates } = await import("./kinective-demo-store");
-
-      if (isKinectiveRunning()) {
-        return res.status(409).json({ error: "Pipeline already running. Please wait for current run to complete." });
-      }
+      const { resetKinectiveDemo, setKinectiveTraceId, setKinectiveRunning, getEnabledSystems, finalizeKinectiveSystemUpdates } = await import("./kinective-demo-store");
 
       const enabledSystems = getEnabledSystems();
       const isEnabled = (key: string) => enabledSystems.some((s) => s.toLowerCase().includes(key.toLowerCase()));
