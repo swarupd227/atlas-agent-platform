@@ -208,7 +208,8 @@ export function finalizeKinectiveSystemUpdates(scenario: KinectiveScenario): voi
     }
   }
   if (!state.auditLog.find((e) => e.action === "COA_COMPLETE")) {
-    addKinectiveAudit("COA_COMPLETE", "ATLAS Engine", "COA-2026-00412 complete. All 11 systems synchronized successfully. Member notified via email and SMS. Signed form archived in SignPlus.");
+    const updatedCount = state.systemUpdates.filter((s) => s.status === "success").length;
+    addKinectiveAudit("COA_COMPLETE", "ATLAS Engine", `COA-2026-00412 complete. All ${updatedCount} systems synchronized successfully. Member notified via email and SMS. Signed form archived in SignPlus.`);
   }
   state.finalized = true;
 }
