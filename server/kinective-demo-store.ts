@@ -19,6 +19,7 @@ export interface SystemUpdateStatus {
 export interface KinectiveDemoState {
   scenario: KinectiveScenario;
   running: boolean;
+  finalized: boolean;
   traceId: string | null;
   auditLog: KinectiveAuditEntry[];
   systemUpdates: SystemUpdateStatus[];
@@ -66,6 +67,7 @@ function createInitialState(): KinectiveDemoState {
   return {
     scenario: "happy",
     running: false,
+    finalized: false,
     traceId: null,
     auditLog: [],
     systemUpdates: SYSTEMS.map((s) => ({
@@ -115,6 +117,10 @@ export function setKinectiveRunning(running: boolean): void {
   state.running = running;
 }
 
+export function isKinectiveRunning(): boolean {
+  return state.running && !state.finalized;
+}
+
 export function getEnabledSystems(): string[] {
   return state.enabledSystems;
 }
@@ -159,6 +165,7 @@ export function finalizeKinectiveSystemUpdates(scenario: KinectiveScenario): voi
     for (const su of state.systemUpdates) {
       if (su.status === "pending") su.status = "skipped";
     }
+    state.finalized = true;
     return;
   }
 
@@ -173,14 +180,24 @@ export function finalizeKinectiveSystemUpdates(scenario: KinectiveScenario): voi
         su.status = "rolled_back";
         su.confirmationId = null;
         if (!su.rolledBackAt) su.rolledBackAt = new Date().toISOString();
-      } else if (su.status === "pending") {
-        su.status = "success";
-        su.confirmationId = confId();
+      } else if (
+        name.includes("bill") ||
+        name.includes("fraud") ||
+        name.includes("bsa") ||
+        name.includes("compliance") ||
+        name.includes("signplus") ||
+        name.includes("archive") ||
+        name.includes("member") ||
+        name.includes("notification")
+      ) {
+        su.status = "skipped";
+        su.confirmationId = null;
       }
     }
     if (!state.auditLog.find((e) => e.action === "PARTIAL_FAILURE")) {
-      addKinectiveAudit("PARTIAL_FAILURE", "ATLAS Engine", "Card Management (PSCU) failure triggered rollback for Loan Origination and CRM. COA-2026-00412 marked partial failure — compliance record filed.");
+      addKinectiveAudit("PARTIAL_FAILURE", "ATLAS Engine", "Card Management (PSCU) failure triggered rollback for Loan Origination and CRM. Remaining systems not reached — agent halted. COA-2026-00412 marked partial failure.");
     }
+    state.finalized = true;
     return;
   }
 
@@ -193,6 +210,7 @@ export function finalizeKinectiveSystemUpdates(scenario: KinectiveScenario): voi
   if (!state.auditLog.find((e) => e.action === "COA_COMPLETE")) {
     addKinectiveAudit("COA_COMPLETE", "ATLAS Engine", "COA-2026-00412 complete. All 11 systems synchronized successfully. Member notified via email and SMS. Signed form archived in SignPlus.");
   }
+  state.finalized = true;
 }
 
 export function getScenarioFormData(): Record<string, any> {
@@ -262,6 +280,10 @@ export function getScenarioValidation(): Record<string, any> {
 }
 
 export function getScenarioSystemUpdate(system: string): Record<string, any> {
+  if (state.finalized) {
+    return { success: true, skipped: true, reason: "Run already finalized — state is locked" };
+  }
+
   const confirmId = `CONF-${Date.now().toString(36).toUpperCase()}`;
 
   if (state.scenario === "invalid_address") {
