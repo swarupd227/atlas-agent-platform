@@ -20,6 +20,7 @@ export interface KinectiveDemoState {
   scenario: KinectiveScenario;
   running: boolean;
   finalized: boolean;
+  runStartedAt: number | null;
   traceId: string | null;
   auditLog: KinectiveAuditEntry[];
   systemUpdates: SystemUpdateStatus[];
@@ -68,6 +69,7 @@ function createInitialState(): KinectiveDemoState {
     scenario: "happy",
     running: false,
     finalized: false,
+    runStartedAt: null,
     traceId: null,
     auditLog: [],
     systemUpdates: SYSTEMS.map((s) => ({
@@ -95,6 +97,7 @@ export function resetKinectiveDemo(scenario: KinectiveScenario = "happy"): void 
   state = createInitialState();
   state.scenario = scenario;
   state.running = true;
+  state.runStartedAt = Date.now();
   state.enabledSystems = enabledSystems;
   for (const su of state.systemUpdates) {
     if (!enabledSystems.includes(su.system)) {
@@ -117,8 +120,15 @@ export function setKinectiveRunning(running: boolean): void {
   state.running = running;
 }
 
+const PIPELINE_STALE_MS = 120_000;
+
 export function isKinectiveRunning(): boolean {
-  return state.running && !state.finalized;
+  if (!state.running || state.finalized) return false;
+  if (state.runStartedAt && Date.now() - state.runStartedAt > PIPELINE_STALE_MS) {
+    state.running = false;
+    return false;
+  }
+  return true;
 }
 
 export function getEnabledSystems(): string[] {
