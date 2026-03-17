@@ -600,7 +600,7 @@ function PipelineBanner({ scenario, running }: { scenario: Scenario; running: bo
   );
 }
 
-function SignedFormPanel({ scenario }: { scenario: Scenario }) {
+function SignedFormPanel({ scenario, hasRun }: { scenario: Scenario; hasRun: boolean }) {
   const formData = scenario === "invalid_address"
     ? {
         form_id: "COA-2026-00412",
@@ -627,51 +627,88 @@ function SignedFormPanel({ scenario }: { scenario: Scenario }) {
         <CardTitle className="text-sm font-semibold flex items-center gap-2">
           <FileText className="w-4 h-4 text-indigo-400" />
           SignPlus — Signed COA Form
-          <Badge variant="outline" className="ml-auto bg-green-500/20 text-green-400 border-green-500/30 text-[10px]">
-            {formData.status} ✓
-          </Badge>
+          {hasRun ? (
+            <Badge variant="outline" className="ml-auto bg-green-500/20 text-green-400 border-green-500/30 text-[10px]">
+              {formData.status} ✓
+            </Badge>
+          ) : (
+            <Badge variant="outline" className="ml-auto bg-zinc-700/40 text-zinc-500 border-zinc-700 text-[10px]">
+              AWAITING SUBMISSION
+            </Badge>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-2 text-xs">
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <span className="text-zinc-500">Form ID:</span>{" "}
-            <span className="text-zinc-200 font-mono">{formData.form_id}</span>
+        {!hasRun ? (
+          <div className="py-4 text-center text-zinc-500">
+            <FileText className="w-6 h-6 mx-auto mb-2 opacity-30" />
+            <div>Submit a Change of Address via the member card above to begin.</div>
           </div>
-          <div>
-            <span className="text-zinc-500">Member:</span>{" "}
-            <span className="text-zinc-200">{formData.member}</span>
-          </div>
-          <div>
-            <span className="text-zinc-500">DOB:</span>{" "}
-            <span className="text-zinc-200">{formData.dob}</span>
-          </div>
-          <div>
-            <span className="text-zinc-500">Member ID:</span>{" "}
-            <span className="text-zinc-200 font-mono">MBR-2026-84291</span>
-          </div>
-        </div>
-        <div className="border-t border-zinc-800 pt-2">
-          <div className="mb-1">
-            <span className="text-zinc-500">Old Address:</span>{" "}
-            <span className="text-zinc-400">{formData.old}</span>
-          </div>
-          <div>
-            <span className="text-zinc-500">New Address:</span>{" "}
-            <span className={formData.note ? "text-yellow-400" : "text-zinc-200"}>{formData.new_addr}</span>
-          </div>
-          {formData.note && (
-            <div className="mt-1 text-yellow-500/80 text-[10px] flex items-center gap-1">
-              <AlertTriangle className="w-3 h-3" /> {formData.note}
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <span className="text-zinc-500">Form ID:</span>{" "}
+                <span className="text-zinc-200 font-mono">{formData.form_id}</span>
+              </div>
+              <div>
+                <span className="text-zinc-500">Member:</span>{" "}
+                <span className="text-zinc-200">{formData.member}</span>
+              </div>
+              <div>
+                <span className="text-zinc-500">DOB:</span>{" "}
+                <span className="text-zinc-200">{formData.dob}</span>
+              </div>
+              <div>
+                <span className="text-zinc-500">Member ID:</span>{" "}
+                <span className="text-zinc-200 font-mono">MBR-2026-84291</span>
+              </div>
             </div>
-          )}
-        </div>
+            <div className="border-t border-zinc-800 pt-2">
+              <div className="mb-1">
+                <span className="text-zinc-500">Old Address:</span>{" "}
+                <span className="text-zinc-400">{formData.old}</span>
+              </div>
+              <div>
+                <span className="text-zinc-500">New Address:</span>{" "}
+                <span className={formData.note ? "text-yellow-400" : "text-zinc-200"}>{formData.new_addr}</span>
+              </div>
+              {formData.note && (
+                <div className="mt-1 text-yellow-500/80 text-[10px] flex items-center gap-1">
+                  <AlertTriangle className="w-3 h-3" /> {formData.note}
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </CardContent>
     </Card>
   );
 }
 
-function ValidationPanel({ scenario }: { scenario: Scenario }) {
+function ValidationPanel({ scenario, hasRun }: { scenario: Scenario; hasRun: boolean }) {
+  if (!hasRun) {
+    return (
+      <Card className="bg-zinc-900 border-zinc-800" data-testid="validation-panel">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <MapPin className="w-4 h-4 text-zinc-500" />
+            USPS Address Validation
+            <Badge variant="outline" className="ml-auto bg-zinc-700/40 text-zinc-500 border-zinc-700 text-[10px]">
+              PENDING
+            </Badge>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="text-xs">
+          <div className="py-3 text-center text-zinc-600">
+            <MapPin className="w-6 h-6 mx-auto mb-2 opacity-20" />
+            <div>Waiting for address submission…</div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   if (scenario === "invalid_address") {
     return (
       <Card className="bg-zinc-900 border-yellow-500/30" data-testid="validation-panel">
@@ -881,7 +918,7 @@ function RollbackPanel({ entries, scenario }: { entries: { system: string; statu
   );
 }
 
-function NotificationPanel({ scenario }: { scenario: Scenario }) {
+function NotificationPanel({ scenario, hasRun }: { scenario: Scenario; hasRun: boolean }) {
   const notifications: Record<Scenario, { type: string; message: string; color: string }[]> = {
     happy: [
       { type: "Member Email", message: "Address change confirmation sent to sarah.mitchell@email.com", color: "text-green-400" },
@@ -909,16 +946,23 @@ function NotificationPanel({ scenario }: { scenario: Scenario }) {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="space-y-1.5">
-          {notifications[scenario].map((n, i) => (
-            <div key={i} className="flex items-start gap-2 text-xs py-1">
-              <Badge variant="outline" className="text-[10px] bg-zinc-800 border-zinc-700 text-zinc-400 shrink-0">
-                {n.type}
-              </Badge>
-              <span className={n.color}>{n.message}</span>
-            </div>
-          ))}
-        </div>
+        {!hasRun ? (
+          <div className="py-3 text-center text-zinc-600 text-xs">
+            <Bell className="w-6 h-6 mx-auto mb-2 opacity-20" />
+            <div>No notifications yet.</div>
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {notifications[scenario].map((n, i) => (
+              <div key={i} className="flex items-start gap-2 text-xs py-1">
+                <Badge variant="outline" className="text-[10px] bg-zinc-800 border-zinc-700 text-zinc-400 shrink-0">
+                  {n.type}
+                </Badge>
+                <span className={n.color}>{n.message}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -1047,6 +1091,7 @@ export default function KinectiveDemo() {
   const systemUpdates = systemUpdatesQuery.data?.updates || [];
   const rollbackEntries = rollbackQuery.data?.entries || [];
   const traceId = traceQuery.data?.traceId;
+  const hasRun = running || entries.length > 0;
 
   const mcpServerList = Object.values(KINECTIVE_MCP_SERVERS);
 
@@ -1169,11 +1214,11 @@ export default function KinectiveDemo() {
               running={running}
               onTriggerComplete={handlePipelineStarted}
             />
-            <SignedFormPanel scenario={scenario} />
-            <ValidationPanel scenario={scenario} />
+            <SignedFormPanel scenario={scenario} hasRun={hasRun} />
+            <ValidationPanel scenario={scenario} hasRun={hasRun} />
             <SystemUpdatesPanel scenario={scenario} updates={systemUpdates} />
             {(scenario === "system_failure" || scenario === "invalid_address") && <RollbackPanel entries={rollbackEntries} scenario={scenario} />}
-            <NotificationPanel scenario={scenario} />
+            <NotificationPanel scenario={scenario} hasRun={hasRun} />
           </div>
 
           <div className="col-span-5 space-y-4">
