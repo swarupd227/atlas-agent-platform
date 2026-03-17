@@ -38,6 +38,7 @@ import {
   Code2,
   PlayCircle,
   Building2,
+  MapPin,
 } from "lucide-react";
 import {
   Sidebar,
@@ -240,6 +241,14 @@ export function AppSidebar() {
                       <Link href="/demo/blackrock" data-testid="link-nav-blackrock-demo">
                         <Building2 className="w-4 h-4" />
                         <span>AIM - Synthetic Worker</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild data-active={location.startsWith("/demo/kinective-coa")}>
+                      <Link href="/demo/kinective-coa" data-testid="link-nav-kinective-demo">
+                        <MapPin className="w-4 h-4" />
+                        <span>Kinective - Change of Address</span>
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
