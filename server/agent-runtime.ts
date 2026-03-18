@@ -874,26 +874,26 @@ export async function executePromptWithMcp(
       const augmentedQuery = ontologyLabels.length > 0
         ? `${prompt}\n\nDomain concepts: ${ontologyLabels.join(", ")}`
         : prompt;
+      // Layer 4 budget — resolve once before the KB loop to avoid redundant DB fetches
+      const AVG_CHUNK_TOKENS = 150;
+      let effectiveKbBudget = DEFAULT_LAYER_BUDGETS.knowledge;
+      try {
+        const kbProfiles = await storage.getContextProfiles();
+        const kbAgentProfile = kbProfiles.find((p: any) => p.agentId === agentId && p.status === "active")
+          || (industry ? kbProfiles.find((p: any) => p.status === "active" && p.industry?.toLowerCase() === industry.toLowerCase()) : undefined);
+        if (kbAgentProfile) {
+          const kbBudgetAlloc = kbAgentProfile.budgetAllocations as Record<string, any> | null;
+          const kbBudget = kbBudgetAlloc?.knowledge ?? kbBudgetAlloc?.kb_retrieval ?? null;
+          if (typeof kbBudget === "number" && kbBudget > 0) {
+            effectiveKbBudget = kbBudget;
+          }
+        }
+      } catch {}
+
       const kbChunks: string[] = [];
       for (const link of linkedKbs.slice(0, 3)) {
         let kbMeta: any = null;
         try { kbMeta = await storage.getKnowledgeBase(link.knowledgeBaseId); } catch {}
-        // Layer 4 budget: derive topK from knowledge budget (avg ~150 tokens/chunk)
-        // Declared outside try/catch so fallback path can also use budget-derived topK
-        const AVG_CHUNK_TOKENS = 150;
-        let effectiveKbBudget = DEFAULT_LAYER_BUDGETS.knowledge;
-        try {
-          const kbProfiles = await storage.getContextProfiles();
-          const kbAgentProfile = kbProfiles.find((p: any) => p.agentId === agentId && p.status === "active")
-            || (industry ? kbProfiles.find((p: any) => p.status === "active" && p.industry?.toLowerCase() === industry.toLowerCase()) : undefined);
-          if (kbAgentProfile) {
-            const kbBudgetAlloc = kbAgentProfile.budgetAllocations as Record<string, any> | null;
-            const kbBudget = kbBudgetAlloc?.knowledge ?? kbBudgetAlloc?.kb_retrieval ?? null;
-            if (typeof kbBudget === "number" && kbBudget > 0) {
-              effectiveKbBudget = kbBudget;
-            }
-          }
-        } catch {}
         try {
           const linkConfig = (link.retrievalConfig as any) || {};
           const topK = Math.max(3, Math.floor(effectiveKbBudget / AVG_CHUNK_TOKENS));
