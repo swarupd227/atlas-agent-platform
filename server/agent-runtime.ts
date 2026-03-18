@@ -244,13 +244,16 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
 
   if (layerBudgets.capabilities > 0) try {
     // Explicit assignment: if the agent has preloadedSkills, resolve those first
-    const preloadedEntries = ((agent.preloadedSkills || []) as Array<{ skillId: string }>);
+    const rawPreloaded = agent.preloadedSkills;
+    const preloadedEntries: Array<{ skillId: string }> = Array.isArray(rawPreloaded) ? rawPreloaded as Array<{ skillId: string }> : [];
     const explicitSkillIds = preloadedEntries.map(ps => ps.skillId).filter(Boolean);
 
     let relevantSkills;
     if (explicitSkillIds.length > 0) {
       const resolved = await storage.getSkillsByIds(explicitSkillIds);
-      relevantSkills = resolved.filter(s => s.status === "active").slice(0, 20);
+      // Preserve explicit assignment order (IN clause does not guarantee order)
+      const byId = new Map(resolved.map(s => [s.id, s]));
+      relevantSkills = explicitSkillIds.map(id => byId.get(id)).filter((s): s is typeof resolved[0] => !!s && s.status === "active").slice(0, 20);
     } else {
       // Fallback: industry + ontology tag matching
       const allSkills = await storage.getSkills();

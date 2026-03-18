@@ -3027,14 +3027,17 @@ export async function registerRoutes(
           tools.slice(0, 8).forEach(t => mcpToolLines.push(`  - ${t.name}: ${t.description || ""}`));
         }
         // Explicit assignment: use preloadedSkills if the agent has them
-        const preloadedEntries = (((agent as any).preloadedSkills || []) as Array<{ skillId: string }>);
-        const explicitSkillIds = preloadedEntries.map(ps => ps.skillId).filter(Boolean);
+        const rawPreloaded = (agent as any).preloadedSkills;
+        const preloadedEntries: Array<{ skillId: string }> = Array.isArray(rawPreloaded) ? rawPreloaded as Array<{ skillId: string }> : [];
+        const explicitSkillIds = preloadedEntries.map((ps: any) => ps.skillId).filter(Boolean);
 
         let relevantSkills: any[];
         let skillSource: "assigned" | "auto-matched";
         if (explicitSkillIds.length > 0) {
           const resolved = await storage.getSkillsByIds(explicitSkillIds);
-          relevantSkills = resolved.filter((s: any) => s.status === "active").slice(0, 20);
+          // Preserve explicit assignment order (IN clause does not guarantee order)
+          const byId = new Map(resolved.map((s: any) => [s.id, s]));
+          relevantSkills = explicitSkillIds.map(id => byId.get(id)).filter((s: any): s is any => !!s && s.status === "active").slice(0, 20);
           skillSource = "assigned";
         } else {
           const allSkills = await storage.getSkills();
