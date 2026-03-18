@@ -214,7 +214,7 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
     }
   }
 
-  try {
+  if (layerBudgets.governance > 0) try {
     const policies = await storage.getPolicies();
     const activePolicies = policies.filter(p => p.status === "active");
     if (activePolicies.length > 0) {
@@ -231,11 +231,11 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
         policyLines.push(line);
         policyTokensUsed += lineTokens;
       }
-      trackSection("governance_policies", policyLines.join("\n"));
+      if (policyLines.length > 1) trackSection("governance_policies", policyLines.join("\n"));
     }
   } catch {}
 
-  try {
+  if (layerBudgets.capabilities > 0) try {
     const allSkills = await storage.getSkills();
     const agentIndustry = agent.industry?.toLowerCase();
     const ontologyLabels = (agent.ontologyTags || []).map(t => t.conceptLabel.toLowerCase());
@@ -2161,9 +2161,10 @@ async function executeAgentCycle(agent: RuntimeAgent) {
     } catch {}
     try {
       const allContextProfiles = await storage.getContextProfiles();
-      const agentContextProfiles = allContextProfiles.filter((p: any) => p.agentId === agent.agentId);
-      if (agentContextProfiles.length > 0) {
-        const cp = agentContextProfiles[0];
+      // Use same priority as buildRuntimeContext: agent-specific first, then industry fallback
+      const cp = allContextProfiles.find((p: any) => p.agentId === agent.agentId && p.status === "active")
+        || (agent.industry ? allContextProfiles.find((p: any) => p.status === "active" && p.industry?.toLowerCase() === agent.industry!.toLowerCase()) : undefined);
+      if (cp) {
         contextProfileId = cp.id;
         contextProfileVersion = (cp as any).version || 1;
         contextBudgets = (cp as any).budgetAllocations || null;
