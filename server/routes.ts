@@ -3045,7 +3045,8 @@ export async function registerRoutes(
             if (agentIndustry && s.industry?.toLowerCase() === agentIndustry) return true;
             if (ontologyLabels.length > 0) {
               const skillTags = (s.tags || []).map((t: string) => t.toLowerCase());
-              return ontologyLabels.some((label: string) => skillTags.includes(label));
+              const skillDomain = s.domain?.toLowerCase() || "";
+              return ontologyLabels.some((label: string) => skillTags.includes(label) || skillDomain.includes(label));
             }
             return false;
           }).slice(0, 20);
