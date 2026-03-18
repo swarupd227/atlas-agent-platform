@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useState, useEffect } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import type { Agent } from "@shared/schema";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +11,7 @@ import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Target, Shield, Wrench, Database, History, MessageSquare,
   ChevronDown, ChevronRight, ExternalLink, CheckCircle2,
@@ -137,16 +138,51 @@ function LayerCard({ layer }: { layer: ContextLayer }) {
   );
 }
 
-function BudgetTab({ layers }: { layers: ContextLayer[] }) {
+function BudgetTab({ layers, agentId }: { layers: ContextLayer[]; agentId: string }) {
   const [budgets, setBudgets] = useState<Record<string, number>>(DEFAULT_BUDGETS);
   const { toast } = useToast();
 
   const total = Object.values(budgets).reduce((a, b) => a + b, 0);
   const CONTEXT_WINDOW = 128000;
 
-  const handleSave = () => {
-    toast({ title: "Context budgets saved", description: "These allocations will govern the next agent execution." });
-  };
+  const { data: contextProfiles = [] } = useQuery<any[]>({
+    queryKey: ["/api/context-profiles"],
+  });
+
+  const agentProfile = contextProfiles.find((p: any) => p.agentId === agentId && p.status === "active");
+
+  useEffect(() => {
+    if (agentProfile?.budgetAllocations && typeof agentProfile.budgetAllocations === "object") {
+      setBudgets(prev => ({ ...prev, ...agentProfile.budgetAllocations }));
+    } else {
+      setBudgets(DEFAULT_BUDGETS);
+    }
+  }, [agentProfile?.id, agentId]);
+
+  const saveMutation = useMutation({
+    mutationFn: async (newBudgets: Record<string, number>) => {
+      if (agentProfile?.id) {
+        return apiRequest("PATCH", `/api/context-profiles/${agentProfile.id}`, { budgetAllocations: newBudgets });
+      } else {
+        return apiRequest("POST", `/api/context-profiles`, {
+          agentId,
+          name: "Context Budget",
+          status: "active",
+          budgetAllocations: newBudgets,
+          totalBudget: CONTEXT_WINDOW,
+        });
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/context-profiles"] });
+      toast({ title: "Context budgets saved", description: "These allocations will govern the next agent execution." });
+    },
+    onError: () => {
+      toast({ title: "Save failed", description: "Could not persist budget allocations.", variant: "destructive" });
+    },
+  });
+
+  const handleSave = () => saveMutation.mutate(budgets);
 
   return (
     <div className="space-y-6">
@@ -155,7 +191,9 @@ function BudgetTab({ layers }: { layers: ContextLayer[] }) {
           <div className="text-sm font-semibold" data-testid="text-total-budget">Total allocated: {total.toLocaleString()} tokens</div>
           <div className="text-xs text-muted-foreground">Context window: {CONTEXT_WINDOW.toLocaleString()} | Remaining: {(CONTEXT_WINDOW - total).toLocaleString()}</div>
         </div>
-        <Button size="sm" onClick={handleSave} data-testid="button-save-budgets">Save budgets</Button>
+        <Button size="sm" onClick={handleSave} disabled={saveMutation.isPending} data-testid="button-save-budgets">
+          {saveMutation.isPending ? "Saving…" : "Save budgets"}
+        </Button>
       </div>
 
       <div className="space-y-5">
@@ -325,7 +363,7 @@ export default function ContextEngine() {
                     ))}
                   </div>
                 ) : (
-                  <BudgetTab layers={layers} />
+                  <BudgetTab layers={layers} agentId={selectedAgentId} />
                 )}
               </TabsContent>
             </Tabs>

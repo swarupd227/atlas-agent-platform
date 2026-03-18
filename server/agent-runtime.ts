@@ -122,6 +122,28 @@ export function estimateTokenCount(text: string): number {
   return Math.ceil(text.length / 4);
 }
 
+const DEFAULT_LAYER_BUDGETS: Record<string, number> = {
+  outcome: 400,
+  governance: 600,
+  capabilities: 500,
+  knowledge: 800,
+  history: 400,
+  task: 1024,
+};
+
+function truncateLinesToBudget(budgetTokens: number, lines: string[]): string[] {
+  if (!budgetTokens || budgetTokens <= 0) return lines;
+  let used = 0;
+  const result: string[] = [];
+  for (const line of lines) {
+    const t = estimateTokenCount(line);
+    if (result.length > 0 && used + t > budgetTokens) break;
+    result.push(line);
+    used += t;
+  }
+  return result;
+}
+
 async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeContextResult> {
   const sections: string[] = [];
   const sectionMetrics: ContextSectionMetric[] = [];
@@ -130,6 +152,24 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
     sections.push(text);
     sectionMetrics.push({ category, tokenCount: estimateTokenCount(text) });
   }
+
+  // Extract per-layer token budgets from linked context profile (fall back to defaults)
+  let layerBudgets: Record<string, number> = { ...DEFAULT_LAYER_BUDGETS };
+  try {
+    const allProfiles = await storage.getContextProfiles();
+    const agentProfile = allProfiles.find((p: any) => p.agentId === agent.agentId && p.status === "active")
+      || (agent.industry ? allProfiles.find((p: any) => p.status === "active" && p.industry?.toLowerCase() === agent.industry!.toLowerCase()) : undefined);
+    if (agentProfile) {
+      const budgetAlloc = agentProfile.budgetAllocations as Record<string, any> | null;
+      if (budgetAlloc && typeof budgetAlloc === "object") {
+        for (const [key, val] of Object.entries(budgetAlloc)) {
+          if (typeof val === "number" && val > 0) {
+            layerBudgets[key] = val;
+          }
+        }
+      }
+    }
+  } catch {}
 
   if (agent.agentSystemPrompt) {
     trackSection("system_prompt", agent.agentSystemPrompt);
@@ -151,12 +191,18 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
 
         const kpis = await storage.getKpisByOutcome(agent.outcomeId);
         if (kpis.length > 0) {
-          outcomeLines.push(`\n## KPI TARGETS (you must optimize for these)`);
+          const kpiLines: string[] = [];
+          kpiLines.push(`\n## KPI TARGETS (you must optimize for these)`);
           kpis.forEach(kpi => {
             const progress = kpi.target ? `${((kpi.currentValue || 0) / kpi.target * 100).toFixed(0)}%` : "N/A";
-            outcomeLines.push(`- ${kpi.name}: current=${kpi.currentValue ?? 0}, target=${kpi.target}, unit=${kpi.unit}, weight=${kpi.weight ?? 1}, progress=${progress}${kpi.slaThreshold ? `, SLA threshold=${kpi.slaThreshold}` : ""}`);
+            kpiLines.push(`- ${kpi.name}: current=${kpi.currentValue ?? 0}, target=${kpi.target}, unit=${kpi.unit}, weight=${kpi.weight ?? 1}, progress=${progress}${kpi.slaThreshold ? `, SLA threshold=${kpi.slaThreshold}` : ""}`);
           });
-          outcomeLines.push(`Prioritize KPIs with higher weight. Flag if any KPI is breaching its SLA threshold.`);
+          kpiLines.push(`Prioritize KPIs with higher weight. Flag if any KPI is breaching its SLA threshold.`);
+          const cappedKpiLines = truncateLinesToBudget(
+            Math.max(0, layerBudgets.outcome - estimateTokenCount(outcomeLines.join("\n"))),
+            kpiLines
+          );
+          outcomeLines.push(...cappedKpiLines);
         }
         trackSection("outcome_contract", outcomeLines.join("\n"));
       }
@@ -171,12 +217,17 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
     if (activePolicies.length > 0) {
       const policyLines: string[] = [];
       policyLines.push(`\n## GOVERNANCE POLICIES (you must comply with these)`);
-      activePolicies.slice(0, 10).forEach(p => {
+      let policyTokensUsed = estimateTokenCount(policyLines[0]);
+      for (const p of activePolicies.slice(0, 20)) {
         const policyJson = p.policyJson as any;
         const enforcement = policyJson?.enforcement || "soft";
         const rules = Array.isArray(policyJson?.rules) ? policyJson.rules.slice(0, 3).map((r: any) => r.description || r.name || JSON.stringify(r)).join("; ") : "";
-        policyLines.push(`- [${enforcement.toUpperCase()}] ${p.name} (${p.domain}): ${p.description || ""}${rules ? ` Rules: ${rules}` : ""}`);
-      });
+        const line = `- [${enforcement.toUpperCase()}] ${p.name} (${p.domain}): ${p.description || ""}${rules ? ` Rules: ${rules}` : ""}`;
+        const lineTokens = estimateTokenCount(line);
+        if (policyTokensUsed + lineTokens > layerBudgets.governance) break;
+        policyLines.push(line);
+        policyTokensUsed += lineTokens;
+      }
       trackSection("governance_policies", policyLines.join("\n"));
     }
   } catch {}
@@ -194,16 +245,21 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
         return ontologyLabels.some(label => skillTags.includes(label) || skillDomain.includes(label));
       }
       return false;
-    }).slice(0, 10);
+    }).slice(0, 20);
 
     if (relevantSkills.length > 0) {
       const skillLines: string[] = [];
       skillLines.push(`\n## AGENT SKILLS (capabilities you have)`);
-      relevantSkills.forEach(s => {
+      let skillTokensUsed = estimateTokenCount(skillLines[0]);
+      for (const s of relevantSkills) {
         const toolsNote = s.allowedTools?.length ? ` | Allowed tools: ${s.allowedTools.join(", ")}` : "";
         const mcpNote = s.requiredMcpServers?.length ? ` | Required MCP: ${s.requiredMcpServers.join(", ")}` : "";
-        skillLines.push(`- ${s.name} (${s.domain}, v${s.version}): ${s.description}${toolsNote}${mcpNote}`);
-      });
+        const line = `- ${s.name} (${s.domain}, v${s.version}): ${s.description}${toolsNote}${mcpNote}`;
+        const lineTokens = estimateTokenCount(line);
+        if (skillTokensUsed + lineTokens > layerBudgets.capabilities) break;
+        skillLines.push(line);
+        skillTokensUsed += lineTokens;
+      }
       trackSection("skills", skillLines.join("\n"));
 
       const kgResultLines: string[] = [];
@@ -442,6 +498,31 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
         memLines.push(`- [${ageLabel}] ${mem.content}`);
       });
       trackSection("episodic_memory", memLines.join("\n"));
+    }
+  } catch {}
+
+  // Layer 5: Execution History — inject recent completed trace summaries
+  try {
+    const recentTraces = await storage.getTracesByAgent(agent.agentId);
+    const completedTraces = recentTraces.filter((t: any) => t.status === "completed").slice(0, 5);
+    if (completedTraces.length > 0) {
+      const histLines: string[] = [];
+      histLines.push(`\n## EXECUTION HISTORY (${completedTraces.length} recent completed runs)`);
+      histLines.push(`Use this history to maintain continuity and avoid repeating past mistakes:`);
+      for (const t of completedTraces) {
+        const steps = Array.isArray(t.stepsJson) ? t.stepsJson as any[] : [];
+        const toolsUsed = [...new Set(steps.filter((s: any) => s.type === "tool_call").map((s: any) => s.toolName || s.name || "unknown"))].slice(0, 3);
+        const rawDecisions = Array.isArray(t.decisions) ? t.decisions as any[] : [];
+        const keyDecisions = rawDecisions.slice(0, 2).map((d: any) => d.decision || d.action || d.label || String(d)).filter(Boolean);
+        let summary = `- ${t.inputSummary?.substring(0, 60) || "Scheduled run"} → ${t.status}`;
+        if (toolsUsed.length > 0) summary += ` | Tools: ${toolsUsed.join(", ")}`;
+        if (keyDecisions.length > 0) summary += ` | Decisions: ${keyDecisions.join("; ")}`;
+        histLines.push(summary);
+      }
+      const cappedHistLines = truncateLinesToBudget(layerBudgets.history, histLines);
+      if (cappedHistLines.length > 0) {
+        trackSection("execution_history", cappedHistLines.join("\n"));
+      }
     }
   } catch {}
 
@@ -790,7 +871,22 @@ export async function executePromptWithMcp(
         try { kbMeta = await storage.getKnowledgeBase(link.knowledgeBaseId); } catch {}
         try {
           const linkConfig = (link.retrievalConfig as any) || {};
-          const topK = typeof linkConfig.topK === "number" ? linkConfig.topK : 5;
+          const configTopK = typeof linkConfig.topK === "number" ? linkConfig.topK : 5;
+          // Layer 4 budget: derive topK from knowledge budget (avg ~150 tokens/chunk)
+          let topK = configTopK;
+          try {
+            const kbProfiles = await storage.getContextProfiles();
+            const kbAgentProfile = kbProfiles.find((p: any) => p.agentId === agentId && p.status === "active")
+              || (options?.runtimeConfig?.industry ? kbProfiles.find((p: any) => p.status === "active" && p.industry?.toLowerCase() === String(options?.runtimeConfig?.industry).toLowerCase()) : undefined);
+            if (kbAgentProfile) {
+              const kbBudgetAlloc = kbAgentProfile.budgetAllocations as Record<string, any> | null;
+              const kbBudget = kbBudgetAlloc?.knowledge ?? kbBudgetAlloc?.kb_retrieval ?? null;
+              if (typeof kbBudget === "number" && kbBudget > 0) {
+                const AVG_CHUNK_TOKENS = 150;
+                topK = Math.max(3, Math.floor(kbBudget / AVG_CHUNK_TOKENS));
+              }
+            }
+          } catch {}
           const scoreThreshold = typeof linkConfig.scoreThreshold === "number" ? linkConfig.scoreThreshold : 0.3;
           const chunks = await searchKnowledgeBaseChunks(link.knowledgeBaseId, augmentedQuery, topK, scoreThreshold);
           if (chunks.length > 0) {
@@ -2068,6 +2164,11 @@ async function executeAgentCycle(agent: RuntimeAgent) {
       contextProfileId,
       contextProfileVersion,
       contextBudgets,
+      contextLayerUsage: buildSectionMetrics.map(m => ({
+        layer: m.category,
+        tokensUsed: m.tokenCount,
+        budgetAllocated: (contextBudgets as Record<string, number> | null)?.[m.category] ?? DEFAULT_LAYER_BUDGETS[m.category] ?? null,
+      })),
     };
     const fullProvenanceHash = createHash("sha256")
       .update(canonicalJsonStringify(fullProvenanceSnapshot))
