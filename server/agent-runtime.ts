@@ -511,7 +511,13 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
       histLines.push(`Use this history to maintain continuity and avoid repeating past mistakes:`);
       for (const t of completedTraces) {
         const steps = Array.isArray(t.stepsJson) ? t.stepsJson as any[] : [];
-        const toolsUsed = [...new Set(steps.filter((s: any) => s.type === "tool_call").map((s: any) => s.toolName || s.name || "unknown"))].slice(0, 3);
+        const TOOL_STEP_TYPES = new Set(["tool_call", "api_call", "mcpTool", "mcp_tool", "tool_use"]);
+        const toolsUsed = [...new Set(
+          steps
+            .filter((s: any) => TOOL_STEP_TYPES.has(s.type) || s.toolName || s.tool_name)
+            .map((s: any) => s.toolName || s.tool_name || s.name || s.tool || "unknown")
+            .filter((n: string) => n !== "unknown")
+        )].slice(0, 3);
         const rawDecisions = Array.isArray(t.decisions) ? t.decisions as any[] : [];
         const keyDecisions = rawDecisions.slice(0, 2).map((d: any) => d.decision || d.action || d.label || String(d)).filter(Boolean);
         let summary = `- ${t.inputSummary?.substring(0, 60) || "Scheduled run"} → ${t.status}`;
@@ -871,9 +877,9 @@ export async function executePromptWithMcp(
         try { kbMeta = await storage.getKnowledgeBase(link.knowledgeBaseId); } catch {}
         try {
           const linkConfig = (link.retrievalConfig as any) || {};
-          const configTopK = typeof linkConfig.topK === "number" ? linkConfig.topK : 5;
           // Layer 4 budget: derive topK from knowledge budget (avg ~150 tokens/chunk)
-          let topK = configTopK;
+          const AVG_CHUNK_TOKENS = 150;
+          let effectiveKbBudget = DEFAULT_LAYER_BUDGETS.knowledge;
           try {
             const kbProfiles = await storage.getContextProfiles();
             const kbAgentProfile = kbProfiles.find((p: any) => p.agentId === agentId && p.status === "active")
@@ -882,11 +888,11 @@ export async function executePromptWithMcp(
               const kbBudgetAlloc = kbAgentProfile.budgetAllocations as Record<string, any> | null;
               const kbBudget = kbBudgetAlloc?.knowledge ?? kbBudgetAlloc?.kb_retrieval ?? null;
               if (typeof kbBudget === "number" && kbBudget > 0) {
-                const AVG_CHUNK_TOKENS = 150;
-                topK = Math.max(3, Math.floor(kbBudget / AVG_CHUNK_TOKENS));
+                effectiveKbBudget = kbBudget;
               }
             }
           } catch {}
+          const topK = Math.max(3, Math.floor(effectiveKbBudget / AVG_CHUNK_TOKENS));
           const scoreThreshold = typeof linkConfig.scoreThreshold === "number" ? linkConfig.scoreThreshold : 0.3;
           const chunks = await searchKnowledgeBaseChunks(link.knowledgeBaseId, augmentedQuery, topK, scoreThreshold);
           if (chunks.length > 0) {
@@ -2164,11 +2170,24 @@ async function executeAgentCycle(agent: RuntimeAgent) {
       contextProfileId,
       contextProfileVersion,
       contextBudgets,
-      contextLayerUsage: buildSectionMetrics.map(m => ({
-        layer: m.category,
-        tokensUsed: m.tokenCount,
-        budgetAllocated: (contextBudgets as Record<string, number> | null)?.[m.category] ?? DEFAULT_LAYER_BUDGETS[m.category] ?? null,
-      })),
+      contextLayerUsage: (() => {
+        const SECTION_TO_BUDGET_KEY: Record<string, string> = {
+          outcome_contract:    "outcome",
+          governance_policies: "governance",
+          skills:              "capabilities",
+          knowledge_graph:     "knowledge",
+          kb_retrieval:        "knowledge",
+          execution_history:   "history",
+          task_prompt:         "task",
+          system_prompt:       "task",
+        };
+        return buildSectionMetrics.map(m => {
+          const budgetKey = SECTION_TO_BUDGET_KEY[m.category] ?? m.category;
+          const effectiveBudgets = (contextBudgets as Record<string, number> | null);
+          const allocated = effectiveBudgets?.[budgetKey] ?? DEFAULT_LAYER_BUDGETS[budgetKey] ?? null;
+          return { layer: m.category, budgetKey, tokensUsed: m.tokenCount, budgetAllocated: allocated };
+        });
+      })(),
     };
     const fullProvenanceHash = createHash("sha256")
       .update(canonicalJsonStringify(fullProvenanceSnapshot))
