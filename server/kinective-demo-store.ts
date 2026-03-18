@@ -222,8 +222,8 @@ export function finalizeKinectiveSystemUpdates(scenario: KinectiveScenario): voi
         }
       }
     }
-    if (!state.auditLog.find((e) => e.action === "PARTIAL_FAILURE")) {
-      addKinectiveAudit("PARTIAL_FAILURE", "ATLAS Engine", "Card Management (PSCU) failure triggered full rollback of all updated systems (Gateway, Digital Banking, Statement Vendor, Loan Origination, CRM). COA-2026-00412 marked partial failure and reverted to consistent state.");
+    if (!state.auditLog.find((e) => e.action === "FULL_ROLLBACK")) {
+      addKinectiveAudit("FULL_ROLLBACK", "ATLAS Engine", "Card Management (PSCU) failure triggered full rollback across all updated systems (Gateway, Digital Banking, Statement Vendor, Loan Origination, CRM). COA-2026-00412 fully reverted — all systems restored to consistent pre-change state.");
     }
     state.finalized = true;
     return;

@@ -801,7 +801,7 @@ function SystemUpdatesPanel({ scenario, updates, running }: { scenario: Scenario
           )}
           {!running && scenario === "system_failure" && !allPending && (
             <Badge variant="outline" className="ml-auto bg-yellow-500/20 text-yellow-400 border-yellow-500/30 text-[10px]">
-              PARTIAL — ROLLBACK
+              FULL ROLLBACK
             </Badge>
           )}
           {!running && allPending && (
@@ -921,9 +921,9 @@ function NotificationPanel({ scenario, hasRun }: { scenario: Scenario; hasRun: b
       { type: "Review Ticket", message: "Ticket #TKT-84291 opened in ops queue", color: "text-orange-400" },
     ],
     system_failure: [
-      { type: "Member Notice", message: "Address change partially complete. Card update delayed.", color: "text-yellow-400" },
-      { type: "Retry Scheduled", message: "Card management retry: next maintenance window (02:00 UTC)", color: "text-orange-400" },
-      { type: "Ops Ticket", message: "Ticket #TKT-84292: PSCU timeout. Partial rollback executed.", color: "text-red-400" },
+      { type: "Member Notice", message: "Address change request could not be completed. All updates have been reverted — your account remains unchanged.", color: "text-yellow-400" },
+      { type: "Retry Scheduled", message: "COA-2026-00412 queued for retry at next maintenance window (02:00 UTC)", color: "text-orange-400" },
+      { type: "Ops Ticket", message: "Ticket #TKT-84292: PSCU timeout. Full rollback executed — all systems restored to prior state.", color: "text-red-400" },
     ],
   };
 
