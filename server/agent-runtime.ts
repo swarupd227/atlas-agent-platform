@@ -131,6 +131,28 @@ const DEFAULT_LAYER_BUDGETS: Record<string, number> = {
   task: 1024,
 };
 
+/** Resolve active context-profile budgets for an agent.
+ *  Priority: agent-specific active profile → industry-fallback active profile → DEFAULT_LAYER_BUDGETS.
+ *  Returns a merged budgets map; callers can reference DEFAULT_LAYER_BUDGETS as the fallback for any unset key.
+ */
+async function resolveLayerBudgets(agentId: string, industry?: string): Promise<Record<string, number>> {
+  const budgets: Record<string, number> = { ...DEFAULT_LAYER_BUDGETS };
+  try {
+    const allProfiles = await storage.getContextProfiles();
+    const profile = allProfiles.find((p: any) => p.agentId === agentId && p.status === "active")
+      || (industry ? allProfiles.find((p: any) => p.status === "active" && p.industry?.toLowerCase() === industry.toLowerCase()) : undefined);
+    if (profile) {
+      const budgetAlloc = profile.budgetAllocations as Record<string, any> | null;
+      if (budgetAlloc && typeof budgetAlloc === "object") {
+        for (const [key, val] of Object.entries(budgetAlloc)) {
+          if (typeof val === "number") budgets[key] = val;
+        }
+      }
+    }
+  } catch {}
+  return budgets;
+}
+
 function truncateLinesToBudget(budgetTokens: number, lines: string[]): string[] {
   if (budgetTokens === 0) return [];
   if (budgetTokens < 0 || !isFinite(budgetTokens)) return [];
@@ -154,23 +176,8 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
     sectionMetrics.push({ category, tokenCount: estimateTokenCount(text) });
   }
 
-  // Extract per-layer token budgets from linked context profile (fall back to defaults)
-  let layerBudgets: Record<string, number> = { ...DEFAULT_LAYER_BUDGETS };
-  try {
-    const allProfiles = await storage.getContextProfiles();
-    const agentProfile = allProfiles.find((p: any) => p.agentId === agent.agentId && p.status === "active")
-      || (agent.industry ? allProfiles.find((p: any) => p.status === "active" && p.industry?.toLowerCase() === agent.industry!.toLowerCase()) : undefined);
-    if (agentProfile) {
-      const budgetAlloc = agentProfile.budgetAllocations as Record<string, any> | null;
-      if (budgetAlloc && typeof budgetAlloc === "object") {
-        for (const [key, val] of Object.entries(budgetAlloc)) {
-          if (typeof val === "number") {
-            layerBudgets[key] = val;
-          }
-        }
-      }
-    }
-  } catch {}
+  // Extract per-layer token budgets using shared resolver (agent-first, industry fallback, defaults)
+  const layerBudgets = await resolveLayerBudgets(agent.agentId, agent.industry || undefined);
 
   if (agent.agentSystemPrompt) {
     trackSection("system_prompt", agent.agentSystemPrompt);
@@ -506,8 +513,7 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
 
   // Layer 5: Execution History — inject recent completed trace summaries
   try {
-    const recentTraces = await storage.getTracesByAgent(agent.agentId);
-    const completedTraces = recentTraces.filter((t: any) => t.status === "completed").slice(0, 5);
+    const completedTraces = await storage.getRecentCompletedTracesByAgent(agent.agentId, 5);
     if (completedTraces.length > 0) {
       const histLines: string[] = [];
       histLines.push(`\n## EXECUTION HISTORY (${completedTraces.length} recent completed runs)`);
@@ -874,21 +880,10 @@ export async function executePromptWithMcp(
       const augmentedQuery = ontologyLabels.length > 0
         ? `${prompt}\n\nDomain concepts: ${ontologyLabels.join(", ")}`
         : prompt;
-      // Layer 4 budget — resolve once before the KB loop to avoid redundant DB fetches
+      // Layer 4 budget — resolve once via shared helper before the KB loop
       const AVG_CHUNK_TOKENS = 150;
-      let effectiveKbBudget = DEFAULT_LAYER_BUDGETS.knowledge;
-      try {
-        const kbProfiles = await storage.getContextProfiles();
-        const kbAgentProfile = kbProfiles.find((p: any) => p.agentId === agentId && p.status === "active")
-          || (industry ? kbProfiles.find((p: any) => p.status === "active" && p.industry?.toLowerCase() === industry.toLowerCase()) : undefined);
-        if (kbAgentProfile) {
-          const kbBudgetAlloc = kbAgentProfile.budgetAllocations as Record<string, any> | null;
-          const kbBudget = kbBudgetAlloc?.knowledge ?? kbBudgetAlloc?.kb_retrieval ?? null;
-          if (typeof kbBudget === "number" && kbBudget > 0) {
-            effectiveKbBudget = kbBudget;
-          }
-        }
-      } catch {}
+      const kbLayerBudgets = await resolveLayerBudgets(agentId, industry);
+      const effectiveKbBudget = kbLayerBudgets.knowledge;
 
       const kbChunks: string[] = [];
       for (const link of linkedKbs.slice(0, 3)) {
