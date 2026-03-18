@@ -36,7 +36,6 @@ import { StatusBadge } from "@/components/status-badge";
 import { ErrorState } from "@/components/error-state";
 import { Link, useLocation } from "wouter";
 import { useRole, type RoleId } from "@/components/role-provider";
-import { useIndustry } from "@/components/industry-provider";
 
 interface KpiSummary {
   id: string;
@@ -675,19 +674,13 @@ function SystemStatusInline({ systemStatus }: { systemStatus: OverviewData["syst
   );
 }
 
-function PlatformHero({ industry, role, config }: { industry: any; role: any; config: RoleWidgetConfig }) {
+function PlatformHero({ config }: { config: RoleWidgetConfig }) {
   return (
     <div className="flex items-center justify-between gap-3">
       <div className="flex items-center gap-2 min-w-0">
         <h1 className="text-lg font-semibold tracking-tight whitespace-nowrap" data-testid="text-dashboard-title">
           {config.title}
         </h1>
-        <Badge variant="outline" className="text-xs shrink-0" data-testid="badge-role-label">{role.label}</Badge>
-        {industry && (
-          <Badge variant="secondary" className="text-xs shrink-0" data-testid="badge-industry-label">
-            {industry.shortLabel}
-          </Badge>
-        )}
         <span className="text-xs text-muted-foreground hidden md:inline truncate">{config.description}</span>
       </div>
       <Link href="/outcomes/discover">
@@ -753,7 +746,6 @@ function TechnologyStackSection() {
 
 export default function Overview() {
   const { role } = useRole();
-  const { industry } = useIndustry();
   const config = ROLE_WIDGETS[role.id];
 
   const { data, isLoading, error, refetch } = useQuery<OverviewData>({
@@ -779,7 +771,7 @@ export default function Overview() {
   if (!hasOutcomes && data.agentsAtRisk.length === 0) {
     return (
       <div className="flex flex-col gap-3 p-4" data-testid="page-overview">
-        <PlatformHero industry={industry} role={role} config={config} />
+        <PlatformHero config={config} />
         <KeyCapabilitiesSection />
         <TechnologyStackSection />
         <div className="flex flex-col items-center justify-center py-8 gap-3" data-testid="empty-state">
@@ -805,7 +797,7 @@ export default function Overview() {
 
   return (
     <div className="flex flex-col gap-2 p-3" data-testid="page-overview">
-      <PlatformHero industry={industry} role={role} config={config} />
+      <PlatformHero config={config} />
       <PlatformPulseStrip data={data} />
       {config.showNeedsAttention && (
         <NeedsAttentionSection data={data} />
