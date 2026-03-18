@@ -232,6 +232,165 @@ const autonomyOptions = ["autonomous", "assisted", "supervised", "manual"];
 const enforcementOptions = ["hard", "soft", "advisory"];
 const scheduleOptions = ["on_deploy", "daily", "weekly", "on_change", "manual"];
 
+type TemplateContextPreviewProps = {
+  policyBindings: PolicyBinding[];
+  preloadedSkills: any[];
+  requiredSkills: any[];
+  optionalSkills: any[];
+  allSkills?: Skill[];
+};
+
+function resolveSkill(entry: any, catalog?: Skill[]): { name: string; domain: string; description: string; resolved: boolean } {
+  if (!catalog || catalog.length === 0) {
+    return { name: entry.skillName || entry.skillId || "Unknown", domain: entry.domain || "", description: "", resolved: false };
+  }
+  const byId = entry.skillId ? catalog.find(s => s.id === entry.skillId || String(s.id) === String(entry.skillId)) : undefined;
+  const byName = entry.skillName ? catalog.find(s => s.name?.toLowerCase() === entry.skillName?.toLowerCase()) : undefined;
+  const match = byId || byName;
+  if (match) {
+    return { name: match.name, domain: match.domain || entry.domain || "", description: match.description || "", resolved: true };
+  }
+  return { name: entry.skillName || entry.skillId || "Unresolved skill", domain: entry.domain || "", description: "", resolved: false };
+}
+
+function TemplateContextPreview({ policyBindings, preloadedSkills, requiredSkills, optionalSkills, allSkills }: TemplateContextPreviewProps) {
+  const hasGovernance = policyBindings.length > 0;
+  const allSkillEntries = [
+    ...preloadedSkills.map(s => ({ ...s, _role: "preloaded" as const })),
+    ...requiredSkills.map(s => ({ ...s, _role: "required" as const })),
+    ...optionalSkills.map(s => ({ ...s, _role: "optional" as const })),
+  ];
+  const hasSkills = allSkillEntries.length > 0;
+
+  const enforcementColor = (enforcement: string) => {
+    if (enforcement === "hard") return "border-red-300 text-red-700 bg-red-50 dark:border-red-800 dark:text-red-400 dark:bg-red-950/40";
+    if (enforcement === "soft") return "border-amber-300 text-amber-700 bg-amber-50 dark:border-amber-800 dark:text-amber-400 dark:bg-amber-950/40";
+    return "border-slate-300 text-slate-600 bg-slate-50 dark:border-slate-700 dark:text-slate-400 dark:bg-slate-900";
+  };
+
+  return (
+    <div className="rounded-xl border border-violet-200 dark:border-violet-800 bg-violet-50/50 dark:bg-violet-950/20 p-4 space-y-4" data-testid="panel-context-preview">
+      <div className="flex items-center gap-2">
+        <Layers className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+        <span className="font-semibold text-sm text-violet-700 dark:text-violet-300">Context Layer Preview</span>
+        <Badge variant="outline" className="text-[10px] border-violet-300 text-violet-600 dark:border-violet-700 dark:text-violet-400 ml-1">
+          Projected — based on default platform settings
+        </Badge>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Card className="border border-violet-200 dark:border-violet-800" data-testid="card-context-layer2">
+          <CardHeader className="p-4 pb-3 rounded-t-lg bg-violet-50 dark:bg-violet-950/40">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs bg-violet-50 dark:bg-violet-950/40 border-2 border-violet-200 dark:border-violet-700 text-violet-600 dark:text-violet-400">
+                2
+              </div>
+              <Shield className="w-4 h-4 text-violet-600 dark:text-violet-400" />
+              <span className="font-semibold text-sm">Layer 2 — Governance</span>
+              <Badge
+                variant="outline"
+                className={`text-xs ml-auto gap-1 ${hasGovernance ? "border-green-300 text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950/40" : "border-slate-300 text-slate-500"}`}
+                data-testid="badge-layer2-status"
+              >
+                {hasGovernance ? <CheckCircle2 className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                {hasGovernance ? "Populated" : "Not configured"}
+              </Badge>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1 ml-9">Policy bindings active for agents built from this template</p>
+          </CardHeader>
+          <CardContent className="p-4 pt-3">
+            {!hasGovernance ? (
+              <p className="text-xs text-muted-foreground italic" data-testid="text-layer2-empty">
+                No policy bindings defined. Add governance policies to this template to populate this layer.
+              </p>
+            ) : (
+              <div className="space-y-2" data-testid="list-layer2-policies">
+                {policyBindings.map((p, i) => (
+                  <div key={i} className="flex items-center gap-2" data-testid={`policy-row-${i}`}>
+                    <Lock className="w-3 h-3 text-violet-500 flex-shrink-0" />
+                    <span className="text-xs font-medium flex-1 truncate">{p.policyName || "Unnamed policy"}</span>
+                    <Badge variant="outline" className={`text-[10px] flex-shrink-0 ${enforcementColor(p.enforcement)}`}>
+                      {p.enforcement || "advisory"}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="border border-amber-200 dark:border-amber-800" data-testid="card-context-layer3">
+          <CardHeader className="p-4 pb-3 rounded-t-lg bg-amber-50 dark:bg-amber-950/40">
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-full flex items-center justify-center font-bold text-xs bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-200 dark:border-amber-700 text-amber-600 dark:text-amber-400">
+                3
+              </div>
+              <Wrench className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+              <span className="font-semibold text-sm">Layer 3 — Capabilities</span>
+              <Badge
+                variant="outline"
+                className={`text-xs ml-auto gap-1 ${hasSkills ? "border-green-300 text-green-700 bg-green-50 dark:text-green-400 dark:bg-green-950/40" : "border-slate-300 text-slate-500"}`}
+                data-testid="badge-layer3-status"
+              >
+                {hasSkills ? <CheckCircle2 className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                {hasSkills ? "Populated" : "Not configured"}
+              </Badge>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1 ml-9">Skills injected into the agent context at runtime</p>
+          </CardHeader>
+          <CardContent className="p-4 pt-3">
+            {!hasSkills ? (
+              <p className="text-xs text-muted-foreground italic" data-testid="text-layer3-empty">
+                No skills assigned. Add preloaded or required skills to this template to populate this layer.
+              </p>
+            ) : (
+              <div className="space-y-2" data-testid="list-layer3-skills">
+                {allSkillEntries.map((entry, i) => {
+                  const resolved = resolveSkill(entry, allSkills);
+                  return (
+                    <div key={i} className="flex items-start gap-2" data-testid={`skill-preview-row-${i}`}>
+                      <Brain className="w-3 h-3 text-amber-500 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className={`text-xs font-medium truncate ${!resolved.resolved ? "text-muted-foreground italic" : ""}`}>
+                            {resolved.resolved ? resolved.name : `Unresolved skill: ${resolved.name}`}
+                          </span>
+                          {resolved.domain && (
+                            <Badge variant="secondary" className="text-[10px] py-0">{resolved.domain}</Badge>
+                          )}
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] py-0 flex-shrink-0 ${
+                              entry._role === "preloaded"
+                                ? "border-blue-300 text-blue-700 bg-blue-50 dark:border-blue-700 dark:text-blue-400 dark:bg-blue-950/40"
+                                : entry._role === "required"
+                                ? "border-violet-300 text-violet-700 bg-violet-50 dark:border-violet-700 dark:text-violet-400 dark:bg-violet-950/40"
+                                : "border-slate-300 text-slate-500"
+                            }`}
+                          >
+                            {entry._role}
+                          </Badge>
+                        </div>
+                        {resolved.description && (
+                          <p className="text-[11px] text-muted-foreground truncate mt-0.5">{resolved.description}</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      <p className="text-[11px] text-muted-foreground text-center">
+        Layers 1 (Outcome Contract), 4 (Knowledge Retrieval), 5 (History), and 6 (Task) are populated at runtime from linked agent configuration.
+      </p>
+    </div>
+  );
+}
+
 export default function TemplateDetail() {
   const [, params] = useRoute("/templates/:id");
   const [, navigate] = useLocation();
@@ -262,6 +421,7 @@ export default function TemplateDetail() {
   const [skillSearch, setSkillSearch] = useState("");
   const [policySearchOpen, setPolicySearchOpen] = useState(false);
   const [policySearchQuery, setPolicySearchQuery] = useState("");
+  const [showContextPreview, setShowContextPreview] = useState(false);
   const [editData, setEditData] = useState<Record<string, any>>(isNew ? {
     name: "",
     description: "",
@@ -301,7 +461,7 @@ export default function TemplateDetail() {
 
   const { data: allSkills } = useQuery<Skill[]>({
     queryKey: ["/api/skills"],
-    enabled: skillLibraryOpen,
+    enabled: skillLibraryOpen || showContextPreview,
   });
 
   const { data: policyLibrary } = useQuery<Array<{ id: string; name: string; domain: string; description: string }>>({
@@ -906,6 +1066,16 @@ export default function TemplateDetail() {
           </div>
         ) : (
           <div className="flex items-center gap-2">
+            {!isNew && (
+              <Button
+                variant={showContextPreview ? "secondary" : "outline"}
+                onClick={() => setShowContextPreview(v => !v)}
+                data-testid="button-preview-context"
+              >
+                <Layers className="w-4 h-4 mr-1.5" />
+                {showContextPreview ? "Hide Preview" : "Preview Context"}
+              </Button>
+            )}
             <Button variant="outline" onClick={startEditing} data-testid="button-edit-template">
               <Pencil className="w-4 h-4 mr-1.5" /> Edit
             </Button>
@@ -918,6 +1088,16 @@ export default function TemplateDetail() {
           </div>
         )}
       </div>
+
+      {showContextPreview && !isNew && displayTemplate && (
+        <TemplateContextPreview
+          policyBindings={policyBindings}
+          preloadedSkills={Array.isArray(displayTemplate.preloadedSkills) ? (displayTemplate.preloadedSkills as any[]) : []}
+          requiredSkills={Array.isArray(displayTemplate.requiredSkills) ? (displayTemplate.requiredSkills as any[]) : []}
+          optionalSkills={Array.isArray(displayTemplate.optionalSkills) ? (displayTemplate.optionalSkills as any[]) : []}
+          allSkills={allSkills}
+        />
+      )}
 
       {editing ? (
         <>
