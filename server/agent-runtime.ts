@@ -243,19 +243,30 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
   } catch {}
 
   if (layerBudgets.capabilities > 0) try {
-    const allSkills = await storage.getSkills();
-    const agentIndustry = agent.industry?.toLowerCase();
-    const ontologyLabels = (agent.ontologyTags || []).map(t => t.conceptLabel.toLowerCase());
-    const relevantSkills = allSkills.filter(s => {
-      if (s.status !== "active") return false;
-      if (agentIndustry && s.industry.toLowerCase() === agentIndustry) return true;
-      if (ontologyLabels.length > 0) {
-        const skillTags = (s.tags || []).map((t: string) => t.toLowerCase());
-        const skillDomain = s.domain.toLowerCase();
-        return ontologyLabels.some(label => skillTags.includes(label) || skillDomain.includes(label));
-      }
-      return false;
-    }).slice(0, 20);
+    // Explicit assignment: if the agent has preloadedSkills, resolve those first
+    const preloadedEntries = ((agent as any).preloadedSkills as Array<{ skillId: string }> | null) || [];
+    const explicitSkillIds = preloadedEntries.map((ps: any) => ps.skillId).filter(Boolean);
+
+    let relevantSkills;
+    if (explicitSkillIds.length > 0) {
+      const resolved = await storage.getSkillsByIds(explicitSkillIds);
+      relevantSkills = resolved.filter(s => s.status === "active").slice(0, 20);
+    } else {
+      // Fallback: industry + ontology tag matching
+      const allSkills = await storage.getSkills();
+      const agentIndustry = agent.industry?.toLowerCase();
+      const ontologyLabels = (agent.ontologyTags || []).map(t => t.conceptLabel.toLowerCase());
+      relevantSkills = allSkills.filter(s => {
+        if (s.status !== "active") return false;
+        if (agentIndustry && s.industry.toLowerCase() === agentIndustry) return true;
+        if (ontologyLabels.length > 0) {
+          const skillTags = (s.tags || []).map((t: string) => t.toLowerCase());
+          const skillDomain = s.domain.toLowerCase();
+          return ontologyLabels.some(label => skillTags.includes(label) || skillDomain.includes(label));
+        }
+        return false;
+      }).slice(0, 20);
+    }
 
     if (relevantSkills.length > 0) {
       const skillLines: string[] = [];

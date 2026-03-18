@@ -3026,21 +3026,34 @@ export async function registerRoutes(
           const tools = await storage.getMcpServerTools(link.serverId);
           tools.slice(0, 8).forEach(t => mcpToolLines.push(`  - ${t.name}: ${t.description || ""}`));
         }
-        const allSkills = await storage.getSkills();
-        const agentIndustry = (agent as any).industry?.toLowerCase();
-        const ontologyLabels = Array.isArray((agent as any).ontologyTags) ? ((agent as any).ontologyTags as Array<{ conceptLabel: string }>).map(t => t.conceptLabel.toLowerCase()) : [];
-        const relevantSkills = allSkills.filter((s: any) => {
-          if (s.status !== "active") return false;
-          if (agentIndustry && s.industry?.toLowerCase() === agentIndustry) return true;
-          if (ontologyLabels.length > 0) {
-            const skillTags = (s.tags || []).map((t: string) => t.toLowerCase());
-            return ontologyLabels.some((label: string) => skillTags.includes(label));
-          }
-          return false;
-        }).slice(0, 8);
+        // Explicit assignment: use preloadedSkills if the agent has them
+        const preloadedEntries = ((agent as any).preloadedSkills as Array<{ skillId: string }> | null) || [];
+        const explicitSkillIds = preloadedEntries.map((ps: any) => ps.skillId).filter(Boolean);
+
+        let relevantSkills: any[];
+        let skillSource: "assigned" | "auto-matched";
+        if (explicitSkillIds.length > 0) {
+          const resolved = await storage.getSkillsByIds(explicitSkillIds);
+          relevantSkills = resolved.filter((s: any) => s.status === "active").slice(0, 20);
+          skillSource = "assigned";
+        } else {
+          const allSkills = await storage.getSkills();
+          const agentIndustry = (agent as any).industry?.toLowerCase();
+          const ontologyLabels = Array.isArray((agent as any).ontologyTags) ? ((agent as any).ontologyTags as Array<{ conceptLabel: string }>).map(t => t.conceptLabel.toLowerCase()) : [];
+          relevantSkills = allSkills.filter((s: any) => {
+            if (s.status !== "active") return false;
+            if (agentIndustry && s.industry?.toLowerCase() === agentIndustry) return true;
+            if (ontologyLabels.length > 0) {
+              const skillTags = (s.tags || []).map((t: string) => t.toLowerCase());
+              return ontologyLabels.some((label: string) => skillTags.includes(label));
+            }
+            return false;
+          }).slice(0, 20);
+          skillSource = "auto-matched";
+        }
         const lines: string[] = [];
         if (relevantSkills.length > 0) {
-          lines.push(`## AGENT SKILLS`);
+          lines.push(`## AGENT SKILLS (${skillSource === "assigned" ? "explicitly assigned" : "auto-matched by industry/tags"})`);
           relevantSkills.forEach((s: any) => lines.push(`- ${s.name} (${s.domain}, v${s.version}): ${s.description}`));
         }
         if (mcpToolLines.length > 0) {

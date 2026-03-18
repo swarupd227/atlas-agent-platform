@@ -519,6 +519,7 @@ export interface IStorage {
 
   getSkills(): Promise<Skill[]>;
   getSkill(id: string): Promise<Skill | undefined>;
+  getSkillsByIds(ids: string[]): Promise<Skill[]>;
   createSkill(skill: InsertSkill): Promise<Skill>;
   updateSkill(id: string, data: Partial<Skill>): Promise<Skill | undefined>;
   deleteSkill(id: string): Promise<boolean>;
@@ -2076,6 +2077,10 @@ export class DatabaseStorage implements IStorage {
   async getSkill(id: string) {
     const [skill] = await db.select().from(skills).where(eq(skills.id, id));
     return skill;
+  }
+  async getSkillsByIds(ids: string[]) {
+    if (ids.length === 0) return [];
+    return db.select().from(skills).where(inArray(skills.id, ids));
   }
   async createSkill(skill: InsertSkill) {
     const [created] = await db.insert(skills).values(skill).returning();
