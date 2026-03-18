@@ -3092,9 +3092,12 @@ export async function registerRoutes(
         recentCompleted.forEach((t: any, i: number) => {
           const steps = Array.isArray(t.stepsJson) ? t.stepsJson as any[] : [];
           const toolsUsed = [...new Set(steps.filter((s: any) => s.type === "tool_call").map((s: any) => s.toolName || s.name || "unknown"))].slice(0, 3);
+          const rawDecisions = Array.isArray(t.decisions) ? t.decisions as any[] : [];
+          const keyDecisions = rawDecisions.slice(0, 2).map((d: any) => d.decision || d.action || d.label || d.description || JSON.stringify(d)).filter(Boolean);
           lines.push(`\nRun ${i + 1}: ${t.inputSummary?.substring(0, 80) || "Scheduled run"}`);
           lines.push(`  Status: ${t.status} | Latency: ${t.latencyMs}ms | Cost: $${(t.costUsd || 0).toFixed(4)}`);
           if (toolsUsed.length > 0) lines.push(`  Tools: ${toolsUsed.join(", ")}`);
+          if (keyDecisions.length > 0) lines.push(`  Key decisions: ${keyDecisions.join("; ")}`);
           if (t.outputSummary) lines.push(`  Output: ${t.outputSummary.substring(0, 100)}`);
         });
         if (recentCompleted.length === 0) lines.push("No completed runs yet.");
