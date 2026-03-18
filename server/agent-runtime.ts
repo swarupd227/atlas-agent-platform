@@ -132,7 +132,8 @@ const DEFAULT_LAYER_BUDGETS: Record<string, number> = {
 };
 
 function truncateLinesToBudget(budgetTokens: number, lines: string[]): string[] {
-  if (!budgetTokens || budgetTokens <= 0) return lines;
+  if (budgetTokens === 0) return [];
+  if (budgetTokens < 0 || !isFinite(budgetTokens)) return [];
   let used = 0;
   const result: string[] = [];
   for (const line of lines) {
@@ -163,7 +164,7 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
       const budgetAlloc = agentProfile.budgetAllocations as Record<string, any> | null;
       if (budgetAlloc && typeof budgetAlloc === "object") {
         for (const [key, val] of Object.entries(budgetAlloc)) {
-          if (typeof val === "number" && val > 0) {
+          if (typeof val === "number") {
             layerBudgets[key] = val;
           }
         }
@@ -191,20 +192,22 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
 
         const kpis = await storage.getKpisByOutcome(agent.outcomeId);
         if (kpis.length > 0) {
-          const kpiLines: string[] = [];
-          kpiLines.push(`\n## KPI TARGETS (you must optimize for these)`);
-          kpis.forEach(kpi => {
-            const progress = kpi.target ? `${((kpi.currentValue || 0) / kpi.target * 100).toFixed(0)}%` : "N/A";
-            kpiLines.push(`- ${kpi.name}: current=${kpi.currentValue ?? 0}, target=${kpi.target}, unit=${kpi.unit}, weight=${kpi.weight ?? 1}, progress=${progress}${kpi.slaThreshold ? `, SLA threshold=${kpi.slaThreshold}` : ""}`);
-          });
-          kpiLines.push(`Prioritize KPIs with higher weight. Flag if any KPI is breaching its SLA threshold.`);
-          const cappedKpiLines = truncateLinesToBudget(
-            Math.max(0, layerBudgets.outcome - estimateTokenCount(outcomeLines.join("\n"))),
-            kpiLines
-          );
-          outcomeLines.push(...cappedKpiLines);
+          const remainingBudget = layerBudgets.outcome - estimateTokenCount(outcomeLines.join("\n"));
+          if (remainingBudget > 0) {
+            const kpiLines: string[] = [];
+            kpiLines.push(`\n## KPI TARGETS (you must optimize for these)`);
+            kpis.forEach(kpi => {
+              const progress = kpi.target ? `${((kpi.currentValue || 0) / kpi.target * 100).toFixed(0)}%` : "N/A";
+              kpiLines.push(`- ${kpi.name}: current=${kpi.currentValue ?? 0}, target=${kpi.target}, unit=${kpi.unit}, weight=${kpi.weight ?? 1}, progress=${progress}${kpi.slaThreshold ? `, SLA threshold=${kpi.slaThreshold}` : ""}`);
+            });
+            kpiLines.push(`Prioritize KPIs with higher weight. Flag if any KPI is breaching its SLA threshold.`);
+            const cappedKpiLines = truncateLinesToBudget(remainingBudget, kpiLines);
+            outcomeLines.push(...cappedKpiLines);
+          }
         }
-        trackSection("outcome_contract", outcomeLines.join("\n"));
+        // Apply absolute Layer 1 budget cap to full outcome section
+        const absolutelyCapped = truncateLinesToBudget(layerBudgets.outcome, outcomeLines);
+        trackSection("outcome_contract", absolutelyCapped.join("\n"));
       }
     } catch (err: any) {
       console.log(`[agent-runtime] Could not load outcome context: ${err.message}`);
