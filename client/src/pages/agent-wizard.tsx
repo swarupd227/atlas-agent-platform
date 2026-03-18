@@ -1406,6 +1406,7 @@ export default function AgentWizard() {
       memoryGovernanceRules: wizardState.memoryGovernanceRules.length > 0 ? wizardState.memoryGovernanceRules : undefined,
     };
     if (selectedTemplateId) {
+      payload.sourceTemplateId = selectedTemplateId;
       const existingRt = (payload.runtimeConfig as Record<string, any>) || {};
       payload.runtimeConfig = { ...existingRt, sourceTemplateId: selectedTemplateId };
     }

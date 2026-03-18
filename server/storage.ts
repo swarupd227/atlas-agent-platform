@@ -1,4 +1,4 @@
-import { eq, desc, inArray, and, like, or } from "drizzle-orm";
+import { eq, desc, inArray, and, like, or, sql } from "drizzle-orm";
 import { createHash } from "crypto";
 import { db } from "./db";
 import {
@@ -238,6 +238,8 @@ export interface IStorage {
   createAgentTemplate(template: InsertAgentTemplate): Promise<AgentTemplate>;
   updateAgentTemplate(id: string, data: Partial<InsertAgentTemplate>): Promise<AgentTemplate | undefined>;
   deleteAgentTemplate(id: string): Promise<boolean>;
+  incrementTemplateUsage(id: string): Promise<void>;
+  incrementTemplateDeployments(id: string): Promise<void>;
 
   getEvalSuite(id: string): Promise<EvalSuite | undefined>;
   updateEvalSuite(id: string, data: Partial<EvalSuite>): Promise<EvalSuite | undefined>;
@@ -1048,6 +1050,18 @@ export class DatabaseStorage implements IStorage {
   async updateAgentTemplate(id: string, data: Partial<InsertAgentTemplate>) {
     const [updated] = await db.update(agentTemplates).set(data).where(eq(agentTemplates.id, id)).returning();
     return updated;
+  }
+
+  async incrementTemplateUsage(id: string) {
+    await db.update(agentTemplates)
+      .set({ usageCount: sql`${agentTemplates.usageCount} + 1` })
+      .where(eq(agentTemplates.id, id));
+  }
+
+  async incrementTemplateDeployments(id: string) {
+    await db.update(agentTemplates)
+      .set({ deploymentCount: sql`${agentTemplates.deploymentCount} + 1` })
+      .where(eq(agentTemplates.id, id));
   }
 
   async deleteAgentTemplate(id: string) {

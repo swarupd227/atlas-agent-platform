@@ -2298,12 +2298,9 @@ export async function registerRoutes(
       const data = insertAgentSchema.parse(body);
       const agent = await storage.createAgent(data);
 
-      const sourceTemplateId = (agent.runtimeConfig as any)?.sourceTemplateId;
+      const sourceTemplateId = req.body.sourceTemplateId || (agent.runtimeConfig as any)?.sourceTemplateId;
       if (sourceTemplateId) {
-        const tmpl = await storage.getAgentTemplate(sourceTemplateId);
-        if (tmpl) {
-          await storage.updateAgentTemplate(sourceTemplateId, { usageCount: (tmpl.usageCount || 0) + 1 });
-        }
+        await storage.incrementTemplateUsage(sourceTemplateId);
       }
 
       const hasMemGovRules = Array.isArray(req.body.memoryGovernanceRules) && req.body.memoryGovernanceRules.length > 0;
@@ -4393,10 +4390,7 @@ export async function registerRoutes(
         const agent = await storage.getAgent(existing.agentId);
         const srcTplId = (agent?.runtimeConfig as any)?.sourceTemplateId;
         if (srcTplId) {
-          const tmpl = await storage.getAgentTemplate(srcTplId);
-          if (tmpl) {
-            await storage.updateAgentTemplate(srcTplId, { deploymentCount: (tmpl.deploymentCount || 0) + 1 });
-          }
+          await storage.incrementTemplateDeployments(srcTplId);
         }
       }
 
@@ -4874,6 +4868,14 @@ export async function registerRoutes(
         previousHash: lastHash,
         eventHash,
       });
+
+      if (updateData.status === "active" && deployment.status !== "active") {
+        const agent = await storage.getAgent(deployment.agentId);
+        const srcTplId = (agent?.runtimeConfig as any)?.sourceTemplateId;
+        if (srcTplId) {
+          await storage.incrementTemplateDeployments(srcTplId);
+        }
+      }
 
       res.json(updated);
     } catch (e) {
