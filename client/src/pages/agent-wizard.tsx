@@ -979,7 +979,7 @@ export default function AgentWizard() {
       if (!res.ok) return [];
       return res.json();
     },
-    enabled: !!outcomeIdForKpis && fromOutcome,
+    enabled: !!outcomeIdForKpis && (fromOutcome || creationPath === "template"),
   });
 
   useEffect(() => {
@@ -1458,7 +1458,8 @@ export default function AgentWizard() {
     if (!wizardState.description) patch.description = template.description || "";
     if (Object.keys(patch).length) updateState(patch);
     applyTemplate(template);
-    setCurrentStep(2);
+    // Do NOT auto-advance to Step 2 — stay on Step 1 so the user sees the outcome selector
+    // and can optionally link a business outcome before proceeding.
   }
 
   const stepLabels: Record<string, string> = {
@@ -1792,6 +1793,8 @@ export default function AgentWizard() {
             onSelectTemplate={handleSelectTemplate}
             onRunMatching={runAiMatching}
             wizardState={wizardState}
+            outcomes={outcomes}
+            onSelectOutcome={(outcomeId) => updateState({ outcomeId: outcomeId ?? "" })}
           />
         )}
         {currentStep === 2 && (
@@ -2571,6 +2574,8 @@ function Step0GoldenTemplate({
   onSelectTemplate,
   onRunMatching,
   wizardState,
+  outcomes,
+  onSelectOutcome,
 }: {
   creationPath: CreationPath;
   onChoosePath: (path: CreationPath) => void;
@@ -2582,6 +2587,8 @@ function Step0GoldenTemplate({
   onSelectTemplate: (t: AgentTemplate) => void;
   onRunMatching: () => void;
   wizardState: WizardState;
+  outcomes: OutcomeContract[] | undefined;
+  onSelectOutcome: (outcomeId: string | null) => void;
 }) {
   const [showAllTemplates, setShowAllTemplates] = useState(false);
 
@@ -2747,6 +2754,62 @@ function Step0GoldenTemplate({
                 </Card>
               );
             })}
+          </div>
+        )}
+
+        {selectedTemplateId && (
+          <div className="flex flex-col gap-3" data-testid="outcome-selector-panel">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-medium">Link to a Business Outcome <span className="text-muted-foreground font-normal">(optional)</span></h3>
+                <p className="text-xs text-muted-foreground">Connect this agent to a business goal so its performance is tracked against your KPI targets.</p>
+              </div>
+              {wizardState.outcomeId && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground text-xs shrink-0"
+                  onClick={() => onSelectOutcome(null)}
+                  data-testid="button-clear-outcome"
+                >
+                  <X className="w-3 h-3 mr-1" />
+                  Clear
+                </Button>
+              )}
+            </div>
+            {!outcomes || outcomes.length === 0 ? (
+              <p className="text-xs text-muted-foreground" data-testid="text-no-outcomes">No active outcomes yet. You can link one later from the agent detail page.</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2" data-testid="outcome-option-list">
+                {outcomes
+                  .filter((o) => o.status === "active")
+                  .map((outcome) => {
+                    const isSelected = wizardState.outcomeId === outcome.id;
+                    return (
+                      <button
+                        key={outcome.id}
+                        type="button"
+                        className={`flex items-start gap-3 p-3 rounded-lg border text-left transition-colors hover:border-primary/40 ${isSelected ? "border-primary bg-primary/5 ring-1 ring-primary" : "border-border bg-background"}`}
+                        onClick={() => onSelectOutcome(isSelected ? null : outcome.id)}
+                        data-testid={`outcome-option-${outcome.id}`}
+                      >
+                        <div className="w-6 h-6 rounded-full border flex items-center justify-center shrink-0 mt-0.5 bg-background">
+                          {isSelected && <Check className="w-3.5 h-3.5 text-primary" />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium leading-tight truncate">{outcome.name}</p>
+                          {outcome.description && (
+                            <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{outcome.description}</p>
+                          )}
+                          <div className="flex items-center gap-1 mt-1">
+                            <Badge variant="outline" className="text-[9px]">{outcome.riskTier}</Badge>
+                          </div>
+                        </div>
+                      </button>
+                    );
+                  })}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -5467,7 +5530,7 @@ function StepReview({
         </Card>
       )}
 
-      {fromOutcome && linkedOutcome && (
+      {linkedOutcome && (
         <Card className="border-primary/30 bg-primary/5" data-testid="review-outcome-requirements">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
