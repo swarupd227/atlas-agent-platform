@@ -1,0 +1,25 @@
+Layer 1 — Industry Context
+The regulatory and compliance framework specific to your project's industry (e.g. Healthcare/HIPAA, Financial Services/MiFID II/PCI-DSS, Defense/NIST). This is built statically from the industry you selected when creating the project, and includes the agent's role-specific rules for that sector.
+
+Layer 2 — Project Context
+Everything known about the current project: name, type, description, tech stack, compliance tags, requirements summary, architecture decisions (ADRs), context document list (with AI-generated summaries), deployment overview, and recent agent activity.
+
+Layer 3 — Codebase Context
+A live snapshot of the generated code — file graph by language and category, recent code changes, open code review findings, vulnerabilities, and test coverage stats.
+
+Layer 4 — Runtime Context
+Production environment data: active services, recent incidents, postmortems, and infrastructure state. For greenfield projects this layer is sparse since nothing is deployed yet.
+
+Layer 5 — Task Context
+The specific thing being asked of the agent right now — the current requirement or work package being processed, related requirements, affected files, and any additional free-text context passed by the calling agent.
+
+Layer 6 — Compliance Context
+Active compliance matrix data: control frameworks mapped to the project, pass/fail status of security gates, threat model entries, and open compliance gaps.
+
+Layer 7 — Eval Examples
+Past high-quality agent outputs stored in the evaluation dataset for this project. The agent uses these as quality references — essentially "here's the standard your output should match."
+
+Layer 8 — Task History
+Semantically similar past agent invocations for this project — what was asked before, what was produced, and the outcome. Helps the agent stay consistent with prior decisions rather than reinventing the wheel each time.
+
+Layers 1–5 run in every agent call. Layers 6–8 are only added when includeAllLayers: true is set — which BRD generation, requirements analysis, and the compliance agent all do. All layers with TTL-based caching so repeated agent calls within the same session don't hit the database each time.
