@@ -101,9 +101,11 @@ interface OverviewData {
   };
   systemStatus: {
     toolErrorRate: number;
-    queueDepth: number;
+    pendingApprovals: number;
     evalBacklog: number;
     connectorHealth: number;
+    connectedConnectors: number;
+    totalConnectors: number;
     activeAgents: number;
     totalAgents: number;
   };
@@ -649,13 +651,13 @@ function SystemStatusInline({ systemStatus }: { systemStatus: OverviewData["syst
     <div className="flex items-center gap-5 flex-wrap" data-testid="card-system-status">
       <div className="flex items-center gap-1.5" data-testid="status-tool-error-rate">
         <AlertTriangle className="w-4 h-4 text-muted-foreground" />
-        <span className="text-sm text-muted-foreground">Error Rate</span>
+        <span className="text-sm text-muted-foreground">Trace Error Rate</span>
         <span className={`text-sm font-semibold ${systemStatus.toolErrorRate > 5 ? "text-red-600 dark:text-red-400" : ""}`}>{systemStatus.toolErrorRate}%</span>
       </div>
-      <div className="flex items-center gap-1.5" data-testid="status-queue-depth">
+      <div className="flex items-center gap-1.5" data-testid="status-pending-approvals">
         <Clock className="w-4 h-4 text-muted-foreground" />
-        <span className="text-sm text-muted-foreground">Queue</span>
-        <span className={`text-sm font-semibold ${systemStatus.queueDepth > 10 ? "text-amber-600 dark:text-amber-400" : ""}`}>{systemStatus.queueDepth}</span>
+        <span className="text-sm text-muted-foreground">Pending Approvals</span>
+        <span className={`text-sm font-semibold ${systemStatus.pendingApprovals > 10 ? "text-amber-600 dark:text-amber-400" : ""}`}>{systemStatus.pendingApprovals}</span>
       </div>
       <div className="flex items-center gap-1.5" data-testid="status-eval-backlog">
         <FlaskConical className="w-4 h-4 text-muted-foreground" />
@@ -665,7 +667,9 @@ function SystemStatusInline({ systemStatus }: { systemStatus: OverviewData["syst
       <div className="flex items-center gap-1.5" data-testid="status-connector-health">
         {systemStatus.connectorHealth >= 80 ? <Wifi className="w-4 h-4 text-muted-foreground" /> : <WifiOff className="w-4 h-4 text-red-500" />}
         <span className="text-sm text-muted-foreground">Connectors</span>
-        <span className={`text-sm font-semibold ${systemStatus.connectorHealth < 80 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>{systemStatus.connectorHealth}%</span>
+        <span className={`text-sm font-semibold ${systemStatus.connectorHealth < 80 ? "text-red-600 dark:text-red-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+          {systemStatus.connectedConnectors}/{systemStatus.totalConnectors}
+        </span>
       </div>
     </div>
   );
@@ -799,8 +803,6 @@ export default function Overview() {
     );
   }
 
-  const agentIncidents = data.agentsAtRisk.filter((a) => a.openIncidents > 0 || (a.lastDrift && Math.abs(a.lastDrift.driftPercent) > 10)).length;
-
   return (
     <div className="flex flex-col gap-2 p-3" data-testid="page-overview">
       <PlatformHero industry={industry} role={role} config={config} />
@@ -810,7 +812,7 @@ export default function Overview() {
       )}
       <div className="flex flex-col gap-1.5">
         {config.showAgentsAtRisk && (
-          <CollapsibleSection title="Agents At Risk" badge={agentIncidents > 0 ? agentIncidents : undefined} viewAllHref="/agents">
+          <CollapsibleSection title="Agents At Risk" badge={data.agentsAtRisk.length > 0 ? data.agentsAtRisk.length : undefined} viewAllHref="/agents">
             <AgentsAtRiskInline agents={data.agentsAtRisk} />
           </CollapsibleSection>
         )}

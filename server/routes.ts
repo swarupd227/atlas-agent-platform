@@ -15476,7 +15476,7 @@ Eval Suites: ${evalSuites.length} configured`,
 
   app.get("/api/overview", async (_req, res) => {
     try {
-      const [agents, outcomes, kpis, allApprovals, allInvoices, allEvents, allDisputes, evalSuites, traces, deployments] = await Promise.all([
+      const [agents, outcomes, kpis, allApprovals, allInvoices, allEvents, allDisputes, evalSuites, traces, deployments, toolConnectors] = await Promise.all([
         storage.getAgents(),
         storage.getOutcomes(),
         storage.getKpis(),
@@ -15487,6 +15487,7 @@ Eval Suites: ${evalSuites.length} configured`,
         storage.getEvalSuites(),
         storage.getTraces(),
         storage.getDeployments(),
+        storage.getToolConnectors(),
       ]);
 
       // --- Outcome Health Grid ---
@@ -15632,9 +15633,9 @@ Eval Suites: ${evalSuites.length} configured`,
       }
       const evalBacklog = pendingEvalRuns.reduce((s, n) => s + n, 0);
 
-      const activeDeployments = deployments.filter((d) => d.status === "deployed" || d.status === "active");
-      const connectorHealth = activeDeployments.length > 0
-        ? Math.round((activeDeployments.length / Math.max(deployments.length, 1)) * 100)
+      const connectedConnectors = toolConnectors.filter((c) => c.status === "connected").length;
+      const connectorHealth = toolConnectors.length > 0
+        ? Math.round((connectedConnectors / toolConnectors.length) * 100)
         : 100;
 
       // --- Portfolio ---
@@ -15805,9 +15806,11 @@ Eval Suites: ${evalSuites.length} configured`,
         },
         systemStatus: {
           toolErrorRate: Math.round(toolErrorRate * 10) / 10,
-          queueDepth: totalPendingApprovals,
+          pendingApprovals: totalPendingApprovals,
           evalBacklog,
           connectorHealth,
+          connectedConnectors,
+          totalConnectors: toolConnectors.length,
           activeAgents: agents.filter((a) => a.status === "active").length,
           totalAgents: agents.length,
         },
