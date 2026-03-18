@@ -3055,10 +3055,16 @@ export async function registerRoutes(
           }).slice(0, 20);
           skillSource = "auto-matched";
         }
+        const skillSources = relevantSkills.map((s: any) => ({
+          skillId: s.id,
+          name: s.name,
+          source: skillSource as "assigned" | "auto-matched",
+        }));
+        const sourceTag = skillSource === "assigned" ? "[Assigned]" : "[Auto-matched]";
         const lines: string[] = [];
         if (relevantSkills.length > 0) {
           lines.push(`## AGENT SKILLS (${skillSource === "assigned" ? "explicitly assigned" : "auto-matched by industry/tags"})`);
-          relevantSkills.forEach((s: any) => lines.push(`- ${s.name} (${s.domain}, v${s.version}): ${s.description}`));
+          relevantSkills.forEach((s: any) => lines.push(`- ${s.name} (${s.domain}, v${s.version}) ${sourceTag}: ${s.description}`));
         }
         if (mcpToolLines.length > 0) {
           lines.push(`\n## MCP TOOLS (${mcpLinks.length} server(s))`);
@@ -3067,11 +3073,12 @@ export async function registerRoutes(
         if (lines.length === 0) lines.push("No skills or MCP tools linked to this agent.");
         const preview = lines.join("\n");
         layers.push({
-          id: "capabilities", name: "Agent Capabilities", description: "Linked skills and MCP server tools available to this agent",
+          id: "capabilities", name: "Agent Capabilities", description: "Skills explicitly assigned or auto-matched, plus MCP server tools available to this agent",
           status: relevantSkills.length > 0 || mcpLinks.length > 0 ? "populated" : "not_configured",
           tokenEstimate: estimateTokens(preview), previewContent: preview,
           sourceLabel: "Skills", sourceUrl: "/skills",
           itemCount: relevantSkills.length + mcpLinks.length,
+          skillSources,
         });
       } catch { layers.push({ id: "capabilities", name: "Agent Capabilities", description: "Linked skills and MCP server tools available to this agent", status: "not_configured", tokenEstimate: 0, previewContent: "Could not load capabilities." }); }
 

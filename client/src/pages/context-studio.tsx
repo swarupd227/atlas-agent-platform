@@ -20,6 +20,12 @@ import {
 
 type LayerStatus = "populated" | "not_configured" | "dynamic";
 
+type SkillSource = {
+  skillId: string;
+  name: string;
+  source: "assigned" | "auto-matched";
+};
+
 type ContextLayer = {
   id: string;
   name: string;
@@ -30,6 +36,7 @@ type ContextLayer = {
   sourceLabel?: string;
   sourceUrl?: string;
   itemCount?: number;
+  skillSources?: SkillSource[];
 };
 
 const LAYER_META: Record<string, { icon: typeof Target; color: string; bgColor: string; borderColor: string; number: number }> = {
@@ -126,11 +133,45 @@ function LayerCard({ layer }: { layer: ContextLayer }) {
         </div>
 
         {expanded && (
-          <div
-            className="rounded-md bg-muted/40 border p-3 text-xs font-mono whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto"
-            data-testid={`text-preview-${layer.id}`}
-          >
-            {layer.previewContent}
+          <div data-testid={`text-preview-${layer.id}`}>
+            {layer.id === "capabilities" && layer.skillSources && layer.skillSources.length > 0 ? (
+              <div className="space-y-3">
+                <div className="rounded-md bg-muted/40 border p-3">
+                  <p className="text-xs text-muted-foreground font-medium mb-2 uppercase tracking-wide">
+                    Agent Skills &mdash; {layer.skillSources[0].source === "assigned" ? "explicitly assigned" : "auto-matched by industry/tags"}
+                  </p>
+                  <div className="space-y-1.5">
+                    {layer.skillSources.map(skill => (
+                      <div key={skill.skillId} className="flex items-center gap-2" data-testid={`skill-row-${skill.skillId}`}>
+                        <span className="text-xs font-mono flex-1 truncate">{skill.name}</span>
+                        <Badge
+                          variant="outline"
+                          className={`text-xs flex-shrink-0 ${skill.source === "assigned"
+                            ? "border-blue-300 text-blue-700 bg-blue-50 dark:border-blue-700 dark:text-blue-400 dark:bg-blue-950/40"
+                            : "border-zinc-300 text-zinc-500 bg-zinc-50 dark:border-zinc-600 dark:text-zinc-400 dark:bg-zinc-900"}`}
+                          data-testid={`badge-skill-source-${skill.skillId}`}
+                        >
+                          {skill.source === "assigned" ? "Assigned" : "Auto-matched"}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                {(() => {
+                  const mcpIdx = layer.previewContent.indexOf("\n## MCP TOOLS");
+                  if (mcpIdx === -1) return null;
+                  return (
+                    <div className="rounded-md bg-muted/40 border p-3 text-xs font-mono whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto">
+                      {layer.previewContent.slice(mcpIdx + 1)}
+                    </div>
+                  );
+                })()}
+              </div>
+            ) : (
+              <div className="rounded-md bg-muted/40 border p-3 text-xs font-mono whitespace-pre-wrap leading-relaxed max-h-64 overflow-y-auto">
+                {layer.previewContent}
+              </div>
+            )}
           </div>
         )}
       </CardContent>
