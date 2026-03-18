@@ -96,7 +96,7 @@ export function AppSidebar() {
         { title: "Blueprints", url: "/blueprints", icon: PenTool },
         { title: "Templates", url: "/templates", icon: Library },
         { title: "Skills", url: "/skills", icon: Layers },
-        { title: "Context Studio", url: "/context-studio", icon: Brain },
+        { title: "Context Engine", url: "/context-studio", icon: Brain },
         { title: "Memory Manager", url: "/memory-architecture", icon: Database },
         { title: "RAG Pipeline", url: "/rag-pipeline", icon: GitBranch },
         { title: "Knowledge Graph", url: "/knowledge-graph", icon: Network },

@@ -2942,6 +2942,186 @@ export async function registerRoutes(
     res.json(logs);
   });
 
+  app.get("/api/agents/:id/context-layers", async (req, res) => {
+    try {
+      const agentId = req.params.id;
+      const agent = await storage.getAgent(agentId);
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      const estimateTokens = (text: string) => Math.ceil(text.length / 4);
+
+      const layers: Array<{
+        id: string; name: string; description: string;
+        status: "populated" | "not_configured" | "dynamic";
+        tokenEstimate: number; previewContent: string;
+        sourceLabel?: string; sourceUrl?: string;
+        itemCount?: number;
+      }> = [];
+
+      // Layer 1 — Outcome Contract
+      try {
+        if (agent.outcomeId) {
+          const outcome = await storage.getOutcome(agent.outcomeId);
+          if (outcome) {
+            const kpis = await storage.getKpisByOutcome(agent.outcomeId);
+            const lines: string[] = [];
+            lines.push(`## OUTCOME CONTRACT`);
+            lines.push(`Name: ${outcome.name}`);
+            if (outcome.description) lines.push(`Description: ${outcome.description}`);
+            lines.push(`Risk Tier: ${outcome.riskTier}`);
+            lines.push(`Status: ${outcome.status}`);
+            if ((outcome as any).slaDescription) lines.push(`SLA: ${(outcome as any).slaDescription}`);
+            if (kpis.length > 0) {
+              lines.push(`\n## KPI TARGETS`);
+              kpis.forEach(kpi => {
+                lines.push(`- ${kpi.name}: target=${kpi.target}, unit=${kpi.unit}, weight=${kpi.weight ?? 1}`);
+              });
+            }
+            const preview = lines.join("\n");
+            layers.push({
+              id: "outcome", name: "Outcome Contract", description: "Business goals, KPIs, and SLAs governing this agent",
+              status: "populated", tokenEstimate: estimateTokens(preview), previewContent: preview,
+              sourceLabel: outcome.name, sourceUrl: `/outcomes/${agent.outcomeId}`,
+              itemCount: kpis.length,
+            });
+          } else {
+            layers.push({ id: "outcome", name: "Outcome Contract", description: "Business goals, KPIs, and SLAs governing this agent", status: "not_configured", tokenEstimate: 0, previewContent: "No outcome linked. Assign an outcome to this agent to populate this layer.", sourceUrl: "/outcomes" });
+          }
+        } else {
+          layers.push({ id: "outcome", name: "Outcome Contract", description: "Business goals, KPIs, and SLAs governing this agent", status: "not_configured", tokenEstimate: 0, previewContent: "No outcome linked. Assign an outcome to this agent to populate this layer.", sourceUrl: "/outcomes" });
+        }
+      } catch { layers.push({ id: "outcome", name: "Outcome Contract", description: "Business goals, KPIs, and SLAs governing this agent", status: "not_configured", tokenEstimate: 0, previewContent: "Could not load outcome." }); }
+
+      // Layer 2 — Industry Governance
+      try {
+        const policies = await storage.getPolicies();
+        const activePolicies = policies.filter(p => p.status === "active");
+        const ontologyTags = Array.isArray((agent as any).ontologyTags) ? (agent as any).ontologyTags as Array<{ conceptId: string; conceptLabel: string }> : [];
+        const lines: string[] = [];
+        lines.push(`## GOVERNANCE POLICIES`);
+        activePolicies.slice(0, 10).forEach(p => {
+          const policyJson = p.policyJson as any;
+          const enforcement = policyJson?.enforcement || "soft";
+          lines.push(`- [${enforcement.toUpperCase()}] ${p.name} (${p.domain}): ${p.description || ""}`);
+        });
+        if (ontologyTags.length > 0) {
+          lines.push(`\n## ONTOLOGY CONCEPTS`);
+          ontologyTags.forEach(t => lines.push(`- ${t.conceptLabel} (${t.conceptId})`));
+        }
+        const preview = lines.join("\n");
+        layers.push({
+          id: "governance", name: "Industry Governance", description: "Active compliance policies and ontology concept tags",
+          status: activePolicies.length > 0 || ontologyTags.length > 0 ? "populated" : "not_configured",
+          tokenEstimate: estimateTokens(preview), previewContent: preview,
+          sourceLabel: "Governance", sourceUrl: "/governance",
+          itemCount: activePolicies.length + ontologyTags.length,
+        });
+      } catch { layers.push({ id: "governance", name: "Industry Governance", description: "Active compliance policies and ontology concept tags", status: "not_configured", tokenEstimate: 0, previewContent: "Could not load governance data." }); }
+
+      // Layer 3 — Agent Capabilities
+      try {
+        const mcpLinks = await storage.getAgentMcpServers(agentId);
+        const mcpToolLines: string[] = [];
+        for (const link of mcpLinks.slice(0, 5)) {
+          const tools = await storage.getMcpServerTools(link.serverId);
+          tools.slice(0, 8).forEach(t => mcpToolLines.push(`  - ${t.name}: ${t.description || ""}`));
+        }
+        const allSkills = await storage.getSkills();
+        const agentIndustry = (agent as any).industry?.toLowerCase();
+        const ontologyLabels = Array.isArray((agent as any).ontologyTags) ? ((agent as any).ontologyTags as Array<{ conceptLabel: string }>).map(t => t.conceptLabel.toLowerCase()) : [];
+        const relevantSkills = allSkills.filter((s: any) => {
+          if (s.status !== "active") return false;
+          if (agentIndustry && s.industry?.toLowerCase() === agentIndustry) return true;
+          if (ontologyLabels.length > 0) {
+            const skillTags = (s.tags || []).map((t: string) => t.toLowerCase());
+            return ontologyLabels.some((label: string) => skillTags.includes(label));
+          }
+          return false;
+        }).slice(0, 8);
+        const lines: string[] = [];
+        if (relevantSkills.length > 0) {
+          lines.push(`## AGENT SKILLS`);
+          relevantSkills.forEach((s: any) => lines.push(`- ${s.name} (${s.domain}, v${s.version}): ${s.description}`));
+        }
+        if (mcpToolLines.length > 0) {
+          lines.push(`\n## MCP TOOLS (${mcpLinks.length} server(s))`);
+          lines.push(...mcpToolLines);
+        }
+        if (lines.length === 0) lines.push("No skills or MCP tools linked to this agent.");
+        const preview = lines.join("\n");
+        layers.push({
+          id: "capabilities", name: "Agent Capabilities", description: "Linked skills and MCP server tools available to this agent",
+          status: relevantSkills.length > 0 || mcpLinks.length > 0 ? "populated" : "not_configured",
+          tokenEstimate: estimateTokens(preview), previewContent: preview,
+          sourceLabel: "Skills", sourceUrl: "/skills",
+          itemCount: relevantSkills.length + mcpLinks.length,
+        });
+      } catch { layers.push({ id: "capabilities", name: "Agent Capabilities", description: "Linked skills and MCP server tools available to this agent", status: "not_configured", tokenEstimate: 0, previewContent: "Could not load capabilities." }); }
+
+      // Layer 4 — Knowledge Retrieval
+      try {
+        const kbLinks = await storage.getAgentKnowledgeBases(agentId);
+        const lines: string[] = [];
+        lines.push(`## KNOWLEDGE BASES (${kbLinks.length})`);
+        let totalChunks = 0;
+        for (const link of kbLinks) {
+          const kb = await storage.getKnowledgeBase(link.knowledgeBaseId);
+          const chunks = await storage.getKnowledgeChunks(link.knowledgeBaseId);
+          totalChunks += chunks.length;
+          const sampleChunk = chunks[0]?.content?.substring(0, 200) || "";
+          lines.push(`\n- ${kb?.name || link.knowledgeBaseId}: ${chunks.length} chunks`);
+          if (sampleChunk) lines.push(`  Sample: "${sampleChunk}${sampleChunk.length >= 200 ? "..." : ""}"`);
+        }
+        if (kbLinks.length === 0) lines.push("No knowledge bases linked to this agent.");
+        const preview = lines.join("\n");
+        layers.push({
+          id: "knowledge", name: "Knowledge Retrieval", description: "Linked Knowledge Bases queried at runtime for relevant context",
+          status: kbLinks.length > 0 ? "populated" : "not_configured",
+          tokenEstimate: kbLinks.length > 0 ? estimateTokens(preview) : 0, previewContent: preview,
+          sourceLabel: "Knowledge", sourceUrl: "/knowledge-bases",
+          itemCount: totalChunks,
+        });
+      } catch { layers.push({ id: "knowledge", name: "Knowledge Retrieval", description: "Linked Knowledge Bases queried at runtime for relevant context", status: "not_configured", tokenEstimate: 0, previewContent: "Could not load knowledge bases." }); }
+
+      // Layer 5 — Execution History
+      try {
+        const allTraces = await storage.getTracesByAgent(agentId);
+        const recentCompleted = allTraces.filter((t: any) => t.status === "completed").slice(0, 5);
+        const lines: string[] = [];
+        lines.push(`## EXECUTION HISTORY (last ${recentCompleted.length} completed runs)`);
+        recentCompleted.forEach((t: any, i: number) => {
+          const steps = Array.isArray(t.stepsJson) ? t.stepsJson as any[] : [];
+          const toolsUsed = [...new Set(steps.filter((s: any) => s.type === "tool_call").map((s: any) => s.toolName || s.name || "unknown"))].slice(0, 3);
+          lines.push(`\nRun ${i + 1}: ${t.inputSummary?.substring(0, 80) || "Scheduled run"}`);
+          lines.push(`  Status: ${t.status} | Latency: ${t.latencyMs}ms | Cost: $${(t.costUsd || 0).toFixed(4)}`);
+          if (toolsUsed.length > 0) lines.push(`  Tools: ${toolsUsed.join(", ")}`);
+          if (t.outputSummary) lines.push(`  Output: ${t.outputSummary.substring(0, 100)}`);
+        });
+        if (recentCompleted.length === 0) lines.push("No completed runs yet.");
+        const preview = lines.join("\n");
+        layers.push({
+          id: "history", name: "Execution History", description: "Recent completed run summaries injected for continuity",
+          status: recentCompleted.length > 0 ? "populated" : "not_configured",
+          tokenEstimate: recentCompleted.length > 0 ? estimateTokens(preview) : 0, previewContent: preview,
+          sourceLabel: "Monitor", sourceUrl: "/monitor",
+          itemCount: recentCompleted.length,
+        });
+      } catch { layers.push({ id: "history", name: "Execution History", description: "Recent completed run summaries injected for continuity", status: "not_configured", tokenEstimate: 0, previewContent: "Could not load execution history." }); }
+
+      // Layer 6 — Task Context
+      layers.push({
+        id: "task", name: "Task Context", description: "The runtime task prompt — provided at invocation time",
+        status: "dynamic", tokenEstimate: 0,
+        previewContent: `This layer is populated at invocation time with the specific task prompt.\n\nCurrent configured prompt:\n${((agent.runtimeConfig as any)?.prompt || "No prompt configured yet.").substring(0, 300)}`,
+        sourceLabel: "Agent Config", sourceUrl: `/agents/${agentId}`,
+      });
+
+      res.json(layers);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to load context layers" });
+    }
+  });
+
   app.get("/api/agents/:id/versions", async (req, res) => {
     const versions = await storage.getAgentVersions(req.params.id);
     const deployments = await storage.getDeployments();
