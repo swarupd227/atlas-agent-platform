@@ -1249,16 +1249,21 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                     <Switch id="skill-disable-model" checked={disableModelInvocation} onCheckedChange={setDisableModelInvocation} data-testid="switch-disable-model" />
                   </div>
                   <div className="space-y-1.5">
-                    <Label>Context Mode</Label>
+                    <Label>Context Injection Mode</Label>
                     <Select value={contextMode} onValueChange={setContextMode}>
                       <SelectTrigger data-testid="select-context-mode">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="fork">Fork (isolated context)</SelectItem>
-                        <SelectItem value="inline">Inline (shared context)</SelectItem>
+                        <SelectItem value="inline">Inline summary (one-line description)</SelectItem>
+                        <SelectItem value="full">Full markdown (inject markdownBody)</SelectItem>
                       </SelectContent>
                     </Select>
+                    <p className="text-[11px] text-muted-foreground">
+                      {contextMode === "full"
+                        ? "The full markdown body will be injected into agent context, subject to budget."
+                        : "A concise one-line summary is injected into agent context."}
+                    </p>
                   </div>
                   <div className="flex items-center justify-between">
                     <div>

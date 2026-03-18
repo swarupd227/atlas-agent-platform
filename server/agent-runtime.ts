@@ -276,13 +276,28 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
       skillLines.push(`\n## AGENT SKILLS (capabilities you have)`);
       let skillTokensUsed = estimateTokenCount(skillLines[0]);
       for (const s of relevantSkills) {
-        const toolsNote = s.allowedTools?.length ? ` | Allowed tools: ${s.allowedTools.join(", ")}` : "";
-        const mcpNote = s.requiredMcpServers?.length ? ` | Required MCP: ${s.requiredMcpServers.join(", ")}` : "";
-        const line = `- ${s.name} (${s.domain}, v${s.version}): ${s.description}${toolsNote}${mcpNote}`;
-        const lineTokens = estimateTokenCount(line);
-        if (skillTokensUsed + lineTokens > layerBudgets.capabilities) break;
-        skillLines.push(line);
-        skillTokensUsed += lineTokens;
+        const header = `- ${s.name} (${s.domain}, v${s.version})`;
+        const useFullBody = s.contextMode !== "inline" && s.markdownBody && (s.markdownBody as string).trim().length > 0;
+        if (useFullBody) {
+          const headerLine = `${header}:`;
+          const headerTokens = estimateTokenCount(headerLine);
+          if (skillTokensUsed + headerTokens > layerBudgets.capabilities) break;
+          const remainingBudget = layerBudgets.capabilities - skillTokensUsed - headerTokens;
+          const maxChars = remainingBudget * 4;
+          const body = (s.markdownBody as string).length > maxChars
+            ? (s.markdownBody as string).substring(0, maxChars) + "\n...[truncated]"
+            : (s.markdownBody as string);
+          skillLines.push(`${headerLine}\n${body}`);
+          skillTokensUsed += headerTokens + estimateTokenCount(body);
+        } else {
+          const toolsNote = s.allowedTools?.length ? ` | Allowed tools: ${s.allowedTools.join(", ")}` : "";
+          const mcpNote = s.requiredMcpServers?.length ? ` | Required MCP: ${s.requiredMcpServers.join(", ")}` : "";
+          const line = `${header}: ${s.description}${toolsNote}${mcpNote}`;
+          const lineTokens = estimateTokenCount(line);
+          if (skillTokensUsed + lineTokens > layerBudgets.capabilities) break;
+          skillLines.push(line);
+          skillTokensUsed += lineTokens;
+        }
       }
       trackSection("skills", skillLines.join("\n"));
 

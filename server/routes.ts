@@ -3064,7 +3064,15 @@ export async function registerRoutes(
         const lines: string[] = [];
         if (relevantSkills.length > 0) {
           lines.push(`## AGENT SKILLS (${skillSource === "assigned" ? "explicitly assigned" : "auto-matched by industry/tags"})`);
-          relevantSkills.forEach((s: any) => lines.push(`- ${s.name} (${s.domain}, v${s.version}) ${sourceTag}: ${s.description}`));
+          for (const s of relevantSkills) {
+            const header = `- ${s.name} (${s.domain}, v${s.version}) ${sourceTag}`;
+            const useFullBody = s.contextMode !== "inline" && s.markdownBody && (s.markdownBody as string).trim().length > 0;
+            if (useFullBody) {
+              lines.push(`${header}:\n${s.markdownBody}`);
+            } else {
+              lines.push(`${header}: ${s.description}`);
+            }
+          }
         }
         if (mcpToolLines.length > 0) {
           lines.push(`\n## MCP TOOLS (${mcpLinks.length} server(s))`);
