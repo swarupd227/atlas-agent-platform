@@ -744,15 +744,47 @@ export default function AgentWizard() {
             entries: Array<{ skillId: string; skillName: string; domain: string; executionOrder: number }>
           ) {
             return entries.map((s) => {
-              if (s.skillId) return s;
+              // Treat synthetic fallback IDs (e.g. "skill_0") as unresolved
+              const isSynthetic = /^skill_\d+$/.test(s.skillId);
+              if (s.skillId && !isSynthetic) return s;
+
               const sLower = s.skillName.toLowerCase();
-              const match = catalog.find(
+              const sDomain = s.domain.toLowerCase();
+
+              // Priority 1: exact name + exact domain match
+              let match = catalog.find(
                 (c) =>
-                  c.name.toLowerCase() === sLower ||
-                  c.name.toLowerCase().includes(sLower) ||
-                  sLower.includes(c.name.toLowerCase())
+                  c.name.toLowerCase() === sLower &&
+                  c.domain.toLowerCase() === sDomain
               );
-              return match ? { ...s, skillId: match.id } : s;
+              // Priority 2: exact name, any domain
+              if (!match) {
+                match = catalog.find((c) => c.name.toLowerCase() === sLower);
+              }
+              // Priority 3: partial name within same domain
+              if (!match && sDomain) {
+                match = catalog.find(
+                  (c) =>
+                    c.domain.toLowerCase() === sDomain &&
+                    (c.name.toLowerCase().includes(sLower) || sLower.includes(c.name.toLowerCase()))
+                );
+              }
+              // Priority 4: partial name, any domain (lowest priority)
+              if (!match) {
+                match = catalog.find(
+                  (c) =>
+                    c.name.toLowerCase().includes(sLower) ||
+                    sLower.includes(c.name.toLowerCase())
+                );
+              }
+
+              if (!match) {
+                console.warn(
+                  `[template-skill-resolver] Unresolved skill "${s.skillName}" (domain: "${s.domain}") for template ${templateId} — will not be injected at runtime`
+                );
+                return { ...s, skillId: "" };
+              }
+              return { ...s, skillId: match.id };
             });
           }
 
@@ -778,7 +810,9 @@ export default function AgentWizard() {
           };
         });
       })
-      .catch(() => {});
+      .catch((err) => {
+        console.warn("[template-skill-resolver] Failed to fetch skill catalog for template skill resolution:", err);
+      });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wizardState.templateSkills.templateId]);
 
@@ -1187,7 +1221,8 @@ export default function AgentWizard() {
           : [];
         if (reqSkills.length === 0 && optSkills.length === 0 && Array.isArray(template.preloadedSkills)) {
           const fallbackOptional = (template.preloadedSkills as any[]).map((s: any, i: number) => ({
-            skillId: s.skillId || s.id || `skill_${i}`,
+            // Use real IDs only — never synthesize fake ones; resolution effect will populate empties
+            skillId: s.skillId || s.id || "",
             skillName: s.skillName || s.name || String(s),
             domain: s.domain || "",
             executionOrder: s.executionOrder ?? i + 1,
