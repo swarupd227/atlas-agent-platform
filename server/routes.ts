@@ -3069,7 +3069,7 @@ export async function registerRoutes(
           let skillTokensUsed = estimateTokens(sectionHeader);
           for (const s of relevantSkills) {
             const header = `- ${s.name} (${s.domain}, v${s.version}) ${sourceTag}`;
-            const useFullBody = s.contextMode !== "inline" && s.markdownBody && (s.markdownBody as string).trim().length > 0;
+            const useFullBody = s.contextMode === "full" && s.markdownBody && (s.markdownBody as string).trim().length > 0;
             if (useFullBody) {
               const headerLine = `${header}:`;
               const headerTokens = estimateTokens(headerLine);
