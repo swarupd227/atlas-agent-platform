@@ -240,17 +240,58 @@ type TemplateContextPreviewProps = {
   allSkills?: Skill[];
 };
 
-function resolveSkill(entry: any, catalog?: Skill[]): { name: string; domain: string; description: string; resolved: boolean } {
+function resolveSkillEntry(
+  entry: any,
+  catalog?: Skill[]
+): { name: string; domain: string; description: string; resolved: boolean } {
+  const fallbackName = entry.skillName || entry.skillId || "Unresolved skill";
+  const fallbackDomain = entry.domain || "";
+
   if (!catalog || catalog.length === 0) {
-    return { name: entry.skillName || entry.skillId || "Unknown", domain: entry.domain || "", description: "", resolved: false };
+    return { name: fallbackName, domain: fallbackDomain, description: "", resolved: false };
   }
-  const byId = entry.skillId ? catalog.find(s => s.id === entry.skillId || String(s.id) === String(entry.skillId)) : undefined;
-  const byName = entry.skillName ? catalog.find(s => s.name?.toLowerCase() === entry.skillName?.toLowerCase()) : undefined;
-  const match = byId || byName;
+
+  const isSynthetic = entry.skillId && /^skill_\d+$/.test(entry.skillId);
+  if (entry.skillId && !isSynthetic) {
+    const byId = catalog.find(s => String(s.id) === String(entry.skillId));
+    if (byId) {
+      return { name: byId.name, domain: byId.domain || fallbackDomain, description: byId.description || "", resolved: true };
+    }
+  }
+
+  if (!entry.skillName) {
+    return { name: fallbackName, domain: fallbackDomain, description: "", resolved: false };
+  }
+
+  const sLower = entry.skillName.toLowerCase();
+  const sDomain = (entry.domain || "").toLowerCase();
+
+  let match: Skill | undefined;
+
+  // Priority 1: exact name + exact domain
+  match = catalog.find(
+    c => c.name.toLowerCase() === sLower && (c.domain || "").toLowerCase() === sDomain
+  );
+  // Priority 2: exact name, any domain
+  if (!match) match = catalog.find(c => c.name.toLowerCase() === sLower);
+  // Priority 3: partial name within same domain
+  if (!match && sDomain) {
+    match = catalog.find(
+      c => (c.domain || "").toLowerCase() === sDomain &&
+        (c.name.toLowerCase().includes(sLower) || sLower.includes(c.name.toLowerCase()))
+    );
+  }
+  // Priority 4: partial name, any domain
+  if (!match) {
+    match = catalog.find(
+      c => c.name.toLowerCase().includes(sLower) || sLower.includes(c.name.toLowerCase())
+    );
+  }
+
   if (match) {
-    return { name: match.name, domain: match.domain || entry.domain || "", description: match.description || "", resolved: true };
+    return { name: match.name, domain: match.domain || fallbackDomain, description: match.description || "", resolved: true };
   }
-  return { name: entry.skillName || entry.skillId || "Unresolved skill", domain: entry.domain || "", description: "", resolved: false };
+  return { name: fallbackName, domain: fallbackDomain, description: "", resolved: false };
 }
 
 function TemplateContextPreview({ policyBindings, preloadedSkills, requiredSkills, optionalSkills, allSkills }: TemplateContextPreviewProps) {
@@ -346,7 +387,7 @@ function TemplateContextPreview({ policyBindings, preloadedSkills, requiredSkill
             ) : (
               <div className="space-y-2" data-testid="list-layer3-skills">
                 {allSkillEntries.map((entry, i) => {
-                  const resolved = resolveSkill(entry, allSkills);
+                  const resolved = resolveSkillEntry(entry, allSkills);
                   return (
                     <div key={i} className="flex items-start gap-2" data-testid={`skill-preview-row-${i}`}>
                       <Brain className="w-3 h-3 text-amber-500 flex-shrink-0 mt-0.5" />
