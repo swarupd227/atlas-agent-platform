@@ -283,6 +283,18 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
           const headerTokens = estimateTokenCount(headerLine);
           if (skillTokensUsed + headerTokens > layerBudgets.capabilities) break;
           const remainingBudget = layerBudgets.capabilities - skillTokensUsed - headerTokens;
+          if (remainingBudget <= 0) {
+            // No room for markdown body — attempt inline fallback
+            const toolsNote = s.allowedTools?.length ? ` | Allowed tools: ${s.allowedTools.join(", ")}` : "";
+            const mcpNote = s.requiredMcpServers?.length ? ` | Required MCP: ${s.requiredMcpServers.join(", ")}` : "";
+            const fallback = `${header}: ${s.description}${toolsNote}${mcpNote}`;
+            const fallbackTokens = estimateTokenCount(fallback);
+            if (skillTokensUsed + fallbackTokens <= layerBudgets.capabilities) {
+              skillLines.push(fallback);
+              skillTokensUsed += fallbackTokens;
+            }
+            continue;
+          }
           const maxChars = remainingBudget * 4;
           const body = (s.markdownBody as string).length > maxChars
             ? (s.markdownBody as string).substring(0, maxChars) + "\n...[truncated]"

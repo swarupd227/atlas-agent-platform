@@ -3061,16 +3061,41 @@ export async function registerRoutes(
           source: skillSource as "assigned" | "auto-matched",
         }));
         const sourceTag = skillSource === "assigned" ? "[Assigned]" : "[Auto-matched]";
+        const CAPABILITIES_BUDGET = 500;
         const lines: string[] = [];
         if (relevantSkills.length > 0) {
-          lines.push(`## AGENT SKILLS (${skillSource === "assigned" ? "explicitly assigned" : "auto-matched by industry/tags"})`);
+          const sectionHeader = `## AGENT SKILLS (${skillSource === "assigned" ? "explicitly assigned" : "auto-matched by industry/tags"})`;
+          lines.push(sectionHeader);
+          let skillTokensUsed = estimateTokens(sectionHeader);
           for (const s of relevantSkills) {
             const header = `- ${s.name} (${s.domain}, v${s.version}) ${sourceTag}`;
             const useFullBody = s.contextMode !== "inline" && s.markdownBody && (s.markdownBody as string).trim().length > 0;
             if (useFullBody) {
-              lines.push(`${header}:\n${s.markdownBody}`);
+              const headerLine = `${header}:`;
+              const headerTokens = estimateTokens(headerLine);
+              if (skillTokensUsed + headerTokens > CAPABILITIES_BUDGET) break;
+              const remainingBudget = CAPABILITIES_BUDGET - skillTokensUsed - headerTokens;
+              if (remainingBudget <= 0) {
+                const fallback = `${header}: ${s.description}`;
+                const ft = estimateTokens(fallback);
+                if (skillTokensUsed + ft <= CAPABILITIES_BUDGET) {
+                  lines.push(fallback);
+                  skillTokensUsed += ft;
+                }
+                continue;
+              }
+              const maxChars = remainingBudget * 4;
+              const body = (s.markdownBody as string).length > maxChars
+                ? (s.markdownBody as string).substring(0, maxChars) + "\n...[truncated]"
+                : (s.markdownBody as string);
+              lines.push(`${headerLine}\n${body}`);
+              skillTokensUsed += headerTokens + estimateTokens(body);
             } else {
-              lines.push(`${header}: ${s.description}`);
+              const line = `${header}: ${s.description}`;
+              const lt = estimateTokens(line);
+              if (skillTokensUsed + lt > CAPABILITIES_BUDGET) break;
+              lines.push(line);
+              skillTokensUsed += lt;
             }
           }
         }
