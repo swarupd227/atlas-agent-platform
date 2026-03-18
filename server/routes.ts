@@ -2298,6 +2298,14 @@ export async function registerRoutes(
       const data = insertAgentSchema.parse(body);
       const agent = await storage.createAgent(data);
 
+      const sourceTemplateId = (agent.runtimeConfig as any)?.sourceTemplateId;
+      if (sourceTemplateId) {
+        const tmpl = await storage.getAgentTemplate(sourceTemplateId);
+        if (tmpl) {
+          await storage.updateAgentTemplate(sourceTemplateId, { usageCount: (tmpl.usageCount || 0) + 1 });
+        }
+      }
+
       const hasMemGovRules = Array.isArray(req.body.memoryGovernanceRules) && req.body.memoryGovernanceRules.length > 0;
       const hasRegulatedTags = Array.isArray(agent.complianceTags) && agent.complianceTags.some((t: string) => ["HIPAA", "PCI-DSS", "SOX", "GDPR", "BSA", "AML", "NAIC", "PCI"].includes(t.toUpperCase()));
       if (hasMemGovRules || hasRegulatedTags) {
@@ -4375,9 +4383,23 @@ export async function registerRoutes(
 
   app.patch("/api/deployments/:id", async (req, res) => {
     try {
+      const existing = await storage.getDeployment(req.params.id);
+      if (!existing) return res.status(404).json({ message: "Deployment not found" });
       const data = insertDeploymentSchema.partial().parse(req.body);
       const updated = await storage.updateDeployment(req.params.id, data);
       if (!updated) return res.status(404).json({ message: "Deployment not found" });
+
+      if (req.body.status === "active" && existing.status !== "active") {
+        const agent = await storage.getAgent(existing.agentId);
+        const srcTplId = (agent?.runtimeConfig as any)?.sourceTemplateId;
+        if (srcTplId) {
+          const tmpl = await storage.getAgentTemplate(srcTplId);
+          if (tmpl) {
+            await storage.updateAgentTemplate(srcTplId, { deploymentCount: (tmpl.deploymentCount || 0) + 1 });
+          }
+        }
+      }
+
       res.json(updated);
     } catch (e) {
       handleZodError(res, e);

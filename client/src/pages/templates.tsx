@@ -676,6 +676,13 @@ export default function Templates() {
               Side-by-side comparison of {compareTemplates.length} templates
             </DialogDescription>
           </DialogHeader>
+          {(() => {
+            const showCompliance = compareTemplates.some(t => (t.complianceCertifications || []).length > 0);
+            const showAvgKpi = compareTemplates.some(t => (t.avgKpiDelivery || 0) > 0);
+            const showMonthlyCost = compareTemplates.some(t => !!(t.costProfile as any)?.monthlyEstimate);
+            const showComputeTier = compareTemplates.some(t => !!(t.costProfile as any)?.computeTier);
+            const showApiCalls = compareTemplates.some(t => !!(t.costProfile as any)?.apiCallsPerMonth);
+            return (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -719,67 +726,79 @@ export default function Templates() {
                     <td key={t.id} className="p-2 text-xs capitalize">{t.defaultAutonomyMode}</td>
                   ))}
                 </tr>
-                <tr className="border-b">
-                  <td className="p-2 text-xs text-muted-foreground">Compliance</td>
-                  {compareTemplates.map((t) => (
-                    <td key={t.id} className="p-2">
-                      <div className="flex flex-wrap gap-1">
-                        {(t.complianceCertifications || []).map((cert) => (
-                          <Badge key={cert} variant="outline" className="text-[9px]">{cert}</Badge>
-                        ))}
-                      </div>
-                    </td>
-                  ))}
-                </tr>
+                {showCompliance && (
+                  <tr className="border-b">
+                    <td className="p-2 text-xs text-muted-foreground">Compliance</td>
+                    {compareTemplates.map((t) => (
+                      <td key={t.id} className="p-2">
+                        <div className="flex flex-wrap gap-1">
+                          {(t.complianceCertifications || []).length > 0
+                            ? (t.complianceCertifications || []).map((cert) => (
+                                <Badge key={cert} variant="outline" className="text-[9px]">{cert}</Badge>
+                              ))
+                            : <span className="text-xs text-muted-foreground">—</span>}
+                        </div>
+                      </td>
+                    ))}
+                  </tr>
+                )}
                 <tr className="border-b">
                   <td className="p-2 text-xs text-muted-foreground">Deployments</td>
                   {compareTemplates.map((t) => (
                     <td key={t.id} className="p-2 text-xs font-medium">{t.deploymentCount || 0}</td>
                   ))}
                 </tr>
-                <tr className="border-b">
-                  <td className="p-2 text-xs text-muted-foreground">Avg KPI</td>
-                  {compareTemplates.map((t) => (
-                    <td key={t.id} className="p-2">
-                      <div className="flex items-center gap-2">
-                        <div className="w-16 bg-muted rounded-full h-1.5">
-                          <div
-                            className={`h-1.5 rounded-full ${(t.avgKpiDelivery || 0) >= 80 ? "bg-green-600 dark:bg-green-500" : (t.avgKpiDelivery || 0) >= 60 ? "bg-yellow-600 dark:bg-yellow-500" : "bg-red-600 dark:bg-red-500"}`}
-                            style={{ width: `${Math.min(100, t.avgKpiDelivery || 0)}%` }}
-                          />
+                {showAvgKpi && (
+                  <tr className="border-b">
+                    <td className="p-2 text-xs text-muted-foreground">Avg KPI</td>
+                    {compareTemplates.map((t) => (
+                      <td key={t.id} className="p-2">
+                        <div className="flex items-center gap-2">
+                          <div className="w-16 bg-muted rounded-full h-1.5">
+                            <div
+                              className={`h-1.5 rounded-full ${(t.avgKpiDelivery || 0) >= 80 ? "bg-green-600 dark:bg-green-500" : (t.avgKpiDelivery || 0) >= 60 ? "bg-yellow-600 dark:bg-yellow-500" : "bg-red-600 dark:bg-red-500"}`}
+                              style={{ width: `${Math.min(100, t.avgKpiDelivery || 0)}%` }}
+                            />
+                          </div>
+                          <span className="text-xs font-medium">{t.avgKpiDelivery || 0}%</span>
                         </div>
-                        <span className="text-xs font-medium">{t.avgKpiDelivery || 0}%</span>
-                      </div>
-                    </td>
-                  ))}
-                </tr>
+                      </td>
+                    ))}
+                  </tr>
+                )}
                 <tr className="border-b">
                   <td className="p-2 text-xs text-muted-foreground">Time to Prod</td>
                   {compareTemplates.map((t) => (
                     <td key={t.id} className="p-2 text-xs">{t.estimatedTimeToProd || "2-4 weeks"}</td>
                   ))}
                 </tr>
-                <tr className="border-b">
-                  <td className="p-2 text-xs text-muted-foreground">Monthly Cost</td>
-                  {compareTemplates.map((t) => {
-                    const cp = t.costProfile as { monthlyEstimate?: string } | null;
-                    return <td key={t.id} className="p-2 text-xs font-medium">{cp?.monthlyEstimate || "N/A"}</td>;
-                  })}
-                </tr>
-                <tr className="border-b">
-                  <td className="p-2 text-xs text-muted-foreground">Compute Tier</td>
-                  {compareTemplates.map((t) => {
-                    const cp = t.costProfile as { computeTier?: string } | null;
-                    return <td key={t.id} className="p-2 text-xs">{cp?.computeTier || "N/A"}</td>;
-                  })}
-                </tr>
-                <tr className="border-b">
-                  <td className="p-2 text-xs text-muted-foreground">API Calls/mo</td>
-                  {compareTemplates.map((t) => {
-                    const cp = t.costProfile as { apiCallsPerMonth?: string } | null;
-                    return <td key={t.id} className="p-2 text-xs">{cp?.apiCallsPerMonth || "N/A"}</td>;
-                  })}
-                </tr>
+                {showMonthlyCost && (
+                  <tr className="border-b">
+                    <td className="p-2 text-xs text-muted-foreground">Monthly Cost</td>
+                    {compareTemplates.map((t) => {
+                      const cp = t.costProfile as { monthlyEstimate?: string } | null;
+                      return <td key={t.id} className="p-2 text-xs font-medium">{cp?.monthlyEstimate || "—"}</td>;
+                    })}
+                  </tr>
+                )}
+                {showComputeTier && (
+                  <tr className="border-b">
+                    <td className="p-2 text-xs text-muted-foreground">Compute Tier</td>
+                    {compareTemplates.map((t) => {
+                      const cp = t.costProfile as { computeTier?: string } | null;
+                      return <td key={t.id} className="p-2 text-xs">{cp?.computeTier || "—"}</td>;
+                    })}
+                  </tr>
+                )}
+                {showApiCalls && (
+                  <tr className="border-b">
+                    <td className="p-2 text-xs text-muted-foreground">API Calls/mo</td>
+                    {compareTemplates.map((t) => {
+                      const cp = t.costProfile as { apiCallsPerMonth?: string } | null;
+                      return <td key={t.id} className="p-2 text-xs">{cp?.apiCallsPerMonth || "—"}</td>;
+                    })}
+                  </tr>
+                )}
                 <tr className="border-b">
                   <td className="p-2 text-xs text-muted-foreground">Tools</td>
                   {compareTemplates.map((t) => {
@@ -796,6 +815,8 @@ export default function Templates() {
               </tbody>
             </table>
           </div>
+            );
+          })()}
           <DialogFooter>
             <Button variant="outline" onClick={() => { setCompareTemplates([]); setShowComparison(false); }} data-testid="button-clear-comparison">
               Clear Selection

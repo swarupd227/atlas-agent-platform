@@ -1405,6 +1405,11 @@ export default function AgentWizard() {
       runtimeConfig: autoPrompt ? { prompt: autoPrompt, scheduleIntervalMinutes: 5 } : undefined,
       memoryGovernanceRules: wizardState.memoryGovernanceRules.length > 0 ? wizardState.memoryGovernanceRules : undefined,
     };
+    if (selectedTemplateId) {
+      const existingRt = (payload.runtimeConfig as Record<string, any>) || {};
+      payload.runtimeConfig = { ...existingRt, sourceTemplateId: selectedTemplateId };
+    }
+
     const ts = wizardState.templateSkills;
     if (ts.required.length > 0 || ts.optional.length > 0) {
       const activeRequired = ts.required.sort((a, b) => a.executionOrder - b.executionOrder);
