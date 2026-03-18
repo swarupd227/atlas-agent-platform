@@ -31,6 +31,7 @@ import {
   Zap,
   ChevronDown,
   ChevronUp,
+  Info,
 } from "lucide-react";
 
 interface ChainNode {
@@ -117,6 +118,14 @@ function ComposerLanding() {
             New Chain
           </Button>
         </div>
+
+        <div className="flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30 px-4 py-3" data-testid="banner-blueprint-mode">
+          <Info className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+          <div className="text-sm text-blue-800 dark:text-blue-300">
+            <span className="font-semibold">Blueprint mode</span> — Skill chains are compositional design artifacts. They define the intended skill sequencing and data flow, but are not yet executed by the agent runtime. Runtime execution will be connected in a future release.
+          </div>
+        </div>
+
         <Separator />
         {isLoading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -140,7 +149,10 @@ function ComposerLanding() {
                     <CardHeader className="pb-2">
                       <div className="flex items-start justify-between gap-2">
                         <CardTitle className="text-sm leading-tight">{c.name}</CardTitle>
-                        <Badge variant={c.status === "active" ? "default" : "secondary"} className="text-[10px] shrink-0">{c.status}</Badge>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <Badge variant="outline" className="text-[10px] border-blue-300 text-blue-700 bg-blue-50 dark:border-blue-700 dark:text-blue-400 dark:bg-blue-950/30" data-testid={`badge-blueprint-${c.id}`}>Blueprint</Badge>
+                          <Badge variant={c.status === "active" ? "default" : "secondary"} className="text-[10px]">{c.status}</Badge>
+                        </div>
                       </div>
                     </CardHeader>
                     <CardContent>
@@ -426,6 +438,12 @@ function ComposerEditor({ chainId }: { chainId: string }) {
         </div>
 
         <div className="flex-1 flex flex-col min-w-0">
+          <div className="flex items-center gap-2 px-3 py-2 border-b bg-blue-50 dark:bg-blue-950/20 border-blue-200 dark:border-blue-800 shrink-0" data-testid="callout-blueprint-editor">
+            <Info className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+            <p className="text-xs text-blue-800 dark:text-blue-300">
+              <span className="font-semibold">Blueprint mode — not yet executed at runtime.</span> This chain defines the intended skill sequencing and will be connected to agent execution in a future release.
+            </p>
+          </div>
           <div
             ref={canvasRef}
             className="flex-1 relative overflow-auto bg-muted/30"

@@ -107,6 +107,7 @@ export const agents = pgTable("agents", {
   maxToolIterations: integer("max_tool_iterations").default(5),
   blueprintId: varchar("blueprint_id"),
   preloadedSkills: jsonb("preloaded_skills").default(sql`'[]'::jsonb`),
+  linkedSkillChainId: varchar("linked_skill_chain_id"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
