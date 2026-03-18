@@ -518,7 +518,7 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
         const toolsUsed = [...new Set(
           steps
             .filter((s: any) => TOOL_STEP_TYPES.has(s.type) || s.toolName || s.tool_name)
-            .map((s: any) => s.toolName || s.tool_name || s.name || s.tool || "unknown")
+            .map((s: any) => s.toolName || s.mcpTool || s.tool_name || s.name || s.tool || "unknown")
             .filter((n: string) => n !== "unknown")
         )].slice(0, 3);
         const rawDecisions = Array.isArray(t.decisions) ? t.decisions as any[] : [];
