@@ -138,7 +138,7 @@ function LayerCard({ layer }: { layer: ContextLayer }) {
   );
 }
 
-function BudgetTab({ layers, agentId }: { layers: ContextLayer[]; agentId: string }) {
+function BudgetTab({ layers, agentId, agentIndustry }: { layers: ContextLayer[]; agentId: string; agentIndustry?: string }) {
   const [budgets, setBudgets] = useState<Record<string, number>>(DEFAULT_BUDGETS);
   const { toast } = useToast();
 
@@ -167,9 +167,10 @@ function BudgetTab({ layers, agentId }: { layers: ContextLayer[]; agentId: strin
         return apiRequest("POST", `/api/context-profiles`, {
           agentId,
           name: "Context Budget",
+          industry: agentIndustry || "custom",
           status: "active",
           budgetAllocations: newBudgets,
-          totalBudget: CONTEXT_WINDOW,
+          totalCapacity: CONTEXT_WINDOW,
         });
       }
     },
@@ -363,7 +364,7 @@ export default function ContextEngine() {
                     ))}
                   </div>
                 ) : (
-                  <BudgetTab layers={layers} agentId={selectedAgentId} />
+                  <BudgetTab layers={layers} agentId={selectedAgentId} agentIndustry={selectedAgent?.industry || undefined} />
                 )}
               </TabsContent>
             </Tabs>
