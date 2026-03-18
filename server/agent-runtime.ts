@@ -244,8 +244,8 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
 
   if (layerBudgets.capabilities > 0) try {
     // Explicit assignment: if the agent has preloadedSkills, resolve those first
-    const preloadedEntries = ((agent as any).preloadedSkills as Array<{ skillId: string }> | null) || [];
-    const explicitSkillIds = preloadedEntries.map((ps: any) => ps.skillId).filter(Boolean);
+    const preloadedEntries = ((agent.preloadedSkills || []) as Array<{ skillId: string }>);
+    const explicitSkillIds = preloadedEntries.map(ps => ps.skillId).filter(Boolean);
 
     let relevantSkills;
     if (explicitSkillIds.length > 0) {

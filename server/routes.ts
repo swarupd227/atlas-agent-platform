@@ -3027,8 +3027,8 @@ export async function registerRoutes(
           tools.slice(0, 8).forEach(t => mcpToolLines.push(`  - ${t.name}: ${t.description || ""}`));
         }
         // Explicit assignment: use preloadedSkills if the agent has them
-        const preloadedEntries = ((agent as any).preloadedSkills as Array<{ skillId: string }> | null) || [];
-        const explicitSkillIds = preloadedEntries.map((ps: any) => ps.skillId).filter(Boolean);
+        const preloadedEntries = (((agent as any).preloadedSkills || []) as Array<{ skillId: string }>);
+        const explicitSkillIds = preloadedEntries.map(ps => ps.skillId).filter(Boolean);
 
         let relevantSkills: any[];
         let skillSource: "assigned" | "auto-matched";

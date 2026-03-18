@@ -106,6 +106,7 @@ export const agents = pgTable("agents", {
   maturityFactors: jsonb("maturity_factors").notNull().default(sql`'{}'::jsonb`),
   maxToolIterations: integer("max_tool_iterations").default(5),
   blueprintId: varchar("blueprint_id"),
+  preloadedSkills: jsonb("preloaded_skills").default(sql`'[]'::jsonb`),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
