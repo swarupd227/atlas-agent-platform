@@ -2777,37 +2777,39 @@ function Step0GoldenTemplate({
                 </Button>
               )}
             </div>
-            {!outcomes || outcomes.length === 0 ? (
-              <p className="text-xs text-muted-foreground" data-testid="text-no-outcomes">No active outcomes yet. You can link one later from the agent detail page.</p>
+            {(outcomes?.filter((o) => o.status === "active") ?? []).length === 0 ? (
+              <p className="text-xs text-muted-foreground" data-testid="text-no-outcomes">
+                {!outcomes || outcomes.length === 0
+                  ? "No outcomes configured yet. You can link one later from the agent detail page."
+                  : "No active outcomes available. You can activate one from the Outcomes section and link it later."}
+              </p>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2" data-testid="outcome-option-list">
-                {outcomes
-                  .filter((o) => o.status === "active")
-                  .map((outcome) => {
-                    const isSelected = wizardState.outcomeId === outcome.id;
-                    return (
-                      <button
-                        key={outcome.id}
-                        type="button"
-                        className={`flex items-start gap-3 p-3 rounded-lg border text-left transition-colors hover:border-primary/40 ${isSelected ? "border-primary bg-primary/5 ring-1 ring-primary" : "border-border bg-background"}`}
-                        onClick={() => onSelectOutcome(isSelected ? null : outcome.id)}
-                        data-testid={`outcome-option-${outcome.id}`}
-                      >
-                        <div className="w-6 h-6 rounded-full border flex items-center justify-center shrink-0 mt-0.5 bg-background">
-                          {isSelected && <Check className="w-3.5 h-3.5 text-primary" />}
+                {(outcomes?.filter((o) => o.status === "active") ?? []).map((outcome) => {
+                  const isSelected = wizardState.outcomeId === outcome.id;
+                  return (
+                    <button
+                      key={outcome.id}
+                      type="button"
+                      className={`flex items-start gap-3 p-3 rounded-lg border text-left transition-colors hover:border-primary/40 ${isSelected ? "border-primary bg-primary/5 ring-1 ring-primary" : "border-border bg-background"}`}
+                      onClick={() => onSelectOutcome(isSelected ? null : outcome.id)}
+                      data-testid={`outcome-option-${outcome.id}`}
+                    >
+                      <div className="w-6 h-6 rounded-full border flex items-center justify-center shrink-0 mt-0.5 bg-background">
+                        {isSelected && <Check className="w-3.5 h-3.5 text-primary" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium leading-tight truncate">{outcome.name}</p>
+                        {outcome.description && (
+                          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{outcome.description}</p>
+                        )}
+                        <div className="flex items-center gap-1 mt-1">
+                          <Badge variant="outline" className="text-[9px]">{outcome.riskTier}</Badge>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium leading-tight truncate">{outcome.name}</p>
-                          {outcome.description && (
-                            <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{outcome.description}</p>
-                          )}
-                          <div className="flex items-center gap-1 mt-1">
-                            <Badge variant="outline" className="text-[9px]">{outcome.riskTier}</Badge>
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>
