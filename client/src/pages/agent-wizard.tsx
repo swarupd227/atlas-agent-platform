@@ -705,6 +705,7 @@ export default function AgentWizard() {
   const [templateMatches, setTemplateMatches] = useState<TemplateMatch[]>([]);
   const [matchingInProgress, setMatchingInProgress] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [postCreationAgent, setPostCreationAgent] = useState<{ id: string; name: string } | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const [, navigate] = useLocation();
   const searchParams = useSearch();
@@ -832,8 +833,14 @@ export default function AgentWizard() {
         if (data.type === "progress" && data.jobId === jobId) {
           setJobProgress((prev) => prev ? { ...prev, progress: data.progress, step: data.step } : prev);
         } else if (data.type === "completed" && data.jobId === jobId) {
-          setJobProgress((prev) => prev ? { ...prev, progress: 100, step: "completed", status: "completed", result: data.result } : prev);
-          es.close();
+          if (creationPath === "template") {
+            es.close();
+            setJobProgress(null);
+            setPostCreationAgent({ id: agentId, name: agentName });
+          } else {
+            setJobProgress((prev) => prev ? { ...prev, progress: 100, step: "completed", status: "completed", result: data.result } : prev);
+            es.close();
+          }
         } else if (data.type === "failed" && data.jobId === jobId) {
           setJobProgress((prev) => prev ? { ...prev, status: "failed", error: data.error, step: "failed" } : prev);
           es.close();
@@ -895,6 +902,9 @@ export default function AgentWizard() {
       queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
       if (data.jobId && data.suiteId) {
         startJobTracking(data.id, data.jobId, data.suiteId, data.name || wizardState.name);
+      } else if (creationPath === "template") {
+        toast({ title: "Agent created successfully" });
+        setPostCreationAgent({ id: data.id, name: data.name || wizardState.name });
       } else {
         toast({ title: "Agent created successfully" });
         navigate("/agents");
@@ -1442,6 +1452,11 @@ export default function AgentWizard() {
 
   function handleSelectTemplate(template: AgentTemplate) {
     setSelectedTemplateId(template.id);
+    // Pre-fill name and description from template when the user has not yet entered them
+    const patch: Partial<WizardState> = {};
+    if (!wizardState.name) patch.name = template.name || "";
+    if (!wizardState.description) patch.description = template.description || "";
+    if (Object.keys(patch).length) updateState(patch);
     applyTemplate(template);
     setCurrentStep(2);
   }
@@ -1585,6 +1600,96 @@ export default function AgentWizard() {
               </>
             )}
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (postCreationAgent) {
+    const nextSteps = [
+      {
+        icon: PlugZap,
+        title: "Link an MCP Server",
+        description: "Connect a tool server so this agent can call APIs, query databases, and take actions.",
+        href: "/integrations/mcp-servers",
+        testId: "link-next-mcp-servers",
+      },
+      {
+        icon: Layers,
+        title: "Preview Context Layers",
+        description: "Open Context Studio to see what knowledge, skills, and instructions the agent will receive at runtime.",
+        href: "/context-studio",
+        testId: "link-next-context-studio",
+      },
+      {
+        icon: Rocket,
+        title: "Activate the Agent",
+        description: "Deploy this agent to start processing tasks. You can start in shadow mode to validate before going live.",
+        href: `/agents/${postCreationAgent.id}`,
+        testId: "link-next-activate",
+      },
+      {
+        icon: FlaskConical,
+        title: "Run a Test Scenario",
+        description: "Open the agent playground to run a test prompt and verify the agent responds correctly.",
+        href: `/agents/${postCreationAgent.id}/playground`,
+        testId: "link-next-playground",
+      },
+    ];
+
+    return (
+      <div className="flex flex-col gap-6 p-6 max-w-2xl mx-auto" data-testid="page-post-creation-guidance">
+        <div className="flex items-start gap-4">
+          <div className="w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center shrink-0">
+            <CheckCircle className="w-5 h-5 text-green-500" />
+          </div>
+          <div className="flex flex-col gap-1">
+            <h1 className="text-xl font-semibold">Agent created successfully</h1>
+            <p className="text-sm text-muted-foreground">
+              <span className="font-medium text-foreground">{postCreationAgent.name}</span> is ready to be configured. Complete these steps to get it production-ready.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-3" data-testid="next-steps-list">
+          {nextSteps.map((step, i) => (
+            <Card key={i} className="hover:border-primary/40 transition-colors" data-testid={`card-next-step-${i}`}>
+              <CardContent className="flex items-start gap-4 p-4">
+                <div className="w-8 h-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0 mt-0.5">
+                  <step.icon className="w-4 h-4 text-primary" />
+                </div>
+                <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+                  <span className="text-sm font-medium">{step.title}</span>
+                  <span className="text-xs text-muted-foreground">{step.description}</span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="shrink-0 text-primary"
+                  onClick={() => navigate(step.href)}
+                  data-testid={step.testId}
+                >
+                  <ArrowRight className="w-4 h-4" />
+                </Button>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        <div className="flex items-center gap-3 pt-2">
+          <Button
+            onClick={() => navigate(`/agents/${postCreationAgent.id}`)}
+            data-testid="button-go-to-agent"
+          >
+            View Agent
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => navigate("/agents")}
+            data-testid="button-dismiss-next-steps"
+          >
+            All Agents
+          </Button>
         </div>
       </div>
     );
