@@ -435,92 +435,131 @@ export default function TemplateDetail() {
   const applyEnhancement = () => {
     if (!enhancePreview) return;
     const enhanced = enhancePreview;
-    setEditData((prev: Record<string, any>) => {
-      const merged = { ...prev };
-      if (enhanced.description) merged.description = enhanced.description;
-      if (enhanced.tools && Array.isArray(enhanced.tools)) {
-        merged.tools = enhanced.tools.map((t: any) => ({
-          name: t.name || "",
-          description: t.description || "",
-          permissions: Array.isArray(t.permissions) ? t.permissions : [],
-        }));
-      }
-      if (enhanced.workflowNodes && Array.isArray(enhanced.workflowNodes)) {
-        merged.workflowNodes = enhanced.workflowNodes.map((n: any, i: number) => ({
-          id: n.id || `step_${i + 1}`,
-          type: n.type || "llm_call",
-          label: n.label || "",
-        }));
-      }
-      if (enhanced.dataAccess) merged.dataAccess = Array.isArray(enhanced.dataAccess) ? enhanced.dataAccess.join(", ") : enhanced.dataAccess;
-      if (enhanced.apiAccess) merged.apiAccess = Array.isArray(enhanced.apiAccess) ? enhanced.apiAccess.join(", ") : enhanced.apiAccess;
-      if (enhanced.writeAccess) merged.writeAccess = Array.isArray(enhanced.writeAccess) ? enhanced.writeAccess.join(", ") : enhanced.writeAccess;
-      if (enhanced.permissions) {
-        if (enhanced.permissions.dataAccess) merged.dataAccess = Array.isArray(enhanced.permissions.dataAccess) ? enhanced.permissions.dataAccess.join(", ") : enhanced.permissions.dataAccess;
-        if (enhanced.permissions.apiAccess) merged.apiAccess = Array.isArray(enhanced.permissions.apiAccess) ? enhanced.permissions.apiAccess.join(", ") : enhanced.permissions.apiAccess;
-        if (enhanced.permissions.writeAccess) merged.writeAccess = Array.isArray(enhanced.permissions.writeAccess) ? enhanced.permissions.writeAccess.join(", ") : enhanced.permissions.writeAccess;
-      }
-      if (enhanced.memoryRagConfig || enhanced.memoryRag) {
-        const rag = enhanced.memoryRagConfig || enhanced.memoryRag;
-        merged.memoryRagConfig = {
-          vectorStore: rag.vectorStore || "",
-          retrievalStrategy: rag.retrievalStrategy || "semantic",
-          chunkSize: rag.chunkSize || 512,
-          embeddingModel: rag.embeddingModel || "text-embedding-3-small",
-          topK: rag.topK || 5,
-        };
-      }
-      if (enhanced.policyBindings && Array.isArray(enhanced.policyBindings)) {
-        merged.policyBindings = enhanced.policyBindings.map((p: any) => ({
-          policyName: p.policyName || p.name || "",
-          enforcement: p.enforcement || "soft",
-        }));
-      }
-      if (enhanced.evalBindings && Array.isArray(enhanced.evalBindings)) {
-        merged.evalBindings = enhanced.evalBindings.map((e: any) => ({
-          suiteName: e.suiteName || e.name || "",
-          schedule: e.schedule || "on_deploy",
-        }));
-      }
-      if (enhanced.rollbackPlan) {
-        merged.rollbackPlan = {
-          triggerConditions: Array.isArray(enhanced.rollbackPlan.triggerConditions) ? enhanced.rollbackPlan.triggerConditions : [""],
-          rollbackTargetVersion: enhanced.rollbackPlan.rollbackTargetVersion || "previous_stable",
-        };
-      }
-      if (enhanced.complianceCertifications && Array.isArray(enhanced.complianceCertifications)) merged.complianceCertifications = enhanced.complianceCertifications;
-      if (enhanced.tags && Array.isArray(enhanced.tags)) merged.tags = enhanced.tags;
-      if (enhanced.preloadedSkills && Array.isArray(enhanced.preloadedSkills)) {
-        merged.preloadedSkills = enhanced.preloadedSkills.map((s: any) => ({
-          skillId: s.skillId || "",
-          skillName: s.skillName || "",
-          domain: s.domain || "",
-        }));
-      }
-      if (enhanced.requiredSkills && Array.isArray(enhanced.requiredSkills)) {
-        merged.requiredSkills = enhanced.requiredSkills.map((s: any, i: number) => ({
-          skillId: s.skillId || "",
-          skillName: s.skillName || "",
-          domain: s.domain || "",
-          executionOrder: s.executionOrder ?? i + 1,
-        }));
-      }
-      if (enhanced.optionalSkills && Array.isArray(enhanced.optionalSkills)) {
-        merged.optionalSkills = enhanced.optionalSkills.map((s: any, i: number) => ({
-          skillId: s.skillId || "",
-          skillName: s.skillName || "",
-          domain: s.domain || "",
-          executionOrder: s.executionOrder ?? i + 1,
-        }));
-      }
-      if (enhanced.complexity && ["low","medium","high"].includes(enhanced.complexity)) merged.complexity = enhanced.complexity;
-      if (enhanced.defaultRiskTier && ["LOW","MEDIUM","HIGH","CRITICAL"].includes(enhanced.defaultRiskTier)) merged.defaultRiskTier = enhanced.defaultRiskTier;
-      if (enhanced.defaultAutonomyMode && ["autonomous","assisted","supervised","manual"].includes(enhanced.defaultAutonomyMode)) merged.defaultAutonomyMode = enhanced.defaultAutonomyMode;
-      return merged;
-    });
+
+    const merged = { ...editData };
+    if (enhanced.description) merged.description = enhanced.description;
+    if (enhanced.tools && Array.isArray(enhanced.tools)) {
+      merged.tools = enhanced.tools.map((t: any) => ({
+        name: t.name || "",
+        description: t.description || "",
+        permissions: Array.isArray(t.permissions) ? t.permissions : [],
+      }));
+    }
+    if (enhanced.workflowNodes && Array.isArray(enhanced.workflowNodes)) {
+      merged.workflowNodes = enhanced.workflowNodes.map((n: any, i: number) => ({
+        id: n.id || `step_${i + 1}`,
+        type: n.type || "llm_call",
+        label: n.label || "",
+      }));
+    }
+    if (enhanced.dataAccess) merged.dataAccess = Array.isArray(enhanced.dataAccess) ? enhanced.dataAccess.join(", ") : enhanced.dataAccess;
+    if (enhanced.apiAccess) merged.apiAccess = Array.isArray(enhanced.apiAccess) ? enhanced.apiAccess.join(", ") : enhanced.apiAccess;
+    if (enhanced.writeAccess) merged.writeAccess = Array.isArray(enhanced.writeAccess) ? enhanced.writeAccess.join(", ") : enhanced.writeAccess;
+    if (enhanced.permissions) {
+      if (enhanced.permissions.dataAccess) merged.dataAccess = Array.isArray(enhanced.permissions.dataAccess) ? enhanced.permissions.dataAccess.join(", ") : enhanced.permissions.dataAccess;
+      if (enhanced.permissions.apiAccess) merged.apiAccess = Array.isArray(enhanced.permissions.apiAccess) ? enhanced.permissions.apiAccess.join(", ") : enhanced.permissions.apiAccess;
+      if (enhanced.permissions.writeAccess) merged.writeAccess = Array.isArray(enhanced.permissions.writeAccess) ? enhanced.permissions.writeAccess.join(", ") : enhanced.permissions.writeAccess;
+    }
+    if (enhanced.memoryRagConfig || enhanced.memoryRag) {
+      const rag = enhanced.memoryRagConfig || enhanced.memoryRag;
+      merged.memoryRagConfig = {
+        vectorStore: rag.vectorStore || "",
+        retrievalStrategy: rag.retrievalStrategy || "semantic",
+        chunkSize: rag.chunkSize || 512,
+        embeddingModel: rag.embeddingModel || "text-embedding-3-small",
+        topK: rag.topK || 5,
+      };
+    }
+    if (enhanced.policyBindings && Array.isArray(enhanced.policyBindings)) {
+      merged.policyBindings = enhanced.policyBindings.map((p: any) => ({
+        policyName: p.policyName || p.name || "",
+        enforcement: p.enforcement || "soft",
+      }));
+    }
+    if (enhanced.evalBindings && Array.isArray(enhanced.evalBindings)) {
+      merged.evalBindings = enhanced.evalBindings.map((e: any) => ({
+        suiteName: e.suiteName || e.name || "",
+        schedule: e.schedule || "on_deploy",
+      }));
+    }
+    if (enhanced.rollbackPlan) {
+      merged.rollbackPlan = {
+        triggerConditions: Array.isArray(enhanced.rollbackPlan.triggerConditions) ? enhanced.rollbackPlan.triggerConditions : [""],
+        rollbackTargetVersion: enhanced.rollbackPlan.rollbackTargetVersion || "previous_stable",
+      };
+    }
+    if (enhanced.complianceCertifications && Array.isArray(enhanced.complianceCertifications)) merged.complianceCertifications = enhanced.complianceCertifications;
+    if (enhanced.tags && Array.isArray(enhanced.tags)) merged.tags = enhanced.tags;
+    if (enhanced.preloadedSkills && Array.isArray(enhanced.preloadedSkills)) {
+      merged.preloadedSkills = enhanced.preloadedSkills.map((s: any) => ({
+        skillId: s.skillId || "",
+        skillName: s.skillName || "",
+        domain: s.domain || "",
+      }));
+    }
+    if (enhanced.requiredSkills && Array.isArray(enhanced.requiredSkills)) {
+      merged.requiredSkills = enhanced.requiredSkills.map((s: any, i: number) => ({
+        skillId: s.skillId || "",
+        skillName: s.skillName || "",
+        domain: s.domain || "",
+        executionOrder: s.executionOrder ?? i + 1,
+      }));
+    }
+    if (enhanced.optionalSkills && Array.isArray(enhanced.optionalSkills)) {
+      merged.optionalSkills = enhanced.optionalSkills.map((s: any, i: number) => ({
+        skillId: s.skillId || "",
+        skillName: s.skillName || "",
+        domain: s.domain || "",
+        executionOrder: s.executionOrder ?? i + 1,
+      }));
+    }
+    if (enhanced.complexity && ["low","medium","high"].includes(enhanced.complexity)) merged.complexity = enhanced.complexity;
+    if (enhanced.defaultRiskTier && ["LOW","MEDIUM","HIGH","CRITICAL"].includes(enhanced.defaultRiskTier)) merged.defaultRiskTier = enhanced.defaultRiskTier;
+    if (enhanced.defaultAutonomyMode && ["autonomous","assisted","supervised","manual"].includes(enhanced.defaultAutonomyMode)) merged.defaultAutonomyMode = enhanced.defaultAutonomyMode;
+
+    setEditData(merged);
     setEnhanceDialogOpen(false);
     setEnhancePreview(null);
-    toast({ title: "Enhancement applied", description: "AI suggestions have been applied to the form. Review and save when ready." });
+
+    if (!isNew && templateId) {
+      const dataAccessArr = merged.dataAccess ? merged.dataAccess.split(",").map((s: string) => s.trim()).filter(Boolean) : [];
+      const apiAccessArr = merged.apiAccess ? merged.apiAccess.split(",").map((s: string) => s.trim()).filter(Boolean) : [];
+      const writeAccessArr = merged.writeAccess ? merged.writeAccess.split(",").map((s: string) => s.trim()).filter(Boolean) : [];
+      const body: Record<string, any> = {
+        name: merged.name,
+        description: merged.description,
+        category: merged.category,
+        industry: merged.industry,
+        complexity: merged.complexity,
+        defaultRiskTier: merged.defaultRiskTier,
+        defaultAutonomyMode: merged.defaultAutonomyMode,
+        modelProvider: merged.modelProvider,
+        modelName: merged.modelName,
+        tags: merged.tags,
+        toolsConfig: merged.tools,
+        blueprintJson: { nodes: merged.workflowNodes },
+        permissionsConfig: { dataAccess: dataAccessArr, apiAccess: apiAccessArr, writeAccess: writeAccessArr },
+        memoryRagConfig: merged.memoryRagConfig,
+        complianceCertifications: merged.complianceCertifications || [],
+        policyBindings: merged.policyBindings,
+        evalBindings: merged.evalBindings,
+        rollbackPlan: merged.rollbackPlan,
+        preloadedSkills: merged.preloadedSkills || [],
+        requiredSkills: merged.requiredSkills || [],
+        optionalSkills: merged.optionalSkills || [],
+      };
+      apiRequest("PUT", `/api/agent-templates/${templateId}`, body)
+        .then(() => {
+          queryClient.invalidateQueries({ queryKey: ["/api/agent-templates"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/agent-templates", templateId] });
+          toast({ title: "Template saved with AI enhancements" });
+        })
+        .catch(() => {
+          toast({ title: "Enhancement applied", description: "Could not auto-save — use Save Changes to persist manually.", variant: "destructive" });
+        });
+    } else {
+      toast({ title: "Enhancement applied", description: "AI suggestions have been applied to the form. Review and save when ready." });
+    }
   };
 
   const handleEnhance = () => {
