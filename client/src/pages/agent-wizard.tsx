@@ -729,6 +729,59 @@ export default function AgentWizard() {
     };
   }, []);
 
+  // Resolve template skill names against live skill catalog on template apply
+  useEffect(() => {
+    const templateId = wizardState.templateSkills.templateId;
+    if (!templateId) return;
+
+    fetch("/api/skills")
+      .then((r) => r.json())
+      .then((catalog: Array<{ id: string; name: string; domain: string }>) => {
+        setWizardState((prev) => {
+          if (prev.templateSkills.templateId !== templateId) return prev;
+
+          function resolveEntries(
+            entries: Array<{ skillId: string; skillName: string; domain: string; executionOrder: number }>
+          ) {
+            return entries.map((s) => {
+              if (s.skillId) return s;
+              const sLower = s.skillName.toLowerCase();
+              const match = catalog.find(
+                (c) =>
+                  c.name.toLowerCase() === sLower ||
+                  c.name.toLowerCase().includes(sLower) ||
+                  sLower.includes(c.name.toLowerCase())
+              );
+              return match ? { ...s, skillId: match.id } : s;
+            });
+          }
+
+          const resolvedRequired = resolveEntries(prev.templateSkills.required);
+          const resolvedOptional = resolveEntries(prev.templateSkills.optional);
+
+          // Update selectedOptional to use resolved IDs where possible
+          const updatedSelected = prev.templateSkills.selectedOptional.map((sel) => {
+            const opt = resolvedOptional.find(
+              (o) => o.skillId === sel || o.skillName === sel
+            );
+            return opt ? opt.skillId || opt.skillName : sel;
+          });
+
+          return {
+            ...prev,
+            templateSkills: {
+              ...prev.templateSkills,
+              required: resolvedRequired,
+              optional: resolvedOptional,
+              selectedOptional: updatedSelected,
+            },
+          };
+        });
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wizardState.templateSkills.templateId]);
+
   function startJobTracking(agentId: string, jobId: string, suiteId: string, agentName: string) {
     setJobProgress({ agentId, jobId, suiteId, agentName, progress: 0, step: "queued", status: "running" });
 
@@ -1309,17 +1362,32 @@ export default function AgentWizard() {
     };
     const ts = wizardState.templateSkills;
     if (ts.required.length > 0 || ts.optional.length > 0) {
+      const activeRequired = ts.required.sort((a, b) => a.executionOrder - b.executionOrder);
+      const activeOptional = ts.optional
+        .filter(s => ts.selectedOptional.includes(s.skillId || s.skillName))
+        .sort((a, b) => a.executionOrder - b.executionOrder);
+
       const mergedSkills = [
-        ...ts.required.sort((a, b) => a.executionOrder - b.executionOrder).map(s => s.skillName),
-        ...ts.optional
-          .filter(s => ts.selectedOptional.includes(s.skillId || s.skillName))
-          .sort((a, b) => a.executionOrder - b.executionOrder)
-          .map(s => s.skillName),
+        ...activeRequired.map(s => s.skillName),
+        ...activeOptional.map(s => s.skillName),
       ];
       if (mergedSkills.length > 0) {
         const existingRt = (payload.runtimeConfig as Record<string, any>) || {};
         payload.runtimeConfig = { ...existingRt, matchedSkills: mergedSkills };
         (payload as any).agentSkills = mergedSkills;
+      }
+
+      // Carry resolved skill IDs so the runtime can inject Layer 3 context
+      const resolvedPreloaded = [...activeRequired, ...activeOptional]
+        .filter(s => s.skillId)
+        .map(s => ({
+          skillId: s.skillId,
+          skillName: s.skillName,
+          domain: s.domain,
+          executionOrder: s.executionOrder,
+        }));
+      if (resolvedPreloaded.length > 0) {
+        (payload as any).preloadedSkills = resolvedPreloaded;
       }
     }
     createMutation.mutate(payload);
@@ -5441,6 +5509,11 @@ function StepReview({
                     <Lock className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                     <span className="font-medium">{skill.skillName}</span>
                     {skill.domain && <Badge variant="outline" className="text-[9px]">{skill.domain}</Badge>}
+                    {!skill.skillId && (
+                      <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-500/50" data-testid={`badge-unresolved-required-${i}`}>
+                        Not in library
+                      </Badge>
+                    )}
                     <Badge variant="secondary" className="text-[9px] ml-auto">#{skill.executionOrder}</Badge>
                   </div>
                 ))}
@@ -5465,6 +5538,11 @@ function StepReview({
                       )}
                       <span className={isSelected ? "font-medium" : "text-muted-foreground"}>{skill.skillName}</span>
                       {skill.domain && <Badge variant="outline" className="text-[9px]">{skill.domain}</Badge>}
+                      {!skill.skillId && (
+                        <Badge variant="outline" className="text-[9px] text-amber-600 border-amber-500/50" data-testid={`badge-unresolved-optional-${i}`}>
+                          Not in library
+                        </Badge>
+                      )}
                       <Badge variant="secondary" className="text-[9px] ml-auto">#{skill.executionOrder}</Badge>
                     </div>
                   );
