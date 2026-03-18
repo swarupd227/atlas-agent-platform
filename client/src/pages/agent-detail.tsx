@@ -891,6 +891,13 @@ function AgentDetailInner() {
       window.history.replaceState({}, "", window.location.pathname + (remaining ? `?${remaining}` : ""));
       navigate(`/agents/${agentId}/export`);
     }
+    const tabParam = params.get("tab");
+    if (tabParam) {
+      setActiveTab(tabParam);
+      params.delete("tab");
+      const remaining2 = params.toString();
+      window.history.replaceState({}, "", window.location.pathname + (remaining2 ? `?${remaining2}` : ""));
+    }
   }, []);
 
   const { data: computedStats, isLoading: statsLoading } = useQuery<{

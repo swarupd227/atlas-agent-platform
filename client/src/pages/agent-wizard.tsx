@@ -1625,7 +1625,7 @@ export default function AgentWizard() {
         icon: Rocket,
         title: "Activate the Agent",
         description: "Deploy this agent to start processing tasks. You can start in shadow mode to validate before going live.",
-        href: `/agents/${postCreationAgent.id}`,
+        href: `/agents/${postCreationAgent.id}?tab=lifecycle`,
         testId: "link-next-activate",
       },
       {
