@@ -878,24 +878,24 @@ export async function executePromptWithMcp(
       for (const link of linkedKbs.slice(0, 3)) {
         let kbMeta: any = null;
         try { kbMeta = await storage.getKnowledgeBase(link.knowledgeBaseId); } catch {}
+        // Layer 4 budget: derive topK from knowledge budget (avg ~150 tokens/chunk)
+        // Declared outside try/catch so fallback path can also use budget-derived topK
+        const AVG_CHUNK_TOKENS = 150;
+        let effectiveKbBudget = DEFAULT_LAYER_BUDGETS.knowledge;
+        try {
+          const kbProfiles = await storage.getContextProfiles();
+          const kbAgentProfile = kbProfiles.find((p: any) => p.agentId === agentId && p.status === "active")
+            || (industry ? kbProfiles.find((p: any) => p.status === "active" && p.industry?.toLowerCase() === industry.toLowerCase()) : undefined);
+          if (kbAgentProfile) {
+            const kbBudgetAlloc = kbAgentProfile.budgetAllocations as Record<string, any> | null;
+            const kbBudget = kbBudgetAlloc?.knowledge ?? kbBudgetAlloc?.kb_retrieval ?? null;
+            if (typeof kbBudget === "number" && kbBudget > 0) {
+              effectiveKbBudget = kbBudget;
+            }
+          }
+        } catch {}
         try {
           const linkConfig = (link.retrievalConfig as any) || {};
-          // Layer 4 budget: derive topK from knowledge budget (avg ~150 tokens/chunk)
-          // Uses same profile-selection priority as executeAgentCycle: agent-specific first, then industry fallback
-          const AVG_CHUNK_TOKENS = 150;
-          let effectiveKbBudget = DEFAULT_LAYER_BUDGETS.knowledge;
-          try {
-            const kbProfiles = await storage.getContextProfiles();
-            const kbAgentProfile = kbProfiles.find((p: any) => p.agentId === agentId && p.status === "active")
-              || (industry ? kbProfiles.find((p: any) => p.status === "active" && p.industry?.toLowerCase() === industry.toLowerCase()) : undefined);
-            if (kbAgentProfile) {
-              const kbBudgetAlloc = kbAgentProfile.budgetAllocations as Record<string, any> | null;
-              const kbBudget = kbBudgetAlloc?.knowledge ?? kbBudgetAlloc?.kb_retrieval ?? null;
-              if (typeof kbBudget === "number" && kbBudget > 0) {
-                effectiveKbBudget = kbBudget;
-              }
-            }
-          } catch {}
           const topK = Math.max(3, Math.floor(effectiveKbBudget / AVG_CHUNK_TOKENS));
           const scoreThreshold = typeof linkConfig.scoreThreshold === "number" ? linkConfig.scoreThreshold : 0.3;
           const chunks = await searchKnowledgeBaseChunks(link.knowledgeBaseId, augmentedQuery, topK, scoreThreshold);
@@ -916,12 +916,14 @@ export async function executePromptWithMcp(
         } catch {
           const fallbackChunks = await storage.getKnowledgeChunks(link.knowledgeBaseId);
           if (fallbackChunks.length > 0) {
-            kbChunks.push(`--- Knowledge Base: ${link.knowledgeBaseId} ---\n${fallbackChunks.slice(0, 5).map((c: any) => c.content).join("\n\n")}`);
+            const fallbackTopK = Math.max(3, Math.floor(effectiveKbBudget / AVG_CHUNK_TOKENS));
+            const selectedFallback = fallbackChunks.slice(0, fallbackTopK);
+            kbChunks.push(`--- Knowledge Base: ${link.knowledgeBaseId} ---\n${selectedFallback.map((c: any) => c.content).join("\n\n")}`);
             kbRetrievals.push({
               kbId: link.knowledgeBaseId,
               kbName: kbMeta?.name || link.knowledgeBaseId,
               embeddingModel: kbMeta?.embeddingModel || "fallback",
-              chunks: fallbackChunks.slice(0, 5).map((c: any) => ({
+              chunks: selectedFallback.map((c: any) => ({
                 chunkId: c.id,
                 sourceDocId: c.sourceId || "",
                 similarityScore: 0.5,
