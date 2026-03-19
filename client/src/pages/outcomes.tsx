@@ -4,47 +4,33 @@ import { Link, useLocation } from "wouter";
 import {
   Target,
   Plus,
-  TrendingUp,
-  TrendingDown,
-  Minus,
   DollarSign,
-  AlertTriangle,
   Search,
   ArrowRight,
   BarChart3,
-  Lock,
-  GitBranch,
   Sparkles,
   XCircle,
   Activity,
   Users,
-  Zap,
-  Gauge,
   ChevronDown,
   ChevronUp,
   ChevronRight,
-  SlidersHorizontal,
   Download,
-  RefreshCw,
   Filter,
-  Clock,
   Gavel,
   Bot,
   Trash2,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   Select,
@@ -53,13 +39,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { StatCard } from "@/components/stat-card";
 import { StatusBadge } from "@/components/status-badge";
 import {
   ProgressRing,
-  ConfidenceSparkline,
   WaterfallChart,
   RiskHeatBadge,
 } from "@/components/outcome-cockpit";
@@ -70,16 +52,6 @@ import { useIndustry } from "@/components/industry-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { OutcomeContract, KpiDefinition, Invoice, Agent } from "@shared/schema";
-
-function hashCode(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash |= 0;
-  }
-  return hash;
-}
 
 function getIndustryBenchmark(industry: string, kpiName: string, kpiUnit: string): { benchmark: number; unit: string; source: string; comparison: string } | null {
   const nameLower = kpiName.toLowerCase();
@@ -140,37 +112,6 @@ function getIndustryBenchmark(industry: string, kpiName: string, kpiUnit: string
   return null;
 }
 
-function generateTrajectory(id: string, currentConfidence: number): number[] {
-  const trajectory: number[] = [];
-  const base = currentConfidence * 0.85 + 0.1;
-  const seed = hashCode(id);
-  for (let i = 0; i < 30; i++) {
-    const t = i / 29;
-    const noise = Math.sin(seed * (i + 1)) * 0.05;
-    trajectory.push(Math.max(0, Math.min(1, base + (currentConfidence - base) * t + noise)));
-  }
-  return trajectory;
-}
-
-function TrendIcon({ trend }: { trend: string }) {
-  if (trend === "up") return <TrendingUp className="w-3.5 h-3.5 text-emerald-500 dark:text-emerald-400" />;
-  if (trend === "down") return <TrendingDown className="w-3.5 h-3.5 text-red-500 dark:text-red-400" />;
-  return <Minus className="w-3.5 h-3.5 text-muted-foreground" />;
-}
-
-function ConfidenceDot({ value }: { value: number }) {
-  const color = value >= 0.9
-    ? "bg-emerald-500 dark:bg-emerald-400"
-    : value >= 0.7
-    ? "bg-amber-500 dark:bg-amber-400"
-    : "bg-red-500 dark:bg-red-400";
-  return (
-    <div className="flex items-center gap-1">
-      <div className={`w-2 h-2 rounded-full ${color}`} />
-      <span className="text-xs text-muted-foreground">{(value * 100).toFixed(0)}%</span>
-    </div>
-  );
-}
 
 function SlaTrafficLight({ outcome, kpis, agents }: { outcome: OutcomeContract; kpis: KpiDefinition[]; agents: Agent[] }) {
   const sla = (outcome.slaConfig || {}) as Record<string, number>;
@@ -245,9 +186,7 @@ export default function Outcomes() {
   const [filterOwner, setFilterOwner] = useState("all");
   const [filterBillingModel, setFilterBillingModel] = useState("all");
   const [, navigate] = useLocation();
-  const [simulateOpen, setSimulateOpen] = useState(false);
   const [expandedKpis, setExpandedKpis] = useState(false);
-  const [recomputingKpis, setRecomputingKpis] = useState(false);
   const { toast } = useToast();
   const outcomesPerm = usePermission("create_modify_outcomes");
   const { industry } = useIndustry();
@@ -381,16 +320,6 @@ export default function Outcomes() {
     toast({ title: "Outcome summary exported" });
   };
 
-  const handleRecomputeKpis = () => {
-    setRecomputingKpis(true);
-    setTimeout(() => {
-      queryClient.invalidateQueries({ queryKey: ["/api/kpis"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
-      setRecomputingKpis(false);
-      toast({ title: "KPIs recomputed", description: "All KPI values have been refreshed." });
-    }, 1500);
-  };
-
   const billedRevenue = invoices?.filter((i) => i.status === "paid").reduce((s, i) => s + (i.amount || 0), 0) || 0;
   const pendingRevenue = invoices?.filter((i) => i.status === "pending").reduce((s, i) => s + (i.amount || 0), 0) || 0;
   const disputedRevenue = invoices?.filter((i) => i.status === "disputed").reduce((s, i) => s + (i.amount || 0), 0) || 0;
@@ -452,19 +381,6 @@ export default function Outcomes() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <Dialog open={simulateOpen} onOpenChange={setSimulateOpen}>
-            <DialogTrigger asChild>
-              <Button variant="outline" data-testid="button-simulate-change">
-                <SlidersHorizontal className="w-4 h-4 mr-1.5" /> Simulate Change
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-lg">
-              <DialogHeader>
-                <DialogTitle>Scenario Planner</DialogTitle>
-              </DialogHeader>
-              <ScenarioPlanner outcomes={outcomes || []} kpis={kpis || []} agents={agents || []} onClose={() => setSimulateOpen(false)} />
-            </DialogContent>
-          </Dialog>
           {!outcomesPerm.allowed ? (
             <Button disabled title="You do not have permission to create outcome contracts" data-testid="button-create-outcome">
               <Plus className="w-4 h-4 mr-1.5" /> New Contract
@@ -602,10 +518,7 @@ export default function Outcomes() {
                       className="flex flex-col gap-2 p-3 rounded-md border hover-elevate cursor-pointer"
                       data-testid={`kpi-tile-${kpi.id}`}
                     >
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-medium truncate">{kpi.name}</span>
-                        <TrendIcon trend={kpi.trend || "stable"} />
-                      </div>
+                      <span className="text-xs font-medium truncate">{kpi.name}</span>
                       <div className="flex items-center gap-2">
                         <ProgressRing value={Math.min(100, kpi.attainment)} size={36} strokeWidth={3} />
                         <div className="flex flex-col min-w-0">
@@ -619,9 +532,6 @@ export default function Outcomes() {
                           </span>
                           <span className="text-xs text-muted-foreground truncate">{outcomeName}</span>
                         </div>
-                      </div>
-                      <div className="flex items-center justify-between gap-2 flex-wrap">
-                        <ConfidenceDot value={kpi.confidence || 0} />
                       </div>
                     </div>
                   </Link>
@@ -675,16 +585,6 @@ export default function Outcomes() {
           )}
 
           <div className="flex items-center gap-2 ml-auto">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleRecomputeKpis}
-              disabled={recomputingKpis}
-              data-testid="button-recompute-kpis"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 mr-1 ${recomputingKpis ? "animate-spin" : ""}`} />
-              Recompute KPIs
-            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -842,21 +742,6 @@ export default function Outcomes() {
                       })}
                     </div>
                   )}
-                  {(() => {
-                    const avgConfidence = outcomeKpis.length > 0
-                      ? outcomeKpis.reduce((s, k) => s + (k.confidence || 0), 0) / outcomeKpis.length
-                      : 0;
-                    const trajectory = generateTrajectory(outcome.id, avgConfidence);
-                    const declining = trajectory.length >= 2 && trajectory[trajectory.length - 1] < trajectory[0];
-                    return (
-                      <div className="flex items-center justify-between gap-2">
-                        <ConfidenceSparkline data={trajectory} declining={declining} width={80} height={20} />
-                        <span className="text-xs text-muted-foreground tabular-nums shrink-0">
-                          {Math.round(avgConfidence * 100)}% conf
-                        </span>
-                      </div>
-                    );
-                  })()}
                   <div className="flex items-center gap-3 flex-wrap pt-1 border-t">
                     <div className="flex items-center gap-1">
                       <BarChart3 className="w-3 h-3 text-muted-foreground" />
@@ -1026,147 +911,3 @@ export default function Outcomes() {
   );
 }
 
-function ScenarioPlanner({
-  outcomes,
-  kpis,
-  agents,
-  onClose,
-}: {
-  outcomes: OutcomeContract[];
-  kpis: KpiDefinition[];
-  agents: Agent[];
-  onClose: () => void;
-}) {
-  const [changeType, setChangeType] = useState("model_upgrade");
-  const [selectedOutcome, setSelectedOutcome] = useState(outcomes[0]?.id || "");
-  const [simulated, setSimulated] = useState(false);
-
-  const outcomeKpis = kpis.filter((k) => k.outcomeId === selectedOutcome);
-  const outcomeAgents = agents.filter((a) => a.outcomeId === selectedOutcome);
-  const outcome = outcomes.find((o) => o.id === selectedOutcome);
-
-  const impacts = {
-    model_upgrade: {
-      label: "Model Upgrade (e.g., GPT-4.1 to GPT-4.5)",
-      kpiDelta: +8,
-      costDelta: +35,
-      latencyDelta: -15,
-      risk: "medium" as const,
-      description: "Upgrading the model improves accuracy and reasoning but increases cost per run. KPIs relying on quality metrics will likely improve.",
-    },
-    model_downgrade: {
-      label: "Model Downgrade (e.g., GPT-4.1 to GPT-4.1-mini)",
-      kpiDelta: -12,
-      costDelta: -60,
-      latencyDelta: +25,
-      risk: "high" as const,
-      description: "Smaller model reduces cost significantly but may degrade quality. KPIs requiring complex reasoning will be most affected.",
-    },
-    tool_addition: {
-      label: "Add Tool (e.g., Code Interpreter)",
-      kpiDelta: +5,
-      costDelta: +15,
-      latencyDelta: -8,
-      risk: "low" as const,
-      description: "Adding a new tool expands agent capabilities. Minor cost increase but can improve task completion rates.",
-    },
-    workflow_optimization: {
-      label: "Workflow Optimization (reduce steps)",
-      kpiDelta: +3,
-      costDelta: -20,
-      latencyDelta: +20,
-      risk: "low" as const,
-      description: "Streamlining the workflow reduces latency and cost while maintaining or slightly improving KPI attainment.",
-    },
-  };
-
-  const impact = impacts[changeType as keyof typeof impacts] || impacts.model_upgrade;
-
-  return (
-    <div className="flex flex-col gap-4" data-testid="scenario-planner">
-      <div className="flex flex-col gap-2">
-        <Label>Outcome Contract</Label>
-        <Select value={selectedOutcome} onValueChange={(v) => { setSelectedOutcome(v); setSimulated(false); }}>
-          <SelectTrigger data-testid="select-scenario-outcome">
-            <SelectValue placeholder="Select outcome" />
-          </SelectTrigger>
-          <SelectContent>
-            {outcomes.map((o) => (
-              <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div className="flex flex-col gap-2">
-        <Label>Change Type</Label>
-        <Select value={changeType} onValueChange={(v) => { setChangeType(v); setSimulated(false); }}>
-          <SelectTrigger data-testid="select-change-type">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="model_upgrade">Model Upgrade</SelectItem>
-            <SelectItem value="model_downgrade">Model Downgrade</SelectItem>
-            <SelectItem value="tool_addition">Add Tool</SelectItem>
-            <SelectItem value="workflow_optimization">Workflow Optimization</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
-
-      <p className="text-xs text-muted-foreground">{impact.description}</p>
-
-      <Button variant="outline" onClick={() => setSimulated(true)} data-testid="button-run-simulation">
-        <Gauge className="w-4 h-4 mr-1.5" /> Run Simulation
-      </Button>
-
-      {simulated && (
-        <div className="flex flex-col gap-3 p-3 rounded-md border" data-testid="simulation-results">
-          <span className="text-xs font-medium">Projected Impact on "{outcome?.name}"</span>
-          <div className="grid grid-cols-3 gap-3">
-            <div className="flex flex-col gap-1 text-center">
-              <span className="text-xs text-muted-foreground">KPI Change</span>
-              <span className={`text-sm font-semibold ${impact.kpiDelta >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-                {impact.kpiDelta >= 0 ? "+" : ""}{impact.kpiDelta}%
-              </span>
-            </div>
-            <div className="flex flex-col gap-1 text-center">
-              <span className="text-xs text-muted-foreground">Cost Impact</span>
-              <span className={`text-sm font-semibold ${impact.costDelta <= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-                {impact.costDelta >= 0 ? "+" : ""}{impact.costDelta}%
-              </span>
-            </div>
-            <div className="flex flex-col gap-1 text-center">
-              <span className="text-xs text-muted-foreground">Latency</span>
-              <span className={`text-sm font-semibold ${impact.latencyDelta >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-red-600 dark:text-red-400"}`}>
-                {impact.latencyDelta >= 0 ? "+" : ""}{impact.latencyDelta}%
-              </span>
-            </div>
-          </div>
-          <div className="flex flex-col gap-2 pt-2 border-t">
-            <span className="text-xs text-muted-foreground">Affected KPIs ({outcomeKpis.length})</span>
-            {outcomeKpis.map((kpi) => {
-              const currentAtt = kpi.target > 0 ? ((kpi.currentValue || 0) / kpi.target) * 100 : 0;
-              const projected = Math.min(120, Math.max(0, currentAtt + impact.kpiDelta));
-              return (
-                <div key={kpi.id} className="flex items-center justify-between gap-2" data-testid={`sim-kpi-${kpi.id}`}>
-                  <span className="text-xs truncate flex-1">{kpi.name}</span>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-xs text-muted-foreground">{currentAtt.toFixed(0)}%</span>
-                    <ArrowRight className="w-3 h-3 text-muted-foreground" />
-                    <span className={`text-xs font-medium ${projected >= 100 ? "text-emerald-600 dark:text-emerald-400" : projected >= 80 ? "text-blue-600 dark:text-blue-400" : "text-amber-600 dark:text-amber-400"}`}>
-                      {projected.toFixed(0)}%
-                    </span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <div className="flex items-center justify-between gap-2 pt-2 border-t">
-            <span className="text-xs text-muted-foreground">Affected Agents: {outcomeAgents.length}</span>
-            <Badge variant="outline" className="text-xs capitalize">Risk: {impact.risk}</Badge>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
