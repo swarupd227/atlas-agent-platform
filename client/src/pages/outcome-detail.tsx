@@ -116,16 +116,6 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { OutcomeContract, KpiDefinition, Approval, OutcomeEvent, Agent, Policy, Skill, OntologyConcept } from "@shared/schema";
 import { PolicyImpactGraph } from "@/components/policy-impact-graph";
 
-function hashCode(str: string): number {
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    const char = str.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash |= 0;
-  }
-  return hash;
-}
-
 function getIndustryBenchmark(industry: string, kpiName: string, kpiUnit: string): { benchmark: number; unit: string; source: string; comparison: string } | null {
   const nameLower = kpiName.toLowerCase();
   const universalBenchmarks: Array<{ keywords: string[]; data: { benchmark: number; unit: string; source: string } }> = [
@@ -183,18 +173,6 @@ function getIndustryBenchmark(industry: string, kpiName: string, kpiUnit: string
     }
   }
   return null;
-}
-
-function getWorkflowSteps(industry: string, agentName: string): Array<{ name: string }> {
-  const industrySteps: Record<string, string[]> = {
-    financial_services: ["Data Ingestion", "Identity Verification", "Risk Assessment", "Compliance Check", "Transaction Processing", "Audit Logging"],
-    healthcare: ["Patient Intake", "Eligibility Verification", "Prior Authorization", "Clinical Review", "Claims Adjudication", "Provider Notification"],
-    insurance: ["FNOL Registration", "Document Collection", "Damage Assessment", "Coverage Verification", "Settlement Calculation", "Payment Disbursement"],
-    manufacturing: ["Order Receipt", "BOM Validation", "Production Planning", "Quality Inspection", "Inventory Update", "Shipment Coordination"],
-    retail: ["Product Discovery", "Cart Management", "Checkout Flow", "Payment Processing", "Order Fulfillment", "Returns Processing"],
-  };
-  const steps = industrySteps[industry] || ["Data Input", "Processing", "Validation", "Output", "Review"];
-  return steps.map(s => ({ name: s }));
 }
 
 function Sparkline({
@@ -789,6 +767,22 @@ export default function OutcomeDetail() {
     }
   };
 
+  const [regeneratingGraph, setRegeneratingGraph] = useState(false);
+  const regenerateConstraintGraph = async () => {
+    if (!outcomeId) return;
+    setRegeneratingGraph(true);
+    try {
+      await apiRequest("PATCH", `/api/outcomes/${outcomeId}`, {});
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+      toast({ title: "Constraint graph updated", description: "Regenerated from current KPIs and outcome configuration." });
+    } catch {
+      toast({ title: "Regeneration failed", variant: "destructive" });
+    } finally {
+      setRegeneratingGraph(false);
+    }
+  };
+
   const exportAuditBundle = async () => {
     try {
       const res = await apiRequest("POST", `/api/exports/outcome/${outcomeId}/audit`);
@@ -1166,11 +1160,6 @@ export default function OutcomeDetail() {
             <RefreshCw className={`w-4 h-4 mr-1.5 ${recomputing ? "animate-spin" : ""}`} />
             {recomputing ? "Recomputing..." : "Recompute"}
           </Button>
-          <Link href={`/agents/wizard?outcomeId=${outcomeId}&outcomeName=${encodeURIComponent(outcome.name)}&riskTier=${encodeURIComponent(outcome.riskTier)}${outcome.industryId ? `&industryId=${encodeURIComponent(outcome.industryId)}` : ""}&fromOutcome=true&description=${encodeURIComponent(`Agent created for outcome: ${outcome.name}. ${outcome.description || ""}`.trim())}`}>
-            <Button variant="ghost" size="sm" className="text-muted-foreground" data-testid="button-create-agent-from-outcome">
-              <Bot className="w-3.5 h-3.5 mr-1" /> Add Agent Manually
-            </Button>
-          </Link>
           <Button variant="outline" onClick={exportAuditBundle} data-testid="button-export-audit-bundle">
             <Download className="w-4 h-4 mr-1.5" /> Export Audit
           </Button>
@@ -2103,31 +2092,6 @@ export default function OutcomeDetail() {
                           </div>
                         </div>
 
-                        <div className="flex flex-col gap-2">
-                          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Workflow Step Performance</span>
-                          <div className="flex flex-col gap-1.5">
-                            {getWorkflowSteps(industry?.id || "", agent.agentName).map((step, si) => {
-                              const perf = Math.max(0, Math.min(100, 65 + hashCode(`${agent.agentId}-${step.name}`) % 35));
-                              const isUnder = perf < 75;
-                              return (
-                                <div key={si} className="flex items-center gap-3" data-testid={`workflow-step-${agent.agentId}-${si}`}>
-                                  <span className={`text-xs w-48 shrink-0 truncate ${isUnder ? "text-red-600 dark:text-red-400 font-medium" : "text-muted-foreground"}`}>
-                                    {step.name}
-                                  </span>
-                                  <div className="flex-1 h-2 rounded-sm bg-muted/50">
-                                    <div
-                                      className={`h-full rounded-sm ${isUnder ? "bg-red-500/60" : "bg-emerald-500/60"}`}
-                                      style={{ width: `${perf}%` }}
-                                    />
-                                  </div>
-                                  <span className={`text-[10px] w-10 text-right shrink-0 ${isUnder ? "text-red-600 dark:text-red-400" : "text-muted-foreground"}`}>{perf}%</span>
-                                  {isUnder && <AlertTriangle className="w-3 h-3 text-red-500 shrink-0" />}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-
                         <div className="flex items-center gap-3 flex-wrap">
                           <div className="flex items-center gap-1.5">
                             <Activity className="w-3 h-3 text-muted-foreground" />
@@ -2142,6 +2106,14 @@ export default function OutcomeDetail() {
                     </CardContent>
                   </Card>
                 ))}
+              </div>
+
+              <div className="flex justify-end">
+                <Link href={`/agents/wizard?outcomeId=${outcomeId}&outcomeName=${encodeURIComponent(outcome.name)}&riskTier=${encodeURIComponent(outcome.riskTier)}${outcome.industryId ? `&industryId=${encodeURIComponent(outcome.industryId)}` : ""}&fromOutcome=true&description=${encodeURIComponent(`Agent created for outcome: ${outcome.name}. ${outcome.description || ""}`.trim())}`}>
+                  <Button variant="ghost" size="sm" className="text-muted-foreground" data-testid="button-create-agent-from-outcome">
+                    <Bot className="w-3.5 h-3.5 mr-1" /> Add Agent Manually
+                  </Button>
+                </Link>
               </div>
 
             </>
@@ -2169,7 +2141,15 @@ export default function OutcomeDetail() {
             </div>
           </div>
           {(() => {
-            const activePolicies = (governancePolicies || []).filter(p => p.status === "active");
+            const boundAgentIds = new Set(boundAgents.map(a => a.id));
+            const activePolicies = (governancePolicies || []).filter(p => {
+              if (p.status !== "active") return false;
+              const st = p.scopeType;
+              if (!st || st === "org" || st === "global") return true;
+              if (st === "outcome" && p.scopeId === outcomeId) return true;
+              if (st === "agent" && p.scopeId && boundAgentIds.has(p.scopeId)) return true;
+              return false;
+            });
             const domainGroups = activePolicies.reduce<Record<string, Policy[]>>((acc, p) => {
               const d = p.domain || "general";
               if (!acc[d]) acc[d] = [];
@@ -2436,9 +2416,8 @@ export default function OutcomeDetail() {
                 )}
               </div>
 
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold">Data Quality</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+              <CollapsibleSection title="Data Quality" icon={<Database className="w-3 h-3" />} defaultOpen={false} testId="section-evidence-data-quality">
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 pt-2">
                   <Card data-testid="card-dq-total-events">
                     <CardContent className="p-4">
                       <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Total Events</span>
@@ -2470,11 +2449,10 @@ export default function OutcomeDetail() {
                     </CardContent>
                   </Card>
                 </div>
-              </div>
+              </CollapsibleSection>
 
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold">Correlated Agent Metrics</h3>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+              <CollapsibleSection title="Correlated Agent Metrics" icon={<Activity className="w-3 h-3" />} defaultOpen={false} testId="section-evidence-agent-metrics">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
                   <Card data-testid="card-metric-success-rate">
                     <CardContent className="p-4">
                       <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Success Rate</span>
@@ -2500,31 +2478,26 @@ export default function OutcomeDetail() {
                     </CardContent>
                   </Card>
                 </div>
-              </div>
+              </CollapsibleSection>
             </>
           )}
-
-          <Separator />
 
           <AuditTab outcomeId={outcomeId!} outcome={outcome} auditData={auditData} gates={gates} />
 
           {snapshots?.snapshots && snapshots.snapshots.length > 0 && (
-            <div className="space-y-3" data-testid="snapshot-timeline">
-              <div className="flex items-center justify-between gap-4 flex-wrap">
-                <h3 className="text-sm font-semibold">Snapshot Timeline</h3>
-                <div className="flex items-center gap-1 flex-wrap">
-                  {["7d", "30d", "90d"].map((w) => (
-                    <Button
-                      key={w}
-                      variant={evidenceWindow === w ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setEvidenceWindow(w)}
-                      data-testid={`button-window-${w}`}
-                    >
-                      {w}
-                    </Button>
-                  ))}
-                </div>
+            <CollapsibleSection title="Snapshot Timeline" icon={<Calendar className="w-3 h-3" />} defaultOpen={false} count={Math.min(snapshots.snapshots.length, 7)} testId="section-snapshot-timeline">
+              <div className="flex items-center justify-end gap-1 pt-2 pb-1 flex-wrap">
+                {["7d", "30d", "90d"].map((w) => (
+                  <Button
+                    key={w}
+                    variant={evidenceWindow === w ? "default" : "outline"}
+                    size="sm"
+                    onClick={() => setEvidenceWindow(w)}
+                    data-testid={`button-window-${w}`}
+                  >
+                    {w}
+                  </Button>
+                ))}
               </div>
               <div className="space-y-0">
                 {[...snapshots.snapshots].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 7).map((snap, i, arr) => (
@@ -2568,7 +2541,7 @@ export default function OutcomeDetail() {
                   </div>
                 ))}
               </div>
-            </div>
+            </CollapsibleSection>
           )}
         </TabsContent>
 
@@ -2576,7 +2549,7 @@ export default function OutcomeDetail() {
         <TabsContent value="risk-remediation" className="space-y-6" data-testid="tabcontent-risk-remediation">
           <div>
             <h2 className="text-lg font-semibold">Risk & Remediation</h2>
-            <p className="text-sm text-muted-foreground">Active risks, AI-generated recommendations, incidents, and risk sub-factors</p>
+            <p className="text-sm text-muted-foreground">Active risks, AI-generated recommendations, incidents, and pending approvals</p>
           </div>
 
           {!remediation ? (
@@ -2755,82 +2728,6 @@ export default function OutcomeDetail() {
                 </div>
               )}
 
-              <Separator />
-
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold">Risk Sub-Factors</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                  <Card data-testid="card-risk-impact">
-                    <CardContent className="p-4">
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className="w-8 h-8 rounded-md bg-red-500/15 flex items-center justify-center">
-                          <AlertTriangle className="w-4 h-4 text-red-500" />
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="text-xs font-semibold">Business Impact</span>
-                          <span className="text-[10px] text-muted-foreground">Revenue & customer effect</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between gap-2 mt-2">
-                        <Progress value={outcome.riskTier === "CRITICAL" ? 90 : outcome.riskTier === "HIGH" ? 70 : outcome.riskTier === "MEDIUM" ? 45 : 20} className="h-1.5 flex-1" />
-                        <span className="text-xs font-semibold">{outcome.riskTier === "CRITICAL" ? "9/10" : outcome.riskTier === "HIGH" ? "7/10" : outcome.riskTier === "MEDIUM" ? "5/10" : "2/10"}</span>
-                      </div>
-                    </CardContent>
-                  </Card>
-                  <Card data-testid="card-risk-autonomy">
-                    <CardContent className="p-4">
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className="w-8 h-8 rounded-md bg-amber-500/15 flex items-center justify-center">
-                          <Brain className="w-4 h-4 text-amber-500" />
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="text-xs font-semibold">Autonomy Scope</span>
-                          <span className="text-[10px] text-muted-foreground">Decision authority level</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between gap-2 mt-2">
-                        <Progress value={boundAgents.length > 3 ? 80 : boundAgents.length > 1 ? 55 : 30} className="h-1.5 flex-1" />
-                        <span className="text-xs font-semibold">{boundAgents.length > 3 ? "8/10" : boundAgents.length > 1 ? "6/10" : "3/10"}</span>
-                      </div>
-                    </CardContent>
-                  </Card>
-                  <Card data-testid="card-risk-data-class">
-                    <CardContent className="p-4">
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className="w-8 h-8 rounded-md bg-blue-500/15 flex items-center justify-center">
-                          <Database className="w-4 h-4 text-blue-500" />
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="text-xs font-semibold">Data Classification</span>
-                          <span className="text-[10px] text-muted-foreground">Sensitivity & compliance</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between gap-2 mt-2">
-                        <Progress value={outcome.riskTier === "CRITICAL" ? 85 : outcome.riskTier === "HIGH" ? 60 : 35} className="h-1.5 flex-1" />
-                        <span className="text-xs font-semibold">{outcome.riskTier === "CRITICAL" ? "9/10" : outcome.riskTier === "HIGH" ? "6/10" : "4/10"}</span>
-                      </div>
-                    </CardContent>
-                  </Card>
-                  <Card data-testid="card-risk-write-actions">
-                    <CardContent className="p-4">
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className="w-8 h-8 rounded-md bg-purple-500/15 flex items-center justify-center">
-                          <Pencil className="w-4 h-4 text-purple-500" />
-                        </div>
-                        <div className="flex flex-col">
-                          <span className="text-xs font-semibold">Write Actions</span>
-                          <span className="text-[10px] text-muted-foreground">Mutation & side effects</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between gap-2 mt-2">
-                        <Progress value={outcome.riskTier === "CRITICAL" ? 95 : outcome.riskTier === "HIGH" ? 65 : 40} className="h-1.5 flex-1" />
-                        <span className="text-xs font-semibold">{outcome.riskTier === "CRITICAL" ? "10/10" : outcome.riskTier === "HIGH" ? "7/10" : "4/10"}</span>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              </div>
-
               {pendingApprovals.length > 0 && (
                 <div className="space-y-3">
                   <h3 className="text-sm font-semibold">Pending Approvals</h3>
@@ -2924,12 +2821,18 @@ export default function OutcomeDetail() {
                       Typed constraint decomposition showing how outcome requirements propagate to downstream systems
                     </p>
                   </div>
-                  {cg?.generatedAt && (
-                    <Badge variant="outline" data-testid="badge-constraint-graph-generated">
-                      <Clock className="w-3 h-3 mr-1" />
-                      Generated {relativeTime(cg.generatedAt)}
-                    </Badge>
-                  )}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {cg?.generatedAt && (
+                      <Badge variant="outline" data-testid="badge-constraint-graph-generated">
+                        <Clock className="w-3 h-3 mr-1" />
+                        Generated {relativeTime(cg.generatedAt)}
+                      </Badge>
+                    )}
+                    <Button variant="outline" size="sm" onClick={regenerateConstraintGraph} disabled={regeneratingGraph} data-testid="button-regenerate-constraint-graph">
+                      <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${regeneratingGraph ? "animate-spin" : ""}`} />
+                      {regeneratingGraph ? "Generating..." : cg ? "Regenerate" : "Generate"}
+                    </Button>
+                  </div>
                 </div>
 
                 {cg?.summary && (
@@ -2958,7 +2861,11 @@ export default function OutcomeDetail() {
                     <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
                       <Network className="w-10 h-10 text-muted-foreground/40" />
                       <p className="text-sm text-muted-foreground">No constraint graph generated yet</p>
-                      <p className="text-xs text-muted-foreground">Update the outcome or add KPIs to auto-generate the constraint graph</p>
+                      <p className="text-xs text-muted-foreground">Click Generate to derive constraints from current KPIs and outcome configuration.</p>
+                      <Button variant="outline" onClick={regenerateConstraintGraph} disabled={regeneratingGraph} data-testid="button-generate-constraint-graph-empty">
+                        <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${regeneratingGraph ? "animate-spin" : ""}`} />
+                        {regeneratingGraph ? "Generating..." : "Generate Constraint Graph"}
+                      </Button>
                     </CardContent>
                   </Card>
                 ) : (
