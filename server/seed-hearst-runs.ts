@@ -45,20 +45,22 @@ function daysAgo(days: number, hour = 0, minute = 0): Date {
 /**
  * Returns true if this agent was seeded within the last 48 hours.
  *
- * We check `startedAt` (the DB defaultNow() insert timestamp), NOT `completedAt`.
- * `completedAt` is intentionally backdated to simulate realistic agent schedules
- * (e.g. weekly-cadence agents show completedAt 4–7 days ago). Using it for the
- * idempotency gate would cause weekly agents to reseed on every request.
- *
- * `startedAt` is always set to the actual row-insertion time, so the 48h window
- * correctly gates all 5 agents: once seeded, subsequent calls within 48h are
- * no-ops; after 48h the seed refreshes (keeping demo data fresh).
+ * Checks `completedAt >= now - 48h` (matching the spec) and only counts
+ * `status = "completed"` rows so that in-flight or failed runs do not block
+ * a required seed. All 5 seeded agents use `completedAt` within the last 48h
+ * (set to realistic times today), so the window remains valid across the full
+ * pipeline regardless of cadence (daily vs. weekly).
  */
 async function hasRecentlySeeded(agentId: string): Promise<boolean> {
   const runs = await storage.getAgentRuntimeRuns(agentId);
   if (!runs.length) return false;
   const cutoff = Date.now() - 48 * 60 * 60 * 1000;
-  return runs.some(r => r.startedAt && new Date(r.startedAt).getTime() > cutoff);
+  return runs.some(
+    r =>
+      r.status === "completed" &&
+      r.completedAt &&
+      new Date(r.completedAt).getTime() > cutoff,
+  );
 }
 
 async function createSpans(
@@ -374,9 +376,8 @@ async function seedNBADecisionAgent(): Promise<void> {
 async function seedSendTimeOptimizer(): Promise<void> {
   if (await hasRecentlySeeded(AGENTS.sendTimeOptimizer)) return;
 
-  const daysBack = new Date().getDay() === 0 ? 7 : new Date().getDay();
-  const startedAt = daysAgo(daysBack, 3, 2);
-  const completedAt = daysAgo(daysBack, 3, 47);
+  const startedAt = daysAgo(0, 3, 2);
+  const completedAt = daysAgo(0, 3, 47);
   const latencyMs = completedAt.getTime() - startedAt.getTime();
 
   const run = await storage.createAgentRuntimeRun({
@@ -426,9 +427,8 @@ async function seedSendTimeOptimizer(): Promise<void> {
 async function seedPerformanceLearning(): Promise<void> {
   if (await hasRecentlySeeded(AGENTS.performanceLearning)) return;
 
-  const daysBack = new Date().getDay() === 1 ? 7 : ((new Date().getDay() + 6) % 7);
-  const startedAt = daysAgo(Math.max(daysBack, 1), 4, 1);
-  const completedAt = daysAgo(Math.max(daysBack, 1), 4, 28);
+  const startedAt = daysAgo(0, 4, 1);
+  const completedAt = daysAgo(0, 4, 28);
   const latencyMs = completedAt.getTime() - startedAt.getTime();
 
   const run = await storage.createAgentRuntimeRun({
