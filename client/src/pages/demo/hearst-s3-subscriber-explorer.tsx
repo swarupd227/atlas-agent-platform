@@ -248,7 +248,7 @@ function DecisionTracePanel({ subscriberId }: { subscriberId: string }) {
                         <div className="mt-2 rounded-lg border border-border/30 overflow-hidden">
                           <button
                             className="w-full flex items-center justify-between px-2 py-1.5 bg-muted/20 hover:bg-muted/30 transition-colors text-left"
-                            onClick={() => setAltExpanded(v => !v)}
+                            onClick={(e) => { e.stopPropagation(); setAltExpanded(v => !v); }}
                           >
                             <span className="text-[10px] font-semibold text-muted-foreground">
                               Alternatives Considered ({decisionData.alternativesConsidered.length})

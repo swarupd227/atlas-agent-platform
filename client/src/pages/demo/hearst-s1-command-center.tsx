@@ -213,6 +213,16 @@ export default function Screen1CommandCenter({ onBrandClick }: Props) {
           color="bg-orange-500"
           badge="↑ next-day open rates +18–25%"
         />
+        {kpi.aiInfluencedPct != null && (
+          <KpiCard
+            label="AI-Influenced Sends"
+            value={`${kpi.aiInfluencedPct}%`}
+            sub={`${kpi.aiInfluencedPct - (kpi.holdRate ?? 0)}% personalized · ${kpi.holdRate ?? 0}% protected HOLDs`}
+            icon={Bot}
+            color="bg-violet-500"
+            badge="vs. 42% default send"
+          />
+        )}
       </div>
 
       {/* Row 2 — Brand Distribution + Donut */}
