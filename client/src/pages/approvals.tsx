@@ -886,7 +886,7 @@ export default function Approvals() {
                         <Eye className="w-3.5 h-3.5 mr-1" /> View Details
                       </Button>
                     </Link>
-                    {approval.type === "outcome_review" && approval.objectId && (
+                    {approval.type === "outcome_review" && approval.objectId && outcomes?.some(o => o.id === approval.objectId) && (
                       <Link href={`/outcomes/${approval.objectId}`}>
                         <Button size="sm" variant="outline" data-testid={`button-view-outcome-${approval.id}`}>
                           <ArrowRight className="w-3.5 h-3.5 mr-1" /> View Outcome
