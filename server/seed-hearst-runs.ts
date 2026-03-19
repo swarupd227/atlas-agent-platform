@@ -3,14 +3,21 @@
  *
  * Creates real platform records (agent_runtime_runs, run_traces, trace_spans)
  * for the 5 Hearst agents. Called lazily from the demo API routes — if runs
- * already exist within 48h, this is a no-op.
+ * already exist within 48h at the current seed version, this is a no-op.
  *
  * The underlying data the agents worked on (subscriber events, CMS articles,
  * etc.) is realistic/simulated, but every agent identity, run timestamp, run
  * status, tool call, and decision record lives in the real platform DB tables.
+ *
+ * Seed version bump forces re-seed with enriched fields:
+ *   v2 — added aiInfluencedPct breakdown (NBA), alternativesConsidered (NBA
+ *        per-persona traces), timezoneLifts (Send Time Optimizer),
+ *        holdValidation + brandPerformance (Performance & Learning).
  */
 
 import { storage } from "./storage";
+
+const HEARST_SEED_VERSION = 2;
 
 const AGENTS = {
   subscriberProfileEngine: "3a2e02ad-f07a-42ff-9c16-d9b4956dc34d",
@@ -29,38 +36,11 @@ const MCP_SERVERS = {
 
 type McpServerKey = keyof typeof MCP_SERVERS;
 
-function hoursAgo(h: number): Date {
-  const d = new Date();
-  d.setHours(d.getHours() - h);
-  return d;
-}
-
 function daysAgo(days: number, hour = 0, minute = 0): Date {
   const d = new Date();
   d.setDate(d.getDate() - days);
   d.setHours(hour, minute, 0, 0);
   return d;
-}
-
-/**
- * Returns true if this agent was seeded within the last 48 hours.
- *
- * Checks `completedAt >= now - 48h` (matching the spec) and only counts
- * `status = "completed"` rows so that in-flight or failed runs do not block
- * a required seed. All 5 seeded agents use `completedAt` within the last 48h
- * (set to realistic times today), so the window remains valid across the full
- * pipeline regardless of cadence (daily vs. weekly).
- */
-async function hasRecentlySeeded(agentId: string): Promise<boolean> {
-  const runs = await storage.getAgentRuntimeRuns(agentId);
-  if (!runs.length) return false;
-  const cutoff = Date.now() - 48 * 60 * 60 * 1000;
-  return runs.some(
-    r =>
-      r.status === "completed" &&
-      r.completedAt &&
-      new Date(r.completedAt).getTime() > cutoff,
-  );
 }
 
 async function createSpans(
@@ -93,13 +73,28 @@ async function createSpans(
 }
 
 /**
- * Returns true only if the agent has a recent seeded run AND that run has at
- * least one trace record. This guards against the edge case where runs exist
- * (blocking re-seed) but their corresponding traces/spans are missing or were
- * partially written.
+ * Returns true if the most recent completed run for this agent was seeded
+ * at the current HEARST_SEED_VERSION. Older runs missing the seedVersion
+ * field (or with a lower version) will return false, triggering a re-seed.
  */
 async function hasIntactSeed(agentId: string): Promise<boolean> {
-  if (!(await hasRecentlySeeded(agentId))) return false;
+  const runs = await storage.getAgentRuntimeRuns(agentId);
+  if (!runs.length) return false;
+
+  const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+  const recentRuns = runs.filter(
+    r =>
+      r.status === "completed" &&
+      r.completedAt &&
+      new Date(r.completedAt).getTime() > cutoff,
+  );
+  if (!recentRuns.length) return false;
+
+  // Version gate: latest run must carry the current seed version
+  const latest = recentRuns[recentRuns.length - 1];
+  if ((latest.inputConfig as any)?.seedVersion !== HEARST_SEED_VERSION) return false;
+
+  // Must also have at least one trace
   const traces = await storage.getRecentCompletedTracesByAgent(agentId, 1);
   return traces.length > 0;
 }
@@ -143,7 +138,7 @@ async function seedProfileEngine(): Promise<void> {
       lifecycleUpdates: 12400,
       avgAffinityVectors: 8,
     },
-    inputConfig: { schedule: "0 2 * * *", environment: "production" },
+    inputConfig: { schedule: "0 2 * * *", environment: "production", seedVersion: HEARST_SEED_VERSION },
     latencyMs,
     completedAt,
   });
@@ -198,7 +193,7 @@ async function seedContentInventory(): Promise<void> {
       freshItems: 23,
       deprecatedItems: 12,
     },
-    inputConfig: { schedule: "0 6 * * *", environment: "production" },
+    inputConfig: { schedule: "0 6 * * *", environment: "production", seedVersion: HEARST_SEED_VERSION },
     latencyMs,
     completedAt,
   });
@@ -249,6 +244,15 @@ async function seedNBADecisionAgent(): Promise<void> {
   const batchCompletedAt = daysAgo(0, 7, 28);
   const batchLatencyMs = batchCompletedAt.getTime() - batchStartedAt.getTime();
 
+  // Donut breakdown: aiInfluencedPct = aiPersonalizedContentPct + aiPersonalizedTimePct + holdPct
+  // defaultSendPct = 100 - aiInfluencedPct
+  const aiPersonalizedContentPct = 35;
+  const aiPersonalizedTimePct = 14;
+  const holdFatiguePct = 6;
+  const holdLowScorePct = 3;
+  const aiInfluencedPct = aiPersonalizedContentPct + aiPersonalizedTimePct + holdFatiguePct + holdLowScorePct; // 58
+  const defaultSendPct = 100 - aiInfluencedPct; // 42
+
   await storage.createAgentRuntimeRun({
     agentId: AGENTS.nbaEmailDecision,
     status: "completed",
@@ -260,8 +264,14 @@ async function seedNBADecisionAgent(): Promise<void> {
       holdRate: 25.5,
       avgNbEmailScore: 0.58,
       holdThreshold: 0.25,
+      aiInfluencedPct,
+      aiPersonalizedContentPct,
+      aiPersonalizedTimePct,
+      holdFatiguePct,
+      holdLowScorePct,
+      defaultSendPct,
     },
-    inputConfig: { schedule: "0 2 * * *", environment: "production" },
+    inputConfig: { schedule: "0 2 * * *", environment: "production", seedVersion: HEARST_SEED_VERSION },
     latencyMs: batchLatencyMs,
     completedAt: batchCompletedAt,
   });
@@ -287,6 +297,29 @@ async function seedNBADecisionAgent(): Promise<void> {
       fatigueScore: 0.18,
       candidatesScored: 47,
       holdReason: null,
+      alternativesConsidered: [
+        {
+          rank: 2,
+          brand: "Cosmopolitan",
+          subject: "10 Beauty Tips Every Woman Should Know",
+          nbEmailScore: 0.41,
+          lossReason: "Beauty affinity score 0.35 — well below Sarah's top interests (Wellness 0.88, Career 0.82). GH wellness × career crossover scored 0.33 higher.",
+        },
+        {
+          rank: 3,
+          brand: "Elle",
+          subject: "The 12 Career Moves That Separate Good from Great",
+          nbEmailScore: 0.68,
+          lossReason: "Strong career match, but GH wellness + career crossover scored higher (0.74 vs 0.68). GH brand affinity also stronger — Sarah opened 4 of last 5 GH emails.",
+        },
+        {
+          rank: 4,
+          brand: "Good Housekeeping",
+          subject: "The Home Workout Revolution",
+          nbEmailScore: 0.65,
+          lossReason: "Same brand as winner, lower content affinity. Morning habits article has 2.1× higher wellness × career crossover signal than general fitness content.",
+        },
+      ],
     },
     {
       id: "marcus-t",
@@ -308,6 +341,29 @@ async function seedNBADecisionAgent(): Promise<void> {
       fatigueScore: 0.71,
       candidatesScored: 47,
       holdReason: "Score 0.19 below HOLD threshold 0.25. Subscriber shows at-risk signals — sending today risks accelerating unsubscribe. HOLD protects tomorrow's engagement window.",
+      alternativesConsidered: [
+        {
+          rank: 1,
+          brand: "Runner's World",
+          subject: "5 Training Plans for Your First Half Marathon",
+          nbEmailScore: 0.19,
+          lossReason: "Highest-scoring candidate but still below HOLD threshold (0.25). Fatigue cost dominates: at-risk subscriber with 3 low-engagement emails in 30 days.",
+        },
+        {
+          rank: 2,
+          brand: "Men's Health",
+          subject: "The 4-Week Strength Foundation",
+          nbEmailScore: 0.14,
+          lossReason: "Low brand affinity — last Men's Health open 14 days ago with no click. Revenue potential low (free tier subscriber).",
+        },
+        {
+          rank: 3,
+          brand: "Esquire",
+          subject: "Style Guide: The Fall Wardrobe Edit",
+          nbEmailScore: 0.09,
+          lossReason: "Lowest content affinity. Last Esquire open 21 days ago. No style or fashion interest signals in Marcus's affinity profile.",
+        },
+      ],
     },
     {
       id: "jennifer-k",
@@ -329,6 +385,29 @@ async function seedNBADecisionAgent(): Promise<void> {
       fatigueScore: 0.88,
       candidatesScored: 47,
       holdReason: "VIP subscriber has hit weekly email cap. Harper's Bazaar fall fashion exclusive tomorrow will score significantly higher. Protecting tomorrow's engagement.",
+      alternativesConsidered: [
+        {
+          rank: 1,
+          brand: "Harper's Bazaar",
+          subject: "Fall Style Trends You'll Actually Wear",
+          nbEmailScore: 0.22,
+          lossReason: "Best available today but weekly email cap already hit (4 emails sent). HOLD — HB fall fashion exclusive tomorrow predicted to score 0.78+, protecting that engagement.",
+        },
+        {
+          rank: 2,
+          brand: "Elle",
+          subject: "The Best Skincare Launches of September",
+          nbEmailScore: 0.18,
+          lossReason: "High beauty affinity but cannibalization risk — tomorrow's HB exclusive targets the same beauty interest cluster. Sending today would reduce tomorrow's open probability.",
+        },
+        {
+          rank: 3,
+          brand: "Cosmopolitan",
+          subject: "The Dating Rules Gen Z Completely Ignores",
+          nbEmailScore: 0.14,
+          lossReason: "Relationship content has moderate affinity (0.79) but weekly cap exceeded. Any send today risks unsubscribe from over-saturation for this VIP subscriber.",
+        },
+      ],
     },
   ];
 
@@ -371,6 +450,7 @@ async function seedNBADecisionAgent(): Promise<void> {
         holdReason: persona.holdReason,
         scoringFactors: persona.factors,
         candidatesEvaluated: persona.candidatesScored,
+        alternativesConsidered: persona.alternativesConsidered,
       },
       tokenUsage: { promptTokens: 4200, completionTokens: 820, totalTokens: 5020 },
       startedAt,
@@ -403,10 +483,21 @@ async function seedSendTimeOptimizer(): Promise<void> {
       peakHour: 7,
       peakDow: "Tuesday",
     },
-    inputConfig: { schedule: "0 3 * * 0", environment: "production" },
+    inputConfig: { schedule: "0 3 * * 0", environment: "production", seedVersion: HEARST_SEED_VERSION },
     latencyMs,
     completedAt,
   });
+
+  // Timezone lift data: baselineOpenRate = old 9am ET batch open rate per region
+  // openRate = actual open rate after local-time personalization
+  // liftPct = (openRate - baselineOpenRate) / baselineOpenRate * 100
+  const timezoneLifts = [
+    { zone: "US East",   abbr: "ET",   openRate: 36.2, baselineOpenRate: 28.1, liftPct: 28.8, peakHour: "7–8 AM",   sendCount: 680000, color: "#6366F1" },
+    { zone: "US Central", abbr: "CT",  openRate: 33.8, baselineOpenRate: 27.1, liftPct: 24.7, peakHour: "7:30–8:30 AM", sendCount: 310000, color: "#8B5CF6" },
+    { zone: "US West",   abbr: "PT",   openRate: 35.1, baselineOpenRate: 28.5, liftPct: 23.2, peakHour: "7–9 AM",   sendCount: 440000, color: "#3B82F6" },
+    { zone: "Europe",    abbr: "CET",  openRate: 38.4, baselineOpenRate: 25.9, liftPct: 48.3, peakHour: "8–9 AM",   sendCount: 210000, color: "#10B981" },
+    { zone: "APAC",      abbr: "AEDT", openRate: 31.2, baselineOpenRate: 24.8, liftPct: 25.8, peakHour: "8–10 AM",  sendCount: 170000, color: "#F59E0B" },
+  ];
 
   const trace = await storage.createTrace({
     agentId: AGENTS.sendTimeOptimizer,
@@ -414,7 +505,7 @@ async function seedSendTimeOptimizer(): Promise<void> {
     status: "completed",
     latencyMs,
     inputSummary: "Weekly send time recomputation for 6.2M subscribers",
-    outputSummary: "6,220,000 personalized send windows computed · peak: Tue 7am ET · 4,320 unique time slots",
+    outputSummary: "6,220,000 personalized send windows computed · peak: Tue 7am ET · 4,320 unique time slots · Europe +48.3% lift",
     modelId: "claude-3-5-sonnet-20241022",
     toolCalls: [
       { tool: "get_esp_events", server: "Hearst Data Platform MCP Server", calls: 6220000, duration_ms: 1200000 },
@@ -424,6 +515,7 @@ async function seedSendTimeOptimizer(): Promise<void> {
       subscribersOptimized: 6220000,
       uniqueSendWindows: 4320,
       topWindow: "Tue 7:00–8:15 AM local",
+      timezoneLifts,
     },
     tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
     startedAt,
@@ -443,6 +535,30 @@ async function seedPerformanceLearning(): Promise<void> {
   const completedAt = daysAgo(0, 4, 28);
   const latencyMs = completedAt.getTime() - startedAt.getTime();
 
+  // Hold validation: outcome data for held vs not-held subscribers
+  const holdValidation = {
+    heldNextDayOpenRate: 43.6,
+    notHeldOpenRate: 26.8,
+    heldRevenuePerSub: 2.84,
+    notHeldRevenuePerSub: 1.92,
+    unsubReductionPct: 50,
+    preservedSubscribers: 12400,
+    preservedRevenue: 186000,
+  };
+
+  // Per-brand performance data: predictedOpenRate derived from NBA model outputs
+  // baselineOpenRate is the pre-Atlas default batch send open rate
+  const brandPerformance = [
+    { brand: "Cosmopolitan",   subscribers: 890000, aiGroupCount: 5, baselineOpenRate: 22.4, predictedOpenRate: 35.1, liftPct: 56.7 },
+    { brand: "Good Housekeeping", subscribers: 740000, aiGroupCount: 5, baselineOpenRate: 23.1, predictedOpenRate: 33.8, liftPct: 46.3 },
+    { brand: "Elle",           subscribers: 680000, aiGroupCount: 5, baselineOpenRate: 21.8, predictedOpenRate: 36.2, liftPct: 66.1 },
+    { brand: "Harper's Bazaar", subscribers: 510000, aiGroupCount: 5, baselineOpenRate: 24.2, predictedOpenRate: 34.5, liftPct: 42.6 },
+    { brand: "Men's Health",   subscribers: 620000, aiGroupCount: 5, baselineOpenRate: 22.8, predictedOpenRate: 31.9, liftPct: 39.9 },
+    { brand: "Country Living", subscribers: 580000, aiGroupCount: 5, baselineOpenRate: 23.5, predictedOpenRate: 33.2, liftPct: 41.3 },
+    { brand: "Runner's World", subscribers: 420000, aiGroupCount: 5, baselineOpenRate: 20.9, predictedOpenRate: 30.6, liftPct: 46.4 },
+    { brand: "Esquire",        subscribers: 380000, aiGroupCount: 5, baselineOpenRate: 21.8, predictedOpenRate: 29.4, liftPct: 34.9 },
+  ];
+
   const run = await storage.createAgentRuntimeRun({
     agentId: AGENTS.performanceLearning,
     status: "completed",
@@ -454,7 +570,7 @@ async function seedPerformanceLearning(): Promise<void> {
       avgOpenRateLift: 0.217,
       holdStrategyValidated: true,
     },
-    inputConfig: { schedule: "0 4 * * 1", environment: "production" },
+    inputConfig: { schedule: "0 4 * * 1", environment: "production", seedVersion: HEARST_SEED_VERSION },
     latencyMs,
     completedAt,
   });
@@ -465,7 +581,7 @@ async function seedPerformanceLearning(): Promise<void> {
     status: "completed",
     latencyMs,
     inputSummary: "Weekly learning cycle: track 1.81M send outcomes, update model weights",
-    outputSummary: "1,810,000 outcomes tracked · avg open-rate lift +21.7% · 2 anomalies detected · model weights updated",
+    outputSummary: "1,810,000 outcomes tracked · avg open-rate lift +21.7% · HOLD strategy validated · 2 anomalies detected · model weights updated",
     modelId: "claude-3-5-sonnet-20241022",
     toolCalls: [
       { tool: "get_send_logs", server: "Hearst Analytics MCP Server", calls: 1, duration_ms: 124000 },
@@ -481,6 +597,8 @@ async function seedPerformanceLearning(): Promise<void> {
         { brand: "Esquire", metric: "Open Rate", actual: "19.2%", baseline: "21.8%", severity: "warning" },
         { brand: "Country Living", metric: "Affiliate CTR", actual: "4.8%", baseline: "3.7%", severity: "info" },
       ],
+      holdValidation,
+      brandPerformance,
     },
     tokenUsage: { promptTokens: 88000, completionTokens: 12000, totalTokens: 100000 },
     startedAt,

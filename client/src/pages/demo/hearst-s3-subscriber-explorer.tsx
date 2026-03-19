@@ -243,6 +243,23 @@ function DecisionTracePanel({ subscriberId }: { subscriberId: string }) {
                           <p className="text-[10px] text-orange-300 leading-snug">{decisionData.holdReason}</p>
                         </div>
                       )}
+                      {decisionData.alternativesConsidered && decisionData.alternativesConsidered.length > 0 && (
+                        <div className="mt-2">
+                          <p className="text-[10px] font-medium text-muted-foreground mb-1.5">Alternatives Considered</p>
+                          <div className="flex flex-col gap-1.5">
+                            {decisionData.alternativesConsidered.map((alt: any) => (
+                              <div key={alt.rank} className="p-1.5 rounded bg-muted/30 border border-border/20">
+                                <div className="flex items-center justify-between mb-0.5">
+                                  <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-sm bg-muted/60 text-muted-foreground">#{alt.rank} {alt.brand}</span>
+                                  <span className="text-[10px] font-bold text-amber-400">{alt.nbEmailScore.toFixed(2)}</span>
+                                </div>
+                                <p className="text-[9px] text-foreground/70 italic mb-1">"{alt.subject}"</p>
+                                <p className="text-[9px] text-muted-foreground leading-snug">{alt.lossReason}</p>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 

@@ -36226,142 +36226,174 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
 
   // GET /demo-api/hearst/command-center — Screen 1 data
   app.get("/demo-api/hearst/command-center", async (_req, res) => {
-    const totalSubscribers = 6220000;
-    const evaluated = 2430000;
-    const scheduled = 1810000;
-    const held = evaluated - scheduled;
-    const baseOpenRate = 28.1;
-    const projectedOpenRate = 34.2;
-    const liftPct = ((projectedOpenRate - baseOpenRate) / baseOpenRate * 100).toFixed(1);
+    try {
+      await seedHearstAgentRuns();
 
-    const brandDist = HEARST_BRANDS.map((b) => {
-      const base = Math.round(scheduled * (b.subscribers / totalSubscribers));
-      const personalized = Math.round(base * 0.38);
-      const holdCount = Math.round(b.subscribers * 0.18);
-      return { ...b, scheduled: base - personalized, personalized, hold: holdCount };
-    });
+      // Read AI-influenced breakdown from the most recent NBA Decision Agent run
+      const NBA_AGENT_ID = "151db72c-0038-4f01-a4bb-45650a82e8b6";
+      const nbaRuns = await storage.getAgentRuntimeRuns(NBA_AGENT_ID);
+      const latestNbaRun = nbaRuns.length ? nbaRuns[nbaRuns.length - 1] : null;
+      const nbaResult = (latestNbaRun?.resultSummary as any) || {};
 
-    const now = new Date();
-    const currentHour = now.getHours();
-    const timeline = Array.from({ length: 24 }, (_, h) => {
-      const isFuture = h > currentHour;
-      const peak = h >= 6 && h <= 10 ? 1.8 : h >= 19 && h <= 21 ? 1.1 : 0.7;
-      const base = Math.round(25000 * peak * (0.85 + Math.random() * 0.3));
-      return {
-        hour: h,
-        label: `${h === 0 ? 12 : h > 12 ? h - 12 : h}${h < 12 ? "am" : "pm"}`,
-        eastUs: isFuture ? Math.round(base * 0.35) : Math.round(base * 0.35 * (0.9 + Math.random() * 0.2)),
-        centralUs: isFuture ? Math.round(base * 0.2) : Math.round(base * 0.2 * (0.9 + Math.random() * 0.2)),
-        westUs: isFuture ? Math.round(base * 0.25) : Math.round(base * 0.25 * (0.9 + Math.random() * 0.2)),
-        europe: isFuture ? Math.round(base * 0.12) : Math.round(base * 0.12 * (0.9 + Math.random() * 0.2)),
-        apac: isFuture ? Math.round(base * 0.08) : Math.round(base * 0.08 * (0.9 + Math.random() * 0.2)),
-        actualOpenRate: isFuture ? null : parseFloat((28 + Math.random() * 12).toFixed(1)),
-        isFuture,
+      const evaluated    = nbaResult.decisionsEvaluated      ?? 2430000;
+      const scheduled    = nbaResult.sendDecisions            ?? 1810000;
+      const held         = evaluated - scheduled;
+      const aiPersonalizedContentPct = nbaResult.aiPersonalizedContentPct ?? 35;
+      const aiPersonalizedTimePct    = nbaResult.aiPersonalizedTimePct    ?? 14;
+      const holdFatiguePct           = nbaResult.holdFatiguePct           ?? 6;
+      const holdLowScorePct          = nbaResult.holdLowScorePct          ?? 3;
+      const defaultSendPct           = nbaResult.defaultSendPct           ?? 42;
+      const aiInfluencedPct          = nbaResult.aiInfluencedPct          ?? 58;
+
+      const totalSubscribers = 6220000;
+      const baseOpenRate = 28.1;
+      const projectedOpenRate = 34.2;
+      const liftPct = ((projectedOpenRate - baseOpenRate) / baseOpenRate * 100).toFixed(1);
+
+      const brandDist = HEARST_BRANDS.map((b) => {
+        const base = Math.round(scheduled * (b.subscribers / totalSubscribers));
+        const personalized = Math.round(base * (aiPersonalizedContentPct / 100));
+        const holdCount = Math.round(b.subscribers * ((holdFatiguePct + holdLowScorePct) / 100));
+        return { ...b, scheduled: base - personalized, personalized, hold: holdCount };
+      });
+
+      const now = new Date();
+      const currentHour = now.getHours();
+      const timeline = Array.from({ length: 24 }, (_, h) => {
+        const isFuture = h > currentHour;
+        const peak = h >= 6 && h <= 10 ? 1.8 : h >= 19 && h <= 21 ? 1.1 : 0.7;
+        const base = Math.round(25000 * peak * (0.85 + Math.random() * 0.3));
+        return {
+          hour: h,
+          label: `${h === 0 ? 12 : h > 12 ? h - 12 : h}${h < 12 ? "am" : "pm"}`,
+          eastUs: isFuture ? Math.round(base * 0.35) : Math.round(base * 0.35 * (0.9 + Math.random() * 0.2)),
+          centralUs: isFuture ? Math.round(base * 0.2) : Math.round(base * 0.2 * (0.9 + Math.random() * 0.2)),
+          westUs: isFuture ? Math.round(base * 0.25) : Math.round(base * 0.25 * (0.9 + Math.random() * 0.2)),
+          europe: isFuture ? Math.round(base * 0.12) : Math.round(base * 0.12 * (0.9 + Math.random() * 0.2)),
+          apac: isFuture ? Math.round(base * 0.08) : Math.round(base * 0.08 * (0.9 + Math.random() * 0.2)),
+          actualOpenRate: isFuture ? null : parseFloat((28 + Math.random() * 12).toFixed(1)),
+          isFuture,
+        };
+      });
+
+      const anomalyAlerts = [
+        { id: "a1", severity: "warning", brand: "Esquire", message: "Open rate dropped 12% vs. 30-day baseline — possible content fatigue in 35–44 male segment.", time: "38 min ago", metric: "Open Rate", value: "19.2%", baseline: "21.8%" },
+        { id: "a2", severity: "info", brand: "Country Living", message: "Affiliate click rate +31% above baseline. Home & garden content driving higher-than-expected AOV conversions.", time: "2h ago", metric: "Affiliate CTR", value: "4.8%", baseline: "3.7%" },
+      ];
+
+      const topPerformer = {
+        brand: "Elle",
+        brandColor: "#1A1A1A",
+        subject: "The 12 Career Moves That Separate Good from Great",
+        sendVolume: 187000,
+        actualOpenRate: 42.3,
+        predictedOpenRate: 38.0,
+        clickRate: 8.1,
+        revenue: 8200,
+        whyItWorked: "Sent to subscribers with high career-content affinity at their personalized optimal send time. Wellness+career crossover article matched top 2 interests for this cohort.",
       };
-    });
 
-    const anomalyAlerts = [
-      { id: "a1", severity: "warning", brand: "Esquire", message: "Open rate dropped 12% vs. 30-day baseline — possible content fatigue in 35–44 male segment.", time: "38 min ago", metric: "Open Rate", value: "19.2%", baseline: "21.8%" },
-      { id: "a2", severity: "info", brand: "Country Living", message: "Affiliate click rate +31% above baseline. Home & garden content driving higher-than-expected AOV conversions.", time: "2h ago", metric: "Affiliate CTR", value: "4.8%", baseline: "3.7%" },
-    ];
-
-    const topPerformer = {
-      brand: "Elle",
-      brandColor: "#1A1A1A",
-      subject: "The 12 Career Moves That Separate Good from Great",
-      sendVolume: 187000,
-      actualOpenRate: 42.3,
-      predictedOpenRate: 38.0,
-      clickRate: 8.1,
-      revenue: 8200,
-      whyItWorked: "Sent to subscribers with high career-content affinity at their personalized optimal send time. Wellness+career crossover article matched top 2 interests for this cohort.",
-    };
-
-    return res.json({
-      kpi: {
-        evaluated,
-        scheduled,
-        held,
-        projectedOpenRate,
-        baseOpenRate,
-        liftPct: parseFloat(liftPct),
-        revenueForecast: 142000,
-        revenueBreakdown: { subscriptions: 87000, affiliate: 55000 },
-        holdRate: parseFloat(((held / evaluated) * 100).toFixed(1)),
-        currentHour,
-      },
-      brandDist,
-      donut: [
-        { name: "Default Send", value: 38, color: "#6B7280" },
-        { name: "AI-Personalized Content", value: 37, color: "#6366F1" },
-        { name: "Personalized Time Only", value: 12, color: "#8B5CF6" },
-        { name: "HOLD — Fatigue", value: 8, color: "#EF4444" },
-        { name: "HOLD — Low Score", value: 5, color: "#F97316" },
-      ],
-      timeline,
-      topPerformer,
-      anomalyAlerts,
-    });
+      return res.json({
+        kpi: {
+          evaluated,
+          scheduled,
+          held,
+          projectedOpenRate,
+          baseOpenRate,
+          liftPct: parseFloat(liftPct),
+          revenueForecast: 142000,
+          revenueBreakdown: { subscriptions: 87000, affiliate: 55000 },
+          holdRate: parseFloat(((held / evaluated) * 100).toFixed(1)),
+          currentHour,
+          aiInfluencedPct,
+        },
+        brandDist,
+        donut: [
+          { name: "Default Send",             value: defaultSendPct,           color: "#6B7280" },
+          { name: "AI-Personalized Content",  value: aiPersonalizedContentPct, color: "#6366F1" },
+          { name: "Personalized Time Only",   value: aiPersonalizedTimePct,    color: "#8B5CF6" },
+          { name: "HOLD — Fatigue",           value: holdFatiguePct,           color: "#EF4444" },
+          { name: "HOLD — Low Score",         value: holdLowScorePct,          color: "#F97316" },
+        ],
+        timeline,
+        topPerformer,
+        anomalyAlerts,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
   });
 
   // GET /demo-api/hearst/brand/:brand — Screen 2 data
   app.get("/demo-api/hearst/brand/:brand", async (req, res) => {
-    const brandId = req.params.brand;
-    const brand = HEARST_BRANDS.find((b) => b.id === brandId) || HEARST_BRANDS[0];
+    try {
+      await seedHearstAgentRuns();
 
-    const totalSubs = brand.subscribers;
-    const aiGroups = [
-      { label: "Receive planned email (high affinity)", count: Math.round(totalSubs * 0.38), type: "planned", color: "#6366F1" },
-      { label: "Receive planned email, personalized send time", count: Math.round(totalSubs * 0.21), type: "time-personalized", color: "#8B5CF6" },
-      { label: "Receive AI-selected alternative content", count: Math.round(totalSubs * 0.17), type: "content-personalized", color: "#3B82F6" },
-      { label: "HOLD — better email tomorrow", count: Math.round(totalSubs * 0.14), type: "hold-tomorrow", color: "#F97316" },
-      { label: "HOLD — fatigue threshold", count: Math.round(totalSubs * 0.10), type: "hold-fatigue", color: "#EF4444" },
-    ];
+      const brandId = req.params.brand;
+      const brand = HEARST_BRANDS.find((b) => b.id === brandId) || HEARST_BRANDS[0];
+      const totalSubs = brand.subscribers;
 
-    const segments = ["Beauty Enthusiast", "Wellness Seeker", "Career Focused", "Entertainment Fan", "Home & Lifestyle"];
-    const topics = ["Beauty & Style", "Wellness", "Career", "Entertainment", "Relationships", "Food", "Travel"];
-    const heatmap = segments.map((seg) =>
-      topics.map((top) => {
-        const base = Math.random();
-        return parseFloat((base * 0.85 + 0.1).toFixed(2));
-      })
-    );
+      // Read brand-specific predicted open rate from Performance & Learning agent trace
+      const PERF_AGENT_ID = "8cb64dc1-278e-44bf-8f42-9b11a1c4f82d";
+      const perfTraces = await storage.getRecentCompletedTracesByAgent(PERF_AGENT_ID, 1);
+      const perfDecisions = (perfTraces[0]?.decisions as any) || {};
+      const brandPerf = (perfDecisions.brandPerformance as any[] | undefined)
+        ?.find((b: any) => b.brand === brand.name);
+      const predictedOpenRate = brandPerf?.predictedOpenRate ?? 32.4;
+      const baselineOpenRate  = brandPerf?.baselineOpenRate  ?? 22.4;
 
-    const trend7d = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date();
-      d.setDate(d.getDate() - (6 - i));
-      const atlasActive = i >= 3;
-      return {
-        date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-        openRate: atlasActive ? parseFloat((30 + Math.random() * 8).toFixed(1)) : parseFloat((22 + Math.random() * 5).toFixed(1)),
-        clickRate: atlasActive ? parseFloat((5.5 + Math.random() * 3).toFixed(1)) : parseFloat((3 + Math.random() * 2).toFixed(1)),
-        unsubRate: atlasActive ? parseFloat((0.06 + Math.random() * 0.04).toFixed(2)) : parseFloat((0.14 + Math.random() * 0.06).toFixed(2)),
-        revenue: atlasActive ? Math.round(28000 + Math.random() * 15000) : Math.round(16000 + Math.random() * 8000),
-        atlasActive,
-      };
-    });
+      const aiGroups = [
+        { label: "Receive planned email (high affinity)", count: Math.round(totalSubs * 0.38), type: "planned", color: "#6366F1" },
+        { label: "Receive planned email, personalized send time", count: Math.round(totalSubs * 0.21), type: "time-personalized", color: "#8B5CF6" },
+        { label: "Receive AI-selected alternative content", count: Math.round(totalSubs * 0.17), type: "content-personalized", color: "#3B82F6" },
+        { label: "HOLD — better email tomorrow", count: Math.round(totalSubs * 0.14), type: "hold-tomorrow", color: "#F97316" },
+        { label: "HOLD — fatigue threshold", count: Math.round(totalSubs * 0.10), type: "hold-fatigue", color: "#EF4444" },
+      ];
 
-    return res.json({
-      brand,
-      metrics: {
-        totalSubscribers: totalSubs,
-        emailsScheduled: Math.round(totalSubs * 0.76),
-        holdCount: Math.round(totalSubs * 0.24),
-        predictedOpenRate: parseFloat((30 + Math.random() * 8).toFixed(1)),
-        revenueForecast: Math.round(28000 + Math.random() * 15000),
-      },
-      defaultPlan: {
-        subject: `Today's ${brand.name} Newsletter`,
-        targetSize: totalSubs,
-        plannedSendTime: "9:00 AM ET",
-        openRateEstimate: 22.4,
-      },
-      aiGroups,
-      segments,
-      topics,
-      heatmap,
-      trend7d,
-    });
+      const segments = ["Beauty Enthusiast", "Wellness Seeker", "Career Focused", "Entertainment Fan", "Home & Lifestyle"];
+      const topics = ["Beauty & Style", "Wellness", "Career", "Entertainment", "Relationships", "Food", "Travel"];
+      const heatmap = segments.map(() =>
+        topics.map(() => parseFloat((Math.random() * 0.85 + 0.1).toFixed(2)))
+      );
+
+      const trend7d = Array.from({ length: 7 }, (_, i) => {
+        const d = new Date();
+        d.setDate(d.getDate() - (6 - i));
+        const atlasActive = i >= 3;
+        return {
+          date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+          openRate: atlasActive ? parseFloat((predictedOpenRate - 2 + Math.random() * 4).toFixed(1)) : parseFloat((baselineOpenRate - 1 + Math.random() * 4).toFixed(1)),
+          clickRate: atlasActive ? parseFloat((5.5 + Math.random() * 3).toFixed(1)) : parseFloat((3 + Math.random() * 2).toFixed(1)),
+          unsubRate: atlasActive ? parseFloat((0.06 + Math.random() * 0.04).toFixed(2)) : parseFloat((0.14 + Math.random() * 0.06).toFixed(2)),
+          revenue: atlasActive ? Math.round(28000 + Math.random() * 15000) : Math.round(16000 + Math.random() * 8000),
+          atlasActive,
+        };
+      });
+
+      return res.json({
+        brand,
+        metrics: {
+          totalSubscribers: totalSubs,
+          emailsScheduled: Math.round(totalSubs * 0.76),
+          holdCount: Math.round(totalSubs * 0.24),
+          predictedOpenRate,
+          revenueForecast: Math.round(28000 + Math.random() * 15000),
+        },
+        defaultPlan: {
+          subject: `Today's ${brand.name} Newsletter`,
+          targetSize: totalSubs,
+          plannedSendTime: "9:00 AM ET",
+          openRateEstimate: baselineOpenRate,
+        },
+        aiGroups,
+        segments,
+        topics,
+        heatmap,
+        trend7d,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
   });
 
   // GET /demo-api/hearst/subscriber/:id — Screen 3 subscriber data
@@ -36652,92 +36684,116 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
 
   // GET /demo-api/hearst/send-time-map — Screen 4 data
   app.get("/demo-api/hearst/send-time-map", async (_req, res) => {
-    const timezonePerf = [
-      { zone: "US East", abbr: "ET", openRate: 36.2, peakHour: "7–8 AM", sendCount: 680000, color: "#6366F1" },
-      { zone: "US Central", abbr: "CT", openRate: 33.8, peakHour: "7:30–8:30 AM", sendCount: 310000, color: "#8B5CF6" },
-      { zone: "US West", abbr: "PT", openRate: 35.1, peakHour: "7–9 AM", sendCount: 440000, color: "#3B82F6" },
-      { zone: "Europe", abbr: "CET", openRate: 38.4, peakHour: "8–9 AM", sendCount: 210000, color: "#10B981" },
-      { zone: "APAC", abbr: "AEDT", openRate: 31.2, peakHour: "8–10 AM", sendCount: 170000, color: "#F59E0B" },
-    ];
+    try {
+      await seedHearstAgentRuns();
 
-    const beforeAtlas = Array.from({ length: 24 }, (_, h) => ({
-      hour: h, label: `${h === 0 ? 12 : h > 12 ? h - 12 : h}${h < 12 ? "am" : "pm"}`,
-      sends: h === 9 ? 820000 : h === 10 ? 290000 : h === 8 ? 45000 : Math.round(Math.random() * 5000),
-    }));
-    const withAtlas = Array.from({ length: 24 }, (_, h) => ({
-      hour: h, label: `${h === 0 ? 12 : h > 12 ? h - 12 : h}${h < 12 ? "am" : "pm"}`,
-      sends: h >= 5 && h <= 21 ? Math.round(35000 + Math.random() * 55000) : Math.round(Math.random() * 8000),
-    }));
+      // Read timezone lift data from the most recent Send Time Optimizer trace
+      const STO_AGENT_ID = "7de4167e-6b0c-4f04-9fcf-3693bda1d255";
+      const stoTraces = await storage.getRecentCompletedTracesByAgent(STO_AGENT_ID, 1);
+      const stoDecisions = (stoTraces[0]?.decisions as any) || {};
 
-    const hotspots = [
-      { id: "nyc", city: "New York", lat: 40.71, lng: -74.01, subscribers: 180000, brand: "Cosmopolitan", color: "#E91E8C" },
-      { id: "la", city: "Los Angeles", lat: 34.05, lng: -118.24, subscribers: 145000, brand: "Elle", color: "#1A1A1A" },
-      { id: "chicago", city: "Chicago", lat: 41.88, lng: -87.63, subscribers: 98000, brand: "Good Housekeeping", color: "#2E7D32" },
-      { id: "london", city: "London", lat: 51.51, lng: -0.13, subscribers: 87000, brand: "Harper's Bazaar", color: "#C9A84C" },
-      { id: "sydney", city: "Sydney", lat: -33.87, lng: 151.21, subscribers: 52000, brand: "Runner's World", color: "#E65100" },
-      { id: "toronto", city: "Toronto", lat: 43.65, lng: -79.38, subscribers: 61000, brand: "Country Living", color: "#3E6B3E" },
-      { id: "miami", city: "Miami", lat: 25.77, lng: -80.19, subscribers: 74000, brand: "Cosmopolitan", color: "#E91E8C" },
-      { id: "dallas", city: "Dallas", lat: 32.78, lng: -96.80, subscribers: 69000, brand: "Good Housekeeping", color: "#2E7D32" },
-    ];
+      // Fall back to inline defaults if trace data not yet seeded
+      const timezonePerf: any[] = stoDecisions.timezoneLifts ?? [
+        { zone: "US East",   abbr: "ET",   openRate: 36.2, baselineOpenRate: 28.1, liftPct: 28.8, peakHour: "7–8 AM",       sendCount: 680000, color: "#6366F1" },
+        { zone: "US Central", abbr: "CT",  openRate: 33.8, baselineOpenRate: 27.1, liftPct: 24.7, peakHour: "7:30–8:30 AM", sendCount: 310000, color: "#8B5CF6" },
+        { zone: "US West",   abbr: "PT",   openRate: 35.1, baselineOpenRate: 28.5, liftPct: 23.2, peakHour: "7–9 AM",       sendCount: 440000, color: "#3B82F6" },
+        { zone: "Europe",    abbr: "CET",  openRate: 38.4, baselineOpenRate: 25.9, liftPct: 48.3, peakHour: "8–9 AM",       sendCount: 210000, color: "#10B981" },
+        { zone: "APAC",      abbr: "AEDT", openRate: 31.2, baselineOpenRate: 24.8, liftPct: 25.8, peakHour: "8–10 AM",      sendCount: 170000, color: "#F59E0B" },
+      ];
 
-    return res.json({ timezonePerf, beforeAtlas, withAtlas, hotspots, totalSent: 1810000, totalRemaining: 620000, liveOpenRate: 34.2 });
+      const beforeAtlas = Array.from({ length: 24 }, (_, h) => ({
+        hour: h, label: `${h === 0 ? 12 : h > 12 ? h - 12 : h}${h < 12 ? "am" : "pm"}`,
+        sends: h === 9 ? 820000 : h === 10 ? 290000 : h === 8 ? 45000 : Math.round(Math.random() * 5000),
+      }));
+      const withAtlas = Array.from({ length: 24 }, (_, h) => ({
+        hour: h, label: `${h === 0 ? 12 : h > 12 ? h - 12 : h}${h < 12 ? "am" : "pm"}`,
+        sends: h >= 5 && h <= 21 ? Math.round(35000 + Math.random() * 55000) : Math.round(Math.random() * 8000),
+      }));
+
+      const hotspots = [
+        { id: "nyc",     city: "New York",     lat: 40.71,  lng: -74.01,  subscribers: 180000, brand: "Cosmopolitan",    color: "#E91E8C" },
+        { id: "la",      city: "Los Angeles",  lat: 34.05,  lng: -118.24, subscribers: 145000, brand: "Elle",            color: "#1A1A1A" },
+        { id: "chicago", city: "Chicago",      lat: 41.88,  lng: -87.63,  subscribers:  98000, brand: "Good Housekeeping", color: "#2E7D32" },
+        { id: "london",  city: "London",       lat: 51.51,  lng:  -0.13,  subscribers:  87000, brand: "Harper's Bazaar", color: "#C9A84C" },
+        { id: "sydney",  city: "Sydney",       lat: -33.87, lng: 151.21,  subscribers:  52000, brand: "Runner's World",  color: "#E65100" },
+        { id: "toronto", city: "Toronto",      lat: 43.65,  lng: -79.38,  subscribers:  61000, brand: "Country Living",  color: "#3E6B3E" },
+        { id: "miami",   city: "Miami",        lat: 25.77,  lng: -80.19,  subscribers:  74000, brand: "Cosmopolitan",    color: "#E91E8C" },
+        { id: "dallas",  city: "Dallas",       lat: 32.78,  lng: -96.80,  subscribers:  69000, brand: "Good Housekeeping", color: "#2E7D32" },
+      ];
+
+      return res.json({ timezonePerf, beforeAtlas, withAtlas, hotspots, totalSent: 1810000, totalRemaining: 620000, liveOpenRate: 34.2 });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
   });
 
   // GET /demo-api/hearst/fatigue — Screen 5 data
   app.get("/demo-api/hearst/fatigue", async (_req, res) => {
-    const segments = ["Multi-brand loyalist", "Single-brand devotee", "Casual reader", "New subscriber <30d", "At-risk declining"];
-    const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+    try {
+      await seedHearstAgentRuns();
 
-    const preAtlasHeatmap = segments.map((seg) =>
-      days.map(() => {
-        const base = seg === "Multi-brand loyalist" ? 5.2 : seg === "Single-brand devotee" ? 2.8 : seg === "Casual reader" ? 1.9 : seg === "New subscriber <30d" ? 3.1 : 4.2;
-        return parseFloat((base * (0.8 + Math.random() * 0.4)).toFixed(1));
-      })
-    );
-    const withAtlasHeatmap = segments.map((seg) =>
-      days.map(() => {
-        const base = seg === "Multi-brand loyalist" ? 1.4 : seg === "Single-brand devotee" ? 1.1 : seg === "Casual reader" ? 0.8 : seg === "New subscriber <30d" ? 1.2 : 1.0;
-        return parseFloat((base * (0.8 + Math.random() * 0.4)).toFixed(1));
-      })
-    );
+      // Read hold validation outcomes from the most recent Performance & Learning trace
+      const PERF_AGENT_ID = "8cb64dc1-278e-44bf-8f42-9b11a1c4f82d";
+      const perfTraces = await storage.getRecentCompletedTracesByAgent(PERF_AGENT_ID, 1);
+      const perfDecisions = (perfTraces[0]?.decisions as any) || {};
+      const hv = perfDecisions.holdValidation || {};
 
-    const holdImpact = {
-      totalHolds: 3200000,
-      byReason: [
-        { reason: "Fatigue threshold (3+ emails/week)", count: 1800000, color: "#EF4444" },
-        { reason: "Low content affinity (score < 0.25)", count: 800000, color: "#F97316" },
-        { reason: "Better email tomorrow", count: 600000, color: "#F59E0B" },
-      ],
-      heldNextDayOpenRate: 41.2,
-      notHeldOpenRate: 26.8,
-      heldRevenuePerSub: 2.84,
-      notHeldRevenuePerSub: 1.92,
-    };
+      const segments = ["Multi-brand loyalist", "Single-brand devotee", "Casual reader", "New subscriber <30d", "At-risk declining"];
+      const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-    const unsubTrend = Array.from({ length: 12 }, (_, i) => {
-      const atlasActive = i >= 6;
-      const d = new Date();
-      d.setDate(d.getDate() - (11 - i) * 7);
-      return {
-        week: `Wk ${i + 1}`,
-        date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-        preAtlas: atlasActive ? null : parseFloat((0.14 + Math.random() * 0.08).toFixed(2)),
-        withAtlas: atlasActive ? parseFloat((0.07 + Math.random() * 0.04).toFixed(2)) : null,
-        atlasActive,
+      const preAtlasHeatmap = segments.map((seg) =>
+        days.map(() => {
+          const base = seg === "Multi-brand loyalist" ? 5.2 : seg === "Single-brand devotee" ? 2.8 : seg === "Casual reader" ? 1.9 : seg === "New subscriber <30d" ? 3.1 : 4.2;
+          return parseFloat((base * (0.8 + Math.random() * 0.4)).toFixed(1));
+        })
+      );
+      const withAtlasHeatmap = segments.map((seg) =>
+        days.map(() => {
+          const base = seg === "Multi-brand loyalist" ? 1.4 : seg === "Single-brand devotee" ? 1.1 : seg === "Casual reader" ? 0.8 : seg === "New subscriber <30d" ? 1.2 : 1.0;
+          return parseFloat((base * (0.8 + Math.random() * 0.4)).toFixed(1));
+        })
+      );
+
+      const holdImpact = {
+        totalHolds: 3200000,
+        byReason: [
+          { reason: "Fatigue threshold (3+ emails/week)", count: 1800000, color: "#EF4444" },
+          { reason: "Low content affinity (score < 0.25)", count: 800000, color: "#F97316" },
+          { reason: "Better email tomorrow", count: 600000, color: "#F59E0B" },
+        ],
+        heldNextDayOpenRate: hv.heldNextDayOpenRate ?? 43.6,
+        notHeldOpenRate:     hv.notHeldOpenRate     ?? 26.8,
+        heldRevenuePerSub:   hv.heldRevenuePerSub   ?? 2.84,
+        notHeldRevenuePerSub: hv.notHeldRevenuePerSub ?? 1.92,
       };
-    });
 
-    return res.json({
-      segments,
-      days,
-      preAtlasHeatmap,
-      withAtlasHeatmap,
-      holdImpact,
-      unsubTrend,
-      preservedSubscribers: 12400,
-      preservedAnnualRevenue: 186000,
-      unsubReduction: 50,
-    });
+      const unsubTrend = Array.from({ length: 12 }, (_, i) => {
+        const atlasActive = i >= 6;
+        const d = new Date();
+        d.setDate(d.getDate() - (11 - i) * 7);
+        return {
+          week: `Wk ${i + 1}`,
+          date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+          preAtlas: atlasActive ? null : parseFloat((0.14 + Math.random() * 0.08).toFixed(2)),
+          withAtlas: atlasActive ? parseFloat((0.07 + Math.random() * 0.04).toFixed(2)) : null,
+          atlasActive,
+        };
+      });
+
+      return res.json({
+        segments,
+        days,
+        preAtlasHeatmap,
+        withAtlasHeatmap,
+        holdImpact,
+        unsubTrend,
+        preservedSubscribers: hv.preservedSubscribers   ?? 12400,
+        preservedAnnualRevenue: hv.preservedRevenue     ?? 186000,
+        unsubReduction: hv.unsubReductionPct            ?? 50,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
   });
 
   // GET /demo-api/hearst/revenue — Screen 6 data

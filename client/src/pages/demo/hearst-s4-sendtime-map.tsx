@@ -167,12 +167,22 @@ export default function Screen4SendTimeMap() {
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ background: tz.color }} />
                   <span className="text-muted-foreground flex-1">{tz.zone} ({tz.abbr})</span>
                   <span className="text-muted-foreground">Peak: {tz.peakHour} local</span>
+                  {tz.liftPct != null && (
+                    <span className="px-1 py-0.5 rounded text-[9px] font-semibold bg-green-500/15 text-green-400">
+                      +{tz.liftPct.toFixed(1)}%
+                    </span>
+                  )}
                   <span className="font-bold">{tz.openRate}%</span>
                 </div>
               ))}
-              <div className="mt-2 p-2 rounded-lg bg-green-500/10 border border-green-500/20 text-[10px] text-green-300">
-                Europe leads at 38.4% — local timezone optimization vs. old 9am ET sends.
-              </div>
+              {(() => {
+                const europe = data.timezonePerf?.find((tz: any) => tz.zone === "Europe");
+                return europe ? (
+                  <div className="mt-2 p-2 rounded-lg bg-green-500/10 border border-green-500/20 text-[10px] text-green-300">
+                    Europe leads at {europe.openRate}% — +{europe.liftPct?.toFixed(1) ?? "48.3"}% lift from local timezone optimization vs. old {Math.round(europe.baselineOpenRate ?? 25.9)}% with 9am ET batch sends.
+                  </div>
+                ) : null;
+              })()}
             </div>
           </CardContent>
         </Card>
