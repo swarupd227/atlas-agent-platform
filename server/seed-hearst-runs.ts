@@ -43,14 +43,22 @@ function daysAgo(days: number, hour = 0, minute = 0): Date {
 }
 
 /**
- * Returns true if this agent already has any seeded run record.
- * The check is against `startedAt` (defaultNow at insert time), not `completedAt`
- * (which is backdated to match the realistic schedule). This ensures idempotency
- * for weekly-cadence agents whose `completedAt` may be 4–7 days in the past.
+ * Returns true if this agent was seeded within the last 48 hours.
+ *
+ * We check `startedAt` (the DB defaultNow() insert timestamp), NOT `completedAt`.
+ * `completedAt` is intentionally backdated to simulate realistic agent schedules
+ * (e.g. weekly-cadence agents show completedAt 4–7 days ago). Using it for the
+ * idempotency gate would cause weekly agents to reseed on every request.
+ *
+ * `startedAt` is always set to the actual row-insertion time, so the 48h window
+ * correctly gates all 5 agents: once seeded, subsequent calls within 48h are
+ * no-ops; after 48h the seed refreshes (keeping demo data fresh).
  */
-async function hasSeededRun(agentId: string): Promise<boolean> {
+async function hasRecentlySeeded(agentId: string): Promise<boolean> {
   const runs = await storage.getAgentRuntimeRuns(agentId);
-  return runs.length > 0;
+  if (!runs.length) return false;
+  const cutoff = Date.now() - 48 * 60 * 60 * 1000;
+  return runs.some(r => r.startedAt && new Date(r.startedAt).getTime() > cutoff);
 }
 
 async function createSpans(
@@ -85,11 +93,11 @@ async function createSpans(
 export async function seedHearstAgentRuns(): Promise<void> {
   try {
     const allReady = await Promise.all([
-      hasSeededRun(AGENTS.subscriberProfileEngine),
-      hasSeededRun(AGENTS.contentInventory),
-      hasSeededRun(AGENTS.nbaEmailDecision),
-      hasSeededRun(AGENTS.sendTimeOptimizer),
-      hasSeededRun(AGENTS.performanceLearning),
+      hasRecentlySeeded(AGENTS.subscriberProfileEngine),
+      hasRecentlySeeded(AGENTS.contentInventory),
+      hasRecentlySeeded(AGENTS.nbaEmailDecision),
+      hasRecentlySeeded(AGENTS.sendTimeOptimizer),
+      hasRecentlySeeded(AGENTS.performanceLearning),
     ]);
     if (allReady.every(Boolean)) return;
 
@@ -104,7 +112,7 @@ export async function seedHearstAgentRuns(): Promise<void> {
 }
 
 async function seedProfileEngine(): Promise<void> {
-  if (await hasSeededRun(AGENTS.subscriberProfileEngine)) return;
+  if (await hasRecentlySeeded(AGENTS.subscriberProfileEngine)) return;
 
   const startedAt = daysAgo(0, 2, 4);
   const completedAt = daysAgo(0, 2, 47);
@@ -159,7 +167,7 @@ async function seedProfileEngine(): Promise<void> {
 }
 
 async function seedContentInventory(): Promise<void> {
-  if (await hasSeededRun(AGENTS.contentInventory)) return;
+  if (await hasRecentlySeeded(AGENTS.contentInventory)) return;
 
   const startedAt = daysAgo(0, 6, 12);
   const completedAt = daysAgo(0, 6, 19);
@@ -221,7 +229,7 @@ async function seedContentInventory(): Promise<void> {
 }
 
 async function seedNBADecisionAgent(): Promise<void> {
-  if (await hasSeededRun(AGENTS.nbaEmailDecision)) return;
+  if (await hasRecentlySeeded(AGENTS.nbaEmailDecision)) return;
 
   const batchStartedAt = daysAgo(0, 6, 45);
   const batchCompletedAt = daysAgo(0, 7, 28);
@@ -364,7 +372,7 @@ async function seedNBADecisionAgent(): Promise<void> {
 }
 
 async function seedSendTimeOptimizer(): Promise<void> {
-  if (await hasSeededRun(AGENTS.sendTimeOptimizer)) return;
+  if (await hasRecentlySeeded(AGENTS.sendTimeOptimizer)) return;
 
   const daysBack = new Date().getDay() === 0 ? 7 : new Date().getDay();
   const startedAt = daysAgo(daysBack, 3, 2);
@@ -416,7 +424,7 @@ async function seedSendTimeOptimizer(): Promise<void> {
 }
 
 async function seedPerformanceLearning(): Promise<void> {
-  if (await hasSeededRun(AGENTS.performanceLearning)) return;
+  if (await hasRecentlySeeded(AGENTS.performanceLearning)) return;
 
   const daysBack = new Date().getDay() === 1 ? 7 : ((new Date().getDay() + 6) % 7);
   const startedAt = daysAgo(Math.max(daysBack, 1), 4, 1);
