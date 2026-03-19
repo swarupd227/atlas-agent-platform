@@ -1064,6 +1064,26 @@ function AgentDetailInner() {
     },
   };
 
+  const [spEditing, setSpEditing] = useState(false);
+  const [spValue, setSpValue] = useState((agent?.systemPrompt as string) || "");
+  const [spExpanded, setSpExpanded] = useState(false);
+
+  const spMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PATCH", `/api/agents/${agentId}`, {
+        systemPrompt: spValue.trim(),
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setSpEditing(false);
+      handlePatchReEvaluation(data, "System prompt saved");
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to save system prompt", description: err.message, variant: "destructive" });
+    },
+  });
+
   const { data: deployRecommendation } = useQuery<{
     agentId: string;
     agentName: string;
@@ -1920,6 +1940,72 @@ function AgentDetailInner() {
               )}
             </CardContent>
           </Card>
+
+          {(agent.systemPrompt || spEditing) && (
+            <Card data-testid="card-system-prompt" className="border-primary/20 bg-primary/[0.02]">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <FileText className="w-4 h-4 text-primary" />
+                    <CardTitle className="text-sm font-medium">System Prompt</CardTitle>
+                    {agent.systemPrompt && !spEditing && (
+                      <span className="text-[10px] text-muted-foreground">
+                        {(agent.systemPrompt as string).split("\n").length} lines · {(agent.systemPrompt as string).length} chars
+                      </span>
+                    )}
+                  </div>
+                  {!spEditing ? (
+                    <Button variant="ghost" size="sm" onClick={() => { setSpValue((agent.systemPrompt as string) || ""); setSpEditing(true); setSpExpanded(false); }} data-testid="button-edit-system-prompt">
+                      <Settings className="w-3.5 h-3.5 mr-1" /> Edit
+                    </Button>
+                  ) : (
+                    <div className="flex gap-1">
+                      <Button variant="ghost" size="sm" onClick={() => setSpEditing(false)} data-testid="button-cancel-system-prompt">Cancel</Button>
+                      <Button size="sm" onClick={() => spMutation.mutate()} disabled={spMutation.isPending} data-testid="button-save-system-prompt">
+                        {spMutation.isPending ? "Saving..." : "Save"}
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent>
+                {!spEditing ? (
+                  <div className="flex flex-col gap-2">
+                    <div
+                      className={`relative text-xs font-mono whitespace-pre-wrap break-words rounded-md bg-muted/40 p-3 leading-relaxed text-foreground/80 overflow-hidden transition-all`}
+                      style={{ maxHeight: spExpanded ? "none" : "12rem" }}
+                      data-testid="text-system-prompt"
+                    >
+                      {agent.systemPrompt as string}
+                      {!spExpanded && (agent.systemPrompt as string).length > 600 && (
+                        <div className="absolute bottom-0 left-0 right-0 h-10 bg-gradient-to-t from-muted/60 to-transparent pointer-events-none rounded-b-md" />
+                      )}
+                    </div>
+                    {(agent.systemPrompt as string).length > 600 && (
+                      <button
+                        onClick={() => setSpExpanded(v => !v)}
+                        className="text-[11px] text-primary hover:underline self-start"
+                        data-testid="button-toggle-system-prompt"
+                      >
+                        {spExpanded ? "Show less" : "Show full prompt"}
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    <Textarea
+                      value={spValue}
+                      onChange={e => setSpValue(e.target.value)}
+                      className="min-h-[320px] text-xs font-mono"
+                      placeholder="Enter the system prompt for this agent..."
+                      data-testid="input-system-prompt"
+                    />
+                    <span className="text-[10px] text-muted-foreground">{spValue.split("\n").length} lines · {spValue.length} chars</span>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card>
