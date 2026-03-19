@@ -92,14 +92,26 @@ async function createSpans(
   }
 }
 
+/**
+ * Returns true only if the agent has a recent seeded run AND that run has at
+ * least one trace record. This guards against the edge case where runs exist
+ * (blocking re-seed) but their corresponding traces/spans are missing or were
+ * partially written.
+ */
+async function hasIntactSeed(agentId: string): Promise<boolean> {
+  if (!(await hasRecentlySeeded(agentId))) return false;
+  const traces = await storage.getRecentCompletedTracesByAgent(agentId, 1);
+  return traces.length > 0;
+}
+
 export async function seedHearstAgentRuns(): Promise<void> {
   try {
     const allReady = await Promise.all([
-      hasRecentlySeeded(AGENTS.subscriberProfileEngine),
-      hasRecentlySeeded(AGENTS.contentInventory),
-      hasRecentlySeeded(AGENTS.nbaEmailDecision),
-      hasRecentlySeeded(AGENTS.sendTimeOptimizer),
-      hasRecentlySeeded(AGENTS.performanceLearning),
+      hasIntactSeed(AGENTS.subscriberProfileEngine),
+      hasIntactSeed(AGENTS.contentInventory),
+      hasIntactSeed(AGENTS.nbaEmailDecision),
+      hasIntactSeed(AGENTS.sendTimeOptimizer),
+      hasIntactSeed(AGENTS.performanceLearning),
     ]);
     if (allReady.every(Boolean)) return;
 
@@ -114,7 +126,7 @@ export async function seedHearstAgentRuns(): Promise<void> {
 }
 
 async function seedProfileEngine(): Promise<void> {
-  if (await hasRecentlySeeded(AGENTS.subscriberProfileEngine)) return;
+  if (await hasIntactSeed(AGENTS.subscriberProfileEngine)) return;
 
   const startedAt = daysAgo(0, 2, 4);
   const completedAt = daysAgo(0, 2, 47);
@@ -169,7 +181,7 @@ async function seedProfileEngine(): Promise<void> {
 }
 
 async function seedContentInventory(): Promise<void> {
-  if (await hasRecentlySeeded(AGENTS.contentInventory)) return;
+  if (await hasIntactSeed(AGENTS.contentInventory)) return;
 
   const startedAt = daysAgo(0, 6, 12);
   const completedAt = daysAgo(0, 6, 19);
@@ -231,7 +243,7 @@ async function seedContentInventory(): Promise<void> {
 }
 
 async function seedNBADecisionAgent(): Promise<void> {
-  if (await hasRecentlySeeded(AGENTS.nbaEmailDecision)) return;
+  if (await hasIntactSeed(AGENTS.nbaEmailDecision)) return;
 
   const batchStartedAt = daysAgo(0, 6, 45);
   const batchCompletedAt = daysAgo(0, 7, 28);
@@ -374,7 +386,7 @@ async function seedNBADecisionAgent(): Promise<void> {
 }
 
 async function seedSendTimeOptimizer(): Promise<void> {
-  if (await hasRecentlySeeded(AGENTS.sendTimeOptimizer)) return;
+  if (await hasIntactSeed(AGENTS.sendTimeOptimizer)) return;
 
   const startedAt = daysAgo(0, 3, 2);
   const completedAt = daysAgo(0, 3, 47);
@@ -425,7 +437,7 @@ async function seedSendTimeOptimizer(): Promise<void> {
 }
 
 async function seedPerformanceLearning(): Promise<void> {
-  if (await hasRecentlySeeded(AGENTS.performanceLearning)) return;
+  if (await hasIntactSeed(AGENTS.performanceLearning)) return;
 
   const startedAt = daysAgo(0, 4, 1);
   const completedAt = daysAgo(0, 4, 28);
