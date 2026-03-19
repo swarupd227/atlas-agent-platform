@@ -1,0 +1,48 @@
+NBA Email Scoring Formula
+Agent 3 scores each candidate email for each subscriber using this formula:
+
+NBEmail_Score(subscriber, email) =
+
+  w1 * content_affinity(subscriber, email.topics)
+    # How well does this email’s content match the
+    # subscriber’s demonstrated interest patterns?
+    # Cosmo beauty tips to a wellness reader = low
+    # Cosmo wellness article to same reader = high
+
+  + w2 * recency_novelty(subscriber, email)
+    # Has the subscriber seen similar content recently?
+    # Penalty for sending same topic 2 days in a row
+    # Bonus for fresh/exclusive/breaking content
+
+  + w3 * brand_affinity(subscriber, email.brand)
+    # Does the subscriber engage with this brand?
+    # A subscriber who always opens Elle but never
+    # opens Cosmo should get Elle over Cosmo
+
+  + w4 * revenue_potential(subscriber, email)
+    # Predicted revenue from this send:
+    # Subscription conversion probability × sub value
+    # + Affiliate click probability × avg affiliate rev
+    # + Ad impression value
+
+  - w5 * fatigue_cost(subscriber)
+    # How close is this subscriber to fatigue?
+    # High if: sent 4+ emails this week already,
+    # declining open rates, recent unsub from a brand
+
+  - w6 * cannibalization_cost(email, other_candidates)
+    # Does sending this email reduce the impact of
+    # a higher-value email scheduled for tomorrow?
+    # (e.g., don’t send generic Cosmo today if a
+    # Cosmo exclusive drops tomorrow)
+
+HOLD_Threshold = 0.25
+  # If best candidate scores < 0.25, recommend HOLD
+  # Better to skip a day than send a low-value email
+
+Default weights: w1=0.25, w2=0.15, w3=0.15,
+                 w4=0.20, w5=0.15, w6=0.10
+
+THE HOLD DECISION IS THE KEY DIFFERENTIATOR
+Most email orchestration tools try to maximize sends. Atlas maximizes subscriber lifetime value. Sometimes the best email is no email. If the scoring formula says every candidate email for a subscriber today is low-value, the system recommends HOLD — preserving that subscriber’s inbox goodwill for a higher-impact send tomorrow. In testing, HOLD decisions typically improve next-day open rates by 18–25% because the subscriber isn’t fatigued.
+ 
