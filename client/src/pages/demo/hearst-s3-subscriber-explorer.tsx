@@ -6,26 +6,40 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
-import { ChevronDown, Check, AlertTriangle, Pause, User } from "lucide-react";
+import { Link } from "wouter";
+import {
+  ChevronDown, Check, AlertTriangle, Pause, User,
+  ChevronRight, Bot, Database, ExternalLink, Clock,
+  CheckCircle2, XCircle,
+} from "lucide-react";
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Tooltip,
 } from "recharts";
 
 const PERSONAS = [
-  { id: "sarah-m", label: "Sarah M. — New York, NY", tier: "Premium", stage: "Engaged Reader" },
-  { id: "marcus-t", label: "Marcus T. — Chicago, IL", tier: "Free", stage: "At-Risk" },
-  { id: "jennifer-k", label: "Jennifer K. — Austin, TX", tier: "Premium", stage: "VIP" },
+  { id: "sarah-m",    label: "Sarah M. — New York, NY",    tier: "Premium", stage: "Engaged Reader" },
+  { id: "marcus-t",   label: "Marcus T. — Chicago, IL",    tier: "Free",    stage: "At-Risk" },
+  { id: "jennifer-k", label: "Jennifer K. — Austin, TX",   tier: "Premium", stage: "VIP" },
 ];
 
 const STAGE_COLORS: Record<string, string> = {
   "Engaged Reader": "bg-green-500/20 text-green-400 border-green-500/30",
-  "At-Risk": "bg-red-500/20 text-red-400 border-red-500/30",
-  VIP: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+  "At-Risk":        "bg-red-500/20 text-red-400 border-red-500/30",
+  VIP:              "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
   "New Subscriber": "bg-blue-500/20 text-blue-400 border-blue-500/30",
 };
 const ENGAGEMENT_COLORS: Record<string, string> = {
   HIGH: "text-green-400", MEDIUM: "text-yellow-400", LOW: "text-red-400", BROWSE_ONLY: "text-muted-foreground",
 };
+
+const STEP_COLORS = [
+  "border-indigo-500/40 bg-indigo-500/[0.03]",
+  "border-violet-500/40 bg-violet-500/[0.03]",
+  "border-blue-500/40 bg-blue-500/[0.03]",
+  "border-cyan-500/40 bg-cyan-500/[0.03]",
+];
+const STEP_ICON_COLORS = ["text-indigo-400", "text-violet-400", "text-blue-400", "text-cyan-400"];
+const STEP_NUM_COLORS  = ["bg-indigo-500/20 text-indigo-300", "bg-violet-500/20 text-violet-300", "bg-blue-500/20 text-blue-300", "bg-cyan-500/20 text-cyan-300"];
 
 function HealthBar({ score }: { score: number }) {
   const color = score >= 75 ? "bg-green-500" : score >= 50 ? "bg-yellow-500" : "bg-red-500";
@@ -36,6 +50,230 @@ function HealthBar({ score }: { score: number }) {
       </div>
       <span className="text-xs font-bold w-8 text-right">{score}</span>
     </div>
+  );
+}
+
+function formatRelative(dateStr: string | null): string {
+  if (!dateStr) return "—";
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  const hrs  = Math.floor(mins / 60);
+  const days = Math.floor(hrs / 24);
+  if (mins < 60) return `${mins}m ago`;
+  if (hrs < 24)  return `${hrs}h ago`;
+  return `${days}d ago`;
+}
+
+function formatMs(ms: number | null): string {
+  if (!ms) return "—";
+  if (ms < 1000)    return `${ms}ms`;
+  if (ms < 60000)   return `${(ms / 1000).toFixed(1)}s`;
+  if (ms < 3600000) return `${Math.round(ms / 60000)}m`;
+  return `${(ms / 3600000).toFixed(1)}h`;
+}
+
+interface TraceStep {
+  key: string;
+  order: number;
+  agentId: string;
+  agentName: string;
+  traceId: string | null;
+  runAt: string | null;
+  latencyMs: number | null;
+  inputSummary: string | null;
+  outputSummary: string | null;
+  toolCalls: { tool: string | null; server: string | null; durationMs: number | null; status: string | null }[];
+  decisions: any;
+}
+
+function DecisionTracePanel({ subscriberId }: { subscriberId: string }) {
+  const [expandedStep, setExpandedStep] = useState<string | null>(null);
+
+  const { data, isLoading } = useQuery<any>({
+    queryKey: ["/demo-api/hearst/subscriber", subscriberId, "trace"],
+    queryFn: () => fetch(`/demo-api/hearst/subscriber/${subscriberId}/trace`).then(r => r.json()),
+  });
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center gap-2">
+            <Bot className="w-4 h-4 text-indigo-400" />
+            <CardTitle className="text-sm font-medium">Decision Trace — How This Was Decided</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="h-12 rounded-lg bg-muted/20 animate-pulse" />
+          ))}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const steps: TraceStep[] = data?.steps || [];
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <div className="flex items-center gap-2">
+          <Bot className="w-4 h-4 text-indigo-400" />
+          <CardTitle className="text-sm font-medium">Decision Trace — How This Was Decided</CardTitle>
+          <Badge variant="secondary" className="text-[10px] ml-auto">4 agents · real run records</Badge>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Step-by-step pipeline from real platform run traces and MCP tool call spans. Click a step to expand.
+        </p>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        {steps.map((step, i) => {
+          const isExpanded = expandedStep === step.key;
+          const hasTrace   = !!step.traceId;
+          const decisionData = step.decisions as any;
+          const isDecisionStep = step.key === "nbaEmailDecision";
+
+          return (
+            <div
+              key={step.key}
+              className={`rounded-lg border transition-all ${STEP_COLORS[i % STEP_COLORS.length]} ${hasTrace ? "cursor-pointer" : "opacity-50"}`}
+              onClick={() => hasTrace && setExpandedStep(isExpanded ? null : step.key)}
+            >
+              {/* Collapsed / summary row */}
+              <div className="flex items-center gap-3 px-3 py-2.5">
+                {/* Step number */}
+                <span className={`text-[10px] font-bold w-6 h-6 rounded flex items-center justify-center shrink-0 ${STEP_NUM_COLORS[i % STEP_NUM_COLORS.length]}`}>
+                  {step.order}
+                </span>
+
+                {/* Agent name + link */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <Bot className={`w-3 h-3 shrink-0 ${STEP_ICON_COLORS[i % STEP_ICON_COLORS.length]}`} />
+                    <Link href={`/agents/${step.agentId}`} onClick={e => e.stopPropagation()}>
+                      <span className={`text-[11px] font-semibold hover:underline ${STEP_ICON_COLORS[i % STEP_ICON_COLORS.length]}`}>
+                        {step.agentName}
+                      </span>
+                    </Link>
+                    <Link href={`/agents/${step.agentId}`} onClick={e => e.stopPropagation()}>
+                      <ExternalLink className="w-2.5 h-2.5 text-muted-foreground/30 hover:text-foreground" />
+                    </Link>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground/70 mt-0.5 line-clamp-1">{step.outputSummary || "—"}</p>
+                </div>
+
+                {/* Metadata chips */}
+                <div className="flex items-center gap-2 shrink-0">
+                  {step.runAt && (
+                    <div className="flex items-center gap-1 text-[9px] text-muted-foreground/50">
+                      <Clock className="w-2.5 h-2.5" />
+                      <span>{formatRelative(step.runAt)}</span>
+                    </div>
+                  )}
+                  {step.toolCalls.length > 0 && (
+                    <span className="text-[9px] text-muted-foreground/60 bg-muted/30 px-1.5 py-0.5 rounded">
+                      {step.toolCalls.length} tool {step.toolCalls.length === 1 ? "call" : "calls"}
+                    </span>
+                  )}
+                  {hasTrace && (
+                    <ChevronRight className={`w-3 h-3 text-muted-foreground/40 transition-transform ${isExpanded ? "rotate-90" : ""}`} />
+                  )}
+                </div>
+              </div>
+
+              {/* Expanded detail */}
+              {isExpanded && hasTrace && (
+                <div className="px-3 pb-3 flex flex-col gap-3 border-t border-border/30 mt-0 pt-3">
+                  {/* MCP Tool Calls */}
+                  {step.toolCalls.length > 0 && (
+                    <div>
+                      <p className="text-[10px] font-medium text-muted-foreground mb-1.5 flex items-center gap-1">
+                        <Database className="w-3 h-3" />
+                        MCP Tool Calls ({step.toolCalls.length})
+                      </p>
+                      <div className="flex flex-col gap-1">
+                        {step.toolCalls.map((tc, ti) => (
+                          <div key={ti} className="flex items-center justify-between text-[10px] px-2 py-1.5 rounded bg-background/60 border border-border/30">
+                            <div className="flex items-center gap-2">
+                              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${tc.status === "ok" ? "bg-green-400" : "bg-red-400"}`} />
+                              <span className="font-mono font-medium text-foreground/90">{tc.tool}</span>
+                            </div>
+                            <div className="flex items-center gap-3 text-muted-foreground/60">
+                              <span className="truncate max-w-[180px]">{tc.server}</span>
+                              {tc.durationMs && <span>{formatMs(tc.durationMs)}</span>}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Decision-agent specific: scoring formula + factors */}
+                  {isDecisionStep && decisionData && (
+                    <div>
+                      <p className="text-[10px] font-medium text-muted-foreground mb-1.5">NBEmail_Score Decision</p>
+                      <div className={`p-2 rounded-lg text-center font-bold text-xs mb-2 ${decisionData.action === "SEND" ? "bg-green-500/20 text-green-300" : "bg-orange-500/20 text-orange-300"}`}>
+                        {decisionData.action === "SEND" ? (
+                          <>SEND — {decisionData.winningEmail?.brand}: "{decisionData.winningEmail?.subject}"</>
+                        ) : (
+                          <>HOLD — Score {decisionData.nbEmailScore?.toFixed(2)} &lt; threshold {decisionData.holdThreshold}</>
+                        )}
+                      </div>
+                      {decisionData.scoringFactors && (
+                        <div className="flex flex-col gap-1">
+                          {decisionData.scoringFactors.map((f: any, fi: number) => (
+                            <div key={fi} className="flex items-start justify-between text-[10px] gap-2">
+                              <div className="flex-1 min-w-0">
+                                <span className="text-muted-foreground font-mono">{f.label}</span>
+                                <p className="text-[9px] text-muted-foreground/50 mt-0.5">{f.detail}</p>
+                              </div>
+                              <span className={`font-bold shrink-0 ${(f.contribution ?? f.score) < 0 ? "text-red-400" : "text-green-400"}`}>
+                                {(f.contribution ?? f.score) > 0 ? "+" : ""}{(f.contribution ?? f.score).toFixed(2)}
+                              </span>
+                            </div>
+                          ))}
+                          <div className="flex items-center justify-between text-[10px] pt-1 border-t border-border/30 mt-1">
+                            <span className="font-medium">NBEmail_Score</span>
+                            <span className="font-bold">{decisionData.nbEmailScore?.toFixed(2)}</span>
+                          </div>
+                        </div>
+                      )}
+                      {decisionData.holdReason && (
+                        <div className="mt-2 p-2 rounded bg-orange-500/10 border border-orange-500/20">
+                          <p className="text-[10px] text-orange-300 leading-snug">{decisionData.holdReason}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Generic output summary for non-decision agents */}
+                  {!isDecisionStep && step.inputSummary && (
+                    <div className="text-[10px] text-muted-foreground">
+                      <span className="font-medium text-foreground/70">Input: </span>{step.inputSummary}
+                    </div>
+                  )}
+                  {!isDecisionStep && step.outputSummary && (
+                    <div className="text-[10px] text-muted-foreground">
+                      <span className="font-medium text-foreground/70">Output: </span>{step.outputSummary}
+                    </div>
+                  )}
+
+                  {/* Run metadata */}
+                  <div className="flex items-center justify-between text-[9px] text-muted-foreground/40 pt-1">
+                    <span>Run: {step.traceId?.slice(0, 8)}…</span>
+                    <span>Latency: {formatMs(step.latencyMs)}</span>
+                    <div className="flex items-center gap-1">
+                      <CheckCircle2 className="w-2.5 h-2.5 text-green-400" />
+                      <span className="text-green-400">completed</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -225,7 +463,10 @@ export default function Screen3SubscriberExplorer() {
             </Card>
           </div>
 
-          {/* Panel 4 — Engagement Timeline */}
+          {/* Panel 4 — Decision Trace (sourced from real run_traces + trace_spans) */}
+          <DecisionTracePanel subscriberId={selectedPersona} />
+
+          {/* Panel 5 — Engagement Timeline */}
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium">30-Day Engagement Timeline</CardTitle>

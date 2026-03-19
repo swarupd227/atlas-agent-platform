@@ -1,7 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { TrendingUp, Mail, PauseCircle, DollarSign, AlertTriangle, Info, Star } from "lucide-react";
+import { Link } from "wouter";
+import {
+  TrendingUp, Mail, PauseCircle, DollarSign, AlertTriangle, Info, Star,
+  CheckCircle2, Clock, ExternalLink, Bot,
+} from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell, AreaChart, Area,
@@ -29,7 +33,139 @@ function KpiCard({ label, value, sub, icon: Icon, color, badge }: { label: strin
   );
 }
 
-const COLORS_DONUT = ["#6B7280", "#6366F1", "#8B5CF6", "#EF4444", "#F97316"];
+function formatRelative(dateStr: string | null): string {
+  if (!dateStr) return "—";
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  const hrs  = Math.floor(mins / 60);
+  const days = Math.floor(hrs / 24);
+  if (mins < 60) return `${mins}m ago`;
+  if (hrs < 24)  return `${hrs}h ago`;
+  return `${days}d ago`;
+}
+
+const PIPELINE_ROLE: Record<string, string> = {
+  subscriberProfileEngine: "Nightly subscriber profile refresh",
+  contentInventory:        "Daily content catalog scoring",
+  nbaEmailDecision:        "Per-subscriber SEND / HOLD decision",
+  sendTimeOptimizer:       "Personalized send window computation",
+  performanceLearning:     "Outcome tracking + model update",
+};
+
+const PIPELINE_METRIC: Record<string, (rs: any) => string> = {
+  subscriberProfileEngine: rs => rs?.subscribersProcessed ? `${(rs.subscribersProcessed / 1e6).toFixed(1)}M profiles refreshed` : "—",
+  contentInventory:        rs => rs?.emailSendable       ? `${rs.emailSendable} email-sendable / ${rs.articlesScored} scored` : "—",
+  nbaEmailDecision:        rs => rs?.decisionsEvaluated  ? `${(rs.sendDecisions / 1e6).toFixed(2)}M SEND · ${(rs.holdDecisions / 1000).toFixed(0)}K HOLD` : "—",
+  sendTimeOptimizer:       rs => rs?.subscribersOptimized ? `${(rs.subscribersOptimized / 1e6).toFixed(1)}M send windows` : "—",
+  performanceLearning:     rs => rs?.outcomesTracked     ? `${(rs.outcomesTracked / 1e6).toFixed(2)}M outcomes · ${rs.anomaliesDetected} alerts` : "—",
+};
+
+const TRIGGER_LABEL: Record<string, string> = {
+  scheduled: "Scheduled",
+  event: "Event-triggered",
+  manual: "Manual",
+};
+
+function AgentPipelineRunLog() {
+  const { data, isLoading } = useQuery<any>({
+    queryKey: ["/demo-api/hearst/agent-runs"],
+    refetchInterval: 60000,
+  });
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center gap-2">
+            <Bot className="w-4 h-4 text-indigo-400" />
+            <CardTitle className="text-sm font-medium">Agent Pipeline Runs</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col gap-2">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="h-10 rounded-lg bg-muted/20 animate-pulse" />
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const runs: any[] = data?.agentRuns || [];
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <div className="flex items-center gap-2">
+          <Bot className="w-4 h-4 text-indigo-400" />
+          <CardTitle className="text-sm font-medium">Agent Pipeline Runs</CardTitle>
+          <Badge variant="secondary" className="text-[10px] ml-auto">Today's pipeline</Badge>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Each row is a real agent run stored in the platform — click to inspect the full trace.
+        </p>
+      </CardHeader>
+      <CardContent className="p-0">
+        <table className="w-full text-[11px]">
+          <thead>
+            <tr className="border-b border-border/50">
+              <th className="text-left text-[10px] text-muted-foreground font-normal px-4 py-2">Agent</th>
+              <th className="text-left text-[10px] text-muted-foreground font-normal px-2 py-2">Trigger</th>
+              <th className="text-left text-[10px] text-muted-foreground font-normal px-2 py-2">Ran</th>
+              <th className="text-left text-[10px] text-muted-foreground font-normal px-2 py-2">Output</th>
+              <th className="text-[10px] text-muted-foreground font-normal px-4 py-2 text-right">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {runs.map((run, i) => {
+              const metric = PIPELINE_METRIC[run.key]?.(run.resultSummary);
+              const role   = PIPELINE_ROLE[run.key] || "";
+              return (
+                <tr key={run.agentId} className={`border-b border-border/30 hover:bg-muted/20 transition-colors ${i === runs.length - 1 ? "border-none" : ""}`}>
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="w-5 h-5 rounded bg-indigo-500/10 text-indigo-400 text-[9px] font-bold flex items-center justify-center shrink-0">{i + 1}</span>
+                      <div>
+                        <Link href={`/agents/${run.agentId}`}>
+                          <div className="flex items-center gap-1 cursor-pointer group">
+                            <span className="font-medium text-[11px] group-hover:text-[#E91E8C] transition-colors">{run.agentName}</span>
+                            <ExternalLink className="w-2.5 h-2.5 text-muted-foreground/30 group-hover:text-[#E91E8C] transition-colors" />
+                          </div>
+                        </Link>
+                        <p className="text-[9px] text-muted-foreground/60">{role}</p>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-2 py-2.5">
+                    <span className="text-[10px] text-muted-foreground bg-muted/30 px-1.5 py-0.5 rounded">
+                      {TRIGGER_LABEL[run.triggerType] || run.triggerType || "—"}
+                    </span>
+                  </td>
+                  <td className="px-2 py-2.5">
+                    <div className="flex items-center gap-1 text-muted-foreground">
+                      <Clock className="w-3 h-3" />
+                      <span>{formatRelative(run.completedAt)}</span>
+                    </div>
+                  </td>
+                  <td className="px-2 py-2.5 max-w-[240px]">
+                    <span className="text-[10px] text-foreground/80 line-clamp-1">{metric || "—"}</span>
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <CheckCircle2 className="w-3 h-3 text-green-400" />
+                      <span className="text-[10px] text-green-400 font-medium capitalize">{run.runStatus || "completed"}</span>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function Screen1CommandCenter({ onBrandClick }: Props) {
   const { data, isLoading } = useQuery<any>({ queryKey: ["/demo-api/hearst/command-center"] });
@@ -149,7 +285,7 @@ export default function Screen1CommandCenter({ onBrandClick }: Props) {
               ))}
             </div>
           </div>
-          <p className="text-[11px] text-muted-foreground">Send volume by timezone. Vertical line = now. Shaded area = completed (actual open rates shown).</p>
+          <p className="text-[11px] text-muted-foreground">Send volume by timezone. Shaded area = completed (actual open rates shown).</p>
         </CardHeader>
         <CardContent>
           <ResponsiveContainer width="100%" height={180}>
@@ -157,7 +293,6 @@ export default function Screen1CommandCenter({ onBrandClick }: Props) {
               <XAxis dataKey="label" tick={{ fontSize: 9 }} interval={2} />
               <YAxis tickFormatter={v => `${(v / 1000).toFixed(0)}K`} tick={{ fontSize: 9 }} width={32} />
               <Tooltip formatter={(v: any) => [`${(v / 1000).toFixed(1)}K sends`, ""]} />
-              {/* Vertical reference line for current hour is approximated with opacity on future data */}
               <Area type="monotone" dataKey="eastUs" stackId="1" stroke="#6366F1" fill="#6366F1" fillOpacity={0.7} name="US East" dot={false} />
               <Area type="monotone" dataKey="centralUs" stackId="1" stroke="#8B5CF6" fill="#8B5CF6" fillOpacity={0.7} name="US Central" dot={false} />
               <Area type="monotone" dataKey="westUs" stackId="1" stroke="#3B82F6" fill="#3B82F6" fillOpacity={0.7} name="US West" dot={false} />
@@ -245,6 +380,9 @@ export default function Screen1CommandCenter({ onBrandClick }: Props) {
           </CardContent>
         </Card>
       </div>
+
+      {/* Row 5 — Agent Pipeline Run Log (sourced from real agent_runtime_runs) */}
+      <AgentPipelineRunLog />
     </div>
   );
 }

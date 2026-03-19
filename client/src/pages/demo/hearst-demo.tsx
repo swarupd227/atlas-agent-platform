@@ -2,7 +2,6 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent } from "@/components/ui/card";
 import {
   LayoutDashboard,
   BarChart3,
@@ -14,7 +13,8 @@ import {
   AlertCircle,
   Loader2,
   ExternalLink,
-  ChevronRight,
+  ArrowRight,
+  Clock,
 } from "lucide-react";
 
 import Screen1CommandCenter from "./hearst-s1-command-center";
@@ -35,62 +35,128 @@ const SCREENS: { id: ScreenId; label: string; sub: string; icon: any }[] = [
   { id: "revenue", label: "Revenue Attribution", sub: "Email → dollar impact", icon: DollarSign },
 ];
 
-const AGENT_LABELS: Record<string, { name: string; role: string }> = {
-  subscriberProfileEngine: { name: "Subscriber Profile Engine", role: "Profiles 6.2M subscribers" },
-  contentInventory: { name: "Content Inventory Agent", role: "Scores today's content" },
-  nbaEmailDecision: { name: "NBA Email Decision Agent", role: "SEND / HOLD per subscriber" },
-  sendTimeOptimizer: { name: "Send Time Optimizer", role: "Personalized send window" },
-  performanceLearning: { name: "Performance & Learning Agent", role: "Closes the feedback loop" },
+const STATUS_MAP: Record<string, { icon: any; color: string; dot: string; label: string }> = {
+  active:   { icon: CheckCircle2, color: "text-green-400",  dot: "bg-green-400",  label: "Active" },
+  idle:     { icon: CheckCircle2, color: "text-blue-400",   dot: "bg-blue-400",   label: "Idle" },
+  running:  { icon: Loader2,      color: "text-indigo-400", dot: "bg-indigo-400", label: "Running" },
+  error:    { icon: AlertCircle,  color: "text-red-400",    dot: "bg-red-400",    label: "Error" },
+  inactive: { icon: AlertCircle,  color: "text-yellow-400", dot: "bg-yellow-400", label: "Inactive" },
+  completed:{ icon: CheckCircle2, color: "text-green-400",  dot: "bg-green-400",  label: "Done" },
 };
 
-const STATUS_MAP: Record<string, { icon: any; color: string; label: string }> = {
-  active: { icon: CheckCircle2, color: "text-green-400", label: "Active" },
-  idle: { icon: CheckCircle2, color: "text-blue-400", label: "Idle" },
-  running: { icon: Loader2, color: "text-indigo-400", label: "Running" },
-  error: { icon: AlertCircle, color: "text-red-400", label: "Error" },
-  inactive: { icon: AlertCircle, color: "text-yellow-400", label: "Inactive" },
+const TRIGGER_LABELS: Record<string, string> = {
+  scheduled: "Scheduled",
+  event: "Event-triggered",
+  manual: "Manual",
 };
 
-function AgentStatusHeader() {
+function formatRelative(dateStr: string | null): string {
+  if (!dateStr) return "—";
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  const hrs  = Math.floor(mins / 60);
+  const days = Math.floor(hrs / 24);
+  if (mins < 60)  return `${mins}m ago`;
+  if (hrs < 24)   return `${hrs}h ago`;
+  return `${days}d ago`;
+}
+
+const PIPELINE_ROLE: Record<string, string> = {
+  subscriberProfileEngine: "Profiles 6.2M subscribers",
+  contentInventory:        "Scores today's content",
+  nbaEmailDecision:        "SEND / HOLD per subscriber",
+  sendTimeOptimizer:       "Personalized send window",
+  performanceLearning:     "Closes the feedback loop",
+};
+
+const PIPELINE_METRIC: Record<string, (rs: any) => string> = {
+  subscriberProfileEngine: rs => rs?.subscribersProcessed ? `${(rs.subscribersProcessed / 1e6).toFixed(1)}M profiles` : "—",
+  contentInventory:        rs => rs?.emailSendable       ? `${rs.emailSendable} emails scored` : "—",
+  nbaEmailDecision:        rs => rs?.decisionsEvaluated  ? `${(rs.decisionsEvaluated / 1e6).toFixed(2)}M decisions` : "—",
+  sendTimeOptimizer:       rs => rs?.subscribersOptimized ? `${(rs.subscribersOptimized / 1e6).toFixed(1)}M windows` : "—",
+  performanceLearning:     rs => rs?.outcomesTracked     ? `${(rs.outcomesTracked / 1e6).toFixed(2)}M outcomes` : "—",
+};
+
+function PipelineHeader() {
   const { data, isLoading } = useQuery<any>({
-    queryKey: ["/demo-api/hearst/agents"],
-    refetchInterval: 30000,
+    queryKey: ["/demo-api/hearst/agent-runs"],
+    refetchInterval: 60000,
   });
 
   if (isLoading) {
     return (
-      <div className="flex gap-2 py-3 border-b border-border/50">
+      <div className="flex items-center gap-1 py-3 border-b border-border/50 overflow-x-auto">
         {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="flex-1 h-14 rounded-lg bg-muted/20 animate-pulse" />
+          <div key={i} className="flex items-center gap-1 flex-1">
+            <div className="flex-1 h-16 rounded-lg bg-muted/20 animate-pulse min-w-[140px]" />
+            {i < 4 && <ArrowRight className="w-3 h-3 text-muted-foreground/20 shrink-0" />}
+          </div>
         ))}
       </div>
     );
   }
 
-  const agents: any[] = data?.agents || [];
+  const runs: any[] = data?.agentRuns || [];
 
   return (
-    <div className="flex gap-2 flex-wrap py-3 border-b border-border/50">
-      {agents.map((agent, i) => {
-        const meta = AGENT_LABELS[agent.key] || { name: agent.name, role: "" };
-        const statusConf = STATUS_MAP[agent.status] || STATUS_MAP.idle;
-        const Icon = statusConf.icon;
+    <div className="flex items-stretch gap-1 py-3 border-b border-border/50 overflow-x-auto">
+      {runs.map((run, i) => {
+        const statusConf = STATUS_MAP[run.runStatus || run.agentStatus] || STATUS_MAP.idle;
+        const StatusIcon = statusConf.icon;
+        const metric = PIPELINE_METRIC[run.key]?.(run.resultSummary);
+        const role   = PIPELINE_ROLE[run.key] || "";
+
         return (
-          <div key={agent.id} className="flex items-center gap-2 flex-1 min-w-[160px] px-3 py-2 rounded-lg bg-muted/20 border border-border/50">
-            <div className="flex flex-col items-center justify-center w-6 shrink-0">
-              <span className="text-[9px] text-muted-foreground/60 font-mono">{i + 1}</span>
-              <ChevronRight className="w-2.5 h-2.5 text-muted-foreground/40" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5 mb-0.5">
-                <Icon className={`w-3 h-3 shrink-0 ${statusConf.color} ${agent.status === "running" ? "animate-spin" : ""}`} />
-                <span className="text-[11px] font-medium truncate">{meta.name}</span>
+          <div key={run.agentId} className="flex items-center gap-1 flex-1 min-w-[0]">
+            <div className="flex-1 min-w-[130px] px-3 py-2 rounded-lg bg-muted/20 border border-border/50 hover:border-border transition-colors group">
+              {/* Step number + status */}
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[9px] text-muted-foreground/50 font-mono tracking-widest">STEP {i + 1}</span>
+                <div className="flex items-center gap-1">
+                  <span className={`w-1.5 h-1.5 rounded-full ${statusConf.dot} ${run.runStatus === "running" ? "animate-pulse" : ""}`} />
+                  <span className="text-[9px] text-muted-foreground/60">{statusConf.label}</span>
+                </div>
               </div>
-              <p className="text-[10px] text-muted-foreground truncate">{meta.role}</p>
+
+              {/* Agent name + link */}
+              <div className="flex items-center gap-1 mb-0.5">
+                <Link href={`/agents/${run.agentId}`}>
+                  <span className="text-[11px] font-semibold leading-tight hover:text-[#E91E8C] transition-colors line-clamp-1 cursor-pointer">
+                    {run.agentName}
+                  </span>
+                </Link>
+                <Link href={`/agents/${run.agentId}`}>
+                  <ExternalLink className="w-2.5 h-2.5 text-muted-foreground/30 hover:text-[#E91E8C] shrink-0 transition-colors" />
+                </Link>
+              </div>
+
+              {/* Role */}
+              <p className="text-[9px] text-muted-foreground/60 mb-1 line-clamp-1">{role}</p>
+
+              {/* Last run + metric */}
+              <div className="flex items-center justify-between gap-1">
+                <div className="flex items-center gap-1 text-[9px] text-muted-foreground/50">
+                  <Clock className="w-2.5 h-2.5" />
+                  <span>{formatRelative(run.completedAt)}</span>
+                </div>
+                {metric && metric !== "—" && (
+                  <span className="text-[9px] text-indigo-400 font-medium truncate">{metric}</span>
+                )}
+              </div>
+
+              {/* Trigger badge */}
+              {run.triggerType && (
+                <div className="mt-1">
+                  <span className="text-[8px] text-muted-foreground/40 bg-muted/30 px-1 py-0.5 rounded">
+                    {TRIGGER_LABELS[run.triggerType] || run.triggerType}
+                  </span>
+                </div>
+              )}
             </div>
-            <Link href={`/agents/${agent.id}`}>
-              <ExternalLink className="w-3 h-3 text-muted-foreground/40 hover:text-muted-foreground shrink-0" />
-            </Link>
+
+            {i < runs.length - 1 && (
+              <ArrowRight className="w-3 h-3 text-muted-foreground/30 shrink-0" />
+            )}
           </div>
         );
       })}
@@ -102,7 +168,6 @@ export default function HearstDemo() {
   const [activeScreen, setActiveScreen] = useState<ScreenId>("command-center");
   const [pendingBrand, setPendingBrand] = useState<string | null>(null);
 
-  // If command center triggers a brand drill-down
   const handleBrandClick = (brandId: string) => {
     setPendingBrand(brandId);
     setActiveScreen("brand-deepdive");
@@ -147,9 +212,9 @@ export default function HearstDemo() {
         </div>
       </div>
 
-      {/* Agent pipeline status row */}
+      {/* Agent pipeline header — sourced from real agent_runtime_runs records */}
       <div className="px-6 shrink-0">
-        <AgentStatusHeader />
+        <PipelineHeader />
       </div>
 
       {/* Screen tab nav */}

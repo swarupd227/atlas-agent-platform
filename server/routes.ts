@@ -15,6 +15,7 @@ import multer from "multer";
 import { checkPermission, getRequestRole, getTraceRedactionLevel, getRedactionLevel, redactPayload, getOntologySensitivityKeys, invalidateOntologySensitivityCache, redactWithOntologyKeys } from "./permissions";
 import { getSecurityMode, hashPassword, comparePassword, generateToken, verifyToken, setAuthCookie, clearAuthCookie } from "./auth";
 import { resetDemo, setSodPending, setPrivEscPending } from "./demo-store";
+import { seedHearstAgentRuns } from "./seed-hearst-runs";
 import { users } from "@shared/schema";
 import { registerKnowledgeBaseRoutes } from "./kb-routes";
 import adobeAnalyticsRouter from "./mock-mcp/adobe-analytics";
@@ -36303,6 +36304,138 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
       message: `Override logged. ${brand} "${subject}" will be sent. System will learn from this decision.`,
       learnedFrom: reason || "Manual marketer override",
     });
+  });
+
+  // GET /demo-api/hearst/agent-runs — All 5 Hearst agent last runs from real platform tables
+  app.get("/demo-api/hearst/agent-runs", async (_req, res) => {
+    try {
+      await seedHearstAgentRuns();
+
+      const HEARST_AGENT_IDS: Record<string, string> = {
+        subscriberProfileEngine: "3a2e02ad-f07a-42ff-9c16-d9b4956dc34d",
+        contentInventory: "92584a77-d150-4436-9083-a108584bc021",
+        nbaEmailDecision: "151db72c-0038-4f01-a4bb-45650a82e8b6",
+        sendTimeOptimizer: "7de4167e-6b0c-4f04-9fcf-3693bda1d255",
+        performanceLearning: "8cb64dc1-278e-44bf-8f42-9b11a1c4f82d",
+      };
+
+      const PIPELINE_ORDER = [
+        "subscriberProfileEngine",
+        "contentInventory",
+        "nbaEmailDecision",
+        "sendTimeOptimizer",
+        "performanceLearning",
+      ];
+
+      const results = await Promise.all(
+        PIPELINE_ORDER.map(async (key) => {
+          const agentId = HEARST_AGENT_IDS[key];
+          const [agent, runs] = await Promise.all([
+            storage.getAgent(agentId),
+            storage.getAgentRuntimeRuns(agentId),
+          ]);
+
+          const lastRun = runs
+            .filter(r => r.completedAt)
+            .sort((a, b) => new Date(b.completedAt!).getTime() - new Date(a.completedAt!).getTime())[0];
+
+          return {
+            key,
+            agentId,
+            agentName: agent?.name || key,
+            agentStatus: agent?.status || "active",
+            runId: lastRun?.id || null,
+            runStatus: lastRun?.status || null,
+            triggerType: lastRun?.triggerType || null,
+            startedAt: lastRun?.startedAt || null,
+            completedAt: lastRun?.completedAt || null,
+            latencyMs: lastRun?.latencyMs || null,
+            resultSummary: lastRun?.resultSummary || null,
+          };
+        })
+      );
+
+      return res.json({ agentRuns: results });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /demo-api/hearst/subscriber/:id/trace — Per-subscriber pipeline trace from real run_traces + trace_spans
+  app.get("/demo-api/hearst/subscriber/:id/trace", async (req, res) => {
+    try {
+      await seedHearstAgentRuns();
+
+      const subscriberId = req.params.id;
+
+      const PIPELINE_AGENTS: { key: string; agentId: string; label: string; order: number }[] = [
+        { key: "subscriberProfileEngine", agentId: "3a2e02ad-f07a-42ff-9c16-d9b4956dc34d", label: "Subscriber Profile Engine", order: 1 },
+        { key: "contentInventory", agentId: "92584a77-d150-4436-9083-a108584bc021", label: "Content Inventory Agent", order: 2 },
+        { key: "nbaEmailDecision", agentId: "151db72c-0038-4f01-a4bb-45650a82e8b6", label: "NBA Email Decision Agent", order: 3 },
+        { key: "sendTimeOptimizer", agentId: "7de4167e-6b0c-4f04-9fcf-3693bda1d255", label: "Send Time Optimizer", order: 4 },
+      ];
+
+      const steps = await Promise.all(
+        PIPELINE_AGENTS.map(async (pa) => {
+          const agent = await storage.getAgent(pa.agentId);
+          const traces = await storage.getRecentCompletedTracesByAgent(pa.agentId, 10);
+
+          let trace = null;
+          if (pa.key === "nbaEmailDecision") {
+            trace = traces.find((t: any) => {
+              const pi = t.promptInputs as any;
+              return pi && pi.subscriberId === subscriberId;
+            }) || null;
+          } else {
+            trace = traces[0] || null;
+          }
+
+          if (!trace) {
+            return {
+              ...pa,
+              agentName: agent?.name || pa.label,
+              agentStatus: agent?.status || "active",
+              traceId: null,
+              runAt: null,
+              latencyMs: null,
+              inputSummary: null,
+              outputSummary: null,
+              toolCalls: [],
+              decisions: null,
+            };
+          }
+
+          const spans = await storage.getTraceSpans(trace.id);
+          const toolCallSpans = spans
+            .filter(s => s.invocationType === "mcp_tool" && s.mcpToolName)
+            .map(s => ({
+              tool: s.mcpToolName,
+              server: s.mcpServerName,
+              durationMs: s.durationMs,
+              status: s.status,
+              attributes: s.attributes,
+            }));
+
+          return {
+            ...pa,
+            agentName: agent?.name || pa.label,
+            agentStatus: agent?.status || "active",
+            traceId: trace.id,
+            runAt: trace.startedAt,
+            latencyMs: trace.latencyMs,
+            inputSummary: trace.inputSummary,
+            outputSummary: trace.outputSummary,
+            toolCalls: toolCallSpans,
+            decisions: trace.decisions,
+            promptInputs: trace.promptInputs,
+          };
+        })
+      );
+
+      return res.json({ subscriberId, steps });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
   });
 
   // GET /demo-api/hearst/send-time-map — Screen 4 data
