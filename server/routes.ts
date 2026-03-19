@@ -16,6 +16,7 @@ import { checkPermission, getRequestRole, getTraceRedactionLevel, getRedactionLe
 import { getSecurityMode, hashPassword, comparePassword, generateToken, verifyToken, setAuthCookie, clearAuthCookie } from "./auth";
 import { resetDemo, setSodPending, setPrivEscPending } from "./demo-store";
 import { seedHearstAgentRuns } from "./seed-hearst-runs";
+import { seedPartnerPortalRegistry, PARTNER_PORTAL_REGISTRY_SERVER_NAME } from "./seed-blackrock2-partner-portal";
 import { users } from "@shared/schema";
 import { registerKnowledgeBaseRoutes } from "./kb-routes";
 import adobeAnalyticsRouter from "./mock-mcp/adobe-analytics";
@@ -35631,6 +35632,41 @@ Log every action.`;
       res.json({ success: true, scenario: "happy" });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── BlackRock Use Case 2: Partner Portal Registry MCP Server ────────────────
+  // GET /demo-api/blackrock2/partner-portal-registry
+  // Lazily seeds the Partner Portal Registry MCP server (and its 6 tools) via
+  // the platform storage API, then returns the server record + tools.
+  app.get("/demo-api/blackrock2/partner-portal-registry", async (_req, res) => {
+    try {
+      const result = await seedPartnerPortalRegistry();
+      return res.json({
+        server: {
+          id: result.server.id,
+          name: result.server.name,
+          description: result.server.description,
+          status: result.server.status,
+          riskTier: result.server.riskTier,
+          allowlisted: result.server.allowlisted,
+        },
+        tools: result.tools.map((t: any) => ({
+          id: t.id,
+          name: t.name,
+          description: t.description,
+          riskClassification: t.riskClassification,
+          enabled: t.enabled,
+          annotations: t.annotations,
+        })),
+        created: result.created,
+        message: result.created
+          ? `Partner Portal Registry MCP server created with ${result.tools.length} tools.`
+          : `Partner Portal Registry MCP server already exists (${result.tools.length} tools).`,
+      });
+    } catch (err: any) {
+      console.error("[blackrock2] Failed to seed Partner Portal Registry:", err);
+      return res.status(500).json({ error: err.message });
     }
   });
 

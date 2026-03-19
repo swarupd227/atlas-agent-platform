@@ -77,6 +77,19 @@ export const BLACKROCK2_MCP_SERVERS = {
     name: "Partner Portal MCP Server",
     tools: ["scan_accounts", "remove_access", "revoke_certificate", "invalidate_token", "verify_removal"],
   },
+  /**
+   * Partner Portal Registry — New MCP Server for Use Case 2 (Employee Portal Offboarding).
+   * Created lazily via the platform storage API; ID is DB-assigned and resolved at runtime
+   * via GET /demo-api/blackrock2/partner-portal-registry.
+   * Tools (6): scan_accounts · remove_access · revoke_certificate · invalidate_token ·
+   *            verify_removal · get_portal_status
+   */
+  partnerPortalRegistry: {
+    id: null as string | null,
+    name: "Partner Portal Registry",
+    tools: ["scan_accounts", "remove_access", "revoke_certificate", "invalidate_token", "verify_removal", "get_portal_status"],
+    apiRoute: "/demo-api/blackrock2/partner-portal-registry",
+  },
   aladdin: {
     id: "ec259ba6-63f3-476a-a572-0ebd18c92706",
     name: "Aladdin MCP Server",
@@ -97,7 +110,7 @@ export const BLACKROCK2_MCP_SERVERS = {
     name: "Splunk MCP Server",
     tools: ["query_access_logs", "create_monitoring_rule"],
   },
-} as const;
+};
 
 export const BLACKROCK2_SAILPOINT_TOOLS = {
   get_identity_cube: {
@@ -198,6 +211,54 @@ export const BLACKROCK2_SPLUNK_TOOLS = {
     description: "Creates 90-day Splunk monitoring rule for terminated employee access detection",
   },
 } as const;
+
+/**
+ * Partner Portal Registry tool specs — used for UI display and agent prompt generation.
+ * Tool IDs are NOT hardcoded; the real DB IDs are fetched from the platform API at runtime
+ * via GET /demo-api/blackrock2/partner-portal-registry.
+ */
+export const BLACKROCK2_PARTNER_PORTAL_REGISTRY_TOOLS = [
+  {
+    name: "scan_accounts",
+    riskClassification: "low",
+    usedBy: ["IAM-AGT-702"],
+    description:
+      "Given an employee ID, returns all partner portal accounts: portal name, account ID, role, auth type, status, and last login timestamp.",
+  },
+  {
+    name: "remove_access",
+    riskClassification: "high",
+    usedBy: ["IAM-AGT-704"],
+    description:
+      "Deactivates an employee's account on a specific partner portal. Selects the correct adapter (SAML, cert revoke, token invalidation, API disable).",
+  },
+  {
+    name: "revoke_certificate",
+    riskClassification: "high",
+    usedBy: ["IAM-AGT-704"],
+    description:
+      "Revokes a client certificate or PKI certificate for certificate-based portals (Euroclear, SWIFT).",
+  },
+  {
+    name: "invalidate_token",
+    riskClassification: "high",
+    usedBy: ["IAM-AGT-704"],
+    description: "Invalidates a SWIFT token or RSA SecurID token.",
+  },
+  {
+    name: "verify_removal",
+    riskClassification: "low",
+    usedBy: ["IAM-AGT-705"],
+    description:
+      "Checks a specific portal to confirm the employee's account is disabled/removed. Returns: status, timestamp, confirmation ID.",
+  },
+  {
+    name: "get_portal_status",
+    riskClassification: "low",
+    usedBy: ["IAM-AGT-704", "IAM-AGT-705"],
+    description: "Checks if a partner portal is reachable and operational (health check).",
+  },
+] as const;
 
 export const BLACKROCK2_TRIGGERS = {
   terminationEvent: {
