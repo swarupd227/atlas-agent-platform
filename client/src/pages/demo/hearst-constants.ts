@@ -37,10 +37,15 @@ export const HEARST_AGENTS = {
   nbaEmailDecision: {
     id: "151db72c-0038-4f01-a4bb-45650a82e8b6",
     name: "NBA Email Decision Agent",
-    description: "For each subscriber each day, ranks all candidate emails from Hearst brand queues and selects the best one—or decides to skip (HOLD). Considers subscriber profile affinity, content relevance, fatigue rules, and business priorities.",
+    description: "For each subscriber each day, scores every candidate email using the 6-component NBEmail_Score formula: w1=0.25 (content_affinity) + w2=0.15 (recency_novelty) + w3=0.15 (brand_affinity) + w4=0.20 (revenue_potential) − w5=0.15 (fatigue_cost) − w6=0.10 (cannibalization_cost). Selects the highest-scoring email or recommends HOLD if the best score falls below the 0.25 threshold. Key differentiator: Atlas maximizes subscriber lifetime value, not send volume — HOLD decisions improve next-day open rates by 18–25%.",
     autonomyMode: "autonomous",
     riskTier: "MEDIUM",
     department: "Audience Development",
+    scoringFormula: {
+      weights: { w1: 0.25, w2: 0.15, w3: 0.15, w4: 0.20, w5: 0.15, w6: 0.10 },
+      components: ["content_affinity", "recency_novelty", "brand_affinity", "revenue_potential", "fatigue_cost", "cannibalization_cost"] as const,
+      holdThreshold: 0.25,
+    },
   },
   sendTimeOptimizer: {
     id: "7de4167e-6b0c-4f04-9fcf-3693bda1d255",
