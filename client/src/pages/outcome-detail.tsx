@@ -1528,6 +1528,109 @@ export default function OutcomeDetail() {
         </Card>
       )}
 
+      {/* Platform Intelligence Strip */}
+      {(boundAgents.length > 0 || (kpis && kpis.length > 0) || pendingApprovals.length > 0) && (() => {
+        const avgHealth = boundAgents.length > 0
+          ? Math.round(boundAgents.reduce((s, a) => s + (a.healthScore || 0), 0) / boundAgents.length)
+          : null;
+        const maxDrift = outcome.maxDriftPercent ?? 10;
+        const driftingKpis = (kpis || []).filter(k => {
+          if (!k.target || k.currentValue === null || k.currentValue === undefined) return false;
+          const pct = Math.abs((k.currentValue - k.target) / Math.max(Math.abs(k.target), 1)) * 100;
+          return pct > maxDrift;
+        });
+        const activePolicies = (governancePolicies || []).filter(p => p.status === "active");
+        const pendingCount = pendingApprovals.length;
+        const healthColor = avgHealth === null ? "text-muted-foreground" : avgHealth >= 80 ? "text-emerald-500 dark:text-emerald-400" : avgHealth >= 60 ? "text-amber-500 dark:text-amber-400" : "text-red-500 dark:text-red-400";
+        const healthBg = avgHealth === null ? "bg-muted/30" : avgHealth >= 80 ? "bg-emerald-500/5" : avgHealth >= 60 ? "bg-amber-500/5" : "bg-red-500/5";
+
+        return (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="platform-intelligence-strip">
+            <button
+              type="button"
+              onClick={() => setActiveTab("agent-map")}
+              className={`flex items-center gap-3 p-3 rounded-lg border ${healthBg} hover:opacity-80 transition-opacity text-left`}
+              data-testid="strip-agent-health"
+            >
+              <div className="flex flex-col items-center justify-center w-10 h-10 rounded-full bg-background border shrink-0">
+                <Activity className={`w-4 h-4 ${healthColor}`} />
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Agent Health</span>
+                <span className={`text-lg font-bold tabular-nums leading-tight ${healthColor}`}>
+                  {avgHealth !== null ? `${avgHealth}` : "—"}
+                  {avgHealth !== null && <span className="text-xs font-normal ml-0.5">/ 100</span>}
+                </span>
+                <span className="text-[10px] text-muted-foreground truncate">
+                  {boundAgents.length === 0 ? "No agents assigned" : `${boundAgents.length} agent${boundAgents.length !== 1 ? "s" : ""} bound`}
+                </span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab("kpi-delivery")}
+              className={`flex items-center gap-3 p-3 rounded-lg border ${driftingKpis.length > 0 ? "bg-amber-500/5" : "bg-muted/30"} hover:opacity-80 transition-opacity text-left`}
+              data-testid="strip-drift-status"
+            >
+              <div className="flex flex-col items-center justify-center w-10 h-10 rounded-full bg-background border shrink-0">
+                <TrendingDown className={`w-4 h-4 ${driftingKpis.length > 0 ? "text-amber-500 dark:text-amber-400" : "text-muted-foreground"}`} />
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Drift Status</span>
+                <span className={`text-lg font-bold tabular-nums leading-tight ${driftingKpis.length > 0 ? "text-amber-500 dark:text-amber-400" : "text-emerald-500 dark:text-emerald-400"}`}>
+                  {driftingKpis.length}
+                  <span className="text-xs font-normal ml-0.5">KPI{driftingKpis.length !== 1 ? "s" : ""}</span>
+                </span>
+                <span className="text-[10px] text-muted-foreground truncate">
+                  {driftingKpis.length === 0 ? "All within threshold" : `outside ${maxDrift}% threshold`}
+                </span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab("governance")}
+              className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30 hover:opacity-80 transition-opacity text-left"
+              data-testid="strip-policy-activity"
+            >
+              <div className="flex flex-col items-center justify-center w-10 h-10 rounded-full bg-background border shrink-0">
+                <ShieldCheck className={`w-4 h-4 ${activePolicies.length > 0 ? "text-primary" : "text-muted-foreground"}`} />
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Policies Active</span>
+                <span className="text-lg font-bold tabular-nums leading-tight text-primary">
+                  {activePolicies.length}
+                </span>
+                <span className="text-[10px] text-muted-foreground truncate">
+                  {activePolicies.length === 0 ? "No policies bound" : "auto-enforced"}
+                </span>
+              </div>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab("governance")}
+              className={`flex items-center gap-3 p-3 rounded-lg border ${pendingCount > 0 ? "bg-amber-500/5" : "bg-muted/30"} hover:opacity-80 transition-opacity text-left`}
+              data-testid="strip-approval-queue"
+            >
+              <div className="flex flex-col items-center justify-center w-10 h-10 rounded-full bg-background border shrink-0">
+                <Clock className={`w-4 h-4 ${pendingCount > 0 ? "text-amber-500 dark:text-amber-400" : "text-muted-foreground"}`} />
+              </div>
+              <div className="flex flex-col min-w-0">
+                <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Approval Queue</span>
+                <span className={`text-lg font-bold tabular-nums leading-tight ${pendingCount > 0 ? "text-amber-500 dark:text-amber-400" : "text-emerald-500 dark:text-emerald-400"}`}>
+                  {pendingCount}
+                </span>
+                <span className="text-[10px] text-muted-foreground truncate">
+                  {pendingCount === 0 ? "All resolved" : `pending review`}
+                </span>
+              </div>
+            </button>
+          </div>
+        );
+      })()}
+
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList className="flex-wrap">
           <TabsTrigger value="kpi-delivery" data-testid="tab-kpi-delivery">KPI Delivery</TabsTrigger>

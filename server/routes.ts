@@ -1116,6 +1116,182 @@ export async function registerRoutes(
     res.json(outcomes);
   });
 
+  // Platform intelligence: match live agents, templates, tools, policies for a proposed outcome
+  app.get("/api/outcomes/intelligence", async (req, res) => {
+    try {
+      const industryStr = (req.query.industry as string) || "";
+      const toolNames: string[] = req.query.proposedTools
+        ? (req.query.proposedTools as string).split(",").map((t) => t.trim()).filter(Boolean)
+        : [];
+      let roleNames: string[] = [];
+      let autonomyList: string[] = [];
+      let riskList: string[] = [];
+      try {
+        if (req.query.proposedAgentRoles) roleNames = JSON.parse(req.query.proposedAgentRoles as string);
+        if (req.query.autonomyModes) autonomyList = JSON.parse(req.query.autonomyModes as string);
+        if (req.query.riskTiers) riskList = JSON.parse(req.query.riskTiers as string);
+      } catch { /* ignore parse errors */ }
+
+      const [allAgents, allTemplates, allServers, allPolicies] = await Promise.all([
+        storage.getAgents(),
+        storage.getAgentTemplates(),
+        storage.getMcpServers(),
+        storage.getPolicies(),
+      ]);
+      const toolsPerServer = await Promise.all(allServers.map((s) => storage.getMcpServerTools(s.id)));
+      const allTools = toolsPerServer.flat();
+
+      // Live agent matching by keyword overlap with proposed role names/descriptions
+      const matchedAgents = roleNames.map((role) => {
+        const roleWords = role.toLowerCase().split(/[\s,_-]+/).filter((w) => w.length > 3);
+        const scored = allAgents
+          .filter((a) => a.status !== "archived")
+          .map((a) => {
+            const haystack = (a.name + " " + (a.description || "") + " " + (a.department || "")).toLowerCase();
+            const overlap = roleWords.filter((w) => haystack.includes(w)).length;
+            return { agent: a, score: overlap };
+          })
+          .filter(({ score }) => score > 0)
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 3);
+        return {
+          role,
+          matches: scored.map(({ agent: a }) => ({
+            id: a.id,
+            name: a.name,
+            description: a.description,
+            healthScore: Math.round(a.healthScore || 0),
+            status: a.status,
+            totalRuns: a.totalRuns || 0,
+            autonomyMode: a.autonomyMode,
+            riskTier: a.riskTier,
+          })),
+        };
+      });
+
+      // Template matching by industry + cross_industry
+      const industryTemplates = allTemplates
+        .filter((t) => !industryStr || t.industry === industryStr || t.industry === "cross_industry")
+        .slice(0, 5)
+        .map((t) => ({
+          id: t.id,
+          name: t.name,
+          description: t.description,
+          industry: t.industry,
+          category: t.category,
+          complexity: t.complexity,
+          estimatedTimeToProd: t.estimatedTimeToProd,
+          deploymentCount: t.deploymentCount || 0,
+          avgKpiDelivery: t.avgKpiDelivery || 0,
+          defaultRiskTier: t.defaultRiskTier,
+          complianceCertifications: t.complianceCertifications || [],
+        }));
+
+      // Tool catalog coverage
+      const toolCoverage = toolNames.map((toolName) => {
+        const nameLow = toolName.toLowerCase().replace(/[\s_-]+/g, "_");
+        const exactMatch = allTools.find((t) => t.name.toLowerCase().replace(/[\s_-]+/g, "_") === nameLow);
+        const partialMatch =
+          !exactMatch &&
+          allTools.find(
+            (t) =>
+              t.name.toLowerCase().includes(toolName.toLowerCase().replace(/_/g, " ")) ||
+              toolName.toLowerCase().includes(t.name.toLowerCase().replace(/_/g, " "))
+          );
+        const match = exactMatch || partialMatch;
+        return {
+          proposedName: toolName,
+          status: exactMatch ? "exists" : partialMatch ? "partial" : "missing",
+          matchedTool: match
+            ? {
+                id: match.id,
+                name: match.name,
+                riskClassification: match.riskClassification || "low",
+                serverId: match.serverId,
+              }
+            : null,
+        };
+      });
+
+      // Policy matching by domain keywords derived from industry
+      const industryDomainMap: Record<string, string[]> = {
+        financial_services: ["access_control", "audit", "compliance", "data_handling", "risk", "finance", "financial"],
+        healthcare: ["hipaa", "clinical", "patient", "health", "phi", "data_handling", "access_control"],
+        manufacturing: ["quality", "safety", "osha", "iso", "compliance", "operational"],
+        insurance: ["claims", "compliance", "acord", "regulatory", "data_handling", "risk"],
+        retail: ["pci", "ccpa", "consumer", "data_handling", "fraud", "inventory"],
+        technology_saas: ["access_control", "soc2", "api", "security", "data_handling", "incident"],
+      };
+      const domainKeywords = industryDomainMap[industryStr] || ["data_handling", "compliance", "access_control"];
+      const matchedPolicies = allPolicies
+        .filter((p) => p.status === "active")
+        .filter((p) =>
+          domainKeywords.some(
+            (kw) =>
+              p.domain.toLowerCase().includes(kw) ||
+              p.name.toLowerCase().includes(kw) ||
+              (p.description || "").toLowerCase().includes(kw)
+          )
+        )
+        .slice(0, 6)
+        .map((p) => ({
+          id: p.id,
+          name: p.name,
+          domain: p.domain,
+          description: p.description,
+        }));
+
+      // Composite risk calculation
+      const RISK_LEVELS = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
+      const toolRiskLevels = toolCoverage
+        .filter((t) => t.matchedTool)
+        .map((t) => (t.matchedTool!.riskClassification || "low").toUpperCase());
+      const highestToolRisk = toolRiskLevels.reduce(
+        (max, r) => (RISK_LEVELS.indexOf(r) > RISK_LEVELS.indexOf(max) ? r : max),
+        "LOW"
+      );
+      const hasFullyAutonomous = autonomyList.some((m) => m === "fully_autonomous" || m === "FULLY_AUTONOMOUS");
+      const highRiskToolCount = toolRiskLevels.filter((r) => r === "HIGH" || r === "CRITICAL").length;
+      const rationale: string[] = [];
+      let compositeIdx = RISK_LEVELS.indexOf(highestToolRisk);
+      if (highRiskToolCount > 0) rationale.push(`${highRiskToolCount} HIGH/CRITICAL tool${highRiskToolCount > 1 ? "s" : ""}`);
+      if (hasFullyAutonomous) {
+        if (compositeIdx < 3) compositeIdx++;
+        rationale.push("fully-autonomous mode");
+      }
+      const proposedHighRisk = riskList.some((r) => r === "HIGH" || r === "CRITICAL");
+      if (proposedHighRisk && compositeIdx < 2) {
+        compositeIdx = 2;
+        rationale.push("HIGH-risk agent tier");
+      }
+      if (rationale.length === 0) rationale.push("no high-risk tools detected");
+      const compositeLevel = RISK_LEVELS[compositeIdx];
+
+      const totalLiveMatches = matchedAgents.filter((r) => r.matches.length > 0).length;
+      const coverageCount = toolCoverage.filter((t) => t.status !== "missing").length;
+
+      res.json({
+        matchedAgents,
+        matchedTemplates: industryTemplates,
+        toolCoverage,
+        matchedPolicies,
+        compositeRisk: {
+          level: compositeLevel,
+          rationale: rationale.join(" + "),
+        },
+        summary: {
+          liveAgentMatchCount: totalLiveMatches,
+          templateCount: industryTemplates.length,
+          toolCoveragePercent: toolNames.length > 0 ? Math.round((coverageCount / toolNames.length) * 100) : 100,
+          matchedPolicyCount: matchedPolicies.length,
+        },
+      });
+    } catch (err) {
+      console.error("[/api/outcomes/intelligence]", err);
+      res.status(500).json({ message: "Failed to compute outcome intelligence" });
+    }
+  });
+
   app.get("/api/outcomes/:id", async (req, res) => {
     const outcome = await storage.getOutcome(req.params.id);
     if (!outcome) return res.status(404).json({ message: "Not found" });
