@@ -39,6 +39,7 @@ import {
   PlayCircle,
   Building2,
   MapPin,
+  Mail,
 } from "lucide-react";
 import {
   Sidebar,
@@ -257,6 +258,14 @@ export function AppSidebar() {
                       <Link href="/demo/moodys" data-testid="link-nav-moodys-demo">
                         <FileText className="w-4 h-4" />
                         <span>Credit Assessment Package</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild data-active={location.startsWith("/demo/hearst")}>
+                      <Link href="/demo/hearst" data-testid="link-nav-hearst-demo">
+                        <Mail className="w-4 h-4" />
+                        <span>Hearst - NBA Email Orchestration</span>
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
