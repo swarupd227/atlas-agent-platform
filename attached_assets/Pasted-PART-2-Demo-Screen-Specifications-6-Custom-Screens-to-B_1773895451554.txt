@@ -1,0 +1,112 @@
+PART 2
+Demo Screen Specifications
+6 Custom Screens to Build for the Demo
+
+The Atlas demo requires 6 custom screens that showcase the email orchestration engine’s intelligence. These screens sit within the Atlas platform UI and are accessed from the main navigation. Below are the detailed specifications for each screen, including layout, data displayed, interactions, and the data sources that populate them.
+
+💻 DEMO SCREEN SPECIFICATION
+Screen 1: Email Orchestration Command Center
+The primary dashboard showing today’s email orchestration decisions across all Hearst brands. This is the “home screen” of the demo — the first thing the audience sees.
+
+Layout Specification
+Full-width dashboard with 4 rows:
+
+Row 1 — KPI Ribbon (fixed top bar, 80px height): 4 metric cards in a horizontal row: (1) “Today’s Decisions” showing total subscriber evaluations (e.g., 2.4M evaluated, 1.8M emails scheduled, 600K on HOLD). (2) “Projected Open Rate” showing today’s predicted open rate vs. 30-day average (e.g., 34.2% vs. 28.1% baseline, +21.7% lift with green upward arrow). (3) “Revenue Forecast” showing today’s projected email-driven revenue (e.g., $142K from subscriptions + affiliate, vs. $98K on a typical non-optimized day). (4) “Fatigue Score” showing portfolio-wide subscriber fatigue indicator (e.g., 22/100, green — healthy, down from 38 last month).
+
+Row 2 — Brand Distribution Chart (left 60%) + Decision Breakdown Donut (right 40%): Left: Horizontal stacked bar chart showing how many emails are being sent per brand today, with brand colors (Cosmo = pink, Elle = black, Esquire = navy, Good Housekeeping = green, Harper’s Bazaar = gold, Country Living = forest, Runner’s World = orange, etc.). Each bar shows: scheduled sends, personalized sends (AI-selected content different from brand default), and HOLD decisions. Right: Donut chart breaking down today’s 2.4M decisions: 42% “Send brand default” (the brand’s scheduled email won the scoring), 33% “Send personalized” (AI selected different content than brand default), 25% “HOLD” (no email today). Center of donut: “58% AI-influenced” (personalized + HOLD = AI added value).
+
+Row 3 — Live Send Timeline (full width): A 24-hour timeline (midnight to midnight) showing send volume per hour as an area chart, color-coded by timezone bucket (US East, US Central, US West, Europe, Asia-Pacific). Shows the “wave” of personalized sends rolling across timezones as each subscriber’s optimal send time arrives. Current time marker (vertical line) shows where we are in today’s execution. Completed sends show actual open rate vs. predicted (small sparkline overlay).
+
+Row 4 — Top Performing Email Today (left 50%) + Anomaly Alerts (right 50%): Left: Card showing today’s best-performing email so far: thumbnail preview, brand, subject line, send volume, actual open rate, click rate, and revenue generated. With a “why it worked” explanation: “This Elle career article was sent to subscribers with high career-content affinity at their personalized optimal time. Predicted open rate: 38%. Actual: 42%. Revenue: $8,200 from subscription upgrades.” Right: Alert panel showing any anomalies detected by Agent 5: “⚠️ Esquire newsletter unsub rate 2.3x above normal in EMEA. Possible cause: subject line triggered spam filters in German inboxes. Recommended: pause Esquire EMEA sends pending review.”
+
+Data Sources
+▸ KPI Ribbon: Agent 3 decision log (today’s runs) + Agent 5 performance predictions
+▸ Brand Distribution: Agent 3 decision log grouped by brand + decision type
+▸ Send Timeline: ESP send queue data + Agent 4 personalized send times + real-time open events
+▸ Top Performer: Agent 5 real-time performance tracking, ranked by composite (open rate × revenue)
+▸ Anomaly Alerts: Agent 5 anomaly detection (statistical deviation from 30-day baselines)
+
+Interaction
+Clicking any brand in the distribution chart drills into Screen 2 (Brand Deep-Dive). Clicking a subscriber segment in the timeline opens Screen 3 (Subscriber Explorer). Clicking the anomaly alert opens the Atlas Healing Operations Center with the issue pre-loaded.
+ 
+💻 DEMO SCREEN SPECIFICATION
+Screen 2: Brand Deep-Dive Dashboard
+Drill-down view for a single brand (e.g., Cosmopolitan), showing how Atlas’s NBA engine is orchestrating that brand’s emails differently than the brand’s default plan.
+
+Layout Specification
+Header: Brand name + logo + today’s key metrics (total subscribers, emails scheduled today, HOLD count, predicted open rate, revenue forecast).
+Section 1 — Default vs. AI Comparison: Split-screen showing: LEFT: “Brand Default Plan” — what the Cosmo email team planned to send today (same email to all subscribers, same send time, same subject line). Shows the planned email preview, subject line, target list size (e.g., 890K subscribers), planned send time (9 AM ET for everyone). RIGHT: “Atlas Optimized Plan” — what Atlas is actually doing. Shows: 890K subscribers broken into 5 groups: (1) 340K receive the planned Cosmo email at personalized times (brand default won the scoring). (2) 180K receive the Cosmo email with a different subject line optimized for their open patterns. (3) 120K receive a different Cosmo article (AI-selected content match). (4) 85K receive an email from a different Hearst brand instead (Elle or Harper’s Bazaar won the cross-brand scoring). (5) 165K are on HOLD (fatigue protection — will be eligible for tomorrow’s send). A waterfall chart showing the delta: default plan predicted 24.8% open rate; Atlas predicts 33.6% open rate (+35.5% lift).
+Section 2 — Content Affinity Heatmap: Matrix visualization with subscriber segments (rows) vs. content topics (columns). Cell color = engagement intensity. For Cosmo: rows are “Beauty Enthusiast,” “Wellness Seeker,” “Career Focused,” “Entertainment Fan,” “Relationship Advisor.” Columns are today’s available content topics. Highlights show which segments are getting which content — and why. For example, the “Wellness Seeker” segment is not getting today’s beauty-focused Cosmo email — instead they’re getting a Women’s Health cross-brand recommendation.
+Section 3 — 7-Day Performance Trend: Line chart showing this brand’s daily open rate, click rate, unsub rate, and revenue for the past 7 days, with the Atlas optimization period highlighted (showing lift vs. pre-Atlas baseline).
+
+Data Sources
+▸ Default vs. AI: Agent 3 decision log filtered by brand + brand’s editorial calendar feed
+▸ Content Affinity: Agent 1 subscriber profiles aggregated by segment + Agent 2 content catalog
+▸ Performance Trend: Agent 5 daily performance metrics for this brand
+ 
+💻 DEMO SCREEN SPECIFICATION
+Screen 3: Subscriber Explorer (Individual View)
+Deep-dive into a single subscriber’s profile showing why the system made a specific email decision for them. This is the “explainability” screen — the most important for earning trust.
+
+Layout Specification
+Header: Subscriber name (anonymized or demo persona: “Sarah M., New York, NY”), email, subscription tier (free/premium), lifecycle stage badge (Engaged Reader / At-Risk / New Subscriber / VIP / Dormant), and overall engagement health score (0–100 with color bar).
+
+Panel 1 — Brand Subscription Map (left column, 30%): Vertical stack of brand cards showing every Hearst brand this subscriber has opted into: Cosmopolitan (✓ opted in, last open: 2 days ago, engagement: HIGH), Elle (✓ opted in, last open: 5 days ago, engagement: MEDIUM), Esquire (✓ opted in, last open: 32 days ago, engagement: LOW — at-risk), Good Housekeeping (✓ opted in, last open: 1 day ago, engagement: HIGH), Runner’s World (✗ not opted in but shows website visits to RW content). Each brand card shows a mini engagement sparkline (last 30 days).
+
+Panel 2 — Content Affinity Radar Chart (center, 40%): A radar/spider chart with 8 axes representing content topic clusters: Beauty & Style, Wellness & Fitness, Career & Finance, Entertainment & Culture, Home & Garden, Food & Recipes, Relationships, News & Politics. The chart shows the subscriber’s engagement intensity per topic (larger = more engaged). For “Sarah M.,” the chart shows strong peaks in Wellness & Fitness and Career & Finance, moderate Home & Garden, and low Beauty & Style and Entertainment. Below the chart: “Top 3 Content Interests: (1) Wellness routines & mental health, (2) Career advancement & salary negotiation, (3) Home organization & decor.”
+
+Panel 3 — Today’s NBA Decision (right column, 30%): The key explainability panel. Shows: TODAY’S RECOMMENDATION: “Send Good Housekeeping wellness article: ‘5 Morning Habits That Actually Boost Productivity’ at 7:12 AM ET”. WHY THIS EMAIL (ranked factors): (1) Content match: 92% affinity — wellness + career crossover article matches top 2 interests. (2) Brand affinity: Good Housekeeping engagement is HIGH (opened 4 of last 5). (3) Revenue potential: This article includes affiliate links to productivity tools; Sarah’s segment has 3.2x affiliate click rate. (4) Timing: 7:12 AM is Sarah’s peak open window (based on 90 days of open-time data). WHAT WAS CONSIDERED (alternatives that lost): Runner 1-up: Cosmo beauty email (affinity: 34% — too low for her). Runner 2-up: Elle career article (affinity: 78% but she got an Elle email yesterday — recency penalty). Runner 3-up: HOLD (score 0.31, above threshold but below the GH article’s 0.72). FATIGUE STATUS: 2 emails sent this week (Mon: GH recipe, Wed: Elle career). Fatigue score: 18/100 (green). Next send eligible: Friday.
+
+Panel 4 — Engagement Timeline (bottom, full width): A horizontal timeline showing the last 30 days of interactions: email opens (by brand, colored dots), website visits (grey dots), subscription events (star markers), purchases/affiliate clicks (dollar markers). The timeline makes it visually obvious which brands and content types drive engagement. Hovering over any dot shows the specific email/article and the subscriber’s interaction (opened, clicked, converted).
+
+Data Sources
+▸ Brand Map: Agent 1 subscriber profile + ESP subscription data
+▸ Affinity Radar: Agent 1 content affinity vectors (computed from activity history)
+▸ NBA Decision: Agent 3 decision log with full scoring breakdown for this subscriber
+▸ Timeline: Agent 1 activity stream from ESP + website analytics
+
+Interaction
+The presenter can click “Override” on the NBA decision to show Atlas’s Adaptive Autonomy: a marketer can manually select a different email, and the override is logged. The system learns from overrides to improve future recommendations.
+ 
+💻 DEMO SCREEN SPECIFICATION
+Screen 4: Send Time Optimization Map
+Visual representation of how Atlas personalizes send times across Hearst’s global subscriber base.
+
+Layout Specification
+Main Area — World Map with Animated Send Waves: A dark-themed world map showing subscriber density as glowing heat spots (NYC, LA, London, Sydney, etc.). As the demo’s 24-hour timeline plays (accelerated), animated “waves” of email sends pulse across the map as each timezone’s optimal windows arrive. The wave color corresponds to the dominant brand being sent in that region. A counter in the corner shows emails sent / emails remaining / real-time open rate. The animation dramatically demonstrates that Atlas is NOT sending everything at 9 AM ET — it’s orchestrating sends across a 16-hour window to hit each subscriber at their optimal time.
+Side Panel — Timezone Performance: Vertical bar chart showing open rates by timezone bucket: US East: 36.2% (peak send: 7–8 AM local). US Central: 33.8% (peak: 7:30–8:30 AM local). US West: 35.1% (peak: 7–9 AM local). Europe: 38.4% (peak: 8–9 AM local). APAC: 31.2% (peak: 8–10 AM local). Highlight: Europe’s highest rate because European subscribers receive sends at local optimal times instead of the old one-size-fits-all US morning send.
+Bottom — Before/After Comparison: Two histogram distributions side by side. LEFT: “Before Atlas” — all emails sent in a narrow 9–10 AM ET window (tall spike). RIGHT: “With Atlas” — sends distributed across a 16-hour window matching individual subscriber patterns (smooth distribution). The shift from spike to distribution is visually striking and immediately communicates the value.
+
+Data Sources
+▸ Map + Waves: Agent 4 personalized send time schedule + real-time ESP send confirmations
+▸ Timezone Performance: Agent 5 open rate metrics grouped by timezone
+▸ Before/After: Historical send time distribution (pre-Atlas) vs. current optimized distribution
+ 
+💻 DEMO SCREEN SPECIFICATION
+Screen 5: Cross-Brand Fatigue Protection Dashboard
+Shows how Atlas prevents subscriber fatigue across brands — the problem no single brand team can solve alone.
+
+Layout Specification
+Section 1 — Portfolio Fatigue Heatmap (full width): Matrix where rows = subscriber segments (e.g., “Multi-brand loyalist,” “Single-brand devotee,” “Casual reader,” “New subscriber < 30 days,” “At-risk declining”) and columns = days of the week (Mon–Sun). Cell color intensity = average emails received that day for that segment. The heatmap reveals: “Multi-brand loyalists” were receiving 5–6 emails/day pre-Atlas (all red). Now receiving 1–2/day (green). “At-risk declining” were receiving same volume as loyalists (accelerating their decline). Now receiving 2–3/week with HOLD decisions on other days.
+Section 2 — HOLD Decision Impact Panel: Split card showing: LEFT: “Total HOLDs this week: 3.2M sends suppressed.” With breakdown: 1.8M due to fatigue threshold (subscriber received 3+ emails this week). 800K due to low content affinity (no available email scored above HOLD threshold). 600K due to timing conflict (better email scheduled for tomorrow). RIGHT: “HOLD Impact: What happened to held subscribers?” Next-day open rate for subscribers who were held: 41.2%. Next-day open rate for subscribers who were NOT held: 28.7%. Delta: +43.6% higher engagement when HOLD is applied. This is the money slide — it proves that NOT sending sometimes is more valuable than sending.
+Section 3 — Unsub Prevention Tracker: Line chart showing weekly unsubscribe rate over 12 weeks, with the Atlas activation date marked. Pre-Atlas unsub rate: 0.18%/week. Post-Atlas unsub rate: 0.09%/week. Delta: -50% unsubscribe reduction. Below: estimated subscriber lifetime value preserved: “12,400 subscribers who would have unsubscribed under the old model are still active and engaged. Estimated preserved annual revenue: $186K.”
+
+Data Sources
+▸ Fatigue Heatmap: Agent 1 subscriber profiles (emails-per-week metric) + Agent 3 HOLD decisions
+▸ HOLD Impact: Agent 5 A/B analysis: held vs. not-held cohort open rates
+▸ Unsub Tracker: Agent 5 weekly unsub metrics with pre/post Atlas comparison
+ 
+💻 DEMO SCREEN SPECIFICATION
+Screen 6: Revenue Attribution & Weekly Intelligence Report
+The business value screen — connects email orchestration decisions to actual revenue.
+
+Layout Specification
+Section 1 — Revenue Waterfall (full width): Waterfall chart showing this week’s email-driven revenue flow: Total emails sent: 8.2M → Opens: 2.8M (34.1%) → Clicks: 420K (15% CTO) → Subscription conversions: 3,200 ($128K) → Affiliate clicks: 85K ($62K) → Ad impressions: 2.8M ($34K) → Total email revenue: $224K. Below: comparison bar showing last week without full Atlas optimization: $156K. Lift: +$68K (+43.6%). The waterfall makes it viscerally clear how decisions cascade to revenue.
+Section 2 — Revenue by Brand (left 50%): Horizontal bar chart ranking brands by email revenue this week. Top brands: Country Living: $42K (driven by home/garden affiliate revenue — high AOV). Cosmopolitan: $38K (subscription conversions from premium beauty content). Good Housekeeping: $35K (product reviews driving affiliate). Elle: $28K (fashion affiliate + subscription). Others: $81K combined. Insight callout: “Country Living generates 2.1x more revenue per email than Cosmopolitan despite 60% fewer sends. Atlas has automatically increased CL’s share of daily sends by 15% based on revenue performance.”
+Section 3 — AI Insight Cards (right 50%): 3–4 auto-generated insight cards from Agent 5: Card 1: “💡 Wellness content outperforms beauty content by 2.3x on engagement and 1.8x on revenue for the 25–34 female segment. Recommend: shift 20% of Cosmo’s beauty newsletter inventory to wellness for this segment.” Card 2: “💡 Subscribers who receive personalized send times open at 37.4% vs. 26.8% for default-time sends. The personalization lift is strongest for European subscribers (+48%) due to timezone correction.” Card 3: “⚠️ Esquire’s engagement has declined 12% month-over-month. Root cause analysis: 67% of Esquire subscribers have overlapping interest with Motor Trend content (recently acquired). Recommend: test Motor Trend cross-brand sends to Esquire’s automotive enthusiast segment.” Card 4: “✅ HOLD decisions this week preserved 12,400 subscribers from fatigue-driven unsubscription. Estimated annual value preserved: $186K.”
+
+Data Sources
+▸ Revenue Waterfall: Agent 5 revenue tracking (ESP opens/clicks + subscription system + affiliate tracking + ad server)
+▸ Revenue by Brand: Agent 5 brand-level revenue attribution
+▸ AI Insights: Agent 5 weekly learning cycle output — auto-generated from pattern analysis
+ 

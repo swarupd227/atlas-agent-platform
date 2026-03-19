@@ -35973,6 +35973,469 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
     }
   });
 
+  // ============================================================
+  // HEARST NBA EMAIL DEMO ROUTES
+  // ============================================================
+
+  const HEARST_AGENT_IDS = {
+    subscriberProfileEngine: "3a2e02ad-f07a-42ff-9c16-d9b4956dc34d",
+    contentInventory: "92584a77-d150-4436-9083-a108584bc021",
+    nbaEmailDecision: "151db72c-0038-4f01-a4bb-45650a82e8b6",
+    sendTimeOptimizer: "7de4167e-6b0c-4f04-9fcf-3693bda1d255",
+    performanceLearning: "8cb64dc1-278e-44bf-8f42-9b11a1c4f82d",
+  };
+
+  const HEARST_BRANDS = [
+    { id: "cosmo", name: "Cosmopolitan", color: "#E91E8C", shortName: "Cosmo", subscribers: 890000 },
+    { id: "elle", name: "Elle", color: "#1A1A1A", shortName: "Elle", subscribers: 720000 },
+    { id: "esquire", name: "Esquire", color: "#1B3A6B", shortName: "Esquire", subscribers: 540000 },
+    { id: "goodhousekeeping", name: "Good Housekeeping", color: "#2E7D32", shortName: "GH", subscribers: 1200000 },
+    { id: "harpersbazaar", name: "Harper's Bazaar", color: "#C9A84C", shortName: "HB", subscribers: 680000 },
+    { id: "countryliving", name: "Country Living", color: "#3E6B3E", shortName: "CL", subscribers: 950000 },
+    { id: "runnersworld", name: "Runner's World", color: "#E65100", shortName: "RW", subscribers: 480000 },
+    { id: "menshealth", name: "Men's Health", color: "#1565C0", shortName: "MH", subscribers: 760000 },
+  ];
+
+  // GET /demo-api/hearst/agents — real agent status from platform
+  app.get("/demo-api/hearst/agents", async (_req, res) => {
+    try {
+      const agents = await Promise.all(
+        Object.entries(HEARST_AGENT_IDS).map(async ([key, id]) => {
+          const agent = await storage.getAgent(id);
+          return { key, id, name: agent?.name || key, status: agent?.status || "active", riskTier: agent?.riskTier || "MEDIUM" };
+        })
+      );
+      return res.json({ agents });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /demo-api/hearst/command-center — Screen 1 data
+  app.get("/demo-api/hearst/command-center", async (_req, res) => {
+    const totalSubscribers = 6220000;
+    const evaluated = 2430000;
+    const scheduled = 1810000;
+    const held = evaluated - scheduled;
+    const baseOpenRate = 28.1;
+    const projectedOpenRate = 34.2;
+    const liftPct = ((projectedOpenRate - baseOpenRate) / baseOpenRate * 100).toFixed(1);
+
+    const brandDist = HEARST_BRANDS.map((b) => {
+      const base = Math.round(scheduled * (b.subscribers / totalSubscribers));
+      const personalized = Math.round(base * 0.38);
+      const holdCount = Math.round(b.subscribers * 0.18);
+      return { ...b, scheduled: base - personalized, personalized, hold: holdCount };
+    });
+
+    const now = new Date();
+    const currentHour = now.getHours();
+    const timeline = Array.from({ length: 24 }, (_, h) => {
+      const isFuture = h > currentHour;
+      const peak = h >= 6 && h <= 10 ? 1.8 : h >= 19 && h <= 21 ? 1.1 : 0.7;
+      const base = Math.round(25000 * peak * (0.85 + Math.random() * 0.3));
+      return {
+        hour: h,
+        label: `${h === 0 ? 12 : h > 12 ? h - 12 : h}${h < 12 ? "am" : "pm"}`,
+        eastUs: isFuture ? Math.round(base * 0.35) : Math.round(base * 0.35 * (0.9 + Math.random() * 0.2)),
+        centralUs: isFuture ? Math.round(base * 0.2) : Math.round(base * 0.2 * (0.9 + Math.random() * 0.2)),
+        westUs: isFuture ? Math.round(base * 0.25) : Math.round(base * 0.25 * (0.9 + Math.random() * 0.2)),
+        europe: isFuture ? Math.round(base * 0.12) : Math.round(base * 0.12 * (0.9 + Math.random() * 0.2)),
+        apac: isFuture ? Math.round(base * 0.08) : Math.round(base * 0.08 * (0.9 + Math.random() * 0.2)),
+        actualOpenRate: isFuture ? null : parseFloat((28 + Math.random() * 12).toFixed(1)),
+        isFuture,
+      };
+    });
+
+    const anomalyAlerts = [
+      { id: "a1", severity: "warning", brand: "Esquire", message: "Open rate dropped 12% vs. 30-day baseline — possible content fatigue in 35–44 male segment.", time: "38 min ago", metric: "Open Rate", value: "19.2%", baseline: "21.8%" },
+      { id: "a2", severity: "info", brand: "Country Living", message: "Affiliate click rate +31% above baseline. Home & garden content driving higher-than-expected AOV conversions.", time: "2h ago", metric: "Affiliate CTR", value: "4.8%", baseline: "3.7%" },
+    ];
+
+    const topPerformer = {
+      brand: "Elle",
+      brandColor: "#1A1A1A",
+      subject: "The 12 Career Moves That Separate Good from Great",
+      sendVolume: 187000,
+      actualOpenRate: 42.3,
+      predictedOpenRate: 38.0,
+      clickRate: 8.1,
+      revenue: 8200,
+      whyItWorked: "Sent to subscribers with high career-content affinity at their personalized optimal send time. Wellness+career crossover article matched top 2 interests for this cohort.",
+    };
+
+    return res.json({
+      kpi: {
+        evaluated,
+        scheduled,
+        held,
+        projectedOpenRate,
+        baseOpenRate,
+        liftPct: parseFloat(liftPct),
+        revenueForecast: 142000,
+        revenueBreakdown: { subscriptions: 87000, affiliate: 55000 },
+        holdRate: parseFloat(((held / evaluated) * 100).toFixed(1)),
+        currentHour,
+      },
+      brandDist,
+      donut: [
+        { name: "Default Send", value: 38, color: "#6B7280" },
+        { name: "AI-Personalized Content", value: 37, color: "#6366F1" },
+        { name: "Personalized Time Only", value: 12, color: "#8B5CF6" },
+        { name: "HOLD — Fatigue", value: 8, color: "#EF4444" },
+        { name: "HOLD — Low Score", value: 5, color: "#F97316" },
+      ],
+      timeline,
+      topPerformer,
+      anomalyAlerts,
+    });
+  });
+
+  // GET /demo-api/hearst/brand/:brand — Screen 2 data
+  app.get("/demo-api/hearst/brand/:brand", async (req, res) => {
+    const brandId = req.params.brand;
+    const brand = HEARST_BRANDS.find((b) => b.id === brandId) || HEARST_BRANDS[0];
+
+    const totalSubs = brand.subscribers;
+    const aiGroups = [
+      { label: "Receive planned email (high affinity)", count: Math.round(totalSubs * 0.38), type: "planned", color: "#6366F1" },
+      { label: "Receive planned email, personalized send time", count: Math.round(totalSubs * 0.21), type: "time-personalized", color: "#8B5CF6" },
+      { label: "Receive AI-selected alternative content", count: Math.round(totalSubs * 0.17), type: "content-personalized", color: "#3B82F6" },
+      { label: "HOLD — better email tomorrow", count: Math.round(totalSubs * 0.14), type: "hold-tomorrow", color: "#F97316" },
+      { label: "HOLD — fatigue threshold", count: Math.round(totalSubs * 0.10), type: "hold-fatigue", color: "#EF4444" },
+    ];
+
+    const segments = ["Beauty Enthusiast", "Wellness Seeker", "Career Focused", "Entertainment Fan", "Home & Lifestyle"];
+    const topics = ["Beauty & Style", "Wellness", "Career", "Entertainment", "Relationships", "Food", "Travel"];
+    const heatmap = segments.map((seg) =>
+      topics.map((top) => {
+        const base = Math.random();
+        return parseFloat((base * 0.85 + 0.1).toFixed(2));
+      })
+    );
+
+    const trend7d = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() - (6 - i));
+      const atlasActive = i >= 3;
+      return {
+        date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        openRate: atlasActive ? parseFloat((30 + Math.random() * 8).toFixed(1)) : parseFloat((22 + Math.random() * 5).toFixed(1)),
+        clickRate: atlasActive ? parseFloat((5.5 + Math.random() * 3).toFixed(1)) : parseFloat((3 + Math.random() * 2).toFixed(1)),
+        unsubRate: atlasActive ? parseFloat((0.06 + Math.random() * 0.04).toFixed(2)) : parseFloat((0.14 + Math.random() * 0.06).toFixed(2)),
+        revenue: atlasActive ? Math.round(28000 + Math.random() * 15000) : Math.round(16000 + Math.random() * 8000),
+        atlasActive,
+      };
+    });
+
+    return res.json({
+      brand,
+      metrics: {
+        totalSubscribers: totalSubs,
+        emailsScheduled: Math.round(totalSubs * 0.76),
+        holdCount: Math.round(totalSubs * 0.24),
+        predictedOpenRate: parseFloat((30 + Math.random() * 8).toFixed(1)),
+        revenueForecast: Math.round(28000 + Math.random() * 15000),
+      },
+      defaultPlan: {
+        subject: `Today's ${brand.name} Newsletter`,
+        targetSize: totalSubs,
+        plannedSendTime: "9:00 AM ET",
+        openRateEstimate: 22.4,
+      },
+      aiGroups,
+      segments,
+      topics,
+      heatmap,
+      trend7d,
+    });
+  });
+
+  // GET /demo-api/hearst/subscriber/:id — Screen 3 subscriber data
+  app.get("/demo-api/hearst/subscriber/:id", async (req, res) => {
+    const personaId = req.params.id;
+    const personas: Record<string, any> = {
+      "sarah-m": {
+        id: "sarah-m",
+        name: "Sarah M.",
+        location: "New York, NY",
+        tier: "Premium",
+        lifecycleStage: "Engaged Reader",
+        healthScore: 84,
+        brandMap: [
+          { brand: "Good Housekeeping", color: "#2E7D32", optedIn: true, lastOpen: "1 day ago", engagement: "HIGH" },
+          { brand: "Cosmopolitan", color: "#E91E8C", optedIn: true, lastOpen: "2 days ago", engagement: "HIGH" },
+          { brand: "Elle", color: "#1A1A1A", optedIn: true, lastOpen: "5 days ago", engagement: "MEDIUM" },
+          { brand: "Esquire", color: "#1B3A6B", optedIn: true, lastOpen: "32 days ago", engagement: "LOW" },
+          { brand: "Runner's World", color: "#E65100", optedIn: false, lastOpen: "—", engagement: "BROWSE_ONLY" },
+        ],
+        affinityRadar: [
+          { topic: "Beauty & Style", score: 35 }, { topic: "Wellness & Fitness", score: 88 },
+          { topic: "Career & Finance", score: 82 }, { topic: "Entertainment", score: 54 },
+          { topic: "Home & Garden", score: 63 }, { topic: "Food & Recipes", score: 47 },
+          { topic: "Relationships", score: 38 }, { topic: "News & Politics", score: 29 },
+        ],
+        todayDecision: {
+          action: "SEND",
+          brand: "Good Housekeeping",
+          subject: "5 Morning Habits That Actually Boost Productivity",
+          sendTime: "7:12 AM ET",
+          nbEmailScore: 0.74,
+          factors: [
+            { label: "Content match", score: 0.92, detail: "Wellness + career crossover matches top 2 interests" },
+            { label: "Brand affinity", score: 0.88, detail: "GH: opened 4 of last 5 emails" },
+            { label: "Revenue potential", score: 0.71, detail: "Article includes subscription upgrade prompt (38% conversion history)" },
+            { label: "Fatigue cost", score: -0.12, detail: "Received 1 email this week — low fatigue" },
+            { label: "Cannibalization", score: -0.08, detail: "No competing GH content scheduled tomorrow" },
+          ],
+          holdThreshold: 0.25,
+        },
+        timeline: Array.from({ length: 30 }, (_, i) => {
+          const d = new Date();
+          d.setDate(d.getDate() - (29 - i));
+          const events = [];
+          if (Math.random() > 0.4) events.push({ type: "open", brand: ["Good Housekeeping", "Cosmopolitan", "Elle"][Math.floor(Math.random() * 3)], label: "Email opened" });
+          if (Math.random() > 0.7) events.push({ type: "visit", label: "Website visit" });
+          if (Math.random() > 0.9) events.push({ type: "purchase", label: "Subscription action" });
+          return { date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }), events };
+        }),
+      },
+      "marcus-t": {
+        id: "marcus-t",
+        name: "Marcus T.",
+        location: "Chicago, IL",
+        tier: "Free",
+        lifecycleStage: "At-Risk",
+        healthScore: 38,
+        brandMap: [
+          { brand: "Esquire", color: "#1B3A6B", optedIn: true, lastOpen: "21 days ago", engagement: "LOW" },
+          { brand: "Men's Health", color: "#1565C0", optedIn: true, lastOpen: "14 days ago", engagement: "LOW" },
+          { brand: "Runner's World", color: "#E65100", optedIn: true, lastOpen: "3 days ago", engagement: "MEDIUM" },
+        ],
+        affinityRadar: [
+          { topic: "Beauty & Style", score: 12 }, { topic: "Wellness & Fitness", score: 71 },
+          { topic: "Career & Finance", score: 45 }, { topic: "Entertainment", score: 63 },
+          { topic: "Home & Garden", score: 28 }, { topic: "Food & Recipes", score: 52 },
+          { topic: "Relationships", score: 33 }, { topic: "News & Politics", score: 68 },
+        ],
+        todayDecision: {
+          action: "HOLD",
+          brand: null,
+          subject: null,
+          sendTime: null,
+          nbEmailScore: 0.19,
+          factors: [
+            { label: "Content match", score: 0.41, detail: "Available content only partially matches fitness interests" },
+            { label: "Brand affinity", score: 0.32, detail: "Esquire: low recent engagement" },
+            { label: "Revenue potential", score: 0.28, detail: "Free tier — limited conversion pathway" },
+            { label: "Fatigue cost", score: -0.38, detail: "Received 3 emails this week — near threshold" },
+            { label: "Cannibalization", score: -0.15, detail: "Runner's World race-prep article drops tomorrow — better timing" },
+          ],
+          holdThreshold: 0.25,
+          holdReason: "Best score (0.19) is below HOLD threshold (0.25). Better Runner's World content is available tomorrow.",
+        },
+        timeline: Array.from({ length: 30 }, (_, i) => {
+          const d = new Date();
+          d.setDate(d.getDate() - (29 - i));
+          const events = [];
+          if (Math.random() > 0.7) events.push({ type: "open", brand: ["Esquire", "Runner's World"][Math.floor(Math.random() * 2)], label: "Email opened" });
+          if (Math.random() > 0.8) events.push({ type: "visit", label: "Website visit" });
+          return { date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }), events };
+        }),
+      },
+      "jennifer-k": {
+        id: "jennifer-k",
+        name: "Jennifer K.",
+        location: "Austin, TX",
+        tier: "Premium",
+        lifecycleStage: "VIP",
+        healthScore: 96,
+        brandMap: [
+          { brand: "Harper's Bazaar", color: "#C9A84C", optedIn: true, lastOpen: "Today", engagement: "HIGH" },
+          { brand: "Elle", color: "#1A1A1A", optedIn: true, lastOpen: "Yesterday", engagement: "HIGH" },
+          { brand: "Cosmopolitan", color: "#E91E8C", optedIn: true, lastOpen: "2 days ago", engagement: "HIGH" },
+          { brand: "Good Housekeeping", color: "#2E7D32", optedIn: true, lastOpen: "3 days ago", engagement: "HIGH" },
+          { brand: "Country Living", color: "#3E6B3E", optedIn: true, lastOpen: "4 days ago", engagement: "MEDIUM" },
+        ],
+        affinityRadar: [
+          { topic: "Beauty & Style", score: 94 }, { topic: "Wellness & Fitness", score: 76 },
+          { topic: "Career & Finance", score: 68 }, { topic: "Entertainment", score: 82 },
+          { topic: "Home & Garden", score: 71 }, { topic: "Food & Recipes", score: 85 },
+          { topic: "Relationships", score: 79 }, { topic: "News & Politics", score: 43 },
+        ],
+        todayDecision: {
+          action: "HOLD",
+          brand: null,
+          subject: null,
+          sendTime: null,
+          nbEmailScore: 0.22,
+          factors: [
+            { label: "Content match", score: 0.71, detail: "High beauty affinity matches available content" },
+            { label: "Brand affinity", score: 0.88, detail: "All 5 brands show HIGH engagement" },
+            { label: "Revenue potential", score: 0.74, detail: "Premium subscriber — high LTV conversion" },
+            { label: "Fatigue cost", score: -0.82, detail: "Already received 4 emails this week — at threshold" },
+            { label: "Cannibalization", score: -0.41, detail: "HB fall fashion exclusive drops tomorrow — higher score" },
+          ],
+          holdThreshold: 0.25,
+          holdReason: "VIP subscriber has hit weekly email cap. Harper's Bazaar fall fashion exclusive tomorrow will score significantly higher. Protecting tomorrow's engagement.",
+        },
+        timeline: Array.from({ length: 30 }, (_, i) => {
+          const d = new Date();
+          d.setDate(d.getDate() - (29 - i));
+          const events = [];
+          if (Math.random() > 0.25) events.push({ type: "open", brand: ["Harper's Bazaar", "Elle", "Cosmopolitan", "Good Housekeeping"][Math.floor(Math.random() * 4)], label: "Email opened" });
+          if (Math.random() > 0.5) events.push({ type: "visit", label: "Website visit" });
+          if (Math.random() > 0.8) events.push({ type: "purchase", label: "Purchase / affiliate click" });
+          return { date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }), events };
+        }),
+      },
+    };
+    const persona = personas[personaId] || personas["sarah-m"];
+    return res.json(persona);
+  });
+
+  // POST /demo-api/hearst/subscriber/:id/override
+  app.post("/demo-api/hearst/subscriber/:id/override", async (req, res) => {
+    const { brand, subject, reason } = req.body;
+    return res.json({
+      success: true,
+      overrideId: `ov-${Date.now()}`,
+      message: `Override logged. ${brand} "${subject}" will be sent. System will learn from this decision.`,
+      learnedFrom: reason || "Manual marketer override",
+    });
+  });
+
+  // GET /demo-api/hearst/send-time-map — Screen 4 data
+  app.get("/demo-api/hearst/send-time-map", async (_req, res) => {
+    const timezonePerf = [
+      { zone: "US East", abbr: "ET", openRate: 36.2, peakHour: "7–8 AM", sendCount: 680000, color: "#6366F1" },
+      { zone: "US Central", abbr: "CT", openRate: 33.8, peakHour: "7:30–8:30 AM", sendCount: 310000, color: "#8B5CF6" },
+      { zone: "US West", abbr: "PT", openRate: 35.1, peakHour: "7–9 AM", sendCount: 440000, color: "#3B82F6" },
+      { zone: "Europe", abbr: "CET", openRate: 38.4, peakHour: "8–9 AM", sendCount: 210000, color: "#10B981" },
+      { zone: "APAC", abbr: "AEDT", openRate: 31.2, peakHour: "8–10 AM", sendCount: 170000, color: "#F59E0B" },
+    ];
+
+    const beforeAtlas = Array.from({ length: 24 }, (_, h) => ({
+      hour: h, label: `${h === 0 ? 12 : h > 12 ? h - 12 : h}${h < 12 ? "am" : "pm"}`,
+      sends: h === 9 ? 820000 : h === 10 ? 290000 : h === 8 ? 45000 : Math.round(Math.random() * 5000),
+    }));
+    const withAtlas = Array.from({ length: 24 }, (_, h) => ({
+      hour: h, label: `${h === 0 ? 12 : h > 12 ? h - 12 : h}${h < 12 ? "am" : "pm"}`,
+      sends: h >= 5 && h <= 21 ? Math.round(35000 + Math.random() * 55000) : Math.round(Math.random() * 8000),
+    }));
+
+    const hotspots = [
+      { id: "nyc", city: "New York", lat: 40.71, lng: -74.01, subscribers: 180000, brand: "Cosmopolitan", color: "#E91E8C" },
+      { id: "la", city: "Los Angeles", lat: 34.05, lng: -118.24, subscribers: 145000, brand: "Elle", color: "#1A1A1A" },
+      { id: "chicago", city: "Chicago", lat: 41.88, lng: -87.63, subscribers: 98000, brand: "Good Housekeeping", color: "#2E7D32" },
+      { id: "london", city: "London", lat: 51.51, lng: -0.13, subscribers: 87000, brand: "Harper's Bazaar", color: "#C9A84C" },
+      { id: "sydney", city: "Sydney", lat: -33.87, lng: 151.21, subscribers: 52000, brand: "Runner's World", color: "#E65100" },
+      { id: "toronto", city: "Toronto", lat: 43.65, lng: -79.38, subscribers: 61000, brand: "Country Living", color: "#3E6B3E" },
+      { id: "miami", city: "Miami", lat: 25.77, lng: -80.19, subscribers: 74000, brand: "Cosmopolitan", color: "#E91E8C" },
+      { id: "dallas", city: "Dallas", lat: 32.78, lng: -96.80, subscribers: 69000, brand: "Good Housekeeping", color: "#2E7D32" },
+    ];
+
+    return res.json({ timezonePerf, beforeAtlas, withAtlas, hotspots, totalSent: 1810000, totalRemaining: 620000, liveOpenRate: 34.2 });
+  });
+
+  // GET /demo-api/hearst/fatigue — Screen 5 data
+  app.get("/demo-api/hearst/fatigue", async (_req, res) => {
+    const segments = ["Multi-brand loyalist", "Single-brand devotee", "Casual reader", "New subscriber <30d", "At-risk declining"];
+    const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+    const preAtlasHeatmap = segments.map((seg) =>
+      days.map(() => {
+        const base = seg === "Multi-brand loyalist" ? 5.2 : seg === "Single-brand devotee" ? 2.8 : seg === "Casual reader" ? 1.9 : seg === "New subscriber <30d" ? 3.1 : 4.2;
+        return parseFloat((base * (0.8 + Math.random() * 0.4)).toFixed(1));
+      })
+    );
+    const withAtlasHeatmap = segments.map((seg) =>
+      days.map(() => {
+        const base = seg === "Multi-brand loyalist" ? 1.4 : seg === "Single-brand devotee" ? 1.1 : seg === "Casual reader" ? 0.8 : seg === "New subscriber <30d" ? 1.2 : 1.0;
+        return parseFloat((base * (0.8 + Math.random() * 0.4)).toFixed(1));
+      })
+    );
+
+    const holdImpact = {
+      totalHolds: 3200000,
+      byReason: [
+        { reason: "Fatigue threshold (3+ emails/week)", count: 1800000, color: "#EF4444" },
+        { reason: "Low content affinity (score < 0.25)", count: 800000, color: "#F97316" },
+        { reason: "Better email tomorrow", count: 600000, color: "#F59E0B" },
+      ],
+      heldNextDayOpenRate: 41.2,
+      notHeldOpenRate: 26.8,
+      heldRevenuePerSub: 2.84,
+      notHeldRevenuePerSub: 1.92,
+    };
+
+    const unsubTrend = Array.from({ length: 12 }, (_, i) => {
+      const atlasActive = i >= 6;
+      const d = new Date();
+      d.setDate(d.getDate() - (11 - i) * 7);
+      return {
+        week: `Wk ${i + 1}`,
+        date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        preAtlas: atlasActive ? null : parseFloat((0.14 + Math.random() * 0.08).toFixed(2)),
+        withAtlas: atlasActive ? parseFloat((0.07 + Math.random() * 0.04).toFixed(2)) : null,
+        atlasActive,
+      };
+    });
+
+    return res.json({
+      segments,
+      days,
+      preAtlasHeatmap,
+      withAtlasHeatmap,
+      holdImpact,
+      unsubTrend,
+      preservedSubscribers: 12400,
+      preservedAnnualRevenue: 186000,
+      unsubReduction: 50,
+    });
+  });
+
+  // GET /demo-api/hearst/revenue — Screen 6 data
+  app.get("/demo-api/hearst/revenue", async (_req, res) => {
+    const waterfall = [
+      { stage: "Emails Sent", value: 8200000, cumulative: 8200000, type: "count", label: "8.2M" },
+      { stage: "Opens", value: 2800000, cumulative: 2800000, rate: 34.1, type: "count", label: "2.8M (34.1%)" },
+      { stage: "Clicks", value: 420000, cumulative: 420000, rate: 15.0, type: "count", label: "420K (15% CTO)" },
+      { stage: "Subscriptions", value: 128000, cumulative: 128000, type: "revenue", label: "$128K (3,200 conversions)" },
+      { stage: "Affiliate", value: 62000, cumulative: 190000, type: "revenue", label: "$62K (85K clicks)" },
+      { stage: "Ad Revenue", value: 34000, cumulative: 224000, type: "revenue", label: "$34K (2.8M impressions)" },
+      { stage: "Total Revenue", value: 224000, cumulative: 224000, type: "total", label: "$224K" },
+    ];
+
+    const brandRevenue = [
+      { brand: "Country Living", revenue: 42000, color: "#3E6B3E", insight: "Home/garden affiliate drives highest AOV" },
+      { brand: "Cosmopolitan", revenue: 38000, color: "#E91E8C", insight: "Premium content drives subscription upgrades" },
+      { brand: "Good Housekeeping", revenue: 35000, color: "#2E7D32", insight: "Product reviews fuel affiliate conversions" },
+      { brand: "Elle", revenue: 28000, color: "#1A1A1A", insight: "Fashion affiliate + subscription lift" },
+      { brand: "Men's Health", revenue: 22000, color: "#1565C0", insight: "Fitness supplement affiliate" },
+      { brand: "Harper's Bazaar", revenue: 21000, color: "#C9A84C", insight: "Luxury fashion affiliate" },
+      { brand: "Runner's World", revenue: 20000, color: "#E65100", insight: "Race entry + gear affiliate" },
+      { brand: "Esquire", revenue: 18000, color: "#1B3A6B", insight: "Premium subscriptions" },
+    ];
+
+    const aiInsights = [
+      { type: "insight", icon: "💡", title: "Wellness outperforms Beauty 2.3x", body: "Wellness content outperforms beauty content by 2.3× on engagement and 1.8× on revenue for the 25–34 female segment. Recommend shifting 20% of Cosmo's beauty inventory to wellness for this segment.", metric: "+1.8x revenue", urgency: "medium" },
+      { type: "insight", icon: "💡", title: "Personalized send times +37.4% open rate", body: "Subscribers receiving personalized send times open at 37.4% vs. 26.8% for default-time sends. The lift is strongest for European subscribers (+48%) due to timezone correction.", metric: "+10.6pp lift", urgency: "low" },
+      { type: "warning", icon: "⚠️", title: "Esquire engagement declining", body: "Esquire's engagement has declined 12% month-over-month. Root cause: 67% of Esquire subscribers overlap with Motor Trend interests. Recommend testing Motor Trend cross-brand sends to the automotive segment.", metric: "-12% MoM", urgency: "high" },
+      { type: "success", icon: "✅", title: "HOLD decisions preserved $186K ARR", body: "12,400 subscribers who would have unsubscribed under the old model are still active. HOLD decisions this week preserved an estimated $186K in annual recurring subscriber revenue.", metric: "$186K preserved", urgency: "low" },
+    ];
+
+    const lastWeekRevenue = 156000;
+    const thisWeekRevenue = 224000;
+    const lift = parseFloat(((thisWeekRevenue - lastWeekRevenue) / lastWeekRevenue * 100).toFixed(1));
+
+    return res.json({ waterfall, brandRevenue, aiInsights, lastWeekRevenue, thisWeekRevenue, lift });
+  });
+
+  // ============================================================
+  // END HEARST DEMO ROUTES
+  // ============================================================
+
   // Start the job worker
   startWorker();
 
