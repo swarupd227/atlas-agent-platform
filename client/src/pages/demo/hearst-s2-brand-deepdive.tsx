@@ -134,7 +134,12 @@ export default function Screen2BrandDeepdive() {
                 <div className="flex items-center gap-2 mt-1 pt-2 border-t border-border/50">
                   <span className="text-[10px] text-muted-foreground">Predicted open rate:</span>
                   <span className="text-sm font-bold text-green-400">{data.metrics.predictedOpenRate}%</span>
-                  <span className="text-[10px] text-green-400">vs. {data.defaultPlan.openRateEstimate}% default</span>
+                  <span className="text-[10px] text-muted-foreground">vs. {data.defaultPlan.openRateEstimate}% baseline</span>
+                  {data.metrics.liftPct != null && (
+                    <span className="ml-auto px-1.5 py-0.5 rounded text-[10px] font-bold bg-green-500/15 text-green-400">
+                      +{data.metrics.liftPct.toFixed(1)}% lift
+                    </span>
+                  )}
                 </div>
               </CardContent>
             </Card>

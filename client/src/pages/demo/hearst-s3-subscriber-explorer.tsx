@@ -88,6 +88,7 @@ interface TraceStep {
 
 function DecisionTracePanel({ subscriberId }: { subscriberId: string }) {
   const [expandedStep, setExpandedStep] = useState<string | null>(null);
+  const [altExpanded, setAltExpanded] = useState(false);
 
   const { data, isLoading } = useQuery<any>({
     queryKey: ["/demo-api/hearst/subscriber", subscriberId, "trace"],
@@ -244,20 +245,43 @@ function DecisionTracePanel({ subscriberId }: { subscriberId: string }) {
                         </div>
                       )}
                       {decisionData.alternativesConsidered && decisionData.alternativesConsidered.length > 0 && (
-                        <div className="mt-2">
-                          <p className="text-[10px] font-medium text-muted-foreground mb-1.5">Alternatives Considered</p>
-                          <div className="flex flex-col gap-1.5">
-                            {decisionData.alternativesConsidered.map((alt: any) => (
-                              <div key={alt.rank} className="p-1.5 rounded bg-muted/30 border border-border/20">
-                                <div className="flex items-center justify-between mb-0.5">
-                                  <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-sm bg-muted/60 text-muted-foreground">#{alt.rank} {alt.brand}</span>
-                                  <span className="text-[10px] font-bold text-amber-400">{alt.nbEmailScore.toFixed(2)}</span>
+                        <div className="mt-2 rounded-lg border border-border/30 overflow-hidden">
+                          <button
+                            className="w-full flex items-center justify-between px-2 py-1.5 bg-muted/20 hover:bg-muted/30 transition-colors text-left"
+                            onClick={() => setAltExpanded(v => !v)}
+                          >
+                            <span className="text-[10px] font-semibold text-muted-foreground">
+                              Alternatives Considered ({decisionData.alternativesConsidered.length})
+                            </span>
+                            <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform ${altExpanded ? "rotate-180" : ""}`} />
+                          </button>
+                          {altExpanded && (
+                            <div className="flex flex-col divide-y divide-border/20">
+                              {decisionData.alternativesConsidered.map((alt: any) => (
+                                <div key={alt.rank} className="px-2 py-1.5 bg-muted/10">
+                                  <div className="flex items-center gap-1.5 mb-1">
+                                    <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-sm bg-muted/60 text-muted-foreground shrink-0">
+                                      #{alt.rank} {alt.brand}
+                                    </span>
+                                    <p className="text-[9px] text-foreground/60 italic truncate flex-1">"{alt.subject}"</p>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 mb-1">
+                                    <span className="text-[9px] text-muted-foreground shrink-0 w-20">NBEmail_Score</span>
+                                    <div className="flex-1 h-1.5 rounded-full bg-muted/30 overflow-hidden">
+                                      <div
+                                        className="h-full rounded-full bg-amber-400/70"
+                                        style={{ width: `${Math.round(alt.nbEmailScore * 100)}%` }}
+                                      />
+                                    </div>
+                                    <span className="text-[10px] font-bold text-amber-400 shrink-0 w-8 text-right">
+                                      {alt.nbEmailScore.toFixed(2)}
+                                    </span>
+                                  </div>
+                                  <p className="text-[9px] text-muted-foreground leading-snug">{alt.lossReason}</p>
                                 </div>
-                                <p className="text-[9px] text-foreground/70 italic mb-1">"{alt.subject}"</p>
-                                <p className="text-[9px] text-muted-foreground leading-snug">{alt.lossReason}</p>
-                              </div>
-                            ))}
-                          </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>

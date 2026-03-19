@@ -36370,6 +36370,10 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
         };
       });
 
+      const liftPct = brandPerf?.liftPct ?? parseFloat(
+        (((predictedOpenRate - baselineOpenRate) / baselineOpenRate) * 100).toFixed(1)
+      );
+
       return res.json({
         brand,
         metrics: {
@@ -36377,6 +36381,7 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
           emailsScheduled: Math.round(totalSubs * 0.76),
           holdCount: Math.round(totalSubs * 0.24),
           predictedOpenRate,
+          liftPct,
           revenueForecast: Math.round(28000 + Math.random() * 15000),
         },
         defaultPlan: {
