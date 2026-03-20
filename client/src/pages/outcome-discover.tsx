@@ -108,7 +108,7 @@ interface PlatformIntelResponse {
   matchedTemplates: PlatformIntelTemplate[];
   toolCoverage: PlatformIntelTool[];
   matchedPolicies: PlatformIntelPolicy[];
-  compositeRisk?: { level: string; score: number; rationale: string[] } | null;
+  compositeRisk?: { level: string; rationale: string[] } | null;
   summary: {
     liveAgentMatchCount: number;
     templateCount: number;

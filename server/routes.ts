@@ -1289,7 +1289,7 @@ export async function registerRoutes(
         matchedPolicies,
         compositeRisk: {
           level: compositeLevel,
-          rationale: rationale.join(" + "),
+          rationale: rationale,
         },
         summary: {
           liveAgentMatchCount: totalLiveMatches,
