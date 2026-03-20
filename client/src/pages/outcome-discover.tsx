@@ -1320,7 +1320,7 @@ export default function OutcomeDiscover() {
                   </div>
                 </div>
 
-                {/* T004 — Platform Intelligence Hint Panel (always visible in step 2) */}
+                {/* Platform Intelligence Hint Panel (collapsible, Quick Create Step 2) */}
                 {(formIntel || formIntelPending || formIntelError) && (
                   <div className="flex flex-col rounded-lg border border-primary/20 bg-primary/5 overflow-hidden" data-testid="form-intel-panel">
                     <button
@@ -2061,7 +2061,8 @@ export default function OutcomeDiscover() {
                         const agentName = agent.role || agent.name || `Agent ${i + 1}`;
                         const agentTools: string[] = agent.requiredTools || agent.tools || [];
                         const toolChips = agentTools.map((toolName) => {
-                          const tc = platformIntel?.toolCoverage.find((t) => t.proposedName === toolName);
+                          const toolNameLower = toolName.toLowerCase();
+                          const tc = platformIntel?.toolCoverage.find((t) => t.proposedName.toLowerCase() === toolNameLower);
                           return {
                             name: toolName,
                             status: tc?.status || ("missing" as const),
@@ -2130,7 +2131,7 @@ export default function OutcomeDiscover() {
                   </Card>
                 )}
 
-                {/* T002 — Platform Match Card */}
+                {/* Platform Match Card (live agents + templates from intelligence endpoint) */}
                 {(platformIntel || loadingIntel) && (
                   <Card data-testid="card-platform-match">
                     <CardHeader className="p-3 pb-1">
@@ -2165,12 +2166,14 @@ export default function OutcomeDiscover() {
                               <span className="text-[9px] text-muted-foreground italic">Select one to auto-assign on create</span>
                             </div>
                             {platformIntel.matchedAgents.filter((r) => r.matches.length > 0).flatMap((r) => {
-                              const agentDef = (proposal?.proposedAgents || []).find((pa: { role?: string; name?: string }) => (pa.role || pa.name || "") === r.role);
+                              const rRoleLower = r.role.toLowerCase();
+                              const agentDef = (proposal?.proposedAgents || []).find((pa: { role?: string; name?: string }) => (pa.role || pa.name || "").toLowerCase() === rRoleLower);
                               const agentTools: string[] = agentDef?.requiredTools || agentDef?.tools || [];
                               return r.matches.slice(0, 2).map((a) => {
                                 const isSelected = pendingAgentAssign?.agentId === a.id;
                                 const agentToolChips = agentTools.map((toolName) => {
-                                  const tc = platformIntel.toolCoverage.find((t) => t.proposedName === toolName);
+                                  const toolNameLower = toolName.toLowerCase();
+                                  const tc = platformIntel.toolCoverage.find((t) => t.proposedName.toLowerCase() === toolNameLower);
                                   return {
                                     name: toolName,
                                     status: tc?.status || ("missing" as const),
@@ -2562,7 +2565,7 @@ export default function OutcomeDiscover() {
                   </Card>
                 ) : (
                   <>
-                    {/* T003 — Governance Readiness Score */}
+                    {/* Governance Readiness Score card + create button with inline readiness signal */}
                     {(() => {
                       // Governance Readiness: KPIs, risk tier, SLA, policy match, approval gates, drift threshold
                       const hasKpis = (proposal.kpis?.length || 0) > 0;
