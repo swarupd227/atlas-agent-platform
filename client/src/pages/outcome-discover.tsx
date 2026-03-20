@@ -88,10 +88,15 @@ interface PlatformIntelMatchedAgent {
 interface PlatformIntelTemplate {
   id: string;
   name: string;
+  description?: string | null;
   complexity: string;
   estimatedTimeToProd: string;
   deploymentCount: number;
   industryId?: string;
+  category?: string | null;
+  avgKpiDelivery?: number | null;
+  defaultRiskTier?: string | null;
+  complianceCertifications?: string[];
 }
 
 interface PlatformIntelPolicy {
@@ -1300,7 +1305,7 @@ export default function OutcomeDiscover() {
                 </div>
 
                 {/* T004 — Platform Intelligence Hint Panel (collapsible) */}
-                {formIntel && (formIntel.matchedTemplates.length > 0 || formIntel.matchedPolicies.length > 0 || formIntel.matchedAgents.some((r) => r.matches.length > 0)) && (
+                {formIntel && (
                   <div className="flex flex-col rounded-lg border border-primary/20 bg-primary/5 overflow-hidden" data-testid="form-intel-panel">
                     <button
                       type="button"
@@ -1361,6 +1366,12 @@ export default function OutcomeDiscover() {
                             <span key={p.id} className="text-[10px] px-1.5 py-0.5 rounded-full border border-primary/20 bg-primary/5 text-primary truncate max-w-[140px]" data-testid={`form-intel-policy-${p.id}`}>{p.name}</span>
                           ))}
                         </div>
+                      </div>
+                    )}
+                    {!formIntel.matchedAgents.some((r) => r.matches.length > 0) && formIntel.matchedTemplates.length === 0 && formIntel.matchedPolicies.length === 0 && (
+                      <div className="flex items-center gap-2 p-2 rounded bg-background/30 text-muted-foreground/70" data-testid="text-form-intel-no-matches">
+                        <Cpu className="w-3 h-3 shrink-0" />
+                        <span className="text-[10px] italic">No platform matches yet for this industry. Matches appear once agents, templates, or policies are configured for this domain.</span>
                       </div>
                     )}
                     <div className="px-3 pb-2">
@@ -2231,15 +2242,22 @@ export default function OutcomeDiscover() {
                             {platformIntel.matchedTemplates.slice(0, 3).map((t) => {
                               const isSelected = pendingTemplateBuild?.templateId === t.id;
                               return (
-                                <div key={t.id} className={`flex items-center justify-between gap-2 p-2 rounded-md border transition-colors ${isSelected ? "bg-emerald-500/5 border-emerald-500/30" : "bg-muted/50 border-transparent"}`} data-testid={`platform-template-${t.id}`}>
-                                  <div className="flex flex-col min-w-0 flex-1">
-                                    <span className="text-[11px] font-medium truncate">{t.name}</span>
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                      <span className="text-[10px] text-muted-foreground capitalize">{t.complexity} complexity</span>
-                                      <span className="text-[10px] text-muted-foreground">{t.estimatedTimeToProd} to prod</span>
-                                      <span className="text-[10px] text-primary">{t.deploymentCount} deployments</span>
+                                <div key={t.id} className={`flex flex-col gap-1.5 p-2 rounded-md border transition-colors ${isSelected ? "bg-emerald-500/5 border-emerald-500/30" : "bg-muted/50 border-transparent"}`} data-testid={`platform-template-${t.id}`}>
+                                  <div className="flex items-center justify-between gap-2">
+                                    <div className="flex flex-col min-w-0 flex-1">
+                                      <span className="text-[11px] font-medium truncate">{t.name}</span>
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        {t.category && <span className="text-[10px] text-muted-foreground capitalize">{t.category}</span>}
+                                        <span className="text-[10px] text-muted-foreground capitalize">{t.complexity} complexity</span>
+                                        <span className="text-[10px] text-muted-foreground">{t.estimatedTimeToProd} to prod</span>
+                                        <span className="text-[10px] text-primary">{t.deploymentCount} deployments</span>
+                                        {t.defaultRiskTier && (
+                                          <Badge variant="outline" className={`text-[9px] ${t.defaultRiskTier === "HIGH" || t.defaultRiskTier === "CRITICAL" ? "border-red-500/40 text-red-600 dark:text-red-400" : t.defaultRiskTier === "MEDIUM" ? "border-amber-500/40 text-amber-600 dark:text-amber-400" : "border-emerald-500/40 text-emerald-600 dark:text-emerald-400"}`}>
+                                            {t.defaultRiskTier}
+                                          </Badge>
+                                        )}
+                                      </div>
                                     </div>
-                                  </div>
                                   <button
                                     type="button"
                                     onClick={() => setPendingTemplateBuild(isSelected ? null : { templateId: t.id, templateName: t.name })}
@@ -2250,6 +2268,17 @@ export default function OutcomeDiscover() {
                                     {isSelected ? "✓ Selected" : "Build →"}
                                   </button>
                                 </div>
+                                {t.description && (
+                                  <span className="text-[10px] text-muted-foreground leading-relaxed line-clamp-2" data-testid={`text-template-desc-${t.id}`}>{t.description}</span>
+                                )}
+                                {t.complianceCertifications && t.complianceCertifications.length > 0 && (
+                                  <div className="flex flex-wrap gap-1" data-testid={`template-certs-${t.id}`}>
+                                    {t.complianceCertifications.map((cert, ci) => (
+                                      <span key={ci} className="text-[9px] px-1 py-0.5 rounded border border-blue-500/30 text-blue-600 dark:text-blue-400 bg-blue-500/5 font-medium">{cert}</span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
                               );
                             })}
                           </div>
