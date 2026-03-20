@@ -12062,7 +12062,7 @@ Eval Suites: ${evalSuites.length} configured`,
       if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
         return res.status(503).json({ error: "AI assistant is not configured" });
       }
-      const { outcomeContract, kpis, feedback, previousPlan, industryContext } = req.body;
+      const { outcomeContract, kpis, feedback, previousPlan, industryContext, templateId } = req.body;
 
       const [templates, allSkills, allMcpServers, allPolicies, allAgents, ragPipelines, allKnowledgeBases] = await Promise.all([
         storage.getAgentTemplates(),
@@ -12073,6 +12073,10 @@ Eval Suites: ${evalSuites.length} configured`,
         storage.getRagPipelines(),
         storage.getKnowledgeBases(),
       ]);
+
+      const preSelectedTemplate = templateId
+        ? (templates as any[]).find((t) => t.id === templateId) ?? null
+        : null;
 
       const industryId = industryContext?.industryId || outcomeContract?.industry || "general";
       let ontologyConcepts: any[] = [];
