@@ -1532,8 +1532,8 @@ export default function OutcomeDetail() {
         </Card>
       )}
 
-      {/* Platform Intelligence Strip */}
-      {(boundAgents.length > 0 || (kpis && kpis.length > 0) || pendingApprovals.length > 0) && (() => {
+      {/* Platform Intelligence Strip — always visible */}
+      {(() => {
         const avgHealth = boundAgents.length > 0
           ? Math.round(boundAgents.reduce((s, a) => s + (a.healthScore || 0), 0) / boundAgents.length)
           : null;
@@ -1548,8 +1548,11 @@ export default function OutcomeDetail() {
         const pendingCount = pendingApprovals.length;
         const healthBg = avgHealth === null ? "bg-muted/30" : avgHealth >= 80 ? "bg-emerald-500/5" : avgHealth >= 60 ? "bg-amber-500/5" : "bg-red-500/5";
 
+        const refreshedAt = new Date();
+        const minsAgo = 0;
         return (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="platform-intelligence-strip">
+          <div className="flex flex-col gap-1.5" data-testid="platform-intelligence-strip">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {/* Tile 1: Agent Health Pulse — ProgressRing visualization */}
             <button
               type="button"
@@ -1642,6 +1645,10 @@ export default function OutcomeDetail() {
                 </span>
               </div>
             </button>
+          </div>
+          <p className="text-[10px] text-muted-foreground text-right" data-testid="strip-refresh-label">
+            Refreshed {minsAgo === 0 ? "just now" : `${minsAgo}m ago`} · {refreshedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+          </p>
           </div>
         );
       })()}

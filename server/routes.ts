@@ -1266,6 +1266,16 @@ export async function registerRoutes(
         compositeIdx = 2;
         rationale.push("HIGH-risk agent tier");
       }
+      // Approval gate risk: HIGH/CRITICAL tools without auto-enforced platform policies
+      const hasAutoEnforcedPolicy = matchedPolicies.some(
+        (p) => p.enforcementType === "auto" && (p.scopeType === "org" || p.scopeType === "global")
+      );
+      const hasApprovalGapRisk = highRiskToolCount > 0 && !hasAutoEnforcedPolicy;
+      if (hasApprovalGapRisk) {
+        if (compositeIdx < 2) compositeIdx = 2;
+        rationale.push("HIGH/CRITICAL tools lack auto-enforced approval gates");
+      }
+
       if (rationale.length === 0) rationale.push("no high-risk tools detected");
       const compositeLevel = RISK_LEVELS[compositeIdx];
 
@@ -1286,6 +1296,7 @@ export async function registerRoutes(
           templateCount: industryTemplates.length,
           toolCoveragePercent: toolNames.length > 0 ? Math.round((coverageCount / toolNames.length) * 100) : 100,
           matchedPolicyCount: matchedPolicies.length,
+          hasApprovalGapRisk,
         },
       });
     } catch (err) {

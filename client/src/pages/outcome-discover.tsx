@@ -64,6 +64,60 @@ import { useSpeechToText } from "@/hooks/use-speech-to-text";
 import type { IndustryId } from "@/components/industry-provider";
 import type { LucideIcon } from "lucide-react";
 
+interface PlatformIntelTool {
+  proposedName: string;
+  status: "exists" | "partial" | "missing";
+  matchedTool?: { id: string; name: string } | null;
+}
+
+interface PlatformIntelAgent {
+  id: string;
+  name: string;
+  status: string;
+  healthScore: number;
+  totalRuns: number;
+  autonomyMode?: string;
+  riskTier?: string;
+}
+
+interface PlatformIntelMatchedAgent {
+  role: string;
+  matches: PlatformIntelAgent[];
+}
+
+interface PlatformIntelTemplate {
+  id: string;
+  name: string;
+  complexity: string;
+  estimatedTimeToProd: string;
+  deploymentCount: number;
+  industryId?: string;
+}
+
+interface PlatformIntelPolicy {
+  id: string;
+  name: string;
+  domain: string;
+  description?: string | null;
+  enforcementType?: string | null;
+  scopeType?: string | null;
+}
+
+interface PlatformIntelResponse {
+  matchedAgents: PlatformIntelMatchedAgent[];
+  matchedTemplates: PlatformIntelTemplate[];
+  toolCoverage: PlatformIntelTool[];
+  matchedPolicies: PlatformIntelPolicy[];
+  compositeRisk?: { level: string; score: number; rationale: string[] } | null;
+  summary: {
+    liveAgentMatchCount: number;
+    templateCount: number;
+    matchedPolicyCount: number;
+    toolCoveragePercent: number;
+    hasApprovalGapRisk?: boolean;
+  };
+}
+
 interface ProcessFlowStep {
   id: string;
   description: string;
@@ -368,11 +422,14 @@ export default function OutcomeDiscover() {
   const [formKpis, setFormKpis] = useState<Array<{name: string; target: number; unit: string; baseline: number; slaThreshold: number; weight: number; targetOperator: string}>>([]);
   const [formCreatedOutcome, setFormCreatedOutcome] = useState<OutcomeContract | null>(null);
   const [formPlanRequested, setFormPlanRequested] = useState(false);
-  const [platformIntel, setPlatformIntel] = useState<any>(null);
+  const [selectedFormTemplate, setSelectedFormTemplate] = useState<OutcomeTemplate | null>(null);
+  const [platformIntel, setPlatformIntel] = useState<PlatformIntelResponse | null>(null);
   const [loadingIntel, setLoadingIntel] = useState(false);
   const [showPlatformMatch, setShowPlatformMatch] = useState(true);
   const [showRealPolicies, setShowRealPolicies] = useState(true);
   const [showFormIntel, setShowFormIntel] = useState(true);
+  const [pendingAgentAssign, setPendingAgentAssign] = useState<{ agentId: string; role: string } | null>(null);
+  const [pendingTemplateBuild, setPendingTemplateBuild] = useState<{ templateId: string; templateName: string } | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const speechRecognitionRef = useRef<any>(null);
@@ -419,6 +476,7 @@ export default function OutcomeDiscover() {
         targetOperator: (k as any).targetOperator ?? ">=",
       }))
     );
+    setSelectedFormTemplate(template);
     setFormStep(2);
   }
 
@@ -516,9 +574,10 @@ export default function OutcomeDiscover() {
       .catch(() => setLoadingIntel(false));
   }, [proposal, industry?.id]);
 
-  // Quick Create form intel query (Step 2 only)
-  const { data: formIntel } = useQuery<any>({
-    queryKey: ["/api/outcomes/intelligence", { industry: industry?.id || "cross_industry" }],
+  // Quick Create form intel query (Step 2 only) — use template industry with fallback to platform industry
+  const formIntelIndustry = selectedFormTemplate?.industry || industry?.id || "cross_industry";
+  const { data: formIntel } = useQuery<PlatformIntelResponse>({
+    queryKey: ["/api/outcomes/intelligence", { industry: formIntelIndustry }],
     enabled: builderMode === "form" && formStep === 2,
   });
 
@@ -574,6 +633,9 @@ export default function OutcomeDiscover() {
         await apiRequest("PATCH", `/api/outcomes/${outcome.id}`, { status: "awaiting_agent_plan" });
         queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
       } catch {}
+      if (pendingTemplateBuild) {
+        navigate(`/agents?template=${pendingTemplateBuild.templateId}&forOutcome=${outcome.id}`);
+      }
     },
     onError: (err: Error) => {
       toast({ title: "Failed to create outcome", description: err.message, variant: "destructive" });
@@ -1223,7 +1285,7 @@ export default function OutcomeDiscover() {
                 </div>
 
                 {/* T004 — Platform Intelligence Hint Panel (collapsible) */}
-                {formIntel && (formIntel.matchedTemplates?.length > 0 || formIntel.matchedPolicies?.length > 0 || (formIntel.matchedAgents || []).some((r: any) => r.matches.length > 0)) && (
+                {formIntel && (formIntel.matchedTemplates.length > 0 || formIntel.matchedPolicies.length > 0 || formIntel.matchedAgents.some((r) => r.matches.length > 0)) && (
                   <div className="flex flex-col rounded-lg border border-primary/20 bg-primary/5 overflow-hidden" data-testid="form-intel-panel">
                     <button
                       type="button"
@@ -1250,12 +1312,12 @@ export default function OutcomeDiscover() {
                     </button>
                     {showFormIntel && (
                     <div className="flex flex-col gap-2 px-3 pb-3">
-                    {(formIntel.matchedAgents || []).some((r: any) => r.matches.length > 0) && (
+                    {formIntel.matchedAgents.some((r) => r.matches.length > 0) && (
                       <div className="flex flex-col gap-1">
                         <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide">Live Agents</span>
                         <div className="flex flex-col gap-1">
-                          {(formIntel.matchedAgents || []).filter((r: any) => r.matches.length > 0).flatMap((r: any) =>
-                            r.matches.slice(0, 1).map((a: any) => (
+                          {formIntel.matchedAgents.filter((r) => r.matches.length > 0).flatMap((r) =>
+                            r.matches.slice(0, 1).map((a) => (
                               <div key={a.id} className="flex items-center gap-2 p-1.5 rounded bg-background/50" data-testid={`form-intel-agent-${a.id}`}>
                                 <div className={`w-1.5 h-1.5 rounded-full ${a.status === "active" ? "bg-emerald-500" : "bg-amber-500"}`} />
                                 <span className="text-[11px] font-medium truncate flex-1">{a.name}</span>
@@ -1266,21 +1328,21 @@ export default function OutcomeDiscover() {
                         </div>
                       </div>
                     )}
-                    {formIntel.matchedTemplates?.length > 0 && (
+                    {formIntel.matchedTemplates.length > 0 && (
                       <div className="flex flex-col gap-1">
                         <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide">Matching Templates</span>
                         <div className="flex flex-wrap gap-1">
-                          {formIntel.matchedTemplates.slice(0, 3).map((t: any) => (
+                          {formIntel.matchedTemplates.slice(0, 3).map((t) => (
                             <span key={t.id} className="text-[10px] px-1.5 py-0.5 rounded-full border bg-background/50 truncate max-w-[120px]" data-testid={`form-intel-template-${t.id}`}>{t.name}</span>
                           ))}
                         </div>
                       </div>
                     )}
-                    {formIntel.matchedPolicies?.length > 0 && (
+                    {formIntel.matchedPolicies.length > 0 && (
                       <div className="flex flex-col gap-1">
                         <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide">Matched Policies</span>
                         <div className="flex flex-wrap gap-1">
-                          {formIntel.matchedPolicies.slice(0, 4).map((p: any) => (
+                          {formIntel.matchedPolicies.slice(0, 4).map((p) => (
                             <span key={p.id} className="text-[10px] px-1.5 py-0.5 rounded-full border border-primary/20 bg-primary/5 text-primary truncate max-w-[140px]" data-testid={`form-intel-policy-${p.id}`}>{p.name}</span>
                           ))}
                         </div>
@@ -1931,105 +1993,105 @@ export default function OutcomeDiscover() {
                     </CardHeader>
                     {showPlatformMatch && !loadingIntel && platformIntel && (
                       <CardContent className="p-3 pt-0 flex flex-col gap-3">
-                        {/* Tier 1 — Live Agents with per-agent tool coverage score */}
-                        {(platformIntel.matchedAgents || []).some((r: any) => r.matches.length > 0) && (
+                        {/* Tier 1 — Live Agents with per-agent tool coverage chips */}
+                        {platformIntel.matchedAgents.some((r) => r.matches.length > 0) && (
                           <div className="flex flex-col gap-1.5">
-                            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Tier 1 — Live Agents</span>
-                            {(platformIntel.matchedAgents || []).filter((r: any) => r.matches.length > 0).flatMap((r: any) => {
-                              const agentDef = (proposal?.proposedAgents || []).find((pa: any) => (pa.role || pa.name || "") === r.role);
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Tier 1 — Live Agents</span>
+                              <span className="text-[9px] text-muted-foreground italic">Select one to auto-assign on create</span>
+                            </div>
+                            {platformIntel.matchedAgents.filter((r) => r.matches.length > 0).flatMap((r) => {
+                              const agentDef = (proposal?.proposedAgents || []).find((pa: { role?: string; name?: string }) => (pa.role || pa.name || "") === r.role);
                               const agentTools: string[] = agentDef?.requiredTools || agentDef?.tools || [];
-                              const coveredCount = agentTools.length > 0
-                                ? (platformIntel.toolCoverage || []).filter((tc: any) => agentTools.includes(tc.proposedName) && tc.status !== "missing").length
-                                : null;
-                              return r.matches.slice(0, 2).map((a: any) => (
-                                <div key={a.id} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/50" data-testid={`platform-agent-${a.id}`}>
-                                  <div className="flex items-center gap-2 min-w-0 flex-1">
-                                    <div className={`w-2 h-2 rounded-full shrink-0 ${a.status === "active" ? "bg-emerald-500" : a.status === "degraded" ? "bg-amber-500" : "bg-muted-foreground"}`} />
-                                    <div className="flex flex-col min-w-0">
-                                      <span className="text-[11px] font-medium truncate">{a.name}</span>
-                                      <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="text-[10px] text-muted-foreground">Health: {a.healthScore}</span>
-                                        <span className="text-[10px] text-muted-foreground">{a.totalRuns.toLocaleString()} runs</span>
-                                        {coveredCount !== null && (
-                                          <span className={`text-[10px] font-medium ${coveredCount === agentTools.length ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
-                                            {coveredCount}/{agentTools.length} tools
-                                          </span>
-                                        )}
+                              return r.matches.slice(0, 2).map((a) => {
+                                const isSelected = pendingAgentAssign?.agentId === a.id;
+                                const agentToolChips = agentTools.map((toolName) => {
+                                  const tc = platformIntel.toolCoverage.find((t) => t.proposedName === toolName);
+                                  return { name: toolName, status: tc?.status || "missing" as const };
+                                });
+                                return (
+                                  <div key={a.id} className={`flex flex-col gap-1.5 p-2 rounded-md border transition-colors ${isSelected ? "bg-emerald-500/5 border-emerald-500/30" : "bg-muted/50 border-transparent"}`} data-testid={`platform-agent-${a.id}`}>
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                                        <div className={`w-2 h-2 rounded-full shrink-0 ${a.status === "active" ? "bg-emerald-500" : a.status === "degraded" ? "bg-amber-500" : "bg-muted-foreground"}`} />
+                                        <div className="flex flex-col min-w-0">
+                                          <span className="text-[11px] font-medium truncate">{a.name}</span>
+                                          <div className="flex items-center gap-2 flex-wrap">
+                                            <span className="text-[10px] text-muted-foreground">Health: {a.healthScore}</span>
+                                            <span className="text-[10px] text-muted-foreground">{a.totalRuns.toLocaleString()} runs</span>
+                                            <span className="text-[10px] text-primary/70 italic">for: {r.role}</span>
+                                          </div>
+                                        </div>
                                       </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => setPendingAgentAssign(isSelected ? null : { agentId: a.id, role: r.role })}
+                                        className={`text-[9px] px-2 py-0.5 rounded border shrink-0 transition-colors ${isSelected ? "border-emerald-500/60 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" : "border-primary/30 text-primary hover:bg-primary/5"}`}
+                                        data-testid={`button-assign-agent-${a.id}`}
+                                        title={isSelected ? "Deselect agent" : `Select to bind after contract creation`}
+                                      >
+                                        {isSelected ? "✓ Selected" : "Assign →"}
+                                      </button>
+                                    </div>
+                                    {agentToolChips.length > 0 && (
+                                      <div className="flex flex-wrap gap-1">
+                                        {agentToolChips.map((tc, i) => (
+                                          <span
+                                            key={i}
+                                            className={`inline-flex items-center gap-0.5 text-[9px] px-1 py-0.5 rounded border ${
+                                              tc.status === "exists" ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" :
+                                              tc.status === "partial" ? "border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/5" :
+                                              "border-red-500/40 text-red-600 dark:text-red-400 bg-red-500/5"
+                                            }`}
+                                            title={tc.status === "exists" ? "Tool registered" : tc.status === "partial" ? "Partial match" : "Not registered"}
+                                          >
+                                            {tc.status === "exists" ? <Check className="w-2 h-2" /> : tc.status === "partial" ? <Minus className="w-2 h-2" /> : <X className="w-2 h-2" />}
+                                            {tc.name}
+                                          </span>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              });
+                            })}
+                          </div>
+                        )}
+                        {/* Tier 2 — Templates with select-to-build-after-creation action */}
+                        {platformIntel.matchedTemplates.length > 0 && (
+                          <div className="flex flex-col gap-1.5">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Tier 2 — Templates</span>
+                              <span className="text-[9px] text-muted-foreground italic">Select to open in Agent Plan after create</span>
+                            </div>
+                            {platformIntel.matchedTemplates.slice(0, 3).map((t) => {
+                              const isSelected = pendingTemplateBuild?.templateId === t.id;
+                              return (
+                                <div key={t.id} className={`flex items-center justify-between gap-2 p-2 rounded-md border transition-colors ${isSelected ? "bg-emerald-500/5 border-emerald-500/30" : "bg-muted/50 border-transparent"}`} data-testid={`platform-template-${t.id}`}>
+                                  <div className="flex flex-col min-w-0 flex-1">
+                                    <span className="text-[11px] font-medium truncate">{t.name}</span>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className="text-[10px] text-muted-foreground capitalize">{t.complexity} complexity</span>
+                                      <span className="text-[10px] text-muted-foreground">{t.estimatedTimeToProd} to prod</span>
+                                      <span className="text-[10px] text-primary">{t.deploymentCount} deployments</span>
                                     </div>
                                   </div>
                                   <button
                                     type="button"
-                                    onClick={() => navigate(`/agents?create=true&assignTo=${encodeURIComponent(r.role)}`)}
-                                    className="text-[9px] px-2 py-0.5 rounded border border-primary/30 text-primary hover:bg-primary/5 shrink-0 transition-colors"
-                                    data-testid={`button-assign-agent-${a.id}`}
-                                    title={`Assign to role: ${r.role}`}
+                                    onClick={() => setPendingTemplateBuild(isSelected ? null : { templateId: t.id, templateName: t.name })}
+                                    className={`text-[9px] px-2 py-0.5 rounded border shrink-0 transition-colors ${isSelected ? "border-emerald-500/60 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" : "border-primary/30 text-primary hover:bg-primary/5"}`}
+                                    data-testid={`button-build-template-${t.id}`}
+                                    title={isSelected ? "Deselect template" : `Select: opens Agent Plan with this template after contract creation`}
                                   >
-                                    Assign →
+                                    {isSelected ? "✓ Selected" : "Build →"}
                                   </button>
                                 </div>
-                              ));
+                              );
                             })}
                           </div>
                         )}
-                        {/* Tier 2 — Templates with Build action */}
-                        {(platformIntel.matchedTemplates || []).length > 0 && (
-                          <div className="flex flex-col gap-1.5">
-                            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Tier 2 — Templates</span>
-                            {(platformIntel.matchedTemplates || []).slice(0, 3).map((t: any) => (
-                              <div key={t.id} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/50" data-testid={`platform-template-${t.id}`}>
-                                <div className="flex flex-col min-w-0 flex-1">
-                                  <span className="text-[11px] font-medium truncate">{t.name}</span>
-                                  <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="text-[10px] text-muted-foreground capitalize">{t.complexity} complexity</span>
-                                    <span className="text-[10px] text-muted-foreground">{t.estimatedTimeToProd} to prod</span>
-                                    <span className="text-[10px] text-primary">{t.deploymentCount} deployments</span>
-                                  </div>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => navigate(`/agents?template=${t.id}`)}
-                                  className="text-[9px] px-2 py-0.5 rounded border border-primary/30 text-primary hover:bg-primary/5 shrink-0 transition-colors"
-                                  data-testid={`button-build-template-${t.id}`}
-                                  title={`Build from template: ${t.name}`}
-                                >
-                                  Build →
-                                </button>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        {/* Tool Coverage — global chip list with progress */}
-                        {(platformIntel.toolCoverage || []).length > 0 && (
-                          <div className="flex flex-col gap-1.5">
-                            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Tool Catalog Coverage</span>
-                            <div className="flex flex-wrap gap-1.5">
-                              {(platformIntel.toolCoverage || []).map((t: any, i: number) => (
-                                <span
-                                  key={i}
-                                  className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border ${
-                                    t.status === "exists" ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" :
-                                    t.status === "partial" ? "border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/5" :
-                                    "border-red-500/40 text-red-600 dark:text-red-400 bg-red-500/5"
-                                  }`}
-                                  title={t.status === "exists" ? `Registered: ${t.matchedTool?.name}` : t.status === "partial" ? `Partial match: ${t.matchedTool?.name}` : "Not registered — needs onboarding"}
-                                  data-testid={`tool-coverage-${i}`}
-                                >
-                                  {t.status === "exists" ? <Check className="w-2.5 h-2.5" /> : t.status === "partial" ? <Minus className="w-2.5 h-2.5" /> : <X className="w-2.5 h-2.5" />}
-                                  {t.proposedName}
-                                </span>
-                              ))}
-                            </div>
-                            {platformIntel.summary?.toolCoveragePercent !== undefined && (
-                              <div className="flex items-center gap-2">
-                                <Progress value={platformIntel.summary.toolCoveragePercent} className="h-1 flex-1" />
-                                <span className="text-[10px] text-muted-foreground shrink-0">{platformIntel.summary.toolCoveragePercent}% registered</span>
-                              </div>
-                            )}
-                          </div>
-                        )}
                         {/* No matches fallback */}
-                        {(platformIntel.matchedAgents || []).every((r: any) => r.matches.length === 0) && (platformIntel.matchedTemplates || []).length === 0 && (
+                        {platformIntel.matchedAgents.every((r) => r.matches.length === 0) && platformIntel.matchedTemplates.length === 0 && (
                           <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30 text-muted-foreground">
                             <Info className="w-3.5 h-3.5 shrink-0" />
                             <span className="text-[11px]">No live agents or templates found matching the proposed roles. These will need to be built from scratch.</span>
@@ -2156,7 +2218,7 @@ export default function OutcomeDiscover() {
                         {/* Real policies from intel endpoint with enforcement type */}
                         {platformIntel?.matchedPolicies && platformIntel.matchedPolicies.length > 0 && (
                           <div className="flex flex-col gap-1.5">
-                            {platformIntel.matchedPolicies.map((pol: any, i: number) => (
+                            {platformIntel.matchedPolicies.map((pol, i) => (
                               <div key={pol.id} className="flex flex-col gap-1 p-2 rounded-md bg-primary/5 border border-primary/10" data-testid={`real-policy-${i}`}>
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span className="text-[11px] font-medium">{pol.name}</span>
@@ -2175,46 +2237,10 @@ export default function OutcomeDiscover() {
                             ))}
                           </div>
                         )}
-                        {/* AI-suggested policies (existing) */}
-                        {activeApplicablePolicies.length > 0 && (
-                          <div className="flex flex-col gap-1.5">
-                            {platformIntel?.matchedPolicies && platformIntel.matchedPolicies.length > 0 && (
-                              <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide mt-1">Also AI-suggested</span>
-                            )}
-                            {activeApplicablePolicies.map((pol, i) => {
-                              const packName = pol.packName || findPolicyPackName(pol.name, pol.domain);
-                              return (
-                                <div key={i} className="flex flex-col gap-1.5 p-2 rounded-md bg-muted/50" data-testid={`applicable-policy-${i}`}>
-                                  <div className="flex items-start justify-between gap-2">
-                                    <div className="flex flex-col gap-1 flex-1 min-w-0">
-                                      <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="text-xs font-medium">{pol.name}</span>
-                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-mono">{pol.domain}</span>
-                                      </div>
-                                      {packName && (
-                                        <span className="text-[10px] text-muted-foreground/70 font-medium" data-testid={`text-policy-pack-${i}`}>{packName}</span>
-                                      )}
-                                      <span className="text-[11px] text-muted-foreground leading-relaxed">{pol.rationale}</span>
-                                    </div>
-                                    <Button
-                                      variant="ghost"
-                                      size="icon"
-                                      className="w-5 h-5 shrink-0 text-muted-foreground hover:text-destructive"
-                                      onClick={() => setActiveApplicablePolicies(prev => prev.filter((_, idx) => idx !== i))}
-                                      data-testid={`button-remove-policy-${i}`}
-                                    >
-                                      <X className="w-3 h-3" />
-                                    </Button>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                        {(!platformIntel?.matchedPolicies || platformIntel.matchedPolicies.length === 0) && activeApplicablePolicies.length === 0 && (
+                        {(!platformIntel?.matchedPolicies || platformIntel.matchedPolicies.length === 0) && (
                           <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30 text-muted-foreground" data-testid="text-no-applicable-policies">
                             <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-                            <span className="text-[11px]">No platform policies matched for this industry. Add policies manually or generate them with AI.</span>
+                            <span className="text-[11px]">No platform policies matched for this industry. Governance reviews will be triggered at agent deployment.</span>
                           </div>
                         )}
                       </CardContent>
@@ -2296,14 +2322,21 @@ export default function OutcomeDiscover() {
                 ) : (
                   <>
                     {/* T003 — Governance Readiness Score */}
-                    {platformIntel && (() => {
-                      const checklistTotal = proposal.validationChecklist?.length || 0;
-                      const checklistDone = checkedItems.size;
-                      const policyScore = platformIntel.summary?.matchedPolicyCount > 0 ? 25 : 0;
-                      const toolScore = Math.round((platformIntel.summary?.toolCoveragePercent || 0) / 4);
-                      const agentScore = platformIntel.summary?.liveAgentMatchCount > 0 ? 20 : (platformIntel.summary?.templateCount > 0 ? 10 : 0);
-                      const checklistScore = checklistTotal > 0 ? Math.round((checklistDone / checklistTotal) * 30) : 30;
-                      const readinessScore = Math.min(100, policyScore + toolScore + agentScore + checklistScore);
+                    {(() => {
+                      // Governance Readiness: KPIs, risk tier, SLA, policy match, approval gates, drift threshold
+                      const hasKpis = (proposal.kpis?.length || 0) > 0;
+                      const hasRiskTier = !!(proposal.outcomeContract?.riskTier);
+                      const hasSla = !!(proposal.outcomeContract?.maxDriftPercent || proposal.outcomeContract?.riskThreshold);
+                      const hasPolicies = (platformIntel?.summary?.matchedPolicyCount || 0) > 0;
+                      const hasApprovalGates = !platformIntel?.summary?.hasApprovalGapRisk;
+                      const hasDriftDef = !!(proposal.outcomeContract?.maxDriftPercent);
+                      const kpiScore = hasKpis ? 20 : 0;
+                      const riskTierScore = hasRiskTier ? 15 : 0;
+                      const slaScore = hasSla ? 15 : 0;
+                      const policyScore = hasPolicies ? 25 : 0;
+                      const approvalGateScore = hasApprovalGates ? 15 : 0;
+                      const driftScore = hasDriftDef ? 10 : 0;
+                      const readinessScore = kpiScore + riskTierScore + slaScore + policyScore + approvalGateScore + driftScore;
                       const scoreColor = readinessScore >= 80 ? "text-emerald-600 dark:text-emerald-400" : readinessScore >= 50 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
                       const progressColor = readinessScore >= 80 ? "bg-emerald-500" : readinessScore >= 50 ? "bg-amber-500" : "bg-red-500";
                       return (
@@ -2320,22 +2353,28 @@ export default function OutcomeDiscover() {
                               <div className={`h-full rounded-full ${progressColor} transition-all duration-500`} style={{ width: `${readinessScore}%` }} />
                             </div>
                             <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-                              <span className="text-[10px] text-muted-foreground">Live policies: <span className={platformIntel.summary?.matchedPolicyCount > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}>{platformIntel.summary?.matchedPolicyCount || 0}</span></span>
-                              <span className="text-[10px] text-muted-foreground">Tool coverage: <span className={platformIntel.summary?.toolCoveragePercent >= 70 ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}>{platformIntel.summary?.toolCoveragePercent ?? 100}%</span></span>
-                              <span className="text-[10px] text-muted-foreground">Agent match: <span className={agentScore > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}>{agentScore > 0 ? "found" : "none"}</span></span>
-                              <span className="text-[10px] text-muted-foreground">Checklist: <span className={checklistDone === checklistTotal && checklistTotal > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}>{checklistDone}/{checklistTotal}</span></span>
+                              <span className="text-[10px] text-muted-foreground">KPIs defined: <span className={hasKpis ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}>{hasKpis ? `${proposal.kpis?.length} KPIs` : "none"}</span></span>
+                              <span className="text-[10px] text-muted-foreground">Risk tier: <span className={hasRiskTier ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}>{proposal.outcomeContract?.riskTier || "unset"}</span></span>
+                              <span className="text-[10px] text-muted-foreground">Platform policies: <span className={hasPolicies ? "text-emerald-600 dark:text-emerald-400" : "text-amber-500"}>{platformIntel?.summary?.matchedPolicyCount || 0}</span></span>
+                              <span className="text-[10px] text-muted-foreground">Approval gates: <span className={hasApprovalGates ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}>{hasApprovalGates ? "covered" : "gaps"}</span></span>
+                              <span className="text-[10px] text-muted-foreground">Drift threshold: <span className={hasDriftDef ? "text-emerald-600 dark:text-emerald-400" : "text-amber-500"}>{hasDriftDef ? `${proposal.outcomeContract?.maxDriftPercent}%` : "unset"}</span></span>
+                              <span className="text-[10px] text-muted-foreground">SLA defined: <span className={hasSla ? "text-emerald-600 dark:text-emerald-400" : "text-amber-500"}>{hasSla ? "yes" : "no"}</span></span>
                             </div>
                           </CardContent>
                         </Card>
                       );
                     })()}
                     {(() => {
-                      const _policyScore = platformIntel?.summary?.matchedPolicyCount > 0 ? 25 : 0;
-                      const _toolScore = Math.round((platformIntel?.summary?.toolCoveragePercent || 0) / 4);
-                      const _agentScore = platformIntel?.summary?.liveAgentMatchCount > 0 ? 20 : (platformIntel?.summary?.templateCount > 0 ? 10 : 0);
-                      const _checklistTotal = proposal.validationChecklist?.length || 0;
-                      const _checklistScore = _checklistTotal > 0 ? Math.round((checkedItems.size / _checklistTotal) * 30) : 30;
-                      const _readiness = platformIntel ? Math.min(100, _policyScore + _toolScore + _agentScore + _checklistScore) : null;
+                      const _hasKpis = (proposal.kpis?.length || 0) > 0;
+                      const _hasRiskTier = !!(proposal.outcomeContract?.riskTier);
+                      const _hasSla = !!(proposal.outcomeContract?.maxDriftPercent || proposal.outcomeContract?.riskThreshold);
+                      const _hasPolicies = (platformIntel?.summary?.matchedPolicyCount || 0) > 0;
+                      const _hasApprovalGates = !platformIntel?.summary?.hasApprovalGapRisk;
+                      const _hasDrift = !!(proposal.outcomeContract?.maxDriftPercent);
+                      const _readiness = platformIntel ? (
+                        (_hasKpis ? 20 : 0) + (_hasRiskTier ? 15 : 0) + (_hasSla ? 15 : 0) +
+                        (_hasPolicies ? 25 : 0) + (_hasApprovalGates ? 15 : 0) + (_hasDrift ? 10 : 0)
+                      ) : null;
                       const _lowReadiness = _readiness !== null && _readiness < 60;
                       return (
                         <div className="flex flex-col gap-2">
