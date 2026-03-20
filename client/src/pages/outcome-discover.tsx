@@ -46,6 +46,7 @@ import {
 } from "lucide-react";
 import { findPolicyPackName } from "@/lib/policy-packs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -2205,7 +2206,7 @@ export default function OutcomeDiscover() {
                                         data-testid={`button-assign-agent-${a.id}`}
                                         title={isSelected ? "Deselect agent" : `Select to bind after contract creation`}
                                       >
-                                        {isSelected ? "✓ Selected" : "Assign →"}
+                                        {isSelected ? "✓ Selected" : "Assign to Outcome"}
                                       </button>
                                     </div>
                                     {agentToolChips.length > 0 && (
@@ -2282,7 +2283,7 @@ export default function OutcomeDiscover() {
                                     data-testid={`button-build-template-${t.id}`}
                                     title={isSelected ? "Deselect template" : `Select: opens Agent Plan with this template after contract creation`}
                                   >
-                                    {isSelected ? "✓ Selected" : "Build →"}
+                                    {isSelected ? "✓ Selected" : "Build from Template"}
                                   </button>
                                 </div>
                                 {t.description && (
@@ -2601,13 +2602,15 @@ export default function OutcomeDiscover() {
                       const _lowReadiness = _readiness !== null && _readiness < 60;
                       return (
                         <div className="flex flex-col gap-2">
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
                           <Button
                             onClick={handleAcceptProposal}
                             disabled={createOutcomeMutation.isPending}
                             className={`w-full ${_lowReadiness ? "border-amber-500/40" : ""}`}
                             variant={_lowReadiness ? "outline" : "default"}
                             data-testid="button-accept-proposal"
-                            title={_lowReadiness ? `Governance readiness is ${_readiness}/100 — consider addressing gaps before creating` : undefined}
                           >
                             {createOutcomeMutation.isPending ? (
                               <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
@@ -2623,6 +2626,14 @@ export default function OutcomeDiscover() {
                               </span>
                             )}
                           </Button>
+                              </TooltipTrigger>
+                              {_lowReadiness && (
+                                <TooltipContent side="top" className="max-w-[240px] text-xs">
+                                  Governance readiness is {_readiness}/100 — consider addressing gaps above before creating.
+                                </TooltipContent>
+                              )}
+                            </Tooltip>
+                          </TooltipProvider>
                           <p className="text-[10px] text-center text-muted-foreground">
                             {_lowReadiness
                               ? `Readiness ${_readiness}/100 — review governance gaps above before creating`
