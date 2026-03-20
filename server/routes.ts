@@ -13469,7 +13469,8 @@ When you have enough information (usually after 2-3 exchanges), produce a struct
     "pricingModel": "PER_OUTCOME_EVENT | MONTHLY_FIXED | TIERED",
     "pricePerUnit": number,
     "riskThreshold": number (0-1),
-    "maxDriftPercent": number
+    "maxDriftPercent": number,
+    "slaDescription": "string - SLA performance commitment or service level (e.g. 99.5% uptime, results within 4 hours, 24h resolution)"
   },
   "kpis": [
     {

@@ -157,6 +157,8 @@ interface OutcomeProposal {
     pricePerUnit: number;
     riskThreshold: number;
     maxDriftPercent: number;
+    slaDescription?: string;
+    approvalGates?: unknown[];
   };
   kpis: Array<{
     name: string;
@@ -563,10 +565,10 @@ export default function OutcomeDiscover() {
   // Fetch live platform intelligence when a proposal is generated
   useEffect(() => {
     if (!proposal) return;
-    const roles: string[] = (proposal.proposedAgents || []).map((a: any) => a.role || a.name || "");
-    const tools: string[] = (proposal.proposedAgents || []).flatMap((a: any) => a.requiredTools || a.tools || []);
-    const autonomy: string[] = (proposal.proposedAgents || []).map((a: any) => a.autonomyMode || "supervised");
-    const riskTiers: string[] = (proposal.proposedAgents || []).map((a: any) => a.riskTier || "MEDIUM");
+    const roles: string[] = proposal.proposedAgents.map((a) => a.role || a.name || "");
+    const tools: string[] = proposal.proposedAgents.flatMap((a) => a.tools || []);
+    const autonomy: string[] = proposal.proposedAgents.map((a) => a.autonomyMode || "supervised");
+    const riskTiers: string[] = proposal.proposedAgents.map((a) => a.riskTier || "MEDIUM");
     const gateCount = Array.isArray(proposal.outcomeContract?.approvalGates)
       ? proposal.outcomeContract.approvalGates.length
       : 0;
