@@ -330,6 +330,7 @@ async function seedNBADecisionAgent(): Promise<void> {
       projectedOpenRate,
       baseOpenRate,
       brandAiGroups,
+      portfolioFatigueScore: 22,
     },
     inputConfig: { schedule: "0 2 * * *", environment: "production", seedVersion: HEARST_SEED_VERSION },
     latencyMs: batchLatencyMs,

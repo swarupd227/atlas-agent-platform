@@ -4,7 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Link } from "wouter";
 import {
   TrendingUp, Mail, PauseCircle, DollarSign, AlertTriangle, Info, Star,
-  CheckCircle2, Clock, ExternalLink, Bot,
+  CheckCircle2, Clock, ExternalLink, Bot, Activity,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer,
@@ -221,6 +221,16 @@ export default function Screen1CommandCenter({ onBrandClick }: Props) {
             icon={Bot}
             color="bg-violet-500"
             badge="vs. 42% default send"
+          />
+        )}
+        {kpi.portfolioFatigueScore != null && (
+          <KpiCard
+            label="Portfolio Fatigue Score"
+            value={`${kpi.portfolioFatigueScore}%`}
+            sub="of subscribers near weekly email threshold"
+            icon={Activity}
+            color="bg-green-600"
+            badge="↓ Low risk"
           />
         )}
       </div>

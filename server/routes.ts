@@ -36289,14 +36289,18 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
   };
 
   const HEARST_BRANDS = [
-    { id: "cosmo", name: "Cosmopolitan", color: "#E91E8C", shortName: "Cosmo", subscribers: 890000 },
-    { id: "elle", name: "Elle", color: "#1A1A1A", shortName: "Elle", subscribers: 720000 },
-    { id: "esquire", name: "Esquire", color: "#1B3A6B", shortName: "Esquire", subscribers: 540000 },
-    { id: "goodhousekeeping", name: "Good Housekeeping", color: "#2E7D32", shortName: "GH", subscribers: 1200000 },
-    { id: "harpersbazaar", name: "Harper's Bazaar", color: "#C9A84C", shortName: "HB", subscribers: 680000 },
-    { id: "countryliving", name: "Country Living", color: "#3E6B3E", shortName: "CL", subscribers: 950000 },
-    { id: "runnersworld", name: "Runner's World", color: "#E65100", shortName: "RW", subscribers: 480000 },
-    { id: "menshealth", name: "Men's Health", color: "#1565C0", shortName: "MH", subscribers: 760000 },
+    { id: "cosmo",            name: "Cosmopolitan",     color: "#E91E8C", shortName: "Cosmo", subscribers: 890000 },
+    { id: "elle",             name: "Elle",             color: "#1A1A1A", shortName: "Elle",  subscribers: 720000 },
+    { id: "esquire",          name: "Esquire",          color: "#1B3A6B", shortName: "Esq",   subscribers: 540000 },
+    { id: "goodhousekeeping", name: "Good Housekeeping",color: "#2E7D32", shortName: "GH",    subscribers: 1200000 },
+    { id: "harpersbazaar",    name: "Harper's Bazaar",  color: "#C9A84C", shortName: "HB",    subscribers: 680000 },
+    { id: "countryliving",    name: "Country Living",   color: "#3E6B3E", shortName: "CL",    subscribers: 950000 },
+    { id: "runnersworld",     name: "Runner's World",   color: "#E65100", shortName: "RW",    subscribers: 480000 },
+    { id: "menshealth",       name: "Men's Health",     color: "#1565C0", shortName: "MH",    subscribers: 760000 },
+    { id: "womenshealth",     name: "Women's Health",   color: "#EC4899", shortName: "WH",    subscribers: 620000 },
+    { id: "popularmechanics", name: "Popular Mechanics",color: "#F59E0B", shortName: "PM",    subscribers: 380000 },
+    { id: "cosmouk",          name: "Cosmopolitan UK",  color: "#A855F7", shortName: "CUK",   subscribers: 510000 },
+    { id: "roadandtrack",     name: "Road & Track",     color: "#64748B", shortName: "R&T",   subscribers: 290000 },
   ];
 
   // GET /demo-api/hearst/agents — real agent status from platform
@@ -36425,8 +36429,9 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
         zoneWeights[zone] = weights.map(w => w / sum);
       }
 
+      const totalSubscribers = HEARST_BRANDS.reduce((s, b) => s + b.subscribers, 0);
       const brandDist = HEARST_BRANDS.map((b) => {
-        const base = Math.round(scheduled * (b.subscribers / 6220000));
+        const base = Math.round(scheduled * (b.subscribers / totalSubscribers));
         const personalized = Math.round(base * (personalizedPct / 100));
         const holdCount = Math.round(b.subscribers * (holdPct / 100));
         return { ...b, scheduled: base - personalized, personalized, hold: holdCount };
@@ -36464,6 +36469,7 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
           holdRate: parseFloat(((held / evaluated) * 100).toFixed(1)),
           currentHour,
           aiInfluencedPct,
+          portfolioFatigueScore: (nbaResult?.resultSummary as any)?.portfolioFatigueScore ?? 22,
         },
         brandDist,
         donut: [
@@ -36632,7 +36638,7 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
             factors: [
               { label: "Content match", score: 0.92, detail: "Wellness + career crossover matches top 2 interests" },
               { label: "Brand affinity", score: 0.88, detail: "GH: opened 4 of last 5 emails" },
-              { label: "Revenue potential", score: 0.71, detail: "Affiliate link included — 3.2× higher conversion rate for wellness segment" },
+              { label: "Revenue potential", score: 0.71, detail: "Affiliate product links — 3.2x revenue vs. avg Cosmo send" },
               { label: "Fatigue cost", score: -0.12, detail: "Received 1 email this week — low fatigue" },
               { label: "Cannibalization", score: -0.08, detail: "No competing GH content scheduled tomorrow" },
             ],
