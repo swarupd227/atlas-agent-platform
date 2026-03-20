@@ -1186,6 +1186,9 @@ export async function registerRoutes(
           defaultRiskTier: t.defaultRiskTier,
           complianceCertifications: t.complianceCertifications || [],
           tags: t.tags || [],
+          toolNames: Array.isArray(t.toolsConfig)
+            ? (t.toolsConfig as Array<{ name?: string }>).map((tc) => tc.name).filter(Boolean)
+            : [],
         }));
 
       // Tool catalog coverage

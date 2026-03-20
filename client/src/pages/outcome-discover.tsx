@@ -99,6 +99,7 @@ interface PlatformIntelTemplate {
   defaultRiskTier?: string | null;
   complianceCertifications?: string[];
   tags?: string[];
+  toolNames?: string[];
 }
 
 interface PlatformIntelPolicy {
@@ -2321,6 +2322,17 @@ export default function OutcomeDiscover() {
                                     {t.complianceCertifications.map((cert, ci) => (
                                       <span key={ci} className="text-[9px] px-1 py-0.5 rounded border border-blue-500/30 text-blue-600 dark:text-blue-400 bg-blue-500/5 font-medium">{cert}</span>
                                     ))}
+                                  </div>
+                                )}
+                                {t.toolNames && t.toolNames.length > 0 && (
+                                  <div className="flex flex-col gap-0.5" data-testid={`template-tools-${t.id}`}>
+                                    <span className="text-[9px] text-muted-foreground/60 uppercase tracking-wide font-semibold">Tool Set</span>
+                                    <div className="flex flex-wrap gap-1">
+                                      {t.toolNames.slice(0, 5).map((tn, ti) => (
+                                        <span key={ti} className="text-[9px] px-1 py-0.5 rounded border border-muted-foreground/20 text-muted-foreground bg-muted/30">{tn}</span>
+                                      ))}
+                                      {t.toolNames.length > 5 && <span className="text-[9px] text-muted-foreground/60 italic">+{t.toolNames.length - 5} more</span>}
+                                    </div>
                                   </div>
                                 )}
                               </div>
