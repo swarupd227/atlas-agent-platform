@@ -455,7 +455,7 @@ export default function OutcomeDetail() {
     enabled: !!outcomeId,
   });
 
-  const { data: evidence } = useQuery<{
+  const { data: evidence, dataUpdatedAt: evidenceUpdatedAt } = useQuery<{
     kpiTimeSeries: Array<{
       kpiId: string;
       kpiName: string;
@@ -1549,7 +1549,8 @@ export default function OutcomeDetail() {
         const pendingCount = pendingApprovals.length;
         const healthBg = avgHealth === null ? "bg-muted/30" : avgHealth >= 80 ? "bg-emerald-500/5" : avgHealth >= 60 ? "bg-amber-500/5" : "bg-red-500/5";
 
-        const refreshedAt = agentsUpdatedAt ? new Date(agentsUpdatedAt) : new Date();
+        const latestUpdate = Math.max(agentsUpdatedAt || 0, evidenceUpdatedAt || 0);
+        const refreshedAt = latestUpdate > 0 ? new Date(latestUpdate) : new Date();
         const minsAgo = Math.floor((Date.now() - refreshedAt.getTime()) / 60000);
         return (
           <div className="flex flex-col gap-1.5" data-testid="platform-intelligence-strip">
