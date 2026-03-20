@@ -581,10 +581,17 @@ export default function OutcomeDiscover() {
 
   // Quick Create form intel query (Step 2 only) — use template industry with fallback to platform industry
   const formIntelIndustry = selectedFormTemplate?.industry || industry?.id || "cross_industry";
+  const formIntelRoles: string[] = selectedFormTemplate
+    ? [
+        ...(selectedFormTemplate.subVertical ? [selectedFormTemplate.subVertical] : []),
+        selectedFormTemplate.name,
+      ].flatMap((s) => s.split(/[&/,]+/).map((p) => p.trim()).filter(Boolean)).slice(0, 4)
+    : [];
   const { data: formIntel } = useQuery<PlatformIntelResponse>({
-    queryKey: ["/api/outcomes/intelligence/form", formIntelIndustry],
+    queryKey: ["/api/outcomes/intelligence/form", formIntelIndustry, formIntelRoles.join(",")],
     queryFn: async () => {
       const params = new URLSearchParams({ industry: formIntelIndustry });
+      if (formIntelRoles.length > 0) params.set("proposedAgentRoles", JSON.stringify(formIntelRoles));
       const r = await fetch(`/api/outcomes/intelligence?${params}`);
       if (!r.ok) throw new Error("Failed to fetch form intel");
       return r.json();

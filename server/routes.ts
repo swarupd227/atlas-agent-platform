@@ -1279,6 +1279,35 @@ export async function registerRoutes(
       if (rationale.length === 0) rationale.push("no high-risk tools detected");
       const compositeLevel = RISK_LEVELS[compositeIdx];
 
+      // Industry-based fallback: when no roles provided (e.g. Quick Create Step 2),
+      // match top-N active agents by industry tag overlap + health score
+      if (roleNames.length === 0 && industryStr) {
+        const industryWords = industryStr.toLowerCase().split(/[_-]+/).filter((w: string) => w.length > 3);
+        const industryAgents = allAgents
+          .filter((a: any) => a.status === 'active' || a.status === 'degraded')
+          .map((a: any) => {
+            const haystack = (a.name + ' ' + (a.description || '') + ' ' + (a.department || '')).toLowerCase();
+            const overlap = industryWords.filter((w: string) => haystack.includes(w)).length;
+            return { agent: a, score: overlap * 2 + (a.healthScore || 0) / 100 };
+          })
+          .sort((x: any, y: any) => y.score - x.score)
+          .slice(0, 5);
+        if (industryAgents.length > 0) {
+          matchedAgents.push({
+            role: 'Industry Agents',
+            matches: industryAgents.map(({ agent: a }: any) => ({
+              id: a.id,
+              name: a.name,
+              description: a.description,
+              healthScore: Math.round(a.healthScore || 0),
+              status: a.status,
+              totalRuns: a.totalRuns || 0,
+              autonomyMode: a.autonomyMode,
+              riskTier: a.riskTier,
+            })),
+          });
+        }
+      }
       const totalLiveMatches = matchedAgents.filter((r) => r.matches.length > 0).length;
       const coverageCount = toolCoverage.filter((t) => t.status !== "missing").length;
 
