@@ -1253,7 +1253,12 @@ export async function registerRoutes(
             name: p.name,
             domain: p.domain,
             description: p.description,
-            enforcementType: p.scopeType === "org" ? "auto" : "manual",
+            enforcementType: (() => {
+              const pjEnforcement = (p.policyJson as any)?.enforcement as string | undefined;
+              if (pjEnforcement === "block" || pjEnforcement === "warn" || pjEnforcement === "audit") return "auto";
+              if (pjEnforcement === "require_approval") return "manual";
+              return p.scopeType === "org" ? "auto" : "manual";
+            })(),
             scopeType: p.scopeType,
             policyPack,
           };
