@@ -1363,6 +1363,11 @@ export default function OutcomeDiscover() {
                         </div>
                       </div>
                     )}
+                    <div className="px-3 pb-2">
+                      <p className="text-[10px] text-muted-foreground/70 italic leading-relaxed" data-testid="text-form-intel-risk-note">
+                        Risk tier shown reflects the template declaration. Tool-level risk compliance is verified after agent assignment via the platform policy engine.
+                      </p>
+                    </div>
                     </div>
                     )}
                   </div>
@@ -1887,28 +1892,36 @@ export default function OutcomeDiscover() {
                   <CardContent className="p-3 pt-0 flex flex-col gap-2">
                     <span className="text-sm font-semibold" data-testid="text-proposal-name">{proposal.outcomeContract.name}</span>
                     <span className="text-xs text-muted-foreground">{proposal.outcomeContract.description}</span>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      {platformIntel?.compositeRisk ? (
-                        <>
-                          <Badge
-                            variant={platformIntel.compositeRisk.level === "CRITICAL" || platformIntel.compositeRisk.level === "HIGH" ? "destructive" : "outline"}
-                            className={`text-[10px] ${platformIntel.compositeRisk.level === "LOW" ? "border-emerald-500/50 text-emerald-600 dark:text-emerald-400" : platformIntel.compositeRisk.level === "MEDIUM" ? "border-amber-500/50 text-amber-600 dark:text-amber-400" : ""}`}
-                            data-testid="badge-composite-risk"
-                            title={platformIntel.compositeRisk.rationale}
-                          >
-                            {platformIntel.compositeRisk.level} Composite Risk
-                          </Badge>
-                          {proposal.outcomeContract.riskTier && (
-                            <Badge variant="secondary" className="text-[9px] opacity-70" data-testid="badge-ai-risk-tier">
-                              AI: {proposal.outcomeContract.riskTier}
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {platformIntel?.compositeRisk ? (
+                          <>
+                            <Badge
+                              variant={platformIntel.compositeRisk.level === "CRITICAL" || platformIntel.compositeRisk.level === "HIGH" ? "destructive" : "outline"}
+                              className={`text-[10px] ${platformIntel.compositeRisk.level === "LOW" ? "border-emerald-500/50 text-emerald-600 dark:text-emerald-400" : platformIntel.compositeRisk.level === "MEDIUM" ? "border-amber-500/50 text-amber-600 dark:text-amber-400" : ""}`}
+                              data-testid="badge-composite-risk"
+                            >
+                              {platformIntel.compositeRisk.level} Composite Risk
                             </Badge>
-                          )}
-                        </>
-                      ) : (
-                        <Badge variant="outline" className="text-[10px]">{proposal.outcomeContract.riskTier} Risk</Badge>
+                            {proposal.outcomeContract.riskTier && (
+                              <Badge variant="secondary" className="text-[9px] opacity-70" data-testid="badge-ai-risk-tier">
+                                AI: {proposal.outcomeContract.riskTier}
+                              </Badge>
+                            )}
+                          </>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px]">{proposal.outcomeContract.riskTier} Risk</Badge>
+                        )}
+                        <Badge variant="outline" className="text-[10px]">{proposal.outcomeContract.pricingModel.replace(/_/g, " ")}</Badge>
+                        {loadingIntel && <span className="text-[10px] text-muted-foreground animate-pulse">Computing risk…</span>}
+                      </div>
+                      {platformIntel?.compositeRisk?.rationale && platformIntel.compositeRisk.rationale.length > 0 && (
+                        <div className="flex flex-col gap-0.5" data-testid="text-composite-risk-rationale">
+                          {platformIntel.compositeRisk.rationale.map((r, i) => (
+                            <span key={i} className="text-[10px] text-muted-foreground leading-relaxed">· {r}</span>
+                          ))}
+                        </div>
                       )}
-                      <Badge variant="outline" className="text-[10px]">{proposal.outcomeContract.pricingModel.replace(/_/g, " ")}</Badge>
-                      {loadingIntel && <span className="text-[10px] text-muted-foreground animate-pulse">Computing risk…</span>}
                     </div>
                   </CardContent>
                 </Card>
@@ -1988,6 +2001,89 @@ export default function OutcomeDiscover() {
                   </Card>
                 )}
 
+                {/* AI Proposed Agent Architecture — with per-agent MCP tool coverage chips */}
+                {proposal.proposedAgents && proposal.proposedAgents.length > 0 && (
+                  <Card data-testid="card-proposed-agents">
+                    <CardHeader className="p-3 pb-1">
+                      <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                        <Bot className="w-3.5 h-3.5" />
+                        AI Proposed Agent Architecture ({proposal.proposedAgents.length})
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-3 pt-0 flex flex-col gap-2">
+                      {proposal.proposedAgents.map((agent: { role?: string; name?: string; requiredTools?: string[]; tools?: string[]; autonomyMode?: string; riskTier?: string; description?: string }, i: number) => {
+                        const agentName = agent.role || agent.name || `Agent ${i + 1}`;
+                        const agentTools: string[] = agent.requiredTools || agent.tools || [];
+                        const toolChips = agentTools.map((toolName) => {
+                          const tc = platformIntel?.toolCoverage.find((t) => t.proposedName === toolName);
+                          return {
+                            name: toolName,
+                            status: tc?.status || ("missing" as const),
+                            matchedName: tc?.matchedTool?.name ?? null,
+                            riskClassification: tc?.matchedTool?.riskClassification ?? null,
+                          };
+                        });
+                        const registeredCount = toolChips.filter((c) => c.status === "exists" || c.status === "partial").length;
+                        return (
+                          <div key={i} className="flex flex-col gap-1.5 p-2 rounded-md bg-muted/50 border border-transparent" data-testid={`proposed-agent-card-${i}`}>
+                            <div className="flex items-center justify-between gap-2 flex-wrap">
+                              <div className="flex flex-col min-w-0 flex-1">
+                                <span className="text-[11px] font-medium truncate" data-testid={`text-proposed-agent-name-${i}`}>{agentName}</span>
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  {agent.autonomyMode && (
+                                    <span className="text-[10px] text-muted-foreground capitalize">{agent.autonomyMode}</span>
+                                  )}
+                                  {agent.riskTier && (
+                                    <Badge variant="outline" className={`text-[9px] ${agent.riskTier === "HIGH" || agent.riskTier === "CRITICAL" ? "border-red-500/40 text-red-600 dark:text-red-400" : agent.riskTier === "MEDIUM" ? "border-amber-500/40 text-amber-600 dark:text-amber-400" : "border-emerald-500/40 text-emerald-600 dark:text-emerald-400"}`}>
+                                      {agent.riskTier}
+                                    </Badge>
+                                  )}
+                                  {agentTools.length > 0 && (
+                                    <span className="text-[9px] text-muted-foreground" data-testid={`text-tool-score-proposed-${i}`}>
+                                      {registeredCount}/{agentTools.length} tools registered
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                            {toolChips.length > 0 && (
+                              <div className="flex flex-wrap gap-1" data-testid={`tool-chips-proposed-${i}`}>
+                                {toolChips.map((tc, j) => (
+                                  <span
+                                    key={j}
+                                    className={`inline-flex items-center gap-0.5 text-[9px] px-1 py-0.5 rounded border ${
+                                      tc.status === "exists" ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" :
+                                      tc.status === "partial" ? "border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/5" :
+                                      "border-red-500/40 text-red-600 dark:text-red-400 bg-red-500/5"
+                                    }`}
+                                    title={
+                                      tc.status === "exists" ? `Registered · risk: ${tc.riskClassification || "low"}` :
+                                      tc.status === "partial" ? `Partial match → ${tc.matchedName || tc.name}` :
+                                      "Not registered in MCP catalog"
+                                    }
+                                    data-testid={`tool-chip-proposed-${i}-${j}`}
+                                  >
+                                    {tc.status === "exists" ? <Check className="w-2 h-2" /> : tc.status === "partial" ? <Minus className="w-2 h-2" /> : <X className="w-2 h-2" />}
+                                    {tc.status === "exists"
+                                      ? <>{tc.name}{tc.riskClassification && tc.riskClassification !== "low" && <span className="ml-0.5 opacity-60">·{tc.riskClassification.toUpperCase()}</span>}</>
+                                      : tc.status === "partial"
+                                        ? <>{tc.name}{tc.matchedName && tc.matchedName !== tc.name && <span className="ml-0.5 opacity-70">~{tc.matchedName}</span>}</>
+                                        : tc.name
+                                    }
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                            {!platformIntel && agentTools.length > 0 && (
+                              <span className="text-[9px] text-muted-foreground/60 italic">{agentTools.length} tools required — coverage loads with Platform Match</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </CardContent>
+                  </Card>
+                )}
+
                 {/* T002 — Platform Match Card */}
                 {(platformIntel || loadingIntel) && (
                   <Card data-testid="card-platform-match">
@@ -2037,15 +2133,38 @@ export default function OutcomeDiscover() {
                                   };
                                 });
                                 const registeredCount = agentToolChips.filter((c) => c.status === "exists" || c.status === "partial").length;
+                                const score = a.healthScore ?? 0;
+                                const radius = 10;
+                                const circumference = 2 * Math.PI * radius;
+                                const dash = (score / 100) * circumference;
+                                const ringColor = score >= 80 ? "#22c55e" : score >= 60 ? "#f59e0b" : "#ef4444";
+                                const isUnhealthy = score < 60;
                                 return (
-                                  <div key={a.id} className={`flex flex-col gap-1.5 p-2 rounded-md border transition-colors ${isSelected ? "bg-emerald-500/5 border-emerald-500/30" : "bg-muted/50 border-transparent"}`} data-testid={`platform-agent-${a.id}`}>
+                                  <div key={a.id} className={`flex flex-col gap-1.5 p-2 rounded-md border transition-colors ${isSelected ? "bg-emerald-500/5 border-emerald-500/30" : isUnhealthy ? "bg-red-500/5 border-red-500/10" : "bg-muted/50 border-transparent"}`} data-testid={`platform-agent-${a.id}`}>
                                     <div className="flex items-center justify-between gap-2">
                                       <div className="flex items-center gap-2 min-w-0 flex-1">
-                                        <div className={`w-2 h-2 rounded-full shrink-0 ${a.status === "active" ? "bg-emerald-500" : a.status === "degraded" ? "bg-amber-500" : "bg-muted-foreground"}`} />
+                                        <svg width="26" height="26" viewBox="0 0 26 26" className="shrink-0" aria-label={`Health: ${score}%`} data-testid={`health-ring-${a.id}`}>
+                                          <circle cx="13" cy="13" r={radius} fill="none" stroke="currentColor" strokeWidth="2.5" className="text-muted/30" />
+                                          <circle
+                                            cx="13" cy="13" r={radius}
+                                            fill="none"
+                                            stroke={ringColor}
+                                            strokeWidth="2.5"
+                                            strokeDasharray={`${dash} ${circumference - dash}`}
+                                            strokeLinecap="round"
+                                            transform="rotate(-90 13 13)"
+                                          />
+                                          <text x="13" y="16" textAnchor="middle" fontSize="6" fill={ringColor} fontWeight="600">{score}</text>
+                                        </svg>
                                         <div className="flex flex-col min-w-0">
-                                          <span className="text-[11px] font-medium truncate">{a.name}</span>
+                                          <div className="flex items-center gap-1.5 flex-wrap">
+                                            <span className="text-[11px] font-medium truncate">{a.name}</span>
+                                            {isUnhealthy && (
+                                              <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/30" data-testid={`badge-unhealthy-${a.id}`}>UNHEALTHY</span>
+                                            )}
+                                          </div>
                                           <div className="flex items-center gap-2 flex-wrap">
-                                            <span className="text-[10px] text-muted-foreground">Health: {a.healthScore}</span>
+                                            <span className="text-[10px] text-muted-foreground capitalize">{a.status}</span>
                                             <span className="text-[10px] text-muted-foreground">{a.totalRuns.toLocaleString()} runs</span>
                                             <span className="text-[10px] text-primary/70 italic">for: {r.role}</span>
                                           </div>
