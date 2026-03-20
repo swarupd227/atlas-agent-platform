@@ -565,12 +565,16 @@ export default function OutcomeDiscover() {
     const tools: string[] = (proposal.proposedAgents || []).flatMap((a: any) => a.requiredTools || a.tools || []);
     const autonomy: string[] = (proposal.proposedAgents || []).map((a: any) => a.autonomyMode || "supervised");
     const riskTiers: string[] = (proposal.proposedAgents || []).map((a: any) => a.riskTier || "MEDIUM");
+    const gateCount = Array.isArray(proposal.outcomeContract?.approvalGates)
+      ? proposal.outcomeContract.approvalGates.length
+      : 0;
     const params = new URLSearchParams({
       industry: industry?.id || "",
       proposedTools: tools.join(","),
       proposedAgentRoles: JSON.stringify(roles),
       autonomyModes: JSON.stringify(autonomy),
       riskTiers: JSON.stringify(riskTiers),
+      proposedApprovalGatesCount: String(gateCount),
     });
     setLoadingIntel(true);
     fetch(`/api/outcomes/intelligence?${params}`)

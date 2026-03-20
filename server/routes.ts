@@ -1268,7 +1268,13 @@ export async function registerRoutes(
       }
       // Approval gate risk: HIGH/CRITICAL tools without auto-enforced platform policies
       const hasAutoEnforcedPolicy = matchedPolicies.some((p) => p.enforcementType === "auto");
-      const hasApprovalGapRisk = highRiskToolCount > 0 && !hasAutoEnforcedPolicy;
+      const explicitGateCount = req.query.proposedApprovalGatesCount !== undefined
+        ? parseInt(req.query.proposedApprovalGatesCount as string, 10)
+        : null;
+      // Approval gap: HIGH/CRITICAL tools with no explicit proposal approval gates (when gate data
+      // is present in the request), or no auto-enforced policies (when no gate data provided)
+      const hasApprovalGapRisk = highRiskToolCount > 0 &&
+        (explicitGateCount !== null ? explicitGateCount === 0 : !hasAutoEnforcedPolicy);
       if (hasApprovalGapRisk) {
         if (compositeIdx < 2) compositeIdx = 2;
         rationale.push("HIGH/CRITICAL tools lack auto-enforced approval gates");

@@ -414,6 +414,7 @@ export default function OutcomeDetail() {
   const { industry } = useIndustry();
   const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
   const initialTab = searchParams?.get("tab") === "agent-map" ? "agent-map" : "kpi-delivery";
+  const initialTemplateId = searchParams?.get("template") || null;
   const [activeTab, setActiveTab] = useState(initialTab);
   const [reportOpen, setReportOpen] = useState(false);
   const [reportGenerating, setReportGenerating] = useState(false);
@@ -2058,7 +2059,7 @@ export default function OutcomeDetail() {
 
         {/* Tab 2: Agent Plan & Contributions */}
         <TabsContent value="agent-map" className="space-y-6" data-testid="tabcontent-agent-map">
-          <AgentProposalsTab outcome={outcome} kpis={kpis || []} />
+          <AgentProposalsTab outcome={outcome} kpis={kpis || []} initialTemplateId={initialTemplateId} />
 
           {!agentContributions ? (
             <div className="space-y-3">
@@ -4695,10 +4696,11 @@ interface UndoState {
   label: string;
 }
 
-function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: KpiDefinition[] }) {
+function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: OutcomeContract; kpis: KpiDefinition[]; initialTemplateId?: string | null }) {
   const { toast } = useToast();
   const { industry, workspaceConfig, activeFrameworks, activeDepartments } = useIndustry();
   const agentPerm = usePermission("create_modify_blueprints");
+  const [pendingTemplateId, setPendingTemplateId] = useState<string | null>(initialTemplateId ?? null);
   const [proposals, setProposals] = useState<AgentProposal[]>([]);
   const [orchestrator, setOrchestrator] = useState<AgentProposal | null>(null);
   const [pipeline, setPipeline] = useState<PipelineDefinition | null>(null);
@@ -5405,6 +5407,22 @@ function AgentProposalsTab({ outcome, kpis }: { outcome: OutcomeContract; kpis: 
 
   return (
     <div className="flex flex-col gap-4">
+      {pendingTemplateId && (
+        <div className="flex items-start gap-3 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 px-4 py-3" data-testid="banner-template-preselected">
+          <Sparkles className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-blue-800 dark:text-blue-200">Template pre-selected for Agent Plan</p>
+            <p className="text-xs text-blue-700 dark:text-blue-300 mt-0.5">Template <span className="font-mono font-semibold">{pendingTemplateId}</span> is queued. Click <strong>Generate Plan</strong> to build agents from this template.</p>
+          </div>
+          <button
+            type="button"
+            className="text-blue-400 hover:text-blue-600 dark:hover:text-blue-200 transition-colors text-lg leading-none shrink-0"
+            onClick={() => setPendingTemplateId(null)}
+            data-testid="button-dismiss-template-banner"
+            aria-label="Dismiss template selection"
+          >×</button>
+        </div>
+      )}
       <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-3">
