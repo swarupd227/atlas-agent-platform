@@ -1287,10 +1287,11 @@ export async function registerRoutes(
       const explicitGateCount = req.query.proposedApprovalGatesCount !== undefined
         ? parseInt(req.query.proposedApprovalGatesCount as string, 10)
         : null;
-      // Approval gap: HIGH/CRITICAL tools with no explicit proposal approval gates (when gate data
-      // is present in the request), or no auto-enforced policies (when no gate data provided)
+      // Approval gap: HIGH/CRITICAL tools without sufficient approval gates.
+      // When gate count is explicit: flag if fewer gates than high-risk tools (ratio-based).
+      // When no gate count: fall back to checking whether any auto-enforced policy exists.
       const hasApprovalGapRisk = highRiskToolCount > 0 &&
-        (explicitGateCount !== null ? explicitGateCount === 0 : !hasAutoEnforcedPolicy);
+        (explicitGateCount !== null ? explicitGateCount < highRiskToolCount : !hasAutoEnforcedPolicy);
       if (hasApprovalGapRisk) {
         if (compositeIdx < 2) compositeIdx = 2;
         rationale.push("HIGH/CRITICAL tools lack auto-enforced approval gates");
