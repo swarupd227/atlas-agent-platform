@@ -2447,7 +2447,7 @@ export default function OutcomeDiscover() {
                         {platformIntel?.matchedPolicies && platformIntel.matchedPolicies.length > 0 && (
                           <div className="flex flex-col gap-1.5">
                             {platformIntel.matchedPolicies.map((pol, i) => {
-                              const packName = findPolicyPackName(pol.name, pol.domain);
+                              const packName = (pol as any).policyPack ?? findPolicyPackName(pol.name, pol.domain);
                               return (
                                 <div key={pol.id} className="flex flex-col gap-1 p-2 rounded-md bg-primary/5 border border-primary/10" data-testid={`real-policy-${i}`}>
                                   <div className="flex items-center gap-2 flex-wrap">

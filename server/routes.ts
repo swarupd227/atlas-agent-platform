@@ -1235,14 +1235,29 @@ export async function registerRoutes(
           )
         )
         .slice(0, 6)
-        .map((p) => ({
-          id: p.id,
-          name: p.name,
-          domain: p.domain,
-          description: p.description,
-          enforcementType: p.scopeType === "org" ? "auto" : "manual",
-          scopeType: p.scopeType,
-        }));
+        .map((p) => {
+          const bracketMatch = p.name.match(/^\[([^\]]+)\]/);
+          const packPrefixMap: Record<string, string> = {
+            "HIPAA": "HIPAA Compliance Pack",
+            "MiFID II": "MiFID II Compliance Pack",
+            "SOX": "SOX Compliance Pack",
+            "SEC": "Credit Rating / SEC Compliance Pack",
+            "GDPR": "GDPR Compliance Pack",
+            "EU AI Act": "EU AI Act Compliance Pack",
+            "Clinical Safety": "Clinical Safety Pack",
+            "Anti-Fraud": "Anti-Fraud Detection Pack",
+          };
+          const policyPack = bracketMatch ? (packPrefixMap[bracketMatch[1]] ?? null) : null;
+          return {
+            id: p.id,
+            name: p.name,
+            domain: p.domain,
+            description: p.description,
+            enforcementType: p.scopeType === "org" ? "auto" : "manual",
+            scopeType: p.scopeType,
+            policyPack,
+          };
+        });
 
       // Composite risk calculation
       const RISK_LEVELS = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];

@@ -1545,7 +1545,14 @@ export default function OutcomeDetail() {
           return pct > maxDrift;
         });
         const policyChecks24h = evidence?.correlatedMetrics?.policyChecks24h ?? null;
-        const activePoliciesCount = (governancePolicies || []).filter(p => p.status === "active").length;
+        const boundAgentPolicyIds = new Set(boundAgents.flatMap(a => {
+          const pb = a.policyBindings as { policies?: Array<{ id?: string; policyId?: string }> } | null;
+          return (pb?.policies || []).map((p: { id?: string; policyId?: string }) => p.id ?? p.policyId).filter(Boolean);
+        }));
+        const allActive = (governancePolicies || []).filter(p => p.status === "active");
+        const activePoliciesCount = boundAgentPolicyIds.size > 0
+          ? allActive.filter(p => boundAgentPolicyIds.has(p.id)).length
+          : allActive.length;
         const pendingCount = pendingApprovals.length;
         const healthBg = avgHealth === null ? "bg-muted/30" : avgHealth >= 80 ? "bg-emerald-500/5" : avgHealth >= 60 ? "bg-amber-500/5" : "bg-red-500/5";
 
