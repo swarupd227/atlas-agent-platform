@@ -430,12 +430,31 @@ function delay(ms: number): Promise<void> {
 
 let workerRunning = false;
 
+const isDbConnectionError = (err: unknown): boolean => {
+  if (!err || typeof err !== "object") return false;
+  const msg = (err as any).message || "";
+  return msg.includes("Connection terminated") || msg.includes("timeout") || msg.includes("ECONNREFUSED") || msg.includes("ETIMEDOUT");
+};
+
 export function startWorker(intervalMs = 2000) {
   if (workerRunning) return;
   workerRunning = true;
 
+  let dbErrorCount = 0;
+  const MAX_BACKOFF_MS = 60000;
+
+  const getNextPollDelay = (hadDbError: boolean) => {
+    if (!hadDbError) {
+      dbErrorCount = 0;
+      return intervalMs;
+    }
+    dbErrorCount = Math.min(dbErrorCount + 1, 5);
+    return Math.min(intervalMs * Math.pow(4, dbErrorCount - 1), MAX_BACKOFF_MS);
+  };
+
   const poll = async () => {
     if (!workerRunning) return;
+    let hadDbError = false;
 
     try {
       const job = await storage.dequeueNextJob();
@@ -460,21 +479,36 @@ export function startWorker(intervalMs = 2000) {
         }
       }
     } catch (err) {
+      hadDbError = isDbConnectionError(err);
+      if (hadDbError) {
+        const nextDelay = getNextPollDelay(true);
+        if (dbErrorCount === 1) console.error("[worker] Poll error:", err);
+        setTimeout(poll, nextDelay);
+        return;
+      }
       console.error("[worker] Poll error:", err);
     }
 
-    setTimeout(poll, intervalMs);
+    setTimeout(poll, getNextPollDelay(false));
   };
 
   poll();
   console.log("[worker] Job worker started");
 
   const canaryMonitorInterval = 30000;
+  let canaryDbErrorCount = 0;
   const canaryMonitor = async () => {
     if (!workerRunning) return;
     try {
       await monitorCanaryDeployments();
+      canaryDbErrorCount = 0;
     } catch (err) {
+      if (isDbConnectionError(err)) {
+        canaryDbErrorCount = Math.min(canaryDbErrorCount + 1, 4);
+        const backoff = Math.min(canaryMonitorInterval * Math.pow(2, canaryDbErrorCount - 1), 300000);
+        setTimeout(canaryMonitor, backoff);
+        return;
+      }
       console.error("[worker] Canary monitor error:", err);
     }
     setTimeout(canaryMonitor, canaryMonitorInterval);
@@ -488,7 +522,7 @@ export function startWorker(intervalMs = 2000) {
     try {
       await autoValidateTimedOutDecisions();
     } catch (err) {
-      console.error("[worker] Autonomy auto-timeout error:", err);
+      if (!isDbConnectionError(err)) console.error("[worker] Autonomy auto-timeout error:", err);
     }
     setTimeout(autonomyAutoTimeout, autonomyAutoTimeoutInterval);
   };
