@@ -5061,7 +5061,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
     setGeneratingWithFeedback(true);
     setShowFeedback(false);
     try {
-      const res = await apiRequest("POST", "/api/ai/propose-agents", {
+      const feedbackPayload: Record<string, unknown> = {
         outcomeContract: outcome,
         kpis,
         feedback: feedbackText.trim(),
@@ -5071,7 +5071,9 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
           pipeline,
         },
         industryContext: industryContextPayload,
-      });
+      };
+      if (pendingTemplateId) feedbackPayload.templateId = pendingTemplateId;
+      const res = await apiRequest("POST", "/api/ai/propose-agents", feedbackPayload);
       const data = await res.json();
       pushUndo("Regenerate with feedback");
       setProposals(data.agents || []);
@@ -5263,11 +5265,13 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
   async function generateProposals() {
     setGeneratingFresh(true);
     try {
-      const res = await apiRequest("POST", "/api/ai/propose-agents", {
+      const payload: Record<string, unknown> = {
         outcomeContract: outcome,
         kpis,
         industryContext: industryContextPayload,
-      });
+      };
+      if (pendingTemplateId) payload.templateId = pendingTemplateId;
+      const res = await apiRequest("POST", "/api/ai/propose-agents", payload);
       const data = await res.json();
       setProposals(data.agents || []);
       setOrchestrator(data.orchestrator || null);
@@ -5388,6 +5392,11 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
                 <>
                   <Loader2 className="w-5 h-5 mr-2.5 animate-spin" />
                   Analyzing outcome & KPIs...
+                </>
+              ) : pendingTemplateId ? (
+                <>
+                  <Sparkles className="w-5 h-5 mr-2.5" />
+                  Generate Plan from Template
                 </>
               ) : (
                 <>

@@ -12364,7 +12364,13 @@ Regulatory Frameworks: ${regulatoryFrameworks.length > 0 ? regulatoryFrameworks.
 Jurisdictions: ${jurisdictions.length > 0 ? jurisdictions.join(", ") : "Not specified"}
 Departments: ${departments.length > 0 ? departments.join(", ") : "Not specified"}
 
+${preSelectedTemplate ? `═══════════════════════════════════════════
+PRE-SELECTED TEMPLATE (Engineer-specified starting point — base configuration on this)
 ═══════════════════════════════════════════
+${JSON.stringify({ id: preSelectedTemplate.id, name: preSelectedTemplate.name, description: preSelectedTemplate.description, category: preSelectedTemplate.category, defaultRiskTier: preSelectedTemplate.defaultRiskTier, defaultAutonomyMode: preSelectedTemplate.defaultAutonomyMode, toolsConfig: preSelectedTemplate.toolsConfig, policyBindings: preSelectedTemplate.policyBindings, preloadedSkills: preSelectedTemplate.preloadedSkills, complianceCertifications: preSelectedTemplate.complianceCertifications, tags: preSelectedTemplate.tags }, null, 1)}
+INSTRUCTION: Start agent design from this template's configuration. Adapt tools, skills, and workflow steps to the specific outcome contract while preserving the template's core architecture.
+
+` : ""}═══════════════════════════════════════════
 AGENT TEMPLATES (reusable configurations — match to these when possible)
 ═══════════════════════════════════════════
 ${JSON.stringify(templateSummaries, null, 1)}
