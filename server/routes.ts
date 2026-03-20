@@ -1267,9 +1267,7 @@ export async function registerRoutes(
         rationale.push("HIGH-risk agent tier");
       }
       // Approval gate risk: HIGH/CRITICAL tools without auto-enforced platform policies
-      const hasAutoEnforcedPolicy = matchedPolicies.some(
-        (p) => p.enforcementType === "auto" && (p.scopeType === "org" || p.scopeType === "global")
-      );
+      const hasAutoEnforcedPolicy = matchedPolicies.some((p) => p.enforcementType === "auto");
       const hasApprovalGapRisk = highRiskToolCount > 0 && !hasAutoEnforcedPolicy;
       if (hasApprovalGapRisk) {
         if (compositeIdx < 2) compositeIdx = 2;
@@ -1284,18 +1282,18 @@ export async function registerRoutes(
       if (roleNames.length === 0 && industryStr) {
         const industryWords = industryStr.toLowerCase().split(/[_-]+/).filter((w: string) => w.length > 3);
         const industryAgents = allAgents
-          .filter((a: any) => a.status === 'active' || a.status === 'degraded')
-          .map((a: any) => {
+          .filter((a) => a.status === 'active' || a.status === 'degraded')
+          .map((a) => {
             const haystack = (a.name + ' ' + (a.description || '') + ' ' + (a.department || '')).toLowerCase();
             const overlap = industryWords.filter((w: string) => haystack.includes(w)).length;
-            return { agent: a, score: overlap * 2 + (a.healthScore || 0) / 100 };
+            return { agent: a, score: overlap * 2 + (Number(a.healthScore) || 0) / 100 };
           })
-          .sort((x: any, y: any) => y.score - x.score)
+          .sort((x, y) => y.score - x.score)
           .slice(0, 5);
         if (industryAgents.length > 0) {
           matchedAgents.push({
             role: 'Industry Agents',
-            matches: industryAgents.map(({ agent: a }: any) => ({
+            matches: industryAgents.map(({ agent: a }) => ({
               id: a.id,
               name: a.name,
               description: a.description,

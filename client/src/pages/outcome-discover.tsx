@@ -661,7 +661,7 @@ export default function OutcomeDiscover() {
         } catch { /* non-fatal */ }
       }
       if (pendingTemplateBuild) {
-        navigate(`/agents?template=${pendingTemplateBuild.templateId}&forOutcome=${outcome.id}`);
+        navigate(`/outcomes/${outcome.id}?tab=agent-map&template=${pendingTemplateBuild.templateId}`);
       }
     },
     onError: (err: Error) => {
@@ -2532,7 +2532,7 @@ export default function OutcomeDiscover() {
                       // Governance Readiness: KPIs, risk tier, SLA, policy match, approval gates, drift threshold
                       const hasKpis = (proposal.kpis?.length || 0) > 0;
                       const hasRiskTier = !!(proposal.outcomeContract?.riskTier);
-                      const hasSla = !!(proposal.outcomeContract?.slaDescription || proposal.outcomeContract?.maxDriftPercent || proposal.outcomeContract?.riskThreshold);
+                      const hasSla = !!(proposal.outcomeContract?.slaDescription);
                       const hasPolicies = (platformIntel?.summary?.matchedPolicyCount || 0) > 0;
                       const hasApprovalGates = !platformIntel?.summary?.hasApprovalGapRisk;
                       const hasDriftDef = !!(proposal.outcomeContract?.maxDriftPercent);
@@ -2573,7 +2573,7 @@ export default function OutcomeDiscover() {
                     {(() => {
                       const _hasKpis = (proposal.kpis?.length || 0) > 0;
                       const _hasRiskTier = !!(proposal.outcomeContract?.riskTier);
-                      const _hasSla = !!(proposal.outcomeContract?.slaDescription || proposal.outcomeContract?.maxDriftPercent || proposal.outcomeContract?.riskThreshold);
+                      const _hasSla = !!(proposal.outcomeContract?.slaDescription);
                       const _hasPolicies = (platformIntel?.summary?.matchedPolicyCount || 0) > 0;
                       const _hasApprovalGates = !platformIntel?.summary?.hasApprovalGapRisk;
                       const _hasDrift = !!(proposal.outcomeContract?.maxDriftPercent);
