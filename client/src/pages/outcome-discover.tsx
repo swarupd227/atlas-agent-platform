@@ -596,7 +596,7 @@ export default function OutcomeDiscover() {
         selectedFormTemplate.name,
       ].flatMap((s) => s.split(/[&/,]+/).map((p) => p.trim()).filter(Boolean)).slice(0, 4)
     : [];
-  const { data: formIntel, isPending: formIntelPending } = useQuery<PlatformIntelResponse>({
+  const { data: formIntel, isPending: formIntelPending, isError: formIntelError } = useQuery<PlatformIntelResponse>({
     queryKey: ["/api/outcomes/intelligence/form", formIntelIndustry, formIntelRoles.join(",")],
     queryFn: async () => {
       const params = new URLSearchParams({ industry: formIntelIndustry });
@@ -1321,7 +1321,7 @@ export default function OutcomeDiscover() {
                 </div>
 
                 {/* T004 — Platform Intelligence Hint Panel (always visible in step 2) */}
-                {(formIntel || formIntelPending) && (
+                {(formIntel || formIntelPending || formIntelError) && (
                   <div className="flex flex-col rounded-lg border border-primary/20 bg-primary/5 overflow-hidden" data-testid="form-intel-panel">
                     <button
                       type="button"
@@ -1354,6 +1354,12 @@ export default function OutcomeDiscover() {
                         <div className="h-8 w-full bg-muted/50 rounded" />
                         <div className="h-3 w-20 bg-muted rounded mt-0.5" />
                         <div className="h-8 w-full bg-muted/50 rounded" />
+                      </div>
+                    )}
+                    {formIntelError && !formIntelPending && !formIntel && (
+                      <div className="flex items-center gap-2 p-2 rounded bg-background/30 text-muted-foreground/70" data-testid="form-intel-error">
+                        <Cpu className="w-3 h-3 shrink-0" />
+                        <span className="text-[10px] italic">Platform intelligence unavailable — signals will appear once workspace data loads.</span>
                       </div>
                     )}
                     {formIntel && formIntel.matchedAgents.some((r) => r.matches.length > 0) && (
