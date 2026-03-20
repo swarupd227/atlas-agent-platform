@@ -350,7 +350,7 @@ async function seedNBADecisionAgent(): Promise<void> {
         { label: "content_affinity (w1=0.25)", score: 0.92, contribution: 0.23, detail: "Wellness + career crossover matches top 2 interest clusters" },
         { label: "recency_novelty (w2=0.15)", score: 0.81, contribution: 0.12, detail: "Fresh content, not seen in prior 14 days" },
         { label: "brand_affinity (w3=0.15)", score: 0.88, contribution: 0.13, detail: "GH: opened 4 of last 5 emails" },
-        { label: "revenue_potential (w4=0.20)", score: 0.71, contribution: 0.14, detail: "Article includes upgrade prompt (38% conversion history)" },
+        { label: "revenue_potential (w4=0.20)", score: 0.71, contribution: 0.14, detail: "Affiliate product links — 3.2x revenue vs. avg Cosmo send" },
         { label: "fatigue_cost (w5=0.15)", score: -0.12, contribution: -0.02, detail: "Received 1 email this week — low fatigue" },
         { label: "cannibalization_cost (w6=0.10)", score: -0.08, contribution: -0.01, detail: "No competing GH content scheduled tomorrow" },
       ],
@@ -600,6 +600,7 @@ async function seedPerformanceLearning(): Promise<void> {
   const holdValidation = {
     heldNextDayOpenRate: 41.0,
     notHeldOpenRate: 29.0,
+    liftPct: 41.4,
     heldRevenuePerSub: 2.84,
     notHeldRevenuePerSub: 1.92,
     unsubReductionPct: 50,
