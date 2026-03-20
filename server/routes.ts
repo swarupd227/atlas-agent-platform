@@ -36469,6 +36469,8 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
           holdRate: parseFloat(((held / evaluated) * 100).toFixed(1)),
           currentHour,
           aiInfluencedPct,
+          personalizedPct,
+          holdPct,
           portfolioFatigueScore: (nbaResult as any)?.portfolioFatigueScore ?? 22,
         },
         brandDist,

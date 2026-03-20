@@ -217,7 +217,7 @@ export default function Screen1CommandCenter({ onBrandClick }: Props) {
           <KpiCard
             label="AI-Influenced Sends"
             value={`${kpi.aiInfluencedPct}%`}
-            sub={`${kpi.aiInfluencedPct - (kpi.holdRate ?? 0)}% personalized · ${kpi.holdRate ?? 0}% protected HOLDs`}
+            sub={`${kpi.personalizedPct ?? kpi.aiInfluencedPct - (kpi.holdRate ?? 0)}% personalized · ${kpi.holdPct ?? kpi.holdRate ?? 0}% protected HOLDs`}
             icon={Bot}
             color="bg-violet-500"
             badge="vs. 42% default send"
