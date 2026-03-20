@@ -17,7 +17,7 @@
 
 import { storage } from "./storage";
 
-const HEARST_SEED_VERSION = 2;
+const HEARST_SEED_VERSION = 3;
 
 const AGENTS = {
   subscriberProfileEngine: "3a2e02ad-f07a-42ff-9c16-d9b4956dc34d",
@@ -244,14 +244,73 @@ async function seedNBADecisionAgent(): Promise<void> {
   const batchCompletedAt = daysAgo(0, 7, 28);
   const batchLatencyMs = batchCompletedAt.getTime() - batchStartedAt.getTime();
 
-  // Donut breakdown: aiInfluencedPct = aiPersonalizedContentPct + aiPersonalizedTimePct + holdPct
-  // defaultSendPct = 100 - aiInfluencedPct
-  const aiPersonalizedContentPct = 35;
-  const aiPersonalizedTimePct = 14;
-  const holdFatiguePct = 6;
-  const holdLowScorePct = 3;
-  const aiInfluencedPct = aiPersonalizedContentPct + aiPersonalizedTimePct + holdFatiguePct + holdLowScorePct; // 58
-  const defaultSendPct = 100 - aiInfluencedPct; // 42
+  // Donut breakdown (v3): 3-slice consolidation
+  const defaultSendPct = 42;
+  const personalizedPct = 33;
+  const holdPct = 25;
+  const aiInfluencedPct = personalizedPct + holdPct; // 58
+  const projectedOpenRate = 34.2;
+  const baseOpenRate = 28.1;
+
+  // Brand AI group breakdown seeded per brand for S2
+  const brandAiGroups: Record<string, any[]> = {
+    cosmo: [
+      { label: "Receive planned Cosmo email", count: 338200, type: "planned", color: "#6366F1" },
+      { label: "Same email — AI-optimized subject line", count: 178000, type: "subject-personalized", color: "#8B5CF6" },
+      { label: "Different Cosmo article (wellness focus)", count: 115900, type: "content-personalized", color: "#3B82F6" },
+      { label: "Email from a different Hearst brand", count: 85000, type: "cross-brand", color: "#10B981" },
+      { label: "HOLD — suppressed today", count: 172900, type: "hold", color: "#EF4444" },
+    ],
+    elle: [
+      { label: "Receive planned Elle email", count: 273600, type: "planned", color: "#6366F1" },
+      { label: "Same email — AI-optimized subject line", count: 154800, type: "subject-personalized", color: "#8B5CF6" },
+      { label: "Different Elle article (career focus)", count: 104040, type: "content-personalized", color: "#3B82F6" },
+      { label: "Email from a different Hearst brand", count: 71400, type: "cross-brand", color: "#10B981" },
+      { label: "HOLD — suppressed today", count: 116160, type: "hold", color: "#EF4444" },
+    ],
+    goodhousekeeping: [
+      { label: "Receive planned GH email", count: 456000, type: "planned", color: "#6366F1" },
+      { label: "Same email — AI-optimized subject line", count: 194400, type: "subject-personalized", color: "#8B5CF6" },
+      { label: "Different GH article (wellness focus)", count: 132000, type: "content-personalized", color: "#3B82F6" },
+      { label: "Email from a different Hearst brand", count: 88000, type: "cross-brand", color: "#10B981" },
+      { label: "HOLD — suppressed today", count: 129600, type: "hold", color: "#EF4444" },
+    ],
+    harpersbazaar: [
+      { label: "Receive planned HB email", count: 257400, type: "planned", color: "#6366F1" },
+      { label: "Same email — AI-optimized subject line", count: 122400, type: "subject-personalized", color: "#8B5CF6" },
+      { label: "Different HB article (luxury focus)", count: 81600, type: "content-personalized", color: "#3B82F6" },
+      { label: "Email from a different Hearst brand", count: 51000, type: "cross-brand", color: "#10B981" },
+      { label: "HOLD — suppressed today", count: 167600, type: "hold", color: "#EF4444" },
+    ],
+    menshealth: [
+      { label: "Receive planned MH email", count: 295200, type: "planned", color: "#6366F1" },
+      { label: "Same email — AI-optimized subject line", count: 124800, type: "subject-personalized", color: "#8B5CF6" },
+      { label: "Different MH article (nutrition focus)", count: 83200, type: "content-personalized", color: "#3B82F6" },
+      { label: "Email from a different Hearst brand", count: 64000, type: "cross-brand", color: "#10B981" },
+      { label: "HOLD — suppressed today", count: 192800, type: "hold", color: "#EF4444" },
+    ],
+    countryliving: [
+      { label: "Receive planned CL email", count: 360360, type: "planned", color: "#6366F1" },
+      { label: "Same email — AI-optimized subject line", count: 152380, type: "subject-personalized", color: "#8B5CF6" },
+      { label: "Different CL article (home focus)", count: 101920, type: "content-personalized", color: "#3B82F6" },
+      { label: "Email from a different Hearst brand", count: 79040, type: "cross-brand", color: "#10B981" },
+      { label: "HOLD — suppressed today", count: 256300, type: "hold", color: "#EF4444" },
+    ],
+    runnersworld: [
+      { label: "Receive planned RW email", count: 182160, type: "planned", color: "#6366F1" },
+      { label: "Same email — AI-optimized subject line", count: 83880, type: "subject-personalized", color: "#8B5CF6" },
+      { label: "Different RW article (training focus)", count: 50820, type: "content-personalized", color: "#3B82F6" },
+      { label: "Email from a different Hearst brand", count: 37800, type: "cross-brand", color: "#10B981" },
+      { label: "HOLD — suppressed today", count: 65340, type: "hold", color: "#EF4444" },
+    ],
+    esquire: [
+      { label: "Receive planned Esquire email", count: 143640, type: "planned", color: "#6366F1" },
+      { label: "Same email — AI-optimized subject line", count: 60840, type: "subject-personalized", color: "#8B5CF6" },
+      { label: "Different Esquire article (career focus)", count: 38760, type: "content-personalized", color: "#3B82F6" },
+      { label: "Email from a different Hearst brand", count: 32680, type: "cross-brand", color: "#10B981" },
+      { label: "HOLD — suppressed today", count: 104080, type: "hold", color: "#EF4444" },
+    ],
+  };
 
   await storage.createAgentRuntimeRun({
     agentId: AGENTS.nbaEmailDecision,
@@ -265,11 +324,12 @@ async function seedNBADecisionAgent(): Promise<void> {
       avgNbEmailScore: 0.58,
       holdThreshold: 0.25,
       aiInfluencedPct,
-      aiPersonalizedContentPct,
-      aiPersonalizedTimePct,
-      holdFatiguePct,
-      holdLowScorePct,
       defaultSendPct,
+      personalizedPct,
+      holdPct,
+      projectedOpenRate,
+      baseOpenRate,
+      brandAiGroups,
     },
     inputConfig: { schedule: "0 2 * * *", environment: "production", seedVersion: HEARST_SEED_VERSION },
     latencyMs: batchLatencyMs,
@@ -535,10 +595,10 @@ async function seedPerformanceLearning(): Promise<void> {
   const completedAt = daysAgo(0, 4, 28);
   const latencyMs = completedAt.getTime() - startedAt.getTime();
 
-  // Hold validation: outcome data for held vs not-held subscribers
+  // Hold validation: outcome data for held vs not-held subscribers (v3: aligned to talk track)
   const holdValidation = {
-    heldNextDayOpenRate: 43.6,
-    notHeldOpenRate: 26.8,
+    heldNextDayOpenRate: 41.0,
+    notHeldOpenRate: 29.0,
     heldRevenuePerSub: 2.84,
     notHeldRevenuePerSub: 1.92,
     unsubReductionPct: 50,

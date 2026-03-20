@@ -36325,25 +36325,110 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
       const latestNbaRun = nbaRuns.length ? nbaRuns[nbaRuns.length - 1] : null;
       const nbaResult = (latestNbaRun?.resultSummary as any) || {};
 
-      const evaluated    = nbaResult.decisionsEvaluated      ?? 2430000;
-      const scheduled    = nbaResult.sendDecisions            ?? 1810000;
-      const held         = evaluated - scheduled;
-      const aiPersonalizedContentPct = nbaResult.aiPersonalizedContentPct ?? 35;
-      const aiPersonalizedTimePct    = nbaResult.aiPersonalizedTimePct    ?? 14;
-      const holdFatiguePct           = nbaResult.holdFatiguePct           ?? 6;
-      const holdLowScorePct          = nbaResult.holdLowScorePct          ?? 3;
-      const defaultSendPct           = nbaResult.defaultSendPct           ?? 42;
-      const aiInfluencedPct          = nbaResult.aiInfluencedPct          ?? 58;
+      const evaluated       = nbaResult.decisionsEvaluated ?? 2430000;
+      const scheduled       = nbaResult.sendDecisions       ?? 1810000;
+      const held            = evaluated - scheduled;
+      const defaultSendPct  = nbaResult.defaultSendPct      ?? 42;
+      const personalizedPct = nbaResult.personalizedPct     ?? 33;
+      const holdPct         = nbaResult.holdPct             ?? 25;
+      const aiInfluencedPct = nbaResult.aiInfluencedPct     ?? 58;
+      const baseOpenRate    = nbaResult.baseOpenRate         ?? 28.1;
+      const projectedOpenRate = nbaResult.projectedOpenRate  ?? 34.2;
+      const liftPct         = ((projectedOpenRate - baseOpenRate) / baseOpenRate * 100).toFixed(1);
 
-      const totalSubscribers = 6220000;
-      const baseOpenRate = 28.1;
-      const projectedOpenRate = 34.2;
-      const liftPct = ((projectedOpenRate - baseOpenRate) / baseOpenRate * 100).toFixed(1);
+      // Read P&L trace for topPerformer, anomalies, revenueForecast
+      const PERF_AGENT_ID_S1 = "8cb64dc1-278e-44bf-8f42-9b11a1c4f82d";
+      const perfTracesS1 = await storage.getRecentCompletedTracesByAgent(PERF_AGENT_ID_S1, 1);
+      const perfDecisionsS1 = (perfTracesS1[0]?.decisions as any) || {};
+      const brandPerf: any[] = perfDecisionsS1.brandPerformance ?? [];
+      const topBrand = brandPerf.reduce((best: any, b: any) =>
+        (!best || b.predictedOpenRate > best.predictedOpenRate) ? b : best, null);
+      const BRAND_COLORS: Record<string, string> = {
+        "Cosmopolitan": "#E91E8C", "Elle": "#1A1A1A", "Esquire": "#1B3A6B",
+        "Good Housekeeping": "#2E7D32", "Harper's Bazaar": "#C9A84C",
+        "Country Living": "#3E6B3E", "Runner's World": "#E65100", "Men's Health": "#1565C0",
+      };
+      const BRAND_SUBJECTS: Record<string, string> = {
+        "Elle": "The 12 Career Moves That Separate Good from Great",
+        "Good Housekeeping": "5 Morning Habits That Actually Boost Productivity",
+        "Harper's Bazaar": "Your Fall Fashion Exclusive Preview",
+        "Cosmopolitan": "10 Beauty Secrets From Top Dermatologists",
+        "Men's Health": "7-Day Gut Reset That Actually Works",
+        "Country Living": "50 Ways to Refresh Your Home This Weekend",
+        "Runner's World": "5 Training Plans for Your First Half Marathon",
+        "Esquire": "Style Guide: The Fall Wardrobe Edit",
+      };
+      const BRAND_WHY: Record<string, string> = {
+        "Elle": "Sent to subscribers with high career-content affinity at their personalized optimal send time. Wellness+career crossover article matched top 2 interests for this cohort.",
+        "Good Housekeeping": "Wellness + career crossover content resonated with premium subscribers. Personalized 7:12 AM send time drove the highest open rate for this brand.",
+        "Harper's Bazaar": "Exclusive preview content creates urgency. Sent to beauty/fashion segment at their peak engagement window.",
+        "Cosmopolitan": "Beauty affinity segment + personalized subject line variant drove above-average engagement.",
+        "Men's Health": "Gut health content aligned with fitness-first subscribers. Personalized send time added 8% open-rate lift.",
+        "Country Living": "Home & garden content drove high affiliate click-through. Sent at optimal morning engagement window.",
+        "Runner's World": "Training content matched high-fitness-affinity segment. Early morning send time aligned with runner habits.",
+        "Esquire": "Career & finance segment variant outperformed style-only sends for the 25–34 male cohort.",
+      };
+      const topBrandName = topBrand?.brand ?? "Elle";
+      const topPerformer = {
+        brand: topBrandName,
+        brandColor: BRAND_COLORS[topBrandName] ?? "#6366F1",
+        subject: BRAND_SUBJECTS[topBrandName] ?? `Today's Best from ${topBrandName}`,
+        sendVolume: Math.round((topBrand?.subscribers ?? 720000) * 0.26),
+        actualOpenRate: parseFloat(((topBrand?.predictedOpenRate ?? 36.2) + 6.1).toFixed(1)),
+        predictedOpenRate: topBrand?.predictedOpenRate ?? 36.2,
+        clickRate: 8.1,
+        revenue: 8200,
+        whyItWorked: BRAND_WHY[topBrandName] ?? "Personalized content and send time drove above-baseline engagement.",
+      };
+
+      const rawAnomalies: any[] = perfDecisionsS1.anomalies ?? [
+        { brand: "Esquire", metric: "Open Rate", actual: "19.2%", baseline: "21.8%", severity: "warning" },
+        { brand: "Country Living", metric: "Affiliate CTR", actual: "4.8%", baseline: "3.7%", severity: "info" },
+      ];
+      const ANOMALY_MESSAGES: Record<string, string> = {
+        "Open Rate": "Open rate dropped vs. 30-day baseline — possible content fatigue in 35–44 male segment.",
+        "Affiliate CTR": "Affiliate click rate above baseline. Home & garden content driving higher-than-expected AOV conversions.",
+      };
+      const anomalyAlerts = rawAnomalies.map((a: any, i: number) => ({
+        id: `a${i + 1}`,
+        severity: a.severity ?? "info",
+        brand: a.brand,
+        message: ANOMALY_MESSAGES[a.metric] ?? `${a.metric} deviation detected.`,
+        time: i === 0 ? "38 min ago" : "2h ago",
+        metric: a.metric,
+        value: a.actual,
+        baseline: a.baseline,
+      }));
+
+      // Read STO for deterministic timeline distribution
+      const STO_AGENT_ID_S1 = "7de4167e-6b0c-4f04-9fcf-3693bda1d255";
+      const stoTracesS1 = await storage.getRecentCompletedTracesByAgent(STO_AGENT_ID_S1, 1);
+      const stoDecisionsS1 = (stoTracesS1[0]?.decisions as any) || {};
+      const tzLifts: any[] = stoDecisionsS1.timezoneLifts ?? [];
+      const zoneSends: Record<string, number> = {
+        eastUs:    tzLifts[0]?.sendCount ?? 680000,
+        centralUs: tzLifts[1]?.sendCount ?? 310000,
+        westUs:    tzLifts[2]?.sendCount ?? 440000,
+        europe:    tzLifts[3]?.sendCount ?? 210000,
+        apac:      tzLifts[4]?.sendCount ?? 170000,
+      };
+      const zonePeaks: Record<string, number> = { eastUs: 7, centralUs: 8, westUs: 10, europe: 2, apac: 21 };
+
+      function gaussWeight(h: number, peak: number): number {
+        const d = Math.min(Math.abs(h - peak), 24 - Math.abs(h - peak));
+        return Math.exp(-d * d / 3.0);
+      }
+      const zoneWeights: Record<string, number[]> = {};
+      for (const [zone, peak] of Object.entries(zonePeaks)) {
+        const weights = Array.from({ length: 24 }, (_, h) => gaussWeight(h, peak));
+        const sum = weights.reduce((a, b) => a + b, 0);
+        zoneWeights[zone] = weights.map(w => w / sum);
+      }
 
       const brandDist = HEARST_BRANDS.map((b) => {
-        const base = Math.round(scheduled * (b.subscribers / totalSubscribers));
-        const personalized = Math.round(base * (aiPersonalizedContentPct / 100));
-        const holdCount = Math.round(b.subscribers * ((holdFatiguePct + holdLowScorePct) / 100));
+        const base = Math.round(scheduled * (b.subscribers / 6220000));
+        const personalized = Math.round(base * (personalizedPct / 100));
+        const holdCount = Math.round(b.subscribers * (holdPct / 100));
         return { ...b, scheduled: base - personalized, personalized, hold: holdCount };
       });
 
@@ -36351,37 +36436,20 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
       const currentHour = now.getHours();
       const timeline = Array.from({ length: 24 }, (_, h) => {
         const isFuture = h > currentHour;
-        const peak = h >= 6 && h <= 10 ? 1.8 : h >= 19 && h <= 21 ? 1.1 : 0.7;
-        const base = Math.round(25000 * peak * (0.85 + Math.random() * 0.3));
+        const peakWeight = zoneWeights["eastUs"][h];
+        const maxWeight = Math.max(...zoneWeights["eastUs"]);
         return {
           hour: h,
           label: `${h === 0 ? 12 : h > 12 ? h - 12 : h}${h < 12 ? "am" : "pm"}`,
-          eastUs: isFuture ? Math.round(base * 0.35) : Math.round(base * 0.35 * (0.9 + Math.random() * 0.2)),
-          centralUs: isFuture ? Math.round(base * 0.2) : Math.round(base * 0.2 * (0.9 + Math.random() * 0.2)),
-          westUs: isFuture ? Math.round(base * 0.25) : Math.round(base * 0.25 * (0.9 + Math.random() * 0.2)),
-          europe: isFuture ? Math.round(base * 0.12) : Math.round(base * 0.12 * (0.9 + Math.random() * 0.2)),
-          apac: isFuture ? Math.round(base * 0.08) : Math.round(base * 0.08 * (0.9 + Math.random() * 0.2)),
-          actualOpenRate: isFuture ? null : parseFloat((28 + Math.random() * 12).toFixed(1)),
+          eastUs:    isFuture ? 0 : Math.round(zoneSends.eastUs    * zoneWeights["eastUs"][h]),
+          centralUs: isFuture ? 0 : Math.round(zoneSends.centralUs * zoneWeights["centralUs"][h]),
+          westUs:    isFuture ? 0 : Math.round(zoneSends.westUs    * zoneWeights["westUs"][h]),
+          europe:    isFuture ? 0 : Math.round(zoneSends.europe    * zoneWeights["europe"][h]),
+          apac:      isFuture ? 0 : Math.round(zoneSends.apac      * zoneWeights["apac"][h]),
+          actualOpenRate: isFuture ? null : parseFloat((28 + 8 * (peakWeight / maxWeight)).toFixed(1)),
           isFuture,
         };
       });
-
-      const anomalyAlerts = [
-        { id: "a1", severity: "warning", brand: "Esquire", message: "Open rate dropped 12% vs. 30-day baseline — possible content fatigue in 35–44 male segment.", time: "38 min ago", metric: "Open Rate", value: "19.2%", baseline: "21.8%" },
-        { id: "a2", severity: "info", brand: "Country Living", message: "Affiliate click rate +31% above baseline. Home & garden content driving higher-than-expected AOV conversions.", time: "2h ago", metric: "Affiliate CTR", value: "4.8%", baseline: "3.7%" },
-      ];
-
-      const topPerformer = {
-        brand: "Elle",
-        brandColor: "#1A1A1A",
-        subject: "The 12 Career Moves That Separate Good from Great",
-        sendVolume: 187000,
-        actualOpenRate: 42.3,
-        predictedOpenRate: 38.0,
-        clickRate: 8.1,
-        revenue: 8200,
-        whyItWorked: "Sent to subscribers with high career-content affinity at their personalized optimal send time. Wellness+career crossover article matched top 2 interests for this cohort.",
-      };
 
       return res.json({
         kpi: {
@@ -36399,11 +36467,9 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
         },
         brandDist,
         donut: [
-          { name: "Default Send",             value: defaultSendPct,           color: "#6B7280" },
-          { name: "AI-Personalized Content",  value: aiPersonalizedContentPct, color: "#6366F1" },
-          { name: "Personalized Time Only",   value: aiPersonalizedTimePct,    color: "#8B5CF6" },
-          { name: "HOLD — Fatigue",           value: holdFatiguePct,           color: "#EF4444" },
-          { name: "HOLD — Low Score",         value: holdLowScorePct,          color: "#F97316" },
+          { name: "Default Send",    value: defaultSendPct,  color: "#6B7280" },
+          { name: "AI-Personalized", value: personalizedPct, color: "#6366F1" },
+          { name: "HOLD",            value: holdPct,         color: "#EF4444" },
         ],
         timeline,
         topPerformer,
@@ -36432,30 +36498,52 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
       const predictedOpenRate = brandPerf?.predictedOpenRate ?? 32.4;
       const baselineOpenRate  = brandPerf?.baselineOpenRate  ?? 22.4;
 
-      const aiGroups = [
-        { label: "Receive planned email (high affinity)", count: Math.round(totalSubs * 0.38), type: "planned", color: "#6366F1" },
-        { label: "Receive planned email, personalized send time", count: Math.round(totalSubs * 0.21), type: "time-personalized", color: "#8B5CF6" },
-        { label: "Receive AI-selected alternative content", count: Math.round(totalSubs * 0.17), type: "content-personalized", color: "#3B82F6" },
-        { label: "HOLD — better email tomorrow", count: Math.round(totalSubs * 0.14), type: "hold-tomorrow", color: "#F97316" },
-        { label: "HOLD — fatigue threshold", count: Math.round(totalSubs * 0.10), type: "hold-fatigue", color: "#EF4444" },
+      // Read aiGroups from seeded NBA batch run resultSummary
+      const NBA_AGENT_ID_S2 = "151db72c-0038-4f01-a4bb-45650a82e8b6";
+      const nbaRunsS2 = await storage.getAgentRuntimeRuns(NBA_AGENT_ID_S2);
+      const nbaResultS2 = (nbaRunsS2.length ? (nbaRunsS2[nbaRunsS2.length - 1]?.resultSummary as any) : null) || {};
+      const seededBrandGroups: any[] = (nbaResultS2.brandAiGroups ?? {})[brand.id] ?? [];
+      const aiGroups: any[] = seededBrandGroups.length > 0 ? seededBrandGroups : [
+        { label: "Receive planned email", count: Math.round(totalSubs * 0.38), type: "planned", color: "#6366F1" },
+        { label: "Same email — AI-optimized subject line", count: Math.round(totalSubs * 0.20), type: "subject-personalized", color: "#8B5CF6" },
+        { label: "AI-selected alternative content", count: Math.round(totalSubs * 0.13), type: "content-personalized", color: "#3B82F6" },
+        { label: "Email from a different Hearst brand", count: Math.round(totalSubs * 0.10), type: "cross-brand", color: "#10B981" },
+        { label: "HOLD — suppressed today", count: Math.round(totalSubs * 0.19), type: "hold", color: "#EF4444" },
       ];
 
       const segments = ["Beauty Enthusiast", "Wellness Seeker", "Career Focused", "Entertainment Fan", "Home & Lifestyle"];
       const topics = ["Beauty & Style", "Wellness", "Career", "Entertainment", "Relationships", "Food", "Travel"];
-      const heatmap = segments.map(() =>
-        topics.map(() => parseFloat((Math.random() * 0.85 + 0.1).toFixed(2)))
+
+      // Deterministic heatmap — uses brand + segment + topic indices as seed
+      const brandSeed = brand.id.split("").reduce((acc: number, c: string) => acc + c.charCodeAt(0), 0);
+      const heatmap = segments.map((_, si) =>
+        topics.map((_, ti) => {
+          const v = Math.abs(Math.sin((brandSeed + si * 7 + ti * 13) * 0.37)) * 0.85 + 0.1;
+          return parseFloat(v.toFixed(2));
+        })
       );
 
+      // Deterministic 7-day trend — uses predictedOpenRate as anchor, no randomness
+      const trendVariants = [
+        { openDelta: -1.4, clickBase: 3.2, unsubBase: 0.16, revBase: 17000 },
+        { openDelta: -0.8, clickBase: 3.5, unsubBase: 0.15, revBase: 18000 },
+        { openDelta: -1.1, clickBase: 3.1, unsubBase: 0.17, revBase: 16500 },
+        { openDelta:  0.9, clickBase: 5.8, unsubBase: 0.07, revBase: 29000 },
+        { openDelta:  1.2, clickBase: 6.1, unsubBase: 0.08, revBase: 31000 },
+        { openDelta:  0.7, clickBase: 5.4, unsubBase: 0.06, revBase: 28500 },
+        { openDelta:  1.5, clickBase: 6.8, unsubBase: 0.07, revBase: 33000 },
+      ];
       const trend7d = Array.from({ length: 7 }, (_, i) => {
         const d = new Date();
         d.setDate(d.getDate() - (6 - i));
         const atlasActive = i >= 3;
+        const tv = trendVariants[i];
         return {
           date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-          openRate: atlasActive ? parseFloat((predictedOpenRate - 2 + Math.random() * 4).toFixed(1)) : parseFloat((baselineOpenRate - 1 + Math.random() * 4).toFixed(1)),
-          clickRate: atlasActive ? parseFloat((5.5 + Math.random() * 3).toFixed(1)) : parseFloat((3 + Math.random() * 2).toFixed(1)),
-          unsubRate: atlasActive ? parseFloat((0.06 + Math.random() * 0.04).toFixed(2)) : parseFloat((0.14 + Math.random() * 0.06).toFixed(2)),
-          revenue: atlasActive ? Math.round(28000 + Math.random() * 15000) : Math.round(16000 + Math.random() * 8000),
+          openRate: parseFloat((atlasActive ? predictedOpenRate + tv.openDelta : baselineOpenRate + tv.openDelta).toFixed(1)),
+          clickRate: parseFloat(tv.clickBase.toFixed(1)),
+          unsubRate: tv.unsubBase,
+          revenue: tv.revBase,
           atlasActive,
         };
       });
@@ -36472,7 +36560,7 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
           holdCount: Math.round(totalSubs * 0.24),
           predictedOpenRate,
           liftPct,
-          revenueForecast: Math.round(28000 + Math.random() * 15000),
+          revenueForecast: Math.round((brandPerf?.predictedOpenRate ?? 32.4) * 1100),
         },
         defaultPlan: {
           subject: `Today's ${brand.name} Newsletter`,
@@ -36493,53 +36581,65 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
 
   // GET /demo-api/hearst/subscriber/:id — Screen 3 subscriber data
   app.get("/demo-api/hearst/subscriber/:id", async (req, res) => {
-    const personaId = req.params.id;
-    const personas: Record<string, any> = {
-      "sarah-m": {
-        id: "sarah-m",
-        name: "Sarah M.",
-        location: "New York, NY",
-        tier: "Premium",
-        lifecycleStage: "Engaged Reader",
-        healthScore: 84,
-        brandMap: [
-          { brand: "Good Housekeeping", color: "#2E7D32", optedIn: true, lastOpen: "1 day ago", engagement: "HIGH" },
-          { brand: "Cosmopolitan", color: "#E91E8C", optedIn: true, lastOpen: "2 days ago", engagement: "HIGH" },
-          { brand: "Elle", color: "#1A1A1A", optedIn: true, lastOpen: "5 days ago", engagement: "MEDIUM" },
-          { brand: "Esquire", color: "#1B3A6B", optedIn: true, lastOpen: "32 days ago", engagement: "LOW" },
-          { brand: "Runner's World", color: "#E65100", optedIn: false, lastOpen: "—", engagement: "BROWSE_ONLY" },
-        ],
-        affinityRadar: [
-          { topic: "Beauty & Style", score: 35 }, { topic: "Wellness & Fitness", score: 88 },
-          { topic: "Career & Finance", score: 82 }, { topic: "Entertainment", score: 54 },
-          { topic: "Home & Garden", score: 63 }, { topic: "Food & Recipes", score: 47 },
-          { topic: "Relationships", score: 38 }, { topic: "News & Politics", score: 29 },
-        ],
-        todayDecision: {
-          action: "SEND",
-          brand: "Good Housekeeping",
-          subject: "5 Morning Habits That Actually Boost Productivity",
-          sendTime: "7:12 AM ET",
-          nbEmailScore: 0.74,
-          factors: [
-            { label: "Content match", score: 0.92, detail: "Wellness + career crossover matches top 2 interests" },
-            { label: "Brand affinity", score: 0.88, detail: "GH: opened 4 of last 5 emails" },
-            { label: "Revenue potential", score: 0.71, detail: "Article includes subscription upgrade prompt (38% conversion history)" },
-            { label: "Fatigue cost", score: -0.12, detail: "Received 1 email this week — low fatigue" },
-            { label: "Cannibalization", score: -0.08, detail: "No competing GH content scheduled tomorrow" },
-          ],
-          holdThreshold: 0.25,
-        },
-        timeline: Array.from({ length: 30 }, (_, i) => {
+    try {
+      await seedHearstAgentRuns();
+      const personaId = req.params.id;
+
+      // Deterministic timeline helper: uses sine function keyed by persona+day
+      function detTimeline(personaSeed: number, openThreshold: number, visitThreshold: number, purchaseThreshold: number, openBrands: string[]) {
+        return Array.from({ length: 30 }, (_, i) => {
           const d = new Date();
           d.setDate(d.getDate() - (29 - i));
-          const events = [];
-          if (Math.random() > 0.4) events.push({ type: "open", brand: ["Good Housekeeping", "Cosmopolitan", "Elle"][Math.floor(Math.random() * 3)], label: "Email opened" });
-          if (Math.random() > 0.7) events.push({ type: "visit", label: "Website visit" });
-          if (Math.random() > 0.9) events.push({ type: "purchase", label: "Subscription action" });
+          const events: any[] = [];
+          const v1 = Math.abs(Math.sin(personaSeed * 5.3 + i * 1.71));
+          const v2 = Math.abs(Math.sin(personaSeed * 3.1 + i * 2.43));
+          const v3 = Math.abs(Math.sin(personaSeed * 7.7 + i * 3.11));
+          const brandIdx = Math.floor(Math.abs(Math.sin(personaSeed + i * 0.91)) * openBrands.length);
+          if (v1 > (1 - openThreshold)) events.push({ type: "open", brand: openBrands[brandIdx % openBrands.length], label: "Email opened" });
+          if (v2 > (1 - visitThreshold)) events.push({ type: "visit", label: "Website visit" });
+          if (v3 > (1 - purchaseThreshold)) events.push({ type: "purchase", label: "Purchase / affiliate click" });
           return { date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }), events };
-        }),
-      },
+        });
+      }
+
+      const personas: Record<string, any> = {
+        "sarah-m": {
+          id: "sarah-m",
+          name: "Sarah M.",
+          location: "New York, NY",
+          tier: "Premium",
+          lifecycleStage: "Engaged Reader",
+          healthScore: 84,
+          brandMap: [
+            { brand: "Good Housekeeping", color: "#2E7D32", optedIn: true, lastOpen: "1 day ago", engagement: "HIGH" },
+            { brand: "Cosmopolitan", color: "#E91E8C", optedIn: true, lastOpen: "2 days ago", engagement: "HIGH" },
+            { brand: "Elle", color: "#1A1A1A", optedIn: true, lastOpen: "5 days ago", engagement: "MEDIUM" },
+            { brand: "Esquire", color: "#1B3A6B", optedIn: true, lastOpen: "32 days ago", engagement: "LOW" },
+            { brand: "Runner's World", color: "#E65100", optedIn: false, lastOpen: "—", engagement: "BROWSE_ONLY" },
+          ],
+          affinityRadar: [
+            { topic: "Beauty & Style", score: 35 }, { topic: "Wellness & Fitness", score: 88 },
+            { topic: "Career & Finance", score: 82 }, { topic: "Entertainment", score: 54 },
+            { topic: "Home & Garden", score: 63 }, { topic: "Food & Recipes", score: 47 },
+            { topic: "Relationships", score: 38 }, { topic: "News & Politics", score: 29 },
+          ],
+          todayDecision: {
+            action: "SEND",
+            brand: "Good Housekeeping",
+            subject: "5 Morning Habits That Actually Boost Productivity",
+            sendTime: "7:12 AM ET",
+            nbEmailScore: 0.74,
+            factors: [
+              { label: "Content match", score: 0.92, detail: "Wellness + career crossover matches top 2 interests" },
+              { label: "Brand affinity", score: 0.88, detail: "GH: opened 4 of last 5 emails" },
+              { label: "Revenue potential", score: 0.71, detail: "Affiliate link included — 3.2× higher conversion rate for wellness segment" },
+              { label: "Fatigue cost", score: -0.12, detail: "Received 1 email this week — low fatigue" },
+              { label: "Cannibalization", score: -0.08, detail: "No competing GH content scheduled tomorrow" },
+            ],
+            holdThreshold: 0.25,
+          },
+          timeline: detTimeline(17, 0.60, 0.30, 0.10, ["Good Housekeeping", "Cosmopolitan", "Elle"]),
+        },
       "marcus-t": {
         id: "marcus-t",
         name: "Marcus T.",
@@ -36574,14 +36674,7 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
           holdThreshold: 0.25,
           holdReason: "Best score (0.19) is below HOLD threshold (0.25). Better Runner's World content is available tomorrow.",
         },
-        timeline: Array.from({ length: 30 }, (_, i) => {
-          const d = new Date();
-          d.setDate(d.getDate() - (29 - i));
-          const events = [];
-          if (Math.random() > 0.7) events.push({ type: "open", brand: ["Esquire", "Runner's World"][Math.floor(Math.random() * 2)], label: "Email opened" });
-          if (Math.random() > 0.8) events.push({ type: "visit", label: "Website visit" });
-          return { date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }), events };
-        }),
+        timeline: detTimeline(43, 0.25, 0.18, 0, ["Esquire", "Runner's World"]),
       },
       "jennifer-k": {
         id: "jennifer-k",
@@ -36619,19 +36712,30 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
           holdThreshold: 0.25,
           holdReason: "VIP subscriber has hit weekly email cap. Harper's Bazaar fall fashion exclusive tomorrow will score significantly higher. Protecting tomorrow's engagement.",
         },
-        timeline: Array.from({ length: 30 }, (_, i) => {
-          const d = new Date();
-          d.setDate(d.getDate() - (29 - i));
-          const events = [];
-          if (Math.random() > 0.25) events.push({ type: "open", brand: ["Harper's Bazaar", "Elle", "Cosmopolitan", "Good Housekeeping"][Math.floor(Math.random() * 4)], label: "Email opened" });
-          if (Math.random() > 0.5) events.push({ type: "visit", label: "Website visit" });
-          if (Math.random() > 0.8) events.push({ type: "purchase", label: "Purchase / affiliate click" });
-          return { date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }), events };
-        }),
+        timeline: detTimeline(61, 0.75, 0.50, 0.20, ["Harper's Bazaar", "Elle", "Cosmopolitan", "Good Housekeeping"]),
       },
     };
-    const persona = personas[personaId] || personas["sarah-m"];
+
+    const persona = JSON.parse(JSON.stringify(personas[personaId] || personas["sarah-m"]));
+
+    // Merge alternativesConsidered + scoringFactors from real NBA trace decisions
+    const NBA_AGENT_ID_S3 = "151db72c-0038-4f01-a4bb-45650a82e8b6";
+    const nbaTracesS3 = await storage.getRecentCompletedTracesByAgent(NBA_AGENT_ID_S3, 20);
+    const personaTrace = nbaTracesS3.find((t: any) => (t.promptInputs as any)?.subscriberId === personaId);
+    if (personaTrace?.decisions) {
+      const d = personaTrace.decisions as any;
+      if (d.alternativesConsidered) {
+        persona.todayDecision.alternativesConsidered = d.alternativesConsidered;
+      }
+      if (d.scoringFactors) {
+        persona.todayDecision.scoringFactors = d.scoringFactors;
+      }
+    }
+
     return res.json(persona);
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
   });
 
   // POST /demo-api/hearst/subscriber/:id/override
@@ -36796,13 +36900,20 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
         { zone: "APAC",      abbr: "AEDT", openRate: 31.2, baselineOpenRate: 24.8, liftPct: 25.8, peakHour: "8–10 AM",      sendCount: 170000, color: "#F59E0B" },
       ];
 
+      // Deterministic pre-Atlas: sharp 9am spike; all other hours are near-zero
+      const beforeAtlasSends: Record<number, number> = { 8: 45000, 9: 820000, 10: 290000, 11: 18000, 12: 9000, 13: 6000, 14: 4000 };
       const beforeAtlas = Array.from({ length: 24 }, (_, h) => ({
         hour: h, label: `${h === 0 ? 12 : h > 12 ? h - 12 : h}${h < 12 ? "am" : "pm"}`,
-        sends: h === 9 ? 820000 : h === 10 ? 290000 : h === 8 ? 45000 : Math.round(Math.random() * 5000),
+        sends: beforeAtlasSends[h] ?? Math.round(2000 * Math.abs(Math.sin(h * 1.3))),
       }));
+      // Deterministic with-Atlas: distributed across all active hours using zone Gaussian
+      const withAtlasDist = [
+        0, 0, 3200, 6400, 9800, 18200, 32400, 68000, 89000, 92000, 74000, 58000,
+        48000, 41000, 38000, 35000, 42000, 51000, 62000, 71000, 58000, 44000, 22000, 8000,
+      ];
       const withAtlas = Array.from({ length: 24 }, (_, h) => ({
         hour: h, label: `${h === 0 ? 12 : h > 12 ? h - 12 : h}${h < 12 ? "am" : "pm"}`,
-        sends: h >= 5 && h <= 21 ? Math.round(35000 + Math.random() * 55000) : Math.round(Math.random() * 8000),
+        sends: withAtlasDist[h] ?? 0,
       }));
 
       const hotspots = [
@@ -36836,16 +36947,20 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
       const segments = ["Multi-brand loyalist", "Single-brand devotee", "Casual reader", "New subscriber <30d", "At-risk declining"];
       const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-      const preAtlasHeatmap = segments.map((seg) =>
-        days.map(() => {
-          const base = seg === "Multi-brand loyalist" ? 5.2 : seg === "Single-brand devotee" ? 2.8 : seg === "Casual reader" ? 1.9 : seg === "New subscriber <30d" ? 3.1 : 4.2;
-          return parseFloat((base * (0.8 + Math.random() * 0.4)).toFixed(1));
+      const preAtlasBases: Record<string, number> = { "Multi-brand loyalist": 5.2, "Single-brand devotee": 2.8, "Casual reader": 1.9, "New subscriber <30d": 3.1, "At-risk declining": 4.2 };
+      const withAtlasBases: Record<string, number> = { "Multi-brand loyalist": 1.4, "Single-brand devotee": 1.1, "Casual reader": 0.8, "New subscriber <30d": 1.2, "At-risk declining": 1.0 };
+      const preAtlasHeatmap = segments.map((seg, si) =>
+        days.map((_, di) => {
+          const base = preAtlasBases[seg] ?? 3.0;
+          const det = 0.8 + 0.4 * Math.abs(Math.sin(si * 6.3 + di * 2.1));
+          return parseFloat((base * det).toFixed(1));
         })
       );
-      const withAtlasHeatmap = segments.map((seg) =>
-        days.map(() => {
-          const base = seg === "Multi-brand loyalist" ? 1.4 : seg === "Single-brand devotee" ? 1.1 : seg === "Casual reader" ? 0.8 : seg === "New subscriber <30d" ? 1.2 : 1.0;
-          return parseFloat((base * (0.8 + Math.random() * 0.4)).toFixed(1));
+      const withAtlasHeatmap = segments.map((seg, si) =>
+        days.map((_, di) => {
+          const base = withAtlasBases[seg] ?? 1.0;
+          const det = 0.8 + 0.4 * Math.abs(Math.sin(si * 4.7 + di * 3.3));
+          return parseFloat((base * det).toFixed(1));
         })
       );
 
@@ -36856,12 +36971,14 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
           { reason: "Low content affinity (score < 0.25)", count: 800000, color: "#F97316" },
           { reason: "Better email tomorrow", count: 600000, color: "#F59E0B" },
         ],
-        heldNextDayOpenRate: hv.heldNextDayOpenRate ?? 43.6,
-        notHeldOpenRate:     hv.notHeldOpenRate     ?? 26.8,
+        heldNextDayOpenRate: hv.heldNextDayOpenRate ?? 41.0,
+        notHeldOpenRate:     hv.notHeldOpenRate     ?? 29.0,
         heldRevenuePerSub:   hv.heldRevenuePerSub   ?? 2.84,
         notHeldRevenuePerSub: hv.notHeldRevenuePerSub ?? 1.92,
       };
 
+      const preAtlasRates = [0.19, 0.17, 0.18, 0.15, 0.16, 0.14];
+      const withAtlasRates = [0.09, 0.08, 0.08, 0.07, 0.07, 0.08];
       const unsubTrend = Array.from({ length: 12 }, (_, i) => {
         const atlasActive = i >= 6;
         const d = new Date();
@@ -36869,8 +36986,8 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
         return {
           week: `Wk ${i + 1}`,
           date: d.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-          preAtlas: atlasActive ? null : parseFloat((0.14 + Math.random() * 0.08).toFixed(2)),
-          withAtlas: atlasActive ? parseFloat((0.07 + Math.random() * 0.04).toFixed(2)) : null,
+          preAtlas: atlasActive ? null : preAtlasRates[i],
+          withAtlas: atlasActive ? withAtlasRates[i - 6] : null,
           atlasActive,
         };
       });
@@ -36917,7 +37034,7 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
     const aiInsights = [
       { type: "insight", icon: "💡", title: "Wellness outperforms Beauty 2.3x", body: "Wellness content outperforms beauty content by 2.3× on engagement and 1.8× on revenue for the 25–34 female segment. Recommend shifting 20% of Cosmo's beauty inventory to wellness for this segment.", metric: "+1.8x revenue", urgency: "medium" },
       { type: "insight", icon: "💡", title: "Personalized send times +37.4% open rate", body: "Subscribers receiving personalized send times open at 37.4% vs. 26.8% for default-time sends. The lift is strongest for European subscribers (+48%) due to timezone correction.", metric: "+10.6pp lift", urgency: "low" },
-      { type: "warning", icon: "⚠️", title: "Esquire engagement declining", body: "Esquire's engagement has declined 12% month-over-month. Root cause: 67% of Esquire subscribers overlap with Motor Trend interests. Recommend testing Motor Trend cross-brand sends to the automotive segment.", metric: "-12% MoM", urgency: "high" },
+      { type: "warning", icon: "⚠️", title: "Esquire readership segment drift detected", body: "Engagement data shows Esquire's active readers are skewing toward Career & Finance over traditional Style content. Atlas is automatically redistributing Esquire subscriber allocation before unsubscribe rates signal the shift.", metric: "Segment Drift", urgency: "high" },
       { type: "success", icon: "✅", title: "HOLD decisions preserved $186K ARR", body: "12,400 subscribers who would have unsubscribed under the old model are still active. HOLD decisions this week preserved an estimated $186K in annual recurring subscriber revenue.", metric: "$186K preserved", urgency: "low" },
     ];
 
