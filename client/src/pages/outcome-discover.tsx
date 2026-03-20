@@ -1333,14 +1333,14 @@ export default function OutcomeDiscover() {
                         <span className="text-xs font-semibold text-primary">Platform Intelligence</span>
                       </div>
                       <div className="flex items-center gap-2">
-                        {formIntel.summary?.liveAgentMatchCount > 0 && (
-                          <Badge variant="outline" className="text-[9px] border-primary/40 text-primary">{formIntel.summary.liveAgentMatchCount} live agents</Badge>
+                        {(formIntel?.summary?.liveAgentMatchCount ?? 0) > 0 && (
+                          <Badge variant="outline" className="text-[9px] border-primary/40 text-primary">{formIntel!.summary.liveAgentMatchCount} live agents</Badge>
                         )}
-                        {formIntel.summary?.templateCount > 0 && (
-                          <Badge variant="outline" className="text-[9px] border-primary/40 text-primary">{formIntel.summary.templateCount} templates</Badge>
+                        {(formIntel?.summary?.templateCount ?? 0) > 0 && (
+                          <Badge variant="outline" className="text-[9px] border-primary/40 text-primary">{formIntel!.summary.templateCount} templates</Badge>
                         )}
-                        {formIntel.summary?.matchedPolicyCount > 0 && (
-                          <Badge variant="outline" className="text-[9px] border-primary/40 text-primary">{formIntel.summary.matchedPolicyCount} policies</Badge>
+                        {(formIntel?.summary?.matchedPolicyCount ?? 0) > 0 && (
+                          <Badge variant="outline" className="text-[9px] border-primary/40 text-primary">{formIntel!.summary.matchedPolicyCount} policies</Badge>
                         )}
                         <ChevronDown className={`w-3.5 h-3.5 text-primary transition-transform ${showFormIntel ? "rotate-180" : ""}`} />
                       </div>
