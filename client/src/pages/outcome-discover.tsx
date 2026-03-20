@@ -439,8 +439,12 @@ export default function OutcomeDiscover() {
   const [showPlatformMatch, setShowPlatformMatch] = useState(true);
   const [showRealPolicies, setShowRealPolicies] = useState(true);
   const [showFormIntel, setShowFormIntel] = useState(true);
-  const [pendingAgentAssign, setPendingAgentAssign] = useState<{ agentId: string; role: string } | null>(null);
-  const [pendingTemplateBuild, setPendingTemplateBuild] = useState<{ templateId: string; templateName: string } | null>(null);
+  const [agentDecisions, setAgentDecisions] = useState<Record<string, 'accepted' | 'rejected'>>({});
+  const [templateDecisions, setTemplateDecisions] = useState<Record<string, 'accepted' | 'rejected'>>({});
+  const setAgentDecision = (id: string, decision: 'accepted' | 'rejected') =>
+    setAgentDecisions(prev => { const n = { ...prev }; if (n[id] === decision) delete n[id]; else n[id] = decision; return n; });
+  const setTemplateDecision = (id: string, decision: 'accepted' | 'rejected') =>
+    setTemplateDecisions(prev => { const n = { ...prev }; if (n[id] === decision) delete n[id]; else n[id] = decision; return n; });
   const chatEndRef = useRef<HTMLDivElement>(null);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const speechRecognitionRef = useRef<any>(null);
@@ -630,6 +634,21 @@ export default function OutcomeDiscover() {
       });
       const result = await res.json();
       const outcome = result.outcome;
+      // Collect all accepted agents and templates from decisions
+      const acceptedAgentIds = Object.entries(agentDecisions).filter(([, d]) => d === 'accepted').map(([id]) => id);
+      const acceptedTemplateIds = Object.entries(templateDecisions).filter(([, d]) => d === 'accepted').map(([id]) => id);
+      const allAgentMatches = platformIntel?.matchedAgents.flatMap(r => r.matches) ?? [];
+      const acceptedAgentObjects = allAgentMatches.filter(a => acceptedAgentIds.includes(a.id));
+      const acceptedTemplateObjects = (platformIntel?.matchedTemplates ?? []).filter(t => acceptedTemplateIds.includes(t.id));
+
+      // Compute readiness score for evidence
+      const hasKpisE = (proposal?.kpis?.length ?? 0) > 0;
+      const hasRiskTierE = !!data.riskTier;
+      const hasPoliciesE = (platformIntel?.summary?.matchedPolicyCount ?? 0) > 0;
+      const hasApprovalGatesE = !platformIntel?.summary?.hasApprovalGapRisk;
+      const hasDriftDefE = !!data.maxDriftPercent;
+      const readinessScoreE = (hasKpisE ? 20 : 0) + (hasRiskTierE ? 15 : 0) + (hasPoliciesE ? 25 : 0) + (hasApprovalGatesE ? 15 : 0) + (hasDriftDefE ? 10 : 0) + 15;
+
       await apiRequest("POST", "/api/approvals", {
         type: "outcome_review",
         objectType: "outcome_contract",
@@ -647,6 +666,16 @@ export default function OutcomeDiscover() {
           outcomeContract: data,
           discoveryConversation: messages.length,
           createdKpis: result.kpis?.length || 0,
+          // Platform intelligence — carried forward from proposal stage
+          compositeRisk: platformIntel?.compositeRisk || null,
+          matchedPolicies: platformIntel?.matchedPolicies || [],
+          toolCoverage: platformIntel?.toolCoverage || [],
+          governanceReadinessScore: readinessScoreE,
+          // Agent / template decisions — only accepted carry to Agent Map
+          acceptedAgentMatches: acceptedAgentObjects,
+          acceptedTemplateMatches: acceptedTemplateObjects,
+          rejectedAgentIds: Object.entries(agentDecisions).filter(([, d]) => d === 'rejected').map(([id]) => id),
+          rejectedTemplateIds: Object.entries(templateDecisions).filter(([, d]) => d === 'rejected').map(([id]) => id),
         },
       });
       return outcome;
@@ -661,17 +690,21 @@ export default function OutcomeDiscover() {
         await apiRequest("PATCH", `/api/outcomes/${outcome.id}`, { status: "awaiting_agent_plan" });
         queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
       } catch {}
-      if (pendingAgentAssign) {
+      // Assign ALL accepted live agents to the outcome
+      const acceptedIds = Object.entries(agentDecisions).filter(([, d]) => d === 'accepted').map(([id]) => id);
+      for (const agentId of acceptedIds) {
         try {
-          await apiRequest("PATCH", `/api/agents/${pendingAgentAssign.agentId}`, {
-            outcomeId: outcome.id,
-          });
-          queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
-          toast({ title: "Agent assigned", description: `Agent bound to outcome "${outcome.name}"` });
+          await apiRequest("PATCH", `/api/agents/${agentId}`, { outcomeId: outcome.id });
         } catch { /* non-fatal */ }
       }
-      if (pendingTemplateBuild) {
-        navigate(`/outcomes/${outcome.id}?tab=agent-map&template=${pendingTemplateBuild.templateId}`);
+      if (acceptedIds.length > 0) {
+        queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+        toast({ title: `${acceptedIds.length} agent${acceptedIds.length > 1 ? "s" : ""} assigned`, description: `Accepted agents bound to outcome "${outcome.name}"` });
+      }
+      // Navigate to agent map seeded with first accepted template
+      const firstAcceptedTemplate = Object.entries(templateDecisions).find(([, d]) => d === 'accepted')?.[0];
+      if (firstAcceptedTemplate) {
+        navigate(`/outcomes/${outcome.id}?tab=agent-map&template=${firstAcceptedTemplate}`);
       }
     },
     onError: (err: Error) => {
@@ -2164,14 +2197,14 @@ export default function OutcomeDiscover() {
                           <div className="flex flex-col gap-1.5">
                             <div className="flex items-center justify-between gap-2">
                               <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Tier 1 — Live Agents</span>
-                              <span className="text-[9px] text-muted-foreground italic">Select one to auto-assign on create</span>
+                              <span className="text-[9px] text-muted-foreground italic">Accept → bound on create · Reject → excluded from Agent Map</span>
                             </div>
                             {platformIntel.matchedAgents.filter((r) => r.matches.length > 0).flatMap((r) => {
                               const rRoleLower = r.role.toLowerCase();
                               const agentDef = (proposal?.proposedAgents || []).find((pa: { role?: string; name?: string }) => (pa.role || pa.name || "").toLowerCase() === rRoleLower);
                               const agentTools: string[] = agentDef?.requiredTools || agentDef?.tools || [];
                               return r.matches.slice(0, 2).map((a) => {
-                                const isSelected = pendingAgentAssign?.agentId === a.id;
+                                const agentDecision = agentDecisions[a.id];
                                 const agentToolChips = agentTools.map((toolName) => {
                                   const toolNameLower = toolName.toLowerCase();
                                   const tc = platformIntel.toolCoverage.find((t) => t.proposedName.toLowerCase() === toolNameLower);
@@ -2190,7 +2223,7 @@ export default function OutcomeDiscover() {
                                 const ringColor = score >= 80 ? "#22c55e" : score >= 60 ? "#f59e0b" : "#ef4444";
                                 const isUnhealthy = score < 60;
                                 return (
-                                  <div key={a.id} className={`flex flex-col gap-1.5 p-2 rounded-md border transition-colors ${isSelected ? "bg-emerald-500/5 border-emerald-500/30" : isUnhealthy ? "bg-red-500/5 border-red-500/10" : "bg-muted/50 border-transparent"}`} data-testid={`platform-agent-${a.id}`}>
+                                  <div key={a.id} className={`flex flex-col gap-1.5 p-2 rounded-md border transition-all ${agentDecision === 'accepted' ? "bg-emerald-500/5 border-emerald-500/30" : agentDecision === 'rejected' ? "bg-muted/20 border-muted-foreground/10 opacity-40" : isUnhealthy ? "bg-red-500/5 border-red-500/10" : "bg-muted/50 border-transparent"}`} data-testid={`platform-agent-${a.id}`}>
                                     <div className="flex items-center justify-between gap-2">
                                       <div className="flex items-center gap-2 min-w-0 flex-1">
                                         <svg width="26" height="26" viewBox="0 0 26 26" className="shrink-0" aria-label={`Health: ${score}%`} data-testid={`health-ring-${a.id}`}>
@@ -2220,15 +2253,22 @@ export default function OutcomeDiscover() {
                                           </div>
                                         </div>
                                       </div>
-                                      <button
-                                        type="button"
-                                        onClick={() => setPendingAgentAssign(isSelected ? null : { agentId: a.id, role: r.role })}
-                                        className={`text-[9px] px-2 py-0.5 rounded border shrink-0 transition-colors ${isSelected ? "border-emerald-500/60 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" : "border-primary/30 text-primary hover:bg-primary/5"}`}
-                                        data-testid={`button-assign-agent-${a.id}`}
-                                        title={isSelected ? "Deselect agent" : `Select to bind after contract creation`}
-                                      >
-                                        {isSelected ? "✓ Selected" : "Assign to Outcome"}
-                                      </button>
+                                      <div className="flex gap-1 shrink-0">
+                                        <button
+                                          type="button"
+                                          onClick={() => setAgentDecision(a.id, 'accepted')}
+                                          className={`text-[9px] px-2 py-0.5 rounded border transition-colors ${agentDecision === 'accepted' ? "border-emerald-500/60 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 font-semibold" : "border-muted-foreground/30 text-muted-foreground hover:border-emerald-500/50 hover:text-emerald-600"}`}
+                                          data-testid={`button-accept-agent-${a.id}`}
+                                          title="Accept — assign this agent to the outcome"
+                                        >✓ Accept</button>
+                                        <button
+                                          type="button"
+                                          onClick={() => setAgentDecision(a.id, 'rejected')}
+                                          className={`text-[9px] px-2 py-0.5 rounded border transition-colors ${agentDecision === 'rejected' ? "border-red-500/60 text-red-600 dark:text-red-400 bg-red-500/10 font-semibold" : "border-muted-foreground/30 text-muted-foreground hover:border-red-500/50 hover:text-red-600"}`}
+                                          data-testid={`button-reject-agent-${a.id}`}
+                                          title="Reject — exclude from Agent Map"
+                                        >✗ Reject</button>
+                                      </div>
                                     </div>
                                     {agentToolChips.length > 0 && (
                                       <div className="flex flex-col gap-1">
@@ -2276,12 +2316,12 @@ export default function OutcomeDiscover() {
                           <div className="flex flex-col gap-1.5">
                             <div className="flex items-center justify-between gap-2">
                               <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Tier 2 — Templates</span>
-                              <span className="text-[9px] text-muted-foreground italic">Select to open in Agent Plan after create</span>
+                              <span className="text-[9px] text-muted-foreground italic">Accept → Agent Plan opens with this template · Reject → skip</span>
                             </div>
                             {platformIntel.matchedTemplates.slice(0, 3).map((t) => {
-                              const isSelected = pendingTemplateBuild?.templateId === t.id;
+                              const templateDecision = templateDecisions[t.id];
                               return (
-                                <div key={t.id} className={`flex flex-col gap-1.5 p-2 rounded-md border transition-colors ${isSelected ? "bg-emerald-500/5 border-emerald-500/30" : "bg-muted/50 border-transparent"}`} data-testid={`platform-template-${t.id}`}>
+                                <div key={t.id} className={`flex flex-col gap-1.5 p-2 rounded-md border transition-all ${templateDecision === 'accepted' ? "bg-emerald-500/5 border-emerald-500/30" : templateDecision === 'rejected' ? "bg-muted/20 border-muted-foreground/10 opacity-40" : "bg-muted/50 border-transparent"}`} data-testid={`platform-template-${t.id}`}>
                                   <div className="flex items-center justify-between gap-2">
                                     <div className="flex flex-col min-w-0 flex-1">
                                       <span className="text-[11px] font-medium truncate">{t.name}</span>
@@ -2297,15 +2337,22 @@ export default function OutcomeDiscover() {
                                         )}
                                       </div>
                                     </div>
-                                  <button
-                                    type="button"
-                                    onClick={() => setPendingTemplateBuild(isSelected ? null : { templateId: t.id, templateName: t.name })}
-                                    className={`text-[9px] px-2 py-0.5 rounded border shrink-0 transition-colors ${isSelected ? "border-emerald-500/60 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" : "border-primary/30 text-primary hover:bg-primary/5"}`}
-                                    data-testid={`button-build-template-${t.id}`}
-                                    title={isSelected ? "Deselect template" : `Select: opens Agent Plan with this template after contract creation`}
-                                  >
-                                    {isSelected ? "✓ Selected" : "Build from Template"}
-                                  </button>
+                                  <div className="flex gap-1 shrink-0 mt-0.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => setTemplateDecision(t.id, 'accepted')}
+                                      className={`text-[9px] px-2 py-0.5 rounded border transition-colors ${templateDecision === 'accepted' ? "border-emerald-500/60 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 font-semibold" : "border-muted-foreground/30 text-muted-foreground hover:border-emerald-500/50 hover:text-emerald-600"}`}
+                                      data-testid={`button-accept-template-${t.id}`}
+                                      title="Accept — open Agent Plan with this template after creation"
+                                    >✓ Accept</button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setTemplateDecision(t.id, 'rejected')}
+                                      className={`text-[9px] px-2 py-0.5 rounded border transition-colors ${templateDecision === 'rejected' ? "border-red-500/60 text-red-600 dark:text-red-400 bg-red-500/10 font-semibold" : "border-muted-foreground/30 text-muted-foreground hover:border-red-500/50 hover:text-red-600"}`}
+                                      data-testid={`button-reject-template-${t.id}`}
+                                      title="Reject — skip this template in Agent Plan"
+                                    >✗ Reject</button>
+                                  </div>
                                 </div>
                                 {t.description && (
                                   <span className="text-[10px] text-muted-foreground leading-relaxed line-clamp-2" data-testid={`text-template-desc-${t.id}`}>{t.description}</span>
