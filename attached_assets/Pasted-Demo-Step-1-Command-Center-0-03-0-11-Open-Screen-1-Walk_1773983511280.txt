@@ -1,0 +1,36 @@
+Demo Step 1: Command Center (0:03–0:11)
+Open Screen 1. Walk through each panel top to bottom.
+ON SCREEN
+KPI Ribbon shows: 2.4M subscribers evaluated | 1.8M emails scheduled | 600K on HOLD | Projected open rate 34.2% (vs. 28.1% baseline) | Revenue forecast $142K | Fatigue score 22/100 (green). Brand distribution chart shows 12 Hearst brands with varying send volumes. The donut chart highlights: 58% of today’s decisions were AI-influenced (33% personalized + 25% HOLD).
+TALK TRACK
+Two point four million decisions, made automatically at 2 AM this morning, before anyone on any brand team started their day. Every subscriber in Hearst’s universe was individually evaluated: which email is the best one for them today, from any Hearst brand? What time should they receive it? And critically — should they receive one at all? Twenty-five percent of subscribers are on HOLD today. That’s 600,000 emails we are NOT sending, because our model says those subscribers will engage better if we wait. That’s a counterintuitive decision that no brand team would make on their own — they’re incentivized to send. Atlas is incentivized to maximize lifetime value.
+
+Demo Step 2: Brand Deep-Dive (0:11–0:18)
+Click into Cosmopolitan from the brand distribution chart.
+ON SCREEN
+Screen 2 opens with Cosmopolitan’s today view. The Default vs. Atlas split shows: The Cosmo team planned to send their daily beauty newsletter to all 890K opted-in subscribers at 9 AM ET. Atlas is doing something very different: 340K (38%) get the planned Cosmo email (it won the scoring for these subscribers). 180K (20%) get the same email but with an AI-optimized subject line. 120K (13%) get a different Cosmo article (wellness focus instead of beauty). 85K (10%) get an email from a different Hearst brand instead (Elle career or Women’s Health fitness). 165K (19%) are on HOLD. Waterfall shows: Cosmo team predicted 24.8% open rate. Atlas predicts 33.6%. Delta: +35.5%.
+TALK TRACK
+Look at what Atlas did to Cosmo’s email today. The brand team prepared one email for 890,000 people. Atlas said: that email is great for 38% of your subscribers. For the rest, we can do better. 120,000 subscribers care more about wellness than beauty — so they get a wellness article from Cosmo’s own library. 85,000 subscribers actually engage more with Elle or Women’s Health than Cosmo right now — so a different brand leads today. And 165,000 subscribers have received too many emails this week already — so we’re protecting them for a better send tomorrow. The Cosmo team still controls their editorial. Atlas just makes sure the right reader gets the right content.
+
+Demo Step 3: Subscriber Explorer — “Sarah M.” (0:18–0:28)
+Click into a specific subscriber to show the full explainability view. This is the core of the demo.
+ON SCREEN
+Screen 3 opens for “Sarah M., New York, NY.” Brand Map shows: opted into Cosmo, Elle, GH, Esquire (4 brands). Esquire engagement is LOW (at-risk flag). Affinity Radar shows strong Wellness & Fitness and Career & Finance peaks, moderate Home & Garden, low Beauty & Style. Today’s NBA Decision: “Send Good Housekeeping: ‘5 Morning Habits That Actually Boost Productivity’ at 7:12 AM ET.” Scoring breakdown: content match 92%, brand affinity HIGH, revenue potential 3.2x (affiliate links), timing optimal, fatigue green (2 emails this week). Alternatives considered: Cosmo beauty (34% affinity — rejected), Elle career (78% affinity but recency penalty from yesterday’s Elle send), HOLD (above threshold but below GH article). Engagement Timeline shows the last 30 days of opens, clicks, and website visits — clearly concentrated in wellness and career content.
+TALK TRACK
+This is Sarah. She’s opted into four Hearst brands. If we look at her content affinity radar, she cares about wellness and career — not beauty, not fashion, not entertainment. But Cosmo was going to send her a beauty email today, because Cosmo sends beauty emails to everyone. Atlas looked at Sarah’s actual behavior and made a different choice: a Good Housekeeping productivity article that crosses wellness and career — her two strongest interests. Sent at 7:12 AM because that’s when Sarah opens emails. And notice the alternatives the system considered: it thought about the Cosmo email (too low affinity), the Elle career article (she got Elle yesterday), and even HOLD (but the GH article scored too well to skip). Every decision is explainable. Every decision is traceable to data. And if the Cosmo team disagrees, they can override — and the system learns from that override.
+
+Demo Step 4: Send Time Map (0:28–0:33)
+Navigate to Screen 4. Play the animated send wave.
+TALK TRACK
+Watch the map. Instead of one big blast at 9 AM New York time, you see a wave of personalized sends rolling across the globe. London subscribers got their emails at 8 AM local. New York at 7–8 AM local. LA at 7–9 AM local. Each subscriber’s send time is individually computed. The result? Europe’s open rate is up 48% — simply because we stopped sending them emails at 2 PM their time when they were in meetings, and started sending at 8 AM their time when they’re checking email over coffee.
+
+Demo Step 5: Fatigue Protection (0:33–0:38)
+Navigate to Screen 5. Focus on the HOLD impact panel.
+TALK TRACK
+This is the most counterintuitive result and the most important. Subscribers who were HELD — who received no email on a given day — had a 41% open rate on their next email, versus 29% for subscribers who were not held. That’s a 43% lift from NOT sending. The unsub rate dropped 50% since Atlas went live. And we can quantify the value: 12,400 subscribers who would have unsubscribed are still active, worth $186,000 in annual revenue. The best email is sometimes no email. No brand team will make that call for their own newsletter. Atlas makes it for the subscriber.
+
+Demo Step 6: Revenue Attribution (0:38–0:43)
+Navigate to Screen 6. Walk through the revenue waterfall.
+TALK TRACK
+Here’s the business case in one chart. This week: 8.2 million emails sent, generating $224,000 in revenue — a 44% lift over pre-Atlas performance. But look at the insight cards. Country Living generates twice the revenue per email as Cosmopolitan — because its readers click affiliate links for high-ticket home goods. Atlas automatically gives Country Living more share of the daily send allocation because it’s earning it. And notice the Esquire insight: the AI detected that Esquire’s declining engagement overlaps with Motor Trend’s audience — and recommends a cross-brand test. That’s an insight no human would spot because no human is looking across all 200 brands simultaneously. Atlas is.
+ 
