@@ -1308,7 +1308,7 @@ export async function registerRoutes(
           });
         }
       }
-      const totalLiveMatches = matchedAgents.filter((r) => r.matches.length > 0).length;
+      const totalLiveMatches = matchedAgents.reduce((sum, r) => sum + r.matches.length, 0);
       const coverageCount = toolCoverage.filter((t) => t.status !== "missing").length;
 
       res.json({
