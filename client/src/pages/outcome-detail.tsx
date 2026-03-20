@@ -540,7 +540,7 @@ export default function OutcomeDetail() {
     queryKey: ["/api/approvals"],
   });
 
-  const { data: allAgents } = useQuery<Agent[]>({
+  const { data: allAgents, dataUpdatedAt: agentsUpdatedAt } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
   });
 
@@ -1548,8 +1548,8 @@ export default function OutcomeDetail() {
         const pendingCount = pendingApprovals.length;
         const healthBg = avgHealth === null ? "bg-muted/30" : avgHealth >= 80 ? "bg-emerald-500/5" : avgHealth >= 60 ? "bg-amber-500/5" : "bg-red-500/5";
 
-        const refreshedAt = new Date();
-        const minsAgo = 0;
+        const refreshedAt = agentsUpdatedAt ? new Date(agentsUpdatedAt) : new Date();
+        const minsAgo = Math.floor((Date.now() - refreshedAt.getTime()) / 60000);
         return (
           <div className="flex flex-col gap-1.5" data-testid="platform-intelligence-strip">
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">

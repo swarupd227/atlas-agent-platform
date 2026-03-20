@@ -67,7 +67,7 @@ import type { LucideIcon } from "lucide-react";
 interface PlatformIntelTool {
   proposedName: string;
   status: "exists" | "partial" | "missing";
-  matchedTool?: { id: string; name: string } | null;
+  matchedTool?: { id: string; name: string; riskClassification?: string | null; serverId?: string | null } | null;
 }
 
 interface PlatformIntelAgent {
@@ -577,7 +577,13 @@ export default function OutcomeDiscover() {
   // Quick Create form intel query (Step 2 only) — use template industry with fallback to platform industry
   const formIntelIndustry = selectedFormTemplate?.industry || industry?.id || "cross_industry";
   const { data: formIntel } = useQuery<PlatformIntelResponse>({
-    queryKey: ["/api/outcomes/intelligence", { industry: formIntelIndustry }],
+    queryKey: ["/api/outcomes/intelligence/form", formIntelIndustry],
+    queryFn: async () => {
+      const params = new URLSearchParams({ industry: formIntelIndustry });
+      const r = await fetch(`/api/outcomes/intelligence?${params}`);
+      if (!r.ok) throw new Error("Failed to fetch form intel");
+      return r.json();
+    },
     enabled: builderMode === "form" && formStep === 2,
   });
 
@@ -633,6 +639,15 @@ export default function OutcomeDiscover() {
         await apiRequest("PATCH", `/api/outcomes/${outcome.id}`, { status: "awaiting_agent_plan" });
         queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
       } catch {}
+      if (pendingAgentAssign) {
+        try {
+          await apiRequest("PATCH", `/api/agents/${pendingAgentAssign.agentId}`, {
+            outcomeId: outcome.id,
+          });
+          queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+          toast({ title: "Agent assigned", description: `Agent bound to outcome "${outcome.name}"` });
+        } catch { /* non-fatal */ }
+      }
       if (pendingTemplateBuild) {
         navigate(`/agents?template=${pendingTemplateBuild.templateId}&forOutcome=${outcome.id}`);
       }
@@ -1874,14 +1889,21 @@ export default function OutcomeDiscover() {
                     <span className="text-xs text-muted-foreground">{proposal.outcomeContract.description}</span>
                     <div className="flex items-center gap-2 flex-wrap">
                       {platformIntel?.compositeRisk ? (
-                        <Badge
-                          variant={platformIntel.compositeRisk.level === "CRITICAL" || platformIntel.compositeRisk.level === "HIGH" ? "destructive" : "outline"}
-                          className={`text-[10px] ${platformIntel.compositeRisk.level === "LOW" ? "border-emerald-500/50 text-emerald-600 dark:text-emerald-400" : platformIntel.compositeRisk.level === "MEDIUM" ? "border-amber-500/50 text-amber-600 dark:text-amber-400" : ""}`}
-                          data-testid="badge-composite-risk"
-                          title={platformIntel.compositeRisk.rationale}
-                        >
-                          {platformIntel.compositeRisk.level} Composite Risk
-                        </Badge>
+                        <>
+                          <Badge
+                            variant={platformIntel.compositeRisk.level === "CRITICAL" || platformIntel.compositeRisk.level === "HIGH" ? "destructive" : "outline"}
+                            className={`text-[10px] ${platformIntel.compositeRisk.level === "LOW" ? "border-emerald-500/50 text-emerald-600 dark:text-emerald-400" : platformIntel.compositeRisk.level === "MEDIUM" ? "border-amber-500/50 text-amber-600 dark:text-amber-400" : ""}`}
+                            data-testid="badge-composite-risk"
+                            title={platformIntel.compositeRisk.rationale}
+                          >
+                            {platformIntel.compositeRisk.level} Composite Risk
+                          </Badge>
+                          {proposal.outcomeContract.riskTier && (
+                            <Badge variant="secondary" className="text-[9px] opacity-70" data-testid="badge-ai-risk-tier">
+                              AI: {proposal.outcomeContract.riskTier}
+                            </Badge>
+                          )}
+                        </>
                       ) : (
                         <Badge variant="outline" className="text-[10px]">{proposal.outcomeContract.riskTier} Risk</Badge>
                       )}
@@ -2007,8 +2029,14 @@ export default function OutcomeDiscover() {
                                 const isSelected = pendingAgentAssign?.agentId === a.id;
                                 const agentToolChips = agentTools.map((toolName) => {
                                   const tc = platformIntel.toolCoverage.find((t) => t.proposedName === toolName);
-                                  return { name: toolName, status: tc?.status || "missing" as const };
+                                  return {
+                                    name: toolName,
+                                    status: tc?.status || ("missing" as const),
+                                    matchedName: tc?.matchedTool?.name ?? null,
+                                    riskClassification: tc?.matchedTool?.riskClassification ?? null,
+                                  };
                                 });
+                                const registeredCount = agentToolChips.filter((c) => c.status === "exists" || c.status === "partial").length;
                                 return (
                                   <div key={a.id} className={`flex flex-col gap-1.5 p-2 rounded-md border transition-colors ${isSelected ? "bg-emerald-500/5 border-emerald-500/30" : "bg-muted/50 border-transparent"}`} data-testid={`platform-agent-${a.id}`}>
                                     <div className="flex items-center justify-between gap-2">
@@ -2034,21 +2062,38 @@ export default function OutcomeDiscover() {
                                       </button>
                                     </div>
                                     {agentToolChips.length > 0 && (
-                                      <div className="flex flex-wrap gap-1">
-                                        {agentToolChips.map((tc, i) => (
-                                          <span
-                                            key={i}
-                                            className={`inline-flex items-center gap-0.5 text-[9px] px-1 py-0.5 rounded border ${
-                                              tc.status === "exists" ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" :
-                                              tc.status === "partial" ? "border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/5" :
-                                              "border-red-500/40 text-red-600 dark:text-red-400 bg-red-500/5"
-                                            }`}
-                                            title={tc.status === "exists" ? "Tool registered" : tc.status === "partial" ? "Partial match" : "Not registered"}
-                                          >
-                                            {tc.status === "exists" ? <Check className="w-2 h-2" /> : tc.status === "partial" ? <Minus className="w-2 h-2" /> : <X className="w-2 h-2" />}
-                                            {tc.name}
+                                      <div className="flex flex-col gap-1">
+                                        <div className="flex items-center justify-between">
+                                          <span className="text-[9px] text-muted-foreground font-medium" data-testid={`text-tool-score-${a.id}`}>
+                                            {registeredCount}/{agentToolChips.length} tools registered
                                           </span>
-                                        ))}
+                                        </div>
+                                        <div className="flex flex-wrap gap-1">
+                                          {agentToolChips.map((tc, i) => (
+                                            <span
+                                              key={i}
+                                              className={`inline-flex items-center gap-0.5 text-[9px] px-1 py-0.5 rounded border ${
+                                                tc.status === "exists" ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" :
+                                                tc.status === "partial" ? "border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/5" :
+                                                "border-red-500/40 text-red-600 dark:text-red-400 bg-red-500/5"
+                                              }`}
+                                              title={
+                                                tc.status === "exists" ? `Registered · risk: ${tc.riskClassification || "low"}` :
+                                                tc.status === "partial" ? `Partial match → ${tc.matchedName || tc.name}` :
+                                                "Not registered in MCP catalog"
+                                              }
+                                              data-testid={`tool-chip-${a.id}-${i}`}
+                                            >
+                                              {tc.status === "exists" ? <Check className="w-2 h-2" /> : tc.status === "partial" ? <Minus className="w-2 h-2" /> : <X className="w-2 h-2" />}
+                                              {tc.status === "exists"
+                                                ? <>{tc.name}{tc.riskClassification && tc.riskClassification !== "low" && <span className="ml-0.5 opacity-60">·{tc.riskClassification.toUpperCase()}</span>}</>
+                                                : tc.status === "partial"
+                                                  ? <>{tc.name}{tc.matchedName && tc.matchedName !== tc.name && <span className="ml-0.5 opacity-70">~{tc.matchedName}</span>}</>
+                                                  : tc.name
+                                              }
+                                            </span>
+                                          ))}
+                                        </div>
                                       </div>
                                     )}
                                   </div>
@@ -2218,23 +2263,29 @@ export default function OutcomeDiscover() {
                         {/* Real policies from intel endpoint with enforcement type */}
                         {platformIntel?.matchedPolicies && platformIntel.matchedPolicies.length > 0 && (
                           <div className="flex flex-col gap-1.5">
-                            {platformIntel.matchedPolicies.map((pol, i) => (
-                              <div key={pol.id} className="flex flex-col gap-1 p-2 rounded-md bg-primary/5 border border-primary/10" data-testid={`real-policy-${i}`}>
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-[11px] font-medium">{pol.name}</span>
-                                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-mono">{pol.domain}</span>
-                                  <span className="text-[9px] text-primary font-medium bg-primary/5 px-1 py-0.5 rounded-full border border-primary/20">LIVE</span>
-                                  {pol.enforcementType && (
-                                    <span className={`text-[9px] font-medium px-1 py-0.5 rounded-full border ${pol.enforcementType === "auto" ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" : "border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/5"}`}>
-                                      {pol.enforcementType}
-                                    </span>
+                            {platformIntel.matchedPolicies.map((pol, i) => {
+                              const packName = findPolicyPackName(pol.name, pol.domain);
+                              return (
+                                <div key={pol.id} className="flex flex-col gap-1 p-2 rounded-md bg-primary/5 border border-primary/10" data-testid={`real-policy-${i}`}>
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="text-[11px] font-medium">{pol.name}</span>
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-mono">{pol.domain}</span>
+                                    <span className="text-[9px] text-primary font-medium bg-primary/5 px-1 py-0.5 rounded-full border border-primary/20">LIVE</span>
+                                    {pol.enforcementType && (
+                                      <span className={`text-[9px] font-medium px-1 py-0.5 rounded-full border ${pol.enforcementType === "auto" ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" : "border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/5"}`}>
+                                        {pol.enforcementType}
+                                      </span>
+                                    )}
+                                  </div>
+                                  {packName && (
+                                    <span className="text-[10px] text-muted-foreground/70 font-medium" data-testid={`text-real-policy-pack-${i}`}>{packName}</span>
+                                  )}
+                                  {pol.description && (
+                                    <span className="text-[10px] text-muted-foreground leading-relaxed">{pol.description}</span>
                                   )}
                                 </div>
-                                {pol.description && (
-                                  <span className="text-[10px] text-muted-foreground leading-relaxed">{pol.description}</span>
-                                )}
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         )}
                         {(!platformIntel?.matchedPolicies || platformIntel.matchedPolicies.length === 0) && (
@@ -2326,7 +2377,7 @@ export default function OutcomeDiscover() {
                       // Governance Readiness: KPIs, risk tier, SLA, policy match, approval gates, drift threshold
                       const hasKpis = (proposal.kpis?.length || 0) > 0;
                       const hasRiskTier = !!(proposal.outcomeContract?.riskTier);
-                      const hasSla = !!(proposal.outcomeContract?.maxDriftPercent || proposal.outcomeContract?.riskThreshold);
+                      const hasSla = !!(proposal.outcomeContract?.slaDescription || proposal.outcomeContract?.maxDriftPercent || proposal.outcomeContract?.riskThreshold);
                       const hasPolicies = (platformIntel?.summary?.matchedPolicyCount || 0) > 0;
                       const hasApprovalGates = !platformIntel?.summary?.hasApprovalGapRisk;
                       const hasDriftDef = !!(proposal.outcomeContract?.maxDriftPercent);
@@ -2367,7 +2418,7 @@ export default function OutcomeDiscover() {
                     {(() => {
                       const _hasKpis = (proposal.kpis?.length || 0) > 0;
                       const _hasRiskTier = !!(proposal.outcomeContract?.riskTier);
-                      const _hasSla = !!(proposal.outcomeContract?.maxDriftPercent || proposal.outcomeContract?.riskThreshold);
+                      const _hasSla = !!(proposal.outcomeContract?.slaDescription || proposal.outcomeContract?.maxDriftPercent || proposal.outcomeContract?.riskThreshold);
                       const _hasPolicies = (platformIntel?.summary?.matchedPolicyCount || 0) > 0;
                       const _hasApprovalGates = !platformIntel?.summary?.hasApprovalGapRisk;
                       const _hasDrift = !!(proposal.outcomeContract?.maxDriftPercent);
