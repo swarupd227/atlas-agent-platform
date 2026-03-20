@@ -97,6 +97,7 @@ interface PlatformIntelTemplate {
   avgKpiDelivery?: number | null;
   defaultRiskTier?: string | null;
   complianceCertifications?: string[];
+  tags?: string[];
 }
 
 interface PlatformIntelPolicy {
@@ -1362,9 +1363,14 @@ export default function OutcomeDiscover() {
                     {formIntel.matchedTemplates.length > 0 && (
                       <div className="flex flex-col gap-1">
                         <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide">Matching Templates</span>
-                        <div className="flex flex-wrap gap-1">
+                        <div className="flex flex-wrap gap-1.5">
                           {formIntel.matchedTemplates.slice(0, 3).map((t) => (
-                            <span key={t.id} className="text-[10px] px-1.5 py-0.5 rounded-full border bg-background/50 truncate max-w-[120px]" data-testid={`form-intel-template-${t.id}`}>{t.name}</span>
+                            <span key={t.id} className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full border bg-background/50" data-testid={`form-intel-template-${t.id}`}>
+                              <span className="truncate max-w-[100px]">{t.name}</span>
+                              {t.defaultRiskTier && (
+                                <span className={`text-[9px] font-semibold px-1 rounded ${t.defaultRiskTier === "HIGH" || t.defaultRiskTier === "CRITICAL" ? "text-red-600 dark:text-red-400" : t.defaultRiskTier === "MEDIUM" ? "text-amber-600 dark:text-amber-400" : "text-emerald-600 dark:text-emerald-400"}`}>{t.defaultRiskTier}</span>
+                              )}
+                            </span>
                           ))}
                         </div>
                       </div>
@@ -2281,6 +2287,13 @@ export default function OutcomeDiscover() {
                                 </div>
                                 {t.description && (
                                   <span className="text-[10px] text-muted-foreground leading-relaxed line-clamp-2" data-testid={`text-template-desc-${t.id}`}>{t.description}</span>
+                                )}
+                                {t.tags && t.tags.length > 0 && (
+                                  <div className="flex flex-wrap gap-1" data-testid={`template-capabilities-${t.id}`}>
+                                    {t.tags.slice(0, 5).map((tag, ti) => (
+                                      <span key={ti} className="text-[9px] px-1 py-0.5 rounded border border-muted-foreground/25 text-muted-foreground bg-muted/50">{tag}</span>
+                                    ))}
+                                  </div>
                                 )}
                                 {t.complianceCertifications && t.complianceCertifications.length > 0 && (
                                   <div className="flex flex-wrap gap-1" data-testid={`template-certs-${t.id}`}>

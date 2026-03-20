@@ -1185,6 +1185,7 @@ export async function registerRoutes(
           avgKpiDelivery: t.avgKpiDelivery || 0,
           defaultRiskTier: t.defaultRiskTier,
           complianceCertifications: t.complianceCertifications || [],
+          tags: t.tags || [],
         }));
 
       // Tool catalog coverage
