@@ -1239,6 +1239,8 @@ export async function registerRoutes(
           name: p.name,
           domain: p.domain,
           description: p.description,
+          enforcementType: p.scopeType === "org" ? "auto" : "manual",
+          scopeType: p.scopeType,
         }));
 
       // Composite risk calculation
@@ -1654,6 +1656,13 @@ export async function registerRoutes(
         lastEventAt: relevantEvents.length > 0 ? relevantEvents[relevantEvents.length - 1].createdAt : null,
       };
 
+      const now24hAgo = now - 86400000;
+      const recentTraces = relevantTraces.filter(t => new Date(t.startedAt || 0).getTime() >= now24hAgo);
+      const policyChecks24h = recentTraces.reduce((sum, t) => {
+        const checks = t.policyChecks as any[] | null;
+        return sum + (Array.isArray(checks) ? checks.length : 0);
+      }, 0);
+
       res.json({
         kpiTimeSeries,
         correlatedMetrics: {
@@ -1663,6 +1672,7 @@ export async function registerRoutes(
           failedRuns: failedTraces,
           latencyTrend,
           agentCount: boundAgents.length,
+          policyChecks24h,
         },
         dataQuality,
       });

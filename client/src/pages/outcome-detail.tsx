@@ -470,6 +470,7 @@ export default function OutcomeDetail() {
       failedRuns: number;
       latencyTrend: Array<{ date: string; value: number }>;
       agentCount: number;
+      policyChecks24h: number;
     };
     dataQuality: {
       totalEvents: number;
@@ -933,7 +934,10 @@ export default function OutcomeDetail() {
     return <Minus className="w-3.5 h-3.5 text-muted-foreground" />;
   };
 
-  const outcomeApprovals = allApprovals?.filter(a => a.objectId === outcomeId) || [];
+  const boundAgentIds = new Set((allAgents?.filter(a => a.outcomeId === outcomeId) || []).map(a => a.id));
+  const outcomeApprovals = allApprovals?.filter(a =>
+    a.objectId === outcomeId || (a.agentId && boundAgentIds.has(a.agentId))
+  ) || [];
   const pendingApprovals = outcomeApprovals.filter(a => a.status === "pending");
 
   const totalEventsCount = outcomeEvents?.length || 0;
@@ -1539,34 +1543,38 @@ export default function OutcomeDetail() {
           const pct = Math.abs((k.currentValue - k.target) / Math.max(Math.abs(k.target), 1)) * 100;
           return pct > maxDrift;
         });
-        const activePolicies = (governancePolicies || []).filter(p => p.status === "active");
+        const policyChecks24h = evidence?.correlatedMetrics?.policyChecks24h ?? null;
+        const activePoliciesCount = (governancePolicies || []).filter(p => p.status === "active").length;
         const pendingCount = pendingApprovals.length;
-        const healthColor = avgHealth === null ? "text-muted-foreground" : avgHealth >= 80 ? "text-emerald-500 dark:text-emerald-400" : avgHealth >= 60 ? "text-amber-500 dark:text-amber-400" : "text-red-500 dark:text-red-400";
         const healthBg = avgHealth === null ? "bg-muted/30" : avgHealth >= 80 ? "bg-emerald-500/5" : avgHealth >= 60 ? "bg-amber-500/5" : "bg-red-500/5";
 
         return (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="platform-intelligence-strip">
+            {/* Tile 1: Agent Health Pulse — ProgressRing visualization */}
             <button
               type="button"
               onClick={() => setActiveTab("agent-map")}
               className={`flex items-center gap-3 p-3 rounded-lg border ${healthBg} hover:opacity-80 transition-opacity text-left`}
               data-testid="strip-agent-health"
             >
-              <div className="flex flex-col items-center justify-center w-10 h-10 rounded-full bg-background border shrink-0">
-                <Activity className={`w-4 h-4 ${healthColor}`} />
-              </div>
+              {avgHealth !== null ? (
+                <ProgressRing value={avgHealth} size={40} strokeWidth={3} />
+              ) : (
+                <div className="flex flex-col items-center justify-center w-10 h-10 rounded-full bg-background border shrink-0">
+                  <Activity className="w-4 h-4 text-muted-foreground" />
+                </div>
+              )}
               <div className="flex flex-col min-w-0">
                 <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Agent Health</span>
-                <span className={`text-lg font-bold tabular-nums leading-tight ${healthColor}`}>
-                  {avgHealth !== null ? `${avgHealth}` : "—"}
-                  {avgHealth !== null && <span className="text-xs font-normal ml-0.5">/ 100</span>}
-                </span>
-                <span className="text-[10px] text-muted-foreground truncate">
-                  {boundAgents.length === 0 ? "No agents assigned" : `${boundAgents.length} agent${boundAgents.length !== 1 ? "s" : ""} bound`}
-                </span>
+                {avgHealth !== null ? (
+                  <span className="text-xs text-muted-foreground">avg across {boundAgents.length} agent{boundAgents.length !== 1 ? "s" : ""}</span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">No agents assigned</span>
+                )}
               </div>
             </button>
 
+            {/* Tile 2: Drift Status — KPIs outside maxDriftPercent */}
             <button
               type="button"
               onClick={() => setActiveTab("kpi-delivery")}
@@ -1588,6 +1596,7 @@ export default function OutcomeDetail() {
               </div>
             </button>
 
+            {/* Tile 3: Policy Activity — checks fired in last 24h (from traces) + active policy count */}
             <button
               type="button"
               onClick={() => setActiveTab("governance")}
@@ -1595,19 +1604,25 @@ export default function OutcomeDetail() {
               data-testid="strip-policy-activity"
             >
               <div className="flex flex-col items-center justify-center w-10 h-10 rounded-full bg-background border shrink-0">
-                <ShieldCheck className={`w-4 h-4 ${activePolicies.length > 0 ? "text-primary" : "text-muted-foreground"}`} />
+                <ShieldCheck className={`w-4 h-4 ${activePoliciesCount > 0 ? "text-primary" : "text-muted-foreground"}`} />
               </div>
               <div className="flex flex-col min-w-0">
-                <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Policies Active</span>
-                <span className="text-lg font-bold tabular-nums leading-tight text-primary">
-                  {activePolicies.length}
-                </span>
-                <span className="text-[10px] text-muted-foreground truncate">
-                  {activePolicies.length === 0 ? "No policies bound" : "auto-enforced"}
-                </span>
+                <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Policy Activity</span>
+                {policyChecks24h !== null ? (
+                  <>
+                    <span className="text-lg font-bold tabular-nums leading-tight text-primary">{policyChecks24h}</span>
+                    <span className="text-[10px] text-muted-foreground truncate">checks last 24h · {activePoliciesCount} active</span>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-lg font-bold tabular-nums leading-tight text-primary">{activePoliciesCount}</span>
+                    <span className="text-[10px] text-muted-foreground truncate">{activePoliciesCount === 0 ? "No policies bound" : "auto-enforced"}</span>
+                  </>
+                )}
               </div>
             </button>
 
+            {/* Tile 4: Approval Queue — pending approvals for outcome + bound agents */}
             <button
               type="button"
               onClick={() => setActiveTab("governance")}
@@ -1623,7 +1638,7 @@ export default function OutcomeDetail() {
                   {pendingCount}
                 </span>
                 <span className="text-[10px] text-muted-foreground truncate">
-                  {pendingCount === 0 ? "All resolved" : `pending review`}
+                  {pendingCount === 0 ? "All resolved" : "pending review"}
                 </span>
               </div>
             </button>

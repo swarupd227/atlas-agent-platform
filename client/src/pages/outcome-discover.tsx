@@ -42,6 +42,7 @@ import {
   ShieldCheck,
   TrendingDown,
   Star,
+  AlertTriangle,
 } from "lucide-react";
 import { findPolicyPackName } from "@/lib/policy-packs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -371,6 +372,7 @@ export default function OutcomeDiscover() {
   const [loadingIntel, setLoadingIntel] = useState(false);
   const [showPlatformMatch, setShowPlatformMatch] = useState(true);
   const [showRealPolicies, setShowRealPolicies] = useState(true);
+  const [showFormIntel, setShowFormIntel] = useState(true);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const speechRecognitionRef = useRef<any>(null);
@@ -1220,10 +1222,15 @@ export default function OutcomeDiscover() {
                   </div>
                 </div>
 
-                {/* T004 — Platform Intelligence Hint Panel */}
+                {/* T004 — Platform Intelligence Hint Panel (collapsible) */}
                 {formIntel && (formIntel.matchedTemplates?.length > 0 || formIntel.matchedPolicies?.length > 0 || (formIntel.matchedAgents || []).some((r: any) => r.matches.length > 0)) && (
-                  <div className="flex flex-col gap-2 p-3 rounded-lg border border-primary/20 bg-primary/5" data-testid="form-intel-panel">
-                    <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-col rounded-lg border border-primary/20 bg-primary/5 overflow-hidden" data-testid="form-intel-panel">
+                    <button
+                      type="button"
+                      onClick={() => setShowFormIntel(!showFormIntel)}
+                      className="flex items-center justify-between gap-2 p-3 w-full hover:bg-primary/5 transition-colors"
+                      data-testid="button-toggle-form-intel"
+                    >
                       <div className="flex items-center gap-1.5">
                         <Cpu className="w-3.5 h-3.5 text-primary" />
                         <span className="text-xs font-semibold text-primary">Platform Intelligence</span>
@@ -1238,8 +1245,11 @@ export default function OutcomeDiscover() {
                         {formIntel.summary?.matchedPolicyCount > 0 && (
                           <Badge variant="outline" className="text-[9px] border-primary/40 text-primary">{formIntel.summary.matchedPolicyCount} policies</Badge>
                         )}
+                        <ChevronDown className={`w-3.5 h-3.5 text-primary transition-transform ${showFormIntel ? "rotate-180" : ""}`} />
                       </div>
-                    </div>
+                    </button>
+                    {showFormIntel && (
+                    <div className="flex flex-col gap-2 px-3 pb-3">
                     {(formIntel.matchedAgents || []).some((r: any) => r.matches.length > 0) && (
                       <div className="flex flex-col gap-1">
                         <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide">Live Agents</span>
@@ -1275,6 +1285,8 @@ export default function OutcomeDiscover() {
                           ))}
                         </div>
                       </div>
+                    )}
+                    </div>
                     )}
                   </div>
                 )}
@@ -1919,31 +1931,48 @@ export default function OutcomeDiscover() {
                     </CardHeader>
                     {showPlatformMatch && !loadingIntel && platformIntel && (
                       <CardContent className="p-3 pt-0 flex flex-col gap-3">
-                        {/* Tier 1 — Live Agents */}
+                        {/* Tier 1 — Live Agents with per-agent tool coverage score */}
                         {(platformIntel.matchedAgents || []).some((r: any) => r.matches.length > 0) && (
                           <div className="flex flex-col gap-1.5">
                             <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Tier 1 — Live Agents</span>
-                            {(platformIntel.matchedAgents || []).filter((r: any) => r.matches.length > 0).flatMap((r: any) =>
-                              r.matches.slice(0, 2).map((a: any) => (
+                            {(platformIntel.matchedAgents || []).filter((r: any) => r.matches.length > 0).flatMap((r: any) => {
+                              const agentDef = (proposal?.proposedAgents || []).find((pa: any) => (pa.role || pa.name || "") === r.role);
+                              const agentTools: string[] = agentDef?.requiredTools || agentDef?.tools || [];
+                              const coveredCount = agentTools.length > 0
+                                ? (platformIntel.toolCoverage || []).filter((tc: any) => agentTools.includes(tc.proposedName) && tc.status !== "missing").length
+                                : null;
+                              return r.matches.slice(0, 2).map((a: any) => (
                                 <div key={a.id} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/50" data-testid={`platform-agent-${a.id}`}>
                                   <div className="flex items-center gap-2 min-w-0 flex-1">
                                     <div className={`w-2 h-2 rounded-full shrink-0 ${a.status === "active" ? "bg-emerald-500" : a.status === "degraded" ? "bg-amber-500" : "bg-muted-foreground"}`} />
                                     <div className="flex flex-col min-w-0">
                                       <span className="text-[11px] font-medium truncate">{a.name}</span>
-                                      <div className="flex items-center gap-2">
+                                      <div className="flex items-center gap-2 flex-wrap">
                                         <span className="text-[10px] text-muted-foreground">Health: {a.healthScore}</span>
                                         <span className="text-[10px] text-muted-foreground">{a.totalRuns.toLocaleString()} runs</span>
-                                        <span className="text-[10px] text-primary font-medium">for: {r.role}</span>
+                                        {coveredCount !== null && (
+                                          <span className={`text-[10px] font-medium ${coveredCount === agentTools.length ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+                                            {coveredCount}/{agentTools.length} tools
+                                          </span>
+                                        )}
                                       </div>
                                     </div>
                                   </div>
-                                  <Badge variant="outline" className="text-[9px] shrink-0">Assign</Badge>
+                                  <button
+                                    type="button"
+                                    onClick={() => navigate(`/agents?create=true&assignTo=${encodeURIComponent(r.role)}`)}
+                                    className="text-[9px] px-2 py-0.5 rounded border border-primary/30 text-primary hover:bg-primary/5 shrink-0 transition-colors"
+                                    data-testid={`button-assign-agent-${a.id}`}
+                                    title={`Assign to role: ${r.role}`}
+                                  >
+                                    Assign →
+                                  </button>
                                 </div>
-                              ))
-                            )}
+                              ));
+                            })}
                           </div>
                         )}
-                        {/* Tier 2 — Templates */}
+                        {/* Tier 2 — Templates with Build action */}
                         {(platformIntel.matchedTemplates || []).length > 0 && (
                           <div className="flex flex-col gap-1.5">
                             <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Tier 2 — Templates</span>
@@ -1957,15 +1986,23 @@ export default function OutcomeDiscover() {
                                     <span className="text-[10px] text-primary">{t.deploymentCount} deployments</span>
                                   </div>
                                 </div>
-                                <Badge variant="outline" className="text-[9px] shrink-0">Build</Badge>
+                                <button
+                                  type="button"
+                                  onClick={() => navigate(`/agents?template=${t.id}`)}
+                                  className="text-[9px] px-2 py-0.5 rounded border border-primary/30 text-primary hover:bg-primary/5 shrink-0 transition-colors"
+                                  data-testid={`button-build-template-${t.id}`}
+                                  title={`Build from template: ${t.name}`}
+                                >
+                                  Build →
+                                </button>
                               </div>
                             ))}
                           </div>
                         )}
-                        {/* Tool Coverage */}
+                        {/* Tool Coverage — global chip list with progress */}
                         {(platformIntel.toolCoverage || []).length > 0 && (
                           <div className="flex flex-col gap-1.5">
-                            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Tool Coverage</span>
+                            <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Tool Catalog Coverage</span>
                             <div className="flex flex-wrap gap-1.5">
                               {(platformIntel.toolCoverage || []).map((t: any, i: number) => (
                                 <span
@@ -1975,7 +2012,7 @@ export default function OutcomeDiscover() {
                                     t.status === "partial" ? "border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/5" :
                                     "border-red-500/40 text-red-600 dark:text-red-400 bg-red-500/5"
                                   }`}
-                                  title={t.status === "exists" ? `Registered: ${t.matchedTool?.name}` : t.status === "partial" ? `Partial match: ${t.matchedTool?.name}` : "Not registered"}
+                                  title={t.status === "exists" ? `Registered: ${t.matchedTool?.name}` : t.status === "partial" ? `Partial match: ${t.matchedTool?.name}` : "Not registered — needs onboarding"}
                                   data-testid={`tool-coverage-${i}`}
                                 >
                                   {t.status === "exists" ? <Check className="w-2.5 h-2.5" /> : t.status === "partial" ? <Minus className="w-2.5 h-2.5" /> : <X className="w-2.5 h-2.5" />}
@@ -1986,7 +2023,7 @@ export default function OutcomeDiscover() {
                             {platformIntel.summary?.toolCoveragePercent !== undefined && (
                               <div className="flex items-center gap-2">
                                 <Progress value={platformIntel.summary.toolCoveragePercent} className="h-1 flex-1" />
-                                <span className="text-[10px] text-muted-foreground shrink-0">{platformIntel.summary.toolCoveragePercent}% covered</span>
+                                <span className="text-[10px] text-muted-foreground shrink-0">{platformIntel.summary.toolCoveragePercent}% registered</span>
                               </div>
                             )}
                           </div>
@@ -2116,7 +2153,7 @@ export default function OutcomeDiscover() {
                     </CardHeader>
                     {showRealPolicies && (
                       <CardContent className="p-3 pt-0 flex flex-col gap-2">
-                        {/* Real policies from intel endpoint */}
+                        {/* Real policies from intel endpoint with enforcement type */}
                         {platformIntel?.matchedPolicies && platformIntel.matchedPolicies.length > 0 && (
                           <div className="flex flex-col gap-1.5">
                             {platformIntel.matchedPolicies.map((pol: any, i: number) => (
@@ -2125,6 +2162,11 @@ export default function OutcomeDiscover() {
                                   <span className="text-[11px] font-medium">{pol.name}</span>
                                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-mono">{pol.domain}</span>
                                   <span className="text-[9px] text-primary font-medium bg-primary/5 px-1 py-0.5 rounded-full border border-primary/20">LIVE</span>
+                                  {pol.enforcementType && (
+                                    <span className={`text-[9px] font-medium px-1 py-0.5 rounded-full border ${pol.enforcementType === "auto" ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" : "border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/5"}`}>
+                                      {pol.enforcementType}
+                                    </span>
+                                  )}
                                 </div>
                                 {pol.description && (
                                   <span className="text-[10px] text-muted-foreground leading-relaxed">{pol.description}</span>
@@ -2287,26 +2329,48 @@ export default function OutcomeDiscover() {
                         </Card>
                       );
                     })()}
-                    <div className="flex flex-col gap-2">
-                      <Button
-                        onClick={handleAcceptProposal}
-                        disabled={createOutcomeMutation.isPending}
-                        className="w-full"
-                        data-testid="button-accept-proposal"
-                      >
-                        {createOutcomeMutation.isPending ? (
-                          <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                        ) : (
-                          <CheckCircle className="w-4 h-4 mr-1.5" />
-                        )}
-                        Create Outcome Contract
-                      </Button>
-                      <p className="text-[10px] text-center text-muted-foreground">
-                        {allChecked
-                          ? "All validation items confirmed — ready to create"
-                          : `${(proposal.validationChecklist?.length || 0) - checkedItems.size} validation items remaining (optional)`}
-                      </p>
-                    </div>
+                    {(() => {
+                      const _policyScore = platformIntel?.summary?.matchedPolicyCount > 0 ? 25 : 0;
+                      const _toolScore = Math.round((platformIntel?.summary?.toolCoveragePercent || 0) / 4);
+                      const _agentScore = platformIntel?.summary?.liveAgentMatchCount > 0 ? 20 : (platformIntel?.summary?.templateCount > 0 ? 10 : 0);
+                      const _checklistTotal = proposal.validationChecklist?.length || 0;
+                      const _checklistScore = _checklistTotal > 0 ? Math.round((checkedItems.size / _checklistTotal) * 30) : 30;
+                      const _readiness = platformIntel ? Math.min(100, _policyScore + _toolScore + _agentScore + _checklistScore) : null;
+                      const _lowReadiness = _readiness !== null && _readiness < 60;
+                      return (
+                        <div className="flex flex-col gap-2">
+                          <Button
+                            onClick={handleAcceptProposal}
+                            disabled={createOutcomeMutation.isPending}
+                            className={`w-full ${_lowReadiness ? "border-amber-500/40" : ""}`}
+                            variant={_lowReadiness ? "outline" : "default"}
+                            data-testid="button-accept-proposal"
+                            title={_lowReadiness ? `Governance readiness is ${_readiness}/100 — consider addressing gaps before creating` : undefined}
+                          >
+                            {createOutcomeMutation.isPending ? (
+                              <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                            ) : _lowReadiness ? (
+                              <AlertTriangle className="w-4 h-4 mr-1.5 text-amber-500" />
+                            ) : (
+                              <CheckCircle className="w-4 h-4 mr-1.5" />
+                            )}
+                            Create Outcome Contract
+                            {_readiness !== null && !createOutcomeMutation.isPending && (
+                              <span className={`ml-2 text-[10px] font-normal tabular-nums ${_lowReadiness ? "text-amber-500" : "opacity-60"}`}>
+                                {_readiness}/100
+                              </span>
+                            )}
+                          </Button>
+                          <p className="text-[10px] text-center text-muted-foreground">
+                            {_lowReadiness
+                              ? `Readiness ${_readiness}/100 — review governance gaps above before creating`
+                              : allChecked
+                                ? "All validation items confirmed — ready to create"
+                                : `${(proposal.validationChecklist?.length || 0) - checkedItems.size} validation items remaining (optional)`}
+                          </p>
+                        </div>
+                      );
+                    })()}
                   </>
                 )}
               </div>
