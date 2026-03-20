@@ -108,6 +108,7 @@ interface PlatformIntelPolicy {
   description?: string | null;
   enforcementType?: string | null;
   scopeType?: string | null;
+  policyPack?: string | null;
 }
 
 interface PlatformIntelResponse {
@@ -2447,7 +2448,7 @@ export default function OutcomeDiscover() {
                         {platformIntel?.matchedPolicies && platformIntel.matchedPolicies.length > 0 && (
                           <div className="flex flex-col gap-1.5">
                             {platformIntel.matchedPolicies.map((pol, i) => {
-                              const packName = (pol as any).policyPack ?? findPolicyPackName(pol.name, pol.domain);
+                              const packName = pol.policyPack ?? findPolicyPackName(pol.name, pol.domain);
                               return (
                                 <div key={pol.id} className="flex flex-col gap-1 p-2 rounded-md bg-primary/5 border border-primary/10" data-testid={`real-policy-${i}`}>
                                   <div className="flex items-center gap-2 flex-wrap">
@@ -2573,85 +2574,74 @@ export default function OutcomeDiscover() {
                       const readinessScore = kpiScore + riskTierScore + slaScore + policyScore + approvalGateScore + driftScore;
                       const scoreColor = readinessScore >= 80 ? "text-emerald-600 dark:text-emerald-400" : readinessScore >= 50 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
                       const progressColor = readinessScore >= 80 ? "bg-emerald-500" : readinessScore >= 50 ? "bg-amber-500" : "bg-red-500";
-                      return (
-                        <Card className="border-dashed" data-testid="card-readiness-score">
-                          <CardContent className="p-3 flex flex-col gap-2">
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-1.5">
-                                <Star className="w-3.5 h-3.5 text-muted-foreground" />
-                                <span className="text-xs font-medium text-muted-foreground">Governance Readiness</span>
-                              </div>
-                              <span className={`text-xl font-bold tabular-nums ${scoreColor}`} data-testid="text-readiness-score">{readinessScore}<span className="text-xs font-normal">/100</span></span>
-                            </div>
-                            <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden">
-                              <div className={`h-full rounded-full ${progressColor} transition-all duration-500`} style={{ width: `${readinessScore}%` }} />
-                            </div>
-                            <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-                              <span className="text-[10px] text-muted-foreground">KPIs defined: <span className={hasKpis ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}>{hasKpis ? `${proposal.kpis?.length} KPIs` : "none"}</span></span>
-                              <span className="text-[10px] text-muted-foreground">Risk tier: <span className={hasRiskTier ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}>{proposal.outcomeContract?.riskTier || "unset"}</span></span>
-                              <span className="text-[10px] text-muted-foreground">Platform policies: <span className={hasPolicies ? "text-emerald-600 dark:text-emerald-400" : "text-amber-500"}>{platformIntel?.summary?.matchedPolicyCount || 0}</span></span>
-                              <span className="text-[10px] text-muted-foreground">Approval gates: <span className={hasApprovalGates ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}>{hasApprovalGates ? "covered" : "gaps"}</span></span>
-                              <span className="text-[10px] text-muted-foreground">Drift threshold: <span className={hasDriftDef ? "text-emerald-600 dark:text-emerald-400" : "text-amber-500"}>{hasDriftDef ? `${proposal.outcomeContract?.maxDriftPercent}%` : "unset"}</span></span>
-                              <span className="text-[10px] text-muted-foreground">SLA defined: <span className={hasSla ? "text-emerald-600 dark:text-emerald-400" : "text-amber-500"}>{hasSla ? "yes" : "no"}</span></span>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      );
-                    })()}
-                    {(() => {
-                      const _hasKpis = (proposal.kpis?.length || 0) > 0;
-                      const _hasRiskTier = !!(proposal.outcomeContract?.riskTier);
-                      const _hasSla = !!(proposal.outcomeContract?.slaDescription);
-                      const _hasPolicies = (platformIntel?.summary?.matchedPolicyCount || 0) > 0;
-                      const _hasApprovalGates = !platformIntel?.summary?.hasApprovalGapRisk;
-                      const _hasDrift = !!(proposal.outcomeContract?.maxDriftPercent);
-                      const _readiness = platformIntel ? (
-                        (_hasKpis ? 20 : 0) + (_hasRiskTier ? 15 : 0) + (_hasSla ? 15 : 0) +
-                        (_hasPolicies ? 25 : 0) + (_hasApprovalGates ? 15 : 0) + (_hasDrift ? 10 : 0)
-                      ) : null;
+                      const _readiness = platformIntel ? readinessScore : null;
                       const _lowReadiness = _readiness !== null && _readiness < 60;
                       return (
-                        <div className="flex flex-col gap-2">
-                          <TooltipProvider>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                          <Button
-                            onClick={handleAcceptProposal}
-                            disabled={createOutcomeMutation.isPending}
-                            className={`w-full ${_lowReadiness ? "border-amber-500/40" : ""}`}
-                            variant={_lowReadiness ? "outline" : "default"}
-                            data-testid="button-accept-proposal"
-                          >
-                            {createOutcomeMutation.isPending ? (
-                              <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
-                            ) : _lowReadiness ? (
-                              <AlertTriangle className="w-4 h-4 mr-1.5 text-amber-500" />
-                            ) : (
-                              <CheckCircle className="w-4 h-4 mr-1.5" />
-                            )}
-                            Create Outcome Contract
-                            {_readiness !== null && !createOutcomeMutation.isPending && (
-                              <span className={`ml-2 text-[10px] font-normal tabular-nums ${_lowReadiness ? "text-amber-500" : "opacity-60"}`}>
-                                {_readiness}/100
-                              </span>
-                            )}
-                          </Button>
-                              </TooltipTrigger>
-                              {_lowReadiness && (
-                                <TooltipContent side="top" className="max-w-[240px] text-xs">
-                                  Governance readiness is {_readiness}/100 — consider addressing gaps above before creating.
-                                </TooltipContent>
-                              )}
-                            </Tooltip>
-                          </TooltipProvider>
-                          <p className="text-[10px] text-center text-muted-foreground">
-                            {_lowReadiness
-                              ? `Readiness ${_readiness}/100 — review governance gaps above before creating`
-                              : allChecked
-                                ? "All validation items confirmed — ready to create"
-                                : `${(proposal.validationChecklist?.length || 0) - checkedItems.size} validation items remaining (optional)`}
-                          </p>
-                        </div>
+                        <>
+                          <Card className="border-dashed" data-testid="card-readiness-score">
+                            <CardContent className="p-3 flex flex-col gap-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-1.5">
+                                  <Star className="w-3.5 h-3.5 text-muted-foreground" />
+                                  <span className="text-xs font-medium text-muted-foreground">Governance Readiness</span>
+                                </div>
+                                <span className={`text-xl font-bold tabular-nums ${scoreColor}`} data-testid="text-readiness-score">{readinessScore}<span className="text-xs font-normal">/100</span></span>
+                              </div>
+                              <div className="w-full h-1.5 rounded-full bg-muted overflow-hidden">
+                                <div className={`h-full rounded-full ${progressColor} transition-all duration-500`} style={{ width: `${readinessScore}%` }} />
+                              </div>
+                              <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                                <span className="text-[10px] text-muted-foreground">KPIs defined: <span className={hasKpis ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}>{hasKpis ? `${proposal.kpis?.length} KPIs` : "none"}</span></span>
+                                <span className="text-[10px] text-muted-foreground">Risk tier: <span className={hasRiskTier ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}>{proposal.outcomeContract?.riskTier || "unset"}</span></span>
+                                <span className="text-[10px] text-muted-foreground">Platform policies: <span className={hasPolicies ? "text-emerald-600 dark:text-emerald-400" : "text-amber-500"}>{platformIntel?.summary?.matchedPolicyCount || 0}</span></span>
+                                <span className="text-[10px] text-muted-foreground">Approval gates: <span className={hasApprovalGates ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}>{hasApprovalGates ? "covered" : "gaps"}</span></span>
+                                <span className="text-[10px] text-muted-foreground">Drift threshold: <span className={hasDriftDef ? "text-emerald-600 dark:text-emerald-400" : "text-amber-500"}>{hasDriftDef ? `${proposal.outcomeContract?.maxDriftPercent}%` : "unset"}</span></span>
+                                <span className="text-[10px] text-muted-foreground">SLA defined: <span className={hasSla ? "text-emerald-600 dark:text-emerald-400" : "text-amber-500"}>{hasSla ? "yes" : "no"}</span></span>
+                              </div>
+                            </CardContent>
+                          </Card>
+                          <div className="flex flex-col gap-2">
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    onClick={handleAcceptProposal}
+                                    disabled={createOutcomeMutation.isPending}
+                                    className={`w-full ${_lowReadiness ? "border-amber-500/40" : ""}`}
+                                    variant={_lowReadiness ? "outline" : "default"}
+                                    data-testid="button-accept-proposal"
+                                  >
+                                    {createOutcomeMutation.isPending ? (
+                                      <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />
+                                    ) : _lowReadiness ? (
+                                      <AlertTriangle className="w-4 h-4 mr-1.5 text-amber-500" />
+                                    ) : (
+                                      <CheckCircle className="w-4 h-4 mr-1.5" />
+                                    )}
+                                    Create Outcome Contract
+                                    {_readiness !== null && !createOutcomeMutation.isPending && (
+                                      <span className={`ml-2 text-[10px] font-normal tabular-nums ${_lowReadiness ? "text-amber-500" : "opacity-60"}`}>
+                                        {_readiness}/100
+                                      </span>
+                                    )}
+                                  </Button>
+                                </TooltipTrigger>
+                                {_lowReadiness && (
+                                  <TooltipContent side="top" className="max-w-[240px] text-xs">
+                                    Governance readiness is {_readiness}/100 — consider addressing gaps above before creating.
+                                  </TooltipContent>
+                                )}
+                              </Tooltip>
+                            </TooltipProvider>
+                            <p className="text-[10px] text-center text-muted-foreground">
+                              {_lowReadiness
+                                ? `Readiness ${_readiness}/100 — review governance gaps above before creating`
+                                : allChecked
+                                  ? "All validation items confirmed — ready to create"
+                                  : `${(proposal.validationChecklist?.length || 0) - checkedItems.size} validation items remaining (optional)`}
+                            </p>
+                          </div>
+                        </>
                       );
                     })()}
                   </>
