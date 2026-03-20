@@ -175,6 +175,230 @@ function getServerDefinitions(): MockMcpServerDef[] {
       ],
     },
     {
+      name: "Hearst Data Platform MCP Server",
+      description: "Hearst subscriber data platform: ESP event streams, website behavior from Adobe Analytics, subscription status, purchase history, and demographic enrichment from Experian/Acxiom. Covers 6.2M subscribers across 12 Hearst brands.",
+      baseUrl: `${BASE_URL}/api/mock/hearst-data-platform`,
+      tools: [
+        {
+          name: "get_esp_events",
+          description: "Retrieve ESP engagement events (opens, clicks, unsubscribes, bounces) from Salesforce Marketing Cloud for one or all subscribers. Supports filtering by subscriberId, brand, and lookback window.",
+          endpoint: "/esp-events",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              subscriberId: { type: "string", description: "Subscriber ID to filter events for (omit for portfolio view)" },
+              brand: { type: "string", description: "Filter by Hearst brand name" },
+              limit: { type: "number", description: "Max events to return (default 50, max 200)" },
+              lookback_days: { type: "number", description: "How many days back to look (default 30)" },
+            },
+          },
+        },
+        {
+          name: "get_website_behavior",
+          description: "Retrieve subscriber website session data including pages visited, time on site, articles read, video plays, and content affinity signals from Adobe Analytics.",
+          endpoint: "/website-behavior",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              subscriberId: { type: "string", description: "Subscriber ID" },
+              limit: { type: "number", description: "Max sessions to return (default 30)" },
+            },
+          },
+        },
+        {
+          name: "get_subscription_status",
+          description: "Get current subscription status, tier (free/premium/vip), MRR, lifetime value, and churn risk for a subscriber across all Hearst brands.",
+          endpoint: "/subscription-status",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              subscriberId: { type: "string", description: "Subscriber ID" },
+            },
+          },
+        },
+        {
+          name: "get_purchase_history",
+          description: "Retrieve transaction history for a subscriber including subscriptions, single issues, merchandise, and event tickets.",
+          endpoint: "/purchase-history",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              subscriberId: { type: "string", description: "Subscriber ID" },
+              limit: { type: "number", description: "Max transactions to return (default 20)" },
+            },
+          },
+        },
+        {
+          name: "get_demographic_data",
+          description: "Retrieve household demographic enrichment for a subscriber including age group, income, region, education, luxury propensity, and travel frequency from Experian/Acxiom.",
+          endpoint: "/demographic-data",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              subscriberId: { type: "string", description: "Subscriber ID" },
+            },
+          },
+        },
+      ],
+    },
+    {
+      name: "Hearst CMS MCP Server",
+      description: "Hearst content management system: editorial calendar, email-sendable article inventory with topic tagging and freshness scoring, newsletter archives, and historical content performance metrics by audience segment.",
+      baseUrl: `${BASE_URL}/api/mock/hearst-cms`,
+      tools: [
+        {
+          name: "get_editorial_calendar",
+          description: "Retrieve upcoming and recent editorial calendar entries across Hearst brands. Returns scheduled publish dates, content categories, and target audiences.",
+          endpoint: "/editorial-calendar",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              brand: { type: "string", description: "Filter by Hearst brand name" },
+              lookback_days: { type: "number", description: "Days back/forward to include (default 14)" },
+              limit: { type: "number", description: "Max entries (default 30)" },
+            },
+          },
+        },
+        {
+          name: "get_cms_articles",
+          description: "Retrieve email-sendable CMS articles with topic tags, freshness scores, and historical CTR by brand. Use email_sendable=true to filter to deliverable content only.",
+          endpoint: "/articles",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              brand: { type: "string", description: "Filter by Hearst brand name" },
+              category: { type: "string", description: "Filter by content category" },
+              email_sendable: { type: "string", enum: ["true", "false"], description: "Filter to email-sendable articles only" },
+              limit: { type: "number", description: "Max articles (default 50)" },
+            },
+          },
+        },
+        {
+          name: "get_newsletter_archives",
+          description: "Retrieve historical newsletter editions with open rate, click rate, revenue attributed, and top article IDs for content deduplication and reuse analysis.",
+          endpoint: "/newsletter-archives",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              brand: { type: "string", description: "Filter by Hearst brand name" },
+              limit: { type: "number", description: "Max newsletters (default 20)" },
+            },
+          },
+        },
+        {
+          name: "get_content_performance",
+          description: "Retrieve detailed performance metrics for articles: opens, clicks, CTR, scroll depth, conversion rate, revenue attributed, and performance breakdown by audience segment (free/premium/vip).",
+          endpoint: "/content-performance",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              articleId: { type: "string", description: "Specific article ID to get performance for" },
+              brand: { type: "string", description: "Filter by Hearst brand name" },
+              limit: { type: "number", description: "Max records (default 30)" },
+            },
+          },
+        },
+      ],
+    },
+    {
+      name: "Hearst Email Queue MCP Server",
+      description: "Hearst email operations: pending email campaign queues across all 12 brands with priority scores and recipient estimates, fatigue management rules (frequency caps, cool-down periods, score thresholds), and business rules (compliance, exclusivity, priority ordering).",
+      baseUrl: `${BASE_URL}/api/mock/hearst-email-queue`,
+      tools: [
+        {
+          name: "get_brand_email_queues",
+          description: "Retrieve all pending email campaigns queued across Hearst brands for today and tomorrow. Returns subject lines, priority scores, recipient estimates, target segments, and predicted revenue.",
+          endpoint: "/brand-email-queues",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              brand: { type: "string", description: "Filter to a specific Hearst brand" },
+              limit: { type: "number", description: "Max queue entries (default 60)" },
+            },
+          },
+        },
+        {
+          name: "get_fatigue_rules",
+          description: "Retrieve all active fatigue management rules: weekly send caps, fatigue score thresholds, same-brand same-day blocks, cool-down periods, and unsubscribe risk guards. Essential for HOLD decision logic.",
+          endpoint: "/fatigue-rules",
+          method: "GET",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "get_business_rules",
+          description: "Retrieve all active business rules governing send decisions: access control tiers, advertiser exclusivity windows, CCPA/CAN-SPAM compliance rules, brand priority ordering, and holiday blackout dates.",
+          endpoint: "/business-rules",
+          method: "GET",
+          inputSchema: { type: "object", properties: {} },
+        },
+      ],
+    },
+    {
+      name: "Hearst Analytics MCP Server",
+      description: "Hearst email analytics: detailed send-level logs from SFMC with delivery, open, and click metrics; post-click conversion events (subscriptions, paywall, purchases); deliverability KPIs (inbox placement, sender reputation, DKIM/SPF/DMARC); and affiliate revenue attribution from Skimlinks/Amazon Associates.",
+      baseUrl: `${BASE_URL}/api/mock/hearst-analytics`,
+      tools: [
+        {
+          name: "get_send_logs",
+          description: "Retrieve detailed send-level logs including delivery status, open rate, click rate, bounce type, spam rate, and inbox placement from Salesforce Marketing Cloud.",
+          endpoint: "/send-logs",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              brand: { type: "string", description: "Filter by Hearst brand" },
+              limit: { type: "number", description: "Max log entries (default 50)" },
+              lookback_days: { type: "number", description: "Lookback window in days (default 7)" },
+            },
+          },
+        },
+        {
+          name: "get_conversion_data",
+          description: "Retrieve post-click conversion events including subscription starts, upgrades, paywall conversions, and purchases with revenue attribution and time-to-convert metrics.",
+          endpoint: "/conversion-data",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              brand: { type: "string", description: "Filter by Hearst brand" },
+              limit: { type: "number", description: "Max conversions (default 30)" },
+              lookback_days: { type: "number", description: "Lookback window in days (default 30)" },
+            },
+          },
+        },
+        {
+          name: "get_deliverability_metrics",
+          description: "Retrieve deliverability KPIs per Hearst brand: inbox placement rate, spam rate, sender reputation score, DKIM/SPF/DMARC pass rates, and ISP-level breakdown (Gmail, Outlook, Yahoo, Apple Mail).",
+          endpoint: "/deliverability",
+          method: "GET",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "get_affiliate_revenue",
+          description: "Retrieve affiliate revenue attribution per brand from Skimlinks and Amazon Associates: clicks, conversions, revenue, average order value, and earnings per click.",
+          endpoint: "/affiliate-revenue",
+          method: "GET",
+          inputSchema: {
+            type: "object",
+            properties: {
+              brand: { type: "string", description: "Filter by Hearst brand" },
+              lookback_days: { type: "number", description: "Lookback window in days (default 30)" },
+            },
+          },
+        },
+      ],
+    },
+    {
       name: "Adobe Analytics",
       description: "Adobe Analytics API for web analytics reporting including page views, referral sources, conversion funnels, visitor segments, and engagement metrics.",
       baseUrl: `${BASE_URL}/api/mock/adobe`,

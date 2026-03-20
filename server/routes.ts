@@ -22,6 +22,10 @@ import { registerKnowledgeBaseRoutes } from "./kb-routes";
 import adobeAnalyticsRouter from "./mock-mcp/adobe-analytics";
 import marketoRouter from "./mock-mcp/marketo";
 import salesforceRouter from "./mock-mcp/salesforce";
+import hearstDataPlatformRouter from "./mock-mcp/hearst-data-platform";
+import hearstCmsRouter from "./mock-mcp/hearst-cms";
+import hearstEmailQueueRouter from "./mock-mcp/hearst-email-queue";
+import hearstAnalyticsRouter from "./mock-mcp/hearst-analytics";
 import { registerMockMcpServers } from "./mock-mcp/register";
 import type { RedactionLevel } from "./permissions";
 import {
@@ -1087,6 +1091,10 @@ export async function registerRoutes(
   app.use("/api/mock/adobe", adobeAnalyticsRouter);
   app.use("/api/mock/marketo", marketoRouter);
   app.use("/api/mock/salesforce", salesforceRouter);
+  app.use("/api/mock/hearst-data-platform", hearstDataPlatformRouter);
+  app.use("/api/mock/hearst-cms", hearstCmsRouter);
+  app.use("/api/mock/hearst-email-queue", hearstEmailQueueRouter);
+  app.use("/api/mock/hearst-analytics", hearstAnalyticsRouter);
 
   app.post("/api/mock-mcp/register", async (_req, res) => {
     try {
