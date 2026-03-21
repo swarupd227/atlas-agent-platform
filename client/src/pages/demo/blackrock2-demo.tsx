@@ -361,6 +361,7 @@ export default function BlackRock2Demo() {
         const errLabel: Record<string, string> = {
           ECONNREFUSED:                    "unreachable — deferred",
           PENDING_SETTLEMENTS_BLOCK:       "blocked — pending settlements",
+          PENDING_SETTLEMENTS_FOUND:       "pending settlements detected",
           CRITICAL_TIER_APPROVAL_REQUIRED: "blocked — manager approval required",
         };
         const errText = data?.error ? (errLabel[data.error] || data.error) : "failed";

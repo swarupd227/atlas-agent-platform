@@ -1504,29 +1504,44 @@ demoRouter.get("/blackrock2/live-run", async (req: Request, res: Response) => {
   let currentAgentName = "unknown";
   let aborted = false;
 
+  // Only process events from the 6 BK2 deployments — prevents background periodic agents
+  // (Weather Alert, AQ Sentinel, etc.) from polluting this SSE stream.
+  const bk2DeploymentIds = new Set<string>();
+
   const onRuntimeEvent = (evt: { deploymentId: string; agentId: string; runId: string; result: any }) => {
     if (aborted) return;
+    if (bk2DeploymentIds.size > 0 && !bk2DeploymentIds.has(evt.deploymentId)) return;
+
     const steps: any[] = evt.result?.steps ?? [];
     const toolCallSteps = steps.filter((s: any) => s.type === "api_call");
     for (const step of toolCallSteps) {
       const tool = step.mcpTool || step.output?.mcpTool || step.name || "unknown_tool";
       const stepCompleted = step.status === "completed" || step.status === "passed";
 
-      // Check the tool response body — a step can "complete" (HTTP 200) but report failure in body
+      // Check the tool response body — a step can "complete" (HTTP 200) but carry semantic failure
       const responseData = step.output?.data ?? step.output ?? null;
       const bodySuccess = (() => {
         if (!responseData) return stepCompleted;
-        // Explicit success field
+        // Explicit success field (execute-access-removal returns success:false when blocked)
         if (typeof responseData.success === "boolean") return responseData.success;
-        // Portal health check — reachable:false means blocked
+        // Portal health check — reachable:false means the portal is down
         if (typeof responseData.reachable === "boolean") return responseData.reachable;
-        // Verification status
+        // Verification status — "deferred" or "pending_approval" means not yet removed
         if (responseData.status === "deferred" || responseData.status === "pending_approval") return false;
+        // Pending settlements — check_pending_settlements returns hasPendingSettlements:true when blocked
+        if (responseData.hasPendingSettlements === true) return false;
         return stepCompleted;
       })();
 
       const success = stepCompleted && bodySuccess;
-      const errorReason = !success ? (responseData?.errorCode || responseData?.errorMessage || step.error || "blocked") : null;
+      const errorReason = !success
+        ? (responseData?.errorCode
+          || (responseData?.hasPendingSettlements ? "PENDING_SETTLEMENTS_FOUND" : null)
+          || responseData?.errorMessage
+          || responseData?.message
+          || step.error
+          || "blocked")
+        : null;
 
       sendEvent("agent_event", {
         agentName: currentAgentName,
@@ -1567,6 +1582,7 @@ demoRouter.get("/blackrock2/live-run", async (req: Request, res: Response) => {
       const agentName = agent?.name || role;
       const depId = await ensureBk2AgentDeployment(agentId, agentName, mcpServerId);
       deploymentIds[role] = depId;
+      bk2DeploymentIds.add(depId); // allow onRuntimeEvent to process events from this deployment
     }
 
     sendEvent("setup", { message: `All 6 agents configured — starting execution for ${employee} (${empId}), case ${caseId}` });
