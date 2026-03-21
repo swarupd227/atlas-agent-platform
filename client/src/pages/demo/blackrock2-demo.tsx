@@ -83,7 +83,7 @@ const AGENT_NAME_MAP: Record<string, AgentNodeId> = {
   "Active Trade Check Agent":       "active_trade_check",
   "Access Removal Executor Agent":  "access_removal",
   "Removal Verification Agent":     "removal_verification",
-  "Audit Evidence Agent":           "audit_evidence",
+  "Audit & Evidence Agent":         "audit_evidence",
 };
 
 // ─── Scenario data ────────────────────────────────────────────────────────────
@@ -631,34 +631,57 @@ export default function BlackRock2Demo() {
               className="flex-1 overflow-y-auto px-5 py-4 space-y-1 font-mono text-[11px]"
               data-testid="bk2-live-feed"
             >
-              {liveEvents.map((ev) => (
-                <div key={ev.id} className="flex items-start gap-2.5" data-testid={`bk2-live-event-${ev.id}`}>
-                  <span className="text-muted-foreground/60 shrink-0 pt-0.5 w-16">{ev.time}</span>
-                  <span className={`leading-relaxed ${
-                    ev.type === "run_start" || ev.type === "setup"     ? "text-muted-foreground" :
-                    ev.type === "agent_start"                          ? "text-primary font-semibold" :
-                    ev.type === "tool_call_start"                      ? "text-blue-400" :
-                    ev.type === "tool_call_result" && ev.success       ? "text-emerald-400" :
-                    ev.type === "tool_call_result" && !ev.success      ? "text-red-400" :
-                    ev.type === "agent_complete" && ev.message.startsWith("✓") ? "text-emerald-400" :
-                    ev.type === "agent_complete"                       ? "text-amber-400" :
-                    ev.type === "run_complete"                         ? "text-primary font-semibold" :
-                    ev.type === "final_analysis"                       ? "text-muted-foreground" :
-                    ev.type === "error"                                ? "text-red-400" :
-                    "text-foreground"
-                  }`}>
-                    {ev.type === "tool_call_start"                            && <Zap         className="inline w-3 h-3 mr-1 text-blue-400" />}
-                    {ev.type === "tool_call_result" && ev.success             && <CheckCircle2 className="inline w-3 h-3 mr-1 text-emerald-400" />}
-                    {ev.type === "tool_call_result" && ev.success === false   && <XCircle      className="inline w-3 h-3 mr-1 text-red-400" />}
-                    {ev.type === "agent_start"                                && <Cpu         className="inline w-3 h-3 mr-1 text-primary" />}
-                    {ev.type === "run_complete"                               && <CheckCircle2 className="inline w-3 h-3 mr-1 text-emerald-400" />}
-                    {ev.type === "error"                                      && <XCircle      className="inline w-3 h-3 mr-1 text-red-400" />}
-                    {ev.type === "agent_complete" && ev.message.startsWith("✓") && <CheckCircle2 className="inline w-3 h-3 mr-1 text-emerald-400" />}
-                    {ev.type === "agent_complete" && !ev.message.startsWith("✓") && <AlertTriangle className="inline w-3 h-3 mr-1 text-amber-400" />}
-                    {ev.message}
-                  </span>
-                </div>
-              ))}
+              {(() => {
+                // Group consecutive identical tool_call_result entries (same tool + same success)
+                const grouped: Array<{ ev: LiveEvent; count: number }> = [];
+                for (const ev of liveEvents) {
+                  const last = grouped[grouped.length - 1];
+                  if (
+                    last &&
+                    ev.type === "tool_call_result" &&
+                    last.ev.type === "tool_call_result" &&
+                    ev.tool === last.ev.tool &&
+                    ev.success === last.ev.success
+                  ) {
+                    last.count++;
+                  } else {
+                    grouped.push({ ev, count: 1 });
+                  }
+                }
+                return grouped.map(({ ev, count }) => (
+                  <div key={ev.id} className="flex items-start gap-2.5" data-testid={`bk2-live-event-${ev.id}`}>
+                    <span className="text-muted-foreground/60 shrink-0 pt-0.5 w-16">{ev.time}</span>
+                    <span className={`leading-relaxed flex items-center gap-1.5 ${
+                      ev.type === "run_start" || ev.type === "setup"     ? "text-muted-foreground" :
+                      ev.type === "agent_start"                          ? "text-primary font-semibold" :
+                      ev.type === "tool_call_start"                      ? "text-blue-400" :
+                      ev.type === "tool_call_result" && ev.success       ? "text-emerald-400" :
+                      ev.type === "tool_call_result" && !ev.success      ? "text-red-400" :
+                      ev.type === "agent_complete" && ev.message.startsWith("✓") ? "text-emerald-400" :
+                      ev.type === "agent_complete"                       ? "text-amber-400" :
+                      ev.type === "run_complete"                         ? "text-primary font-semibold" :
+                      ev.type === "final_analysis"                       ? "text-muted-foreground" :
+                      ev.type === "error"                                ? "text-red-400" :
+                      "text-foreground"
+                    }`}>
+                      {ev.type === "tool_call_start"                            && <Zap         className="inline w-3 h-3 mr-0.5 text-blue-400 shrink-0" />}
+                      {ev.type === "tool_call_result" && ev.success             && <CheckCircle2 className="inline w-3 h-3 mr-0.5 text-emerald-400 shrink-0" />}
+                      {ev.type === "tool_call_result" && ev.success === false   && <XCircle      className="inline w-3 h-3 mr-0.5 text-red-400 shrink-0" />}
+                      {ev.type === "agent_start"                                && <Cpu         className="inline w-3 h-3 mr-0.5 text-primary shrink-0" />}
+                      {ev.type === "run_complete"                               && <CheckCircle2 className="inline w-3 h-3 mr-0.5 text-emerald-400 shrink-0" />}
+                      {ev.type === "error"                                      && <XCircle      className="inline w-3 h-3 mr-0.5 text-red-400 shrink-0" />}
+                      {ev.type === "agent_complete" && ev.message.startsWith("✓") && <CheckCircle2 className="inline w-3 h-3 mr-0.5 text-emerald-400 shrink-0" />}
+                      {ev.type === "agent_complete" && !ev.message.startsWith("✓") && <AlertTriangle className="inline w-3 h-3 mr-0.5 text-amber-400 shrink-0" />}
+                      <span>{ev.message}</span>
+                      {count > 1 && (
+                        <span className="ml-1 text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-muted border border-border text-muted-foreground shrink-0">
+                          ×{count}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                ));
+              })()}
 
               {running && liveEvents.length === 0 && (
                 <div className="flex items-center gap-2.5 text-muted-foreground">

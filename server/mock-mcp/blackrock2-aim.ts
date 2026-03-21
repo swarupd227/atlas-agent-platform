@@ -69,7 +69,7 @@ router.post("/validate-termination", (req: Request, res: Response) => {
 });
 
 // ─── Tool: scan_portal_accounts ──────────────────────────────────────────────
-router.post("/scan-portal-accounts", (req: Request, res: Response) => {
+router.post(["/scan-portal-accounts", "/scan-accounts", "/scan_portal_accounts", "/scan_accounts"], (req: Request, res: Response) => {
   const s = resolveScenario(req.body);
   if (!s) return res.status(404).json({ error: "No active scenario" });
 
@@ -96,7 +96,7 @@ router.post("/scan-portal-accounts", (req: Request, res: Response) => {
 });
 
 // ─── Tool: check_portal_health ───────────────────────────────────────────────
-router.post("/check-portal-health", (req: Request, res: Response) => {
+router.post(["/check-portal-health", "/check-health", "/check_portal_health"], (req: Request, res: Response) => {
   const s = resolveScenario(req.body);
   const portalName: string = req.body.portalName || "";
 
@@ -133,7 +133,7 @@ router.post("/check-portal-health", (req: Request, res: Response) => {
 });
 
 // ─── Tool: check_pending_settlements ─────────────────────────────────────────
-router.post("/check-pending-settlements", (req: Request, res: Response) => {
+router.post(["/check-pending-settlements", "/check-settlements", "/check_pending_settlements"], (req: Request, res: Response) => {
   const s = resolveScenario(req.body);
   const portalName: string = req.body.portalName || "";
 
@@ -207,7 +207,7 @@ router.post("/check-pending-settlements", (req: Request, res: Response) => {
 });
 
 // ─── Tool: execute_access_removal ────────────────────────────────────────────
-router.post("/execute-access-removal", (req: Request, res: Response) => {
+router.post(["/execute-access-removal", "/execute-removal", "/execute_access_removal"], (req: Request, res: Response) => {
   const s = resolveScenario(req.body);
   const portalName: string = req.body.portalName || "";
   const authType: string = req.body.authType || "SAML";
@@ -308,7 +308,7 @@ router.post("/execute-access-removal", (req: Request, res: Response) => {
 });
 
 // ─── Tool: verify_access_removed ─────────────────────────────────────────────
-router.post("/verify-access-removed", (req: Request, res: Response) => {
+router.post(["/verify-access-removed", "/verify-removal", "/verify_access_removed"], (req: Request, res: Response) => {
   const s = resolveScenario(req.body);
   const portalName: string = req.body.portalName || "";
 
@@ -389,7 +389,7 @@ router.post("/verify-access-removed", (req: Request, res: Response) => {
 });
 
 // ─── Tool: generate_evidence_package ─────────────────────────────────────────
-router.post("/generate-evidence-package", (req: Request, res: Response) => {
+router.post(["/generate-evidence-package", "/generate-evidence", "/generate_evidence_package"], (req: Request, res: Response) => {
   const s = resolveScenario(req.body);
   const caseId: string = req.body.caseId || s?.caseId || "AIM-UNKNOWN";
   const portalsRemoved: number = req.body.portalsRemoved || s?.portals.filter((p) => p.reachable).length || 0;
