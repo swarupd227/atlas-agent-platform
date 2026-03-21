@@ -10,8 +10,13 @@ import { Link } from "wouter";
 import {
   ChevronDown, Check, AlertTriangle, Pause, User,
   ChevronRight, Bot, Database, ExternalLink, Clock,
-  CheckCircle2, XCircle,
+  CheckCircle2, XCircle, Play, Activity, SendHorizonal, Sparkles,
 } from "lucide-react";
+import {
+  useNBARun,
+  HEARST_PERSONAS,
+  type NBARunStep,
+} from "./hearst-constants";
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ResponsiveContainer, Tooltip,
 } from "recharts";
@@ -86,9 +91,40 @@ interface TraceStep {
   decisions: any;
 }
 
+function LiveRunStepRow({ step, index }: { step: NBARunStep; index: number }) {
+  const colors = ["text-indigo-400", "text-violet-400", "text-blue-400", "text-cyan-400", "text-teal-400", "text-sky-400"];
+  const numColors = ["bg-indigo-500/20 text-indigo-300", "bg-violet-500/20 text-violet-300", "bg-blue-500/20 text-blue-300", "bg-cyan-500/20 text-cyan-300", "bg-teal-500/20 text-teal-300", "bg-sky-500/20 text-sky-300"];
+  const col = colors[index % colors.length];
+  return (
+    <div className="flex items-start gap-2.5 py-2 border-b border-border/20 last:border-none">
+      <span className={`text-[9px] font-bold w-5 h-5 rounded flex items-center justify-center shrink-0 mt-0.5 ${numColors[index % numColors.length]}`}>{index + 1}</span>
+      <div className="w-5 h-5 shrink-0 mt-0.5 rounded bg-muted/30 flex items-center justify-center">
+        <Database className={`w-3 h-3 ${col}`} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-0.5">
+          <span className={`text-[11px] font-mono font-semibold ${col}`}>{step.tool}</span>
+          <span className="text-[9px] text-muted-foreground/50 truncate max-w-[120px]">{step.server}</span>
+          {step.durationMs > 0 && (
+            <span className="ml-auto text-[9px] text-muted-foreground/50 shrink-0">
+              {step.durationMs < 1000 ? `${step.durationMs}ms` : `${(step.durationMs / 1000).toFixed(1)}s`}
+            </span>
+          )}
+        </div>
+        <p className="text-[10px] text-muted-foreground/70 line-clamp-2 leading-relaxed">{step.outputSummary}</p>
+      </div>
+      <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0 mt-0.5" />
+    </div>
+  );
+}
+
 function DecisionTracePanel({ subscriberId }: { subscriberId: string }) {
   const [expandedStep, setExpandedStep] = useState<string | null>(null);
   const [altExpanded, setAltExpanded] = useState(false);
+
+  const { run, isRunning, trigger } = useNBARun(subscriberId);
+  const personaLabel = HEARST_PERSONAS.find(p => p.id === subscriberId)?.label ?? subscriberId;
+  const runTrigger = () => trigger(personaLabel);
 
   const { data, isLoading } = useQuery<any>({
     queryKey: ["/demo-api/hearst/subscriber", subscriberId, "trace"],
@@ -113,18 +149,129 @@ function DecisionTracePanel({ subscriberId }: { subscriberId: string }) {
     );
   }
 
+  // ── LIVE RUN MODE ────────────────────────────────────────────────────────
+  if (run || isRunning) {
+    return (
+      <Card className="border-indigo-500/20">
+        <CardHeader className="pb-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <Bot className="w-4 h-4 text-indigo-400" />
+            <CardTitle className="text-sm font-medium">Decision Trace — How This Was Decided</CardTitle>
+            <Badge className="text-[10px] bg-indigo-500/20 text-indigo-300 border-indigo-500/30 flex items-center gap-1">
+              <Sparkles className="w-2.5 h-2.5" /> Live Claude run
+            </Badge>
+            {run && !isRunning && (
+              <Badge className={`text-[10px] ml-1 ${run.action === "SEND" ? "bg-green-500/20 text-green-300 border-green-500/30" : "bg-orange-500/20 text-orange-300 border-orange-500/30"}`}>
+                {run.action === "SEND" ? "✓ SEND" : "⏸ HOLD"}
+              </Badge>
+            )}
+            <Button
+              size="sm"
+              variant="outline"
+              data-testid="s3-run-live-btn"
+              className="ml-auto h-6 text-[10px] gap-1 border-indigo-500/30 hover:bg-indigo-500/10"
+              onClick={runTrigger}
+              disabled={isRunning}
+            >
+              <Play className={`w-2.5 h-2.5 ${isRunning ? "animate-pulse text-indigo-400" : ""}`} />
+              {isRunning ? "Running…" : "Re-run"}
+            </Button>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Real Anthropic execution — tool calls and reasoning from Claude.
+          </p>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3 pt-0">
+          {/* Running state */}
+          {isRunning && (
+            <div className="flex items-center gap-2.5 py-3">
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-indigo-500" />
+              </span>
+              <span className="text-sm font-medium text-indigo-300">NBA Orchestrator Agent is reasoning…</span>
+            </div>
+          )}
+
+          {/* Reasoning block */}
+          {run && !isRunning && run.reasoning && (
+            <div className="p-3 rounded-lg bg-indigo-500/[0.06] border border-indigo-500/20">
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <Activity className="w-3 h-3 text-indigo-400" />
+                <span className="text-[10px] font-semibold text-indigo-300">Claude Reasoning</span>
+              </div>
+              <p className="text-[11px] text-muted-foreground/90 leading-relaxed">{run.reasoning}</p>
+            </div>
+          )}
+
+          {/* Decision chip */}
+          {run && !isRunning && (
+            <div className={`flex items-center gap-3 p-2.5 rounded-lg border ${run.action === "SEND" ? "bg-green-500/10 border-green-500/20" : "bg-orange-500/10 border-orange-500/20"}`}>
+              {run.action === "SEND"
+                ? <SendHorizonal className="w-4 h-4 text-green-400 shrink-0" />
+                : <Pause className="w-4 h-4 text-orange-400 shrink-0" />}
+              <span className={`text-sm font-bold ${run.action === "SEND" ? "text-green-300" : "text-orange-300"}`}>
+                {run.action === "SEND" ? "SEND" : "HOLD"} Decision
+              </span>
+            </div>
+          )}
+
+          {/* Live tool steps */}
+          {run && !isRunning && run.steps.length > 0 && (
+            <div>
+              <p className="text-[10px] font-medium text-muted-foreground mb-1.5 flex items-center gap-1">
+                <Database className="w-3 h-3" />
+                MCP Tool Calls ({run.steps.length})
+              </p>
+              <div className="rounded-lg border border-border/30 bg-background/40 px-3 py-1">
+                {run.steps.map((step, i) => <LiveRunStepRow key={`${step.tool}-${i}`} step={step} index={i} />)}
+              </div>
+            </div>
+          )}
+
+          {run && !isRunning && run.steps.length === 0 && (
+            <div className="text-[11px] text-muted-foreground/60 text-center py-3">
+              No tool call steps captured — the LLM produced a direct response.
+            </div>
+          )}
+
+          <div className="flex items-center justify-between text-[9px] text-muted-foreground/40 pt-1">
+            {run && <span>Completed {new Date(run.completedAt).toLocaleTimeString()}</span>}
+            <span>{run?.steps.length || 0} tool calls · real Anthropic execution</span>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // ── STATIC FALLBACK MODE (existing logic below) ──────────────────────────
+  const staticHeader = (
+    <div className="flex items-center gap-2 flex-wrap">
+      <Bot className="w-4 h-4 text-indigo-400" />
+      <CardTitle className="text-sm font-medium">Decision Trace — How This Was Decided</CardTitle>
+      <Badge variant="secondary" className="text-[10px] ml-auto">4 agents · run records</Badge>
+      <Button
+        size="sm"
+        variant="outline"
+        data-testid="s3-run-live-btn"
+        className="h-6 text-[10px] gap-1 border-indigo-500/30 hover:bg-indigo-500/10"
+        onClick={runTrigger}
+        disabled={isRunning}
+      >
+        <Play className="w-2.5 h-2.5" />
+        Run Live
+      </Button>
+    </div>
+  );
+
   const steps: TraceStep[] = data?.steps || [];
 
   return (
     <Card>
       <CardHeader className="pb-3">
-        <div className="flex items-center gap-2">
-          <Bot className="w-4 h-4 text-indigo-400" />
-          <CardTitle className="text-sm font-medium">Decision Trace — How This Was Decided</CardTitle>
-          <Badge variant="secondary" className="text-[10px] ml-auto">4 agents · real run records</Badge>
-        </div>
+        {staticHeader}
         <p className="text-[11px] text-muted-foreground">
-          Step-by-step pipeline from real platform run traces and MCP tool call spans. Click a step to expand.
+          Step-by-step pipeline from real platform run traces and MCP tool call spans. Click a step to expand or click "Run Live" for a real Anthropic execution.
         </p>
       </CardHeader>
       <CardContent className="flex flex-col gap-2">

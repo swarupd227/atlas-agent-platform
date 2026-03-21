@@ -1,13 +1,20 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
 import {
   TrendingUp, Mail, PauseCircle, DollarSign, AlertTriangle, Info, Star,
   CheckCircle2, Clock, ExternalLink, Bot, ShieldCheck,
+  Play, Activity, Database, ChevronDown, User, Check, SendHorizonal, Pause,
 } from "lucide-react";
-import { ensureHearstAgentConfig } from "./hearst-constants";
+import {
+  ensureHearstAgentConfig,
+  useNBARun,
+  HEARST_PERSONAS,
+  type NBARunStep,
+} from "./hearst-constants";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell, AreaChart, Area,
@@ -67,6 +74,181 @@ const TRIGGER_LABEL: Record<string, string> = {
   event: "Event-triggered",
   manual: "Manual",
 };
+
+const TOOL_SERVER_COLORS: Record<string, string> = {
+  "Hearst Data Platform": "text-indigo-400",
+  "Hearst CMS":           "text-violet-400",
+  "Hearst Email Queue":   "text-blue-400",
+  "Hearst Analytics":     "text-cyan-400",
+};
+
+function TickerStep({ step, index }: { step: NBARunStep; index: number }) {
+  const colors = ["text-indigo-400", "text-violet-400", "text-blue-400", "text-cyan-400", "text-teal-400", "text-sky-400"];
+  const col = colors[index % colors.length];
+  const serverCol = Object.entries(TOOL_SERVER_COLORS).find(([k]) => step.server.includes(k.split(" ")[2] || k))?.[1] || col;
+  return (
+    <div className="flex items-start gap-2.5 py-2 border-b border-border/20 last:border-none">
+      <div className="w-5 h-5 shrink-0 mt-0.5 rounded bg-muted/30 flex items-center justify-center">
+        <Database className={`w-3 h-3 ${serverCol}`} />
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 mb-0.5">
+          <span className={`text-[11px] font-mono font-semibold ${col}`}>{step.tool}</span>
+          <span className="text-[9px] text-muted-foreground/50 truncate max-w-[140px]">{step.server}</span>
+          {step.durationMs > 0 && (
+            <span className="ml-auto text-[9px] text-muted-foreground/50 shrink-0">{step.durationMs < 1000 ? `${step.durationMs}ms` : `${(step.durationMs / 1000).toFixed(1)}s`}</span>
+          )}
+        </div>
+        <p className="text-[10px] text-muted-foreground/70 line-clamp-2 leading-relaxed">{step.outputSummary}</p>
+      </div>
+      <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0 mt-0.5" />
+    </div>
+  );
+}
+
+function NBAPipelineSection() {
+  const [selectedPersonaId, setSelectedPersonaId] = useState<string>(HEARST_PERSONAS[0].id);
+  const [showPersonaMenu, setShowPersonaMenu] = useState(false);
+  const { run, isRunning, trigger } = useNBARun(selectedPersonaId);
+  const persona = HEARST_PERSONAS.find(p => p.id === selectedPersonaId) || HEARST_PERSONAS[0];
+
+  return (
+    <Card className="border-indigo-500/20 bg-indigo-500/[0.02]">
+      <CardHeader className="pb-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Activity className="w-4 h-4 text-indigo-400" />
+          <CardTitle className="text-sm font-medium">Live NBA Pipeline Execution</CardTitle>
+          <Badge variant="secondary" className="text-[10px]">Claude-powered</Badge>
+          {run && !isRunning && (
+            <Badge className={`text-[10px] ml-1 ${run.action === "SEND" ? "bg-green-500/20 text-green-300 border-green-500/30" : "bg-orange-500/20 text-orange-300 border-orange-500/30"}`}>
+              {run.action === "SEND" ? "✓ SEND" : "⏸ HOLD"}
+            </Badge>
+          )}
+          <div className="ml-auto flex items-center gap-2">
+            {/* Persona picker */}
+            <div className="relative">
+              <button
+                data-testid="s1-persona-picker"
+                className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground border border-border/50 rounded-md px-2 py-1 transition-colors"
+                onClick={() => setShowPersonaMenu(v => !v)}
+              >
+                <User className="w-3 h-3" />
+                <span>{persona.label.split(" — ")[0]}</span>
+                <ChevronDown className="w-2.5 h-2.5" />
+              </button>
+              {showPersonaMenu && (
+                <div className="absolute right-0 top-full mt-1 z-50 bg-background border rounded-lg shadow-lg py-1 min-w-[200px]">
+                  {HEARST_PERSONAS.map(p => (
+                    <button
+                      key={p.id}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-muted/50 text-left"
+                      onClick={() => { setSelectedPersonaId(p.id); setShowPersonaMenu(false); }}
+                    >
+                      <User className="w-3 h-3 text-muted-foreground shrink-0" />
+                      <div>
+                        <p className="text-[11px] font-medium">{p.label.split(" — ")[0]}</p>
+                        <p className="text-[9px] text-muted-foreground">{p.tier} · {p.stage}</p>
+                      </div>
+                      {p.id === selectedPersonaId && <Check className="w-3 h-3 text-primary ml-auto shrink-0" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <Button
+              size="sm"
+              data-testid="s1-run-pipeline-btn"
+              className="h-7 text-xs gap-1.5 bg-indigo-600 hover:bg-indigo-500"
+              onClick={() => trigger(persona.label)}
+              disabled={isRunning}
+            >
+              <Play className={`w-3 h-3 ${isRunning ? "animate-pulse" : ""}`} />
+              {isRunning ? "Running…" : "▶ Run Pipeline"}
+            </Button>
+          </div>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          Calls the real NBA Email Decision Agent via Anthropic Claude — live MCP tool execution.
+        </p>
+      </CardHeader>
+      <CardContent className="pt-0">
+        {/* Idle state */}
+        {!isRunning && !run && (
+          <div className="flex flex-col items-center justify-center py-8 text-center">
+            <div className="w-10 h-10 rounded-full bg-indigo-500/10 flex items-center justify-center mb-3">
+              <Bot className="w-5 h-5 text-indigo-400/60" />
+            </div>
+            <p className="text-sm text-muted-foreground">Select a subscriber and click ▶ Run Pipeline</p>
+            <p className="text-[11px] text-muted-foreground/60 mt-1">Claude will call 6 MCP tools and produce a real SEND / HOLD decision (15–40s)</p>
+          </div>
+        )}
+
+        {/* Running state — pulsing ticker */}
+        {isRunning && (
+          <div className="flex flex-col gap-3 py-2">
+            <div className="flex items-center gap-2.5">
+              <span className="relative flex h-3 w-3">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-indigo-400 opacity-75" />
+                <span className="relative inline-flex rounded-full h-3 w-3 bg-indigo-500" />
+              </span>
+              <span className="text-sm font-medium text-indigo-300">NBA Orchestrator Agent is reasoning…</span>
+            </div>
+            <div className="text-[11px] text-muted-foreground/70 ml-5.5 space-y-1">
+              <p>Calling <span className="font-mono text-indigo-400">get_esp_events</span> → <span className="font-mono text-violet-400">get_subscription_status</span> → <span className="font-mono text-blue-400">get_cms_articles</span>…</p>
+              <p>Applying <span className="font-mono text-cyan-400">NBEmail_Score</span> formula with 6 components…</p>
+            </div>
+            <div className="flex gap-1.5 mt-1 ml-5">
+              {["get_esp_events","get_subscription_status","get_cms_articles","get_fatigue_rules","get_brand_email_queues","get_conversion_data"].map((t, i) => (
+                <span key={t} className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-muted/30 text-muted-foreground/60 animate-pulse" style={{ animationDelay: `${i * 0.2}s` }}>{t}</span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Results */}
+        {!isRunning && run && (
+          <div className="flex flex-col gap-3">
+            {/* Decision chip */}
+            <div className={`flex items-center gap-3 p-3 rounded-lg border ${run.action === "SEND" ? "bg-green-500/10 border-green-500/20" : "bg-orange-500/10 border-orange-500/20"}`}>
+              {run.action === "SEND"
+                ? <SendHorizonal className="w-4 h-4 text-green-400 shrink-0" />
+                : <Pause className="w-4 h-4 text-orange-400 shrink-0" />}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-0.5">
+                  <span className={`text-sm font-bold ${run.action === "SEND" ? "text-green-300" : "text-orange-300"}`}>
+                    {run.action === "SEND" ? "SEND" : "HOLD"}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">for {persona.label.split(" — ")[0]}</span>
+                </div>
+                {run.reasoning && (
+                  <p className="text-[11px] text-muted-foreground/80 line-clamp-3 leading-relaxed">{run.reasoning}</p>
+                )}
+              </div>
+            </div>
+
+            {/* Tool call steps */}
+            {run.steps.length > 0 && (
+              <div>
+                <p className="text-[10px] font-medium text-muted-foreground mb-1 flex items-center gap-1">
+                  <Database className="w-3 h-3" />
+                  MCP Tool Calls ({run.steps.length})
+                </p>
+                <div className="rounded-lg border border-border/30 bg-background/40 px-3 py-1">
+                  {run.steps.map((step, i) => <TickerStep key={`${step.tool}-${i}`} step={step} index={i} />)}
+                </div>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between text-[9px] text-muted-foreground/40 pt-1">
+              <span>Completed {new Date(run.completedAt).toLocaleTimeString()}</span>
+              <span>{run.steps.length} tool calls · real Anthropic execution</span>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 function AgentPipelineRunLog() {
   const { data, isLoading } = useQuery<any>({
@@ -410,7 +592,10 @@ export default function Screen1CommandCenter({ onBrandClick }: Props) {
         </Card>
       </div>
 
-      {/* Row 5 — Agent Pipeline Run Log (sourced from real agent_runtime_runs) */}
+      {/* Row 5 — Live NBA Pipeline Execution (real Anthropic LLM run) */}
+      <NBAPipelineSection />
+
+      {/* Row 6 — Agent Pipeline Run Log (sourced from real agent_runtime_runs) */}
       <AgentPipelineRunLog />
     </div>
   );

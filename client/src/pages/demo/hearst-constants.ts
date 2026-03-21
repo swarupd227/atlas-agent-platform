@@ -16,6 +16,7 @@
  *
  * Agents are pre-created in the dev environment via API.
  */
+import { useState, useCallback, useEffect } from "react";
 
 export const HEARST_AGENTS = {
   subscriberProfileEngine: {
@@ -260,6 +261,151 @@ const MCP_SERVER_IDS: string[] = [
 interface AgentMcpLink { serverId: string; id: string }
 interface AgentRecord { systemPrompt: string | null; maxToolIterations: number | null }
 
+// ─── Shared subscriber personas (used in S1 + S3) ──────────────────────────
+export const HEARST_PERSONAS = [
+  { id: "sarah-m",    label: "Sarah M. — New York, NY",    tier: "Premium", stage: "Engaged Reader" },
+  { id: "marcus-t",   label: "Marcus T. — Chicago, IL",    tier: "Free",    stage: "At-Risk" },
+  { id: "jennifer-k", label: "Jennifer K. — Austin, TX",   tier: "Premium", stage: "VIP" },
+] as const;
+
+export type HearstPersonaId = (typeof HEARST_PERSONAS)[number]["id"];
+
+// ─── NBA Run types ──────────────────────────────────────────────────────────
+export interface NBARunStep {
+  tool: string;
+  server: string;
+  inputSummary: string;
+  outputSummary: string;
+  durationMs: number;
+}
+
+export interface NBARunResult {
+  subscriberId: string;
+  action: "SEND" | "HOLD";
+  steps: NBARunStep[];
+  reasoning: string;
+  rawSteps: unknown[];
+  completedAt: string;
+}
+
+// Module-level session cache keyed by subscriberId
+const nbaRunCache = new Map<string, NBARunResult>();
+
+export function getCachedNBARun(subscriberId: string): NBARunResult | undefined {
+  return nbaRunCache.get(subscriberId);
+}
+
+function buildSubscriberPrompt(subscriberId: string, personaLabel: string): string {
+  return `Make the Next Best Action email decision for subscriber ${subscriberId} (${personaLabel}). Follow your mandatory tool sequence: call get_esp_events, get_subscription_status, get_cms_articles, get_fatigue_rules, get_brand_email_queues, and get_conversion_data in order. After gathering all data, apply the NBEmail_Score formula and return a structured SEND or HOLD decision with scoring factors and a brief reasoning paragraph.`;
+}
+
+function parseRunSteps(rawSteps: unknown[]): NBARunStep[] {
+  return (rawSteps as Record<string, unknown>[])
+    .filter(s => s.type === "api_call" && s.mcpResolved && s.status === "completed")
+    .map(s => {
+      const startMs = typeof s.startedAt === "string" ? new Date(s.startedAt).getTime() : 0;
+      const endMs   = typeof s.completedAt === "string" ? new Date(s.completedAt).getTime() : 0;
+      const durationMs = endMs > startMs ? endMs - startMs : 0;
+
+      let outputSummary = "—";
+      if (s.output !== undefined && s.output !== null) {
+        const raw = typeof s.output === "string" ? s.output : JSON.stringify(s.output);
+        outputSummary = raw.slice(0, 140);
+      }
+
+      let inputSummary = "—";
+      if (s.input !== undefined && s.input !== null) {
+        const raw = typeof s.input === "string" ? s.input : JSON.stringify(s.input);
+        inputSummary = raw.slice(0, 100);
+      }
+
+      return {
+        tool: typeof s.mcpTool === "string" ? s.mcpTool : "unknown_tool",
+        server: typeof s.mcpServer === "string" ? s.mcpServer : "unknown",
+        inputSummary,
+        outputSummary,
+        durationMs,
+      };
+    });
+}
+
+function parseActionAndReasoning(rawSteps: unknown[], summary: unknown): { action: "SEND" | "HOLD"; reasoning: string } {
+  const steps = rawSteps as Record<string, unknown>[];
+  const analysisSteps = steps.filter(s => s.type === "ai_analysis" && s.status === "completed");
+  const lastAnalysis  = analysisSteps[analysisSteps.length - 1];
+
+  const output  = (lastAnalysis?.output as Record<string, unknown>) || {};
+  const sumObj  = (summary as Record<string, unknown>) || {};
+  const sumAna  = (sumObj.analysis as Record<string, unknown>) || {};
+
+  const reasoningRaw =
+    output.summary || output.analysis ||
+    sumAna.summary || sumAna.analysis || "";
+
+  const reasoning = (typeof reasoningRaw === "string" ? reasoningRaw : JSON.stringify(reasoningRaw)).slice(0, 1200);
+
+  const textUpper = reasoning.toUpperCase() + JSON.stringify(summary || "").toUpperCase();
+  const hasHold = textUpper.includes("ACTION: HOLD") || textUpper.includes("DECISION: HOLD");
+  const hasSend = textUpper.includes("ACTION: SEND") || textUpper.includes("DECISION: SEND");
+  const action: "SEND" | "HOLD" = hasHold && !hasSend ? "HOLD" : "SEND";
+
+  return { action, reasoning };
+}
+
+export async function runNBAPipeline(subscriberId: string, personaLabel: string): Promise<NBARunResult> {
+  const { apiRequest } = await import("@/lib/queryClient");
+  const agentId = HEARST_AGENTS.nbaEmailDecision.id;
+  const prompt  = buildSubscriberPrompt(subscriberId, personaLabel);
+
+  const res  = await apiRequest("POST", `/api/agents/${agentId}/run-test`, { prompt });
+  const data = await res.json() as { steps: unknown[]; success: boolean; summary: unknown };
+
+  const rawSteps = Array.isArray(data.steps) ? data.steps : [];
+  const steps    = parseRunSteps(rawSteps);
+  const { action, reasoning } = parseActionAndReasoning(rawSteps, data.summary);
+
+  const result: NBARunResult = {
+    subscriberId,
+    action,
+    steps,
+    reasoning,
+    rawSteps,
+    completedAt: new Date().toISOString(),
+  };
+
+  nbaRunCache.set(subscriberId, result);
+  return result;
+}
+
+export function useNBARun(subscriberId: string): {
+  run: NBARunResult | undefined;
+  isRunning: boolean;
+  trigger: (personaLabel: string) => Promise<void>;
+} {
+  const [run, setRun] = useState<NBARunResult | undefined>(() => nbaRunCache.get(subscriberId));
+  const [isRunning, setIsRunning] = useState(false);
+
+  useEffect(() => {
+    setRun(nbaRunCache.get(subscriberId));
+  }, [subscriberId]);
+
+  const trigger = useCallback(async (personaLabel: string) => {
+    if (isRunning) return;
+    setIsRunning(true);
+    try {
+      const result = await runNBAPipeline(subscriberId, personaLabel);
+      setRun(result);
+    } catch (err) {
+      console.error("[hearst] runNBAPipeline failed:", err);
+    } finally {
+      setIsRunning(false);
+    }
+  }, [subscriberId, isRunning]);
+
+  return { run, isRunning, trigger };
+}
+
+// ─── Bootstrap ──────────────────────────────────────────────────────────────
 let _bootstrapDone = false;
 
 export async function ensureHearstAgentConfig(): Promise<void> {
