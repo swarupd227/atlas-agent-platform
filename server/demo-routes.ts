@@ -1041,7 +1041,6 @@ demoRouter.get("/kinective/stream", async (req: Request, res: Response) => {
       setKinectiveRunning(false);
     } catch {}
   } finally {
-    runtimeEvents.off("agent_execution", onRuntimeEvent);
     if (!aborted) res.end();
   }
 });
