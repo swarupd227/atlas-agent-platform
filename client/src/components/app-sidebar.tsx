@@ -40,6 +40,7 @@ import {
   Building2,
   MapPin,
   Mail,
+  UserX,
 } from "lucide-react";
 import {
   Sidebar,
@@ -238,10 +239,18 @@ export function AppSidebar() {
               <SidebarGroupContent>
                 <SidebarMenu>
                   <SidebarMenuItem>
-                    <SidebarMenuButton asChild data-active={location.startsWith("/demo/blackrock")}>
+                    <SidebarMenuButton asChild data-active={location === "/demo/blackrock"}>
                       <Link href="/demo/blackrock" data-testid="link-nav-blackrock-demo">
                         <Building2 className="w-4 h-4" />
                         <span>AIM - Synthetic Worker</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild data-active={location.startsWith("/demo/blackrock2")}>
+                      <Link href="/demo/blackrock2" data-testid="link-nav-blackrock2-demo">
+                        <UserX className="w-4 h-4" />
+                        <span>AIM - Portal Offboarding</span>
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>

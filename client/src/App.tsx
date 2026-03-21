@@ -90,6 +90,7 @@ import ModelProviders from "@/pages/model-providers";
 import DeveloperPortal from "@/pages/developer-portal";
 import AgentExport from "@/pages/agent-export";
 import BlackRockDemo from "@/pages/demo/blackrock-demo";
+import BlackRock2Demo from "@/pages/demo/blackrock2-demo";
 import KinectiveDemo from "@/pages/demo/kinective-demo";
 import MoodysDemo from "@/pages/demo/moodys-demo";
 import HearstDemo from "@/pages/demo/hearst-demo";
@@ -209,6 +210,7 @@ function DashboardRouter() {
       <Route path="/model-providers" component={ModelProviders} />
       <Route path="/developer" component={DeveloperPortal} />
       <Route path="/demo/blackrock" component={BlackRockDemo} />
+      <Route path="/demo/blackrock2" component={BlackRock2Demo} />
       <Route path="/demo/kinective-coa" component={KinectiveDemo} />
       <Route path="/demo/kinective" component={KinectiveDemo} />
       <Route path="/demo/moodys" component={MoodysDemo} />
