@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -6,6 +7,7 @@ import {
   TrendingUp, Mail, PauseCircle, DollarSign, AlertTriangle, Info, Star,
   CheckCircle2, Clock, ExternalLink, Bot, ShieldCheck,
 } from "lucide-react";
+import { ensureHearstAgentConfig } from "./hearst-constants";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer,
   PieChart, Pie, Cell, AreaChart, Area,
@@ -168,6 +170,13 @@ function AgentPipelineRunLog() {
 }
 
 export default function Screen1CommandCenter({ onBrandClick }: Props) {
+  const bootstrapRan = useRef(false);
+  useEffect(() => {
+    if (bootstrapRan.current) return;
+    bootstrapRan.current = true;
+    ensureHearstAgentConfig();
+  }, []);
+
   const { data, isLoading } = useQuery<any>({ queryKey: ["/demo-api/hearst/command-center"] });
 
   if (isLoading || !data) {

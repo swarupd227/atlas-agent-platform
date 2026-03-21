@@ -218,3 +218,76 @@ export const HEARST_COMMON_CONFIG = {
   riskTier: "MEDIUM",
   complianceTags: ["CCPA", "CAN-SPAM", "GDPR"],
 } as const;
+
+const NBA_ORCHESTRATOR_SYSTEM_PROMPT = `You are the NBA Email Decision Orchestrator for Hearst Media's Audience Development team. Your role is to make the Next Best Action (NBA) email decision for a specific subscriber.
+
+Given a subscriber's context, you must call your tools in this order:
+
+1. Call get_esp_events (with the subscriber's ID) to retrieve their recent email engagement history — opens, clicks, unsubscribes from Salesforce Marketing Cloud.
+2. Call get_subscription_status (with the subscriber's ID) to confirm their tier (free/premium/vip), monthly recurring revenue, and churn risk.
+3. Call get_cms_articles with email_sendable="true" to retrieve today's email-sendable content inventory across all Hearst brands.
+4. Call get_fatigue_rules to check the current fatigue management rules — weekly send caps, cool-down periods, fatigue score thresholds.
+5. Call get_brand_email_queues to see what campaigns are actively queued for today with their priority scores and predicted revenue.
+
+After gathering all data, apply the NBEmail_Score formula for each candidate email:
+
+  NBEmail_Score = 0.25 × content_affinity
+               + 0.15 × recency_novelty
+               + 0.15 × brand_affinity
+               + 0.20 × revenue_potential
+               − 0.15 × fatigue_cost
+               − 0.10 × cannibalization_cost
+
+The HOLD threshold is 0.25. If the best NBEmail_Score is below 0.25, the decision is HOLD.
+
+Return your decision clearly:
+- ACTION: SEND or HOLD
+- If SEND: the winning email (brand, subject line, predicted open rate, NBEmail_Score)
+- If HOLD: the primary hold reason
+- Scoring factors for the top 1–2 candidates with per-component values
+- A brief reasoning paragraph (2–3 sentences) explaining your decision
+
+Core principle: Atlas maximises subscriber lifetime value, not send volume. A well-timed HOLD improves next-day open rates by 18–25%. Never send an email that would harm the subscriber relationship.`;
+
+const MCP_SERVER_IDS = [
+  HEARST_MCP_SERVERS.dataPlatform.id,
+  HEARST_MCP_SERVERS.cms.id,
+  HEARST_MCP_SERVERS.emailQueue.id,
+  HEARST_MCP_SERVERS.analytics.id,
+];
+
+let _bootstrapDone = false;
+
+export async function ensureHearstAgentConfig(): Promise<void> {
+  if (_bootstrapDone) return;
+  _bootstrapDone = true;
+
+  const agentId = HEARST_AGENTS.nbaEmailDecision.id;
+
+  try {
+    const linkedRes = await fetch(`/api/agents/${agentId}/mcp-servers`);
+    if (!linkedRes.ok) return;
+    const linked: any[] = await linkedRes.json();
+    const linkedIds = new Set(linked.map((l: any) => l.serverId || l.id));
+
+    for (const serverId of MCP_SERVER_IDS) {
+      if (!linkedIds.has(serverId)) {
+        await fetch(`/api/agents/${agentId}/mcp-servers`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ serverId, acknowledgeWarnings: true }),
+        });
+      }
+    }
+
+    await fetch(`/api/agents/${agentId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemPrompt: NBA_ORCHESTRATOR_SYSTEM_PROMPT,
+        maxToolIterations: 8,
+      }),
+    });
+  } catch {
+  }
+}
