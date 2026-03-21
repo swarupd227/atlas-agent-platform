@@ -1509,13 +1509,30 @@ demoRouter.get("/blackrock2/live-run", async (req: Request, res: Response) => {
     const steps: any[] = evt.result?.steps ?? [];
     const toolCallSteps = steps.filter((s: any) => s.type === "api_call");
     for (const step of toolCallSteps) {
-      const tool = step.mcpTool || step.name || "unknown_tool";
-      const success = step.status === "completed" || step.status === "passed";
+      const tool = step.mcpTool || step.output?.mcpTool || step.name || "unknown_tool";
+      const stepCompleted = step.status === "completed" || step.status === "passed";
+
+      // Check the tool response body — a step can "complete" (HTTP 200) but report failure in body
+      const responseData = step.output?.data ?? step.output ?? null;
+      const bodySuccess = (() => {
+        if (!responseData) return stepCompleted;
+        // Explicit success field
+        if (typeof responseData.success === "boolean") return responseData.success;
+        // Portal health check — reachable:false means blocked
+        if (typeof responseData.reachable === "boolean") return responseData.reachable;
+        // Verification status
+        if (responseData.status === "deferred" || responseData.status === "pending_approval") return false;
+        return stepCompleted;
+      })();
+
+      const success = stepCompleted && bodySuccess;
+      const errorReason = !success ? (responseData?.errorCode || responseData?.errorMessage || step.error || "blocked") : null;
+
       sendEvent("agent_event", {
         agentName: currentAgentName,
         type: "tool_call_result",
         tool,
-        data: { tool, success, error: step.error || null },
+        data: { tool, success, error: errorReason },
         success,
       });
     }

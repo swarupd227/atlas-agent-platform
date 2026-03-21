@@ -358,7 +358,13 @@ export default function BlackRock2Demo() {
         addEvent("tool_call_start", agentName, `→ Calling: ${data?.tool || tool}`, data?.tool || tool);
       } else if (type === "tool_call_result") {
         const t = data?.tool || tool || "tool";
-        addEvent("tool_call_result", agentName, `${success ? "✓" : "✗"} ${t}: ${success ? "success" : data?.error || "failed"}`, t, success);
+        const errLabel: Record<string, string> = {
+          ECONNREFUSED:                    "unreachable — deferred",
+          PENDING_SETTLEMENTS_BLOCK:       "blocked — pending settlements",
+          CRITICAL_TIER_APPROVAL_REQUIRED: "blocked — manager approval required",
+        };
+        const errText = data?.error ? (errLabel[data.error] || data.error) : "failed";
+        addEvent("tool_call_result", agentName, `${success ? "✓" : "✗"} ${t}: ${success ? "success" : errText}`, t, success);
       } else if (type === "final_analysis") {
         addEvent("final_analysis", agentName, `Analysis complete — ${data?.steps ?? 0} steps`);
       }
