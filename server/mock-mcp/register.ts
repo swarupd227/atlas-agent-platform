@@ -460,6 +460,27 @@ export async function registerMockMcpServers(): Promise<{ servers: any[]; tools:
       }
       servers.push({ ...existing, url: def.baseUrl });
       const existingTools = await storage.getMcpServerTools(existing.id);
+      for (const toolDef of def.tools) {
+        const existingTool = existingTools.find(t => t.name === toolDef.name);
+        if (existingTool) {
+          const ann = existingTool.annotations as Record<string, any> | null;
+          if (!ann?.endpoint) {
+            await storage.updateMcpServerTool(existingTool.id, {
+              annotations: { endpoint: toolDef.endpoint, method: toolDef.method },
+            });
+          }
+        } else {
+          await storage.createMcpServerTool({
+            serverId: existing.id,
+            name: toolDef.name,
+            description: toolDef.description,
+            inputSchema: toolDef.inputSchema,
+            enabled: true,
+            riskClassification: "low",
+            annotations: { endpoint: toolDef.endpoint, method: toolDef.method },
+          });
+        }
+      }
       toolCount += existingTools.length;
       continue;
     }

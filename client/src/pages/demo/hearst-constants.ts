@@ -361,24 +361,44 @@ function parseActionAndReasoning(rawSteps: unknown[], _summary: unknown): { acti
   const lastAnalysis  = analysisSteps[analysisSteps.length - 1];
   const output = (lastAnalysis?.output as Record<string, unknown>) || {};
 
-  // Extract the actual text block from the final analysis step
+  // Build full text from ALL available analysis fields for better signal extraction
+  const parts: string[] = [];
+  const addText = (v: unknown) => { if (typeof v === "string") parts.push(v); };
+  addText(output.summary);
+  addText(output.analysis);
+  if (Array.isArray(output.findings)) output.findings.forEach((f: unknown) => addText(f));
+  if (Array.isArray(output.recommendedActions)) output.recommendedActions.forEach((a: unknown) => addText(a));
+  if (Array.isArray(output.riskFactors)) output.riskFactors.forEach((r: unknown) => addText(r));
+
+  // processedRecords[0].decision is the most explicit signal ("send" / "hold")
+  const records = Array.isArray(output.processedRecords) ? output.processedRecords as Record<string, unknown>[] : [];
+  const topDecision = typeof records[0]?.decision === "string" ? (records[0].decision as string).toUpperCase() : "";
+
   const rawText = output.summary ?? output.analysis ?? "";
   const reasoning = (typeof rawText === "string" ? rawText : JSON.stringify(rawText)).slice(0, 1500);
+  const fullText = parts.join(" ");
 
-  // Deterministic extraction: scan lines for "ACTION:" marker (as specified in system prompt)
+  // 1. Highest confidence: processedRecords[0].decision
   let action: "SEND" | "HOLD" | null = null;
-  for (const line of reasoning.split("\n")) {
-    const upper = line.trim().toUpperCase();
-    if (upper.startsWith("ACTION:") || upper.startsWith("- ACTION:") || upper.startsWith("* ACTION:")) {
-      if (upper.includes("SEND")) { action = "SEND"; break; }
-      if (upper.includes("HOLD")) { action = "HOLD"; break; }
+  if (topDecision === "SEND") action = "SEND";
+  else if (topDecision === "HOLD") action = "HOLD";
+
+  // 2. Scan all lines for explicit "ACTION: SEND/HOLD" marker
+  if (action === null) {
+    for (const line of fullText.split("\n")) {
+      const upper = line.trim().toUpperCase();
+      if (upper.startsWith("ACTION:") || upper.startsWith("- ACTION:") || upper.startsWith("* ACTION:")) {
+        if (upper.includes("SEND")) { action = "SEND"; break; }
+        if (upper.includes("HOLD")) { action = "HOLD"; break; }
+      }
     }
   }
 
-  // Fallback: count word-boundary occurrences of SEND vs HOLD
+  // 3. Fallback: count word-boundary occurrences of SEND vs HOLD across all fields
   if (action === null) {
-    const sendHits = (reasoning.match(/\bSEND\b/gi) || []).length;
-    const holdHits = (reasoning.match(/\bHOLD\b/gi) || []).length;
+    const sendHits = (fullText.match(/\bSEND\b/gi) || []).length;
+    const holdHits = (fullText.match(/\bHOLD\b/gi) || []).length
+                   + (fullText.match(/\bSUPPRESS(ED)?\b/gi) || []).length;
     if (holdHits > sendHits && holdHits > 0)  action = "HOLD";
     else if (sendHits > holdHits && sendHits > 0) action = "SEND";
     // leave null if truly ambiguous — UI handles null as "Undecided"

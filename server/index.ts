@@ -95,6 +95,8 @@ app.use((req, res, next) => {
   const { seedDemoMcpServer, seedWorkerMcpEndpoints, demoRouter } = await import("./demo-routes");
   await seedDemoMcpServer(storage).catch((err) => { console.error("Demo MCP seed error:", err); });
   await seedWorkerMcpEndpoints(storage).catch((err) => { console.error("Worker MCP endpoint seed error:", err); });
+  const { registerMockMcpServers } = await import("./mock-mcp/register");
+  await registerMockMcpServers().catch((err) => { console.error("Mock MCP register error:", err); });
   app.use("/demo-api", demoRouter);
   log(`Security mode: ${getSecurityMode()}`);
   await registerRoutes(httpServer, app);
