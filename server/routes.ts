@@ -35703,7 +35703,7 @@ Return ONLY valid JSON array, no explanation.`;
 
       const KINECTIVE_AGENT_ID = "c4b3099f-dfd8-4cce-9cf4-0cbb031f7f73";
 
-      const { resetKinectiveDemo, setKinectiveTraceId, setKinectiveRunning, isKinectiveRunning, getEnabledSystems, finalizeKinectiveSystemUpdates, getRunGeneration } = await import("./kinective-demo-store");
+      const { resetKinectiveDemo, setKinectiveTraceId, setKinectiveRunning, isKinectiveRunning, getEnabledSystems, getRunGeneration } = await import("./kinective-demo-store");
 
       if (isKinectiveRunning()) {
         return res.status(409).json({ error: "Pipeline already running. Please wait for current run to complete." });
@@ -35841,7 +35841,6 @@ Log every action.`;
             return;
           }
 
-          finalizeKinectiveSystemUpdates(selectedScenario as any);
 
           const traces = await storage.getTracesByAgent(KINECTIVE_AGENT_ID);
           if (traces.length > 0) {
@@ -35869,37 +35868,30 @@ Log every action.`;
     }
   });
 
-  // ── Kinective Demo: submit-coa (member-initiated COA with trigger sequence) ──
+  // ── Kinective Demo: submit-coa — resets state; SSE stream starts the agent ──
   app.post("/demo-api/kinective/submit-coa", async (req, res) => {
     try {
       const { scenario } = req.body || {};
       const validScenarios = ["happy", "invalid_address", "system_failure"];
       const selectedScenario = validScenarios.includes(scenario) ? scenario : "happy";
 
-      const result = await fetch(`http://localhost:${process.env.PORT || 5000}/demo-api/kinective/run-pipeline`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scenario: selectedScenario }),
-      });
-      const data = await result.json();
-
-      if (!result.ok) {
-        return res.status(result.status).json(data);
-      }
+      const { resetKinectiveDemo } = await import("./kinective-demo-store");
+      resetKinectiveDemo(selectedScenario);
 
       return res.json({
-        ...data,
+        started: true,
+        scenario: selectedScenario,
         formId: "COA-2026-00412",
         webhookId: `WH-${Date.now().toString(36).toUpperCase()}`,
         memberId: "MBR-2026-84291",
         memberName: "Sarah Mitchell",
+        message: "COA request received. Open /demo-api/kinective/stream to begin agent processing.",
       });
     } catch (err: any) {
       console.error("[demo-api/kinective/submit-coa]", err);
       return res.status(500).json({ error: err.message || "Failed to submit COA" });
     }
   });
-
   // ── Kinective Demo: full demo reset ─────────────────────────────────────────
   app.post("/demo-api/kinective/full-reset", async (_req, res) => {
     try {

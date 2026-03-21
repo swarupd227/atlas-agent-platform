@@ -796,6 +796,265 @@ demoRouter.post("/kinective/ensure-agent", async (_req: Request, res: Response) 
   }
 });
 
+// ── Kinective: SSE live-stream endpoint ──────────────────────────────────────
+
+const KINECTIVE_TOOL_SYSTEM_MAP: Record<string, string> = {
+  get_form_data: "SignPlus",
+  archive_signed_document: "SignPlus",
+  get_signing_status: "SignPlus",
+  validate_address: "USPS",
+  update_member_address: "Kinective Gateway",
+  get_member_profile: "Kinective Gateway",
+  update_digital_address: "Digital Banking",
+  notify_digital_banking: "Member Notification",
+  update_statement_address: "Statement Vendor",
+  update_card_address: "Card Management",
+  update_loan_address: "Loan Origination",
+  update_crm_contact: "CRM",
+  create_interaction_record: "CRM",
+  update_bill_pay_address: "Bill Pay",
+  flag_address_change: "Fraud Detection",
+  log_bsa_event: "Compliance",
+  create_compliance_record: "Compliance",
+  log_action: "ATLAS",
+  rollback_address_update: "Rollback",
+};
+
+function buildKinectiveAgentPrompt(scenario: string, isEnabled: (key: string) => boolean): string {
+  if (scenario === "invalid_address") {
+    return `You are the Change of Address Agent for Kinective. Process form COA-2026-00412 for member Sarah Mitchell.
+
+Execute these steps:
+
+1. Call get_form_data with form_id "COA-2026-00412" to retrieve the signed form
+2. Call validate_address with street "1847 Lakewod Drve", city "Austin", state "TX", zip ""
+3. The validation will return valid=false. When it does:
+   - Call log_action with action "VALIDATION_FAILED", system "USPS", details "Address not found in USPS database. Routing to human review."
+   - Call create_compliance_record with member_id "MBR-2026-84291", status "pending_review", details "USPS validation failed. Address change routed to manual review."
+   - STOP. Do NOT call any system update tools. The member address must remain unchanged.
+
+Log every action.`;
+  }
+
+  if (scenario === "system_failure") {
+    return `You are the Change of Address Agent for Kinective. Process form COA-2026-00412 for member Sarah Mitchell.
+
+Execute these steps in order:
+
+1. Call get_form_data with form_id "COA-2026-00412"
+2. Call validate_address with street "1847 Lakewood Drive", city "Austin", state "TX", zip "78701"
+3. Call update_member_address with member_id "MBR-2026-84291" — success
+4. Call update_digital_address with member_id "MBR-2026-84291" — success
+5. Call update_statement_address with member_id "MBR-2026-84291" — success
+6. Call update_bill_pay_address with member_id "MBR-2026-84291" — success
+7. Call update_loan_address with member_id "MBR-2026-84291" — success
+8. Call update_crm_contact with member_id "MBR-2026-84291" — success
+9. Call flag_address_change with member_id "MBR-2026-84291"
+10. Call update_card_address with member_id "MBR-2026-84291" — this will return a TIMEOUT error
+11. The card update failed. Now initiate rollback:
+    - Call log_action with action "SYSTEM_FAILURE", system "Card Management", details "PSCU card management timeout after 3 retries. Initiating rollback for data consistency."
+    - Call rollback_address_update with member_id "MBR-2026-84291", system "loan-origination", reason "Card management failure — rolling back for data consistency"
+    - Call rollback_address_update with member_id "MBR-2026-84291", system "crm", reason "Card management failure — rolling back for data consistency"
+12. Call create_compliance_record with member_id "MBR-2026-84291", status "partial_failure"
+13. Call log_action with action "RETRY_SCHEDULED", system "ATLAS", details "Card management retry scheduled for next maintenance window. Ops ticket opened."
+
+Log every action.`;
+  }
+
+  // Happy path — respects enabled system config
+  const happySteps: string[] = [
+    `1. Call get_form_data with form_id "COA-2026-00412" to retrieve the signed form`,
+    `2. Call validate_address with street "1847 Lakewood Drive", city "Austin", state "TX", zip "78701"`,
+  ];
+  let stepNum = 3;
+  if (isEnabled("Gateway") || isEnabled("Core Banking")) {
+    happySteps.push(`${stepNum++}. Call update_member_address with member_id "MBR-2026-84291" and the new address`);
+  }
+  if (isEnabled("Digital Banking") || isEnabled("Alkami")) {
+    happySteps.push(`${stepNum++}. Call update_digital_address with member_id "MBR-2026-84291" and the new address`);
+  }
+  if (isEnabled("Statement")) {
+    happySteps.push(`${stepNum++}. Call update_statement_address with member_id "MBR-2026-84291" and the new address`);
+  }
+  if (isEnabled("Card")) {
+    happySteps.push(`${stepNum++}. Call update_card_address with member_id "MBR-2026-84291" and the new address`);
+  }
+  if (isEnabled("Loan")) {
+    happySteps.push(`${stepNum++}. Call update_loan_address with member_id "MBR-2026-84291" and the new address`);
+  }
+  if (isEnabled("CRM") || isEnabled("Salesforce")) {
+    happySteps.push(`${stepNum++}. Call update_crm_contact with member_id "MBR-2026-84291" and the new address`);
+  }
+  if (isEnabled("Bill Pay")) {
+    happySteps.push(`${stepNum++}. Call update_bill_pay_address with member_id "MBR-2026-84291" and the new address`);
+  }
+  if (isEnabled("Fraud")) {
+    happySteps.push(`${stepNum++}. Call flag_address_change with member_id "MBR-2026-84291", old and new addresses`);
+  }
+  if (isEnabled("BSA") || isEnabled("Compliance") || isEnabled("AML")) {
+    happySteps.push(`${stepNum++}. Call log_bsa_event with member_id "MBR-2026-84291", event_type "address_change"`);
+    happySteps.push(`${stepNum++}. Call create_compliance_record with member_id "MBR-2026-84291", status "complete"`);
+  }
+  if (isEnabled("SignPlus")) {
+    happySteps.push(`${stepNum++}. Call archive_signed_document with form_id "COA-2026-00412" and member_id "MBR-2026-84291"`);
+  }
+  if (isEnabled("Notification") || isEnabled("Member Notification")) {
+    happySteps.push(`${stepNum++}. Call notify_digital_banking with member_id "MBR-2026-84291" and confirmation message`);
+  }
+
+  return `You are the Change of Address Agent for Kinective. Process form COA-2026-00412 for member Sarah Mitchell.
+
+Execute these steps in order. Call each tool exactly once:
+
+${happySteps.join("\n")}
+
+Complete all steps. Log every action.`;
+}
+
+// SSE: GET /demo-api/kinective/stream?scenario=...
+demoRouter.get("/kinective/stream", async (req: Request, res: Response) => {
+  const scenarioParam = (req.query.scenario as string) || "happy";
+  const validScenarios = ["happy", "invalid_address", "system_failure"];
+  const scenario = validScenarios.includes(scenarioParam) ? scenarioParam : "happy";
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.flushHeaders();
+
+  const sendEvent = (eventType: string, payload: object) => {
+    try { res.write(`event: ${eventType}\ndata: ${JSON.stringify(payload)}\n\n`); } catch {}
+  };
+
+  let aborted = false;
+  let kinectiveDeploymentId: string | null = null;
+
+  const onRuntimeEvent = (evt: { deploymentId: string; agentId: string; runId: string; result: any }) => {
+    if (aborted || evt.deploymentId !== kinectiveDeploymentId) return;
+
+    const steps: any[] = evt.result?.steps ?? [];
+    const toolCallSteps = steps.filter((s: any) => s.type === "api_call" && s.mcpServer !== "unknown");
+
+    for (const step of toolCallSteps) {
+      const tool = step.mcpTool || step.output?.mcpTool || step.name || "unknown_tool";
+      const stepCompleted = step.status === "completed" || step.status === "passed";
+      const responseData = step.output?.data ?? step.output ?? null;
+
+      const bodySuccess = (() => {
+        if (!responseData) return stepCompleted;
+        if (typeof responseData.success === "boolean") return responseData.success;
+        if (typeof responseData.valid === "boolean") return responseData.valid;
+        return stepCompleted;
+      })();
+
+      const success = stepCompleted && bodySuccess;
+      const errorDetail = !success
+        ? (responseData?.error || responseData?.errorMessage || responseData?.error_message || step.error || "failed")
+        : null;
+
+      sendEvent("agent_event", {
+        type: "tool_call_result",
+        tool,
+        system: KINECTIVE_TOOL_SYSTEM_MAP[tool] || "Unknown",
+        success,
+        error: errorDetail,
+      });
+    }
+  };
+
+  runtimeEvents.on("agent_execution", onRuntimeEvent);
+  req.on("close", () => { aborted = true; runtimeEvents.off("agent_execution", onRuntimeEvent); });
+
+  try {
+    const {
+      resetKinectiveDemo,
+      setKinectiveRunning,
+      setKinectiveTraceId,
+      isKinectiveRunning,
+      getEnabledSystems,
+      getRunGeneration,
+    } = await import("./kinective-demo-store");
+
+    if (isKinectiveRunning()) {
+      sendEvent("error", { message: "Pipeline already running — wait for it to complete." });
+      res.end();
+      return;
+    }
+
+    sendEvent("run_start", { scenario, message: `COA pipeline starting — scenario: ${scenario}` });
+    resetKinectiveDemo(scenario);
+    setKinectiveRunning(true);
+    const thisGeneration = getRunGeneration();
+
+    sendEvent("setup", { message: "Ensuring COA agent and 11 MCP servers..." });
+    await ensureKinectiveAgentSetup();
+    sendEvent("setup", { message: "Agent ready — 11 MCP servers configured" });
+
+    const allDeployments = await storage.getDeployments();
+    let deployment = (allDeployments as any[]).find(
+      (d: any) => d.agentId === KINECTIVE_AGENT_ID && d.status !== "rolled_back"
+    );
+    if (!deployment) {
+      deployment = await storage.createDeployment({
+        agentId: KINECTIVE_AGENT_ID,
+        environment: "staging",
+        version: "1.0.0",
+        status: "active",
+        rolloutStrategy: "direct",
+        trafficPercentage: 100,
+      } as any);
+    }
+    kinectiveDeploymentId = deployment.id;
+
+    if (isRuntimeActive(kinectiveDeploymentId!)) {
+      stopAgentRuntime(kinectiveDeploymentId!);
+    }
+
+    const enabledSystems = getEnabledSystems();
+    const isEnabled = (key: string) => enabledSystems.some((s: string) => s.toLowerCase().includes(key.toLowerCase()));
+    const prompt = buildKinectiveAgentPrompt(scenario, isEnabled);
+    const maxSteps = scenario === "invalid_address" ? 10 : 25;
+
+    sendEvent("agent_start", { agentId: KINECTIVE_AGENT_ID, agentName: "Change of Address Agent" });
+
+    const result = await runAgentOnce(deployment.id, prompt, maxSteps);
+
+    if (getRunGeneration() !== thisGeneration) {
+      setKinectiveRunning(false);
+      sendEvent("run_complete", { scenario, success: false, message: "Run superseded by reset" });
+      return;
+    }
+
+    const traces = await storage.getTracesByAgent(KINECTIVE_AGENT_ID);
+    if (traces.length > 0) {
+      const sorted = [...traces].sort((a: any, b: any) =>
+        new Date((b as any).startedAt || 0).getTime() - new Date((a as any).startedAt || 0).getTime()
+      );
+      setKinectiveTraceId((sorted[0] as any).id);
+    }
+
+    setKinectiveRunning(false);
+    sendEvent("run_complete", {
+      scenario,
+      success: result.success,
+      message: result.success
+        ? "COA pipeline complete — all systems processed"
+        : "COA pipeline completed with errors",
+    });
+  } catch (err: any) {
+    console.error("[kinective/stream] Error:", err?.message);
+    sendEvent("error", { message: err?.message || "Pipeline failed" });
+    try {
+      const { setKinectiveRunning } = await import("./kinective-demo-store");
+      setKinectiveRunning(false);
+    } catch {}
+  } finally {
+    runtimeEvents.off("agent_execution", onRuntimeEvent);
+    if (!aborted) res.end();
+  }
+});
+
 const BASE_URL = `http://localhost:${process.env.PORT || 5000}`;
 
 // ── Seed: BlackRock Synthetic Worker MCP (orchestrator) ──────────────────────

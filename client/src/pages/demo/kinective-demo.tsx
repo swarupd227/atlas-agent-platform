@@ -958,6 +958,105 @@ function NotificationPanel({ scenario, hasRun }: { scenario: Scenario; hasRun: b
   );
 }
 
+interface SseToolEvent {
+  id: number;
+  tool: string;
+  system: string;
+  success: boolean;
+  error: string | null;
+}
+
+const TOOL_EMOJI: Record<string, string> = {
+  get_form_data: "📋",
+  archive_signed_document: "📁",
+  get_signing_status: "✅",
+  validate_address: "🔍",
+  update_member_address: "🏛",
+  get_member_profile: "👤",
+  update_digital_address: "💻",
+  notify_digital_banking: "🔔",
+  update_statement_address: "📄",
+  update_card_address: "💳",
+  update_loan_address: "🏦",
+  update_crm_contact: "👤",
+  create_interaction_record: "📋",
+  update_bill_pay_address: "💰",
+  flag_address_change: "🛡",
+  log_bsa_event: "⚖",
+  create_compliance_record: "📜",
+  log_action: "📝",
+  rollback_address_update: "↩",
+};
+
+function LiveAgentEventsPanel({ events, running }: { events: SseToolEvent[]; running: boolean }) {
+  return (
+    <Card className="bg-zinc-900 border-zinc-800" data-testid="live-agent-events-panel">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+          <Zap className="w-4 h-4 text-orange-400" />
+          Live Agent Execution
+          {running && (
+            <Badge variant="outline" className="ml-auto bg-orange-500/10 text-orange-400 border-orange-500/30 text-[10px] animate-pulse">
+              GPT-4.1 RUNNING
+            </Badge>
+          )}
+          {!running && events.length > 0 && (
+            <Badge variant="outline" className="ml-auto bg-zinc-800 border-zinc-700 text-zinc-400 text-[10px]">
+              {events.length} tool calls
+            </Badge>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-0.5 max-h-[300px] overflow-y-auto">
+          {events.length === 0 && !running && (
+            <div className="text-zinc-500 text-xs py-5 text-center">
+              <Zap className="w-5 h-5 mx-auto mb-2 opacity-20" />
+              <div>Real GPT-4.1 tool calls will appear here when the agent runs.</div>
+            </div>
+          )}
+          {events.length === 0 && running && (
+            <div className="text-zinc-500 text-xs py-3 flex items-center gap-2 justify-center">
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-orange-400" />
+              <span className="text-orange-400/70">Agent initializing…</span>
+            </div>
+          )}
+          {events.map((evt) => (
+            <div
+              key={evt.id}
+              className={`flex items-center gap-2 py-1.5 px-2 rounded text-xs ${
+                evt.success ? "hover:bg-zinc-800/40" : "bg-red-500/5 hover:bg-red-500/10"
+              }`}
+              data-testid={`sse-event-${evt.id}`}
+            >
+              <span className="text-[11px] shrink-0">{TOOL_EMOJI[evt.tool] || "🔧"}</span>
+              <span className={`font-mono text-[10px] truncate flex-1 ${evt.success ? "text-zinc-300" : "text-red-400"}`}>
+                {evt.tool}
+              </span>
+              <span className="text-zinc-600 text-[10px] shrink-0">{evt.system}</span>
+              <div className="shrink-0">
+                {evt.success ? (
+                  <Badge variant="outline" className="bg-green-500/20 text-green-400 border-green-500/30 text-[9px] px-1">✓</Badge>
+                ) : (
+                  <Badge variant="outline" className="bg-red-500/20 text-red-400 border-red-500/30 text-[9px] px-1 max-w-[80px] truncate">
+                    {evt.error ? evt.error.slice(0, 12) + "…" : "✗"}
+                  </Badge>
+                )}
+              </div>
+            </div>
+          ))}
+          {running && events.length > 0 && (
+            <div className="flex items-center gap-2 py-1.5 px-2 text-[10px] text-orange-400/50">
+              <Loader2 className="w-2.5 h-2.5 animate-spin" />
+              <span>processing…</span>
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function ActivityFeed({ entries }: { entries: AuditEntry[] }) {
   return (
     <Card className="bg-zinc-900 border-zinc-800" data-testid="activity-feed">
@@ -1008,6 +1107,9 @@ export default function KinectiveDemo() {
   const [scenario, setScenario] = useState<Scenario>("happy");
   const [running, setRunning] = useState(false);
   const [agentTeamOpen, setAgentTeamOpen] = useState(false);
+  const [sseEvents, setSseEvents] = useState<SseToolEvent[]>([]);
+  const sseRef = useRef<EventSource | null>(null);
+  const sseCounter = useRef(0);
   const lastStartedAt = useRef<number>(0);
   const { toast } = useToast();
 
@@ -1056,23 +1158,55 @@ export default function KinectiveDemo() {
     }
   }, [traceQuery.data, traceQuery.dataUpdatedAt, running]);
 
-  const runPipeline = useMutation({
-    mutationFn: async (s: Scenario) => {
-      const res = await apiRequest("POST", "/demo-api/kinective/run-pipeline", { scenario: s });
-      return res.json();
-    },
-    onSuccess: () => {
+  // Close SSE on unmount
+  useEffect(() => {
+    return () => { sseRef.current?.close(); };
+  }, []);
+
+  const openKinectiveStream = (scenarioName: Scenario) => {
+    if (sseRef.current) {
+      sseRef.current.close();
+      sseRef.current = null;
+    }
+    setSseEvents([]);
+    sseCounter.current = 0;
+
+    const es = new EventSource(`/demo-api/kinective/stream?scenario=${scenarioName}`);
+    sseRef.current = es;
+
+    es.addEventListener("run_start", () => {
       startRunning();
-      toast({ title: "Pipeline Started", description: `Running scenario: ${SCENARIO_LABELS[scenario].label}` });
-    },
-    onError: (err: any) => {
-      if (err?.message?.startsWith("409")) {
-        startRunning();
-        return;
-      }
-      toast({ title: "Pipeline Error", description: err.message, variant: "destructive" });
-    },
-  });
+    });
+
+    es.addEventListener("agent_event", (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.type === "tool_call_result") {
+          sseCounter.current += 1;
+          const id = sseCounter.current;
+          setSseEvents((prev) => [
+            ...prev,
+            { id, tool: data.tool || "unknown", system: data.system || "Unknown", success: data.success ?? true, error: data.error || null },
+          ]);
+          queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/system-updates"] });
+          queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/audit-log"] });
+        }
+      } catch {}
+    });
+
+    es.addEventListener("run_complete", () => {
+      setRunning(false);
+      invalidateAll();
+      es.close();
+      sseRef.current = null;
+    });
+
+    es.addEventListener("error", () => {
+      setRunning(false);
+      es.close();
+      sseRef.current = null;
+    });
+  };
 
   const resetMutation = useMutation({
     mutationFn: async () => {
@@ -1080,6 +1214,10 @@ export default function KinectiveDemo() {
       return res.json();
     },
     onSuccess: () => {
+      sseRef.current?.close();
+      sseRef.current = null;
+      setSseEvents([]);
+      sseCounter.current = 0;
       setRunning(false);
       setScenario("happy");
       invalidateAll();
@@ -1088,7 +1226,7 @@ export default function KinectiveDemo() {
   });
 
   const handlePipelineStarted = () => {
-    startRunning();
+    openKinectiveStream(scenario);
   };
 
   const entries = auditQuery.data?.entries || [];
@@ -1188,14 +1326,14 @@ export default function KinectiveDemo() {
               </Link>
             )}
             <Button
-              onClick={() => runPipeline.mutate(scenario)}
-              disabled={running || runPipeline.isPending}
+              onClick={() => openKinectiveStream(scenario)}
+              disabled={running}
               variant="outline"
               size="sm"
               className="border-zinc-600 text-zinc-300 hover:bg-zinc-800"
               data-testid="run-scenario-button"
             >
-              {running || runPipeline.isPending ? (
+              {running ? (
                 <>
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                   Running...
@@ -1229,6 +1367,7 @@ export default function KinectiveDemo() {
           </div>
 
           <div className="col-span-5 space-y-4">
+            <LiveAgentEventsPanel events={sseEvents} running={running} />
             <ActivityFeed entries={entries} />
 
             <Collapsible open={agentTeamOpen} onOpenChange={setAgentTeamOpen}>
