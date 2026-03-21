@@ -1,0 +1,56 @@
+DEMO SCENARIOS (4 SCENARIOS)
+Scenario 1: Happy Path — Clean Removal (Robert Kessler)
+Employee: Robert Kessler (EMP-38291), Senior Trade Operations Analyst, Global Trade Settlements, New York
+Termination: Voluntary Resignation, effective Mar 14, 2026
+Portals: 6 — DTCC (SAML), Euroclear (Client Cert), Clearstream (SWIFT Token), Bloomberg TOMS (Bloomberg Auth), SWIFT Alliance (PKI), ICE Link (Username/Password)
+Exceptions: None. All portals reachable. No pending trades. No admin access. All support API removal.
+Expected Outcome: All 6 portals cleaned in under 3 minutes. Full SOX evidence package generated.
+STEP 1  Show the Removal Queue  (1 min)
+💻 DEMO	Removal Queue screen — 6 employees pending removal
+“This is the removal queue. We have 6 recent terminations. Two are already completed by the synthetic worker. Four are pending. Let me show you what happens when we process Robert Kessler — a clean, happy path scenario.”
+STEP 2  Show Employee Detail  (2 min)
+💻 DEMO	Employee Detail for Robert Kessler — 6 partner portal accesses
+Walk through the portal list: each portal with different auth type, role, and risk level. Point out: “Today, someone has to manually log into each of these 6 portals. Different credentials, different UIs, different processes. That’s 2+ hours of manual work.”
+STEP 3  Execute the Pipeline  (3 min)
+💻 DEMO	Click ‘Start Atlas Automated Removal Pipeline’ → Watch the pipeline execute
+Walk through the agent log as it executes:
+•	AGT-701: Picks up the termination from SailPoint. Validates. Creates case. Priority: HIGH (voluntary).
+•	AGT-702: Scans Partner Portal Registry. Discovers 6 portal accounts.
+•	AGT-703: Checks for pending trades. None found. Clear to proceed.
+•	AGT-704: Removes access from each portal one by one. Different method per portal. All succeed.
+•	AGT-705: Verifies removal across all 6 portals. All confirmed.
+•	AGT-706: Generates SOX evidence package. Hash-chained provenance.
+“6 portals. 6 different authentication architectures. All cleaned in under 3 minutes with a complete audit trail. That’s what used to take 2 hours of manual work with no evidence of completion.”
+
+Scenario 2: Exception — Portal Unreachable (Karen Nakamura)
+Employee: Karen Nakamura (EMP-41055), Trade Settlement Specialist, APAC Settlements, Hong Kong
+Termination: Involuntary — Role Elimination, effective Mar 12 (CRITICAL priority — 2-hour SLA)
+Exception: HKEX CCASS portal is down for scheduled maintenance (03:00-07:00 HKT). Connection times out.
+What the demo shows:
+•	3 of 4 portals removed successfully and immediately
+•	HKEX CCASS: AGT-704 retries 3x, fails. Creates ServiceNow ticket. Sets Splunk monitoring alert.
+•	Demo has a “Simulate Retry” button — click to show the post-maintenance retry succeeding
+“This is what happens in reality — partner portals have maintenance windows. The current manual process? Someone forgets to come back and check. Atlas doesn’t forget. It creates a ticket, sets a monitoring alert, and retries automatically when the portal recovers.”
+Scenario 3: Exception — Active Pending Trades (Marcus Thompson)
+Employee: Marcus Thompson (EMP-29847), Fixed Income Trader, London
+Exception: 3 pending trades on Euroclear ($25M UST, €15M BUND, £10M Gilt) settling Mar 17-18. Also: Markitserv has no API.
+What the demo shows:
+•	AGT-703 discovers 3 pending trades. Recommends: HOLD Euroclear removal until Mar 19 (T+1 after last settlement)
+•	DTCC, Clearstream, SWIFT: removed immediately
+•	Markitserv: no API — AGT-704 creates ServiceNow ticket with step-by-step manual removal instructions
+•	Euroclear: held with pending trade details visible in the UI (trade ID, security, notional, counterparty, settle date)
+“You can’t just rip out someone’s Euroclear access when they have $50 million in unsettled trades. Atlas knows this. It checks settlement systems, holds the removal, and schedules it for the day after the last trade settles. No human has to remember to come back.”
+Scenario 4: Exception — Elevated Admin Access (James Whitfield)
+Employee: James Whitfield (EMP-15503), Senior Settlement Technology Lead, London
+Termination: Involuntary — Performance (CRITICAL priority)
+Exception: Has System Administrator on Bloomberg TOMS and Security Officer on SWIFT Alliance. Both CRITICAL risk requiring multi-person approval.
+What the demo shows:
+•	DTCC, Euroclear, ICE Link: removed immediately (standard access)
+•	Bloomberg TOMS Admin: BLOCKED — requires Ops Director approval (SEC 17a-4 audit preservation)
+•	SWIFT Security Officer: BLOCKED — requires 2-person approval (Ops Director + CISO)
+•	Demo has “Simulate Approval” buttons for each — click to show approval and subsequent removal
+“This is an involuntary termination of someone with admin access to your SWIFT infrastructure. You absolutely do NOT want this automated without controls. Atlas knows: admin access on critical systems requires explicit human approval. But unlike the manual process, it doesn’t wait for someone to notice — it immediately routes the approval request and blocks until it’s received.”
+
+	The Demo Narrative Arc
+Start with the Queue (show the scale of the problem). Then Happy Path (show the speed — 6 portals in 3 minutes). Then Portal Down (show resilience — Atlas doesn’t forget). Then Pending Trades (show intelligence — Atlas checks settlement systems). Then Admin Access (show governance — Atlas blocks until approved). Each scenario builds on the last, showing increasingly sophisticated handling. End with: “Every one of these scenarios currently requires a human to remember, check, wait, follow up, and document. Atlas does all of it, with a SOX evidence package at the end.”
+
