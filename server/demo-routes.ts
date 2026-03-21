@@ -1449,6 +1449,13 @@ async function ensureBk2AgentDeployment(agentId: string, agentName: string, mcpS
   }
 
   const existingLinks = await storage.getAgentMcpServers(agentId);
+  // Remove any MCP server links that are NOT the AIM server — stale links cause Claude to see
+  // unrelated tools (scan_accounts, revoke_certificate, etc.) and hallucinate or call wrong endpoints.
+  for (const link of existingLinks) {
+    if (link.serverId !== mcpServerId) {
+      await storage.deleteAgentMcpServer(link.id);
+    }
+  }
   const alreadyLinked = existingLinks.some((l: any) => l.serverId === mcpServerId);
   if (!alreadyLinked) {
     await storage.createAgentMcpServer({ agentId, serverId: mcpServerId, assignedBy: "bk2-live-demo" });
