@@ -166,7 +166,13 @@ const PORTALS_WHITFIELD: Portal[] = [
   { name: "ICE Connect",         authType: "SAML SSO",    riskTier: "LOW",      role: "Data_Viewer",            status: "pending" },
   { name: "SWIFT (MyStandards)", authType: "Token",       riskTier: "CRITICAL", role: "SWIFT_Admin",            status: "pending" },
 ];
-const FINAL_WHITFIELD: Portal[] = PORTALS_WHITFIELD.map(p => ({ ...p, status: "approved" as PortalStatus }));
+const FINAL_WHITFIELD: Portal[] = [
+  { ...PORTALS_WHITFIELD[0], status: "removed" },
+  { ...PORTALS_WHITFIELD[1], status: "removed" },
+  { ...PORTALS_WHITFIELD[2], status: "removed" },
+  { ...PORTALS_WHITFIELD[3], status: "removed" },
+  { ...PORTALS_WHITFIELD[4], status: "held", note: "Awaiting manager approval — SOX SM-14 policy (APPR-AIM-2026-0798-SWIFT-ADMIN)" },
+];
 
 const SCENARIOS: ScenarioDef[] = [
   { id: "happy_path",        label: "Happy Path",        subtitle: "6 portals, clean removal",   icon: "check", employee: EMPLOYEE_KESSLER,  portals: PORTALS_KESSLER,  finalPortals: FINAL_KESSLER  },
