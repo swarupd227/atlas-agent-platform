@@ -1610,7 +1610,14 @@ demoRouter.get("/blackrock2/live-run", async (req: Request, res: Response) => {
         agentName: currentAgentName,
         type: "tool_call_result",
         tool,
-        data: { tool, success, error: errorReason },
+        data: {
+          tool,
+          success,
+          error: errorReason,
+          // Include portal/entity name so the frontend can disambiguate repeated tool calls
+          portalName: responseData?.portalName || responseData?.portal || null,
+          accountId: responseData?.newAccountId || responseData?.accountId || null,
+        },
         success,
       });
     }

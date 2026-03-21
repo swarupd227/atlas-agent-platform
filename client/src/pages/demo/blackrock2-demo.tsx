@@ -75,6 +75,7 @@ interface LiveEvent {
   tool?: string;
   success?: boolean;
   message: string;
+  portalName?: string;
 }
 
 // ─── Agent name → node ID map ─────────────────────────────────────────────────
@@ -212,19 +213,22 @@ const SCENARIOS: ScenarioDef[] = [
 
 // ─── Pipeline banner ──────────────────────────────────────────────────────────
 
-const PIPELINE_NODES: { id: AgentNodeId; label: string; short: string }[] = [
-  { id: "termination_intake",   label: "Termination Intake",      short: "Intake"    },
-  { id: "portal_discovery",     label: "Portal Discovery",         short: "Discovery" },
-  { id: "active_trade_check",   label: "Active Trade Check",       short: "Trade Chk" },
-  { id: "access_removal",       label: "Access Removal Executor",  short: "Removal"   },
-  { id: "removal_verification", label: "Removal Verification",     short: "Verify"    },
-  { id: "audit_evidence",       label: "Audit & Evidence",         short: "Audit"     },
-];
+function getPipelineNodes(isTransfer: boolean): { id: AgentNodeId; label: string; short: string }[] {
+  return [
+    { id: "termination_intake",   label: isTransfer ? "Transfer Intake"     : "Termination Intake",     short: "Intake"    },
+    { id: "portal_discovery",     label: "Portal Discovery",                                             short: "Discovery" },
+    { id: "active_trade_check",   label: "Active Trade Check",                                           short: "Trade Chk" },
+    { id: "access_removal",       label: isTransfer ? "Access Revocation"   : "Access Removal Executor", short: isTransfer ? "Revoke"  : "Removal"  },
+    { id: "removal_verification", label: isTransfer ? "Access Provisioner"  : "Removal Verification",   short: isTransfer ? "Provision" : "Verify" },
+    { id: "audit_evidence",       label: "Audit & Evidence",                                             short: "Audit"     },
+  ];
+}
 
-function PipelineBanner({ activeAgent, completedAgents }: { activeAgent: AgentNodeId | null; completedAgents: Set<AgentNodeId> }) {
+function PipelineBanner({ activeAgent, completedAgents, isTransfer }: { activeAgent: AgentNodeId | null; completedAgents: Set<AgentNodeId>; isTransfer: boolean }) {
+  const nodes = getPipelineNodes(isTransfer);
   return (
     <div className="flex items-center justify-center gap-1 py-3 px-4 flex-wrap" data-testid="bk2-pipeline-banner">
-      {PIPELINE_NODES.map((node, i) => {
+      {nodes.map((node, i) => {
         const isDone   = completedAgents.has(node.id);
         const isActive = activeAgent === node.id && !isDone;
         return (
@@ -242,7 +246,7 @@ function PipelineBanner({ activeAgent, completedAgents }: { activeAgent: AgentNo
               }
               <span className="hidden sm:inline">{node.short}</span>
             </div>
-            {i < PIPELINE_NODES.length - 1 && (
+            {i < nodes.length - 1 && (
               <ChevronRight className="w-3.5 h-3.5 text-muted-foreground" />
             )}
           </div>
@@ -366,10 +370,10 @@ export default function BlackRock2Demo() {
     setActiveAgent(null);
     setCompletedAgents(new Set());
 
-    const addEvent = (type: string, agentName: string, message: string, tool?: string, success?: boolean) => {
+    const addEvent = (type: string, agentName: string, message: string, tool?: string, success?: boolean, portalName?: string) => {
       const now = new Date();
       const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
-      setLiveEvents(prev => [...prev, { id: liveEventId.current++, time, agentName, type, tool, success, message }]);
+      setLiveEvents(prev => [...prev, { id: liveEventId.current++, time, agentName, type, tool, success, message, portalName }]);
     };
 
     const es = new EventSource(`/demo-api/blackrock2/live-run?scenarioId=${scenarioId}`);
@@ -397,6 +401,7 @@ export default function BlackRock2Demo() {
         addEvent("tool_call_start", agentName, `→ Calling: ${data?.tool || tool}`, data?.tool || tool);
       } else if (type === "tool_call_result") {
         const t = data?.tool || tool || "tool";
+        const portalName: string | undefined = data?.portalName || undefined;
         const errLabel: Record<string, string> = {
           ECONNREFUSED:                    "unreachable — deferred",
           PENDING_SETTLEMENTS_BLOCK:       "blocked — pending settlements",
@@ -404,7 +409,8 @@ export default function BlackRock2Demo() {
           CRITICAL_TIER_APPROVAL_REQUIRED: "blocked — manager approval required",
         };
         const errText = data?.error ? (errLabel[data.error] || data.error) : "failed";
-        addEvent("tool_call_result", agentName, `${success ? "✓" : "✗"} ${t}: ${success ? "success" : errText}`, t, success);
+        const portalSuffix = portalName ? ` → ${portalName}` : "";
+        addEvent("tool_call_result", agentName, `${success ? "✓" : "✗"} ${t}${portalSuffix}: ${success ? "success" : errText}`, t, success, portalName);
       } else if (type === "final_analysis") {
         addEvent("final_analysis", agentName, `Analysis complete — ${data?.steps ?? 0} steps`);
       }
@@ -515,7 +521,7 @@ export default function BlackRock2Demo() {
 
         {/* Pipeline */}
         <div className="border-t bg-muted/20">
-          <PipelineBanner activeAgent={activeAgent} completedAgents={completedAgents} />
+          <PipelineBanner activeAgent={activeAgent} completedAgents={completedAgents} isTransfer={isTransfer} />
         </div>
       </div>
 
@@ -721,7 +727,9 @@ export default function BlackRock2Demo() {
                     ev.type === "tool_call_result" &&
                     last.ev.type === "tool_call_result" &&
                     ev.tool === last.ev.tool &&
-                    ev.success === last.ev.success
+                    ev.success === last.ev.success &&
+                    // Don't collapse portal-specific events (provision/removal per portal)
+                    !ev.portalName && !last.ev.portalName
                   ) {
                     last.count++;
                   } else {
