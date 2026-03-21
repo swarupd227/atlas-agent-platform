@@ -1155,7 +1155,7 @@ After receiving tool results, provide a structured analysis with key findings, s
           lastStep.completedAt = new Date().toISOString();
           lastStep.output = { source: "mcp_integration", mcpServer: matchedTool.serverName, mcpTool: matchedTool.toolName, data: result };
           toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result });
-          emitProgress("tool_call_result", { tool: matchedTool.toolName, server: matchedTool.serverName, success: true, iteration: iterationsUsed });
+          emitProgress("tool_call_result", { tool: matchedTool.toolName, server: matchedTool.serverName, success: true, result, iteration: iterationsUsed });
         } catch (err: any) {
           const lastStep = steps[steps.length - 1];
           lastStep.status = "failed";

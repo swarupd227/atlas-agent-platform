@@ -947,12 +947,17 @@ demoRouter.get("/kinective/stream", async (req: Request, res: Response) => {
     } else if (type === "tool_call_result") {
       const tool = data.tool || "unknown";
       if (data.server === "unknown") return;
+      // Semantic success check — tools like validate_address return valid:false with HTTP 200
+      let success = data.success ?? true;
+      if (success && data.result !== undefined) {
+        if (typeof data.result?.valid === "boolean") success = data.result.valid;
+      }
       sendEvent("agent_event", {
         type: "tool_call_result",
         tool,
         system: KINECTIVE_TOOL_SYSTEM_MAP[tool] || "Unknown",
-        success: data.success ?? true,
-        error: data.success === false ? (data.error || "failed") : null,
+        success,
+        error: !success ? (data.result?.error_message || data.error || "failed") : null,
       });
     }
   };
@@ -965,6 +970,7 @@ demoRouter.get("/kinective/stream", async (req: Request, res: Response) => {
       isKinectiveRunning,
       getEnabledSystems,
       getRunGeneration,
+      finalizeKinectiveSystemUpdates,
     } = await import("./kinective-demo-store");
 
     if (isKinectiveRunning()) {
@@ -1010,6 +1016,8 @@ demoRouter.get("/kinective/stream", async (req: Request, res: Response) => {
     sendEvent("agent_start", { agentId: KINECTIVE_AGENT_ID, agentName: "Change of Address Agent" });
 
     const result = await runAgentOnce(deployment.id, prompt, maxSteps, onProgress);
+
+    finalizeKinectiveSystemUpdates(scenario as any);
 
     if (getRunGeneration() !== thisGeneration) {
       setKinectiveRunning(false);

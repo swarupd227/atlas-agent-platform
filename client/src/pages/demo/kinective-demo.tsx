@@ -1111,11 +1111,6 @@ export default function KinectiveDemo() {
   const lastStartedAt = useRef<number>(0);
   const { toast } = useToast();
 
-  const auditQuery = useQuery<{ entries: AuditEntry[] }>({
-    queryKey: ["/demo-api/kinective/audit-log"],
-    refetchInterval: running ? POLL_INTERVAL : false,
-  });
-
   const traceQuery = useQuery<{ traceId: string | null; running: boolean }>({
     queryKey: ["/demo-api/kinective/trace-id"],
     refetchInterval: running ? POLL_INTERVAL : false,
@@ -1132,7 +1127,6 @@ export default function KinectiveDemo() {
   });
 
   const invalidateAll = () => {
-    queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/audit-log"] });
     queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/trace-id"] });
     queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/system-updates"] });
     queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/rollback-log"] });
@@ -1213,7 +1207,6 @@ export default function KinectiveDemo() {
             : `✗ ${data.tool}${suffix}: ${data.error || "failed"}`;
           addEntry("tool_call_result", msg, { tool: data.tool, system: data.system, success: data.success ?? true });
           queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/system-updates"] });
-          queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/audit-log"] });
         }
       } catch {}
     });
@@ -1270,11 +1263,10 @@ export default function KinectiveDemo() {
     openKinectiveStream(scenario);
   };
 
-  const entries = auditQuery.data?.entries || [];
   const systemUpdates = systemUpdatesQuery.data?.updates || [];
   const rollbackEntries = rollbackQuery.data?.entries || [];
   const traceId = traceQuery.data?.traceId;
-  const hasRun = running || entries.length > 0;
+  const hasRun = running || complete;
 
   const mcpServerList = Object.values(KINECTIVE_MCP_SERVERS);
 
@@ -1409,7 +1401,6 @@ export default function KinectiveDemo() {
 
           <div className="col-span-5 space-y-4">
             <KinectiveLogFeed entries={logEntries} running={running} complete={complete} />
-            <ActivityFeed entries={entries} />
 
             <Collapsible open={agentTeamOpen} onOpenChange={setAgentTeamOpen}>
               <Card className="bg-zinc-900 border-zinc-800">
