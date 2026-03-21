@@ -138,25 +138,8 @@ function DecisionTracePanel({ subscriberId }: { subscriberId: string }) {
     queryFn: () => fetch(`/demo-api/hearst/subscriber/${subscriberId}/trace`).then(r => r.json()),
   });
 
-  if (isLoading) {
-    return (
-      <Card>
-        <CardHeader className="pb-2">
-          <div className="flex items-center gap-2">
-            <Bot className="w-4 h-4 text-indigo-400" />
-            <CardTitle className="text-sm font-medium">Decision Trace — How This Was Decided</CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-2">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-12 rounded-lg bg-muted/20 animate-pulse" />
-          ))}
-        </CardContent>
-      </Card>
-    );
-  }
-
   // ── LIVE RUN MODE ────────────────────────────────────────────────────────
+  // Prioritise cached live run over static query loading state
   if (run || isRunning) {
     return (
       <Card className="border-indigo-500/20">
@@ -211,6 +194,52 @@ function DecisionTracePanel({ subscriberId }: { subscriberId: string }) {
             </div>
           )}
 
+          {/* Scoring detail from static trace — shown below reasoning in live mode */}
+          {run && !isRunning && (() => {
+            const nbStep = (data?.steps as any[] || []).find((s: any) => s.key === "nbaEmailDecision");
+            const dd = nbStep?.decisions as any;
+            if (!dd) return null;
+            return (
+              <div className="flex flex-col gap-1.5">
+                <p className="text-[10px] font-medium text-muted-foreground flex items-center gap-1">
+                  <Database className="w-3 h-3" />
+                  NBEmail_Score Breakdown
+                </p>
+                {dd.winningEmail && (
+                  <div className={`p-2 rounded text-center font-bold text-[10px] ${dd.action === "SEND" ? "bg-green-500/15 text-green-300" : "bg-orange-500/15 text-orange-300"}`}>
+                    {dd.action === "SEND"
+                      ? <>{dd.winningEmail.brand}: "{dd.winningEmail.subject}"</>
+                      : <>HOLD — Score {dd.nbEmailScore?.toFixed(2)} &lt; threshold {dd.holdThreshold}</>}
+                  </div>
+                )}
+                {dd.scoringFactors && (
+                  <div className="flex flex-col gap-0.5 px-1">
+                    {dd.scoringFactors.map((f: any, fi: number) => (
+                      <div key={fi} className="flex items-start justify-between text-[10px] gap-2">
+                        <div className="flex-1 min-w-0">
+                          <span className="text-muted-foreground font-mono">{f.label}</span>
+                          {f.detail && <p className="text-[9px] text-muted-foreground/50 mt-0.5 line-clamp-1">{f.detail}</p>}
+                        </div>
+                        <span className={`font-bold shrink-0 ${(f.contribution ?? f.score) < 0 ? "text-red-400" : "text-green-400"}`}>
+                          {(f.contribution ?? f.score) > 0 ? "+" : ""}{(f.contribution ?? f.score)?.toFixed(2)}
+                        </span>
+                      </div>
+                    ))}
+                    <div className="flex items-center justify-between text-[10px] pt-1 border-t border-border/30 mt-1">
+                      <span className="font-medium">NBEmail_Score</span>
+                      <span className="font-bold">{dd.nbEmailScore?.toFixed(2)}</span>
+                    </div>
+                  </div>
+                )}
+                {dd.holdReason && (
+                  <div className="p-2 rounded bg-orange-500/10 border border-orange-500/20">
+                    <p className="text-[10px] text-orange-300 leading-snug">{dd.holdReason}</p>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {/* Decision chip */}
           {run && !isRunning && (
             <div className={`flex items-center gap-3 p-2.5 rounded-lg border ${run.action === "SEND" ? "bg-green-500/10 border-green-500/20" : run.action === "HOLD" ? "bg-orange-500/10 border-orange-500/20" : "bg-amber-500/10 border-amber-500/20"}`}>
@@ -248,6 +277,25 @@ function DecisionTracePanel({ subscriberId }: { subscriberId: string }) {
             {run && <span>Completed {new Date(run.completedAt).toLocaleTimeString()}</span>}
             <span>{run?.steps.length || 0} tool calls · real Anthropic execution</span>
           </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // ── STATIC FALLBACK LOADING GUARD ────────────────────────────────────────
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center gap-2">
+            <Bot className="w-4 h-4 text-indigo-400" />
+            <CardTitle className="text-sm font-medium">Decision Trace — How This Was Decided</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="h-12 rounded-lg bg-muted/20 animate-pulse" />
+          ))}
         </CardContent>
       </Card>
     );

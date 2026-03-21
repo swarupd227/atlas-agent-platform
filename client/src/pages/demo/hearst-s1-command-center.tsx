@@ -360,7 +360,7 @@ function AgentPipelineRunLog() {
                           className="text-[9px] text-indigo-400 hover:text-indigo-300 border border-indigo-500/30 rounded px-1.5 py-0.5 transition-colors disabled:opacity-40"
                           title={`Run NBA pipeline for ${defaultPersona.label}`}
                         >
-                          {nbaRunning ? "…" : "▶ Run"}
+                          {nbaRunning ? "…" : `▶ Run · ${defaultPersona.label.split(" — ")[0]}`}
                         </button>
                       </div>
                     ) : (
