@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type ComponentType, type FormEvent } from "react";
+import { useState, useEffect, useRef, useCallback, type ComponentType, type FormEvent } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -125,19 +125,27 @@ const TRIGGER_STEPS: TriggerStep[] = [
 
 function TriggerSequence({ onComplete }: { onComplete: () => void }) {
   const [step, setStep] = useState(-1);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
+  const firedRef = useRef(false);
 
   useEffect(() => {
-    let timeout: ReturnType<typeof setTimeout>;
+    const timeouts: ReturnType<typeof setTimeout>[] = [];
     TRIGGER_STEPS.forEach((s, i) => {
-      timeout = setTimeout(() => {
+      timeouts.push(setTimeout(() => {
         setStep(i);
         if (i === TRIGGER_STEPS.length - 1) {
-          setTimeout(onComplete, 800);
+          timeouts.push(setTimeout(() => {
+            if (!firedRef.current) {
+              firedRef.current = true;
+              onCompleteRef.current();
+            }
+          }, 800));
         }
-      }, s.delayMs + 400);
+      }, s.delayMs + 400));
     });
-    return () => clearTimeout(timeout);
-  }, [onComplete]);
+    return () => timeouts.forEach(clearTimeout);
+  }, []);
 
   return (
     <div className="mt-4 space-y-2" data-testid="trigger-sequence">
@@ -244,10 +252,10 @@ function MemberCard({
     submitCoa.mutate();
   };
 
-  const handleTriggerComplete = () => {
+  const handleTriggerComplete = useCallback(() => {
     setDialogOpen(false);
     setShowTrigger(false);
-  };
+  }, []);
 
   return (
     <>
