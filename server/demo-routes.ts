@@ -48,7 +48,7 @@ import type { IStorage } from "./storage";
 import { storage } from "./storage";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
-import { runTraces, agentRuntimeRuns, agents } from "@shared/schema";
+import { runTraces, agentRuntimeRuns, agents, mcpServers } from "@shared/schema";
 import { runAgentOnce, stopAgentRuntime, isRuntimeActive, runtimeEvents, type RuntimeProgressEvent } from "./agent-runtime";
 import { setBk2LiveScenario, clearBk2LiveScenario, type Bk2LiveScenario } from "./blackrock2-live-store";
 
@@ -582,6 +582,218 @@ demoRouter.post("/kinective/config", (req: Request, res: Response) => {
   const valid = enabledSystems.filter((s: string) => SYSTEMS.includes(s));
   setEnabledSystems(valid);
   res.json({ success: true, enabledSystems: valid });
+});
+
+// ── Kinective: ensure-agent bootstrap ────────────────────────────────────────
+
+const KINECTIVE_AGENT_ID = "c4b3099f-dfd8-4cce-9cf4-0cbb031f7f73";
+
+const KINECTIVE_MCP_DEFS = [
+  {
+    id: "342cbdc9-6757-4600-9ca5-abe22aab5212",
+    name: "Kinective SignPlus MCP Server",
+    tools: [
+      { name: "get_form_data", method: "GET", endpoint: "/signplus/form/{form_id}", description: "Retrieve the signed Change of Address form data" },
+      { name: "archive_signed_document", method: "POST", endpoint: "/signplus/archive", description: "Archive the signed COA document to permanent storage" },
+      { name: "get_signing_status", method: "GET", endpoint: "/signplus/status/{form_id}", description: "Check the signing status of a COA form" },
+    ],
+  },
+  {
+    id: "ad15b89f-b45a-4eeb-9dc4-86f7769f4451",
+    name: "Kinective Gateway Core MCP Server",
+    tools: [
+      { name: "update_member_address", method: "POST", endpoint: "/gateway/update-address", description: "Update the member's address in the core banking gateway" },
+      { name: "get_member_profile", method: "GET", endpoint: "/gateway/member/{member_id}", description: "Retrieve member profile and account details" },
+    ],
+  },
+  {
+    id: "b8b0d00d-280e-4d2b-946d-f5611d22473b",
+    name: "USPS Address Validation MCP Server",
+    tools: [
+      { name: "validate_address", method: "POST", endpoint: "/usps/validate", description: "Validate and standardize a mailing address via USPS" },
+    ],
+  },
+  {
+    id: "7665f8ba-5162-400b-b2c0-bd2c10ae534c",
+    name: "Digital Banking Connector MCP Server",
+    tools: [
+      { name: "update_digital_address", method: "POST", endpoint: "/digital-banking/update-address", description: "Update address in the digital banking platform" },
+      { name: "notify_digital_banking", method: "POST", endpoint: "/digital-banking/notify", description: "Send address change notification to digital banking" },
+    ],
+  },
+  {
+    id: "4a33df90-fda6-4d55-b6e0-0f616f8910a4",
+    name: "Statement Vendor Connector MCP Server",
+    tools: [
+      { name: "update_statement_address", method: "POST", endpoint: "/statement/update-address", description: "Update mailing address with the statement print vendor" },
+    ],
+  },
+  {
+    id: "10dce6b3-8645-433d-bd2c-fbab17db127f",
+    name: "Card Management Connector MCP Server",
+    tools: [
+      { name: "update_card_address", method: "POST", endpoint: "/card/update-address", description: "Update billing and shipping address for all member cards" },
+    ],
+  },
+  {
+    id: "0f821a1d-c46c-4561-bcf7-22558d62099e",
+    name: "Loan Origination Connector MCP Server",
+    tools: [
+      { name: "update_loan_address", method: "POST", endpoint: "/loan/update-address", description: "Update mailing address on all active loan accounts" },
+    ],
+  },
+  {
+    id: "d9d2b2ff-0827-4e8c-a19d-2a3efd96d679",
+    name: "CRM Connector MCP Server",
+    tools: [
+      { name: "update_crm_contact", method: "POST", endpoint: "/crm/update-contact", description: "Update member contact record in the CRM system" },
+      { name: "create_interaction_record", method: "POST", endpoint: "/crm/interaction", description: "Log the address change as a CRM interaction event" },
+    ],
+  },
+  {
+    id: "7600115e-f721-450a-b640-4799c5d9e6eb",
+    name: "Bill Pay Connector MCP Server",
+    tools: [
+      { name: "update_bill_pay_address", method: "POST", endpoint: "/billpay/update-address", description: "Update billing address in the bill pay system" },
+    ],
+  },
+  {
+    id: "8dbce5ea-3941-40b2-a2ea-95ee22fbddc4",
+    name: "Fraud Detection Connector MCP Server",
+    tools: [
+      { name: "flag_address_change", method: "POST", endpoint: "/fraud/flag-change", description: "Flag the address change event for fraud monitoring review" },
+    ],
+  },
+  {
+    id: "3d5bfe63-df5d-42c0-9dfb-ce4bfcf6b41b",
+    name: "Compliance Connector MCP Server",
+    tools: [
+      { name: "log_bsa_event", method: "POST", endpoint: "/compliance/bsa-event", description: "Log a BSA/AML compliance event for the address change" },
+      { name: "create_compliance_record", method: "POST", endpoint: "/compliance/record", description: "Create a permanent compliance record for the change" },
+      { name: "log_action", method: "POST", endpoint: "/audit-log", description: "Append an entry to the immutable audit log" },
+      { name: "rollback_address_update", method: "POST", endpoint: "/rollback", description: "Roll back address changes for a specific system on failure" },
+    ],
+  },
+] as const;
+
+async function ensureKinectiveAgentSetup(): Promise<{ agentCreated: boolean; serversEnsured: string[] }> {
+  const PORT = process.env.PORT || 5000;
+  const MCP_BASE_URL = `http://localhost:${PORT}/demo-api/kinective`;
+
+  // 1. Ensure the COA agent exists
+  const existingAgent = await storage.getAgent(KINECTIVE_AGENT_ID);
+  let agentCreated = false;
+  if (!existingAgent) {
+    await db.insert(agents).values({
+      id: KINECTIVE_AGENT_ID,
+      name: "Change of Address Agent",
+      description:
+        "Orchestrates member address changes across all downstream systems including core banking, digital, cards, loans, compliance, and fraud detection.",
+      agentType: "single",
+      status: "active",
+      environment: "production",
+      modelProvider: "openai",
+      modelName: "gpt-4.1",
+      riskTier: "MEDIUM",
+      autonomyMode: "autonomous",
+      currentVersion: "1.0.0",
+      maxToolIterations: 30,
+      toolAccessClass: "standard",
+      department: "Member Services",
+      owner: "Kinective Demo",
+      healthScore: 95,
+      successRate: 0.97,
+      maturityFactors: {},
+    } as any);
+    agentCreated = true;
+  } else if (
+    (existingAgent as any).modelProvider !== "openai" ||
+    (existingAgent as any).modelName !== "gpt-4.1"
+  ) {
+    await storage.updateAgent(KINECTIVE_AGENT_ID, {
+      modelProvider: "openai",
+      modelName: "gpt-4.1",
+    } as any);
+  }
+
+  // 2. Ensure each MCP server exists, has the right tools, and is linked to the agent
+  const serversEnsured: string[] = [];
+
+  for (const def of KINECTIVE_MCP_DEFS) {
+    // Ensure MCP server record with the canonical UUID
+    const allServers = await storage.getMcpServers();
+    const existing = allServers.find((s: any) => s.id === def.id);
+
+    if (!existing) {
+      await db.insert(mcpServers).values({
+        id: def.id,
+        name: def.name,
+        description: `Mock MCP server for the Kinective Change of Address demo — ${def.name}`,
+        transportType: "streamable-http",
+        url: MCP_BASE_URL,
+        status: "production-enabled",
+        riskTier: "MEDIUM",
+        allowlisted: true,
+        industryId: "financial_services",
+        addedBy: "kinective-demo",
+        capabilities: { tools: true, resources: false, prompts: false, sampling: false },
+        serverInfo: { vendor: "Kinective", version: "1.0.0" },
+      } as any);
+    } else if (existing.url !== MCP_BASE_URL) {
+      await storage.updateMcpServer(def.id, { url: MCP_BASE_URL });
+    }
+
+    // Ensure tools are registered
+    const existingTools = (await storage.getMcpServerTools(def.id)) ?? [];
+    const existingToolNames = new Set(existingTools.map((t: any) => t.name));
+
+    for (const tool of def.tools) {
+      if (!existingToolNames.has(tool.name)) {
+        await storage.createMcpServerTool({
+          serverId: def.id,
+          name: tool.name,
+          description: tool.description,
+          inputSchema: { type: "object", properties: {} },
+          outputSchema: null,
+          annotations: { endpoint: tool.endpoint, method: tool.method },
+          riskClassification: "medium",
+          owner: "Kinective Demo",
+          enabled: true,
+        });
+      }
+    }
+
+    // Link MCP server to agent if not already linked
+    const existingLinks = (await storage.getAgentMcpServers(KINECTIVE_AGENT_ID)) ?? [];
+    if (!existingLinks.some((l: any) => l.serverId === def.id)) {
+      await storage.createAgentMcpServer({
+        agentId: KINECTIVE_AGENT_ID,
+        serverId: def.id,
+        assignedBy: "kinective-demo",
+      });
+    }
+
+    serversEnsured.push(def.name);
+  }
+
+  return { agentCreated, serversEnsured };
+}
+
+demoRouter.post("/kinective/ensure-agent", async (_req: Request, res: Response) => {
+  try {
+    const result = await ensureKinectiveAgentSetup();
+    return res.json({
+      success: true,
+      agentId: KINECTIVE_AGENT_ID,
+      agentCreated: result.agentCreated,
+      mcpServersConfigured: result.serversEnsured.length,
+      mcpServers: result.serversEnsured,
+      message: `Kinective COA agent and all ${result.serversEnsured.length} MCP servers are ready in this environment.`,
+    });
+  } catch (err: any) {
+    console.error("[kinective/ensure-agent] Error:", err?.message, err?.stack);
+    return res.status(500).json({ success: false, error: err?.message ?? "Setup failed" });
+  }
 });
 
 const BASE_URL = `http://localhost:${process.env.PORT || 5000}`;
