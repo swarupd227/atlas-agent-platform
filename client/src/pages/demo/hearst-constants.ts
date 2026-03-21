@@ -281,7 +281,7 @@ export interface NBARunStep {
 
 export interface NBARunResult {
   subscriberId: string;
-  action: "SEND" | "HOLD";
+  action: "SEND" | "HOLD" | null;
   steps: NBARunStep[];
   reasoning: string;
   rawSteps: unknown[];
@@ -296,7 +296,29 @@ export function getCachedNBARun(subscriberId: string): NBARunResult | undefined 
 }
 
 function buildSubscriberPrompt(subscriberId: string, personaLabel: string): string {
-  return `Make the Next Best Action email decision for subscriber ${subscriberId} (${personaLabel}). Follow your mandatory tool sequence: call get_esp_events, get_subscription_status, get_cms_articles, get_fatigue_rules, get_brand_email_queues, and get_conversion_data in order. After gathering all data, apply the NBEmail_Score formula and return a structured SEND or HOLD decision with scoring factors and a brief reasoning paragraph.`;
+  const persona = HEARST_PERSONAS.find(p => p.id === subscriberId);
+  const tier       = persona?.tier  ?? "unknown";
+  const stage      = persona?.stage ?? "unknown";
+  const name       = personaLabel.split(" — ")[0] ?? personaLabel;
+  const location   = personaLabel.split(" — ")[1] ?? "unknown";
+
+  return `Make the Next Best Action (NBA) email decision for the following subscriber:
+
+Subscriber ID: ${subscriberId}
+Name: ${name}
+Location: ${location}
+Subscription tier: ${tier}
+Lifecycle stage: ${stage}
+
+Follow your mandatory tool sequence in order:
+1. get_esp_events (subscriber_id="${subscriberId}") — fetch their Salesforce Marketing Cloud engagement history
+2. get_subscription_status (subscriber_id="${subscriberId}") — confirm tier, MRR, and churn risk
+3. get_cms_articles (email_sendable="true") — get today's sendable content inventory
+4. get_fatigue_rules — check weekly send caps and cool-down rules
+5. get_brand_email_queues — see today's active campaign queue with priority scores
+6. get_conversion_data — get recent post-click conversion performance by brand/content type
+
+After gathering all data, compute the NBEmail_Score for each candidate email and select the best match for ${name}. Return your decision in the required format starting with ACTION: SEND or ACTION: HOLD.`;
 }
 
 function parseRunSteps(rawSteps: unknown[]): NBARunStep[] {
@@ -329,25 +351,36 @@ function parseRunSteps(rawSteps: unknown[]): NBARunStep[] {
     });
 }
 
-function parseActionAndReasoning(rawSteps: unknown[], summary: unknown): { action: "SEND" | "HOLD"; reasoning: string } {
+function parseActionAndReasoning(rawSteps: unknown[], _summary: unknown): { action: "SEND" | "HOLD" | null; reasoning: string } {
   const steps = rawSteps as Record<string, unknown>[];
+
+  // Take the LAST completed ai_analysis step (final synthesis after all tool iterations)
   const analysisSteps = steps.filter(s => s.type === "ai_analysis" && s.status === "completed");
   const lastAnalysis  = analysisSteps[analysisSteps.length - 1];
+  const output = (lastAnalysis?.output as Record<string, unknown>) || {};
 
-  const output  = (lastAnalysis?.output as Record<string, unknown>) || {};
-  const sumObj  = (summary as Record<string, unknown>) || {};
-  const sumAna  = (sumObj.analysis as Record<string, unknown>) || {};
+  // Extract the actual text block from the final analysis step
+  const rawText = output.summary ?? output.analysis ?? "";
+  const reasoning = (typeof rawText === "string" ? rawText : JSON.stringify(rawText)).slice(0, 1500);
 
-  const reasoningRaw =
-    output.summary || output.analysis ||
-    sumAna.summary || sumAna.analysis || "";
+  // Deterministic extraction: scan lines for "ACTION:" marker (as specified in system prompt)
+  let action: "SEND" | "HOLD" | null = null;
+  for (const line of reasoning.split("\n")) {
+    const upper = line.trim().toUpperCase();
+    if (upper.startsWith("ACTION:") || upper.startsWith("- ACTION:") || upper.startsWith("* ACTION:")) {
+      if (upper.includes("SEND")) { action = "SEND"; break; }
+      if (upper.includes("HOLD")) { action = "HOLD"; break; }
+    }
+  }
 
-  const reasoning = (typeof reasoningRaw === "string" ? reasoningRaw : JSON.stringify(reasoningRaw)).slice(0, 1200);
-
-  const textUpper = reasoning.toUpperCase() + JSON.stringify(summary || "").toUpperCase();
-  const hasHold = textUpper.includes("ACTION: HOLD") || textUpper.includes("DECISION: HOLD");
-  const hasSend = textUpper.includes("ACTION: SEND") || textUpper.includes("DECISION: SEND");
-  const action: "SEND" | "HOLD" = hasHold && !hasSend ? "HOLD" : "SEND";
+  // Fallback: count word-boundary occurrences of SEND vs HOLD
+  if (action === null) {
+    const sendHits = (reasoning.match(/\bSEND\b/gi) || []).length;
+    const holdHits = (reasoning.match(/\bHOLD\b/gi) || []).length;
+    if (holdHits > sendHits && holdHits > 0)  action = "HOLD";
+    else if (sendHits > holdHits && sendHits > 0) action = "SEND";
+    // leave null if truly ambiguous — UI handles null as "Undecided"
+  }
 
   return { action, reasoning };
 }

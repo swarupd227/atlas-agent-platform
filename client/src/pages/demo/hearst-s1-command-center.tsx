@@ -120,8 +120,8 @@ function NBAPipelineSection() {
           <CardTitle className="text-sm font-medium">Live NBA Pipeline Execution</CardTitle>
           <Badge variant="secondary" className="text-[10px]">Claude-powered</Badge>
           {run && !isRunning && (
-            <Badge className={`text-[10px] ml-1 ${run.action === "SEND" ? "bg-green-500/20 text-green-300 border-green-500/30" : "bg-orange-500/20 text-orange-300 border-orange-500/30"}`}>
-              {run.action === "SEND" ? "✓ SEND" : "⏸ HOLD"}
+            <Badge className={`text-[10px] ml-1 ${run.action === "SEND" ? "bg-green-500/20 text-green-300 border-green-500/30" : run.action === "HOLD" ? "bg-orange-500/20 text-orange-300 border-orange-500/30" : "bg-amber-500/20 text-amber-300 border-amber-500/30"}`}>
+              {run.action === "SEND" ? "✓ SEND" : run.action === "HOLD" ? "⏸ HOLD" : "⚠ Undecided"}
             </Badge>
           )}
           <div className="ml-auto flex items-center gap-2">
@@ -209,14 +209,16 @@ function NBAPipelineSection() {
         {!isRunning && run && (
           <div className="flex flex-col gap-3">
             {/* Decision chip */}
-            <div className={`flex items-center gap-3 p-3 rounded-lg border ${run.action === "SEND" ? "bg-green-500/10 border-green-500/20" : "bg-orange-500/10 border-orange-500/20"}`}>
+            <div className={`flex items-center gap-3 p-3 rounded-lg border ${run.action === "SEND" ? "bg-green-500/10 border-green-500/20" : run.action === "HOLD" ? "bg-orange-500/10 border-orange-500/20" : "bg-amber-500/10 border-amber-500/20"}`}>
               {run.action === "SEND"
                 ? <SendHorizonal className="w-4 h-4 text-green-400 shrink-0" />
-                : <Pause className="w-4 h-4 text-orange-400 shrink-0" />}
+                : run.action === "HOLD"
+                ? <Pause className="w-4 h-4 text-orange-400 shrink-0" />
+                : <Activity className="w-4 h-4 text-amber-400 shrink-0" />}
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-0.5">
-                  <span className={`text-sm font-bold ${run.action === "SEND" ? "text-green-300" : "text-orange-300"}`}>
-                    {run.action === "SEND" ? "SEND" : "HOLD"}
+                  <span className={`text-sm font-bold ${run.action === "SEND" ? "text-green-300" : run.action === "HOLD" ? "text-orange-300" : "text-amber-300"}`}>
+                    {run.action ?? "Undecided"}
                   </span>
                   <span className="text-[10px] text-muted-foreground">for {persona.label.split(" — ")[0]}</span>
                 </div>
@@ -255,6 +257,9 @@ function AgentPipelineRunLog() {
     queryKey: ["/demo-api/hearst/agent-runs"],
     refetchInterval: 60000,
   });
+  // Default to first persona for per-row NBA Decision run trigger
+  const defaultPersona = HEARST_PERSONAS[0];
+  const { run: nbaRun, isRunning: nbaRunning, trigger: nbaRunTrigger } = useNBARun(defaultPersona.id);
 
   if (isLoading) {
     return (
@@ -336,10 +341,34 @@ function AgentPipelineRunLog() {
                     <span className="text-[10px] text-foreground/80 line-clamp-1">{metric || "—"}</span>
                   </td>
                   <td className="px-4 py-2.5 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      <CheckCircle2 className="w-3 h-3 text-green-400" />
-                      <span className="text-[10px] text-green-400 font-medium capitalize">{run.runStatus || "completed"}</span>
-                    </div>
+                    {run.key === "nbaEmailDecision" ? (
+                      <div className="flex items-center justify-end gap-1.5">
+                        {nbaRunning ? (
+                          <span className="text-[9px] text-indigo-300 flex items-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-ping inline-block" />
+                            Running…
+                          </span>
+                        ) : nbaRun ? (
+                          <span className={`text-[9px] font-bold ${nbaRun.action === "SEND" ? "text-green-400" : nbaRun.action === "HOLD" ? "text-orange-400" : "text-amber-400"}`}>
+                            {nbaRun.action ?? "⚠"}
+                          </span>
+                        ) : null}
+                        <button
+                          data-testid="table-row-run-nba-btn"
+                          onClick={() => nbaRunTrigger(defaultPersona.label)}
+                          disabled={nbaRunning}
+                          className="text-[9px] text-indigo-400 hover:text-indigo-300 border border-indigo-500/30 rounded px-1.5 py-0.5 transition-colors disabled:opacity-40"
+                          title={`Run NBA pipeline for ${defaultPersona.label}`}
+                        >
+                          {nbaRunning ? "…" : "▶ Run"}
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-end gap-1">
+                        <CheckCircle2 className="w-3 h-3 text-green-400" />
+                        <span className="text-[10px] text-green-400 font-medium capitalize">{run.runStatus || "completed"}</span>
+                      </div>
+                    )}
                   </td>
                 </tr>
               );

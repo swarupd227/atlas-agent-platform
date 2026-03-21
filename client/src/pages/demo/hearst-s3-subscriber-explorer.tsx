@@ -111,7 +111,14 @@ function LiveRunStepRow({ step, index }: { step: NBARunStep; index: number }) {
             </span>
           )}
         </div>
-        <p className="text-[10px] text-muted-foreground/70 line-clamp-2 leading-relaxed">{step.outputSummary}</p>
+        {step.inputSummary !== "—" && (
+          <p className="text-[9px] text-muted-foreground/45 line-clamp-1 mb-0.5">
+            <span className="font-medium text-muted-foreground/60">Input: </span>{step.inputSummary}
+          </p>
+        )}
+        <p className="text-[10px] text-muted-foreground/70 line-clamp-2 leading-relaxed">
+          <span className="font-medium text-muted-foreground/60">Output: </span>{step.outputSummary}
+        </p>
       </div>
       <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0 mt-0.5" />
     </div>
@@ -161,8 +168,8 @@ function DecisionTracePanel({ subscriberId }: { subscriberId: string }) {
               <Sparkles className="w-2.5 h-2.5" /> Live Claude run
             </Badge>
             {run && !isRunning && (
-              <Badge className={`text-[10px] ml-1 ${run.action === "SEND" ? "bg-green-500/20 text-green-300 border-green-500/30" : "bg-orange-500/20 text-orange-300 border-orange-500/30"}`}>
-                {run.action === "SEND" ? "✓ SEND" : "⏸ HOLD"}
+              <Badge className={`text-[10px] ml-1 ${run.action === "SEND" ? "bg-green-500/20 text-green-300 border-green-500/30" : run.action === "HOLD" ? "bg-orange-500/20 text-orange-300 border-orange-500/30" : "bg-amber-500/20 text-amber-300 border-amber-500/30"}`}>
+                {run.action === "SEND" ? "✓ SEND" : run.action === "HOLD" ? "⏸ HOLD" : "⚠ Undecided"}
               </Badge>
             )}
             <Button
@@ -206,12 +213,14 @@ function DecisionTracePanel({ subscriberId }: { subscriberId: string }) {
 
           {/* Decision chip */}
           {run && !isRunning && (
-            <div className={`flex items-center gap-3 p-2.5 rounded-lg border ${run.action === "SEND" ? "bg-green-500/10 border-green-500/20" : "bg-orange-500/10 border-orange-500/20"}`}>
+            <div className={`flex items-center gap-3 p-2.5 rounded-lg border ${run.action === "SEND" ? "bg-green-500/10 border-green-500/20" : run.action === "HOLD" ? "bg-orange-500/10 border-orange-500/20" : "bg-amber-500/10 border-amber-500/20"}`}>
               {run.action === "SEND"
                 ? <SendHorizonal className="w-4 h-4 text-green-400 shrink-0" />
-                : <Pause className="w-4 h-4 text-orange-400 shrink-0" />}
-              <span className={`text-sm font-bold ${run.action === "SEND" ? "text-green-300" : "text-orange-300"}`}>
-                {run.action === "SEND" ? "SEND" : "HOLD"} Decision
+                : run.action === "HOLD"
+                ? <Pause className="w-4 h-4 text-orange-400 shrink-0" />
+                : <Activity className="w-4 h-4 text-amber-400 shrink-0" />}
+              <span className={`text-sm font-bold ${run.action === "SEND" ? "text-green-300" : run.action === "HOLD" ? "text-orange-300" : "text-amber-300"}`}>
+                {(run.action ?? "Undecided")} Decision
               </span>
             </div>
           )}
