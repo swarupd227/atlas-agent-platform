@@ -391,9 +391,9 @@ function AgentTeamCard() {
                     </div>
                     <p className="text-[10px] text-muted-foreground mt-0.5 line-clamp-2">{agent.description}</p>
                   </div>
-                  <Link href={`/agents/${agent.id}`}>
+                  <Link href={`/agents/${agent.id}?tab=traces`}>
                     <Button variant="ghost" size="sm" className="h-7 px-2 gap-1 text-[10px] shrink-0" data-testid={`button-view-bk2-agent-${agent.id}`}>
-                      View <ExternalLink className="w-3 h-3" />
+                      Runs & Traces <ExternalLink className="w-3 h-3" />
                     </Button>
                   </Link>
                 </div>
