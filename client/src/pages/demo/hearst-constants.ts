@@ -249,7 +249,9 @@ Return your decision clearly:
 - Scoring factors for the top 1–2 candidates with per-component values
 - A brief reasoning paragraph (2–3 sentences) explaining your decision
 
-Core principle: Atlas maximises subscriber lifetime value, not send volume. A well-timed HOLD improves next-day open rates by 18–25%. Never send an email that would harm the subscriber relationship.`;
+Core principle: Atlas maximises subscriber lifetime value, not send volume. A well-timed HOLD improves next-day open rates by 18–25%. Never send an email that would harm the subscriber relationship.
+
+Important: Always produce a final decision. If any tool returns unexpected subscriber IDs or partial data, use whatever data is available to compute the NBEmail_Score and still output ACTION: SEND or ACTION: HOLD. Never abort the decision process.`;
 
 const MCP_SERVER_IDS: string[] = [
   HEARST_MCP_SERVERS.dataPlatform.id,
@@ -311,8 +313,8 @@ Subscription tier: ${tier}
 Lifecycle stage: ${stage}
 
 Follow your mandatory tool sequence in order:
-1. get_esp_events (subscriber_id="${subscriberId}") — fetch their Salesforce Marketing Cloud engagement history
-2. get_subscription_status (subscriber_id="${subscriberId}") — confirm tier, MRR, and churn risk
+1. get_esp_events (subscriberId="${subscriberId}") — fetch their Salesforce Marketing Cloud engagement history
+2. get_subscription_status (subscriberId="${subscriberId}") — confirm tier, MRR, and churn risk
 3. get_cms_articles (email_sendable="true") — get today's sendable content inventory
 4. get_fatigue_rules — check weekly send caps and cool-down rules
 5. get_brand_email_queues — see today's active campaign queue with priority scores

@@ -47,7 +47,9 @@ function getSubscriberPool() {
 }
 
 router.get("/esp-events", (req: Request, res: Response) => {
-  const { subscriberId, brand, limit: limitStr, lookback_days: lookbackStr } = req.query;
+  const rawId = (req.query.subscriberId || req.query.subscriber_id) as string | undefined;
+  const { brand, limit: limitStr, lookback_days: lookbackStr } = req.query;
+  const subscriberId = rawId;
   const limit = Math.min(parseInt(limitStr as string) || 50, 200);
   const lookbackDays = parseInt(lookbackStr as string) || 30;
   const rng = seededRng(subscriberId ? subscriberId.toString().charCodeAt(3) * 17 : 4711);
@@ -114,7 +116,7 @@ router.get("/website-behavior", (req: Request, res: Response) => {
 });
 
 router.get("/subscription-status", (req: Request, res: Response) => {
-  const { subscriberId } = req.query;
+  const subscriberId = (req.query.subscriberId || req.query.subscriber_id) as string | undefined;
   const rng = seededRng(subscriberId ? subscriberId.toString().length * 997 : 3333);
 
   const statuses = ["active", "active", "active", "trialing", "paused", "cancelled"];
