@@ -215,20 +215,59 @@ router.post("/execute-access-removal", (req: Request, res: Response) => {
 
   if (!s) return res.status(404).json({ error: "No active scenario" });
 
-  const isHkex = portalName.toLowerCase().includes("hkex") || portalName.toLowerCase().includes("ccass");
-  const matchedPortal = s.portals.find((p) => p.name.toLowerCase() === portalName.toLowerCase());
+  const portalNameLower = portalName.toLowerCase();
+  const isHkex = portalNameLower.includes("hkex") || portalNameLower.includes("ccass");
+  const matchedPortal = s.portals.find((p) => p.name.toLowerCase() === portalNameLower);
 
+  // Block: portal unreachable (HKEX CCASS in portal_unreachable scenario)
   if (s.hkexDown && (isHkex || (matchedPortal && !matchedPortal.reachable))) {
     return res.json({
       success: false,
       portalName,
       employeeId: s.empId,
       errorCode: "ECONNREFUSED",
-      errorMessage: "HKEX CCASS unreachable — removal deferred",
+      errorMessage: "HKEX CCASS unreachable — removal deferred to retry queue",
+      blocked: true,
       deferred: true,
       deferredQueueId: `DQ-${confirmId("HKEX")}`,
       retryAfterMinutes: 240,
       servicenowTicket: `INC-2026-${Math.floor(Math.random() * 90000 + 10000)}`,
+    });
+  }
+
+  // Block: pending trade settlements (pending_trades scenario)
+  if (s.tradeCheck && matchedPortal?.hasPendingTrades) {
+    const settlementDate = new Date(Date.now() + 172800000).toISOString().split("T")[0];
+    return res.json({
+      success: false,
+      portalName,
+      employeeId: s.empId,
+      errorCode: "PENDING_SETTLEMENTS_BLOCK",
+      errorMessage: `Access removal BLOCKED — ${portalName} has unsettled trades above the $50M threshold. Premature removal would cause settlement failure and regulatory breach.`,
+      blocked: true,
+      deferred: true,
+      pendingSettlements: true,
+      earliestRemovalDate: settlementDate,
+      recommendation: `HOLD — defer access removal until T+2 settlement completes on ${settlementDate}. Human approval required to override.`,
+      requiresHumanApproval: true,
+      deferredQueueId: `DQ-SETTLE-${confirmId(portalName.slice(0, 4).toUpperCase())}`,
+    });
+  }
+
+  // Block: CRITICAL tier SWIFT admin — requires explicit manager approval code
+  const isSwiftAdmin = portalNameLower.includes("swift") && s.criticalTier;
+  if (isSwiftAdmin && !req.body.managerApprovalCode) {
+    return res.json({
+      success: false,
+      portalName,
+      employeeId: s.empId,
+      errorCode: "CRITICAL_TIER_APPROVAL_REQUIRED",
+      errorMessage: "SWIFT Alliance admin access is CRITICAL tier. SOX SM-14 policy mandates explicit manager approval before admin credential revocation. Provide managerApprovalCode to proceed.",
+      blocked: true,
+      requiresApproval: true,
+      approvalType: "MANAGER_SOX_CRITICAL",
+      policy: "SM-14: Critical System Administrator Access Revocation",
+      approvalWorkflow: `APPR-${caseId}-SWIFT-ADMIN`,
     });
   }
 
@@ -239,7 +278,6 @@ router.post("/execute-access-removal", (req: Request, res: Response) => {
     API_KEY: "ApiKeyAdapter",
   };
 
-  const isSwiftAdmin = portalName.toLowerCase().includes("swift") && s.criticalTier;
   const steps = isSwiftAdmin
     ? ["admin_role_revoked", "bic_credential_invalidated", "hsm_key_deactivated", "swift_session_terminated"]
     : ["account_deactivated", "session_terminated", "entitlement_removed"];
@@ -276,18 +314,51 @@ router.post("/verify-access-removed", (req: Request, res: Response) => {
 
   if (!s) return res.status(404).json({ error: "No active scenario" });
 
-  const isHkex = portalName.toLowerCase().includes("hkex") || portalName.toLowerCase().includes("ccass");
-  const matchedPortal = s.portals.find((p) => p.name.toLowerCase() === portalName.toLowerCase());
+  const portalNameLower = portalName.toLowerCase();
+  const isHkex = portalNameLower.includes("hkex") || portalNameLower.includes("ccass");
+  const matchedPortal = s.portals.find((p) => p.name.toLowerCase() === portalNameLower);
 
+  // Portal was unreachable — still deferred
   if (s.hkexDown && (isHkex || (matchedPortal && !matchedPortal.reachable))) {
     return res.json({
       portalName,
       employeeId: s.empId,
-      status: "unreachable",
+      status: "deferred",
       verifiedAt: null,
       confirmationId: null,
-      message: "HKEX CCASS unreachable — verification deferred",
+      message: "HKEX CCASS still unreachable — removal and verification deferred to retry queue",
       retryQueueId: `DQ-VERIFY-${confirmId("HKEX")}`,
+    });
+  }
+
+  // Portal had pending trades — was never removed, access still present
+  if (s.tradeCheck && matchedPortal?.hasPendingTrades) {
+    return res.json({
+      portalName,
+      employeeId: s.empId,
+      status: "deferred",
+      verifiedAt: null,
+      confirmationId: null,
+      accessStillPresent: true,
+      message: `Access NOT removed — ${portalName} was deferred due to pending trade settlements. Account remains active until settlement completes.`,
+      earliestRemovalDate: new Date(Date.now() + 172800000).toISOString().split("T")[0],
+      openExceptionId: `EXC-SETTLE-${confirmId(portalName.slice(0, 4).toUpperCase())}`,
+    });
+  }
+
+  // CRITICAL tier SWIFT admin — was blocked without approval code, access still present
+  const isSwiftAdmin = portalNameLower.includes("swift") && s.criticalTier;
+  if (isSwiftAdmin) {
+    return res.json({
+      portalName,
+      employeeId: s.empId,
+      status: "pending_approval",
+      verifiedAt: null,
+      confirmationId: null,
+      accessStillPresent: true,
+      message: "SWIFT Alliance admin access NOT removed — awaiting manager approval (SOX SM-14 policy). Approval workflow open.",
+      approvalWorkflow: `APPR-${s.caseId}-SWIFT-ADMIN`,
+      openExceptionId: `EXC-CRIT-${confirmId("SWIFT")}`,
     });
   }
 
@@ -328,22 +399,44 @@ router.post("/generate-evidence-package", (req: Request, res: Response) => {
   const packageId = `${caseId.replace("AIM", "AIM-EVP")}-${Date.now().toString(36).toUpperCase()}`;
   const retentionYears = s.criticalTier ? 10 : 7;
 
+  const deferredPortals = s.portals.filter((p) => !p.reachable || p.hasPendingTrades);
+  const swiftAdminBlocked = s.criticalTier && s.portals.some(p => p.name.toLowerCase().includes("swift"));
+  const hasOpenExceptions = deferredPortals.length > 0 || swiftAdminBlocked;
+  const closureCode = hasOpenExceptions ? "COMPLETED_WITH_EXCEPTIONS" : "COMPLETED_SUCCESSFULLY";
+
+  const openExceptions = [
+    ...deferredPortals.map(p => ({
+      portal: p.name,
+      reason: p.hasPendingTrades ? "PENDING_SETTLEMENTS — deferred until T+2 settlement" : "PORTAL_UNREACHABLE — deferred to retry queue",
+      exceptionId: `EXC-${confirmId(p.name.slice(0, 4).toUpperCase())}`,
+      requiresFollowUp: true,
+    })),
+    ...(swiftAdminBlocked ? [{
+      portal: "SWIFT Alliance",
+      reason: "CRITICAL_TIER_APPROVAL_REQUIRED — awaiting SOX SM-14 manager approval",
+      exceptionId: `EXC-CRIT-${confirmId("SWIFT")}`,
+      requiresFollowUp: true,
+    }] : []),
+  ];
+
   res.json({
     success: true,
     packageId,
     caseId,
     employeeId: s.empId,
+    completionStatus: closureCode,
     artifacts: [
-      ...s.portals.filter((p) => p.reachable).map((p) => ({
+      ...s.portals.filter((p) => p.reachable && !p.hasPendingTrades).map((p) => ({
         type: "removal_receipt",
         portal: p.name,
         artifactId: `ART-${confirmId(p.name.slice(0, 4).toUpperCase())}`,
         hash: `sha256:${Buffer.from(p.accountId + Date.now()).toString("base64").slice(0, 43)}=`,
       })),
-      { type: "sailpoint_entitlement_diff", artifactId: `ART-SP-DIFF-${Date.now().toString(36).toUpperCase()}`, itemsCleared: s.portals.length },
-      { type: "ad_audit_log", artifactId: `ART-AD-${Date.now().toString(36).toUpperCase()}`, accountsDisabled: 1 },
+      { type: "sailpoint_entitlement_diff", artifactId: `ART-SP-DIFF-${Date.now().toString(36).toUpperCase()}`, itemsCleared: portalsRemoved },
+      { type: "ad_audit_log", artifactId: `ART-AD-${Date.now().toString(36).toUpperCase()}`, accountsDisabled: portalsRemoved },
       { type: "chain_of_custody_manifest", artifactId: `ART-COC-${Date.now().toString(36).toUpperCase()}` },
     ],
+    openExceptions,
     compliance: {
       soxSection404: true,
       retentionYears,
@@ -352,12 +445,14 @@ router.post("/generate-evidence-package", (req: Request, res: Response) => {
       grcArchiveId: `GRC-${confirmId("VAULT")}`,
       splunkRuleCreated: true,
       splunkRuleId: `SPL-RULE-${s.empId}-${Date.now().toString(36).toUpperCase()}`,
+      exceptionsDocumented: openExceptions.length,
     },
     servicenow: {
       caseId,
-      status: "CLOSED",
-      closureCode: "COMPLETED_SUCCESSFULLY",
+      status: hasOpenExceptions ? "OPEN_EXCEPTIONS" : "CLOSED",
+      closureCode,
       closedAt: new Date().toISOString(),
+      followUpRequired: hasOpenExceptions,
     },
     ...(s.criticalTier && {
       internalAuditNotification: {
@@ -367,6 +462,8 @@ router.post("/generate-evidence-package", (req: Request, res: Response) => {
       },
     }),
     generatedAt: new Date().toISOString(),
+    portalsRemoved,
+    portalsDeferred: openExceptions.length,
     totalArtifacts: portalsRemoved + 3,
   });
 });
