@@ -47,8 +47,9 @@ import {
 import type { IStorage } from "./storage";
 import { storage } from "./storage";
 import { db } from "./db";
+import { eq } from "drizzle-orm";
 import { runTraces, agentRuntimeRuns, agents } from "@shared/schema";
-import { runAgentOnce, runtimeEvents, type RuntimeProgressEvent } from "./agent-runtime";
+import { runAgentOnce, stopAgentRuntime, isRuntimeActive, runtimeEvents, type RuntimeProgressEvent } from "./agent-runtime";
 import { setBk2LiveScenario, clearBk2LiveScenario, type Bk2LiveScenario } from "./blackrock2-live-store";
 
 export const demoRouter = Router();
@@ -1448,7 +1449,16 @@ const BK2_AGENT_DEFINITIONS: Record<keyof typeof BK2_LIVE_AGENT_IDS, { name: str
  */
 async function ensureBk2Agent(id: string, role: keyof typeof BK2_LIVE_AGENT_IDS): Promise<void> {
   const existing = await storage.getAgent(id);
-  if (existing) return;
+  if (existing) {
+    // Fix any existing agent that was created with the wrong model provider —
+    // the runtime only works reliably with openai/gpt-4.1 in this environment.
+    if ((existing as any).modelProvider !== "openai" || (existing as any).modelName !== "gpt-4.1") {
+      await db.update(agents)
+        .set({ modelProvider: "openai", modelName: "gpt-4.1" } as any)
+        .where(eq(agents.id, id));
+    }
+    return;
+  }
 
   const def = BK2_AGENT_DEFINITIONS[role];
   await db.insert(agents).values({
@@ -1458,8 +1468,8 @@ async function ensureBk2Agent(id: string, role: keyof typeof BK2_LIVE_AGENT_IDS)
     agentType: "single",
     status: "active",
     environment: "production",
-    modelProvider: "anthropic",
-    modelName: "claude-3-5-sonnet-20241022",
+    modelProvider: "openai",
+    modelName: "gpt-4.1",
     riskTier: "HIGH",
     autonomyMode: "autonomous",
     currentVersion: "1.0.0",
@@ -1522,20 +1532,25 @@ async function ensureAimMcpServer(): Promise<string> {
 
 async function ensureBk2AgentDeployment(agentId: string, agentName: string, mcpServerId: string): Promise<string> {
   const deps = await storage.getDeploymentsByAgentId(agentId);
-  let deployment = deps.find((d: any) => d.status === "deployed");
+  // Accept any existing deployment — "pending" prevents auto-resume, "deployed" would trigger it.
+  // If existing is "deployed" patch it to "pending" to stop the 20s periodic cycles.
+  let deployment = deps[0];
 
   if (!deployment) {
     deployment = await storage.createDeployment({
       agentId,
       agentName,
       environment: "production",
-      status: "deployed",
+      status: "pending",
       version: "1.0.0",
       rolloutStrategy: "canary",
       canaryPercent: 100,
       pipelineComplete: true,
       deployedAt: new Date(),
     });
+  } else if (deployment.status === "deployed") {
+    // Downgrade to "pending" so auto-resume stops picking this up on server restarts.
+    await storage.updateDeployment(deployment.id, { status: "pending" });
   }
 
   const existingLinks = await storage.getAgentMcpServers(agentId);
@@ -1761,6 +1776,12 @@ demoRouter.get("/blackrock2/live-run", async (req: Request, res: Response) => {
       const prompt = buildAgentPrompt(role, scenarioSpec);
 
       sendEvent("agent_start", { agentId, agentName: currentAgentName, role, deploymentId });
+
+      // Stop any lingering periodic auto-resume cycle for this deployment before running —
+      // prevents a background cycle from racing with runAgentOnce and polluting the SSE stream.
+      if (isRuntimeActive(deploymentId)) {
+        stopAgentRuntime(deploymentId);
+      }
 
       const result = await runAgentOnce(deploymentId, prompt, 6);
 
