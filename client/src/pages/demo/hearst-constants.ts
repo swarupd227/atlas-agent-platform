@@ -228,6 +228,7 @@ Given a subscriber's context, you must call your tools in this order:
 3. Call get_cms_articles with email_sendable="true" to retrieve today's email-sendable content inventory across all Hearst brands.
 4. Call get_fatigue_rules to check the current fatigue management rules — weekly send caps, cool-down periods, fatigue score thresholds.
 5. Call get_brand_email_queues to see what campaigns are actively queued for today with their priority scores and predicted revenue.
+6. Call get_conversion_data to check recent post-click conversion performance — which brands and content types are currently driving subscription upgrades and paywall conversions. This informs the revenue_potential component of the score.
 
 After gathering all data, apply the NBEmail_Score formula for each candidate email:
 
@@ -266,9 +267,9 @@ export async function ensureHearstAgentConfig(): Promise<void> {
   _bootstrapDone = true;
 
   const agentId = HEARST_AGENTS.nbaEmailDecision.id;
-  const { apiRequest } = await import("@/lib/queryClient");
 
   try {
+    const { apiRequest } = await import("@/lib/queryClient");
     const linksRes = await apiRequest("GET", `/api/agents/${agentId}/mcp-servers`);
     const links: AgentMcpLink[] = await linksRes.json();
     const linkedIds = new Set(links.map((l) => l.serverId || l.id));
