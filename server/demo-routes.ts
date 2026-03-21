@@ -407,6 +407,10 @@ demoRouter.post("/reset", (_req: Request, res: Response) => {
 
 // ── Kinective: Change of Address tool endpoints ──────────────────────────────
 
+demoRouter.get("/kinective/signplus/form", (_req: Request, res: Response) => {
+  res.json(getScenarioFormData());
+});
+
 demoRouter.get("/kinective/signplus/form/:form_id", (_req: Request, res: Response) => {
   res.json(getScenarioFormData());
 });
@@ -415,6 +419,10 @@ demoRouter.post("/kinective/signplus/archive", (_req: Request, res: Response) =>
   addKinectiveAudit("DOCUMENT_ARCHIVED", "SignPlus", "Signed COA form archived to permanent storage");
   getScenarioSystemUpdate("archive");
   res.json({ success: true, archive_id: `ARC-${Date.now().toString(36).toUpperCase()}` });
+});
+
+demoRouter.get("/kinective/signplus/status", (_req: Request, res: Response) => {
+  res.json({ form_id: "COA-2026-00412", status: "SIGNED", signed_at: new Date().toISOString() });
 });
 
 demoRouter.get("/kinective/signplus/status/:form_id", (_req: Request, res: Response) => {
@@ -593,9 +601,9 @@ const KINECTIVE_MCP_DEFS = [
     id: "342cbdc9-6757-4600-9ca5-abe22aab5212",
     name: "Kinective SignPlus MCP Server",
     tools: [
-      { name: "get_form_data", method: "GET", endpoint: "/signplus/form/{form_id}", description: "Retrieve the signed Change of Address form data" },
+      { name: "get_form_data", method: "GET", endpoint: "/signplus/form", description: "Retrieve the signed Change of Address form data for form COA-2026-00412" },
       { name: "archive_signed_document", method: "POST", endpoint: "/signplus/archive", description: "Archive the signed COA document to permanent storage" },
-      { name: "get_signing_status", method: "GET", endpoint: "/signplus/status/{form_id}", description: "Check the signing status of a COA form" },
+      { name: "get_signing_status", method: "GET", endpoint: "/signplus/status", description: "Check the signing status of COA form COA-2026-00412" },
     ],
   },
   {
@@ -760,6 +768,15 @@ async function ensureKinectiveAgentSetup(): Promise<{ agentCreated: boolean; ser
           owner: "Kinective Demo",
           enabled: true,
         });
+      } else {
+        const existing = existingTools.find((t: any) => t.name === tool.name);
+        const existingEndpoint = existing?.annotations?.endpoint;
+        if (existing && existingEndpoint !== tool.endpoint) {
+          await storage.updateMcpServerTool(existing.id, {
+            description: tool.description,
+            annotations: { endpoint: tool.endpoint, method: tool.method },
+          } as any);
+        }
       }
     }
 
