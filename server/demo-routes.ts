@@ -47,7 +47,7 @@ import {
 import type { IStorage } from "./storage";
 import { storage } from "./storage";
 import { db } from "./db";
-import { runTraces, agentRuntimeRuns } from "@shared/schema";
+import { runTraces, agentRuntimeRuns, agents } from "@shared/schema";
 import { runAgentOnce, runtimeEvents, type RuntimeProgressEvent } from "./agent-runtime";
 import { setBk2LiveScenario, clearBk2LiveScenario, type Bk2LiveScenario } from "./blackrock2-live-store";
 
@@ -1414,6 +1414,65 @@ const AIM_TOOLS = [
   },
 ];
 
+// Agent definitions for idempotent creation — must match AGENT_NAME_MAP in the frontend
+const BK2_AGENT_DEFINITIONS: Record<keyof typeof BK2_LIVE_AGENT_IDS, { name: string; description: string }> = {
+  terminationIntake: {
+    name: "Termination Intake Agent",
+    description: "Validates employee termination events against Workday and SailPoint, creates removal cases, and flags special handling requirements.",
+  },
+  portalDiscovery: {
+    name: "Portal Discovery Agent",
+    description: "Scans all partner portals for employee account entitlements and verifies connectivity for each portal before removal.",
+  },
+  activeTradeCheck: {
+    name: "Active Trade Check Agent",
+    description: "Checks for pending trade settlements on each portal. Blocks removal for portals with unsettled trades above risk thresholds.",
+  },
+  accessRemovalExecutor: {
+    name: "Access Removal Executor Agent",
+    description: "Executes access removal across partner portals using the appropriate authentication adapters (SAML, PKI, SWIFT token, API key).",
+  },
+  removalVerification: {
+    name: "Removal Verification Agent",
+    description: "Independently verifies access removal by probing each portal's auth endpoint. Also provisions new access for employee transfers.",
+  },
+  auditEvidence: {
+    name: "Audit & Evidence Agent",
+    description: "Generates SOX Section 404 compliance evidence packages, archives to GRC vault, and closes ServiceNow cases.",
+  },
+};
+
+/**
+ * Ensures a BK2 agent exists in the database with the hardcoded UUID.
+ * Uses ON CONFLICT DO NOTHING so it is safe to call from both dev and prod — idempotent.
+ */
+async function ensureBk2Agent(id: string, role: keyof typeof BK2_LIVE_AGENT_IDS): Promise<void> {
+  const existing = await storage.getAgent(id);
+  if (existing) return;
+
+  const def = BK2_AGENT_DEFINITIONS[role];
+  await db.insert(agents).values({
+    id,
+    name: def.name,
+    description: def.description,
+    agentType: "single",
+    status: "active",
+    environment: "production",
+    modelProvider: "anthropic",
+    modelName: "claude-3-5-sonnet-20241022",
+    riskTier: "HIGH",
+    autonomyMode: "autonomous",
+    currentVersion: "1.0.0",
+    maxToolIterations: 6,
+    toolAccessClass: "standard",
+    department: "Operations",
+    owner: "BlackRock IAM Team",
+    healthScore: 95,
+    successRate: 0.97,
+    maturityFactors: {},
+  } as any).onConflictDoNothing();
+}
+
 async function ensureAimMcpServer(): Promise<string> {
   const servers = await storage.getMcpServers();
   const existing = servers.find((s: any) => s.name === AIM_MCP_SERVER_NAME);
@@ -1543,6 +1602,36 @@ function buildAgentPrompt(role: keyof typeof BK2_LIVE_AGENT_IDS, s: ReturnType<t
   }
 }
 
+// POST /demo-api/blackrock2/ensure-agents — lightweight setup: creates agents, MCP server,
+// and deployments in the current environment without running any Claude cycles.
+// Safe to call from prod to bootstrap the demo before first live run.
+demoRouter.post("/blackrock2/ensure-agents", async (req: Request, res: Response) => {
+  try {
+    const mcpServerId = await ensureAimMcpServer();
+    const agentEntries = Object.entries(BK2_LIVE_AGENT_IDS) as [keyof typeof BK2_LIVE_AGENT_IDS, string][];
+    const results: Record<string, { agentId: string; deploymentId: string; agentName: string }> = {};
+
+    for (const [role, agentId] of agentEntries) {
+      await ensureBk2Agent(agentId, role);
+      const agent = await storage.getAgent(agentId);
+      const agentName = agent?.name || BK2_AGENT_DEFINITIONS[role].name;
+      const deploymentId = await ensureBk2AgentDeployment(agentId, agentName, mcpServerId);
+      results[role] = { agentId, deploymentId, agentName };
+    }
+
+    return res.json({
+      success: true,
+      mcpServerId,
+      agentsConfigured: Object.keys(results).length,
+      agents: results,
+      message: `All 6 BK2 agents and AIM MCP server are ready in this environment.`,
+    });
+  } catch (err: any) {
+    console.error("[bk2-ensure-agents] Error:", err?.message);
+    return res.status(500).json({ success: false, error: err?.message || "Setup failed" });
+  }
+});
+
 // SSE: GET /demo-api/blackrock2/live-run?scenarioId=...
 demoRouter.get("/blackrock2/live-run", async (req: Request, res: Response) => {
   const scenarioId = (req.query.scenarioId as Bk2LiveScenario) || "happy_path";
@@ -1647,9 +1736,15 @@ demoRouter.get("/blackrock2/live-run", async (req: Request, res: Response) => {
     const agentEntries = Object.entries(BK2_LIVE_AGENT_IDS) as [keyof typeof BK2_LIVE_AGENT_IDS, string][];
     const deploymentIds: Record<string, string> = {};
 
+    sendEvent("setup", { message: `Ensuring all 6 BK2 agents exist in this environment...` });
+    for (const [role, agentId] of agentEntries) {
+      // Idempotently create the agent in this DB if it doesn't exist (handles fresh prod DB)
+      await ensureBk2Agent(agentId, role);
+    }
+
     for (const [role, agentId] of agentEntries) {
       const agent = await storage.getAgent(agentId);
-      const agentName = agent?.name || role;
+      const agentName = agent?.name || BK2_AGENT_DEFINITIONS[role].name;
       const depId = await ensureBk2AgentDeployment(agentId, agentName, mcpServerId);
       deploymentIds[role] = depId;
       bk2DeploymentIds.add(depId); // allow onRuntimeEvent to process events from this deployment
