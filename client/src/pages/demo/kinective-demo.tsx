@@ -43,6 +43,8 @@ import {
   Send,
   Webhook,
   Zap,
+  Terminal,
+  Cpu,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { KINECTIVE_AGENT, KINECTIVE_MCP_SERVERS, KINECTIVE_SKILLS, KINECTIVE_CONFIG } from "./kinective-constants";
@@ -958,100 +960,87 @@ function NotificationPanel({ scenario, hasRun }: { scenario: Scenario; hasRun: b
   );
 }
 
-interface SseToolEvent {
+interface KinectiveLogEntry {
   id: number;
-  tool: string;
-  system: string;
-  success: boolean;
-  error: string | null;
+  time: string;
+  type: "run_start" | "setup" | "agent_start" | "tool_call_start" | "tool_call_result" | "run_complete" | "error";
+  message: string;
+  tool?: string;
+  system?: string;
+  success?: boolean;
 }
 
-const TOOL_EMOJI: Record<string, string> = {
-  get_form_data: "📋",
-  archive_signed_document: "📁",
-  get_signing_status: "✅",
-  validate_address: "🔍",
-  update_member_address: "🏛",
-  get_member_profile: "👤",
-  update_digital_address: "💻",
-  notify_digital_banking: "🔔",
-  update_statement_address: "📄",
-  update_card_address: "💳",
-  update_loan_address: "🏦",
-  update_crm_contact: "👤",
-  create_interaction_record: "📋",
-  update_bill_pay_address: "💰",
-  flag_address_change: "🛡",
-  log_bsa_event: "⚖",
-  create_compliance_record: "📜",
-  log_action: "📝",
-  rollback_address_update: "↩",
-};
+function KinectiveLogFeed({ entries, running, complete }: { entries: KinectiveLogEntry[]; running: boolean; complete: boolean }) {
+  const feedRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
+  }, [entries]);
 
-function LiveAgentEventsPanel({ events, running }: { events: SseToolEvent[]; running: boolean }) {
   return (
-    <Card className="bg-zinc-900 border-zinc-800" data-testid="live-agent-events-panel">
-      <CardHeader className="pb-3">
+    <Card className="bg-zinc-900 border-zinc-800 flex flex-col" style={{ minHeight: 320 }} data-testid="kinective-log-feed">
+      <CardHeader className="pb-3 shrink-0">
         <CardTitle className="text-sm font-semibold flex items-center gap-2">
-          <Zap className="w-4 h-4 text-orange-400" />
-          Live Agent Execution
+          <Terminal className="w-4 h-4 text-cyan-400" />
+          Live Agent Trace
           {running && (
-            <Badge variant="outline" className="ml-auto bg-orange-500/10 text-orange-400 border-orange-500/30 text-[10px] animate-pulse">
+            <Badge variant="outline" className="ml-auto bg-cyan-500/10 text-cyan-400 border-cyan-500/30 text-[10px] animate-pulse">
               GPT-4.1 RUNNING
             </Badge>
           )}
-          {!running && events.length > 0 && (
+          {!running && entries.length > 0 && (
             <Badge variant="outline" className="ml-auto bg-zinc-800 border-zinc-700 text-zinc-400 text-[10px]">
-              {events.length} tool calls
+              {entries.filter(e => e.type === "tool_call_result").length} tool calls
             </Badge>
           )}
         </CardTitle>
       </CardHeader>
-      <CardContent>
-        <div className="space-y-0.5 max-h-[300px] overflow-y-auto">
-          {events.length === 0 && !running && (
-            <div className="text-zinc-500 text-xs py-5 text-center">
-              <Zap className="w-5 h-5 mx-auto mb-2 opacity-20" />
-              <div>Real GPT-4.1 tool calls will appear here when the agent runs.</div>
-            </div>
-          )}
-          {events.length === 0 && running && (
-            <div className="text-zinc-500 text-xs py-3 flex items-center gap-2 justify-center">
-              <Loader2 className="w-3.5 h-3.5 animate-spin text-orange-400" />
-              <span className="text-orange-400/70">Agent initializing…</span>
-            </div>
-          )}
-          {events.map((evt) => (
-            <div
-              key={evt.id}
-              className={`flex items-center gap-2 py-1.5 px-2 rounded text-xs ${
-                evt.success ? "hover:bg-zinc-800/40" : "bg-red-500/5 hover:bg-red-500/10"
-              }`}
-              data-testid={`sse-event-${evt.id}`}
-            >
-              <span className="text-[11px] shrink-0">{TOOL_EMOJI[evt.tool] || "🔧"}</span>
-              <span className={`font-mono text-[10px] truncate flex-1 ${evt.success ? "text-zinc-300" : "text-red-400"}`}>
-                {evt.tool}
-              </span>
-              <span className="text-zinc-600 text-[10px] shrink-0">{evt.system}</span>
-              <div className="shrink-0">
-                {evt.success ? (
-                  <Badge variant="outline" className="bg-green-500/20 text-green-400 border-green-500/30 text-[9px] px-1">✓</Badge>
-                ) : (
-                  <Badge variant="outline" className="bg-red-500/20 text-red-400 border-red-500/30 text-[9px] px-1 max-w-[80px] truncate">
-                    {evt.error ? evt.error.slice(0, 12) + "…" : "✗"}
-                  </Badge>
-                )}
+      <CardContent className="flex-1 overflow-hidden p-0 pb-4">
+        {entries.length === 0 && !running && !complete && (
+          <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-6">
+            <Terminal className="w-6 h-6 text-zinc-600" />
+            <p className="text-xs text-zinc-500">GPT-4.1 agent tool calls will stream here in real time.</p>
+          </div>
+        )}
+        {(entries.length > 0 || running) && (
+          <div ref={feedRef} className="h-full overflow-y-auto px-5 py-2 space-y-0.5 font-mono text-[11px]" data-testid="kinective-feed-scroll">
+            {entries.map((ev) => (
+              <div key={ev.id} className="flex items-start gap-2.5" data-testid={`kinective-log-${ev.id}`}>
+                <span className="text-zinc-600 shrink-0 pt-0.5 w-16">{ev.time}</span>
+                <span className={`leading-relaxed flex items-center gap-1.5 ${
+                  ev.type === "run_start" || ev.type === "setup"          ? "text-zinc-500" :
+                  ev.type === "agent_start"                               ? "text-cyan-400 font-semibold" :
+                  ev.type === "tool_call_start"                           ? "text-blue-400" :
+                  ev.type === "tool_call_result" && ev.success            ? "text-emerald-400" :
+                  ev.type === "tool_call_result" && ev.success === false  ? "text-red-400" :
+                  ev.type === "run_complete"                              ? "text-emerald-400 font-semibold" :
+                  ev.type === "error"                                     ? "text-red-400" :
+                  "text-zinc-300"
+                }`}>
+                  {ev.type === "tool_call_start"                           && <Zap         className="inline w-3 h-3 shrink-0 text-blue-400" />}
+                  {ev.type === "tool_call_result" && ev.success            && <CheckCircle2 className="inline w-3 h-3 shrink-0 text-emerald-400" />}
+                  {ev.type === "tool_call_result" && ev.success === false  && <XCircle      className="inline w-3 h-3 shrink-0 text-red-400" />}
+                  {ev.type === "agent_start"                               && <Cpu          className="inline w-3 h-3 shrink-0 text-cyan-400" />}
+                  {ev.type === "run_complete"                              && <CheckCircle2 className="inline w-3 h-3 shrink-0 text-emerald-400" />}
+                  {ev.type === "error"                                     && <XCircle      className="inline w-3 h-3 shrink-0 text-red-400" />}
+                  <span>{ev.message}</span>
+                </span>
               </div>
-            </div>
-          ))}
-          {running && events.length > 0 && (
-            <div className="flex items-center gap-2 py-1.5 px-2 text-[10px] text-orange-400/50">
-              <Loader2 className="w-2.5 h-2.5 animate-spin" />
-              <span>processing…</span>
-            </div>
-          )}
-        </div>
+            ))}
+            {running && entries.length > 0 && (
+              <div className="flex items-center gap-2.5 text-zinc-500 mt-1">
+                <span className="w-16 shrink-0" />
+                <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+                <span className="italic text-[10px]">Agent working…</span>
+              </div>
+            )}
+            {running && entries.length === 0 && (
+              <div className="flex items-center gap-2.5 text-zinc-500">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span>Initializing agent…</span>
+              </div>
+            )}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -1107,9 +1096,10 @@ export default function KinectiveDemo() {
   const [scenario, setScenario] = useState<Scenario>("happy");
   const [running, setRunning] = useState(false);
   const [agentTeamOpen, setAgentTeamOpen] = useState(false);
-  const [sseEvents, setSseEvents] = useState<SseToolEvent[]>([]);
+  const [logEntries, setLogEntries] = useState<KinectiveLogEntry[]>([]);
+  const [complete, setComplete] = useState(false);
   const sseRef = useRef<EventSource | null>(null);
-  const sseCounter = useRef(0);
+  const logCounter = useRef(0);
   const lastStartedAt = useRef<number>(0);
   const { toast } = useToast();
 
@@ -1168,44 +1158,86 @@ export default function KinectiveDemo() {
       sseRef.current.close();
       sseRef.current = null;
     }
-    setSseEvents([]);
-    sseCounter.current = 0;
+    setLogEntries([]);
+    setComplete(false);
+    logCounter.current = 0;
+
+    const now = () => {
+      const d = new Date();
+      return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+    };
+    const addEntry = (type: KinectiveLogEntry["type"], message: string, extra?: Partial<KinectiveLogEntry>) => {
+      const id = ++logCounter.current;
+      setLogEntries((prev) => [...prev, { id, time: now(), type, message, ...extra }]);
+    };
 
     const es = new EventSource(`/demo-api/kinective/stream?scenario=${scenarioName}`);
     sseRef.current = es;
 
-    es.addEventListener("run_start", () => {
+    es.addEventListener("run_start", (e: MessageEvent) => {
       startRunning();
+      try {
+        const d = JSON.parse(e.data);
+        addEntry("run_start", `Live run started — scenario: ${d.scenario || scenarioName}`);
+      } catch { addEntry("run_start", "COA pipeline starting…"); }
+    });
+
+    es.addEventListener("setup", (e: MessageEvent) => {
+      try { const d = JSON.parse(e.data); addEntry("setup", d.message || "Setting up…"); } catch {}
+    });
+
+    es.addEventListener("agent_start", (e: MessageEvent) => {
+      try {
+        const d = JSON.parse(e.data);
+        addEntry("agent_start", `Executing ${d.agentName || "Change of Address Agent"}…`);
+      } catch { addEntry("agent_start", "Executing Change of Address Agent…"); }
     });
 
     es.addEventListener("agent_event", (e: MessageEvent) => {
       try {
         const data = JSON.parse(e.data);
-        if (data.type === "tool_call_result") {
-          sseCounter.current += 1;
-          const id = sseCounter.current;
-          setSseEvents((prev) => [
-            ...prev,
-            { id, tool: data.tool || "unknown", system: data.system || "Unknown", success: data.success ?? true, error: data.error || null },
-          ]);
+        if (data.type === "tool_call_start") {
+          addEntry("tool_call_start", `→ Calling: ${data.tool}`, { tool: data.tool, system: data.system });
+        } else if (data.type === "tool_call_result") {
+          const suffix = data.system ? ` → ${data.system}` : "";
+          const msg = data.success
+            ? `✓ ${data.tool}${suffix}: success`
+            : `✗ ${data.tool}${suffix}: ${data.error || "failed"}`;
+          addEntry("tool_call_result", msg, { tool: data.tool, system: data.system, success: data.success ?? true });
           queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/system-updates"] });
           queryClient.invalidateQueries({ queryKey: ["/demo-api/kinective/audit-log"] });
         }
       } catch {}
     });
 
-    es.addEventListener("run_complete", () => {
+    es.addEventListener("run_complete", (e: MessageEvent) => {
+      try {
+        const d = JSON.parse(e.data);
+        addEntry("run_complete", d.message || "COA pipeline complete — all systems processed");
+      } catch { addEntry("run_complete", "COA pipeline complete"); }
       setRunning(false);
+      setComplete(true);
       invalidateAll();
       es.close();
       sseRef.current = null;
     });
 
-    es.addEventListener("error", () => {
+    es.addEventListener("error", (e: MessageEvent) => {
+      try {
+        const d = JSON.parse(e.data);
+        addEntry("error", `Error: ${d.message || "Connection error"}`);
+      } catch { addEntry("error", "Stream error"); }
       setRunning(false);
       es.close();
       sseRef.current = null;
     });
+
+    es.onerror = () => {
+      if (es.readyState === EventSource.CLOSED) {
+        setRunning(false);
+        sseRef.current = null;
+      }
+    };
   };
 
   const resetMutation = useMutation({
@@ -1216,8 +1248,9 @@ export default function KinectiveDemo() {
     onSuccess: () => {
       sseRef.current?.close();
       sseRef.current = null;
-      setSseEvents([]);
-      sseCounter.current = 0;
+      setLogEntries([]);
+      setComplete(false);
+      logCounter.current = 0;
       setRunning(false);
       setScenario("happy");
       invalidateAll();
@@ -1367,7 +1400,7 @@ export default function KinectiveDemo() {
           </div>
 
           <div className="col-span-5 space-y-4">
-            <LiveAgentEventsPanel events={sseEvents} running={running} />
+            <KinectiveLogFeed entries={logEntries} running={running} complete={complete} />
             <ActivityFeed entries={entries} />
 
             <Collapsible open={agentTeamOpen} onOpenChange={setAgentTeamOpen}>

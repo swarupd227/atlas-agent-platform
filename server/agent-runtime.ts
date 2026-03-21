@@ -2111,7 +2111,7 @@ export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ st
   };
 }
 
-async function executeAgentCycle(agent: RuntimeAgent) {
+async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: RuntimeProgressEvent) => void) {
   console.log(`[agent-runtime] Executing cycle for ${agent.agentName} (deployment: ${agent.deploymentId})`);
 
   if (!agent.prompt) {
@@ -2146,6 +2146,7 @@ async function executeAgentCycle(agent: RuntimeAgent) {
           agent.industry,
           enrichedContext || agent.agentSystemPrompt,
           { ontologyLabels: (agent.ontologyTags || []).map(t => t.conceptLabel), runtimeConfig: agent.runtimeConfig || {}, modelProvider: agent.modelProvider, modelName: agent.modelName, maxToolIterations: agent.maxToolIterations },
+          onProgress,
         );
 
     await storage.updateAgentRuntimeRun(runtimeRun.id, {
@@ -2628,7 +2629,7 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
   }
 }
 
-export async function runAgentOnce(deploymentId: string, promptOverride?: string, maxIterationsOverride?: number): Promise<{ success: boolean; message: string }> {
+export async function runAgentOnce(deploymentId: string, promptOverride?: string, maxIterationsOverride?: number, onProgress?: (event: RuntimeProgressEvent) => void): Promise<{ success: boolean; message: string }> {
   const deployment = await storage.getDeployment(deploymentId);
   if (!deployment) return { success: false, message: "Deployment not found" };
 
@@ -2669,7 +2670,7 @@ export async function runAgentOnce(deploymentId: string, promptOverride?: string
   };
 
   try {
-    await executeAgentCycle(runtimeAgent);
+    await executeAgentCycle(runtimeAgent, onProgress);
     return { success: true, message: `${agent.name} cycle completed` };
   } catch (err: any) {
     return { success: false, message: err.message || "Cycle failed" };

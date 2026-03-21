@@ -928,43 +928,33 @@ demoRouter.get("/kinective/stream", async (req: Request, res: Response) => {
   };
 
   let aborted = false;
-  let kinectiveDeploymentId: string | null = null;
 
-  const onRuntimeEvent = (evt: { deploymentId: string; agentId: string; runId: string; result: any }) => {
-    if (aborted || evt.deploymentId !== kinectiveDeploymentId) return;
+  req.on("close", () => { aborted = true; });
 
-    const steps: any[] = evt.result?.steps ?? [];
-    const toolCallSteps = steps.filter((s: any) => s.type === "api_call" && s.mcpServer !== "unknown");
-
-    for (const step of toolCallSteps) {
-      const tool = step.mcpTool || step.output?.mcpTool || step.name || "unknown_tool";
-      const stepCompleted = step.status === "completed" || step.status === "passed";
-      const responseData = step.output?.data ?? step.output ?? null;
-
-      const bodySuccess = (() => {
-        if (!responseData) return stepCompleted;
-        if (typeof responseData.success === "boolean") return responseData.success;
-        if (typeof responseData.valid === "boolean") return responseData.valid;
-        return stepCompleted;
-      })();
-
-      const success = stepCompleted && bodySuccess;
-      const errorDetail = !success
-        ? (responseData?.error || responseData?.errorMessage || responseData?.error_message || step.error || "failed")
-        : null;
-
+  // Per-step progress callback — fires in real-time as each tool call completes
+  const onProgress = (evt: { type: string; timestamp: string; data: Record<string, any> }) => {
+    if (aborted) return;
+    const { type, data } = evt;
+    if (type === "tool_call_start") {
+      const tool = data.tool || "unknown";
+      if (data.server === "unknown") return; // skip unresolved tool names
+      sendEvent("agent_event", {
+        type: "tool_call_start",
+        tool,
+        system: KINECTIVE_TOOL_SYSTEM_MAP[tool] || "Unknown",
+      });
+    } else if (type === "tool_call_result") {
+      const tool = data.tool || "unknown";
+      if (data.server === "unknown") return;
       sendEvent("agent_event", {
         type: "tool_call_result",
         tool,
         system: KINECTIVE_TOOL_SYSTEM_MAP[tool] || "Unknown",
-        success,
-        error: errorDetail,
+        success: data.success ?? true,
+        error: data.success === false ? (data.error || "failed") : null,
       });
     }
   };
-
-  runtimeEvents.on("agent_execution", onRuntimeEvent);
-  req.on("close", () => { aborted = true; runtimeEvents.off("agent_execution", onRuntimeEvent); });
 
   try {
     const {
@@ -1018,7 +1008,7 @@ demoRouter.get("/kinective/stream", async (req: Request, res: Response) => {
 
     sendEvent("agent_start", { agentId: KINECTIVE_AGENT_ID, agentName: "Change of Address Agent" });
 
-    const result = await runAgentOnce(deployment.id, prompt, maxSteps);
+    const result = await runAgentOnce(deployment.id, prompt, maxSteps, onProgress);
 
     if (getRunGeneration() !== thisGeneration) {
       setKinectiveRunning(false);
