@@ -928,6 +928,7 @@ demoRouter.get("/kinective/stream", async (req: Request, res: Response) => {
   };
 
   let aborted = false;
+  let kinectiveDeploymentId: string | null = null;
 
   req.on("close", () => { aborted = true; });
 
