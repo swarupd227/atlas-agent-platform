@@ -254,20 +254,22 @@ router.post(["/execute-access-removal", "/execute-removal", "/execute_access_rem
     });
   }
 
-  // Block: CRITICAL tier SWIFT admin — requires explicit manager approval code
+  // Block: CRITICAL tier SWIFT admin — ALWAYS blocked regardless of any agent-provided approval code.
+  // Manager approval must arrive via out-of-band ServiceNow workflow (human-in-the-loop only).
   const isSwiftAdmin = portalNameLower.includes("swift") && s.criticalTier;
-  if (isSwiftAdmin && !req.body.managerApprovalCode) {
+  if (isSwiftAdmin) {
     return res.json({
       success: false,
       portalName,
       employeeId: s.empId,
       errorCode: "CRITICAL_TIER_APPROVAL_REQUIRED",
-      errorMessage: "SWIFT Alliance admin access is CRITICAL tier. SOX SM-14 policy mandates explicit manager approval before admin credential revocation. Provide managerApprovalCode to proceed.",
+      errorMessage: "SWIFT Alliance admin access is CRITICAL tier. SOX SM-14 policy mandates explicit manager approval via ServiceNow workflow before admin credential revocation. Agent cannot self-approve — human action required.",
       blocked: true,
       requiresApproval: true,
       approvalType: "MANAGER_SOX_CRITICAL",
       policy: "SM-14: Critical System Administrator Access Revocation",
       approvalWorkflow: `APPR-${caseId}-SWIFT-ADMIN`,
+      agentProvidedCodeIgnored: !!req.body.managerApprovalCode,
     });
   }
 
