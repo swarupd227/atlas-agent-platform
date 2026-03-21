@@ -27,14 +27,15 @@ import {
   Cpu,
   Zap,
   Terminal,
+  ArrowLeftRight,
 } from "lucide-react";
 import { BLACKROCK2_AGENTS } from "./blackrock2-constants";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type PortalStatus = "pending" | "removed" | "failed" | "deferred" | "held" | "approved";
+type PortalStatus = "pending" | "removed" | "failed" | "deferred" | "held" | "approved" | "provisioned";
 type AgentNodeId = "termination_intake" | "portal_discovery" | "active_trade_check" | "access_removal" | "removal_verification" | "audit_evidence";
-type ScenarioId = "happy_path" | "portal_unreachable" | "pending_trades" | "admin_access";
+type ScenarioId = "happy_path" | "portal_unreachable" | "pending_trades" | "admin_access" | "employee_transfer";
 
 interface Portal {
   name: string;
@@ -43,6 +44,7 @@ interface Portal {
   role: string;
   status: PortalStatus;
   note?: string;
+  isNew?: boolean;
 }
 
 interface Employee {
@@ -59,7 +61,7 @@ interface ScenarioDef {
   id: ScenarioId;
   label: string;
   subtitle: string;
-  icon: "check" | "warn" | "clock" | "lock";
+  icon: "check" | "warn" | "clock" | "lock" | "arrows";
   employee: Employee;
   portals: Portal[];
   finalPortals: Portal[];
@@ -174,11 +176,38 @@ const FINAL_WHITFIELD: Portal[] = [
   { ...PORTALS_WHITFIELD[4], status: "held", note: "Awaiting manager approval — SOX SM-14 policy (APPR-AIM-2026-0798-SWIFT-ADMIN)" },
 ];
 
+const EMPLOYEE_CHEN: Employee = {
+  id: "EMP-28834",
+  name: "Sarah Chen",
+  title: "Senior Fixed Income Trader → Senior Equities Trader",
+  department: "Fixed Income Trading → Equities Trading",
+  terminationDate: "2026-03-22 (Transfer effective)",
+  lastWorkingDay: "2026-03-21 (Last FI day)",
+  manager: "Michael Torres (MD, Equities Trading)",
+};
+const PORTALS_CHEN: Portal[] = [
+  { name: "Bloomberg TOMS",  authType: "API Key",     riskTier: "MEDIUM", role: "FI Trade Blotter Writer", status: "pending" },
+  { name: "ICE Trade Vault", authType: "SAML SSO",    riskTier: "HIGH",   role: "FI Trade Reporter",       status: "pending" },
+  { name: "Clearstream",     authType: "Certificate", riskTier: "HIGH",   role: "Custodian",               status: "pending" },
+  { name: "MarkitServ",      authType: "SAML SSO",    riskTier: "MEDIUM", role: "Confirmation User",       status: "pending" },
+];
+const FINAL_CHEN: Portal[] = [
+  { ...PORTALS_CHEN[0], status: "removed" },
+  { ...PORTALS_CHEN[1], status: "deferred", note: "Deferred — 2 FI repo positions pending settlement (ICE-FI-REP-2281, ICE-FI-REP-2347). Handover required." },
+  { ...PORTALS_CHEN[2], status: "removed" },
+  { ...PORTALS_CHEN[3], status: "removed" },
+  { name: "Bloomberg AIM",      authType: "API Key",  riskTier: "MEDIUM", role: "EQ Trade Blotter Writer",  status: "provisioned", isNew: true },
+  { name: "Fidessa OMS",        authType: "SAML SSO", riskTier: "MEDIUM", role: "Order Manager",            status: "provisioned", isNew: true },
+  { name: "DTCC Equities",      authType: "SAML SSO", riskTier: "MEDIUM", role: "Equities Participant",     status: "provisioned", isNew: true },
+  { name: "Morningstar Direct", authType: "SAML SSO", riskTier: "LOW",    role: "Research Analyst",         status: "provisioned", isNew: true },
+];
+
 const SCENARIOS: ScenarioDef[] = [
-  { id: "happy_path",        label: "Happy Path",        subtitle: "6 portals, clean removal",   icon: "check", employee: EMPLOYEE_KESSLER,  portals: PORTALS_KESSLER,  finalPortals: FINAL_KESSLER  },
-  { id: "portal_unreachable",label: "Portal Unreachable",subtitle: "HKEX CCASS offline",         icon: "warn",  employee: EMPLOYEE_NAKAMURA, portals: PORTALS_NAKAMURA, finalPortals: FINAL_NAKAMURA },
-  { id: "pending_trades",    label: "Pending Trades",    subtitle: "Euroclear hold required",    icon: "clock", employee: EMPLOYEE_THOMPSON, portals: PORTALS_THOMPSON, finalPortals: FINAL_THOMPSON },
-  { id: "admin_access",      label: "Admin Access",      subtitle: "SWIFT admin approval gate",  icon: "lock",  employee: EMPLOYEE_WHITFIELD,portals: PORTALS_WHITFIELD,finalPortals: FINAL_WHITFIELD},
+  { id: "happy_path",        label: "Happy Path",        subtitle: "6 portals, clean removal",      icon: "check",  employee: EMPLOYEE_KESSLER,  portals: PORTALS_KESSLER,  finalPortals: FINAL_KESSLER  },
+  { id: "portal_unreachable",label: "Portal Unreachable",subtitle: "HKEX CCASS offline",            icon: "warn",   employee: EMPLOYEE_NAKAMURA, portals: PORTALS_NAKAMURA, finalPortals: FINAL_NAKAMURA },
+  { id: "pending_trades",    label: "Pending Trades",    subtitle: "Euroclear hold required",       icon: "clock",  employee: EMPLOYEE_THOMPSON, portals: PORTALS_THOMPSON, finalPortals: FINAL_THOMPSON },
+  { id: "admin_access",      label: "Admin Access",      subtitle: "SWIFT admin approval gate",     icon: "lock",   employee: EMPLOYEE_WHITFIELD,portals: PORTALS_WHITFIELD,finalPortals: FINAL_WHITFIELD},
+  { id: "employee_transfer", label: "Employee Transfer", subtitle: "FI→EQ role change, provisioning",icon: "arrows",employee: EMPLOYEE_CHEN,    portals: PORTALS_CHEN,     finalPortals: FINAL_CHEN     },
 ];
 
 // ─── Pipeline banner ──────────────────────────────────────────────────────────
@@ -224,18 +253,20 @@ function PipelineBanner({ activeAgent, completedAgents }: { activeAgent: AgentNo
 }
 
 function ScenarioIcon({ icon, className }: { icon: ScenarioDef["icon"]; className?: string }) {
-  if (icon === "check") return <CheckCircle2 className={className} />;
-  if (icon === "warn")  return <AlertTriangle className={className} />;
-  if (icon === "clock") return <Clock className={className} />;
+  if (icon === "check")  return <CheckCircle2 className={className} />;
+  if (icon === "warn")   return <AlertTriangle className={className} />;
+  if (icon === "clock")  return <Clock className={className} />;
+  if (icon === "arrows") return <ArrowLeftRight className={className} />;
   return <Lock className={className} />;
 }
 
 function PortalStatusBadge({ status }: { status: PortalStatus }) {
-  if (status === "removed")  return <Badge variant="outline" className="text-[9px] border-emerald-500/50 text-emerald-400 bg-emerald-500/5">Removed</Badge>;
-  if (status === "failed")   return <Badge variant="outline" className="text-[9px] border-red-500/50 text-red-400 bg-red-500/5">Failed</Badge>;
-  if (status === "deferred") return <Badge variant="outline" className="text-[9px] border-amber-500/50 text-amber-400 bg-amber-500/5">Deferred</Badge>;
-  if (status === "held")     return <Badge variant="outline" className="text-[9px] border-orange-500/50 text-orange-400 bg-orange-500/5">On Hold</Badge>;
-  if (status === "approved") return <Badge variant="outline" className="text-[9px] border-emerald-500/50 text-emerald-400 bg-emerald-500/5">Approved & Removed</Badge>;
+  if (status === "removed")     return <Badge variant="outline" className="text-[9px] border-emerald-500/50 text-emerald-400 bg-emerald-500/5">Removed</Badge>;
+  if (status === "failed")      return <Badge variant="outline" className="text-[9px] border-red-500/50 text-red-400 bg-red-500/5">Failed</Badge>;
+  if (status === "deferred")    return <Badge variant="outline" className="text-[9px] border-amber-500/50 text-amber-400 bg-amber-500/5">Deferred</Badge>;
+  if (status === "held")        return <Badge variant="outline" className="text-[9px] border-orange-500/50 text-orange-400 bg-orange-500/5">On Hold</Badge>;
+  if (status === "approved")    return <Badge variant="outline" className="text-[9px] border-emerald-500/50 text-emerald-400 bg-emerald-500/5">Approved & Removed</Badge>;
+  if (status === "provisioned") return <Badge variant="outline" className="text-[9px] border-cyan-500/50 text-cyan-400 bg-cyan-500/5">Provisioned</Badge>;
   return <Badge variant="outline" className="text-[9px] border-muted-foreground/40 text-muted-foreground">Pending</Badge>;
 }
 
@@ -314,10 +345,12 @@ export default function BlackRock2Demo() {
 
   const scenario = SCENARIOS.find((s) => s.id === selectedId)!;
 
-  const removedCount  = portals.filter(p => p.status === "removed" || p.status === "approved").length;
-  const deferredCount = portals.filter(p => p.status === "deferred").length;
-  const failedCount   = portals.filter(p => p.status === "failed").length;
-  const heldCount     = portals.filter(p => p.status === "held").length;
+  const isTransfer      = selectedId === "employee_transfer";
+  const removedCount    = portals.filter(p => p.status === "removed" || p.status === "approved").length;
+  const deferredCount   = portals.filter(p => p.status === "deferred").length;
+  const failedCount     = portals.filter(p => p.status === "failed").length;
+  const heldCount       = portals.filter(p => p.status === "held").length;
+  const provisionedCount = portals.filter(p => p.status === "provisioned").length;
 
   const stopLiveRun = useCallback(() => {
     if (esRef.current) { esRef.current.close(); esRef.current = null; }
@@ -520,34 +553,55 @@ export default function BlackRock2Demo() {
                 <ShieldCheck className="w-3.5 h-3.5" />
                 Partner Portals
                 <span className="ml-auto text-[10px] font-normal">
-                  {removedCount}/{(portals.length || scenario.portals.length)} removed
+                  {isTransfer
+                    ? `${removedCount} revoked · ${provisionedCount} provisioned`
+                    : `${removedCount}/${(portals.length || scenario.portals.length)} removed`}
                 </span>
               </CardTitle>
             </CardHeader>
             <CardContent className="p-3 pt-0 space-y-1.5">
-              {(portals.length > 0 ? portals : scenario.portals).map((portal, i) => (
-                <div key={i} className={`flex flex-col gap-0.5 p-2 rounded-md border text-[11px] ${
-                  portal.status === "removed" || portal.status === "approved" ? "bg-emerald-500/5 border-emerald-500/20" :
-                  portal.status === "failed"   ? "bg-red-500/5 border-red-500/20" :
-                  portal.status === "deferred" ? "bg-amber-500/5 border-amber-500/20" :
-                  portal.status === "held"     ? "bg-orange-500/5 border-orange-500/20" :
-                                                  "bg-muted/30 border-transparent"
-                }`} data-testid={`bk2-portal-${i}`}>
-                  <div className="flex items-center gap-1.5">
-                    <RiskTierDot tier={portal.riskTier} />
-                    <span className="font-medium truncate flex-1">{portal.name}</span>
-                    <PortalStatusBadge status={portal.status} />
-                  </div>
-                  <div className="pl-3.5 flex items-center gap-2 text-[10px] text-muted-foreground flex-wrap">
-                    <span>{portal.authType}</span>
-                    <span className="opacity-50">·</span>
-                    <span className="truncate">{portal.role}</span>
-                  </div>
-                  {portal.note && (
-                    <p className="pl-3.5 text-[10px] text-amber-400 italic">{portal.note}</p>
-                  )}
-                </div>
-              ))}
+              {(() => {
+                const list = portals.length > 0 ? portals : scenario.portals;
+                const elements: JSX.Element[] = [];
+                let shownNewHeader = false;
+                list.forEach((portal, i) => {
+                  if (portal.isNew && !shownNewHeader) {
+                    shownNewHeader = true;
+                    elements.push(
+                      <div key="new-portals-divider" className="flex items-center gap-2 pt-1">
+                        <div className="flex-1 h-px bg-cyan-500/30" />
+                        <span className="text-[9px] text-cyan-400 font-semibold uppercase tracking-wide whitespace-nowrap">New EQ Access Provisioned</span>
+                        <div className="flex-1 h-px bg-cyan-500/30" />
+                      </div>
+                    );
+                  }
+                  elements.push(
+                    <div key={i} className={`flex flex-col gap-0.5 p-2 rounded-md border text-[11px] ${
+                      portal.status === "provisioned"                             ? "bg-cyan-500/5 border-cyan-500/20" :
+                      portal.status === "removed" || portal.status === "approved" ? "bg-emerald-500/5 border-emerald-500/20" :
+                      portal.status === "failed"                                  ? "bg-red-500/5 border-red-500/20" :
+                      portal.status === "deferred"                                ? "bg-amber-500/5 border-amber-500/20" :
+                      portal.status === "held"                                    ? "bg-orange-500/5 border-orange-500/20" :
+                                                                                    "bg-muted/30 border-transparent"
+                    }`} data-testid={`bk2-portal-${i}`}>
+                      <div className="flex items-center gap-1.5">
+                        <RiskTierDot tier={portal.riskTier} />
+                        <span className="font-medium truncate flex-1">{portal.name}</span>
+                        <PortalStatusBadge status={portal.status} />
+                      </div>
+                      <div className="pl-3.5 flex items-center gap-2 text-[10px] text-muted-foreground flex-wrap">
+                        <span>{portal.authType}</span>
+                        <span className="opacity-50">·</span>
+                        <span className="truncate">{portal.role}</span>
+                      </div>
+                      {portal.note && (
+                        <p className="pl-3.5 text-[10px] text-amber-400 italic">{portal.note}</p>
+                      )}
+                    </div>
+                  );
+                });
+                return elements;
+              })()}
             </CardContent>
           </Card>
 
@@ -556,12 +610,25 @@ export default function BlackRock2Demo() {
             <div className="grid grid-cols-2 gap-1.5">
               <div className="flex flex-col items-center p-2 rounded-md border bg-emerald-500/5 border-emerald-500/20" data-testid="bk2-stat-removed">
                 <span className="text-xl font-bold text-emerald-400">{removedCount}</span>
-                <span className="text-[10px] text-muted-foreground">Removed</span>
+                <span className="text-[10px] text-muted-foreground">{isTransfer ? "Revoked" : "Removed"}</span>
               </div>
-              <div className="flex flex-col items-center p-2 rounded-md border bg-amber-500/5 border-amber-500/20" data-testid="bk2-stat-deferred">
-                <span className="text-xl font-bold text-amber-400">{deferredCount + heldCount}</span>
-                <span className="text-[10px] text-muted-foreground">Deferred / Held</span>
-              </div>
+              {isTransfer ? (
+                <div className="flex flex-col items-center p-2 rounded-md border bg-cyan-500/5 border-cyan-500/20" data-testid="bk2-stat-provisioned">
+                  <span className="text-xl font-bold text-cyan-400">{provisionedCount}</span>
+                  <span className="text-[10px] text-muted-foreground">Provisioned</span>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center p-2 rounded-md border bg-amber-500/5 border-amber-500/20" data-testid="bk2-stat-deferred">
+                  <span className="text-xl font-bold text-amber-400">{deferredCount + heldCount}</span>
+                  <span className="text-[10px] text-muted-foreground">Deferred / Held</span>
+                </div>
+              )}
+              {(deferredCount + heldCount) > 0 && isTransfer && (
+                <div className="col-span-2 flex flex-col items-center p-2 rounded-md border bg-amber-500/5 border-amber-500/20" data-testid="bk2-stat-deferred-transfer">
+                  <span className="text-xl font-bold text-amber-400">{deferredCount + heldCount}</span>
+                  <span className="text-[10px] text-muted-foreground">Deferred (Pending Handover)</span>
+                </div>
+              )}
               {failedCount > 0 && (
                 <div className="col-span-2 flex flex-col items-center p-2 rounded-md border bg-red-500/5 border-red-500/20" data-testid="bk2-stat-failed">
                   <span className="text-xl font-bold text-red-400">{failedCount}</span>
@@ -716,9 +783,13 @@ export default function BlackRock2Demo() {
                   <span className="w-16 shrink-0" />
                   <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                   <span className="text-emerald-400 font-semibold">
-                    {failedCount > 0 || deferredCount > 0
-                      ? `Offboarding complete with exceptions — ${removedCount} portals removed, ${deferredCount + failedCount} deferred/unreachable`
-                      : `Offboarding complete — ${removedCount}/${portals.length} portals removed. SOX audit package filed.`}
+                    {isTransfer
+                      ? deferredCount > 0
+                        ? `Transfer complete with exceptions — ${removedCount} FI portals revoked, ${provisionedCount} EQ portals provisioned, ${deferredCount} deferred (ICE Trade Vault handover pending). MiFID II audit package filed.`
+                        : `Transfer complete — ${removedCount} FI portals revoked, ${provisionedCount} EQ portals provisioned. MiFID II audit package filed.`
+                      : failedCount > 0 || deferredCount > 0
+                        ? `Offboarding complete with exceptions — ${removedCount} portals removed, ${deferredCount + failedCount} deferred/unreachable`
+                        : `Offboarding complete — ${removedCount}/${portals.length} portals removed. SOX audit package filed.`}
                   </span>
                 </div>
               )}

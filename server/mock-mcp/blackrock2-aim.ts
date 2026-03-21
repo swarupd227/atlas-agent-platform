@@ -24,6 +24,7 @@ function resolveScenario(body: any): Bk2ScenarioSpec | null {
       "EMP-19823": "portal_unreachable",
       "EMP-34102": "pending_trades",
       "EMP-41087": "admin_access",
+      "EMP-28834": "employee_transfer",
     };
     const sid = BY_EMP[empId];
     if (sid) return getBk2ScenarioSpec(sid);
@@ -159,6 +160,30 @@ router.post(["/check-pending-settlements", "/check-settlements", "/check_pending
         riskLevel: "HIGH",
         prematureRemovalImpact: "Settlement failure for EUR 847M notional — regulatory breach risk",
         recommendedAction: "HOLD — defer access removal until T+1/T+2 settlement completes",
+        thresholdExceeded: true,
+        thresholdUsd: 50000000,
+        requiresHumanApproval: true,
+      },
+    });
+  }
+
+  // ICE Trade Vault — FI repo positions held during employee transfer
+  if (hasTrades && (portalName.toLowerCase().includes("ice") || portalName.toLowerCase().includes("trade vault"))) {
+    return res.json({
+      portalName,
+      employeeId: s.empId,
+      hasPendingSettlements: true,
+      pendingCount: 2,
+      totalNotionalUsd: 285000000,
+      currency: "USD",
+      trades: [
+        { tradeId: "ICE-FI-REP-2281", type: "REPO", counterparty: "Barclays Capital", notional: 165000000, settlementDate: new Date(Date.now() + 172800000).toISOString().split("T")[0], status: "PENDING_T2" },
+        { tradeId: "ICE-FI-REP-2347", type: "REPO", counterparty: "UBS Securities", notional: 120000000, settlementDate: new Date(Date.now() + 86400000).toISOString().split("T")[0], status: "PENDING_T1" },
+      ],
+      riskAssessment: {
+        riskLevel: "HIGH",
+        prematureRemovalImpact: "FI Repo position reporting failure — CFTC Part 45 breach risk. Positions must be reassigned to backup reporter before access change.",
+        recommendedAction: "HOLD — defer ICE Trade Vault access removal. Coordinate with Fixed Income Desk to hand over open positions to designated backup reporter.",
         thresholdExceeded: true,
         thresholdUsd: 50000000,
         requiresHumanApproval: true,
@@ -467,6 +492,109 @@ router.post(["/generate-evidence-package", "/generate-evidence", "/generate_evid
     portalsRemoved,
     portalsDeferred: openExceptions.length,
     totalArtifacts: portalsRemoved + 3,
+  });
+});
+
+// ─── Tool: validate_transfer ─────────────────────────────────────────────────
+router.post(["/validate-transfer", "/validate_transfer"], (req: Request, res: Response) => {
+  const s = resolveScenario(req.body);
+  if (!s) return res.status(400).json({ error: "No active scenario" });
+
+  if (!s.isTransfer) {
+    return res.status(400).json({
+      success: false,
+      error: "Employee is not undergoing a transfer — use validate_termination for offboarding",
+    });
+  }
+
+  const [oldRole, newRole] = s.role.split("→").map((r) => r.trim());
+
+  return res.json({
+    success: true,
+    employeeId: s.empId,
+    employee: s.employee,
+    caseId: s.caseId,
+    caseType: "EMPLOYEE_TRANSFER",
+    workdayValidation: {
+      status: "CONFIRMED",
+      effectiveDate: new Date(Date.now() + 86400000).toISOString().split("T")[0],
+      previousTitle: oldRole,
+      newTitle: newRole || s.newRole,
+      previousDepartment: "Fixed Income Trading",
+      newDepartment: s.newDepartment || "Equities Trading",
+      previousCostCenter: "FI-BLK-07",
+      newCostCenter: "EQ-BLK-12",
+      managerApproved: true,
+      hrApproved: true,
+    },
+    sailpointValidation: {
+      status: "CONFIRMED",
+      currentEntitlements: s.portals.map((p) => ({ portal: p.name, accountId: p.accountId, role: p.role })),
+      requestedEntitlements: (s.newPortals || []).map((p) => ({ portal: p.name, accountId: p.accountId, role: p.role })),
+      entitlementConflicts: [],
+    },
+    portalsToRevoke: s.portals.map((p) => p.name),
+    portalsToProvision: (s.newPortals || []).map((p) => p.name),
+    handoverRequirements: [
+      { portal: "ICE Trade Vault", requirement: "Assign open FI repo positions to backup reporter before access removal", priority: "HIGH", deadline: new Date(Date.now() + 172800000).toISOString().split("T")[0] },
+    ],
+    complianceNotes: ["MiFID II Article 26 — transfer audit trail required", "SOX IA-07 — dual-role access prohibited during transition"],
+    caseConfirmationId: confirmId("TR"),
+    validatedAt: new Date().toISOString(),
+  });
+});
+
+// ─── Tool: provision_access ───────────────────────────────────────────────────
+router.post(["/provision-access", "/provision_access"], (req: Request, res: Response) => {
+  const s = resolveScenario(req.body);
+  if (!s) return res.status(400).json({ error: "No active scenario" });
+
+  const portalName: string = req.body.portalName || req.body.portal || "";
+  const newRole: string = req.body.newRole || req.body.role || "";
+  const caseId: string = req.body.caseId || s.caseId;
+
+  const matchedPortal = (s.newPortals || []).find(
+    (p) => p.name.toLowerCase() === portalName.toLowerCase() || portalName.toLowerCase().includes(p.name.toLowerCase().split(" ")[0])
+  );
+
+  if (!matchedPortal && !portalName) {
+    return res.status(400).json({ success: false, error: "portalName is required" });
+  }
+
+  const portal = matchedPortal || { name: portalName, accountId: `ACC-${confirmId(portalName.slice(0, 4).toUpperCase())}`, role: newRole, authType: "SAML" };
+
+  const authSetupMessages: Record<string, string> = {
+    "Bloomberg AIM": "API key generated and injected into Bloomberg terminal profile SC-7734",
+    "Fidessa OMS": "SAML assertion configured in IDP — user added to EQ-TRADERS group",
+    "DTCC Equities": "SAML assertion configured — Equities Participant entitlement granted in DTCC Member Portal",
+    "Morningstar Direct": "SAML SSO configured — Research Analyst seat activated",
+  };
+
+  const adGroups: Record<string, string[]> = {
+    "Bloomberg AIM": ["EQ-BLOOMBERG-USERS", "AIM-BLOTTER-WRITERS", "BLK-EQUITIES-TRADERS"],
+    "Fidessa OMS": ["EQ-FIDESSA-USERS", "EQ-ORDER-MANAGERS", "BLK-EQUITIES-TRADERS"],
+    "DTCC Equities": ["EQ-DTCC-PARTICIPANTS", "EQ-SETTLEMENT-USERS", "BLK-EQUITIES-TRADERS"],
+    "Morningstar Direct": ["EQ-MORNINGSTAR-USERS", "EQ-RESEARCH-ANALYSTS", "BLK-EQUITIES-TRADERS"],
+  };
+
+  const confirmationId = confirmId(portalName.replace(/\s+/g, "").slice(0, 6).toUpperCase());
+
+  res.json({
+    success: true,
+    portalName: portal.name,
+    employeeId: s.empId,
+    employee: s.employee,
+    caseId,
+    status: "provisioned",
+    newAccountId: portal.accountId,
+    newRole: portal.role || newRole,
+    authType: portal.authType,
+    authSetup: authSetupMessages[portal.name] || `${portal.authType} authentication configured for ${portal.name}`,
+    activeDirectoryGroups: adGroups[portal.name] || [`EQ-${portal.name.toUpperCase().replace(/\s+/g, "-")}-USERS`, "BLK-EQUITIES-TRADERS"],
+    sailpointEntitlementStatus: "GRANTED",
+    provisionedAt: new Date().toISOString(),
+    confirmationId,
+    message: `✓ Access provisioned — ${portal.name} (${portal.role || newRole}) — ${s.employee} is now active in the Equities Trading desk.`,
   });
 });
 

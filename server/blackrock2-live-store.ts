@@ -1,4 +1,4 @@
-export type Bk2LiveScenario = "happy_path" | "portal_unreachable" | "pending_trades" | "admin_access";
+export type Bk2LiveScenario = "happy_path" | "portal_unreachable" | "pending_trades" | "admin_access" | "employee_transfer";
 
 export interface Bk2ScenarioSpec {
   scenarioId: Bk2LiveScenario;
@@ -7,9 +7,13 @@ export interface Bk2ScenarioSpec {
   role: string;
   caseId: string;
   portals: Bk2Portal[];
+  newPortals?: Bk2NewPortal[];
   tradeCheck: boolean;
   criticalTier: boolean;
   hkexDown: boolean;
+  isTransfer?: boolean;
+  newDepartment?: string;
+  newRole?: string;
 }
 
 export interface Bk2Portal {
@@ -19,6 +23,13 @@ export interface Bk2Portal {
   authType: "SAML" | "PKI_CERT" | "SWIFT_TOKEN" | "API_KEY";
   reachable: boolean;
   hasPendingTrades: boolean;
+}
+
+export interface Bk2NewPortal {
+  name: string;
+  accountId: string;
+  role: string;
+  authType: "SAML" | "PKI_CERT" | "SWIFT_TOKEN" | "API_KEY";
 }
 
 const SCENARIOS: Record<Bk2LiveScenario, Bk2ScenarioSpec> = {
@@ -87,6 +98,31 @@ const SCENARIOS: Record<Bk2LiveScenario, Bk2ScenarioSpec> = {
     tradeCheck: false,
     criticalTier: true,
     hkexDown: false,
+  },
+  employee_transfer: {
+    scenarioId: "employee_transfer",
+    employee: "Sarah Chen",
+    empId: "EMP-28834",
+    role: "Senior Fixed Income Trader → Senior Equities Trader",
+    caseId: "AIM-TR-2026-0912",
+    portals: [
+      { name: "Bloomberg TOMS", accountId: "BBG-SC-7734", role: "FI Trade Blotter Writer", authType: "API_KEY", reachable: true, hasPendingTrades: false },
+      { name: "ICE Trade Vault", accountId: "ICE-SC-4421", role: "FI Trade Reporter", authType: "SAML", reachable: true, hasPendingTrades: true },
+      { name: "Clearstream", accountId: "CS-SC-BLK-2291", role: "Custodian", authType: "PKI_CERT", reachable: true, hasPendingTrades: false },
+      { name: "MarkitServ", accountId: "MS-SC-7012", role: "Confirmation User", authType: "SAML", reachable: true, hasPendingTrades: false },
+    ],
+    newPortals: [
+      { name: "Bloomberg AIM", accountId: "BBG-AIM-SC-001", role: "EQ Trade Blotter Writer", authType: "API_KEY" },
+      { name: "Fidessa OMS", accountId: "FIDS-SC-EQ-002", role: "Order Manager", authType: "SAML" },
+      { name: "DTCC Equities", accountId: "DTCC-EQ-SC-003", role: "Equities Participant", authType: "SAML" },
+      { name: "Morningstar Direct", accountId: "MS-DIR-SC-004", role: "Research Analyst", authType: "SAML" },
+    ],
+    tradeCheck: true,
+    criticalTier: false,
+    hkexDown: false,
+    isTransfer: true,
+    newDepartment: "Equities Trading",
+    newRole: "Senior Equities Trader",
   },
 };
 

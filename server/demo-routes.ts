@@ -1084,7 +1084,7 @@ const BK2_AGENT_IDS = {
   auditEvidence:        "388b13f6-0e3d-475f-a6b4-67c0c4f98c0d",
 };
 
-type Bk2Scenario = "happy_path" | "portal_unreachable" | "pending_trades" | "admin_access";
+type Bk2Scenario = "happy_path" | "portal_unreachable" | "pending_trades" | "admin_access" | "employee_transfer";
 
 interface ScenarioSpec {
   employee: string; emp: string; caseId: string;
@@ -1109,6 +1109,10 @@ const BK2_SCENARIO_DATA: Record<Bk2Scenario, ScenarioSpec> = {
   admin_access: {
     employee: "James Whitfield", emp: "EMP-41087", caseId: "AIM-2026-0798",
     portalsRemoved: 4, portalsDeferred: 0, tradeHold: false, criticalTier: true, hkexDown: false,
+  },
+  employee_transfer: {
+    employee: "Sarah Chen", emp: "EMP-28834", caseId: "AIM-TR-2026-0912",
+    portalsRemoved: 3, portalsDeferred: 1, tradeHold: true, criticalTier: false, hkexDown: false,
   },
 };
 
@@ -1392,42 +1396,69 @@ const AIM_TOOLS = [
     method: "POST",
     inputSchema: { type: "object", required: ["caseId", "employeeId"], properties: { caseId: { type: "string" }, employeeId: { type: "string" }, portalsRemoved: { type: "number" } } },
   },
+  {
+    name: "validate_transfer",
+    description: "Validates an employee transfer event in Workday and SailPoint. Returns old role, new role, current portal entitlements to revoke, new portal entitlements to provision, and any handover requirements.",
+    riskClassification: "low",
+    endpoint: "/validate-transfer",
+    method: "POST",
+    inputSchema: { type: "object", required: ["employeeId"], properties: { employeeId: { type: "string" } } },
+  },
+  {
+    name: "provision_access",
+    description: "Provisions new portal access for an employee's new role. Creates account, assigns entitlements, syncs with Active Directory and SailPoint. Returns provision confirmation ID.",
+    riskClassification: "medium",
+    endpoint: "/provision-access",
+    method: "POST",
+    inputSchema: { type: "object", required: ["employeeId", "portalName", "caseId"], properties: { employeeId: { type: "string" }, portalName: { type: "string" }, newRole: { type: "string" }, department: { type: "string" }, caseId: { type: "string" }, authType: { type: "string" } } },
+  },
 ];
 
 async function ensureAimMcpServer(): Promise<string> {
   const servers = await storage.getMcpServers();
   const existing = servers.find((s: any) => s.name === AIM_MCP_SERVER_NAME);
-  if (existing) return existing.id;
 
-  const server = await storage.createMcpServer({
-    name: AIM_MCP_SERVER_NAME,
-    description: "Live execution MCP server for BlackRock AIM Portal Offboarding. Provides validated tools for termination intake, portal discovery, trade settlement checks, access removal, verification, and SOX evidence generation.",
-    transportType: "streamable-http",
-    url: `${AIM_BASE_URL}/api/mock/bk2-aim`,
-    status: "registered",
-    riskTier: "HIGH",
-    allowlisted: true,
-    industryId: "financial_services",
-    addedBy: "bk2-live-demo",
-    capabilities: { tools: true, resources: false, prompts: false, sampling: false },
-    serverInfo: { vendor: "BlackRock AIM", version: "1.0.0", compliance: ["SOX", "FCA SM&CR", "SEC 17a-4"] },
-  });
-
-  for (const t of AIM_TOOLS) {
-    await storage.createMcpServerTool({
-      serverId: server.id,
-      name: t.name,
-      description: t.description,
-      inputSchema: t.inputSchema,
-      outputSchema: null,
-      annotations: { endpoint: t.endpoint, method: t.method, risk: t.riskClassification, compliance: ["SOX"] },
-      riskClassification: t.riskClassification,
-      owner: "BlackRock IAM Team",
-      enabled: true,
+  let serverId: string;
+  if (existing) {
+    serverId = existing.id;
+  } else {
+    const server = await storage.createMcpServer({
+      name: AIM_MCP_SERVER_NAME,
+      description: "Live execution MCP server for BlackRock AIM Portal Offboarding. Provides validated tools for termination intake, portal discovery, trade settlement checks, access removal, verification, evidence generation, and employee transfers.",
+      transportType: "streamable-http",
+      url: `${AIM_BASE_URL}/api/mock/bk2-aim`,
+      status: "registered",
+      riskTier: "HIGH",
+      allowlisted: true,
+      industryId: "financial_services",
+      addedBy: "bk2-live-demo",
+      capabilities: { tools: true, resources: false, prompts: false, sampling: false },
+      serverInfo: { vendor: "BlackRock AIM", version: "1.1.0", compliance: ["SOX", "FCA SM&CR", "SEC 17a-4", "MiFID II"] },
     });
+    serverId = server.id;
   }
 
-  return server.id;
+  // Idempotently register any tools that are not yet recorded — handles newly-added tools
+  // (validate_transfer, provision_access) without dropping and re-creating the server.
+  const existingTools = await storage.getMcpServerTools(serverId);
+  const existingToolNames = new Set((existingTools || []).map((t: any) => t.name));
+  for (const t of AIM_TOOLS) {
+    if (!existingToolNames.has(t.name)) {
+      await storage.createMcpServerTool({
+        serverId,
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema,
+        outputSchema: null,
+        annotations: { endpoint: t.endpoint, method: t.method, risk: t.riskClassification, compliance: ["SOX"] },
+        riskClassification: t.riskClassification,
+        owner: "BlackRock IAM Team",
+        enabled: true,
+      });
+    }
+  }
+
+  return serverId;
 }
 
 async function ensureBk2AgentDeployment(agentId: string, agentName: string, mcpServerId: string): Promise<string> {
@@ -1465,26 +1496,46 @@ async function ensureBk2AgentDeployment(agentId: string, agentName: string, mcpS
 }
 
 function buildAgentPrompt(role: keyof typeof BK2_LIVE_AGENT_IDS, s: ReturnType<typeof setBk2LiveScenario>): string {
-  const { employee, empId, caseId, role: empRole, tradeCheck, criticalTier, hkexDown } = s;
+  const { employee, empId, caseId, role: empRole, tradeCheck, criticalTier, hkexDown, isTransfer, newPortals, newRole, newDepartment } = s as any;
   const base = `You are operating within the BlackRock AIM Portal Offboarding System for case ${caseId}.\nEmployee: ${employee} (${empId}) | Role: ${empRole}\n\n`;
 
   switch (role) {
     case "terminationIntake":
+      if (isTransfer) {
+        const newPortalNames = (newPortals || []).map((p: any) => p.name).join(", ");
+        return base + `This is an EMPLOYEE TRANSFER case — NOT a termination. Handle accordingly.\nYour task: Intake and validate the transfer event.\n1. Call validate_transfer with employeeId="${empId}" to confirm the Workday transfer event, SailPoint entitlement delta, portals to revoke, and portals to provision.\n2. Call scan_portal_accounts with employeeId="${empId}" to inventory all current portal accounts.\n3. Note handover requirements from the validate_transfer response — ICE Trade Vault has pending FI repo positions that must be reassigned to a backup reporter before access removal.\n4. Summarize: employee details, transfer confirmation (old role → ${newRole || "new role"}), portals to revoke, portals to provision (${newPortalNames}), and all handover requirements.`;
+      }
       return base + `Your task: Intake and validate the termination case.\n1. Call validate_termination with employeeId="${empId}" to confirm the HR event and workday status.\n2. Call scan_portal_accounts with employeeId="${empId}" to inventory all portal accounts.\n3. Note any special flags: requiresTradeCheck=${tradeCheck}, requiresCriticalApproval=${criticalTier}.\n4. Summarize: employee details, termination confirmation, portal list, and all special flags.`;
 
     case "portalDiscovery":
+      if (isTransfer) {
+        return base + `This is an EMPLOYEE TRANSFER case.\nYour task: Discover and validate all current portal accounts that must be revoked.\n1. Call scan_portal_accounts with employeeId="${empId}" to get the current FI portal list.\n2. For each portal, call check_portal_health with that portalName to verify connectivity.\n3. If a portal returns reachable=false, mark it DEFERRED.\n4. Also note: ICE Trade Vault has pending FI repo positions — it will need a HOLD pending handover.\n5. Categorize each portal as READY FOR REVOCATION or DEFERRED/HOLD and list all health results.`;
+      }
       return base + `Your task: Discover and validate all portal accounts.\n1. Call scan_portal_accounts with employeeId="${empId}" to get the complete portal list.\n2. For each portal, call check_portal_health with that portalName to verify connectivity.\n3. If a portal returns reachable=false, mark it DEFERRED — do not proceed with removal for that portal.\n4. Categorize each portal as READY or DEFERRED and list all health results.${hkexDown ? "\nNOTE: Expect HKEX CCASS to be unreachable in this scenario." : ""}`;
 
     case "activeTradeCheck":
+      if (isTransfer) {
+        return base + `This is an EMPLOYEE TRANSFER case.\nYour task: Check for pending FI trade settlements before any access removal — critical for compliance.\n1. For each portal in scope (Bloomberg TOMS, ICE Trade Vault, Clearstream, MarkitServ), call check_pending_settlements with employeeId="${empId}" and that portalName.\n2. ICE Trade Vault is expected to have pending FI repo positions — output: "HOLD — ICE Trade Vault: [trade details]".\n3. For portals with no pending trades, output: "PROCEED — [portalName]: clear for revocation".\n4. Final output: list each portal's settlement status with clear HOLD or PROCEED designation.`;
+      }
       return base + `Your task: Check for pending trade settlements before any access removal.\n1. Call scan_portal_accounts with employeeId="${empId}" to identify all portals.\n2. For each settlement-linked portal (Euroclear, DTCC FICC, Clearstream, DTCC), call check_pending_settlements with employeeId="${empId}" and that portalName.\n3. If hasPendingSettlements=true and riskAssessment.riskLevel is HIGH or CRITICAL, output: "HOLD — [portalName]: [trade details]". If clear, output: "PROCEED — [portalName]: no pending settlements".\n4. Your final output must list each portal's settlement status clearly.${tradeCheck ? "\nNOTE: This employee has active trade positions. Expect settlement holds." : ""}`;
 
     case "accessRemovalExecutor":
+      if (isTransfer) {
+        return base + `This is an EMPLOYEE TRANSFER case — revoke OLD Fixed Income portal access only.\nYour task: Execute access revocation across all current FI portals.\n1. Call scan_portal_accounts with employeeId="${empId}" to get the portal list with accountIds and authTypes.\n2. For each portal (Bloomberg TOMS, ICE Trade Vault, Clearstream, MarkitServ), call execute_access_removal with employeeId="${empId}", portalName, accountId, authType, and caseId="${caseId}".\n3. IMPORTANT: ICE Trade Vault will return success=false with errorCode PENDING_SETTLEMENTS_BLOCK — do NOT retry. Mark it DEFERRED with note "Pending FI repo positions — handover required before access removal". Move on.\n4. Log all results: REVOKED (with confirmationId) or DEFERRED (with errorCode and reason).\n5. Summarize: portals revoked, portals deferred and why.`;
+      }
       return base + `Your task: Execute access removal across all portals. Respect any blocks from the system.\n1. Call scan_portal_accounts with employeeId="${empId}" to get portal list with accountIds and authTypes.\n2. For each portal, call execute_access_removal with employeeId="${empId}", portalName, accountId, authType, and caseId="${caseId}".\n3. IMPORTANT: If the response contains success=false with errorCode PENDING_SETTLEMENTS_BLOCK or CRITICAL_TIER_APPROVAL_REQUIRED or ECONNREFUSED, do NOT retry — document it as a BLOCKED/DEFERRED portal with the reason and move on to the next portal.\n4. Log all results: for each portal state whether it was REMOVED (with confirmationId) or BLOCKED/DEFERRED (with errorCode and reason).\n5. At the end, summarize: portals removed, portals blocked/deferred and why.${tradeCheck ? "\nNOTE: Euroclear and DTCC FICC may be blocked due to pending settlements — treat blocked responses as DEFERRED." : ""}${criticalTier ? "\nNOTE: SWIFT Alliance is CRITICAL tier — expect a CRITICAL_TIER_APPROVAL_REQUIRED block. Document it as requiring manager approval." : ""}${hkexDown ? "\nNOTE: HKEX CCASS will be unreachable — treat as DEFERRED." : ""}`;
 
     case "removalVerification":
+      if (isTransfer) {
+        const provisionList = (newPortals || []).map((p: any) => `${p.name} (${p.role}, ${p.authType})`).join(", ");
+        return base + `This is an EMPLOYEE TRANSFER case. Your task is ACCESS PROVISIONING — not removal verification.\nYour task: Provision new Equities desk access for ${employee}'s new role as ${newRole || "Equities Trader"} in ${newDepartment || "Equities Trading"}.\n1. For each new portal — ${provisionList} — call provision_access with:\n   - employeeId="${empId}"\n   - portalName (exact name as listed)\n   - newRole (the role listed for that portal)\n   - department="${newDepartment || "Equities Trading"}"\n   - caseId="${caseId}"\n2. For each call, record: provisionedAt, confirmationId, newAccountId, and authSetup details.\n3. Summarize: all portals provisioned, confirmation IDs, and any failures.`;
+      }
       return base + `Your task: Independently verify access removal status for every portal.\n1. Call scan_portal_accounts with employeeId="${empId}" to get the portal list.\n2. For each portal, call verify_access_removed with employeeId="${empId}" and portalName.\n3. For each portal, report: status (removed / unreachable / deferred), authProbeResult, and confirmationId if available.\n4. Count: portals confirmed removed, portals deferred/unreachable. Flag any portal showing status other than "removed" or "unreachable".`;
 
     case "auditEvidence":
+      if (isTransfer) {
+        return base + `This is an EMPLOYEE TRANSFER case — generate a transfer compliance evidence package.\nYour task: Archive evidence and close the transfer case.\n1. Call generate_evidence_package with caseId="${caseId}", employeeId="${empId}", and portalsRemoved=3 (Bloomberg TOMS, Clearstream, MarkitServ — ICE Trade Vault is deferred).\n2. Confirm: GRC vault archival, MiFID II Article 26 transfer audit trail, SOX IA-07 dual-role prohibition check, Splunk monitoring rules, ServiceNow case ${caseId} status.\n3. Note open exception: ICE Trade Vault access removal deferred — pending FI repo position handover. Include follow-up task reference.\n4. Also confirm: 4 new Equities portals provisioned (Bloomberg AIM, Fidessa OMS, DTCC Equities, Morningstar Direct).`;
+      }
       return base + `Your task: Generate the SOX compliance evidence package and close the case.\n1. Call scan_portal_accounts with employeeId="${empId}" to count all portals in scope.\n2. Call generate_evidence_package with caseId="${caseId}", employeeId="${empId}", and portalsRemoved (count only successfully removed portals — exclude deferred/blocked ones).\n3. Confirm: GRC vault archival, SOX Section 404 compliance, Splunk monitoring rules, ServiceNow case ${caseId} status.\n4. Note any deferred portals in the evidence package summary as open exceptions requiring follow-up.`;
 
     default:
