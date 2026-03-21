@@ -76,7 +76,7 @@ const SCENARIOS: Record<Bk2LiveScenario, Bk2ScenarioSpec> = {
     caseId: "AIM-2026-0812",
     portals: [
       { name: "Euroclear", accountId: "EU-BLK-34102", role: "Settlement Participant", authType: "PKI_CERT", reachable: true, hasPendingTrades: true },
-      { name: "DTCC FICC", accountId: "DTC-MT-00891", role: "GCF Repo Participant", authType: "SAML", reachable: true, hasPendingTrades: true },
+      { name: "DTCC FICC", accountId: "DTC-MT-00891", role: "GCF Repo Participant", authType: "SAML", reachable: true, hasPendingTrades: false },
       { name: "Clearstream", accountId: "CS-BLK-34102", role: "Participant", authType: "PKI_CERT", reachable: true, hasPendingTrades: false },
     ],
     tradeCheck: true,

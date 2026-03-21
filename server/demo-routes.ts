@@ -1190,18 +1190,18 @@ demoRouter.post("/blackrock2/run-scenario", async (req: Request, res: Response) 
       "Active Trade Check Agent",
       `Case ${s.caseId} | ${s.emp} | Check settlement systems${s.tradeHold ? " — Fixed Income Trader, mandatory check" : ""}`,
       s.tradeHold
-        ? `CRITICAL hold detected. 3 unsettled REPO trades in Euroclear (EUR 847M notional). DTC FICC: 2 pending GCF Repos (USD 340M). Euroclear access held pending settlement. Other portals cleared. Escalated for human approval.`
+        ? `CRITICAL hold detected. 3 unsettled REPO trades in Euroclear (EUR 847M notional). DTCC FICC and Clearstream are clear. Euroclear access held pending settlement. Other portals cleared for immediate removal. Escalated for human approval.`
         : `Trade check complete. No pending trades across all systems. All ${s.portalsRemoved} portals cleared for immediate removal.`,
       [
-        { tool: "euroclear_pending_trades", status: "success" },
-        { tool: "dtc_ficc_settlement_check", status: "success" },
-        { tool: "clearstream_settlement_check", status: "success" },
-        { tool: "dtcc_ctm_open_positions", status: "success" },
+        { tool: "check_pending_settlements", status: "success" },
+        { tool: "check_pending_settlements", status: "success" },
+        { tool: "check_pending_settlements", status: "success" },
         ...(s.tradeHold ? [{ tool: "risk_threshold_evaluator", status: "success" }] : []),
       ],
       s.tradeHold ? [
         { step: "Euroclear settlement check", reasoning: "3 REPO trades with T+1 settlement. EUR 847M notional. Premature removal would cause settlement fails.", confidence: 0.99 },
-        { step: "Issue hold recommendation", reasoning: "Exceeds $50M auto-approve threshold. Human approval required. Euroclear access held until settlement clears.", confidence: 0.98 },
+        { step: "DTCC FICC settlement check", reasoning: "No pending GCF Repos. Account clear for immediate removal.", confidence: 0.99 },
+        { step: "Issue hold recommendation", reasoning: "Euroclear exceeds $50M threshold. Human approval required. All other portals auto-cleared.", confidence: 0.98 },
       ] : [
         { step: "Check all settlement systems", reasoning: `Zero pending trades for ${s.emp}. Last trade settled 2 days ago.`, confidence: 0.99 },
         { step: "Issue clearance", reasoning: `No settlement risk. All ${s.portalsRemoved} portals auto-cleared.`, confidence: 0.99 },
@@ -1591,13 +1591,13 @@ function buildAgentPrompt(role: keyof typeof BK2_LIVE_AGENT_IDS, s: ReturnType<t
       if (isTransfer) {
         return base + `This is an EMPLOYEE TRANSFER case.\nYour task: Check for pending FI trade settlements before any access removal — critical for compliance.\n1. For each portal in scope (Bloomberg TOMS, ICE Trade Vault, Clearstream, MarkitServ), call check_pending_settlements with employeeId="${empId}" and that portalName.\n2. ICE Trade Vault is expected to have pending FI repo positions — output: "HOLD — ICE Trade Vault: [trade details]".\n3. For portals with no pending trades, output: "PROCEED — [portalName]: clear for revocation".\n4. Final output: list each portal's settlement status with clear HOLD or PROCEED designation.`;
       }
-      return base + `Your task: Check for pending trade settlements before any access removal.\n1. Call scan_portal_accounts with employeeId="${empId}" to identify all portals.\n2. For each settlement-linked portal (Euroclear, DTCC FICC, Clearstream, DTCC), call check_pending_settlements with employeeId="${empId}" and that portalName.\n3. If hasPendingSettlements=true and riskAssessment.riskLevel is HIGH or CRITICAL, output: "HOLD — [portalName]: [trade details]". If clear, output: "PROCEED — [portalName]: no pending settlements".\n4. Your final output must list each portal's settlement status clearly.${tradeCheck ? "\nNOTE: This employee has active trade positions. Expect settlement holds." : ""}`;
+      return base + `Your task: Check for pending trade settlements before any access removal.\n1. Call scan_portal_accounts with employeeId="${empId}" to identify all portals.\n2. For each settlement-linked portal (Euroclear, Clearstream, DTCC FICC), call check_pending_settlements with employeeId="${empId}" and that portalName.\n3. If hasPendingSettlements=true and riskAssessment.riskLevel is HIGH or CRITICAL, output: "HOLD — [portalName]: [trade details]". If clear, output: "PROCEED — [portalName]: no pending settlements".\n4. Your final output must list each portal's settlement status clearly.${tradeCheck ? "\nNOTE: Only Euroclear has pending trade positions in this case — expect a settlement hold on Euroclear only. DTCC FICC and Clearstream are clear." : ""}`;
 
     case "accessRemovalExecutor":
       if (isTransfer) {
         return base + `This is an EMPLOYEE TRANSFER case — revoke OLD Fixed Income portal access only.\nYour task: Execute access revocation across all current FI portals.\n1. Call scan_portal_accounts with employeeId="${empId}" to get the portal list with accountIds and authTypes.\n2. For each portal (Bloomberg TOMS, ICE Trade Vault, Clearstream, MarkitServ), call execute_access_removal with employeeId="${empId}", portalName, accountId, authType, and caseId="${caseId}".\n3. IMPORTANT: ICE Trade Vault will return success=false with errorCode PENDING_SETTLEMENTS_BLOCK — do NOT retry. Mark it DEFERRED with note "Pending FI repo positions — handover required before access removal". Move on.\n4. Log all results: REVOKED (with confirmationId) or DEFERRED (with errorCode and reason).\n5. Summarize: portals revoked, portals deferred and why.`;
       }
-      return base + `Your task: Execute access removal across all portals. Respect any blocks from the system.\n1. Call scan_portal_accounts with employeeId="${empId}" to get portal list with accountIds and authTypes.\n2. For each portal, call execute_access_removal with employeeId="${empId}", portalName, accountId, authType, and caseId="${caseId}".\n3. IMPORTANT: If the response contains success=false with errorCode PENDING_SETTLEMENTS_BLOCK or CRITICAL_TIER_APPROVAL_REQUIRED or ECONNREFUSED, do NOT retry — document it as a BLOCKED/DEFERRED portal with the reason and move on to the next portal.\n4. Log all results: for each portal state whether it was REMOVED (with confirmationId) or BLOCKED/DEFERRED (with errorCode and reason).\n5. At the end, summarize: portals removed, portals blocked/deferred and why.${tradeCheck ? "\nNOTE: Euroclear and DTCC FICC may be blocked due to pending settlements — treat blocked responses as DEFERRED." : ""}${criticalTier ? "\nNOTE: SWIFT Alliance is CRITICAL tier — expect a CRITICAL_TIER_APPROVAL_REQUIRED block. Document it as requiring manager approval." : ""}${hkexDown ? "\nNOTE: HKEX CCASS will be unreachable — treat as DEFERRED." : ""}`;
+      return base + `Your task: Execute access removal across all portals. Respect any blocks from the system.\n1. Call scan_portal_accounts with employeeId="${empId}" to get portal list with accountIds and authTypes.\n2. For each portal, call execute_access_removal with employeeId="${empId}", portalName, accountId, authType, and caseId="${caseId}".\n3. IMPORTANT: If the response contains success=false with errorCode PENDING_SETTLEMENTS_BLOCK or CRITICAL_TIER_APPROVAL_REQUIRED or ECONNREFUSED, do NOT retry — document it as a BLOCKED/DEFERRED portal with the reason and move on to the next portal.\n4. Log all results: for each portal state whether it was REMOVED (with confirmationId) or BLOCKED/DEFERRED (with errorCode and reason).\n5. At the end, summarize: portals removed, portals blocked/deferred and why.${tradeCheck ? "\nNOTE: Only Euroclear will be blocked due to pending settlements — treat its PENDING_SETTLEMENTS_BLOCK response as DEFERRED. DTCC FICC and Clearstream are clear and should be removed." : ""}${criticalTier ? "\nNOTE: SWIFT Alliance is CRITICAL tier — expect a CRITICAL_TIER_APPROVAL_REQUIRED block. Document it as requiring manager approval." : ""}${hkexDown ? "\nNOTE: HKEX CCASS will be unreachable — treat as DEFERRED." : ""}`;
 
     case "removalVerification":
       if (isTransfer) {
