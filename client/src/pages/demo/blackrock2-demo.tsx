@@ -464,6 +464,11 @@ export default function BlackRock2Demo() {
       setRunning(false);
       setComplete(true);
       setActiveAgent(null);
+      fetch("/demo-api/blackrock2/run-scenario", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scenarioId: selectedId }),
+      }).catch(() => {});
       return;
     }
 

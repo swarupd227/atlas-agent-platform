@@ -45,6 +45,8 @@ import {
   type KinectiveScenario,
 } from "./kinective-demo-store";
 import type { IStorage } from "./storage";
+import { db } from "./db";
+import { runTraces, agentRuntimeRuns } from "@shared/schema";
 
 export const demoRouter = Router();
 
@@ -1064,3 +1066,252 @@ demoRouter.post("/moodys/tools/get_legal_database", mkToolHandler("newsEventScan
 demoRouter.post("/moodys/tools/get_market_data", mkToolHandler("newsEventScanner", "get_market_data", "Retrieved Ford credit spreads: 5Y spread 185bps, CDS 142bps", { marketData: FORD_NEWS.marketData }));
 demoRouter.post("/moodys/tools/get_rating_scorecard_template", mkToolHandler("scorecardPrePopulation", "get_rating_scorecard_template", "Retrieved Automobile Manufacturer scorecard template v2.1", { methodology: FORD_SCORECARD.methodology, factors: 9, quantitative: 5, qualitative: 4 }));
 demoRouter.post("/moodys/tools/get_current_rating", mkToolHandler("scorecardPrePopulation", "get_current_rating", "Retrieved Ford current rating: Ba1, Outlook Stable", { currentRating: "Ba1", outlook: "Stable", ratingDate: "2024-09-18" }));
+
+// ─── BlackRock 2 Scenario Runner ─────────────────────────────────────────────
+// Called by the frontend after each scenario animation completes.
+// Creates fresh run_traces + agent_runtime_runs so users can see new entries
+// in the Runs & Traces tab immediately after each demo run.
+
+const BK2_AGENT_IDS = {
+  terminationIntake:    "b9f26c40-967a-482d-98f1-fa1bfe518aa7",
+  portalDiscovery:      "ba94fcde-b3b5-4ac5-b78d-3cc72ef0c99e",
+  activeTradeCheck:     "50f18f63-433a-4efd-a844-173a861bc406",
+  accessRemovalExecutor:"8b363fb5-9406-4b53-86d1-8e58f206e21a",
+  removalVerification:  "1c13e7ab-451e-48f5-b315-fe901b071305",
+  auditEvidence:        "388b13f6-0e3d-475f-a6b4-67c0c4f98c0d",
+};
+
+type Bk2Scenario = "happy_path" | "portal_unreachable" | "pending_trades" | "admin_access";
+
+interface ScenarioSpec {
+  employee: string; emp: string; caseId: string;
+  portalsRemoved: number; portalsDeferred: number;
+  tradeHold: boolean; criticalTier: boolean;
+  hkexDown: boolean;
+}
+
+const BK2_SCENARIO_DATA: Record<Bk2Scenario, ScenarioSpec> = {
+  happy_path: {
+    employee: "Robert Kessler", emp: "EMP-29471", caseId: "AIM-2026-0847",
+    portalsRemoved: 6, portalsDeferred: 0, tradeHold: false, criticalTier: false, hkexDown: false,
+  },
+  portal_unreachable: {
+    employee: "Karen Nakamura", emp: "EMP-19823", caseId: "AIM-2026-0831",
+    portalsRemoved: 4, portalsDeferred: 1, tradeHold: false, criticalTier: false, hkexDown: true,
+  },
+  pending_trades: {
+    employee: "Marcus Thompson", emp: "EMP-34102", caseId: "AIM-2026-0812",
+    portalsRemoved: 2, portalsDeferred: 1, tradeHold: true, criticalTier: false, hkexDown: false,
+  },
+  admin_access: {
+    employee: "James Whitfield", emp: "EMP-41087", caseId: "AIM-2026-0798",
+    portalsRemoved: 4, portalsDeferred: 0, tradeHold: false, criticalTier: true, hkexDown: false,
+  },
+};
+
+function bk2Trace(agentId: string, s: ScenarioSpec, role: string, input: string, output: string,
+  tools: object[], decisions: object[], policies: object[], latencyMs: number, costUsd: number) {
+  const now = new Date();
+  return {
+    agentId,
+    environment: "production" as const,
+    status: "completed" as const,
+    costUsd,
+    latencyMs,
+    inputSummary: input,
+    outputSummary: output,
+    modelId: "claude-3-5-sonnet-20241022",
+    toolCalls: tools as any,
+    decisions: decisions as any,
+    policyChecks: policies as any,
+    tokenUsage: { input_tokens: Math.round(latencyMs * 0.3), output_tokens: Math.round(latencyMs * 0.09), total_tokens: Math.round(latencyMs * 0.39) } as any,
+    endedAt: now,
+  };
+}
+
+demoRouter.post("/blackrock2/run-scenario", async (req: Request, res: Response) => {
+  const { scenarioId } = req.body as { scenarioId: string };
+  const s = BK2_SCENARIO_DATA[scenarioId as Bk2Scenario];
+  if (!s) return res.status(400).json({ error: "Unknown scenarioId" });
+
+  const AGENTS = BK2_AGENT_IDS;
+  const now = new Date();
+
+  const traces = [
+    // 1. Termination Intake
+    bk2Trace(AGENTS.terminationIntake, s,
+      "Termination Intake Agent",
+      `SailPoint termination event: ${s.employee} (${s.emp}) | Case ${s.caseId} | ${s.criticalTier ? "CRITICAL — admin role detected" : "Voluntary resignation"}`,
+      `Termination validated. Employment confirmed inactive in Workday. Case ${s.caseId} created${s.criticalTier ? " with CRITICAL priority" : ""}. ${s.portalsRemoved + s.portalsDeferred} portals flagged.`,
+      [{ tool: "sailpoint_get_termination_event", status: "success" }, { tool: "workday_validate_employment", status: "success" }, { tool: "servicenow_create_case", status: "success" }],
+      [
+        { step: "Validate termination", reasoning: `SailPoint event matches Workday HR record for ${s.emp}. Employment confirmed inactive.`, confidence: 0.98 },
+        { step: "Create removal case", reasoning: `Case ${s.caseId} created${s.criticalTier ? " at CRITICAL priority — admin role" : ""}. ${s.portalsRemoved + s.portalsDeferred} portals queued.`, confidence: 0.97 },
+      ],
+      [
+        { policy: "HR Validation Required", passed: true, reason: "Employment status confirmed inactive in Workday" },
+        { policy: "Case Creation SLA", passed: true, reason: "Case created within SLA window" },
+      ],
+      3800 + Math.floor(Math.random() * 800), 0.0031
+    ),
+
+    // 2. Portal Discovery
+    bk2Trace(AGENTS.portalDiscovery, s,
+      "Portal Discovery Agent",
+      `Case ${s.caseId} | ${s.emp} | Scan all partner portals${s.hkexDown ? " — HKEX CCASS connectivity issue noted" : ""}`,
+      `Discovery complete. ${s.portalsRemoved + s.portalsDeferred} portal${s.portalsRemoved + s.portalsDeferred > 1 ? "s" : ""} identified.${s.hkexDown ? " HKEX CCASS unreachable — ServiceNow ticket created." : " All portals reachable."}`,
+      [
+        { tool: "partner_portal_registry_scan", status: "success" },
+        { tool: "sailpoint_get_entitlements", status: "success" },
+        { tool: "radiantone_ad_groups", status: "success" },
+        ...(s.hkexDown ? [{ tool: "portal_connectivity_check", status: "partial_failure" }] : []),
+      ],
+      [
+        { step: "Scan Partner Portal Registry", reasoning: `${s.portalsRemoved + s.portalsDeferred} portals found for ${s.emp}. ${s.hkexDown ? "HKEX CCASS returned ECONNREFUSED." : "All portals reachable."}`, confidence: 0.97 },
+        ...(s.hkexDown ? [{ step: "Handle unreachable portal", reasoning: "HKEX CCASS unreachable. Deferred task created with 4-hour retry.", confidence: 0.94 }] : []),
+      ],
+      [
+        { policy: "Complete Entitlement Discovery", passed: true, reason: "All reachable portals scanned" },
+        { policy: "Cross-Reference Validation", passed: true, reason: "SailPoint entitlements match AD groups" },
+      ],
+      4900 + Math.floor(Math.random() * 600), 0.0046
+    ),
+
+    // 3. Active Trade Check
+    bk2Trace(AGENTS.activeTradeCheck, s,
+      "Active Trade Check Agent",
+      `Case ${s.caseId} | ${s.emp} | Check settlement systems${s.tradeHold ? " — Fixed Income Trader, mandatory check" : ""}`,
+      s.tradeHold
+        ? `CRITICAL hold detected. 3 unsettled REPO trades in Euroclear (EUR 847M notional). DTC FICC: 2 pending GCF Repos (USD 340M). Euroclear access held pending settlement. Other portals cleared. Escalated for human approval.`
+        : `Trade check complete. No pending trades across all systems. All ${s.portalsRemoved} portals cleared for immediate removal.`,
+      [
+        { tool: "euroclear_pending_trades", status: "success" },
+        { tool: "dtc_ficc_settlement_check", status: "success" },
+        { tool: "clearstream_settlement_check", status: "success" },
+        { tool: "dtcc_ctm_open_positions", status: "success" },
+        ...(s.tradeHold ? [{ tool: "risk_threshold_evaluator", status: "success" }] : []),
+      ],
+      s.tradeHold ? [
+        { step: "Euroclear settlement check", reasoning: "3 REPO trades with T+1 settlement. EUR 847M notional. Premature removal would cause settlement fails.", confidence: 0.99 },
+        { step: "Issue hold recommendation", reasoning: "Exceeds $50M auto-approve threshold. Human approval required. Euroclear access held until settlement clears.", confidence: 0.98 },
+      ] : [
+        { step: "Check all settlement systems", reasoning: `Zero pending trades for ${s.emp}. Last trade settled 2 days ago.`, confidence: 0.99 },
+        { step: "Issue clearance", reasoning: `No settlement risk. All ${s.portalsRemoved} portals auto-cleared.`, confidence: 0.99 },
+      ],
+      [
+        { policy: "Settlement Risk Pre-Check", passed: true, reason: "All settlement systems checked before any removal" },
+        ...(s.tradeHold ? [{ policy: "Human Approval for Hold Decisions", passed: true, reason: "Hold escalated — $50M threshold exceeded" }] : [{ policy: "Auto-Approve Clearance", passed: true, reason: "No holds required" }]),
+      ],
+      5800 + Math.floor(Math.random() * 1200), 0.0051
+    ),
+
+    // 4. Access Removal Executor
+    bk2Trace(AGENTS.accessRemovalExecutor, s,
+      "Access Removal Executor Agent",
+      `Case ${s.caseId} | ${s.emp} | Execute access removal${s.criticalTier ? " — CRITICAL tier, post-approval" : ""}${s.hkexDown ? " — HKEX CCASS deferred" : ""}`,
+      s.criticalTier
+        ? `Removal complete post-approval. SWIFT Alliance: Admin role revoked, BIC credentials invalidated, HSM key deactivated. 3 additional portals removed. ${s.portalsRemoved}/4 cleared.`
+        : s.hkexDown
+          ? `Partial removal. ${s.portalsRemoved}/${s.portalsRemoved + s.portalsDeferred} portals revoked. HKEX CCASS unreachable — deferred to retry queue. ServiceNow ticket updated.`
+          : s.tradeHold
+            ? `Removal complete (post-approval). ${s.portalsRemoved} portals revoked. Euroclear OnLine deferred pending settlement clearance.`
+            : `Access removal complete. ${s.portalsRemoved}/${s.portalsRemoved} portals successfully revoked. All SAML sessions terminated, tokens invalidated, certs revoked.`,
+      [
+        ...(s.criticalTier ? [{ tool: "approval_gate_check", status: "success" }, { tool: "swift_admin_revoke", status: "success" }, { tool: "swift_bic_credential_revoke", status: "success" }, { tool: "swift_hsm_key_deactivate", status: "success" }] : []),
+        { tool: "dtcc_saml_deactivate", status: "success", latency_ms: 2100 },
+        { tool: "bloomberg_session_terminate", status: "success", latency_ms: 3100 },
+        { tool: "ice_trade_vault_revoke", status: "success", latency_ms: 2000 },
+        { tool: "markitserv_deprovision", status: "success", latency_ms: 2500 },
+        ...(s.hkexDown ? [{ tool: "hkex_ccass_revoke", status: "failed", error: "ECONNREFUSED" }, { tool: "deferred_queue_add", status: "success" }] : []),
+        ...(!s.hkexDown && !s.criticalTier ? [{ tool: "euroclear_token_invalidate", status: s.tradeHold ? "deferred" : "success", latency_ms: 3400 }, { tool: "clearstream_cert_revoke", status: "success", latency_ms: 1800 }] : []),
+        { tool: "sailpoint_update_entitlements", status: "success", latency_ms: 1500 },
+      ],
+      [
+        ...(s.criticalTier ? [{ step: "Verify manager approval", reasoning: `Approval from CISO verified. SWIFT 3-step revocation: Admin role, BIC credential, HSM key.`, confidence: 1.0 }] : []),
+        { step: "Execute portal removals", reasoning: `${s.portalsRemoved} portals revoked successfully.${s.hkexDown ? " HKEX timed out — deferred." : ""}`, confidence: 0.98 },
+        { step: "Update SailPoint & AD", reasoning: "Entitlements cleared in SailPoint. RadiantOne AD account disabled.", confidence: 0.99 },
+      ],
+      [
+        { policy: "Dual-System Confirmation", passed: true, reason: "Each removal confirmed in portal AND SailPoint/AD" },
+        { policy: "SOX Access Removal Audit", passed: true, reason: `Timestamped evidence for ${s.portalsRemoved} portals` },
+        ...(s.criticalTier ? [{ policy: "CRITICAL Tier Dual Approval", passed: true, reason: "CISO approval verified before execution" }] : []),
+      ],
+      10200 + Math.floor(Math.random() * 2400), 0.0088
+    ),
+
+    // 5. Removal Verification
+    bk2Trace(AGENTS.removalVerification, s,
+      "Removal Verification Agent",
+      `Case ${s.caseId} | ${s.emp} | Verify removal across ${s.portalsRemoved + s.portalsDeferred} portals`,
+      s.hkexDown
+        ? `Partial verification. ${s.portalsRemoved} portals confirmed revoked (all return auth rejection). HKEX CCASS still unreachable — verification deferred. SNow ticket updated.`
+        : `Verification complete. ${s.portalsRemoved}/${s.portalsRemoved} portals confirmed. All return definitive rejection. SailPoint and AD in sync. Case closed.`,
+      [
+        { tool: "dtcc_access_probe", status: "success", result: "SAML_INVALID" },
+        { tool: "bloomberg_access_probe", status: "success", result: "ACCOUNT_DISABLED" },
+        { tool: "ice_access_probe", status: "success", result: "403_FORBIDDEN" },
+        { tool: "markitserv_access_probe", status: "success", result: "DEPROVISIONED" },
+        ...(s.hkexDown ? [{ tool: "hkex_ccass_probe", status: "failed", result: "ECONNREFUSED" }] : [{ tool: "euroclear_access_probe", status: "success", result: "401_UNAUTHORIZED" }, { tool: "clearstream_access_probe", status: "success", result: "CERT_REJECTED" }]),
+        { tool: "sailpoint_entitlement_check", status: "success", result: "CLEARED" },
+        { tool: "radiantone_ad_check", status: "success", result: "ACCOUNT_DISABLED" },
+      ],
+      [
+        { step: "Verify portal rejections", reasoning: `${s.portalsRemoved} portals return definitive auth rejections. No grace periods or cached sessions detected.`, confidence: 0.99 },
+        { step: "Verify SailPoint + AD sync", reasoning: "Zero active entitlements in SailPoint. AD account disabled and reflected in RadiantOne.", confidence: 0.99 },
+      ],
+      [
+        { policy: "Portal-Level Verification", passed: true, reason: "Each portal probed with actual auth attempt, not just provisioning API" },
+        { policy: "Dual-System Sync Verification", passed: true, reason: "SailPoint and AD both confirmed cleared" },
+      ],
+      7800 + Math.floor(Math.random() * 1000), 0.0058
+    ),
+
+    // 6. Audit & Evidence
+    bk2Trace(AGENTS.auditEvidence, s,
+      "Audit & Evidence Agent",
+      `Case ${s.caseId} | ${s.emp} | Generate SOX evidence package${s.criticalTier ? " — CRITICAL tier, 10-year retention" : ""}`,
+      `Evidence package ${s.caseId.replace("AIM", "AIM-EVP")}.zip compiled. ${s.portalsRemoved} portal removal receipts, SailPoint diff, AD audit log, chain-of-custody hash. Splunk monitoring rule created. ServiceNow case closed.${s.criticalTier ? " Internal Audit notified." : ""}`,
+      [
+        { tool: "evidence_collector", status: "success" },
+        { tool: "sailpoint_entitlement_diff", status: "success" },
+        { tool: "radiantone_audit_export", status: "success" },
+        { tool: "evidence_package_zip", status: "success" },
+        { tool: "splunk_rule_create", status: "success" },
+        { tool: "servicenow_close_case", status: "success" },
+        { tool: "grc_vault_archive", status: "success" },
+        { tool: "chain_of_custody_hash", status: "success" },
+        ...(s.criticalTier ? [{ tool: "internal_audit_notify", status: "success" }] : []),
+      ],
+      [
+        { step: "Compile evidence artifacts", reasoning: `${s.portalsRemoved * 2 + 2} artifacts collected: portal receipts, verification probes, SailPoint diff, AD log. All cryptographically signed.`, confidence: 0.99 },
+        { step: "Generate SOX package", reasoning: `SOX Section 404 requirements met. ${s.criticalTier ? "10-year CRITICAL retention" : "7-year standard retention"} applied.`, confidence: 0.99 },
+        { step: "Create Splunk monitoring rule", reasoning: `Post-removal monitoring active — any ${s.emp} credential reuse triggers SOC alert.`, confidence: 0.98 },
+      ],
+      [
+        { policy: s.criticalTier ? "CRITICAL Tier 10-Year Retention" : "SOX Section 404 Evidence", passed: true, reason: `Complete audit trail with ${s.criticalTier ? "10-year immutable" : "7-year"} retention` },
+        { policy: "Post-Removal Monitoring", passed: true, reason: "Splunk rule active — alerts on any credential reappearance" },
+      ],
+      9400 + Math.floor(Math.random() * 1200), 0.0070
+    ),
+  ];
+
+  try {
+    const inserted = await db.insert(runTraces).values(traces).returning({ id: runTraces.id, agentId: runTraces.agentId });
+
+    await db.insert(agentRuntimeRuns).values(
+      Object.values(AGENTS).map((agentId) => ({
+        agentId,
+        status: "completed" as const,
+        triggerType: "event" as const,
+        latencyMs: traces.find((t) => t.agentId === agentId)?.latencyMs ?? 5000,
+        resultSummary: { caseId: s.caseId, employee: s.employee, scenarioId } as any,
+        completedAt: now,
+      }))
+    );
+
+    res.json({ success: true, traceCount: inserted.length, caseId: s.caseId, employee: s.employee });
+  } catch (err: any) {
+    console.error("[bk2-run-scenario] Error creating traces:", err?.message);
+    res.status(500).json({ error: "Failed to create traces" });
+  }
+});
