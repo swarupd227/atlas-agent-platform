@@ -23,24 +23,14 @@ import {
   Clock,
   Lock,
   UserCheck,
-  FileText,
   Building2,
   Cpu,
   Zap,
+  Terminal,
 } from "lucide-react";
-
-interface LiveEvent {
-  id: number;
-  time: string;
-  agentName: string;
-  type: string;
-  tool?: string;
-  success?: boolean;
-  message: string;
-}
 import { BLACKROCK2_AGENTS } from "./blackrock2-constants";
 
-// ─── Scenario definitions ────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 type PortalStatus = "pending" | "removed" | "failed" | "deferred" | "held" | "approved";
 type AgentNodeId = "termination_intake" | "portal_discovery" | "active_trade_check" | "access_removal" | "removal_verification" | "audit_evidence";
@@ -65,16 +55,6 @@ interface Employee {
   manager: string;
 }
 
-interface ActivityEntry {
-  id: number;
-  agent: AgentNodeId;
-  agentLabel: string;
-  tool: string;
-  message: string;
-  level: "info" | "warn" | "success" | "error";
-  timestamp: string;
-}
-
 interface ScenarioDef {
   id: ScenarioId;
   label: string;
@@ -82,41 +62,31 @@ interface ScenarioDef {
   icon: "check" | "warn" | "clock" | "lock";
   employee: Employee;
   portals: Portal[];
-  steps: ScenarioStep[];
+  finalPortals: Portal[];
 }
 
-interface ScenarioStep {
-  agent: AgentNodeId;
-  agentLabel: string;
-  tool: string;
+interface LiveEvent {
+  id: number;
+  time: string;
+  agentName: string;
+  type: string;
+  tool?: string;
+  success?: boolean;
   message: string;
-  level: "info" | "warn" | "success" | "error";
-  portalUpdates?: { name: string; status: PortalStatus; note?: string }[];
-  approval?: boolean;
-  delay?: number;
 }
 
-const mkTime = () => new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+// ─── Agent name → node ID map ─────────────────────────────────────────────────
 
-const AGENT_LABELS: Record<AgentNodeId, string> = {
-  termination_intake: "Termination Intake",
-  portal_discovery: "Portal Discovery",
-  active_trade_check: "Active Trade Check",
-  access_removal: "Access Removal Executor",
-  removal_verification: "Removal Verification",
-  audit_evidence: "Audit & Evidence",
+const AGENT_NAME_MAP: Record<string, AgentNodeId> = {
+  "Termination Intake Agent":       "termination_intake",
+  "Portal Discovery Agent":         "portal_discovery",
+  "Active Trade Check Agent":       "active_trade_check",
+  "Access Removal Executor Agent":  "access_removal",
+  "Removal Verification Agent":     "removal_verification",
+  "Audit Evidence Agent":           "audit_evidence",
 };
 
-const AGENT_COLORS: Record<AgentNodeId, string> = {
-  termination_intake: "bg-blue-600",
-  portal_discovery: "bg-indigo-600",
-  active_trade_check: "bg-amber-600",
-  access_removal: "bg-orange-600",
-  removal_verification: "bg-teal-600",
-  audit_evidence: "bg-purple-700",
-};
-
-// ─── Scenario 1: Happy Path ──────────────────────────────────────────────────
+// ─── Scenario data ────────────────────────────────────────────────────────────
 
 const EMPLOYEE_KESSLER: Employee = {
   id: "EMP-4821",
@@ -136,26 +106,7 @@ const PORTALS_KESSLER: Portal[] = [
   { name: "Bloomberg TOMS",       authType: "API Key",     riskTier: "MEDIUM",   role: "Trade_Blotter_Writer",   status: "pending" },
   { name: "ICE Connect",          authType: "SAML SSO",    riskTier: "LOW",      role: "Data_Viewer",            status: "pending" },
 ];
-
-const STEPS_HAPPY: ScenarioStep[] = [
-  { agent: "termination_intake", agentLabel: AGENT_LABELS.termination_intake, tool: "get_pending_tasks",      message: "SailPoint lifecycle event detected → Termination workflow triggered for Robert Kessler (EMP-4821). Separation type: Voluntary.", level: "info" },
-  { agent: "termination_intake", agentLabel: AGENT_LABELS.termination_intake, tool: "get_identity_cube",      message: "Identity cube retrieved: 6 portal accounts active, 23 SailPoint entitlements, 4 AD groups. Last working day confirmed: 2026-03-20.", level: "info" },
-  { agent: "termination_intake", agentLabel: AGENT_LABELS.termination_intake, tool: "check_policy_violations",message: "SoD policy check passed. No active violations. Removal case created: CASE-BR2-2891.", level: "success" },
-  { agent: "portal_discovery",   agentLabel: AGENT_LABELS.portal_discovery,   tool: "scan_accounts",         message: "Partner Portal Registry scanned. 6 active portal accounts discovered for EMP-4821: DTCC, Euroclear, Clearstream, SWIFT, Bloomberg TOMS, ICE Connect.", level: "info" },
-  { agent: "portal_discovery",   agentLabel: AGENT_LABELS.portal_discovery,   tool: "get_portal_status",     message: "Health checks complete: all 6 portals reachable and operational. Discovery complete → triggering parallel trade check.", level: "success" },
-  { agent: "active_trade_check", agentLabel: AGENT_LABELS.active_trade_check, tool: "get_pending_trades",    message: "Settlement systems checked: DTCC, Euroclear, Clearstream. No pending or unsettled trades found. Removal may proceed immediately.", level: "success" },
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "remove_access",         message: "DTCC (DTC): SAML SSO session terminated. Account disabled. Removal confirmed.", level: "success", portalUpdates: [{ name: "DTCC (DTC)", status: "removed" }] },
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "revoke_certificate",    message: "Euroclear: Client certificate revoked (CN=kessler-r, serial 0x4F2A). Account suspended. PKI revocation propagated.", level: "success", portalUpdates: [{ name: "Euroclear", status: "removed" }] },
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "revoke_certificate",    message: "Clearstream: Certificate revoked and account disabled. Custodian_Access role removed.", level: "success", portalUpdates: [{ name: "Clearstream", status: "removed" }] },
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "invalidate_token",      message: "SWIFT (MyStandards): SWIFT token invalidated. Message_Sender permissions revoked from MyStandards portal.", level: "success", portalUpdates: [{ name: "SWIFT (MyStandards)", status: "removed" }] },
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "remove_access",         message: "Bloomberg TOMS: API key deactivated. Trade_Blotter_Writer role removed from TOMS configuration.", level: "success", portalUpdates: [{ name: "Bloomberg TOMS", status: "removed" }] },
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "remove_access",         message: "ICE Connect: SAML SSO access revoked. Data_Viewer role removed.", level: "success", portalUpdates: [{ name: "ICE Connect", status: "removed" }] },
-  { agent: "removal_verification",agentLabel: AGENT_LABELS.removal_verification,tool: "verify_removal",      message: "Verification pass complete: 6/6 portals confirmed removed. SailPoint entitlement revocation logged. RadiantOne directory updated.", level: "success" },
-  { agent: "audit_evidence",     agentLabel: AGENT_LABELS.audit_evidence,     tool: "create_monitoring_rule",message: "90-day Splunk monitoring rule created: alert on any auth attempt from kessler-r credentials across monitored portals.", level: "info" },
-  { agent: "audit_evidence",     agentLabel: AGENT_LABELS.audit_evidence,     tool: "close_ticket",          message: "SOX-compliant evidence package generated. All 6 portal removals timestamped and signed. ServiceNow INC-2026-4821 closed. Audit complete in 4m 12s.", level: "success" },
-];
-
-// ─── Scenario 2: Portal Unreachable ─────────────────────────────────────────
+const FINAL_KESSLER: Portal[] = PORTALS_KESSLER.map(p => ({ ...p, status: "removed" as PortalStatus }));
 
 const EMPLOYEE_NAKAMURA: Employee = {
   id: "EMP-2293",
@@ -166,30 +117,18 @@ const EMPLOYEE_NAKAMURA: Employee = {
   lastWorkingDay: "2026-03-20",
   manager: "Oliver Park (MD, APAC Equities)",
 };
-
 const PORTALS_NAKAMURA: Portal[] = [
   { name: "DTCC (DTC)",    authType: "SAML SSO",    riskTier: "MEDIUM", role: "Settlement_Participant", status: "pending" },
   { name: "Euroclear",     authType: "Certificate", riskTier: "HIGH",   role: "Trade_Viewer",          status: "pending" },
   { name: "Bloomberg TOMS",authType: "API Key",     riskTier: "MEDIUM", role: "Trade_Blotter_Writer",  status: "pending" },
-  { name: "HKEX CCASS",   authType: "Password",    riskTier: "MEDIUM", role: "Clearing_Participant",  status: "pending", note: "Portal health check FAILED — connectivity issue" },
+  { name: "HKEX CCASS",   authType: "Password",    riskTier: "MEDIUM", role: "Clearing_Participant",  status: "pending" },
 ];
-
-const STEPS_UNREACHABLE: ScenarioStep[] = [
-  { agent: "termination_intake", agentLabel: AGENT_LABELS.termination_intake, tool: "get_pending_tasks",      message: "SailPoint lifecycle event detected → Termination for Karen Nakamura (EMP-2293). Separation type: Involuntary. Case CASE-BR2-2892 created.", level: "info" },
-  { agent: "termination_intake", agentLabel: AGENT_LABELS.termination_intake, tool: "get_identity_cube",      message: "Identity cube retrieved: 4 portal accounts active. Entitlements include APAC equities systems.", level: "info" },
-  { agent: "portal_discovery",   agentLabel: AGENT_LABELS.portal_discovery,   tool: "scan_accounts",         message: "Scanning Partner Portal Registry for EMP-2293. 4 portal accounts found.", level: "info" },
-  { agent: "portal_discovery",   agentLabel: AGENT_LABELS.portal_discovery,   tool: "get_portal_status",     message: "Health check: DTCC ✓ Euroclear ✓ Bloomberg TOMS ✓ — HKEX CCASS ✗ (timeout after 3 retries, portal unreachable). Flagged for deferred removal.", level: "warn", portalUpdates: [{ name: "HKEX CCASS", status: "failed", note: "Portal unreachable — deferred to retry queue" }] },
-  { agent: "active_trade_check", agentLabel: AGENT_LABELS.active_trade_check, tool: "get_pending_trades",    message: "Settlement check: no pending trades across DTCC, Euroclear. Proceeding with available portal removals.", level: "success" },
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "remove_access",         message: "DTCC: SAML SSO access revoked. Clearing_Participant role removed.", level: "success", portalUpdates: [{ name: "DTCC (DTC)", status: "removed" }] },
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "revoke_certificate",    message: "Euroclear: Certificate revoked. Trade_Viewer access removed.", level: "success", portalUpdates: [{ name: "Euroclear", status: "removed" }] },
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "remove_access",         message: "Bloomberg TOMS: API key deactivated. Trade_Blotter_Writer role removed.", level: "success", portalUpdates: [{ name: "Bloomberg TOMS", status: "removed" }] },
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "remove_access",         message: "HKEX CCASS: Removal SKIPPED — portal unreachable. Creating retry task and ServiceNow incident.", level: "warn", portalUpdates: [{ name: "HKEX CCASS", status: "deferred", note: "Retry scheduled in 6h via ServiceNow INC-2026-2293" }] },
-  { agent: "removal_verification",agentLabel: AGENT_LABELS.removal_verification,tool: "verify_removal",      message: "Verification: 3/4 portals confirmed removed. HKEX CCASS deferred — retry job scheduled. Exception documented.", level: "warn" },
-  { agent: "audit_evidence",     agentLabel: AGENT_LABELS.audit_evidence,     tool: "create_monitoring_rule",message: "Splunk monitoring rules created for confirmed portals. Escalation alert set for HKEX CCASS if retry fails within 24h.", level: "info" },
-  { agent: "audit_evidence",     agentLabel: AGENT_LABELS.audit_evidence,     tool: "close_ticket",          message: "SOX package generated with exception documentation for HKEX CCASS portal outage. ServiceNow INC-2026-2293 flagged for follow-up. Audit complete.", level: "warn" },
+const FINAL_NAKAMURA: Portal[] = [
+  { ...PORTALS_NAKAMURA[0], status: "removed" },
+  { ...PORTALS_NAKAMURA[1], status: "removed" },
+  { ...PORTALS_NAKAMURA[2], status: "removed" },
+  { ...PORTALS_NAKAMURA[3], status: "deferred", note: "Portal unreachable — retry scheduled via ServiceNow" },
 ];
-
-// ─── Scenario 3: Pending Trades ──────────────────────────────────────────────
 
 const EMPLOYEE_THOMPSON: Employee = {
   id: "EMP-7711",
@@ -200,31 +139,16 @@ const EMPLOYEE_THOMPSON: Employee = {
   lastWorkingDay: "2026-03-20",
   manager: "Sarah Liu (MD, EMEA Fixed Income)",
 };
-
 const PORTALS_THOMPSON: Portal[] = [
   { name: "DTCC (DTC)",   authType: "SAML SSO",    riskTier: "MEDIUM", role: "Settlement_Participant", status: "pending" },
-  { name: "Euroclear",    authType: "Certificate", riskTier: "HIGH",   role: "Settlement_Officer",     status: "pending", note: "2 pending trades — T+2 settlement due 2026-03-23" },
+  { name: "Euroclear",    authType: "Certificate", riskTier: "HIGH",   role: "Settlement_Officer",     status: "pending" },
   { name: "Clearstream",  authType: "Certificate", riskTier: "HIGH",   role: "Custodian_Access",       status: "pending" },
 ];
-
-const STEPS_PENDING_TRADES: ScenarioStep[] = [
-  { agent: "termination_intake", agentLabel: AGENT_LABELS.termination_intake, tool: "get_pending_tasks",      message: "SailPoint event: Termination for Marcus Thompson (EMP-7711). Case CASE-BR2-2893 created.", level: "info" },
-  { agent: "termination_intake", agentLabel: AGENT_LABELS.termination_intake, tool: "get_identity_cube",      message: "Identity cube retrieved: 3 portal accounts. EMEA Fixed Income entitlements confirmed.", level: "info" },
-  { agent: "portal_discovery",   agentLabel: AGENT_LABELS.portal_discovery,   tool: "scan_accounts",         message: "Partner Portal Registry: 3 portal accounts found for EMP-7711. All portals reachable.", level: "info" },
-  { agent: "active_trade_check", agentLabel: AGENT_LABELS.active_trade_check, tool: "get_pending_trades",    message: "Settlement check: DTCC — clean. Clearstream — clean. Euroclear — 2 PENDING TRADES DETECTED.", level: "warn", portalUpdates: [{ name: "Euroclear", status: "held", note: "2 pending trades (T+2): ISIN XS2387241811 €8.2M, ISIN XS2345119283 €4.1M — settlement due 2026-03-23" }] },
-  { agent: "active_trade_check", agentLabel: AGENT_LABELS.active_trade_check, tool: "get_pending_trades",    message: "Recommendation: HOLD Euroclear removal until trade settlement (T+2, 2026-03-23). DTCC and Clearstream may proceed. Escalating to human for approval.", level: "warn", approval: true },
+const FINAL_THOMPSON: Portal[] = [
+  { ...PORTALS_THOMPSON[0], status: "removed" },
+  { ...PORTALS_THOMPSON[1], status: "deferred", note: "Removal deferred — 2 pending trades settle 2026-03-23" },
+  { ...PORTALS_THOMPSON[2], status: "removed" },
 ];
-
-const STEPS_PENDING_TRADES_POST_APPROVAL: ScenarioStep[] = [
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "remove_access",         message: "Approval received. Proceeding with DTCC and Clearstream removals. Euroclear on HOLD.", level: "info" },
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "remove_access",         message: "DTCC: SAML SSO access revoked. Settlement_Participant role removed.", level: "success", portalUpdates: [{ name: "DTCC (DTC)", status: "removed" }] },
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "revoke_certificate",    message: "Clearstream: Certificate revoked. Custodian_Access removed.", level: "success", portalUpdates: [{ name: "Clearstream", status: "removed" }] },
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "remove_access",         message: "Euroclear: Removal DEFERRED — pending trade hold active. Scheduled for 2026-03-23 post-settlement.", level: "warn", portalUpdates: [{ name: "Euroclear", status: "deferred", note: "Removal deferred until 2026-03-23 post-settlement" }] },
-  { agent: "removal_verification",agentLabel: AGENT_LABELS.removal_verification,tool: "verify_removal",      message: "Verification: 2/3 portals confirmed removed. Euroclear hold documented. Retry task scheduled for 2026-03-24.", level: "warn" },
-  { agent: "audit_evidence",     agentLabel: AGENT_LABELS.audit_evidence,     tool: "close_ticket",          message: "SOX package generated with Euroclear hold exception. Human approval decision recorded. ServiceNow INC-2026-7711 updated. Audit complete.", level: "success" },
-];
-
-// ─── Scenario 4: Admin Access ────────────────────────────────────────────────
 
 const EMPLOYEE_WHITFIELD: Employee = {
   id: "EMP-9034",
@@ -235,83 +159,31 @@ const EMPLOYEE_WHITFIELD: Employee = {
   lastWorkingDay: "2026-03-20",
   manager: "Rachel Evans (CRO, Counterparty Risk)",
 };
-
 const PORTALS_WHITFIELD: Portal[] = [
-  { name: "DTCC (DTC)",    authType: "SAML SSO",    riskTier: "MEDIUM",   role: "Settlement_Participant",  status: "pending" },
-  { name: "Euroclear",     authType: "Certificate", riskTier: "HIGH",     role: "Settlement_Viewer",       status: "pending" },
-  { name: "Bloomberg TOMS",authType: "API Key",     riskTier: "MEDIUM",   role: "Trade_Blotter_Writer",   status: "pending" },
-  { name: "ICE Connect",   authType: "SAML SSO",    riskTier: "LOW",      role: "Data_Viewer",            status: "pending" },
-  { name: "SWIFT (MyStandards)", authType: "Token", riskTier: "CRITICAL", role: "SWIFT_Admin",            status: "pending", note: "ADMIN-level role: SOX policy requires manager approval before removal" },
+  { name: "DTCC (DTC)",          authType: "SAML SSO",    riskTier: "MEDIUM",   role: "Settlement_Participant",  status: "pending" },
+  { name: "Euroclear",           authType: "Certificate", riskTier: "HIGH",     role: "Settlement_Viewer",       status: "pending" },
+  { name: "Bloomberg TOMS",      authType: "API Key",     riskTier: "MEDIUM",   role: "Trade_Blotter_Writer",   status: "pending" },
+  { name: "ICE Connect",         authType: "SAML SSO",    riskTier: "LOW",      role: "Data_Viewer",            status: "pending" },
+  { name: "SWIFT (MyStandards)", authType: "Token",       riskTier: "CRITICAL", role: "SWIFT_Admin",            status: "pending" },
 ];
-
-const STEPS_ADMIN: ScenarioStep[] = [
-  { agent: "termination_intake", agentLabel: AGENT_LABELS.termination_intake, tool: "get_pending_tasks",      message: "SailPoint event: Termination for James Whitfield (EMP-9034). Case CASE-BR2-2894 created.", level: "info" },
-  { agent: "termination_intake", agentLabel: AGENT_LABELS.termination_intake, tool: "get_identity_cube",      message: "Identity cube retrieved: 5 portal accounts. CRITICAL flag: SWIFT_Admin role detected.", level: "warn" },
-  { agent: "portal_discovery",   agentLabel: AGENT_LABELS.portal_discovery,   tool: "scan_accounts",         message: "Partner Portal Registry scan: 5 portal accounts. SWIFT flagged CRITICAL — admin-level access role: SWIFT_Admin.", level: "warn", portalUpdates: [{ name: "SWIFT (MyStandards)", status: "held", note: "CRITICAL tier — SWIFT_Admin role requires SOX manager approval" }] },
-  { agent: "active_trade_check", agentLabel: AGENT_LABELS.active_trade_check, tool: "get_pending_trades",    message: "Settlement check: all systems clean. No pending trades.", level: "success" },
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "remove_access",         message: "SWIFT (MyStandards): CRITICAL tier admin access — escalating for manager approval per SOX policy. Removal PAUSED.", level: "warn", approval: true },
-];
-
-const STEPS_ADMIN_POST_APPROVAL: ScenarioStep[] = [
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "remove_access",         message: "Manager approval received from Rachel Evans (CRO). Proceeding with all portal removals.", level: "info" },
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "remove_access",         message: "DTCC: SAML SSO access revoked.", level: "success", portalUpdates: [{ name: "DTCC (DTC)", status: "removed" }] },
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "revoke_certificate",    message: "Euroclear: Certificate revoked. Trade_Viewer access removed.", level: "success", portalUpdates: [{ name: "Euroclear", status: "removed" }] },
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "remove_access",         message: "Bloomberg TOMS: API key deactivated.", level: "success", portalUpdates: [{ name: "Bloomberg TOMS", status: "removed" }] },
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "remove_access",         message: "ICE Connect: SAML SSO access revoked.", level: "success", portalUpdates: [{ name: "ICE Connect", status: "removed" }] },
-  { agent: "access_removal",     agentLabel: AGENT_LABELS.access_removal,     tool: "invalidate_token",      message: "SWIFT (MyStandards): SWIFT_Admin token invalidated. Admin access fully revoked post manager approval.", level: "success", portalUpdates: [{ name: "SWIFT (MyStandards)", status: "approved" }] },
-  { agent: "removal_verification",agentLabel: AGENT_LABELS.removal_verification,tool: "verify_removal",      message: "Verification: 5/5 portals confirmed removed. Manager approval decision logged. SailPoint and RadiantOne updated.", level: "success" },
-  { agent: "audit_evidence",     agentLabel: AGENT_LABELS.audit_evidence,     tool: "create_monitoring_rule",message: "90-day Splunk monitoring rule created for SWIFT admin credentials. Enhanced alert threshold (any auth attempt).", level: "info" },
-  { agent: "audit_evidence",     agentLabel: AGENT_LABELS.audit_evidence,     tool: "close_ticket",          message: "SOX package generated with manager approval chain documented. SWIFT admin removal evidence signed. ServiceNow INC-2026-9034 closed.", level: "success" },
-];
+const FINAL_WHITFIELD: Portal[] = PORTALS_WHITFIELD.map(p => ({ ...p, status: "approved" as PortalStatus }));
 
 const SCENARIOS: ScenarioDef[] = [
-  {
-    id: "happy_path",
-    label: "Happy Path",
-    subtitle: "6 portals, clean removal",
-    icon: "check",
-    employee: EMPLOYEE_KESSLER,
-    portals: PORTALS_KESSLER,
-    steps: STEPS_HAPPY,
-  },
-  {
-    id: "portal_unreachable",
-    label: "Portal Unreachable",
-    subtitle: "HKEX CCASS offline",
-    icon: "warn",
-    employee: EMPLOYEE_NAKAMURA,
-    portals: PORTALS_NAKAMURA,
-    steps: STEPS_UNREACHABLE,
-  },
-  {
-    id: "pending_trades",
-    label: "Pending Trades",
-    subtitle: "Euroclear hold required",
-    icon: "clock",
-    employee: EMPLOYEE_THOMPSON,
-    portals: PORTALS_THOMPSON,
-    steps: STEPS_PENDING_TRADES,
-  },
-  {
-    id: "admin_access",
-    label: "Admin Access",
-    subtitle: "SWIFT admin approval gate",
-    icon: "lock",
-    employee: EMPLOYEE_WHITFIELD,
-    portals: PORTALS_WHITFIELD,
-    steps: STEPS_ADMIN,
-  },
+  { id: "happy_path",        label: "Happy Path",        subtitle: "6 portals, clean removal",   icon: "check", employee: EMPLOYEE_KESSLER,  portals: PORTALS_KESSLER,  finalPortals: FINAL_KESSLER  },
+  { id: "portal_unreachable",label: "Portal Unreachable",subtitle: "HKEX CCASS offline",         icon: "warn",  employee: EMPLOYEE_NAKAMURA, portals: PORTALS_NAKAMURA, finalPortals: FINAL_NAKAMURA },
+  { id: "pending_trades",    label: "Pending Trades",    subtitle: "Euroclear hold required",    icon: "clock", employee: EMPLOYEE_THOMPSON, portals: PORTALS_THOMPSON, finalPortals: FINAL_THOMPSON },
+  { id: "admin_access",      label: "Admin Access",      subtitle: "SWIFT admin approval gate",  icon: "lock",  employee: EMPLOYEE_WHITFIELD,portals: PORTALS_WHITFIELD,finalPortals: FINAL_WHITFIELD},
 ];
 
-// ─── Sub-components ──────────────────────────────────────────────────────────
+// ─── Pipeline banner ──────────────────────────────────────────────────────────
 
 const PIPELINE_NODES: { id: AgentNodeId; label: string; short: string }[] = [
-  { id: "termination_intake",  label: "Termination Intake",      short: "Intake"    },
-  { id: "portal_discovery",    label: "Portal Discovery",         short: "Discovery" },
-  { id: "active_trade_check",  label: "Active Trade Check",       short: "Trade Chk" },
-  { id: "access_removal",      label: "Access Removal Executor",  short: "Removal"   },
-  { id: "removal_verification",label: "Removal Verification",     short: "Verify"    },
-  { id: "audit_evidence",      label: "Audit & Evidence",         short: "Audit"     },
+  { id: "termination_intake",   label: "Termination Intake",      short: "Intake"    },
+  { id: "portal_discovery",     label: "Portal Discovery",         short: "Discovery" },
+  { id: "active_trade_check",   label: "Active Trade Check",       short: "Trade Chk" },
+  { id: "access_removal",       label: "Access Removal Executor",  short: "Removal"   },
+  { id: "removal_verification", label: "Removal Verification",     short: "Verify"    },
+  { id: "audit_evidence",       label: "Audit & Evidence",         short: "Audit"     },
 ];
 
 function PipelineBanner({ activeAgent, completedAgents }: { activeAgent: AgentNodeId | null; completedAgents: Set<AgentNodeId> }) {
@@ -369,12 +241,12 @@ function RiskTierDot({ tier }: { tier: Portal["riskTier"] }) {
 function AgentTeamCard() {
   const [open, setOpen] = useState(false);
   const agentRows = [
-    { ...BLACKROCK2_AGENTS.terminationIntake,  badge: "bg-blue-500/20 text-blue-400 border-blue-500/30" },
-    { ...BLACKROCK2_AGENTS.portalDiscovery,    badge: "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" },
-    { ...BLACKROCK2_AGENTS.activeTradeCheck,   badge: "bg-amber-500/20 text-amber-400 border-amber-500/30" },
-    { ...BLACKROCK2_AGENTS.accessRemovalExecutor, badge: "bg-orange-500/20 text-orange-400 border-orange-500/30" },
-    { ...BLACKROCK2_AGENTS.removalVerification,badge: "bg-teal-500/20 text-teal-400 border-teal-500/30" },
-    { ...BLACKROCK2_AGENTS.auditEvidence,      badge: "bg-purple-500/20 text-purple-400 border-purple-500/30" },
+    { ...BLACKROCK2_AGENTS.terminationIntake,     badge: "bg-blue-500/20 text-blue-400 border-blue-500/30"   },
+    { ...BLACKROCK2_AGENTS.portalDiscovery,        badge: "bg-indigo-500/20 text-indigo-400 border-indigo-500/30" },
+    { ...BLACKROCK2_AGENTS.activeTradeCheck,       badge: "bg-amber-500/20 text-amber-400 border-amber-500/30"   },
+    { ...BLACKROCK2_AGENTS.accessRemovalExecutor,  badge: "bg-orange-500/20 text-orange-400 border-orange-500/30"},
+    { ...BLACKROCK2_AGENTS.removalVerification,    badge: "bg-teal-500/20 text-teal-400 border-teal-500/30"      },
+    { ...BLACKROCK2_AGENTS.auditEvidence,          badge: "bg-purple-500/20 text-purple-400 border-purple-500/30"},
   ];
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -418,49 +290,31 @@ function AgentTeamCard() {
   );
 }
 
-// ─── Main Component ───────────────────────────────────────────────────────────
+// ─── Main Component ────────────────────────────────────────────────────────────
 
 export default function BlackRock2Demo() {
-  const [selectedId, setSelectedId]       = useState<ScenarioId>("happy_path");
-  const [running, setRunning]             = useState(false);
-  const [complete, setComplete]           = useState(false);
-  const [stepIndex, setStepIndex]         = useState(0);
-  const [portals, setPortals]             = useState<Portal[]>([]);
-  const [activityLog, setActivityLog]     = useState<ActivityEntry[]>([]);
-  const [activeAgent, setActiveAgent]     = useState<AgentNodeId | null>(null);
+  const [selectedId, setSelectedId]           = useState<ScenarioId>("happy_path");
+  const [running, setRunning]                 = useState(false);
+  const [complete, setComplete]               = useState(false);
+  const [portals, setPortals]                 = useState<Portal[]>([]);
+  const [activeAgent, setActiveAgent]         = useState<AgentNodeId | null>(null);
   const [completedAgents, setCompletedAgents] = useState<Set<AgentNodeId>>(new Set());
-  const [approvalPending, setApprovalPending] = useState(false);
-  const [postApproval, setPostApproval]   = useState(false);
-  const [liveEvents, setLiveEvents]         = useState<LiveEvent[]>([]);
-  const [liveRunActive, setLiveRunActive]   = useState(false);
-  const [liveAgentName, setLiveAgentName]   = useState<string | null>(null);
-  const feedRef     = useRef<HTMLDivElement>(null);
+  const [liveEvents, setLiveEvents]           = useState<LiveEvent[]>([]);
+  const [liveAgentName, setLiveAgentName]     = useState<string | null>(null);
+
   const liveFeedRef = useRef<HTMLDivElement>(null);
-  const timerRef    = useRef<NodeJS.Timeout | null>(null);
   const esRef       = useRef<EventSource | null>(null);
   const liveEventId = useRef(0);
-  let entryId = useRef(0);
 
   const scenario = SCENARIOS.find((s) => s.id === selectedId)!;
 
-  const getSteps = (): ScenarioStep[] => {
-    if (selectedId === "pending_trades") {
-      if (!postApproval) return STEPS_PENDING_TRADES;
-      return [...STEPS_PENDING_TRADES, ...STEPS_PENDING_TRADES_POST_APPROVAL];
-    }
-    if (selectedId === "admin_access") {
-      if (!postApproval) return STEPS_ADMIN;
-      return [...STEPS_ADMIN, ...STEPS_ADMIN_POST_APPROVAL];
-    }
-    return scenario.steps;
-  };
+  const removedCount  = portals.filter(p => p.status === "removed" || p.status === "approved").length;
+  const deferredCount = portals.filter(p => p.status === "deferred").length;
+  const failedCount   = portals.filter(p => p.status === "failed").length;
+  const heldCount     = portals.filter(p => p.status === "held").length;
 
   const stopLiveRun = useCallback(() => {
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
-    }
-    setLiveRunActive(false);
+    if (esRef.current) { esRef.current.close(); esRef.current = null; }
     setLiveAgentName(null);
   }, []);
 
@@ -468,12 +322,15 @@ export default function BlackRock2Demo() {
     stopLiveRun();
     setLiveEvents([]);
     liveEventId.current = 0;
-    setLiveRunActive(true);
+    setRunning(true);
+    setComplete(false);
+    setActiveAgent(null);
+    setCompletedAgents(new Set());
 
     const addEvent = (type: string, agentName: string, message: string, tool?: string, success?: boolean) => {
       const now = new Date();
       const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
-      setLiveEvents((prev) => [...prev, { id: liveEventId.current++, time, agentName, type, tool, success, message }]);
+      setLiveEvents(prev => [...prev, { id: liveEventId.current++, time, agentName, type, tool, success, message }]);
     };
 
     const es = new EventSource(`/demo-api/blackrock2/live-run?scenarioId=${scenarioId}`);
@@ -490,44 +347,56 @@ export default function BlackRock2Demo() {
     es.addEventListener("agent_start", (e) => {
       const d = JSON.parse(e.data);
       setLiveAgentName(d.agentName);
+      const nodeId = AGENT_NAME_MAP[d.agentName];
+      if (nodeId) setActiveAgent(nodeId);
       addEvent("agent_start", d.agentName, `Executing ${d.agentName}...`);
     });
     es.addEventListener("agent_event", (e) => {
       const d = JSON.parse(e.data);
-      const { agentName, type, data } = d;
+      const { agentName, type, data, tool, success } = d;
       if (type === "tool_call_start") {
-        addEvent("tool_call_start", agentName, `→ Calling tool: ${data.tool}`, data.tool);
+        addEvent("tool_call_start", agentName, `→ Calling: ${data?.tool || tool}`, data?.tool || tool);
       } else if (type === "tool_call_result") {
-        addEvent("tool_call_result", agentName, `${data.success ? "✓" : "✗"} ${data.tool}: ${data.success ? "success" : data.error || "failed"}`, data.tool, data.success);
-      } else if (type === "planning") {
-        addEvent("planning", agentName, `Planning: ${data.summary || "Analyzing task..."}`);
+        const t = data?.tool || tool || "tool";
+        addEvent("tool_call_result", agentName, `${success ? "✓" : "✗"} ${t}: ${success ? "success" : data?.error || "failed"}`, t, success);
       } else if (type === "final_analysis") {
-        addEvent("final_analysis", agentName, `Analysis complete — ${data.steps ?? 0} steps`);
+        addEvent("final_analysis", agentName, `Analysis complete — ${data?.steps ?? 0} steps`);
       }
     });
     es.addEventListener("agent_complete", (e) => {
       const d = JSON.parse(e.data);
+      const nodeId = AGENT_NAME_MAP[d.agentName];
+      if (nodeId) {
+        setCompletedAgents(prev => new Set([...prev, nodeId]));
+        setActiveAgent(null);
+      }
       addEvent("agent_complete", d.agentName, `${d.success ? "✓ Complete" : "✗ Failed"}: ${d.message}`);
     });
     es.addEventListener("run_complete", (e) => {
       const d = JSON.parse(e.data);
       addEvent("run_complete", "Atlas Runtime", `All 6 agents completed — ${d.caseId} — traces available in Runs & Traces`);
+      const sc = SCENARIOS.find(s => s.id === scenarioId);
+      if (sc) setPortals(sc.finalPortals.map(p => ({ ...p })));
       es.close();
       esRef.current = null;
-      setLiveRunActive(false);
+      setRunning(false);
+      setComplete(true);
       setLiveAgentName(null);
+      setActiveAgent(null);
     });
     es.addEventListener("error", (e: any) => {
       const d = e.data ? JSON.parse(e.data) : {};
       addEvent("error", "Atlas Runtime", `Error: ${d.message || "Connection error"}`);
       es.close();
       esRef.current = null;
-      setLiveRunActive(false);
+      setRunning(false);
+      setLiveAgentName(null);
     });
     es.onerror = () => {
       if (es.readyState === EventSource.CLOSED) {
-        setLiveRunActive(false);
+        setRunning(false);
         esRef.current = null;
+        setLiveAgentName(null);
       }
     };
   }, [stopLiveRun]);
@@ -539,192 +408,59 @@ export default function BlackRock2Demo() {
   }, [liveEvents]);
 
   const reset = () => {
-    if (timerRef.current) clearTimeout(timerRef.current);
     stopLiveRun();
     setRunning(false);
     setComplete(false);
-    setStepIndex(0);
-    setPortals(scenario.portals.map((p) => ({ ...p })));
-    setActivityLog([]);
+    setPortals(scenario.portals.map(p => ({ ...p })));
     setActiveAgent(null);
     setCompletedAgents(new Set());
-    setApprovalPending(false);
-    setPostApproval(false);
     setLiveEvents([]);
-    entryId.current = 0;
+    liveEventId.current = 0;
   };
 
   useEffect(() => { reset(); }, [selectedId]);
 
-  useEffect(() => {
-    if (feedRef.current) {
-      feedRef.current.scrollTop = feedRef.current.scrollHeight;
-    }
-  }, [activityLog]);
-
-  const runStep = (steps: ScenarioStep[], idx: number, currentPortals: Portal[]) => {
-    if (idx >= steps.length) {
-      setRunning(false);
-      setComplete(true);
-      setActiveAgent(null);
-      fetch("/demo-api/blackrock2/run-scenario", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scenarioId: selectedId }),
-      }).catch(() => {});
-      return;
-    }
-
-    const step = steps[idx];
-
-    if (step.approval) {
-      setActiveAgent(step.agent);
-      setActivityLog((prev) => [
-        ...prev,
-        {
-          id: entryId.current++,
-          agent: step.agent,
-          agentLabel: step.agentLabel,
-          tool: step.tool,
-          message: step.message,
-          level: step.level,
-          timestamp: mkTime(),
-        },
-      ]);
-      if (step.portalUpdates) {
-        const updated = currentPortals.map((p) => {
-          const upd = step.portalUpdates!.find((u) => u.name === p.name);
-          return upd ? { ...p, status: upd.status, note: upd.note ?? p.note } : p;
-        });
-        setPortals(updated);
-      }
-      setRunning(false);
-      setApprovalPending(true);
-      setStepIndex(idx + 1);
-      return;
-    }
-
-    const delay = step.delay ?? 900;
-
-    timerRef.current = setTimeout(() => {
-      setActiveAgent(step.agent);
-      let updatedPortals = currentPortals;
-      if (step.portalUpdates) {
-        updatedPortals = currentPortals.map((p) => {
-          const upd = step.portalUpdates!.find((u) => u.name === p.name);
-          return upd ? { ...p, status: upd.status, note: upd.note ?? p.note } : p;
-        });
-        setPortals(updatedPortals);
-      }
-
-      setActivityLog((prev) => [
-        ...prev,
-        {
-          id: entryId.current++,
-          agent: step.agent,
-          agentLabel: step.agentLabel,
-          tool: step.tool,
-          message: step.message,
-          level: step.level,
-          timestamp: mkTime(),
-        },
-      ]);
-
-      const nextIdx = idx + 1;
-      setStepIndex(nextIdx);
-
-      const nextStep = steps[nextIdx];
-      if (!nextStep || nextStep.agent !== step.agent) {
-        setCompletedAgents((prev) => new Set([...prev, step.agent]));
-      }
-
-      runStep(steps, nextIdx, updatedPortals);
-    }, delay);
-  };
-
   const handleRun = () => {
-    if (running || approvalPending) return;
-    setRunning(true);
-    setComplete(false);
-    if (activityLog.length === 0) {
-      setPortals(scenario.portals.map((p) => ({ ...p })));
-      startLiveRun(selectedId);
-    }
-    const steps = getSteps();
-    runStep(steps, stepIndex, portals.length > 0 ? portals : scenario.portals.map((p) => ({ ...p })));
+    if (running) return;
+    setPortals(scenario.portals.map(p => ({ ...p })));
+    startLiveRun(selectedId);
   };
 
-  const handleApprove = () => {
-    setApprovalPending(false);
-    setPostApproval(true);
-    const updatedSteps = getSteps().concat(
-      selectedId === "pending_trades" ? STEPS_PENDING_TRADES_POST_APPROVAL : STEPS_ADMIN_POST_APPROVAL
-    );
-    setRunning(true);
-    runStep(updatedSteps, stepIndex, portals);
-  };
-
-  const levelColors: Record<string, string> = {
-    info:    "text-muted-foreground",
-    warn:    "text-amber-400",
-    success: "text-emerald-400",
-    error:   "text-red-400",
-  };
-  const agentBadgeColors: Record<AgentNodeId, string> = AGENT_COLORS;
-
-  const removedCount  = portals.filter((p) => p.status === "removed" || p.status === "approved").length;
-  const deferredCount = portals.filter((p) => p.status === "deferred").length;
-  const heldCount     = portals.filter((p) => p.status === "held").length;
-  const failedCount   = portals.filter((p) => p.status === "failed").length;
+  // ─── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex flex-col h-full overflow-hidden" data-testid="bk2-demo-page">
+    <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
-      <div className="flex flex-col border-b bg-background">
-        <div className="flex items-start justify-between gap-4 px-6 pt-5 pb-3 flex-wrap">
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2">
-              <Building2 className="w-5 h-5 text-primary" />
-              <h1 className="text-lg font-bold tracking-tight">BlackRock — External Portal Offboarding</h1>
-              <Badge variant="outline" className="text-[10px] border-primary/40 text-primary">Use Case 2</Badge>
+      <div className="flex-none border-b bg-background">
+        {/* Title row */}
+        <div className="flex items-center justify-between gap-3 px-5 py-3 border-b">
+          <div className="flex items-center gap-2.5">
+            <Building2 className="w-5 h-5 text-muted-foreground" />
+            <div>
+              <h1 className="text-sm font-bold leading-tight">AIM Portal Offboarding Suite</h1>
+              <p className="text-[11px] text-muted-foreground leading-tight">BlackRock Investment Management · Atlas Agent Orchestration</p>
             </div>
-            <p className="text-sm text-muted-foreground">
-              Automated termination detection and multi-portal access revocation — SailPoint → Partner Registry → Settlement → Audit
-            </p>
           </div>
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
             <AgentTeamCard />
-            <Button variant="outline" size="sm" onClick={reset} className="gap-1.5" data-testid="button-bk2-reset" disabled={running}>
-              <RotateCcw className="w-4 h-4" />
-              Reset
-            </Button>
           </div>
         </div>
 
         {/* Scenario tabs */}
-        <div className="flex gap-1 px-6 pb-0 overflow-x-auto">
+        <div className="flex items-center gap-0 overflow-x-auto px-5 py-2 text-sm">
           {SCENARIOS.map((s) => (
             <button
               key={s.id}
-              type="button"
-              onClick={() => { if (!running) setSelectedId(s.id); }}
+              onClick={() => setSelectedId(s.id as ScenarioId)}
               disabled={running}
-              className={`flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-t-md border-b-2 transition-colors whitespace-nowrap ${
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md font-medium text-xs transition-all whitespace-nowrap mr-1 ${
                 selectedId === s.id
-                  ? "border-primary text-primary bg-primary/5"
-                  : "border-transparent text-muted-foreground hover:text-foreground hover:border-muted-foreground/30"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
               }`}
-              data-testid={`button-bk2-scenario-${s.id}`}
+              data-testid={`bk2-scenario-${s.id}`}
             >
-              <ScenarioIcon
-                icon={s.icon}
-                className={`w-3.5 h-3.5 ${
-                  s.icon === "check" ? "text-emerald-500" :
-                  s.icon === "warn"  ? "text-amber-500"   :
-                  s.icon === "clock" ? "text-orange-500"  :
-                                       "text-red-500"
-                }`}
-              />
+              <ScenarioIcon icon={s.icon} className="w-3.5 h-3.5" />
               {s.label}
               <span className="text-muted-foreground font-normal hidden sm:inline">— {s.subtitle}</span>
             </button>
@@ -771,7 +507,7 @@ export default function BlackRock2Demo() {
                 <ShieldCheck className="w-3.5 h-3.5" />
                 Partner Portals
                 <span className="ml-auto text-[10px] font-normal">
-                  {removedCount}/{portals.length} removed
+                  {removedCount}/{(portals.length || scenario.portals.length)} removed
                 </span>
               </CardTitle>
             </CardHeader>
@@ -803,7 +539,7 @@ export default function BlackRock2Demo() {
           </Card>
 
           {/* Summary stats */}
-          {(running || complete || activityLog.length > 0) && (
+          {(running || complete) && (
             <div className="grid grid-cols-2 gap-1.5">
               <div className="flex flex-col items-center p-2 rounded-md border bg-emerald-500/5 border-emerald-500/20" data-testid="bk2-stat-removed">
                 <span className="text-xl font-bold text-emerald-400">{removedCount}</span>
@@ -823,92 +559,54 @@ export default function BlackRock2Demo() {
           )}
         </div>
 
-        {/* Right panel: activity feed */}
+        {/* Right panel: Live Atlas Runtime */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Controls */}
-          <div className="flex items-center justify-between gap-3 px-5 py-3 border-b bg-background">
+          {/* Controls bar */}
+          <div className="flex items-center justify-between gap-3 px-5 py-3 border-b bg-background shrink-0">
             <div className="flex items-center gap-2">
-              <FileText className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm font-medium">Live Agent Activity</span>
+              <Cpu className="w-4 h-4 text-primary" />
+              <span className="text-sm font-medium">Live Atlas Runtime</span>
               {running && (
-                <Badge variant="outline" className="text-[10px] border-primary/40 text-primary animate-pulse">
-                  Running
-                </Badge>
+                <div className="flex items-center gap-1.5">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                  </span>
+                  <Badge variant="outline" className="text-[10px] border-primary/40 text-primary animate-pulse">
+                    Running
+                  </Badge>
+                  {liveAgentName && (
+                    <span className="text-[10px] text-muted-foreground font-mono">{liveAgentName}</span>
+                  )}
+                </div>
               )}
               {complete && (
                 <Badge variant="outline" className="text-[10px] border-emerald-500/50 text-emerald-400">
                   Complete
                 </Badge>
               )}
-              {approvalPending && (
-                <Badge variant="outline" className="text-[10px] border-orange-500/50 text-orange-400 animate-pulse">
-                  Awaiting Approval
-                </Badge>
-              )}
             </div>
             <div className="flex items-center gap-2">
-              {approvalPending && (
-                <Button
-                  size="sm"
-                  className="gap-1.5 bg-emerald-600 hover:bg-emerald-700 text-white"
-                  onClick={handleApprove}
-                  data-testid="button-bk2-approve"
-                >
-                  <CheckCircle2 className="w-4 h-4" />
-                  Approve & Continue
-                </Button>
-              )}
-              {!complete && !approvalPending && (
-                <Button
-                  size="sm"
-                  onClick={handleRun}
-                  disabled={running || complete}
-                  className="gap-1.5"
-                  data-testid="button-bk2-run"
-                >
-                  {running ? (
-                    <><Loader2 className="w-4 h-4 animate-spin" />Running…</>
-                  ) : activityLog.length === 0 ? (
-                    <>Run Scenario</>
-                  ) : (
-                    <>Continue</>
-                  )}
-                </Button>
-              )}
+              <span className="text-[10px] text-muted-foreground font-mono hidden sm:inline">Claude Sonnet · MCP · AIM Offboarding Suite</span>
               {complete && (
                 <Button size="sm" variant="outline" onClick={reset} className="gap-1.5" data-testid="button-bk2-rerun">
                   <RotateCcw className="w-3.5 h-3.5" />
                   Run Again
                 </Button>
               )}
+              {!running && !complete && (
+                <Button size="sm" onClick={handleRun} className="gap-1.5" data-testid="button-bk2-run">
+                  Run Scenario
+                </Button>
+              )}
             </div>
           </div>
 
-          {/* Approval gate banner */}
-          {approvalPending && (
-            <div className="flex items-start gap-3 px-5 py-3 bg-orange-500/10 border-b border-orange-500/30" data-testid="bk2-approval-gate">
-              <AlertTriangle className="w-5 h-5 text-orange-400 shrink-0 mt-0.5" />
-              <div className="flex flex-col gap-1">
-                <p className="text-sm font-semibold text-orange-400">Human Approval Required</p>
-                <p className="text-xs text-muted-foreground">
-                  {selectedId === "pending_trades"
-                    ? "Active Trade Check detected 2 unsettled trades on Euroclear. The agent recommends deferring Euroclear removal until settlement on 2026-03-23. Approve to proceed with DTCC and Clearstream now."
-                    : "SWIFT (MyStandards) has an admin-level role (SWIFT_Admin) classified CRITICAL. SOX policy requires manager approval before admin access can be revoked. Approve to proceed."}
-                </p>
-              </div>
-            </div>
-          )}
-
           {/* Empty state */}
-          {activityLog.length === 0 && !running && (
+          {liveEvents.length === 0 && !running && !complete && (
             <div className="flex flex-col items-center justify-center flex-1 gap-3 text-center px-8" data-testid="bk2-empty-state">
               <div className="w-12 h-12 rounded-full bg-muted/50 flex items-center justify-center">
-                <ScenarioIcon icon={scenario.icon} className={`w-6 h-6 ${
-                  scenario.icon === "check" ? "text-emerald-500" :
-                  scenario.icon === "warn"  ? "text-amber-500"   :
-                  scenario.icon === "clock" ? "text-orange-500"  :
-                                               "text-red-500"
-                }`} />
+                <Terminal className="w-6 h-6 text-muted-foreground" />
               </div>
               <div>
                 <p className="text-sm font-semibold">{scenario.label}</p>
@@ -917,44 +615,68 @@ export default function BlackRock2Demo() {
                   {scenario.portals.length} portal{scenario.portals.length !== 1 ? "s" : ""} · {scenario.employee.name} ({scenario.employee.id})
                 </p>
               </div>
+              <p className="text-xs text-muted-foreground max-w-sm">
+                6 Claude-powered agents will execute via the AIM Offboarding Suite MCP server. Real tool calls, real traces.
+              </p>
               <Button size="sm" className="mt-2" onClick={handleRun} data-testid="button-bk2-run-center">
                 Run Scenario
               </Button>
             </div>
           )}
 
-          {/* Activity feed */}
-          {activityLog.length > 0 && (
-            <div ref={feedRef} className="flex-1 overflow-y-auto px-5 py-4 space-y-2" data-testid="bk2-activity-feed">
-              {activityLog.map((entry) => (
-                <div key={entry.id} className="flex items-start gap-2.5 text-xs" data-testid={`bk2-entry-${entry.id}`}>
-                  <span className="text-muted-foreground font-mono text-[10px] pt-0.5 w-16 shrink-0">{entry.timestamp}</span>
-                  <Badge
-                    variant="secondary"
-                    className={`text-white text-[9px] px-1.5 shrink-0 mt-0.5 ${agentBadgeColors[entry.agent] || "bg-gray-600"}`}
-                  >
-                    {entry.agentLabel.split(" ")[0]}
-                  </Badge>
-                  <div className="flex flex-col gap-0.5 min-w-0">
-                    <span className="text-[10px] text-muted-foreground font-mono">{entry.tool}</span>
-                    <span className={`leading-relaxed ${levelColors[entry.level]}`}>
-                      {entry.level === "warn"    && <AlertTriangle className="inline w-3 h-3 mr-1 text-amber-400" />}
-                      {entry.level === "error"   && <XCircle       className="inline w-3 h-3 mr-1 text-red-400" />}
-                      {entry.level === "success" && <CheckCircle2  className="inline w-3 h-3 mr-1 text-emerald-400" />}
-                      {entry.message}
-                    </span>
-                  </div>
+          {/* Live event feed */}
+          {(liveEvents.length > 0 || running) && (
+            <div
+              ref={liveFeedRef}
+              className="flex-1 overflow-y-auto px-5 py-4 space-y-1 font-mono text-[11px]"
+              data-testid="bk2-live-feed"
+            >
+              {liveEvents.map((ev) => (
+                <div key={ev.id} className="flex items-start gap-2.5" data-testid={`bk2-live-event-${ev.id}`}>
+                  <span className="text-muted-foreground/60 shrink-0 pt-0.5 w-16">{ev.time}</span>
+                  <span className={`leading-relaxed ${
+                    ev.type === "run_start" || ev.type === "setup"     ? "text-muted-foreground" :
+                    ev.type === "agent_start"                          ? "text-primary font-semibold" :
+                    ev.type === "tool_call_start"                      ? "text-blue-400" :
+                    ev.type === "tool_call_result" && ev.success       ? "text-emerald-400" :
+                    ev.type === "tool_call_result" && !ev.success      ? "text-red-400" :
+                    ev.type === "agent_complete" && ev.message.startsWith("✓") ? "text-emerald-400" :
+                    ev.type === "agent_complete"                       ? "text-amber-400" :
+                    ev.type === "run_complete"                         ? "text-primary font-semibold" :
+                    ev.type === "final_analysis"                       ? "text-muted-foreground" :
+                    ev.type === "error"                                ? "text-red-400" :
+                    "text-foreground"
+                  }`}>
+                    {ev.type === "tool_call_start"                            && <Zap         className="inline w-3 h-3 mr-1 text-blue-400" />}
+                    {ev.type === "tool_call_result" && ev.success             && <CheckCircle2 className="inline w-3 h-3 mr-1 text-emerald-400" />}
+                    {ev.type === "tool_call_result" && ev.success === false   && <XCircle      className="inline w-3 h-3 mr-1 text-red-400" />}
+                    {ev.type === "agent_start"                                && <Cpu         className="inline w-3 h-3 mr-1 text-primary" />}
+                    {ev.type === "run_complete"                               && <CheckCircle2 className="inline w-3 h-3 mr-1 text-emerald-400" />}
+                    {ev.type === "error"                                      && <XCircle      className="inline w-3 h-3 mr-1 text-red-400" />}
+                    {ev.type === "agent_complete" && ev.message.startsWith("✓") && <CheckCircle2 className="inline w-3 h-3 mr-1 text-emerald-400" />}
+                    {ev.type === "agent_complete" && !ev.message.startsWith("✓") && <AlertTriangle className="inline w-3 h-3 mr-1 text-amber-400" />}
+                    {ev.message}
+                  </span>
                 </div>
               ))}
-              {running && (
-                <div className="flex items-center gap-2.5 text-xs text-muted-foreground" data-testid="bk2-running-indicator">
+
+              {running && liveEvents.length === 0 && (
+                <div className="flex items-center gap-2.5 text-muted-foreground">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Initializing agents…</span>
+                </div>
+              )}
+
+              {running && liveEvents.length > 0 && (
+                <div className="flex items-center gap-2.5 text-muted-foreground mt-1" data-testid="bk2-running-indicator">
                   <span className="w-16 shrink-0" />
                   <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
                   <span className="italic">Agent working…</span>
                 </div>
               )}
+
               {complete && (
-                <div className="flex items-center gap-2.5 text-xs mt-2 pt-2 border-t" data-testid="bk2-complete-banner">
+                <div className="flex items-center gap-2.5 mt-3 pt-3 border-t" data-testid="bk2-complete-banner">
                   <span className="w-16 shrink-0" />
                   <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
                   <span className="text-emerald-400 font-semibold">
@@ -964,67 +686,6 @@ export default function BlackRock2Demo() {
                   </span>
                 </div>
               )}
-            </div>
-          )}
-
-          {/* Live Atlas Runtime panel */}
-          {(liveEvents.length > 0 || liveRunActive) && (
-            <div className="border-t flex flex-col shrink-0" style={{ maxHeight: "220px" }} data-testid="bk2-live-runtime-panel">
-              <div className="flex items-center gap-2 px-4 py-2 bg-muted/30 border-b shrink-0">
-                <Cpu className="w-3.5 h-3.5 text-primary" />
-                <span className="text-xs font-semibold tracking-wide">Live Atlas Runtime</span>
-                {liveRunActive && (
-                  <div className="flex items-center gap-1.5 ml-1">
-                    <span className="relative flex h-2 w-2">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
-                    </span>
-                    {liveAgentName && (
-                      <span className="text-[10px] text-primary font-mono">{liveAgentName}</span>
-                    )}
-                  </div>
-                )}
-                {!liveRunActive && liveEvents.length > 0 && (
-                  <Badge variant="outline" className="text-[9px] border-emerald-500/40 text-emerald-400 ml-1">
-                    Done
-                  </Badge>
-                )}
-                <span className="ml-auto text-[10px] text-muted-foreground font-mono">Claude Sonnet · MCP</span>
-              </div>
-              <div
-                ref={liveFeedRef}
-                className="overflow-y-auto px-4 py-2 space-y-1 font-mono text-[10px]"
-              >
-                {liveEvents.map((ev) => (
-                  <div key={ev.id} className="flex items-start gap-2" data-testid={`bk2-live-event-${ev.id}`}>
-                    <span className="text-muted-foreground/60 shrink-0 pt-0.5">{ev.time}</span>
-                    <span className={`shrink-0 pt-0.5 ${
-                      ev.type === "run_start" || ev.type === "setup" ? "text-muted-foreground" :
-                      ev.type === "agent_start" ? "text-primary font-semibold" :
-                      ev.type === "tool_call_start" ? "text-blue-400" :
-                      ev.type === "tool_call_result" && ev.success ? "text-emerald-400" :
-                      ev.type === "tool_call_result" && !ev.success ? "text-red-400" :
-                      ev.type === "agent_complete" ? "text-emerald-400 font-semibold" :
-                      ev.type === "run_complete" ? "text-primary font-semibold" :
-                      ev.type === "error" ? "text-red-400" :
-                      "text-muted-foreground"
-                    }`}>
-                      {ev.type === "tool_call_start"   && <Zap className="inline w-3 h-3 mr-0.5" />}
-                      {ev.type === "tool_call_result" && ev.success    && <CheckCircle2 className="inline w-3 h-3 mr-0.5 text-emerald-400" />}
-                      {ev.type === "tool_call_result" && ev.success === false && <XCircle className="inline w-3 h-3 mr-0.5 text-red-400" />}
-                      {ev.type === "agent_start"       && <Cpu className="inline w-3 h-3 mr-0.5" />}
-                      {ev.type === "run_complete"      && <CheckCircle2 className="inline w-3 h-3 mr-0.5 text-emerald-400" />}
-                      {ev.message}
-                    </span>
-                  </div>
-                ))}
-                {liveRunActive && liveEvents.length === 0 && (
-                  <div className="flex items-center gap-2 text-muted-foreground">
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                    <span>Initializing agents…</span>
-                  </div>
-                )}
-              </div>
             </div>
           )}
         </div>
