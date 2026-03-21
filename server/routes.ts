@@ -35868,15 +35868,16 @@ Log every action.`;
     }
   });
 
-  // ── Kinective Demo: submit-coa — resets state; SSE stream starts the agent ──
+  // ── Kinective Demo: submit-coa — acknowledges COA; SSE stream handles reset + agent ──
   app.post("/demo-api/kinective/submit-coa", async (req, res) => {
     try {
       const { scenario } = req.body || {};
       const validScenarios = ["happy", "invalid_address", "system_failure"];
       const selectedScenario = validScenarios.includes(scenario) ? scenario : "happy";
 
-      const { resetKinectiveDemo } = await import("./kinective-demo-store");
-      resetKinectiveDemo(selectedScenario);
+      // Do NOT reset state here — resetKinectiveDemo sets running=true which would
+      // cause the SSE stream endpoint to immediately reject with "already running".
+      // The SSE /kinective/stream endpoint resets state itself at run start.
 
       return res.json({
         started: true,
