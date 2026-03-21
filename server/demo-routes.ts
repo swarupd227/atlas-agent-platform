@@ -1510,10 +1510,15 @@ demoRouter.get("/blackrock2/live-run", async (req: Request, res: Response) => {
 
   const onRuntimeEvent = (evt: { deploymentId: string; agentId: string; runId: string; result: any }) => {
     if (aborted) return;
-    if (bk2DeploymentIds.size > 0 && !bk2DeploymentIds.has(evt.deploymentId)) return;
+    // Always require a known BK2 deployment ID — empty set rejects everything (prevents
+    // background agents from firing into this SSE stream during the setup phase too).
+    if (!bk2DeploymentIds.has(evt.deploymentId)) return;
 
     const steps: any[] = evt.result?.steps ?? [];
-    const toolCallSteps = steps.filter((s: any) => s.type === "api_call");
+    // Skip steps where mcpServer === "unknown" — those are unresolved tool names
+    // (Claude hallucinated a short alias that didn't match any registered tool).
+    // Real scenario blocks come from resolved tools that have a proper mcpServer name.
+    const toolCallSteps = steps.filter((s: any) => s.type === "api_call" && s.mcpServer !== "unknown");
     for (const step of toolCallSteps) {
       const tool = step.mcpTool || step.output?.mcpTool || step.name || "unknown_tool";
       const stepCompleted = step.status === "completed" || step.status === "passed";
