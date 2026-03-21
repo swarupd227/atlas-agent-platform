@@ -45,8 +45,11 @@ import {
   type KinectiveScenario,
 } from "./kinective-demo-store";
 import type { IStorage } from "./storage";
+import { storage } from "./storage";
 import { db } from "./db";
 import { runTraces, agentRuntimeRuns } from "@shared/schema";
+import { runAgentOnce, runtimeEvents, type RuntimeProgressEvent } from "./agent-runtime";
+import { setBk2LiveScenario, clearBk2LiveScenario, type Bk2LiveScenario } from "./blackrock2-live-store";
 
 export const demoRouter = Router();
 
@@ -1313,5 +1316,267 @@ demoRouter.post("/blackrock2/run-scenario", async (req: Request, res: Response) 
   } catch (err: any) {
     console.error("[bk2-run-scenario] Error creating traces:", err?.message);
     res.status(500).json({ error: "Failed to create traces" });
+  }
+});
+
+// ─── BlackRock 2 LIVE Execution Engine ───────────────────────────────────────
+// Invokes the actual Atlas agent runtime for all 6 BK2 agents.
+// Streams real Claude-powered execution events to the frontend via SSE.
+
+const BK2_LIVE_AGENT_IDS = {
+  terminationIntake:     "b9f26c40-967a-482d-98f1-fa1bfe518aa7",
+  portalDiscovery:       "ba94fcde-b3b5-4ac5-b78d-3cc72ef0c99e",
+  activeTradeCheck:      "50f18f63-433a-4efd-a844-173a861bc406",
+  accessRemovalExecutor: "8b363fb5-9406-4b53-86d1-8e58f206e21a",
+  removalVerification:   "1c13e7ab-451e-48f5-b315-fe901b071305",
+  auditEvidence:         "388b13f6-0e3d-475f-a6b4-67c0c4f98c0d",
+};
+
+const AIM_MCP_SERVER_NAME = "AIM Offboarding Suite";
+const AIM_BASE_URL = `http://localhost:${process.env.PORT || 5000}`;
+
+const AIM_TOOLS = [
+  {
+    name: "validate_termination",
+    description: "Validates a termination event against Workday and SailPoint. Returns employment status, termination details, and case creation parameters.",
+    riskClassification: "low",
+    endpoint: "/validate-termination",
+    method: "POST",
+    inputSchema: { type: "object", required: ["employeeId"], properties: { employeeId: { type: "string" } } },
+  },
+  {
+    name: "scan_portal_accounts",
+    description: "Scans all partner portal accounts for an employee across DTCC, Bloomberg, ICE, Euroclear, Clearstream, SWIFT, HKEX CCASS, and MarkitServ.",
+    riskClassification: "low",
+    endpoint: "/scan-portal-accounts",
+    method: "POST",
+    inputSchema: { type: "object", required: ["employeeId"], properties: { employeeId: { type: "string" } } },
+  },
+  {
+    name: "check_portal_health",
+    description: "Checks if a specific partner portal is reachable and operational. Returns connectivity status and any active incidents.",
+    riskClassification: "low",
+    endpoint: "/check-portal-health",
+    method: "POST",
+    inputSchema: { type: "object", required: ["portalName"], properties: { portalName: { type: "string" } } },
+  },
+  {
+    name: "check_pending_settlements",
+    description: "Checks for pending trade settlements on a specific portal for an employee. Returns trade details, notional amounts, and risk assessment.",
+    riskClassification: "low",
+    endpoint: "/check-pending-settlements",
+    method: "POST",
+    inputSchema: { type: "object", required: ["employeeId", "portalName"], properties: { employeeId: { type: "string" }, portalName: { type: "string" } } },
+  },
+  {
+    name: "execute_access_removal",
+    description: "Executes access removal for an employee on a specific partner portal using the appropriate adapter (SAML, PKI, SWIFT token, API key).",
+    riskClassification: "high",
+    endpoint: "/execute-access-removal",
+    method: "POST",
+    inputSchema: { type: "object", required: ["employeeId", "portalName", "authType", "caseId"], properties: { employeeId: { type: "string" }, portalName: { type: "string" }, accountId: { type: "string" }, authType: { type: "string", enum: ["SAML", "PKI_CERT", "SWIFT_TOKEN", "API_KEY"] }, caseId: { type: "string" } } },
+  },
+  {
+    name: "verify_access_removed",
+    description: "Independently verifies that an employee's access has been removed from a portal by probing the auth endpoint. Returns confirmation ID.",
+    riskClassification: "low",
+    endpoint: "/verify-access-removed",
+    method: "POST",
+    inputSchema: { type: "object", required: ["employeeId", "portalName"], properties: { employeeId: { type: "string" }, portalName: { type: "string" } } },
+  },
+  {
+    name: "generate_evidence_package",
+    description: "Generates SOX Section 404 compliance evidence package. Archives to GRC vault, creates Splunk monitoring rule, closes ServiceNow case.",
+    riskClassification: "low",
+    endpoint: "/generate-evidence-package",
+    method: "POST",
+    inputSchema: { type: "object", required: ["caseId", "employeeId"], properties: { caseId: { type: "string" }, employeeId: { type: "string" }, portalsRemoved: { type: "number" } } },
+  },
+];
+
+async function ensureAimMcpServer(): Promise<string> {
+  const servers = await storage.getMcpServers();
+  const existing = servers.find((s: any) => s.name === AIM_MCP_SERVER_NAME);
+  if (existing) return existing.id;
+
+  const server = await storage.createMcpServer({
+    name: AIM_MCP_SERVER_NAME,
+    description: "Live execution MCP server for BlackRock AIM Portal Offboarding. Provides validated tools for termination intake, portal discovery, trade settlement checks, access removal, verification, and SOX evidence generation.",
+    transportType: "streamable-http",
+    url: `${AIM_BASE_URL}/api/mock/bk2-aim`,
+    status: "registered",
+    riskTier: "HIGH",
+    allowlisted: true,
+    industryId: "financial_services",
+    addedBy: "bk2-live-demo",
+    capabilities: { tools: true, resources: false, prompts: false, sampling: false },
+    serverInfo: { vendor: "BlackRock AIM", version: "1.0.0", compliance: ["SOX", "FCA SM&CR", "SEC 17a-4"] },
+  });
+
+  for (const t of AIM_TOOLS) {
+    await storage.createMcpServerTool({
+      serverId: server.id,
+      name: t.name,
+      description: t.description,
+      inputSchema: t.inputSchema,
+      outputSchema: null,
+      annotations: { endpoint: t.endpoint, method: t.method, risk: t.riskClassification, compliance: ["SOX"] },
+      riskClassification: t.riskClassification,
+      owner: "BlackRock IAM Team",
+      enabled: true,
+    });
+  }
+
+  return server.id;
+}
+
+async function ensureBk2AgentDeployment(agentId: string, agentName: string, mcpServerId: string): Promise<string> {
+  const deps = await storage.getDeploymentsByAgentId(agentId);
+  let deployment = deps.find((d: any) => d.status === "deployed");
+
+  if (!deployment) {
+    deployment = await storage.createDeployment({
+      agentId,
+      agentName,
+      environment: "production",
+      status: "deployed",
+      version: "1.0.0",
+      rolloutStrategy: "canary",
+      canaryPercent: 100,
+      pipelineComplete: true,
+      deployedAt: new Date(),
+    });
+  }
+
+  const existingLinks = await storage.getAgentMcpServers(agentId);
+  const alreadyLinked = existingLinks.some((l: any) => l.serverId === mcpServerId);
+  if (!alreadyLinked) {
+    await storage.createAgentMcpServer({ agentId, serverId: mcpServerId, assignedBy: "bk2-live-demo" });
+  }
+
+  return deployment.id;
+}
+
+function buildAgentPrompt(role: keyof typeof BK2_LIVE_AGENT_IDS, s: ReturnType<typeof setBk2LiveScenario>): string {
+  const { employee, empId, caseId, role: empRole } = s;
+  const base = `You are operating within the BlackRock AIM Portal Offboarding System for case ${caseId}.\nEmployee: ${employee} (${empId}) | Role: ${empRole}\n\n`;
+
+  switch (role) {
+    case "terminationIntake":
+      return base + `Your task: Intake and validate the termination case.\n1. Call validate_termination with employeeId="${empId}" to confirm the HR event and workday status.\n2. Call scan_portal_accounts with employeeId="${empId}" to inventory all portal accounts.\n3. Summarize: employee details, termination confirmation, list of portals, total count, and any special flags (trade check required, critical tier). This summary will be handed off to the Portal Discovery agent.`;
+    case "portalDiscovery":
+      return base + `Your task: Discover and validate all portal accounts.\n1. Call scan_portal_accounts with employeeId="${empId}" to get the complete portal list.\n2. For each portal returned, call check_portal_health with that portalName to verify connectivity.\n3. Categorize portals as READY (reachable) or DEFERRED (unreachable, error, or maintenance). List each with its health status.`;
+    case "activeTradeCheck":
+      return base + `Your task: Check for pending trade settlements before any access removal.\n1. Call scan_portal_accounts with employeeId="${empId}" to identify settlement-linked portals.\n2. For each portal that involves trade settlement (Euroclear, DTCC FICC, Clearstream), call check_pending_settlements with employeeId="${empId}" and that portalName.\n3. Evaluate: if any portal has pendingCount > 0 and notional above $50M, recommend HOLD. Otherwise recommend PROCEED. Output your risk assessment clearly.`;
+    case "accessRemovalExecutor":
+      return base + `Your task: Execute access removal across all cleared portals.\n1. Call scan_portal_accounts with employeeId="${empId}" to get the portal list with accountIds and authTypes.\n2. For each portal, call execute_access_removal with employeeId="${empId}", portalName, accountId, authType, and caseId="${caseId}".\n3. Log the result for each portal: success/failure, confirmationId, or deferral reason. Collect all confirmation IDs.`;
+    case "removalVerification":
+      return base + `Your task: Independently verify that access has been removed from every portal.\n1. Call scan_portal_accounts with employeeId="${empId}" to get the portal list.\n2. For each portal, call verify_access_removed with employeeId="${empId}" and portalName.\n3. Report the verification status for each portal (removed, unreachable, still_active) and the auth probe result. Collect all confirmationIds.`;
+    case "auditEvidence":
+      return base + `Your task: Generate the SOX compliance evidence package and close the case.\n1. Call scan_portal_accounts with employeeId="${empId}" to count total portals processed.\n2. Call generate_evidence_package with caseId="${caseId}", employeeId="${empId}", and portalsRemoved=N.\n3. Confirm: GRC vault archival, SOX Section 404 compliance, Splunk monitoring rule creation, ServiceNow case ${caseId} closed. Summarize all artifact IDs and the package ID.`;
+    default:
+      return base + `Execute your offboarding task for employee ${empId}, case ${caseId}.`;
+  }
+}
+
+// SSE: GET /demo-api/blackrock2/live-run?scenarioId=...
+demoRouter.get("/blackrock2/live-run", async (req: Request, res: Response) => {
+  const scenarioId = (req.query.scenarioId as Bk2LiveScenario) || "happy_path";
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.flushHeaders();
+
+  const sendEvent = (eventType: string, payload: object) => {
+    try {
+      res.write(`event: ${eventType}\ndata: ${JSON.stringify(payload)}\n\n`);
+    } catch {}
+  };
+
+  let currentAgentName = "unknown";
+  let aborted = false;
+
+  const onRuntimeEvent = (evt: { deploymentId: string; agentId: string; runId: string; result: any }) => {
+    if (aborted) return;
+    const steps: any[] = evt.result?.steps ?? [];
+    const toolCallSteps = steps.filter((s: any) => s.type === "api_call");
+    for (const step of toolCallSteps) {
+      const tool = step.mcpTool || step.name || "unknown_tool";
+      const success = step.status === "completed" || step.status === "passed";
+      sendEvent("agent_event", {
+        agentName: currentAgentName,
+        type: "tool_call_result",
+        tool,
+        data: { tool, success, error: step.error || null },
+        success,
+      });
+    }
+    if (toolCallSteps.length === 0) {
+      sendEvent("agent_event", {
+        agentName: currentAgentName,
+        type: "final_analysis",
+        data: { steps: steps.length, success: evt.result?.success },
+        success: evt.result?.success,
+      });
+    }
+  };
+
+  runtimeEvents.on("agent_execution", onRuntimeEvent);
+  req.on("close", () => { aborted = true; runtimeEvents.off("agent_execution", onRuntimeEvent); });
+
+  try {
+    sendEvent("run_start", { scenarioId, message: `Starting live run for scenario: ${scenarioId}` });
+
+    const scenarioSpec = setBk2LiveScenario(scenarioId);
+    const { employee, empId, caseId } = scenarioSpec;
+
+    sendEvent("setup", { message: `Setting up AIM Offboarding Suite MCP server...` });
+    const mcpServerId = await ensureAimMcpServer();
+    sendEvent("setup", { message: `AIM MCP server ready (${mcpServerId.slice(0, 8)})` });
+
+    const agentEntries = Object.entries(BK2_LIVE_AGENT_IDS) as [keyof typeof BK2_LIVE_AGENT_IDS, string][];
+    const deploymentIds: Record<string, string> = {};
+
+    for (const [role, agentId] of agentEntries) {
+      const agent = await storage.getAgent(agentId);
+      const agentName = agent?.name || role;
+      const depId = await ensureBk2AgentDeployment(agentId, agentName, mcpServerId);
+      deploymentIds[role] = depId;
+    }
+
+    sendEvent("setup", { message: `All 6 agents configured — starting execution for ${employee} (${empId}), case ${caseId}` });
+
+    for (const [role, agentId] of agentEntries) {
+      if (aborted) break;
+
+      const agent = await storage.getAgent(agentId);
+      currentAgentName = agent?.name || role;
+      const deploymentId = deploymentIds[role];
+      const prompt = buildAgentPrompt(role, scenarioSpec);
+
+      sendEvent("agent_start", { agentId, agentName: currentAgentName, role, deploymentId });
+
+      const result = await runAgentOnce(deploymentId, prompt, 6);
+
+      sendEvent("agent_complete", {
+        agentId,
+        agentName: currentAgentName,
+        role,
+        success: result.success,
+        message: result.message,
+      });
+    }
+
+    clearBk2LiveScenario();
+    sendEvent("run_complete", { scenarioId, caseId, employee, success: true, message: `All 6 agents completed for case ${caseId}` });
+  } catch (err: any) {
+    console.error("[bk2-live-run] Error:", err?.message);
+    sendEvent("error", { message: err?.message || "Live run failed" });
+    clearBk2LiveScenario();
+  } finally {
+    runtimeEvents.off("agent_execution", onRuntimeEvent);
+    if (!aborted) res.end();
   }
 });

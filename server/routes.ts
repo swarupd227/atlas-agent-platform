@@ -26,6 +26,7 @@ import hearstDataPlatformRouter from "./mock-mcp/hearst-data-platform";
 import hearstCmsRouter from "./mock-mcp/hearst-cms";
 import hearstEmailQueueRouter from "./mock-mcp/hearst-email-queue";
 import hearstAnalyticsRouter from "./mock-mcp/hearst-analytics";
+import blackrock2AimRouter from "./mock-mcp/blackrock2-aim";
 import { registerMockMcpServers } from "./mock-mcp/register";
 import type { RedactionLevel } from "./permissions";
 import {
@@ -1095,6 +1096,7 @@ export async function registerRoutes(
   app.use("/api/mock/hearst-cms", hearstCmsRouter);
   app.use("/api/mock/hearst-email-queue", hearstEmailQueueRouter);
   app.use("/api/mock/hearst-analytics", hearstAnalyticsRouter);
+  app.use("/api/mock/bk2-aim", blackrock2AimRouter);
 
   app.post("/api/mock-mcp/register", async (_req, res) => {
     try {

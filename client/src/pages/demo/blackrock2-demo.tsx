@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,7 +25,19 @@ import {
   UserCheck,
   FileText,
   Building2,
+  Cpu,
+  Zap,
 } from "lucide-react";
+
+interface LiveEvent {
+  id: number;
+  time: string;
+  agentName: string;
+  type: string;
+  tool?: string;
+  success?: boolean;
+  message: string;
+}
 import { BLACKROCK2_AGENTS } from "./blackrock2-constants";
 
 // ─── Scenario definitions ────────────────────────────────────────────────────
@@ -419,8 +431,14 @@ export default function BlackRock2Demo() {
   const [completedAgents, setCompletedAgents] = useState<Set<AgentNodeId>>(new Set());
   const [approvalPending, setApprovalPending] = useState(false);
   const [postApproval, setPostApproval]   = useState(false);
-  const feedRef  = useRef<HTMLDivElement>(null);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const [liveEvents, setLiveEvents]         = useState<LiveEvent[]>([]);
+  const [liveRunActive, setLiveRunActive]   = useState(false);
+  const [liveAgentName, setLiveAgentName]   = useState<string | null>(null);
+  const feedRef     = useRef<HTMLDivElement>(null);
+  const liveFeedRef = useRef<HTMLDivElement>(null);
+  const timerRef    = useRef<NodeJS.Timeout | null>(null);
+  const esRef       = useRef<EventSource | null>(null);
+  const liveEventId = useRef(0);
   let entryId = useRef(0);
 
   const scenario = SCENARIOS.find((s) => s.id === selectedId)!;
@@ -437,8 +455,92 @@ export default function BlackRock2Demo() {
     return scenario.steps;
   };
 
+  const stopLiveRun = useCallback(() => {
+    if (esRef.current) {
+      esRef.current.close();
+      esRef.current = null;
+    }
+    setLiveRunActive(false);
+    setLiveAgentName(null);
+  }, []);
+
+  const startLiveRun = useCallback((scenarioId: string) => {
+    stopLiveRun();
+    setLiveEvents([]);
+    liveEventId.current = 0;
+    setLiveRunActive(true);
+
+    const addEvent = (type: string, agentName: string, message: string, tool?: string, success?: boolean) => {
+      const now = new Date();
+      const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
+      setLiveEvents((prev) => [...prev, { id: liveEventId.current++, time, agentName, type, tool, success, message }]);
+    };
+
+    const es = new EventSource(`/demo-api/blackrock2/live-run?scenarioId=${scenarioId}`);
+    esRef.current = es;
+
+    es.addEventListener("run_start", (e) => {
+      const d = JSON.parse(e.data);
+      addEvent("run_start", "Atlas Runtime", `Live run started — scenario: ${d.scenarioId}`);
+    });
+    es.addEventListener("setup", (e) => {
+      const d = JSON.parse(e.data);
+      addEvent("setup", "Atlas Runtime", d.message);
+    });
+    es.addEventListener("agent_start", (e) => {
+      const d = JSON.parse(e.data);
+      setLiveAgentName(d.agentName);
+      addEvent("agent_start", d.agentName, `Executing ${d.agentName}...`);
+    });
+    es.addEventListener("agent_event", (e) => {
+      const d = JSON.parse(e.data);
+      const { agentName, type, data } = d;
+      if (type === "tool_call_start") {
+        addEvent("tool_call_start", agentName, `→ Calling tool: ${data.tool}`, data.tool);
+      } else if (type === "tool_call_result") {
+        addEvent("tool_call_result", agentName, `${data.success ? "✓" : "✗"} ${data.tool}: ${data.success ? "success" : data.error || "failed"}`, data.tool, data.success);
+      } else if (type === "planning") {
+        addEvent("planning", agentName, `Planning: ${data.summary || "Analyzing task..."}`);
+      } else if (type === "final_analysis") {
+        addEvent("final_analysis", agentName, `Analysis complete — ${data.steps ?? 0} steps`);
+      }
+    });
+    es.addEventListener("agent_complete", (e) => {
+      const d = JSON.parse(e.data);
+      addEvent("agent_complete", d.agentName, `${d.success ? "✓ Complete" : "✗ Failed"}: ${d.message}`);
+    });
+    es.addEventListener("run_complete", (e) => {
+      const d = JSON.parse(e.data);
+      addEvent("run_complete", "Atlas Runtime", `All 6 agents completed — ${d.caseId} — traces available in Runs & Traces`);
+      es.close();
+      esRef.current = null;
+      setLiveRunActive(false);
+      setLiveAgentName(null);
+    });
+    es.addEventListener("error", (e: any) => {
+      const d = e.data ? JSON.parse(e.data) : {};
+      addEvent("error", "Atlas Runtime", `Error: ${d.message || "Connection error"}`);
+      es.close();
+      esRef.current = null;
+      setLiveRunActive(false);
+    });
+    es.onerror = () => {
+      if (es.readyState === EventSource.CLOSED) {
+        setLiveRunActive(false);
+        esRef.current = null;
+      }
+    };
+  }, [stopLiveRun]);
+
+  useEffect(() => () => { stopLiveRun(); }, [stopLiveRun]);
+
+  useEffect(() => {
+    if (liveFeedRef.current) liveFeedRef.current.scrollTop = liveFeedRef.current.scrollHeight;
+  }, [liveEvents]);
+
   const reset = () => {
     if (timerRef.current) clearTimeout(timerRef.current);
+    stopLiveRun();
     setRunning(false);
     setComplete(false);
     setStepIndex(0);
@@ -448,6 +550,7 @@ export default function BlackRock2Demo() {
     setCompletedAgents(new Set());
     setApprovalPending(false);
     setPostApproval(false);
+    setLiveEvents([]);
     entryId.current = 0;
   };
 
@@ -545,6 +648,7 @@ export default function BlackRock2Demo() {
     setComplete(false);
     if (activityLog.length === 0) {
       setPortals(scenario.portals.map((p) => ({ ...p })));
+      startLiveRun(selectedId);
     }
     const steps = getSteps();
     runStep(steps, stepIndex, portals.length > 0 ? portals : scenario.portals.map((p) => ({ ...p })));
@@ -860,6 +964,67 @@ export default function BlackRock2Demo() {
                   </span>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* Live Atlas Runtime panel */}
+          {(liveEvents.length > 0 || liveRunActive) && (
+            <div className="border-t flex flex-col shrink-0" style={{ maxHeight: "220px" }} data-testid="bk2-live-runtime-panel">
+              <div className="flex items-center gap-2 px-4 py-2 bg-muted/30 border-b shrink-0">
+                <Cpu className="w-3.5 h-3.5 text-primary" />
+                <span className="text-xs font-semibold tracking-wide">Live Atlas Runtime</span>
+                {liveRunActive && (
+                  <div className="flex items-center gap-1.5 ml-1">
+                    <span className="relative flex h-2 w-2">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
+                    </span>
+                    {liveAgentName && (
+                      <span className="text-[10px] text-primary font-mono">{liveAgentName}</span>
+                    )}
+                  </div>
+                )}
+                {!liveRunActive && liveEvents.length > 0 && (
+                  <Badge variant="outline" className="text-[9px] border-emerald-500/40 text-emerald-400 ml-1">
+                    Done
+                  </Badge>
+                )}
+                <span className="ml-auto text-[10px] text-muted-foreground font-mono">Claude Sonnet · MCP</span>
+              </div>
+              <div
+                ref={liveFeedRef}
+                className="overflow-y-auto px-4 py-2 space-y-1 font-mono text-[10px]"
+              >
+                {liveEvents.map((ev) => (
+                  <div key={ev.id} className="flex items-start gap-2" data-testid={`bk2-live-event-${ev.id}`}>
+                    <span className="text-muted-foreground/60 shrink-0 pt-0.5">{ev.time}</span>
+                    <span className={`shrink-0 pt-0.5 ${
+                      ev.type === "run_start" || ev.type === "setup" ? "text-muted-foreground" :
+                      ev.type === "agent_start" ? "text-primary font-semibold" :
+                      ev.type === "tool_call_start" ? "text-blue-400" :
+                      ev.type === "tool_call_result" && ev.success ? "text-emerald-400" :
+                      ev.type === "tool_call_result" && !ev.success ? "text-red-400" :
+                      ev.type === "agent_complete" ? "text-emerald-400 font-semibold" :
+                      ev.type === "run_complete" ? "text-primary font-semibold" :
+                      ev.type === "error" ? "text-red-400" :
+                      "text-muted-foreground"
+                    }`}>
+                      {ev.type === "tool_call_start"   && <Zap className="inline w-3 h-3 mr-0.5" />}
+                      {ev.type === "tool_call_result" && ev.success    && <CheckCircle2 className="inline w-3 h-3 mr-0.5 text-emerald-400" />}
+                      {ev.type === "tool_call_result" && ev.success === false && <XCircle className="inline w-3 h-3 mr-0.5 text-red-400" />}
+                      {ev.type === "agent_start"       && <Cpu className="inline w-3 h-3 mr-0.5" />}
+                      {ev.type === "run_complete"      && <CheckCircle2 className="inline w-3 h-3 mr-0.5 text-emerald-400" />}
+                      {ev.message}
+                    </span>
+                  </div>
+                ))}
+                {liveRunActive && liveEvents.length === 0 && (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span>Initializing agents…</span>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
