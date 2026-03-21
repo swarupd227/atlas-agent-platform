@@ -249,12 +249,15 @@ Return your decision clearly:
 
 Core principle: Atlas maximises subscriber lifetime value, not send volume. A well-timed HOLD improves next-day open rates by 18–25%. Never send an email that would harm the subscriber relationship.`;
 
-const MCP_SERVER_IDS = [
+const MCP_SERVER_IDS: string[] = [
   HEARST_MCP_SERVERS.dataPlatform.id,
   HEARST_MCP_SERVERS.cms.id,
   HEARST_MCP_SERVERS.emailQueue.id,
   HEARST_MCP_SERVERS.analytics.id,
 ];
+
+interface AgentMcpLink { serverId: string; id: string }
+interface AgentRecord { systemPrompt: string | null; maxToolIterations: number | null }
 
 let _bootstrapDone = false;
 
@@ -263,31 +266,48 @@ export async function ensureHearstAgentConfig(): Promise<void> {
   _bootstrapDone = true;
 
   const agentId = HEARST_AGENTS.nbaEmailDecision.id;
+  const { apiRequest } = await import("@/lib/queryClient");
 
   try {
-    const linkedRes = await fetch(`/api/agents/${agentId}/mcp-servers`);
-    if (!linkedRes.ok) return;
-    const linked: any[] = await linkedRes.json();
-    const linkedIds = new Set(linked.map((l: any) => l.serverId || l.id));
+    const linksRes = await apiRequest("GET", `/api/agents/${agentId}/mcp-servers`);
+    const links: AgentMcpLink[] = await linksRes.json();
+    const linkedIds = new Set(links.map((l) => l.serverId || l.id));
 
     for (const serverId of MCP_SERVER_IDS) {
       if (!linkedIds.has(serverId)) {
-        await fetch(`/api/agents/${agentId}/mcp-servers`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ serverId, acknowledgeWarnings: true }),
-        });
+        try {
+          await apiRequest("POST", `/api/agents/${agentId}/mcp-servers`, {
+            serverId,
+            acknowledgeWarnings: true,
+          });
+          console.debug(`[hearst-bootstrap] Linked MCP server ${serverId}`);
+        } catch (linkErr: unknown) {
+          const msg = linkErr instanceof Error ? linkErr.message : String(linkErr);
+          if (msg.startsWith("409")) {
+            console.debug(`[hearst-bootstrap] MCP server ${serverId} already linked (409 — OK)`);
+          } else {
+            console.debug(`[hearst-bootstrap] Failed to link MCP server ${serverId}:`, msg);
+          }
+        }
       }
     }
 
-    await fetch(`/api/agents/${agentId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        systemPrompt: NBA_ORCHESTRATOR_SYSTEM_PROMPT,
-        maxToolIterations: 8,
-      }),
-    });
-  } catch {
+    const agentRes = await apiRequest("GET", `/api/agents/${agentId}`);
+    const agent: AgentRecord = await agentRes.json();
+
+    const needsPromptUpdate = agent.systemPrompt !== NBA_ORCHESTRATOR_SYSTEM_PROMPT;
+    const needsIterationUpdate = (agent.maxToolIterations ?? 0) < 6;
+
+    if (needsPromptUpdate || needsIterationUpdate) {
+      const patch: Partial<AgentRecord> = {};
+      if (needsPromptUpdate) patch.systemPrompt = NBA_ORCHESTRATOR_SYSTEM_PROMPT;
+      if (needsIterationUpdate) patch.maxToolIterations = 8;
+      await apiRequest("PATCH", `/api/agents/${agentId}`, patch);
+      console.debug("[hearst-bootstrap] Agent config patched", Object.keys(patch));
+    } else {
+      console.debug("[hearst-bootstrap] Agent config already up to date — no patch needed");
+    }
+  } catch (err: unknown) {
+    console.debug("[hearst-bootstrap] Bootstrap failed (non-fatal):", err instanceof Error ? err.message : err);
   }
 }
