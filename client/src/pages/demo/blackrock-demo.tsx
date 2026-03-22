@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef, type RefObject } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -30,6 +30,8 @@ import {
   Trash2,
   FileCheck,
   ArrowRight,
+  Terminal,
+  Cpu,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -2101,10 +2103,139 @@ function PrivEscReviewPanel({
   );
 }
 
+interface LiveEvent {
+  id: number;
+  time: string;
+  agentName: string;
+  type: string;
+  tool?: string;
+  success?: boolean;
+  message: string;
+}
+
+function LiveAgentTrace({ events, running, feedRef }: { events: LiveEvent[]; running: boolean; feedRef: RefObject<HTMLDivElement> }) {
+  if (events.length === 0 && !running) return null;
+  return (
+    <div className="rounded-lg border border-border/60 bg-black/80 overflow-hidden" data-testid="live-agent-trace-panel">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border/40 bg-black/40">
+        <Terminal className="w-3.5 h-3.5 text-orange-400" />
+        <span className="text-xs font-semibold text-orange-400 uppercase tracking-wider">Live Agent Trace</span>
+        {running && <Loader2 className="w-3 h-3 animate-spin text-orange-400 ml-auto" />}
+        {!running && events.length > 0 && <CheckCircle2 className="w-3 h-3 text-green-400 ml-auto" />}
+      </div>
+      <div ref={feedRef} className="font-mono text-xs p-2 space-y-0.5 max-h-[340px] overflow-y-auto" data-testid="live-trace-feed">
+        {events.map((ev) => {
+          let textColor = "text-slate-400";
+          if (ev.type === "run_start" || ev.type === "run_complete") textColor = "text-orange-300";
+          else if (ev.type === "setup") textColor = "text-blue-400";
+          else if (ev.type === "agent_start") textColor = "text-yellow-300";
+          else if (ev.type === "tool_call_result") textColor = ev.success ? "text-green-400" : "text-red-400";
+          else if (ev.type === "final_analysis") textColor = "text-cyan-400";
+          else if (ev.type === "agent_complete") textColor = ev.message.startsWith("✓") ? "text-green-400" : "text-red-400";
+          else if (ev.type === "error") textColor = "text-red-500";
+          return (
+            <div key={ev.id} className={`flex gap-1.5 ${textColor} leading-5`} data-testid={`trace-event-${ev.id}`}>
+              <span className="opacity-50 shrink-0">{ev.time}</span>
+              {ev.type === "agent_start" && <Cpu className="w-3 h-3 mt-0.5 shrink-0 opacity-70" />}
+              <span className="truncate">{ev.message}</span>
+            </div>
+          );
+        })}
+        {running && (
+          <div className="flex items-center gap-1.5 text-slate-500 animate-pulse">
+            <span className="opacity-50">{new Date().toTimeString().slice(0, 8)}</span>
+            <span>waiting for next event…</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function BlackRockDemo() {
   const [activeScenario, setActiveScenario] = useState<"scenario1" | "scenario2" | "scenario3">("scenario1");
   const [activeScreen, setActiveScreen] = useState("servicenow");
   const { toast } = useToast();
+
+  const [liveEvents, setLiveEvents] = useState<LiveEvent[]>([]);
+  const [liveRunning, setLiveRunning] = useState(false);
+  const liveFeedRef = useRef<HTMLDivElement>(null);
+  const esRef = useRef<EventSource | null>(null);
+  const liveEventId = useRef(0);
+
+  const stopLiveRun = useCallback(() => {
+    if (esRef.current) { esRef.current.close(); esRef.current = null; }
+    setLiveRunning(false);
+  }, []);
+
+  const startLiveRun = useCallback((scenario: "default" | "sod" | "privesc") => {
+    stopLiveRun();
+    setLiveEvents([]);
+    liveEventId.current = 0;
+    setLiveRunning(true);
+
+    const addEvent = (type: string, agentName: string, message: string, tool?: string, success?: boolean) => {
+      const now = new Date();
+      const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
+      setLiveEvents(prev => [...prev, { id: liveEventId.current++, time, agentName, type, tool, success, message }]);
+    };
+
+    const es = new EventSource(`/demo-api/blackrock/live-run/stream?scenario=${scenario}`);
+    esRef.current = es;
+
+    es.addEventListener("run_start", (e) => {
+      const d = JSON.parse(e.data);
+      addEvent("run_start", "Atlas Runtime", `Live run started — scenario: ${d.scenario}`);
+    });
+    es.addEventListener("setup", (e) => {
+      const d = JSON.parse(e.data);
+      addEvent("setup", "Atlas Runtime", d.message);
+    });
+    es.addEventListener("agent_start", (e) => {
+      const d = JSON.parse(e.data);
+      addEvent("agent_start", d.agentName, `Executing ${d.agentName}...`);
+    });
+    es.addEventListener("agent_event", (e) => {
+      const d = JSON.parse(e.data);
+      const { agentName, type, data, tool, success } = d;
+      if (type === "tool_call_result") {
+        const t = data?.tool || tool || "tool";
+        addEvent("tool_call_result", agentName, `${success ? "✓" : "✗"} ${t}: ${success ? "success" : (data?.error || "blocked")}`, t, success);
+      } else if (type === "final_analysis") {
+        addEvent("final_analysis", agentName, `Analysis complete — ${data?.steps ?? 0} steps`);
+      }
+    });
+    es.addEventListener("agent_complete", (e) => {
+      const d = JSON.parse(e.data);
+      addEvent("agent_complete", d.agentName, `${d.success ? "✓ Complete" : "✗ Failed"}: ${d.message}`);
+    });
+    es.addEventListener("run_complete", () => {
+      addEvent("run_complete", "Atlas Runtime", "All agents completed — traces available in Runs & Traces");
+      es.close();
+      esRef.current = null;
+      setLiveRunning(false);
+      queryClient.invalidateQueries({ predicate: (q) => typeof q.queryKey[0] === "string" && (q.queryKey[0] as string).startsWith("/demo-api") });
+    });
+    es.addEventListener("error", (e: any) => {
+      const d = e.data ? JSON.parse(e.data) : {};
+      addEvent("error", "Atlas Runtime", `Error: ${d.message || "Connection error"}`);
+      es.close();
+      esRef.current = null;
+      setLiveRunning(false);
+    });
+    es.onerror = () => {
+      if (es.readyState === EventSource.CLOSED) {
+        setLiveRunning(false);
+        esRef.current = null;
+      }
+    };
+  }, [stopLiveRun]);
+
+  useEffect(() => () => { stopLiveRun(); }, [stopLiveRun]);
+
+  useEffect(() => {
+    if (liveFeedRef.current) liveFeedRef.current.scrollTop = liveFeedRef.current.scrollHeight;
+  }, [liveEvents]);
 
   const { data: auditData } = useQuery<AuditLogResponse>({
     queryKey: ["/demo-api/audit-log"],
@@ -2200,34 +2331,19 @@ export default function BlackRockDemo() {
     },
   });
 
-  const runPipelineMutation = useMutation({
-    mutationFn: (opts?: { scenario?: "sod" | "privesc" }) =>
-      apiRequest("POST", "/demo-api/run-pipeline", opts?.scenario ? { scenario: opts.scenario } : undefined),
-    onSuccess: (_data, opts) => {
-      if (opts?.scenario === "sod") {
-        setSodPipelineStarted(true);
-        toast({
-          title: "Pipeline started",
-          description: "The orchestrator is running the SoD compliance check pipeline. Watch the activity feed below.",
-        });
-      } else if (opts?.scenario === "privesc") {
-        setPrivEscPipelineStarted(true);
-        toast({
-          title: "Pipeline started",
-          description: "All 5 agents running. Provisioning first, then Brainwave will detect the privilege escalation. Watch the activity feed.",
-        });
-      } else {
-        toast({
-          title: "Pipeline started",
-          description: "The orchestrator agent is now running the full 7-step provisioning pipeline. Watch the activity feed below.",
-        });
-      }
-      queryClient.invalidateQueries({ predicate: (query) => typeof query.queryKey[0] === "string" && query.queryKey[0].startsWith("/demo-api") });
-    },
-    onError: (err: any) => {
-      toast({ title: "Pipeline error", description: err.message || "Failed to start pipeline", variant: "destructive" });
-    },
-  });
+  const handleRunPipeline = useCallback((scenario: "default" | "sod" | "privesc") => {
+    if (scenario === "sod") setSodPipelineStarted(true);
+    if (scenario === "privesc") setPrivEscPipelineStarted(true);
+    startLiveRun(scenario);
+    toast({
+      title: "Pipeline started",
+      description: scenario === "sod"
+        ? "Orchestrator + Aquera running the SoD compliance check. Watch the Live Agent Trace."
+        : scenario === "privesc"
+        ? "All agents running. Brainwave will detect the privilege escalation. Watch the Live Agent Trace."
+        : "All 5 agents running the provisioning pipeline. Watch the Live Agent Trace.",
+    });
+  }, [startLiveRun, toast]);
 
   const resolvePrivEscMutation = useMutation({
     mutationFn: (path: "revoke_reissue" | "forensic") => apiRequest("POST", "/demo-api/privesc-resolve", { path }),
@@ -2279,7 +2395,7 @@ export default function BlackRockDemo() {
         </div>
         <div className="flex items-center gap-3">
           {activeScenario === "scenario1" && (
-            runPipelineMutation.isPending ? (
+            liveRunning ? (
               <div className="flex items-center gap-2 text-sm text-orange-400 font-medium animate-pulse" data-testid="pipeline-running-indicator">
                 <Loader2 className="w-4 h-4 animate-spin" />
                 Pipeline running…
@@ -2293,8 +2409,8 @@ export default function BlackRockDemo() {
               <Button
                 size="sm"
                 className="gap-1.5 bg-orange-600 hover:bg-orange-500 text-white"
-                onClick={() => runPipelineMutation.mutate()}
-                disabled={runPipelineMutation.isPending}
+                onClick={() => handleRunPipeline("default")}
+                disabled={liveRunning}
                 data-testid="button-run-pipeline"
               >
                 <Zap className="w-3.5 h-3.5" />
@@ -2302,14 +2418,14 @@ export default function BlackRockDemo() {
               </Button>
             )
           )}
-          {activeScenario === "scenario2" && runPipelineMutation.isPending && (
+          {activeScenario === "scenario2" && liveRunning && (
             <div className="flex items-center gap-2 text-sm text-orange-400 font-medium animate-pulse" data-testid="sod-pipeline-running-indicator">
               <Loader2 className="w-4 h-4 animate-spin" />
               Pipeline running…
             </div>
           )}
           {activeScenario === "scenario3" && (
-            runPipelineMutation.isPending ? (
+            liveRunning ? (
               <div className="flex items-center gap-2 text-sm text-red-400 font-medium animate-pulse" data-testid="privesc-pipeline-running-indicator">
                 <Loader2 className="w-4 h-4 animate-spin" />
                 Pipeline running…
@@ -2407,7 +2523,8 @@ export default function BlackRockDemo() {
               {activeScreen === "sailpoint" && <SailPointScreen />}
               {activeScreen === "brainwave" && <BrainwaveScreen />}
             </div>
-            <div>
+            <div className="space-y-4">
+              <LiveAgentTrace events={liveEvents} running={liveRunning} feedRef={liveFeedRef} />
               <ActivityFeed />
             </div>
           </div>
@@ -2427,8 +2544,8 @@ export default function BlackRockDemo() {
             <div className="lg:col-span-2">
               {activeSodScreen === "context" && (
                 <SodContextView
-                  onTrigger={() => runPipelineMutation.mutate({ scenario: "sod" })}
-                  isPending={runPipelineMutation.isPending}
+                  onTrigger={() => handleRunPipeline("sod")}
+                  isPending={liveRunning}
                 />
               )}
               {activeSodScreen === "aquera" && (
@@ -2451,7 +2568,8 @@ export default function BlackRockDemo() {
                 />
               )}
             </div>
-            <div>
+            <div className="space-y-4">
+              <LiveAgentTrace events={liveEvents} running={liveRunning} feedRef={liveFeedRef} />
               <ActivityFeed />
             </div>
           </div>
@@ -2471,8 +2589,8 @@ export default function BlackRockDemo() {
             <div className="lg:col-span-2">
               {activePrivEscScreen === "context" && (
                 <PrivEscContextView
-                  onTrigger={() => runPipelineMutation.mutate({ scenario: "privesc" })}
-                  isPending={runPipelineMutation.isPending}
+                  onTrigger={() => handleRunPipeline("privesc")}
+                  isPending={liveRunning}
                 />
               )}
               {activePrivEscScreen === "detection" && (
@@ -2495,7 +2613,8 @@ export default function BlackRockDemo() {
                 />
               )}
             </div>
-            <div>
+            <div className="space-y-4">
+              <LiveAgentTrace events={liveEvents} running={liveRunning} feedRef={liveFeedRef} />
               <ActivityFeed />
             </div>
           </div>

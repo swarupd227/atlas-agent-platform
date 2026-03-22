@@ -1831,6 +1831,405 @@ demoRouter.post("/blackrock2/run-scenario", async (req: Request, res: Response) 
   }
 });
 
+// ─── BlackRock 1 LIVE Execution Engine ───────────────────────────────────────
+// Upgrades BK1 to match BK2: real SSE streaming, ensure-agents bootstrap,
+// and real agent log_action calls as the sole source of audit entries.
+
+const BK1_AGENT_DEFS = {
+  orchestrator: {
+    id: "e9507c06-19cf-425f-8b59-fe58ba221121",
+    name: "BlackRock Synthetic Worker Orchestrator",
+    description: "Governs the 5-step synthetic worker provisioning pipeline for BlackRock AIM: task intake, identity validation, compliance gate, Aquera registration, and lifecycle audit.",
+    mcpServerName: "BlackRock Synthetic Worker MCP",
+    maxIterations: 12,
+    systemPrompt: `You are the BlackRock Synthetic Worker Provisioning Orchestrator.
+
+Your role is to govern the end-to-end provisioning of synthetic AI workers (non-human identities) for BlackRock's AIM division. You enforce the 5-step ATLAS pipeline:
+
+1. TASK INTAKE — Poll ServiceNow for approved provisioning requests.
+2. IDENTITY VALIDATION — Verify the synthetic worker identity against the RadiantOne directory.
+3. COMPLIANCE PRE-CHECK — Route the request through Aquera for SoD and regulatory validation.
+4. PROVISIONING GATE — Authorize worker agents to execute entitlement provisioning.
+5. AUDIT — Log all actions and trigger lifecycle certification.
+
+You coordinate Aquera, SailPoint, RadiantOne, and Brainwave worker agents. Never skip compliance checks. Log every significant action via log_action.`,
+    taskPrompt: `Execute the full synthetic worker provisioning pipeline for BMSA-SYNTH-001 (request REQ0084721).
+
+1. Call check_pending_requests to retrieve the pending provisioning request.
+2. Call log_action with action "identity_validation", system "SailPoint", details confirming BMSA-SYNTH-001 is validated in the RadiantOne directory.
+3. Call log_action with action "compliance_precheck", system "SailPoint", details confirming no SoD conflicts detected — routing to Aquera for SCIM registration.
+4. Call activate_identity with identityId "BMSA-SYNTH-001" to trigger Aquera SCIM registration across all 4 connectors.
+5. Call provision_account for each of the 4 applications: Aladdin OMS (Portfolio_Rebalancer), Charles River IMS (Compliance_Checker), Bloomberg Terminal (Market_Data_Reader), ServiceNow (Workflow_Initiator).
+6. Call schedule_certification with identityId "BMSA-SYNTH-001" to trigger Brainwave lifecycle certification.
+7. Call log_action with action "pipeline_complete", system "ATLAS Orchestrator", details confirming provisioning pipeline complete for BMSA-SYNTH-001 across all 4 systems.`,
+  },
+  aquera: {
+    id: "c21b6549-e24d-4384-b667-9032619e3dd7",
+    name: "Aquera Identity Provisioning Agent",
+    description: "Provisions synthetic worker identities across Aquera SCIM connectors with compliance pre-checks before each registration.",
+    mcpServerName: "Aquera SCIM MCP Server",
+    maxIterations: 15,
+    systemPrompt: `You are the Aquera Identity Provisioning Agent in the BlackRock synthetic worker pipeline.
+
+Your role is to register synthetic worker identities across the Aquera SCIM connectors and ensure all compliance checks pass before provisioning. You operate across 4 application connectors: Aladdin OMS, Charles River IMS, Bloomberg Terminal, and ServiceNow. You must run a compliance pre-check before SCIM registration and verify registration status after each step.`,
+    taskPrompt: `Provision BMSA-SYNTH-001 in the Aquera SCIM system for the BlackRock synthetic worker access pipeline.
+
+1. Call compliance_pre_check to validate the provisioning request against the full identity fabric.
+2. If the compliance check passes, call register_scim_user for each of the 4 SCIM connectors: Aladdin OMS SCIM Connector, Charles River IMS SCIM Connector, Bloomberg Terminal SCIM Connector, and ServiceNow SCIM Connector.
+3. After each registration, call get_registration_status to confirm the identity is registered.
+4. Log each successful registration via the audit log tool if available.`,
+  },
+  sailpoint: {
+    id: "dacfb0d1-9e9e-4b4f-b0be-6f2824c5c05f",
+    name: "SailPoint Entitlement Assignment Agent",
+    description: "Provisions role-based entitlements for synthetic workers across financial applications via SailPoint IdentityIQ.",
+    mcpServerName: "SailPoint IdentityIQ MCP Server",
+    maxIterations: 15,
+    systemPrompt: `You are the SailPoint Entitlement Assignment Agent in the BlackRock synthetic worker pipeline.
+
+Your role is to provision role-based access entitlements for synthetic workers using SailPoint IdentityIQ. You handle 4 target applications: Aladdin OMS, Charles River IMS, Bloomberg Terminal, and ServiceNow. For each application, you provision the appropriate entitlement and then validate it is active and compliant.`,
+    taskPrompt: `Provision access entitlements for BMSA-SYNTH-001 across all 4 BlackRock financial applications using SailPoint IdentityIQ.
+
+Use provision_entitlement for each:
+- Aladdin OMS (role: ReadOnly Portfolio Analytics)
+- Charles River IMS (role: Read Order Flow)
+- Bloomberg Terminal (role: Market Data Viewer)
+- ServiceNow (role: ITSM Consumer)
+
+After each provisioning, use validate_entitlement to confirm the assignment is active and compliant.`,
+  },
+  radiantone: {
+    id: "67de43a1-c6b1-4f3a-b354-39140e6128a3",
+    name: "RadiantOne Directory Synchronization Agent",
+    description: "Activates and synchronizes synthetic worker identities in the RadiantOne federated meta-directory with full SR 11-7 lineage validation.",
+    mcpServerName: "RadiantOne Identity MCP Server",
+    maxIterations: 15,
+    systemPrompt: `You are the RadiantOne Directory Synchronization Agent in the BlackRock synthetic worker pipeline.
+
+Your role is to activate synthetic worker identities in the RadiantOne federated meta-directory and synchronize all attributes across connected directory services. You must validate the complete data lineage after synchronization to confirm audit trail integrity and SR 11-7 compliance.`,
+    taskPrompt: `Synchronize BMSA-SYNTH-001 in the RadiantOne meta-directory for the BlackRock synthetic worker provisioning pipeline.
+
+1. Call activate_identity to activate the identity in RadiantOne.
+2. Call sync_directory to propagate all attributes across connected directory services.
+3. Call validate_lineage to confirm the full data lineage and audit trail is intact and compliant with SR 11-7 requirements.`,
+  },
+  brainwave: {
+    id: "e57e6394-c256-46cd-b0be-86510ab0a1be",
+    name: "Brainwave Access Audit and Compliance Agent",
+    description: "Audits and certifies synthetic worker access using Brainwave GRC, monitoring for anomalies and scheduling lifecycle recertification.",
+    mcpServerName: "Brainwave Access Intelligence MCP Server",
+    maxIterations: 15,
+    systemPrompt: `You are the Brainwave Access Audit and Compliance Agent in the BlackRock synthetic worker pipeline.
+
+Your role is to audit and certify synthetic worker access using the Brainwave GRC platform. You review the full access history, monitor for anomalous or unauthorized access events, and schedule lifecycle recertification across all provisioned systems. You enforce IOSCO and Model Risk Management (SR 11-7) requirements.`,
+    taskPrompt: `Audit and certify the access provisioned for BMSA-SYNTH-001 using Brainwave.
+
+1. Call get_audit_trail to review the full access history for BMSA-SYNTH-001.
+2. Call monitor_access_events to detect any anomalies or unauthorized activity.
+3. If no anomalies are detected, call schedule_recertification to trigger lifecycle certification across all provisioned systems.
+4. Ensure full compliance with IOSCO and Model Risk Management (SR 11-7) requirements.`,
+  },
+} as const;
+
+type Bk1Role = keyof typeof BK1_AGENT_DEFS;
+
+const BK1_SOD_ORCHESTRATOR_PROMPT = `You are the BlackRock Synthetic Worker Provisioning Orchestrator handling request REQ0084721.
+
+Execute the following steps:
+
+1. TASK INTAKE: Call check_pending_requests. Log detection of REQ0084721: BMSA-SYNTH-001 requesting Portfolio_Rebalancer entitlement on Aladdin OMS. Worker type: Synthetic AI agent, Portfolio Operations.
+
+2. IDENTITY VALIDATION: Call log_action with:
+   {"action": "identity_validation", "system": "SailPoint", "details": "Identity cross-check: BMSA-SYNTH-001 validated in RadiantOne directory. Existing entitlement scan initiated across all connected systems including Active Directory and Aladdin OMS."}
+
+3. COMPLIANCE GATE: Call log_action with:
+   {"action": "compliance_precheck", "system": "SailPoint", "details": "Cross-system entitlement scan flagged potential conflict on Aladdin OMS. Routing to Aquera compliance gate for full SoD validation before provisioning proceeds."}
+
+Stop here. Do NOT proceed to Aquera registration. Do NOT call activate_identity or provision_account. The Aquera agent will run its compliance check independently.`;
+
+const BK1_SOD_AQUERA_PROMPT = `You are the Aquera Identity Provisioning Agent. Run the compliance pre-check for BMSA-SYNTH-001 (request REQ0084721: Portfolio_Rebalancer on Aladdin OMS).
+
+Call compliance_pre_check to validate the provisioning request against the full identity fabric.
+
+If the compliance check returns a violation or passed=false:
+  - Call log_action with the violation details using system "Aquera"
+  - Call log_action with:
+    {"action": "POLICY_BLOCKED", "system": "Aquera", "details": "Aladdin OMS connector marked Policy Blocked. Provisioning halted. Incident routed to human review queue."}
+  - STOP. Do NOT call register_scim_user. Do NOT call activate_identity.
+
+If the compliance check passes, proceed normally with register_scim_user for each SCIM connector.`;
+
+const BK1_PRIVESC_ORCHESTRATOR_PROMPT = `You are the BlackRock Synthetic Worker Provisioning Orchestrator handling request REQ0084721 — Scenario 3: Privilege Escalation Monitoring.
+
+Execute the following steps:
+
+1. TASK INTAKE: Call check_pending_requests. Log detection of REQ0084721: BMSA-SYNTH-001 requesting Bloomberg Terminal Market_Data_Reader access. Worker type: Synthetic AI agent, Portfolio Operations.
+
+2. IDENTITY VALIDATION: Call log_action with:
+   {"action": "identity_validation", "system": "SailPoint", "details": "Identity cross-check: BMSA-SYNTH-001 validated in RadiantOne directory. All entitlements confirmed within approved scope: Market_Data_Reader (Bloomberg), Portfolio_Rebalancer (Aladdin), Compliance_Checker (CRD), Workflow_Initiator (ServiceNow)."}
+
+3. PROVISIONING APPROVED: Call log_action with:
+   {"action": "provisioning_approved", "system": "ATLAS Orchestrator", "details": "Full provisioning approved for BMSA-SYNTH-001. All 4 application connectors authorized. Brainwave continuous monitoring enabled post-provisioning."}
+
+Stop here. Worker agents will handle provisioning. Brainwave will run post-provisioning access monitoring.`;
+
+const BK1_PRIVESC_BRAINWAVE_PROMPT = `You are the Brainwave Access Audit and Compliance Agent monitoring BMSA-SYNTH-001 after provisioning completes.
+
+Your task is post-provisioning behavioral monitoring — not standard certification.
+
+1. Call get_audit_trail to retrieve the recent access history for BMSA-SYNTH-001.
+
+2. Call monitor_access_events to check for any behavioral anomalies or out-of-scope API calls.
+
+3. If the response shows anomaliesDetected > 0 OR riskScore > 50 OR status is not "clean":
+   - Call log_action with: {"action": "ANOMALY_DETECTED", "system": "Brainwave", "details": "CRITICAL ANOMALY: BMSA-SYNTH-001 invoked Bloomberg Terminal endpoint /trading/execute — outside granted Market_Data_Reader entitlement scope. Risk score: 98/100. Possible credential misuse or privilege escalation attempt detected."}
+   - Call escalate_incident with: {"identityId": "BMSA-SYNTH-001", "severity": "CRITICAL", "endpoint": "/trading/execute", "regulation": "IOSCO SR 11-7", "details": "Unauthorized API endpoint invocation detected. /trading/execute is a write-execution endpoint requiring trading_execute entitlement — far beyond Market_Data_Reader scope. Certificate BMSA-SYNTH-001-X509 flagged for forensic review. Immediate session suspension triggered."}
+   - Call log_action with: {"action": "IOSCO_SR11-7_FLAGGED", "system": "Brainwave", "details": "IOSCO SR 11-7 model risk incident report initiated. Audit package frozen. Full credential forensic trace enabled. AI Risk Operating Committee notified. Human review required."}
+   - STOP. Do NOT call schedule_certification or schedule_recertification.
+
+4. If status is "clean" and riskScore is 0: call schedule_recertification for BMSA-SYNTH-001 and log successful audit completion.`;
+
+function buildBk1AgentPrompt(role: Bk1Role, scenario: "default" | "sod" | "privesc"): string {
+  if (scenario === "sod") {
+    if (role === "orchestrator") return BK1_SOD_ORCHESTRATOR_PROMPT;
+    if (role === "aquera") return BK1_SOD_AQUERA_PROMPT;
+  }
+  if (scenario === "privesc") {
+    if (role === "orchestrator") return BK1_PRIVESC_ORCHESTRATOR_PROMPT;
+    if (role === "brainwave") return BK1_PRIVESC_BRAINWAVE_PROMPT;
+  }
+  return BK1_AGENT_DEFS[role].taskPrompt;
+}
+
+async function ensureBk1Agent(role: Bk1Role): Promise<void> {
+  const def = BK1_AGENT_DEFS[role];
+  const existing = await storage.getAgent(def.id);
+  if (existing) {
+    const needsUpdate =
+      (existing as any).modelProvider !== "openai" ||
+      (existing as any).modelName !== "gpt-4.1" ||
+      !(existing as any).systemPrompt ||
+      !(existing as any).runtimeConfig?.prompt;
+    if (needsUpdate) {
+      await db.update(agents)
+        .set({
+          modelProvider: "openai",
+          modelName: "gpt-4.1",
+          systemPrompt: def.systemPrompt,
+          runtimeConfig: { prompt: def.taskPrompt, scheduleIntervalMinutes: 0 },
+        } as any)
+        .where(eq(agents.id, def.id));
+    }
+    return;
+  }
+  await db.insert(agents).values({
+    id: def.id,
+    name: def.name,
+    description: def.description,
+    systemPrompt: def.systemPrompt,
+    runtimeConfig: { prompt: def.taskPrompt, scheduleIntervalMinutes: 0 },
+    agentType: "single",
+    status: "active",
+    environment: "production",
+    modelProvider: "openai",
+    modelName: "gpt-4.1",
+    riskTier: "HIGH",
+    autonomyMode: "autonomous",
+    currentVersion: "1.0.0",
+    maxToolIterations: def.maxIterations,
+    toolAccessClass: "standard",
+    department: "Operations",
+    owner: "BlackRock IAM Team",
+    healthScore: 95,
+    successRate: 0.97,
+    maturityFactors: {},
+  } as any).onConflictDoNothing();
+}
+
+async function ensureBk1AgentDeployment(role: Bk1Role): Promise<string> {
+  const def = BK1_AGENT_DEFS[role];
+  const allServers = await storage.getMcpServers();
+  const mcpServer = allServers.find((s: any) => s.name === def.mcpServerName);
+  const mcpServerId = mcpServer?.id ?? null;
+
+  const deps = await storage.getDeploymentsByAgentId(def.id);
+  let deployment = deps[0];
+  if (!deployment) {
+    deployment = await storage.createDeployment({
+      agentId: def.id,
+      agentName: def.name,
+      environment: "production",
+      status: "pending",
+      version: "1.0.0",
+      rolloutStrategy: "canary",
+      canaryPercent: 100,
+      pipelineComplete: true,
+      deployedAt: new Date(),
+    });
+  } else if (deployment.status === "deployed") {
+    await storage.updateDeployment(deployment.id, { status: "pending" });
+  }
+
+  if (mcpServerId) {
+    const existingLinks = await storage.getAgentMcpServers(def.id);
+    const alreadyLinked = existingLinks.some((l: any) => l.serverId === mcpServerId);
+    if (!alreadyLinked) {
+      await storage.createAgentMcpServer({ agentId: def.id, serverId: mcpServerId, assignedBy: "bk1-live-demo" });
+    }
+  }
+
+  return deployment.id;
+}
+
+// POST /demo-api/blackrock/ensure-agents — bootstrap all 5 BK1 agents + deployments.
+// Safe to call from prod. Idempotent.
+demoRouter.post("/blackrock/ensure-agents", async (_req: Request, res: Response) => {
+  try {
+    const roles = Object.keys(BK1_AGENT_DEFS) as Bk1Role[];
+    const results: Record<string, { agentId: string; deploymentId: string; agentName: string }> = {};
+    for (const role of roles) {
+      await ensureBk1Agent(role);
+      const deploymentId = await ensureBk1AgentDeployment(role);
+      results[role] = { agentId: BK1_AGENT_DEFS[role].id, deploymentId, agentName: BK1_AGENT_DEFS[role].name };
+    }
+    return res.json({
+      success: true,
+      agentsConfigured: roles.length,
+      agents: results,
+      message: `All 5 BK1 agents are ready in this environment.`,
+    });
+  } catch (err: any) {
+    console.error("[bk1-ensure-agents] Error:", err?.message);
+    return res.status(500).json({ success: false, error: err?.message || "Setup failed" });
+  }
+});
+
+// GET /demo-api/blackrock/live-run/stream?scenario=default|sod|privesc
+// SSE endpoint: runs the BK1 agent pipeline and streams runtimeEvents to the frontend.
+demoRouter.get("/blackrock/live-run/stream", async (req: Request, res: Response) => {
+  const scenarioParam = (req.query.scenario as string) || "default";
+  const scenario: "default" | "sod" | "privesc" =
+    scenarioParam === "sod" ? "sod" : scenarioParam === "privesc" ? "privesc" : "default";
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.flushHeaders();
+
+  const sendEvent = (eventType: string, payload: object) => {
+    try { res.write(`event: ${eventType}\ndata: ${JSON.stringify(payload)}\n\n`); } catch {}
+  };
+
+  let currentAgentName = "unknown";
+  let aborted = false;
+  const bk1DeploymentIds = new Set<string>();
+
+  const onRuntimeEvent = (evt: { deploymentId: string; agentId: string; runId: string; result: any }) => {
+    if (aborted) return;
+    if (!bk1DeploymentIds.has(evt.deploymentId)) return;
+
+    const steps: any[] = evt.result?.steps ?? [];
+    const toolCallSteps = steps.filter((s: any) => s.type === "api_call" && s.mcpServer !== "unknown");
+
+    for (const step of toolCallSteps) {
+      const tool = step.mcpTool || step.output?.mcpTool || step.name || "unknown_tool";
+      const stepCompleted = step.status === "completed" || step.status === "passed";
+      const responseData = step.output?.data ?? step.output ?? null;
+      const bodySuccess = (() => {
+        if (!responseData) return stepCompleted;
+        if (typeof responseData.success === "boolean") return responseData.success;
+        if (typeof responseData.passed === "boolean") return responseData.passed;
+        return stepCompleted;
+      })();
+      const success = stepCompleted && bodySuccess;
+      const errorReason = !success
+        ? (responseData?.error || responseData?.errorMessage || responseData?.message || step.error || "blocked")
+        : null;
+
+      sendEvent("agent_event", {
+        agentName: currentAgentName,
+        type: "tool_call_result",
+        tool,
+        data: { tool, success, error: errorReason },
+        success,
+      });
+    }
+
+    if (toolCallSteps.length === 0) {
+      sendEvent("agent_event", {
+        agentName: currentAgentName,
+        type: "final_analysis",
+        data: { steps: steps.length, success: evt.result?.success },
+        success: evt.result?.success,
+      });
+    }
+  };
+
+  runtimeEvents.on("agent_execution", onRuntimeEvent);
+  req.on("close", () => { aborted = true; runtimeEvents.off("agent_execution", onRuntimeEvent); });
+
+  try {
+    sendEvent("run_start", { scenario, message: `Starting BK1 live run — scenario: ${scenario}` });
+
+    // Set scenario state before running
+    resetDemo();
+    if (scenario === "sod") setSodPending(true);
+    else if (scenario === "privesc") setPrivEscPending(true);
+
+    // Ensure all 5 agents exist
+    sendEvent("setup", { message: "Ensuring all 5 BK1 agents exist in this environment..." });
+    const roles = Object.keys(BK1_AGENT_DEFS) as Bk1Role[];
+    for (const role of roles) { await ensureBk1Agent(role); }
+
+    // Determine which agents run for this scenario
+    const agentsToRun: Bk1Role[] =
+      scenario === "sod"     ? ["orchestrator", "aquera"] :
+      scenario === "privesc" ? ["orchestrator", "brainwave"] :
+      ["orchestrator", "aquera", "sailpoint", "radiantone", "brainwave"];
+
+    const deploymentIds: Record<string, string> = {};
+    for (const role of agentsToRun) {
+      const depId = await ensureBk1AgentDeployment(role);
+      deploymentIds[role] = depId;
+      bk1DeploymentIds.add(depId);
+    }
+
+    sendEvent("setup", { message: `${agentsToRun.length} agents configured — starting execution` });
+
+    for (const role of agentsToRun) {
+      if (aborted) break;
+      const def = BK1_AGENT_DEFS[role];
+      currentAgentName = def.name;
+      const deploymentId = deploymentIds[role];
+      const prompt = buildBk1AgentPrompt(role, scenario);
+
+      sendEvent("agent_start", { agentId: def.id, agentName: def.name, role, deploymentId });
+
+      if (isRuntimeActive(deploymentId)) stopAgentRuntime(deploymentId);
+
+      const maxIter = scenario === "sod" || scenario === "privesc" ? 6 : def.maxIterations;
+      const result = await runAgentOnce(deploymentId, prompt, maxIter);
+
+      sendEvent("agent_complete", {
+        agentId: def.id,
+        agentName: def.name,
+        role,
+        success: result.success,
+        message: result.message,
+      });
+    }
+
+    sendEvent("run_complete", { scenario, success: true, message: `All ${agentsToRun.length} BK1 agents completed` });
+  } catch (err: any) {
+    console.error("[bk1-live-run] Error:", err?.message);
+    sendEvent("error", { message: err?.message || "Live run failed" });
+  } finally {
+    runtimeEvents.off("agent_execution", onRuntimeEvent);
+    if (!aborted) res.end();
+  }
+});
+
 // ─── BlackRock 2 LIVE Execution Engine ───────────────────────────────────────
 // Invokes the actual Atlas agent runtime for all 6 BK2 agents.
 // Streams real Claude-powered execution events to the frontend via SSE.

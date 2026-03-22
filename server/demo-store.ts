@@ -252,13 +252,6 @@ export function triggerSodViolation(): { success: boolean; sodViolation: SodViol
     };
   }
 
-  auditCounter++;
-  state.auditLog.push({ id: auditCounter, timestamp: now, action: "SoD_VIOLATION", system: "Aquera", details: "SoD_VIOLATION | SOX_S404 | Compliance pre-check detected conflict: Portfolio_Rebalancer (requested) + Order_Approver (existing manual grant) violates SOX §404 Separation of Duties. Provisioning suspended pending remediation." });
-  auditCounter++;
-  state.auditLog.push({ id: auditCounter, timestamp: new Date().toISOString(), action: "POLICY_BLOCKED", system: "Aquera", details: "Aladdin OMS connector marked Policy Blocked. BMSA-SYNTH-001 provisioning halted. Orchestrator routing to human review queue — SailPoint step bypassed." });
-  auditCounter++;
-  state.auditLog.push({ id: auditCounter, timestamp: new Date().toISOString(), action: "HUMAN_REVIEW_QUEUED", system: "ATLAS Orchestrator", details: "Violation incident INC-SOD-20260313 created. Routed to Alexandra Moore (BMSA Operations Lead) for remediation decision. Dual sign-off required for exception path." });
-
   return { success: true, sodViolation: state.sodViolation };
 }
 
@@ -318,15 +311,6 @@ export function triggerPrivEsc(): { success: boolean; privEscViolation: PrivEscS
   for (const s of state.sailpoint) {
     s.status = "Suspended";
   }
-
-  auditCounter++;
-  state.auditLog.push({ id: auditCounter, timestamp: now, action: "ANOMALY_DETECTED", system: "Brainwave", details: `ANOMALY_DETECTED | CRITICAL | BMSA-SYNTH-001 invoked Bloomberg Terminal endpoint /trading/execute — outside granted Market_Data_Reader entitlement scope. Risk score: 98/100. Possible credential misuse or privilege escalation attempt.` });
-  auditCounter++;
-  state.auditLog.push({ id: auditCounter, timestamp: new Date().toISOString(), action: "INCIDENT_ESCALATED", system: "Brainwave", details: `INCIDENT_ESCALATED | ${incidentId} | Severity: CRITICAL | Regulation: IOSCO SR 11-7. AI Risk Operating Committee notified. Certificate BMSA-SYNTH-001-X509 flagged for forensic review.` });
-  auditCounter++;
-  state.auditLog.push({ id: auditCounter, timestamp: new Date().toISOString(), action: "SESSION_SUSPENDED", system: "RadiantOne", details: `SESSION_SUSPENDED | BMSA-SYNTH-001 active sessions terminated across all 4 applications: Aladdin OMS, Charles River IMS, Bloomberg Terminal, ServiceNow. Status: Suspended_Pending_Review.` });
-  auditCounter++;
-  state.auditLog.push({ id: auditCounter, timestamp: new Date().toISOString(), action: "IOSCO_SR11-7_FLAGGED", system: "Brainwave", details: `IOSCO_SR11-7_FLAGGED | Model risk incident report initiated under IOSCO SR 11-7. Audit package frozen. Full credential forensic trace enabled. Incident ${incidentId} queued for AI ROC review.` });
 
   return { success: true, privEscViolation: state.privEscViolation };
 }
