@@ -2008,8 +2008,8 @@ async function ensureBk1Agent(role: Bk1Role): Promise<void> {
     const needsUpdate =
       (existing as any).modelProvider !== "openai" ||
       (existing as any).modelName !== "gpt-4.1" ||
-      !(existing as any).systemPrompt ||
-      !(existing as any).runtimeConfig?.prompt;
+      (existing as any).systemPrompt !== def.systemPrompt ||
+      (existing as any).runtimeConfig?.prompt !== def.taskPrompt;
     if (needsUpdate) {
       await db.update(agents)
         .set({

@@ -2129,6 +2129,7 @@ function LiveAgentTrace({ events, running, feedRef }: { events: LiveEvent[]; run
           if (ev.type === "run_start" || ev.type === "run_complete") textColor = "text-orange-300";
           else if (ev.type === "setup") textColor = "text-blue-400";
           else if (ev.type === "agent_start") textColor = "text-yellow-300";
+          else if (ev.type === "tool_call_start") textColor = "text-slate-300";
           else if (ev.type === "tool_call_result") textColor = ev.success ? "text-green-400" : "text-red-400";
           else if (ev.type === "final_analysis") textColor = "text-cyan-400";
           else if (ev.type === "agent_complete") textColor = ev.message.startsWith("✓") ? "text-green-400" : "text-red-400";
@@ -2200,6 +2201,7 @@ export default function BlackRockDemo() {
       const { agentName, type, data, tool, success } = d;
       if (type === "tool_call_result") {
         const t = data?.tool || tool || "tool";
+        addEvent("tool_call_start", agentName, `→ Calling: ${t}`, t, undefined);
         addEvent("tool_call_result", agentName, `${success ? "✓" : "✗"} ${t}: ${success ? "success" : (data?.error || "blocked")}`, t, success);
       } else if (type === "final_analysis") {
         addEvent("final_analysis", agentName, `Analysis complete — ${data?.steps ?? 0} steps`);
