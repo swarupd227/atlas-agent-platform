@@ -691,12 +691,27 @@ async function ensureKinectiveAgentSetup(): Promise<{ agentCreated: boolean; ser
   // 1. Ensure the COA agent exists
   const existingAgent = await storage.getAgent(KINECTIVE_AGENT_ID);
   let agentCreated = false;
+  const KINECTIVE_SYSTEM_PROMPT = `You are the Change of Address Agent for Kinective Credit Union. You orchestrate member address changes across all downstream systems, ensuring accuracy, compliance, and a seamless member experience.
+
+Your responsibilities:
+1. Retrieve and validate the signed COA form via SignPlus
+2. Confirm the new address with USPS address validation
+3. Propagate the update to all 11 downstream systems: core banking gateway, digital banking, statement vendor, card management, loan origination, CRM (contact + interaction record), bill pay, compliance (compliance record + BSA event), and fraud detection
+4. Archive the signed document to permanent storage
+5. Log every action for regulatory audit trails
+
+If address validation fails: halt all updates, log the failure, create a compliance record, and route to human review. Never update systems with an unvalidated address.`;
+
+  const KINECTIVE_TASK_PROMPT = "Process member Change of Address requests end-to-end: validate the signed COA form, confirm the new address with USPS, and propagate the update across all 11 downstream systems including core banking, digital banking, statements, cards, loans, CRM, bill pay, compliance, and fraud detection.";
+
   if (!existingAgent) {
     await db.insert(agents).values({
       id: KINECTIVE_AGENT_ID,
       name: "Change of Address Agent",
       description:
         "Orchestrates member address changes across all downstream systems including core banking, digital, cards, loans, compliance, and fraud detection.",
+      systemPrompt: KINECTIVE_SYSTEM_PROMPT,
+      runtimeConfig: { prompt: KINECTIVE_TASK_PROMPT, scheduleIntervalMinutes: 0 },
       agentType: "single",
       status: "active",
       environment: "production",
@@ -714,14 +729,20 @@ async function ensureKinectiveAgentSetup(): Promise<{ agentCreated: boolean; ser
       maturityFactors: {},
     } as any);
     agentCreated = true;
-  } else if (
-    (existingAgent as any).modelProvider !== "openai" ||
-    (existingAgent as any).modelName !== "gpt-4.1"
-  ) {
-    await storage.updateAgent(KINECTIVE_AGENT_ID, {
-      modelProvider: "openai",
-      modelName: "gpt-4.1",
-    } as any);
+  } else {
+    const needsUpdate =
+      (existingAgent as any).modelProvider !== "openai" ||
+      (existingAgent as any).modelName !== "gpt-4.1" ||
+      !(existingAgent as any).systemPrompt ||
+      !(existingAgent as any).runtimeConfig?.prompt;
+    if (needsUpdate) {
+      await storage.updateAgent(KINECTIVE_AGENT_ID, {
+        modelProvider: "openai",
+        modelName: "gpt-4.1",
+        systemPrompt: KINECTIVE_SYSTEM_PROMPT,
+        runtimeConfig: { prompt: KINECTIVE_TASK_PROMPT, scheduleIntervalMinutes: 0 },
+      } as any);
+    }
   }
 
   // 2. Ensure each MCP server exists, has the right tools, and is linked to the agent
@@ -1902,30 +1923,96 @@ const AIM_TOOLS = [
 ];
 
 // Agent definitions for idempotent creation — must match AGENT_NAME_MAP in the frontend
-const BK2_AGENT_DEFINITIONS: Record<keyof typeof BK2_LIVE_AGENT_IDS, { name: string; description: string }> = {
+const BK2_AGENT_DEFINITIONS: Record<keyof typeof BK2_LIVE_AGENT_IDS, { name: string; description: string; systemPrompt: string; taskPrompt: string }> = {
   terminationIntake: {
     name: "Termination Intake Agent",
     description: "Validates employee termination events against Workday and SailPoint, creates removal cases, and flags special handling requirements.",
+    systemPrompt: `You are the Termination Intake Agent for BlackRock's AIM Portal Offboarding Suite. You are the first agent in a 6-agent pipeline responsible for secure employee offboarding across 47 partner portals.
+
+Your responsibilities:
+1. Validate the termination event against Workday HR records
+2. Check SailPoint for current entitlements and active access privileges
+3. Create a removal case with a unique tracking ID
+4. Flag special handling requirements (admin privileges, SWIFT access, elevated risk)
+5. Return a structured case summary for downstream agents
+
+Ensure data completeness before the case proceeds to Portal Discovery. All actions must be logged for SOX audit.`,
+    taskPrompt: "Validate employee termination events against Workday and SailPoint, create access removal cases, and flag special handling requirements for the 6-agent offboarding pipeline.",
   },
   portalDiscovery: {
     name: "Portal Discovery Agent",
     description: "Scans all partner portals for employee account entitlements and verifies connectivity for each portal before removal.",
+    systemPrompt: `You are the Portal Discovery Agent for BlackRock's AIM Portal Offboarding Suite. You run after Termination Intake and before Active Trade Check.
+
+Your responsibilities:
+1. Verify connectivity and health status for each partner portal
+2. Scan all portals for active accounts linked to the terminated employee's credentials
+3. Record account types, entitlement levels, and authentication methods (SAML, PKI, SWIFT token, API key)
+4. Flag portals with pending transactions or elevated privilege access
+5. Build a complete entitlement map for the Access Removal Executor
+
+Connectivity failures must be documented and escalated. All discovered entitlements must be logged for audit.`,
+    taskPrompt: "Scan all 47 partner portals for terminated employee account entitlements, verify portal connectivity, and build a complete access map for downstream offboarding agents.",
   },
   activeTradeCheck: {
     name: "Active Trade Check Agent",
     description: "Checks for pending trade settlements on each portal. Blocks removal for portals with unsettled trades above risk thresholds.",
+    systemPrompt: `You are the Active Trade Check Agent for BlackRock's AIM Portal Offboarding Suite. You run after Portal Discovery to prevent premature access removal during active settlement windows.
+
+Your responsibilities:
+1. Query pending settlements and open positions for each portal with discovered accounts
+2. Evaluate settlement values against risk thresholds ($50K default)
+3. Block access removal for portals with unsettled trades above threshold
+4. Clear portals with no pending settlements for immediate removal
+5. Return a per-portal clearance status to the Access Removal Executor
+
+Blocking a portal does not halt the pipeline — other portals proceed normally. Document all blocking decisions.`,
+    taskPrompt: "Check for pending trade settlements on each partner portal. Block access removal where unsettled trades exceed risk thresholds; clear all others for immediate offboarding.",
   },
   accessRemovalExecutor: {
     name: "Access Removal Executor Agent",
     description: "Executes access removal across partner portals using the appropriate authentication adapters (SAML, PKI, SWIFT token, API key).",
+    systemPrompt: `You are the Access Removal Executor Agent for BlackRock's AIM Portal Offboarding Suite. You execute the actual access removal after trade clearance is confirmed.
+
+Your responsibilities:
+1. For each cleared portal, select the correct authentication adapter (SAML, PKI, SWIFT token, or API key)
+2. Execute the removal command via the AIM MCP server
+3. Handle portal-specific removal protocols and retry logic
+4. Record the outcome for each portal: success, failed, pending, or skipped
+5. Produce a complete removal manifest for the Verification Agent
+
+Execute removals sequentially per portal. Never skip a portal without logging the reason. All removal actions are permanent and must be logged for SOX compliance.`,
+    taskPrompt: "Execute employee access removal across all cleared partner portals using portal-specific authentication adapters (SAML, PKI, SWIFT token, API key). Produce a complete removal manifest.",
   },
   removalVerification: {
     name: "Removal Verification Agent",
     description: "Independently verifies access removal by probing each portal's auth endpoint. Also provisions new access for employee transfers.",
+    systemPrompt: `You are the Removal Verification Agent for BlackRock's AIM Portal Offboarding Suite. You independently verify that the Access Removal Executor succeeded on every portal.
+
+Your responsibilities:
+1. Probe each portal's authentication endpoint using the removed employee's credentials
+2. Confirm access denial (401/403 response expected — any 200 is a failure requiring escalation)
+3. Flag portals where removal was incomplete and trigger re-removal or escalation
+4. For employee transfers: provision new access at the appropriate privilege level
+5. Return a verified removal report to the Audit & Evidence Agent
+
+Your verification is independent of the executor — do not assume success based on the executor's report alone.`,
+    taskPrompt: "Independently verify access removal by probing each portal's authentication endpoint. Flag incomplete removals for escalation, and provision new access for employee transfers.",
   },
   auditEvidence: {
     name: "Audit & Evidence Agent",
     description: "Generates SOX Section 404 compliance evidence packages, archives to GRC vault, and closes ServiceNow cases.",
+    systemPrompt: `You are the Audit & Evidence Agent for BlackRock's AIM Portal Offboarding Suite. You are the final agent in the pipeline, responsible for regulatory compliance and case closure.
+
+Your responsibilities:
+1. Generate a structured SOX Section 404 evidence package (removal timestamps, verification logs, portal-by-portal status)
+2. Archive the evidence package to the GRC vault with cryptographic integrity markers
+3. Update the ServiceNow case to "Resolved" with a complete completion summary
+4. Log the offboarding to the SOX compliance audit trail
+5. Flag any unresolved portals for manual review in the compliance record
+
+Do not close a case with unresolved portals without explicit escalation documentation. All evidence must be immutable and timestamped.`,
+    taskPrompt: "Generate SOX Section 404 compliance evidence packages for completed access removals, archive to GRC vault, and close out ServiceNow cases with full audit trails.",
   },
 };
 
@@ -1935,22 +2022,32 @@ const BK2_AGENT_DEFINITIONS: Record<keyof typeof BK2_LIVE_AGENT_IDS, { name: str
  */
 async function ensureBk2Agent(id: string, role: keyof typeof BK2_LIVE_AGENT_IDS): Promise<void> {
   const existing = await storage.getAgent(id);
+  const def = BK2_AGENT_DEFINITIONS[role];
   if (existing) {
-    // Fix any existing agent that was created with the wrong model provider —
-    // the runtime only works reliably with openai/gpt-4.1 in this environment.
-    if ((existing as any).modelProvider !== "openai" || (existing as any).modelName !== "gpt-4.1") {
+    const needsUpdate =
+      (existing as any).modelProvider !== "openai" ||
+      (existing as any).modelName !== "gpt-4.1" ||
+      !(existing as any).systemPrompt ||
+      !(existing as any).runtimeConfig?.prompt;
+    if (needsUpdate) {
       await db.update(agents)
-        .set({ modelProvider: "openai", modelName: "gpt-4.1" } as any)
+        .set({
+          modelProvider: "openai",
+          modelName: "gpt-4.1",
+          systemPrompt: def.systemPrompt,
+          runtimeConfig: { prompt: def.taskPrompt, scheduleIntervalMinutes: 0 },
+        } as any)
         .where(eq(agents.id, id));
     }
     return;
   }
 
-  const def = BK2_AGENT_DEFINITIONS[role];
   await db.insert(agents).values({
     id,
     name: def.name,
     description: def.description,
+    systemPrompt: def.systemPrompt,
+    runtimeConfig: { prompt: def.taskPrompt, scheduleIntervalMinutes: 0 },
     agentType: "single",
     status: "active",
     environment: "production",
