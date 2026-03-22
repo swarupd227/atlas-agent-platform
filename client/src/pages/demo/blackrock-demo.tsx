@@ -304,47 +304,6 @@ function SetupGuide() {
   );
 }
 
-function ActivityFeed() {
-  const { data } = useQuery<AuditLogResponse>({
-    queryKey: ["/demo-api/audit-log"],
-    refetchInterval: POLL_INTERVAL,
-  });
-
-  const entries = data?.entries ?? [];
-
-  return (
-    <Card data-testid="activity-feed">
-      <CardHeader className="py-3 px-4">
-        <CardTitle className="text-sm font-semibold flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${entries.length > 0 ? "bg-green-400 animate-pulse" : "bg-muted-foreground"}`} />
-          Live Agent Activity
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="px-4 pb-3">
-        {entries.length === 0 ? (
-          <div className="text-sm text-muted-foreground text-center py-4" data-testid="text-waiting-activity">
-            Waiting for agent activity...
-          </div>
-        ) : (
-          <div className="space-y-1.5 max-h-[520px] overflow-y-auto pr-1">
-            {[...entries].reverse().map((entry) => (
-              <div key={entry.id} className="flex items-start gap-2 text-xs" data-testid={`audit-entry-${entry.id}`}>
-                <span className="text-muted-foreground font-mono w-16 shrink-0">
-                  {new Date(entry.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-                </span>
-                <Badge variant="secondary" className={`text-white text-[10px] px-1.5 shrink-0 ${SYSTEM_COLORS[entry.system] || "bg-gray-600"}`}>
-                  {entry.system}
-                </Badge>
-                <span className="text-foreground">{entry.details || entry.action}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 function ServiceNowScreen() {
   const { toast } = useToast();
   const { data: req, isLoading } = useQuery<ServiceNowRequest>({
@@ -2571,9 +2530,8 @@ export default function BlackRockDemo() {
                 />
               )}
             </div>
-            <div className="space-y-4">
+            <div>
               <LiveAgentTrace events={liveEvents} running={liveRunning} feedRef={liveFeedRef} />
-              <ActivityFeed />
             </div>
           </div>
         </>
@@ -2616,9 +2574,8 @@ export default function BlackRockDemo() {
                 />
               )}
             </div>
-            <div className="space-y-4">
+            <div>
               <LiveAgentTrace events={liveEvents} running={liveRunning} feedRef={liveFeedRef} />
-              <ActivityFeed />
             </div>
           </div>
         </>
