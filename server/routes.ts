@@ -35947,6 +35947,16 @@ Log every action.`;
     });
   });
 
+  // ── BK1 ensure-agents + live-run SSE (registered directly on app for reliable Express 5 routing)
+  app.post("/demo-api/blackrock/ensure-agents", async (req, res) => {
+    const { bk1EnsureAgentsHandler } = await import("./demo-routes");
+    return bk1EnsureAgentsHandler(req, res);
+  });
+  app.get("/demo-api/blackrock/live-run/stream", async (req, res) => {
+    const { bk1LiveRunStreamHandler } = await import("./demo-routes");
+    return bk1LiveRunStreamHandler(req, res);
+  });
+
   // ── Moody's Credit Assessment Demo Pipeline ──────────────────────────────
   app.post("/demo-api/moodys/run", async (_req, res) => {
     try {

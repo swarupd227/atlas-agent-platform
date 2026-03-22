@@ -2083,7 +2083,7 @@ async function ensureBk1AgentDeployment(role: Bk1Role): Promise<string> {
 
 // POST /demo-api/blackrock/ensure-agents — bootstrap all 5 BK1 agents + deployments.
 // Safe to call from prod. Idempotent.
-demoRouter.post("/blackrock/ensure-agents", async (_req: Request, res: Response) => {
+export async function bk1EnsureAgentsHandler(_req: Request, res: Response): Promise<void> {
   try {
     const roles = Object.keys(BK1_AGENT_DEFS) as Bk1Role[];
     const results: Record<string, { agentId: string; deploymentId: string; agentName: string }> = {};
@@ -2092,7 +2092,7 @@ demoRouter.post("/blackrock/ensure-agents", async (_req: Request, res: Response)
       const deploymentId = await ensureBk1AgentDeployment(role);
       results[role] = { agentId: BK1_AGENT_DEFS[role].id, deploymentId, agentName: BK1_AGENT_DEFS[role].name };
     }
-    return res.json({
+    res.json({
       success: true,
       agentsConfigured: roles.length,
       agents: results,
@@ -2100,13 +2100,14 @@ demoRouter.post("/blackrock/ensure-agents", async (_req: Request, res: Response)
     });
   } catch (err: any) {
     console.error("[bk1-ensure-agents] Error:", err?.message);
-    return res.status(500).json({ success: false, error: err?.message || "Setup failed" });
+    res.status(500).json({ success: false, error: err?.message || "Setup failed" });
   }
-});
+}
+demoRouter.post("/blackrock/ensure-agents", bk1EnsureAgentsHandler);
 
 // GET /demo-api/blackrock/live-run/stream?scenario=default|sod|privesc
 // SSE endpoint: runs the BK1 agent pipeline and streams runtimeEvents to the frontend.
-demoRouter.get("/blackrock/live-run/stream", async (req: Request, res: Response) => {
+export async function bk1LiveRunStreamHandler(req: Request, res: Response): Promise<void> {
   const scenarioParam = (req.query.scenario as string) || "default";
   const scenario: "default" | "sod" | "privesc" =
     scenarioParam === "sod" ? "sod" : scenarioParam === "privesc" ? "privesc" : "default";
@@ -2228,7 +2229,8 @@ demoRouter.get("/blackrock/live-run/stream", async (req: Request, res: Response)
     runtimeEvents.off("agent_execution", onRuntimeEvent);
     if (!aborted) res.end();
   }
-});
+}
+demoRouter.get("/blackrock/live-run/stream", bk1LiveRunStreamHandler);
 
 // ─── BlackRock 2 LIVE Execution Engine ───────────────────────────────────────
 // Invokes the actual Atlas agent runtime for all 6 BK2 agents.
