@@ -48,7 +48,7 @@ import type { IStorage } from "./storage";
 import { storage } from "./storage";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
-import { runTraces, agentRuntimeRuns, agents, mcpServers } from "@shared/schema";
+import { runTraces, agentRuntimeRuns, agents, mcpServers, deployments } from "@shared/schema";
 import { runAgentOnce, stopAgentRuntime, isRuntimeActive, runtimeEvents, type RuntimeProgressEvent } from "./agent-runtime";
 import { setBk2LiveScenario, clearBk2LiveScenario, type Bk2LiveScenario } from "./blackrock2-live-store";
 
@@ -2876,5 +2876,250 @@ demoRouter.get("/blackrock2/live-run", async (req: Request, res: Response) => {
   } finally {
     runtimeEvents.off("agent_execution", onRuntimeEvent);
     if (!aborted) res.end();
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Moody's Credit Assessment — ensure-agents bootstrap
+// POST /demo-api/moodys/ensure-agents
+// Safe to call from production before the first live run. Idempotent.
+// Creates both MCP servers (internal + external) and all 6 agent deployments
+// with the exact deployment IDs that /demo-api/moodys/run expects.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const MOODYS_TOOL_BASE_URL = `http://localhost:${process.env.PORT || 5000}/demo-api/moodys/tools`;
+
+const MOODYS_AGENT_CONFIG = {
+  financialDataCollector: {
+    agentId:      "a015f037-7d0f-48fd-9145-0779c9da1681",
+    deploymentId: "6066aa6a-f1d4-4d05-b7fd-da2be493e4b7",
+    name:         "Financial Data Collector & Spreader",
+    description:  "Ingests issuer financial statements from EDGAR, IR portals, and Moody's data estate. Spreads into Chart of Accounts with IFRS/US GAAP auto-detection.",
+    modelProvider: "openai" as const,
+    modelName:     "gpt-4.1",
+    mcpServers:    ["internal", "external"] as const,
+    department:    "Credit Research",
+  },
+  earningsAnalyzer: {
+    agentId:      "2cee072c-5471-4023-ad86-d92220068b05",
+    deploymentId: "f4bea6d9-e5d5-45de-a2b5-7e841ddeea28",
+    name:         "Earnings & Management Signal Analyzer",
+    description:  "Analyzes earnings call transcripts and investor presentations. Extracts management tone, forward guidance, and sector risk signals.",
+    modelProvider: "anthropic" as const,
+    modelName:     "claude-sonnet-4-5",
+    mcpServers:    ["external"] as const,
+    department:    "Credit Research",
+  },
+  peerComparisonBuilder: {
+    agentId:      "0a816eab-dae7-41e3-b882-a6954ad21783",
+    deploymentId: "347d49a5-4124-41d1-96cd-06d2016b2d84",
+    name:         "Peer Comparison Builder",
+    description:  "Identifies 5–10 peers via Moody's sector classifications. Builds comparison matrix across all key credit metrics with rankings and outlier flags.",
+    modelProvider: "openai" as const,
+    modelName:     "gpt-4.1",
+    mcpServers:    ["internal"] as const,
+    department:    "Credit Research",
+  },
+  esgProfileAgent: {
+    agentId:      "6efd7a5a-0e2e-4963-9995-d5ed2a585ad6",
+    deploymentId: "cf00b760-cf41-4bb9-892e-b5cca3afffaa",
+    name:         "ESG & Sustainability Profile Agent",
+    description:  "Pulls ESG IPS scores, CIS score, and sustainability data. Flags ESG factors with material credit impact.",
+    modelProvider: "anthropic" as const,
+    modelName:     "claude-sonnet-4-5",
+    mcpServers:    ["internal", "external"] as const,
+    department:    "Credit Research",
+  },
+  newsEventScanner: {
+    agentId:      "248f1d69-9dde-472a-8d41-b5c43c16781b",
+    deploymentId: "88738a00-7523-43ff-86c6-8e6d9d007bac",
+    name:         "News & Event Scanner",
+    description:  "Scans news, regulatory filings, legal databases, and market data for credit-relevant events. Classifies by relevance and potential rating impact.",
+    modelProvider: "anthropic" as const,
+    modelName:     "claude-sonnet-4-5",
+    mcpServers:    ["external"] as const,
+    department:    "Credit Research",
+  },
+  scorecardPrePopulation: {
+    agentId:      "c497a037-2ab9-438d-925c-f96b6e86af25",
+    deploymentId: "baaaeebf-2b3e-490c-8e41-1b5a440cb857",
+    name:         "Scorecard Pre-Population Agent",
+    description:  "Pre-populates sector-specific rating scorecard using outputs from Agents 1–5. Computes scorecard-indicated rating and gap vs. current rating.",
+    modelProvider: "openai" as const,
+    modelName:     "gpt-4.1",
+    mcpServers:    ["internal"] as const,
+    department:    "Credit Research",
+  },
+} as const;
+
+const MOODYS_MCP_SERVER_DEFS = {
+  internal: {
+    id:          "448b894d-2a47-47fe-85eb-cbd29eb8acc2",
+    name:        "Moody's Internal Data MCP Server",
+    description: "Moody's proprietary data estate: financial statements, chart of accounts spreading, credit metrics, ESG scores, peer groups, and rating scorecards.",
+    tools: [
+      { name: "get_moody_financials",          description: "Standardized financial statements from Moody's data estate (8-quarter history)" },
+      { name: "spread_to_chart_of_accounts",   description: "Maps raw financials to Moody's Chart of Accounts with IFRS/US GAAP auto-detection" },
+      { name: "compute_credit_metrics",        description: "Sector-specific credit metrics and financial ratios with 8-quarter trend data" },
+      { name: "get_esg_ips_scores",            description: "ESG Issuer Profile Scores: Environmental (E-1 to E-5), Social (S-1 to S-5), Governance (G-1 to G-5)" },
+      { name: "get_cis_score",                 description: "Credit Impact Score (CIS-1 through CIS-5) with factor-level rationale" },
+      { name: "get_peer_group",                description: "Identifies 5–10 comparable peers via Moody's sector/sub-sector classifications" },
+      { name: "get_peer_financials",           description: "Comparable financial data and credit metrics for peer issuers" },
+      { name: "get_rating_scorecard_template", description: "Sector-specific Moody's rating scorecard template with scoring criteria and weights" },
+      { name: "get_current_rating",            description: "Current assigned credit rating, outlook, watch status, and rating history" },
+    ],
+  },
+  external: {
+    id:          "b7a35c0b-5074-415d-b103-881955723318",
+    name:        "External Research MCP Server",
+    description: "External data sources: SEC EDGAR filings, earnings transcripts, investor presentations, news scanning, legal databases, and market data.",
+    tools: [
+      { name: "get_edgar_filings",          description: "SEC EDGAR 10-K, 10-Q, 8-K, and proxy filings with XBRL parsing" },
+      { name: "get_earnings_transcripts",   description: "Quarterly earnings call transcripts from FactSet/LSEG with speaker attribution" },
+      { name: "get_investor_presentations", description: "Investor day and capital markets day presentations from IR portals" },
+      { name: "scan_credit_news",           description: "Credit-relevant news from Bloomberg, Reuters, and Dow Jones Newswires" },
+      { name: "get_legal_database",         description: "Litigation, regulatory actions, and legal proceedings from LexisNexis" },
+      { name: "get_market_data",            description: "Credit spreads, CDS pricing, bond yields, and covenant data from ICE/Bloomberg" },
+    ],
+  },
+} as const;
+
+async function ensureMoodysMcpServer(key: "internal" | "external"): Promise<string> {
+  const def = MOODYS_MCP_SERVER_DEFS[key];
+  const allServers = await storage.getMcpServers();
+  let server = allServers.find((s: any) => s.name === def.name);
+
+  if (!server) {
+    server = await storage.createMcpServer({
+      name: def.name,
+      description: def.description,
+      url: MOODYS_TOOL_BASE_URL,
+      transportType: "streamable-http",
+      status: "production-enabled",
+      riskTier: "HIGH",
+      allowlisted: true,
+      industryId: "financial_services",
+      addedBy: "moodys-ensure-agents",
+      capabilities: { tools: true, resources: false, prompts: false, sampling: false },
+      serverInfo: { vendor: "Moody's Ratings", version: "1.0.0", compliance: ["NRSRO", "SEC Reg AC", "MiFID II", "IOSCO"] },
+    });
+    console.log(`[moodys-ensure-agents] Created MCP server: ${def.name} (${server.id})`);
+  }
+
+  const existingTools = await storage.getMcpServerTools(server.id);
+  const existingNames = new Set((existingTools || []).map((t: any) => t.name));
+  for (const tool of def.tools) {
+    if (!existingNames.has(tool.name)) {
+      await storage.createMcpServerTool({
+        serverId: server.id,
+        name: tool.name,
+        description: tool.description,
+        inputSchema: { type: "object", properties: {} },
+        annotations: { endpoint: `/${tool.name}`, method: "POST", compliance: ["NRSRO", "SEC Reg AC"] },
+        riskClassification: "low",
+        owner: "Moody's Credit Research",
+        enabled: true,
+      });
+    }
+  }
+
+  return server.id;
+}
+
+async function ensureMoodysAgent(role: keyof typeof MOODYS_AGENT_CONFIG): Promise<void> {
+  const cfg = MOODYS_AGENT_CONFIG[role];
+  const existing = await storage.getAgent(cfg.agentId);
+  if (existing) return;
+
+  await db.insert(agents).values({
+    id: cfg.agentId,
+    name: cfg.name,
+    description: cfg.description,
+    agentType: "single",
+    status: "active",
+    environment: "production",
+    modelProvider: cfg.modelProvider,
+    modelName: cfg.modelName,
+    systemPrompt: `You are the ${cfg.name} for Moody's Ratings automated credit assessment pipeline.`,
+    runtimeConfig: { scheduleIntervalMinutes: 0 },
+    riskTier: "HIGH",
+    autonomyMode: "supervised",
+    currentVersion: "1.0.0",
+    maxToolIterations: 8,
+    toolAccessClass: "standard",
+    department: cfg.department,
+    owner: "Moody's Credit Research",
+    healthScore: 98,
+    successRate: 0.99,
+    maturityFactors: {},
+  } as any).onConflictDoNothing();
+}
+
+async function ensureMoodysDeployment(
+  role: keyof typeof MOODYS_AGENT_CONFIG,
+  mcpServerIds: Record<"internal" | "external", string>,
+): Promise<string> {
+  const cfg = MOODYS_AGENT_CONFIG[role];
+
+  // Insert with the exact deployment ID the run handler expects — idempotent.
+  await db.insert(deployments).values({
+    id: cfg.deploymentId,
+    agentId: cfg.agentId,
+    agentName: cfg.name,
+    environment: "production",
+    status: "pending",
+    version: "1.0.0",
+    rolloutStrategy: "canary",
+    canaryPercent: 100,
+    pipelineComplete: true,
+    deployedAt: new Date(),
+  } as any).onConflictDoNothing();
+
+  // Downgrade "deployed" → "pending" so auto-resume doesn't pick it up.
+  const existing = await storage.getDeployment(cfg.deploymentId);
+  if (existing && (existing as any).status === "deployed") {
+    await storage.updateDeployment(cfg.deploymentId, { status: "pending" });
+  }
+
+  // Link the appropriate MCP servers to this agent.
+  const existingLinks = await storage.getAgentMcpServers(cfg.agentId);
+  const linkedServerIds = new Set(existingLinks.map((l: any) => l.serverId));
+  for (const serverKey of cfg.mcpServers) {
+    const serverId = mcpServerIds[serverKey];
+    if (!linkedServerIds.has(serverId)) {
+      await storage.createAgentMcpServer({ agentId: cfg.agentId, serverId, assignedBy: "moodys-ensure-agents" });
+    }
+  }
+
+  return cfg.deploymentId;
+}
+
+demoRouter.post("/moodys/ensure-agents", async (_req: Request, res: Response) => {
+  try {
+    const internalId = await ensureMoodysMcpServer("internal");
+    const externalId = await ensureMoodysMcpServer("external");
+    const mcpServerIds = { internal: internalId, external: externalId };
+
+    const results: Record<string, { agentId: string; deploymentId: string; agentName: string }> = {};
+    for (const role of Object.keys(MOODYS_AGENT_CONFIG) as (keyof typeof MOODYS_AGENT_CONFIG)[]) {
+      await ensureMoodysAgent(role);
+      const deploymentId = await ensureMoodysDeployment(role, mcpServerIds);
+      results[role] = {
+        agentId: MOODYS_AGENT_CONFIG[role].agentId,
+        deploymentId,
+        agentName: MOODYS_AGENT_CONFIG[role].name,
+      };
+    }
+
+    return res.json({
+      success: true,
+      mcpServers: { internal: internalId, external: externalId },
+      agentsConfigured: Object.keys(results).length,
+      agents: results,
+      message: "All 6 Moody's Credit Assessment agents and both MCP servers are ready in this environment.",
+    });
+  } catch (err: any) {
+    console.error("[moodys-ensure-agents] Error:", err?.message);
+    return res.status(500).json({ success: false, error: err?.message || "Setup failed" });
   }
 });
