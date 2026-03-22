@@ -2324,6 +2324,8 @@ export default function BlackRockDemo() {
   const resetMutation = useMutation({
     mutationFn: () => apiRequest("POST", "/demo-api/reset"),
     onSuccess: () => {
+      stopLiveRun();
+      setLiveEvents([]);
       queryClient.invalidateQueries({ predicate: (query) => typeof query.queryKey[0] === "string" && query.queryKey[0].startsWith("/demo-api") });
       setActiveSodScreen("context");
       setSodPipelineStarted(false);
@@ -2525,9 +2527,8 @@ export default function BlackRockDemo() {
               {activeScreen === "sailpoint" && <SailPointScreen />}
               {activeScreen === "brainwave" && <BrainwaveScreen />}
             </div>
-            <div className="space-y-4">
+            <div>
               <LiveAgentTrace events={liveEvents} running={liveRunning} feedRef={liveFeedRef} />
-              <ActivityFeed />
             </div>
           </div>
         </>
