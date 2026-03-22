@@ -2081,10 +2081,99 @@ async function ensureBk1AgentDeployment(role: Bk1Role): Promise<string> {
   return deployment.id;
 }
 
+// Ensure each BK1 worker MCP server exists with its tools. Idempotent.
+async function ensureBk1WorkerMcpServers(): Promise<void> {
+  const BK1_WORKER_URL = `http://localhost:${process.env.PORT || 5000}/demo-api`;
+
+  const BK1_WORKER_MCP_DEFS: Array<{
+    name: string;
+    description: string;
+    tools: Array<{ name: string; description: string; endpoint: string; method: string; inputSchema: object }>;
+  }> = [
+    {
+      name: "Aquera SCIM MCP Server",
+      description: "Aquera SCIM provisioning server for the BlackRock Synthetic Worker pipeline. Handles identity registration across SCIM connectors with compliance pre-checks.",
+      tools: [
+        { name: "register_scim_user",       description: "Register a synthetic worker identity across all Aquera SCIM application connectors.", endpoint: "/aquera/scim/register",          method: "POST", inputSchema: { type: "object", properties: { identityId: { type: "string" } }, required: ["identityId"] } },
+        { name: "get_registration_status",  description: "Get registration status for a synthetic worker identity across SCIM connectors.",        endpoint: "/aquera/scim/status",            method: "GET",  inputSchema: { type: "object", properties: { identityId: { type: "string" } } } },
+        { name: "deregister_scim_user",     description: "Deregister a synthetic worker identity from all SCIM connectors.",                        endpoint: "/aquera/scim/deregister",        method: "POST", inputSchema: { type: "object", properties: { identityId: { type: "string" } }, required: ["identityId"] } },
+        { name: "compliance_pre_check",     description: "Run a compliance pre-check for a synthetic worker provisioning request. Validates SoD rules, risk tier, and regulatory scope before SCIM registration.", endpoint: "/aquera/scim/compliance-check", method: "POST", inputSchema: { type: "object", properties: { identityId: { type: "string" }, requestedRole: { type: "string" } } } },
+      ],
+    },
+    {
+      name: "SailPoint IdentityIQ MCP Server",
+      description: "SailPoint IdentityIQ MCP server for entitlement provisioning and access governance in the BlackRock Synthetic Worker pipeline.",
+      tools: [
+        { name: "provision_entitlement",  description: "Provision an entitlement for a synthetic worker identity via SailPoint IIQ.",                        endpoint: "/sailpoint/entitlement",           method: "POST", inputSchema: { type: "object", properties: { identityId: { type: "string" }, entitlement: { type: "string" } }, required: ["identityId", "entitlement"] } },
+        { name: "revoke_access",          description: "Revoke access for a synthetic worker identity in SailPoint IIQ.",                                     endpoint: "/sailpoint/revoke",                method: "POST", inputSchema: { type: "object", properties: { identityId: { type: "string" } }, required: ["identityId"] } },
+        { name: "get_entitlements",       description: "Get all entitlements for a synthetic worker identity from SailPoint IIQ.",                            endpoint: "/sailpoint/entitlements",          method: "GET",  inputSchema: { type: "object", properties: { identityId: { type: "string" } } } },
+        { name: "validate_entitlement",   description: "Validate that an entitlement assignment is correct and compliant with SoD policies in SailPoint IIQ.", endpoint: "/sailpoint/entitlement/validate",  method: "POST", inputSchema: { type: "object", properties: { identityId: { type: "string" }, entitlement: { type: "string" } }, required: ["identityId", "entitlement"] } },
+      ],
+    },
+    {
+      name: "RadiantOne Identity MCP Server",
+      description: "RadiantOne Identity MCP server for directory sync and lineage validation in the BlackRock Synthetic Worker pipeline.",
+      tools: [
+        { name: "activate_identity",  description: "Activate a synthetic worker identity in the RadiantOne identity fabric.",                           endpoint: "/radiantone/activate",  method: "POST", inputSchema: { type: "object", properties: { identityId: { type: "string" } }, required: ["identityId"] } },
+        { name: "sync_directory",     description: "Trigger a directory synchronization for a synthetic worker identity across connected systems.",     endpoint: "/radiantone/sync",       method: "POST", inputSchema: { type: "object", properties: { identityId: { type: "string" } } } },
+        { name: "validate_lineage",   description: "Validate the identity lineage for a synthetic worker in RadiantOne.",                              endpoint: "/radiantone/lineage",    method: "GET",  inputSchema: { type: "object", properties: { identityId: { type: "string" } } } },
+        { name: "search_identity",    description: "Search for a synthetic worker identity in the RadiantOne virtual directory.",                       endpoint: "/radiantone/search",     method: "GET",  inputSchema: { type: "object", properties: { identityId: { type: "string" } } } },
+      ],
+    },
+    {
+      name: "Brainwave Access Intelligence MCP Server",
+      description: "Brainwave Access Intelligence MCP server for audit, certification, and anomaly detection in the BlackRock Synthetic Worker pipeline.",
+      tools: [
+        { name: "escalate_incident",        description: "Escalate a compliance or security incident detected for a synthetic worker identity.",              endpoint: "/brainwave/escalate",                     method: "POST", inputSchema: { type: "object", properties: { identityId: { type: "string" }, severity: { type: "string" }, details: { type: "string" } }, required: ["identityId", "severity"] } },
+        { name: "schedule_recertification", description: "Schedule an access recertification for a synthetic worker identity in Brainwave.",                  endpoint: "/brainwave/recertification/{identityId}", method: "POST", inputSchema: { type: "object", properties: { identityId: { type: "string" } }, required: ["identityId"] } },
+        { name: "get_audit_trail",          description: "Retrieve the full audit trail for a synthetic worker identity from Brainwave Access Intelligence.",  endpoint: "/brainwave/audit",                        method: "GET",  inputSchema: { type: "object", properties: { identityId: { type: "string" } } } },
+        { name: "monitor_access_events",    description: "Monitor recent access events and behavioral signals for a synthetic worker identity.",              endpoint: "/brainwave/events",                       method: "GET",  inputSchema: { type: "object", properties: { identityId: { type: "string" } } } },
+      ],
+    },
+  ];
+
+  const allServers = await storage.getMcpServers();
+
+  for (const def of BK1_WORKER_MCP_DEFS) {
+    const existing = allServers.find((s: any) => s.name === def.name);
+    if (existing) {
+      if (existing.url !== BK1_WORKER_URL) {
+        await db.update(mcpServers).set({ url: BK1_WORKER_URL } as any).where(eq(mcpServers.id, existing.id));
+      }
+      continue;
+    }
+
+    const server = await storage.createMcpServer({
+      name: def.name,
+      description: def.description,
+      url: BK1_WORKER_URL,
+      transportType: "streamable-http",
+      status: "production-enabled",
+      riskTier: "LOW",
+      capabilities: { tools: true, resources: false, prompts: false },
+    });
+
+    for (const tool of def.tools) {
+      await storage.createMcpServerTool({
+        serverId: server.id,
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        enabled: true,
+        riskClassification: "low",
+        annotations: { endpoint: tool.endpoint, method: tool.method },
+      });
+    }
+
+    console.log(`[bk1-ensure-agents] Created MCP server: ${def.name}`);
+  }
+}
+
 // POST /demo-api/blackrock/ensure-agents — bootstrap all 5 BK1 agents + deployments.
 // Safe to call from prod. Idempotent.
 export async function bk1EnsureAgentsHandler(_req: Request, res: Response): Promise<void> {
   try {
+    await ensureBk1WorkerMcpServers();
     const roles = Object.keys(BK1_AGENT_DEFS) as Bk1Role[];
     const results: Record<string, { agentId: string; deploymentId: string; agentName: string }> = {};
     for (const role of roles) {
