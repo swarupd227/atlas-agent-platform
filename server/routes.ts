@@ -35957,6 +35957,12 @@ Log every action.`;
     return bk1LiveRunStreamHandler(req, res);
   });
 
+  // ── Moody's ensure-agents (registered directly on app for reliable Express 5 routing) ─
+  app.post("/demo-api/moodys/ensure-agents", async (req, res) => {
+    const { moodysEnsureAgentsHandler } = await import("./demo-routes");
+    return moodysEnsureAgentsHandler(req, res);
+  });
+
   // ── Moody's Credit Assessment Demo Pipeline ──────────────────────────────
   app.post("/demo-api/moodys/run", async (_req, res) => {
     try {

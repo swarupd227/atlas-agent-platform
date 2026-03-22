@@ -2905,8 +2905,8 @@ const MOODYS_AGENT_CONFIG = {
     deploymentId: "f4bea6d9-e5d5-45de-a2b5-7e841ddeea28",
     name:         "Earnings & Management Signal Analyzer",
     description:  "Analyzes earnings call transcripts and investor presentations. Extracts management tone, forward guidance, and sector risk signals.",
-    modelProvider: "anthropic" as const,
-    modelName:     "claude-sonnet-4-5",
+    modelProvider: "openai" as const,
+    modelName:     "gpt-4.1",
     mcpServers:    ["external"] as const,
     department:    "Credit Research",
   },
@@ -2925,8 +2925,8 @@ const MOODYS_AGENT_CONFIG = {
     deploymentId: "cf00b760-cf41-4bb9-892e-b5cca3afffaa",
     name:         "ESG & Sustainability Profile Agent",
     description:  "Pulls ESG IPS scores, CIS score, and sustainability data. Flags ESG factors with material credit impact.",
-    modelProvider: "anthropic" as const,
-    modelName:     "claude-sonnet-4-5",
+    modelProvider: "openai" as const,
+    modelName:     "gpt-4.1",
     mcpServers:    ["internal", "external"] as const,
     department:    "Credit Research",
   },
@@ -2935,8 +2935,8 @@ const MOODYS_AGENT_CONFIG = {
     deploymentId: "88738a00-7523-43ff-86c6-8e6d9d007bac",
     name:         "News & Event Scanner",
     description:  "Scans news, regulatory filings, legal databases, and market data for credit-relevant events. Classifies by relevance and potential rating impact.",
-    modelProvider: "anthropic" as const,
-    modelName:     "claude-sonnet-4-5",
+    modelProvider: "openai" as const,
+    modelName:     "gpt-4.1",
     mcpServers:    ["external"] as const,
     department:    "Credit Research",
   },
@@ -3004,22 +3004,47 @@ async function ensureMoodysMcpServer(key: "internal" | "external"): Promise<stri
       serverInfo: { vendor: "Moody's Ratings", version: "1.0.0", compliance: ["NRSRO", "SEC Reg AC", "MiFID II", "IOSCO"] },
     });
     console.log(`[moodys-ensure-agents] Created MCP server: ${def.name} (${server.id})`);
+  } else {
+    // Reconcile: patch URL / transport / status if they have drifted from canonical values.
+    const needsPatch =
+      (server as any).url !== MOODYS_TOOL_BASE_URL ||
+      (server as any).transportType !== "streamable-http" ||
+      (server as any).status !== "production-enabled";
+    if (needsPatch) {
+      await db.update(mcpServers)
+        .set({ url: MOODYS_TOOL_BASE_URL, transportType: "streamable-http", status: "production-enabled" } as any)
+        .where(eq(mcpServers.id, server.id));
+      console.log(`[moodys-ensure-agents] Reconciled MCP server config: ${def.name}`);
+    }
   }
 
+  // Idempotently create or reconcile every canonical tool.
   const existingTools = await storage.getMcpServerTools(server.id);
-  const existingNames = new Set((existingTools || []).map((t: any) => t.name));
+  const existingByName = new Map((existingTools || []).map((t: any) => [t.name, t]));
   for (const tool of def.tools) {
-    if (!existingNames.has(tool.name)) {
+    const canonicalAnnotations = { endpoint: `/${tool.name}`, method: "POST", compliance: ["NRSRO", "SEC Reg AC"] };
+    const existing = existingByName.get(tool.name);
+    if (!existing) {
       await storage.createMcpServerTool({
         serverId: server.id,
         name: tool.name,
         description: tool.description,
         inputSchema: { type: "object", properties: {} },
-        annotations: { endpoint: `/${tool.name}`, method: "POST", compliance: ["NRSRO", "SEC Reg AC"] },
+        annotations: canonicalAnnotations,
         riskClassification: "low",
         owner: "Moody's Credit Research",
         enabled: true,
       });
+    } else {
+      // Reconcile annotations/enabled if stale.
+      const ann = (existing as any).annotations || {};
+      if (ann.endpoint !== canonicalAnnotations.endpoint || ann.method !== canonicalAnnotations.method || !(existing as any).enabled) {
+        await storage.updateMcpServerTool(existing.id, {
+          annotations: canonicalAnnotations,
+          enabled: true,
+          description: tool.description,
+        } as any);
+      }
     }
   }
 
@@ -3029,7 +3054,25 @@ async function ensureMoodysMcpServer(key: "internal" | "external"): Promise<stri
 async function ensureMoodysAgent(role: keyof typeof MOODYS_AGENT_CONFIG): Promise<void> {
   const cfg = MOODYS_AGENT_CONFIG[role];
   const existing = await storage.getAgent(cfg.agentId);
-  if (existing) return;
+
+  if (existing) {
+    // Reconcile: always ensure GPT-4.1 and a valid system prompt.
+    const needsPatch =
+      (existing as any).modelProvider !== "openai" ||
+      (existing as any).modelName !== "gpt-4.1" ||
+      !(existing as any).systemPrompt;
+    if (needsPatch) {
+      await db.update(agents)
+        .set({
+          modelProvider: "openai",
+          modelName: "gpt-4.1",
+          systemPrompt: `You are the ${cfg.name} for Moody's Ratings automated credit assessment pipeline.`,
+        } as any)
+        .where(eq(agents.id, cfg.agentId));
+      console.log(`[moodys-ensure-agents] Reconciled agent model: ${cfg.name}`);
+    }
+    return;
+  }
 
   await db.insert(agents).values({
     id: cfg.agentId,
@@ -3038,8 +3081,8 @@ async function ensureMoodysAgent(role: keyof typeof MOODYS_AGENT_CONFIG): Promis
     agentType: "single",
     status: "active",
     environment: "production",
-    modelProvider: cfg.modelProvider,
-    modelName: cfg.modelName,
+    modelProvider: "openai",
+    modelName: "gpt-4.1",
     systemPrompt: `You are the ${cfg.name} for Moody's Ratings automated credit assessment pipeline.`,
     runtimeConfig: { scheduleIntervalMinutes: 0 },
     riskTier: "HIGH",
@@ -3094,7 +3137,7 @@ async function ensureMoodysDeployment(
   return cfg.deploymentId;
 }
 
-demoRouter.post("/moodys/ensure-agents", async (_req: Request, res: Response) => {
+export async function moodysEnsureAgentsHandler(_req: Request, res: Response): Promise<void> {
   try {
     const internalId = await ensureMoodysMcpServer("internal");
     const externalId = await ensureMoodysMcpServer("external");
@@ -3111,7 +3154,7 @@ demoRouter.post("/moodys/ensure-agents", async (_req: Request, res: Response) =>
       };
     }
 
-    return res.json({
+    res.json({
       success: true,
       mcpServers: { internal: internalId, external: externalId },
       agentsConfigured: Object.keys(results).length,
@@ -3120,6 +3163,8 @@ demoRouter.post("/moodys/ensure-agents", async (_req: Request, res: Response) =>
     });
   } catch (err: any) {
     console.error("[moodys-ensure-agents] Error:", err?.message);
-    return res.status(500).json({ success: false, error: err?.message || "Setup failed" });
+    res.status(500).json({ success: false, error: err?.message || "Setup failed" });
   }
-});
+}
+
+demoRouter.post("/moodys/ensure-agents", moodysEnsureAgentsHandler);
