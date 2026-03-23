@@ -770,8 +770,11 @@ router.post(["/send-offboarding-summary", "/send_offboarding_summary"], async (r
     subject: subjectLine,
     caseId,
     employeeId,
-    employeeName: s.employee,
-    employeeRole: s.role,
+    employeeName:    s.employee,
+    employeeRole:    s.role,
+    fromAddress:     "ATLAS AIM <aim-noreply@blackrock.com>",
+    soxStatus:       "Satisfied",
+    retentionPolicy: s.isTransfer ? "CRITICAL_TIER_IMMUTABLE (10 yrs)" : "STANDARD_SOX (7 yrs)",
     summaryStats: {
       totalPortals,
       portalsRemoved,

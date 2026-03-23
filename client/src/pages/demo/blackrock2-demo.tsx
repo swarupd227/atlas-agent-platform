@@ -88,6 +88,9 @@ interface EmailSnapshot {
   employeeId:        string | null;
   employeeName:      string | null;
   employeeRole:      string | null;
+  fromAddress:       string | null;
+  soxStatus:         string | null;
+  retentionPolicy:   string | null;
   exceptionDetails:  { portal: string; reason: string }[] | null;
 }
 
@@ -905,7 +908,7 @@ export default function BlackRock2Demo() {
                 )}
               </div>
               <div className="space-y-1.5 text-[12px] text-slate-300">
-                <div className="flex gap-2"><span className="text-slate-500 w-14 shrink-0">From</span><span>ATLAS AIM &lt;aim-noreply@blackrock.com&gt;</span></div>
+                <div className="flex gap-2"><span className="text-slate-500 w-14 shrink-0">From</span><span>{modalSnap.fromAddress ?? "ATLAS AIM <aim-noreply@blackrock.com>"}</span></div>
                 <div className="flex gap-2"><span className="text-slate-500 w-14 shrink-0">To</span><span className="break-all">{(modalSnap.recipients ?? []).join(", ")}</span></div>
                 <div className="flex gap-2"><span className="text-slate-500 w-14 shrink-0">Subject</span><span className="text-white font-medium">{modalSnap.subject ?? "—"}</span></div>
                 <div className="flex gap-2"><span className="text-slate-500 w-14 shrink-0">Sent</span><span>{modalSentAt}</span></div>
@@ -1008,8 +1011,8 @@ export default function BlackRock2Demo() {
                       {([
                         ["Evidence Pkg ID", modalSnap.evidencePackageId ?? "—"],
                         ["GRC Archive",     modalSnap.grcArchiveId ?? "—"],
-                        ["SOX Section 404", "✓ Satisfied"],
-                        ["Retention",       isTransfer ? "CRITICAL_TIER_IMMUTABLE (10 yrs)" : "STANDARD_SOX (7 yrs)"],
+                        ["SOX Section 404", `✓ ${modalSnap.soxStatus ?? "Satisfied"}`],
+                        ["Retention",       modalSnap.retentionPolicy ?? (isTransfer ? "CRITICAL_TIER_IMMUTABLE (10 yrs)" : "STANDARD_SOX (7 yrs)")],
                       ] as [string, string][]).map(([label, value]) => (
                         <tr key={label} className="border-b last:border-0">
                           <td className="px-3 py-2 text-muted-foreground w-36 bg-muted/30 shrink-0">{label}</td>
