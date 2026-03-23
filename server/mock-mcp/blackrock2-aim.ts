@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { getBk2LiveScenario, getBk2ScenarioSpec, type Bk2ScenarioSpec, type Bk2LiveScenario } from "../blackrock2-live-store";
+import { getBk2LiveScenario, getBk2ScenarioSpec, setLastEmailSnapshot, type Bk2ScenarioSpec, type Bk2LiveScenario } from "../blackrock2-live-store";
 
 const router = Router();
 
@@ -760,7 +760,7 @@ router.post(["/send-offboarding-summary", "/send_offboarding_summary"], async (r
     }
   }
 
-  res.json({
+  const responsePayload = {
     success: true,
     messageId: providerMessageId || messageId,
     deliveryMethod,
@@ -804,7 +804,13 @@ router.post(["/send-offboarding-summary", "/send_offboarding_summary"], async (r
     grcArchiveId,
     bodyPreview: textBody.slice(0, 400) + "...",
     message: `✓ Offboarding summary email sent to ${managerEmail}, ${complianceEmail}, and ${iamEmail}. Case ${caseId} — ${s.employee} — ${status}.`,
-  });
+  };
+
+  // Persist so the frontend can retrieve it via GET /demo-api/blackrock2/email-snapshot
+  // even if the SSE connection was closed before the event was delivered.
+  setLastEmailSnapshot(responsePayload as Record<string, unknown>);
+
+  res.json(responsePayload);
 });
 
 export default router;

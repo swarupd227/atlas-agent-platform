@@ -50,7 +50,7 @@ import { db } from "./db";
 import { eq } from "drizzle-orm";
 import { runTraces, agentRuntimeRuns, agents, mcpServers, deployments } from "@shared/schema";
 import { runAgentOnce, stopAgentRuntime, isRuntimeActive, runtimeEvents, type RuntimeProgressEvent } from "./agent-runtime";
-import { setBk2LiveScenario, clearBk2LiveScenario, type Bk2LiveScenario } from "./blackrock2-live-store";
+import { setBk2LiveScenario, clearBk2LiveScenario, getLastEmailSnapshot, clearLastEmailSnapshot, type Bk2LiveScenario } from "./blackrock2-live-store";
 
 export const demoRouter = Router();
 
@@ -2755,6 +2755,7 @@ async function bk2LiveRunHandlerInner(req: Request, res: Response): Promise<void
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.flushHeaders();
 
@@ -2764,8 +2765,15 @@ async function bk2LiveRunHandlerInner(req: Request, res: Response): Promise<void
     } catch {}
   };
 
-  let currentAgentName = "unknown";
+  // Keepalive ping every 15 s — prevents production reverse-proxy from
+  // closing the SSE connection during the ~70s agent pipeline.
   let aborted = false;
+  const keepaliveTimer = setInterval(() => {
+    if (aborted) { clearInterval(keepaliveTimer); return; }
+    try { res.write(": keepalive\n\n"); } catch { clearInterval(keepaliveTimer); }
+  }, 15_000);
+
+  let currentAgentName = "unknown";
   const bk2DeploymentIds = new Set<string>();
 
   const onRuntimeEvent = (evt: { deploymentId: string; agentId: string; runId: string; result: any }) => {
@@ -2850,11 +2858,16 @@ async function bk2LiveRunHandlerInner(req: Request, res: Response): Promise<void
   };
 
   runtimeEvents.on("agent_execution", onRuntimeEvent);
-  req.on("close", () => { aborted = true; runtimeEvents.off("agent_execution", onRuntimeEvent); });
+  req.on("close", () => {
+    aborted = true;
+    clearInterval(keepaliveTimer);
+    runtimeEvents.off("agent_execution", onRuntimeEvent);
+  });
 
   try {
     sendEvent("run_start", { scenarioId, message: `Starting live run for scenario: ${scenarioId}` });
 
+    clearLastEmailSnapshot();
     const scenarioSpec = setBk2LiveScenario(scenarioId);
     const { employee, empId, caseId } = scenarioSpec;
 
@@ -2912,12 +2925,24 @@ async function bk2LiveRunHandlerInner(req: Request, res: Response): Promise<void
     sendEvent("error", { message: err?.message || "Live run failed" });
     clearBk2LiveScenario();
   } finally {
+    clearInterval(keepaliveTimer);
     runtimeEvents.off("agent_execution", onRuntimeEvent);
     if (!aborted) res.end();
   }
 }
 
 demoRouter.get("/blackrock2/live-run", bk2LiveRunHandler);
+
+// GET /demo-api/blackrock2/email-snapshot
+// Fallback poll endpoint: returns the last email snapshot written by the
+// send_offboarding_summary mock tool. The frontend calls this once after the
+// demo completes (or after an SSE error) in case the SSE event was dropped
+// by the production reverse-proxy before it could be delivered.
+demoRouter.get("/blackrock2/email-snapshot", (_req: Request, res: Response) => {
+  const snap = getLastEmailSnapshot();
+  if (!snap) return res.status(404).json({ error: "No email snapshot available" });
+  res.json(snap);
+});
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Moody's Credit Assessment — ensure-agents bootstrap

@@ -408,6 +408,45 @@ export default function BlackRock2Demo() {
       setLiveEvents(prev => [...prev, { id: liveEventId.current++, time, agentName, type, tool, success, message, portalName, emailSnapshot: snap }]);
     };
 
+    // Track whether the emailSnapshot arrived via SSE so we know whether
+    // to fall back to the poll endpoint (needed in prod when the reverse-proxy
+    // closes long-lived SSE connections before the final agent finishes).
+    let sseSnapshotReceived = false;
+
+    const fetchSnapshotFallback = () => {
+      if (sseSnapshotReceived) return;
+      fetch("/demo-api/blackrock2/email-snapshot")
+        .then(r => (r.ok ? r.json() : null))
+        .then((data: Record<string, unknown> | null) => {
+          if (!data || sseSnapshotReceived) return;
+          const snap: EmailSnapshot = {
+            subject:           (data.subject           as string  | null) ?? null,
+            recipients:        (data.recipients         as string[] | null) ?? null,
+            messageId:         (data.messageId          as string  | null) ?? null,
+            deliveryMethod:    (data.deliveryMethod      as string  | null) ?? "mock",
+            sentAt:            (data.sentAt             as string  | null) ?? null,
+            summaryStats:      (data.summaryStats        as EmailSnapshot["summaryStats"]) ?? null,
+            evidencePackageId: (data.evidencePackageId  as string  | null) ?? null,
+            grcArchiveId:      (data.grcArchiveId       as string  | null) ?? null,
+            caseId:            (data.caseId             as string  | null) ?? null,
+            employeeId:        (data.employeeId         as string  | null) ?? null,
+            employeeName:      (data.employeeName       as string  | null) ?? null,
+            employeeRole:      (data.employeeRole       as string  | null) ?? null,
+            fromAddress:       (data.fromAddress        as string  | null) ?? null,
+            soxStatus:         (data.soxStatus          as string  | null) ?? null,
+            retentionPolicy:   (data.retentionPolicy    as string  | null) ?? null,
+            portalsProvisioned:(data.portalsProvisioned as number  | null) ?? null,
+            provisionedPortals:(data.provisionedPortals as EmailSnapshot["provisionedPortals"]) ?? null,
+            exceptionDetails:  (data.exceptionDetails   as EmailSnapshot["exceptionDetails"]) ?? null,
+          };
+          setEmailSnapshot(snap);
+          addEvent("tool_call_result", "Audit & Evidence Agent",
+            `✉ Summary email dispatched (recovered from server) — to: ${snap.recipients?.join(", ") ?? "—"}`,
+            "send_offboarding_summary", true, undefined, snap);
+        })
+        .catch(() => {});
+    };
+
     const es = new EventSource(`/demo-api/blackrock2/live-run?scenarioId=${scenarioId}`);
     esRef.current = es;
 
@@ -451,6 +490,7 @@ export default function BlackRock2Demo() {
           msg = `✉ Summary email dispatched — ${status} — to: ${recipients.join(", ")}`;
           if (data?.emailSnapshot) {
             snap = data.emailSnapshot as EmailSnapshot;
+            sseSnapshotReceived = true;
             setEmailSnapshot(snap);
           }
         } else {
@@ -481,6 +521,9 @@ export default function BlackRock2Demo() {
       setComplete(true);
       setLiveAgentName(null);
       setActiveAgent(null);
+      // Fallback: if SSE dropped the emailSnapshot event (prod proxy timeout),
+      // retrieve it directly from the server-side store.
+      fetchSnapshotFallback();
     });
     es.addEventListener("error", (e: any) => {
       const d = e.data ? JSON.parse(e.data) : {};
@@ -489,12 +532,14 @@ export default function BlackRock2Demo() {
       esRef.current = null;
       setRunning(false);
       setLiveAgentName(null);
+      fetchSnapshotFallback();
     });
     es.onerror = () => {
       if (es.readyState === EventSource.CLOSED) {
         setRunning(false);
         esRef.current = null;
         setLiveAgentName(null);
+        fetchSnapshotFallback();
       }
     };
   }, [stopLiveRun]);
