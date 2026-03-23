@@ -960,18 +960,58 @@ function ConfigureStep({
   const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
   const connectorMap = new Map(connectors.map(c => [normalize(c.name), c]));
 
-  const resolvedTools = agentTools.map((t: any) => {
-    const override = toolAdapterOverrides[t.name];
-    const normalized = normalize(t.name || "");
-    const connector = connectorMap.get(normalized);
-    let status: "builtin" | "customer" | "stub" = override || "stub";
-    if (!override) {
-      if (connector && connector.status === "connected") status = "builtin";
-      else if (connector) status = "customer";
-      else status = "stub";
-    }
-    return { name: t.name || "Unknown Tool", description: t.description || t.type || "No description", status, connectorId: connector?.id };
+  const { data: mcpLinks = [] } = useQuery<any[]>({
+    queryKey: ["/api/agents", agentId, "mcp-servers"],
+    queryFn: async () => {
+      const res = await fetch(`/api/agents/${agentId}/mcp-servers`);
+      return res.ok ? res.json() : [];
+    },
   });
+
+  const mcpLinkKey = mcpLinks.map((l: any) => l.serverId).join(",");
+  const { data: mcpToolEntries = [] } = useQuery<Array<{ name: string; description: string; serverName: string; serverId: string }>>({
+    queryKey: ["/api/agents", agentId, "mcp-all-tools", mcpLinkKey],
+    queryFn: async () => {
+      const results: Array<{ name: string; description: string; serverName: string; serverId: string }> = [];
+      await Promise.all(mcpLinks.map(async (link: any) => {
+        const [serverRes, toolsRes] = await Promise.all([
+          fetch(`/api/mcp-servers/${link.serverId}`),
+          fetch(`/api/mcp-servers/${link.serverId}/tools`),
+        ]);
+        const server = serverRes.ok ? await serverRes.json() : null;
+        const tools: any[] = toolsRes.ok ? await toolsRes.json() : [];
+        const serverName = server?.name || `MCP Server`;
+        for (const tool of tools) {
+          results.push({ name: tool.name, description: tool.description || "", serverName, serverId: link.serverId });
+        }
+      }));
+      return results;
+    },
+    enabled: mcpLinks.length > 0,
+  });
+
+  type ToolStatus = "builtin" | "customer" | "stub" | "mcp";
+
+  const resolvedTools: Array<{ name: string; description: string; status: ToolStatus; connectorId?: string; serverName?: string }> = [
+    ...agentTools.map((t: any) => {
+      const override = toolAdapterOverrides[t.name];
+      const normalized = normalize(t.name || "");
+      const connector = connectorMap.get(normalized);
+      let status: ToolStatus = override || "stub";
+      if (!override) {
+        if (connector && connector.status === "connected") status = "builtin";
+        else if (connector) status = "customer";
+        else status = "stub";
+      }
+      return { name: t.name || "Unknown Tool", description: t.description || t.type || "No description", status, connectorId: connector?.id };
+    }),
+    ...mcpToolEntries.map((t) => ({
+      name: t.name,
+      description: t.description,
+      status: "mcp" as ToolStatus,
+      serverName: t.serverName,
+    })),
+  ];
 
   const depData = (() => {
     const fw = exportFramework;
@@ -1043,6 +1083,7 @@ function ConfigureStep({
   const stubCount = resolvedTools.filter(t => t.status === "stub").length;
   const builtinCount = resolvedTools.filter(t => t.status === "builtin").length;
   const customerCount = resolvedTools.filter(t => t.status === "customer").length;
+  const mcpCount = resolvedTools.filter(t => t.status === "mcp").length;
   const depCount = depData.deps ? Object.keys(depData.deps).length : 0;
 
   return (
@@ -1137,6 +1178,7 @@ function ConfigureStep({
                 {builtinCount > 0 && <Badge variant="outline" className="text-[10px]"><CheckCircle className="w-3 h-3 mr-1 text-emerald-500" />{builtinCount} Built-in</Badge>}
                 {customerCount > 0 && <Badge variant="outline" className="text-[10px]"><AlertCircle className="w-3 h-3 mr-1 text-amber-500" />{customerCount} Customer</Badge>}
                 {stubCount > 0 && <Badge variant="outline" className="text-[10px]"><FileCode className="w-3 h-3 mr-1 text-muted-foreground" />{stubCount} Stubs</Badge>}
+                {mcpCount > 0 && <Badge variant="outline" className="text-[10px]"><Globe className="w-3 h-3 mr-1 text-blue-500" />{mcpCount} MCP</Badge>}
               </div>
             </div>
             {resolvedTools.length === 0 ? (
@@ -1144,26 +1186,28 @@ function ConfigureStep({
             ) : (
               <div className="flex flex-col gap-1.5">
                 {resolvedTools.map((tool, idx) => {
+                  const isMcp = tool.status === "mcp";
                   const cfg = tool.status === "builtin" ? { color: "text-emerald-600 dark:text-emerald-400", icon: CheckCircle, label: "Built-in" }
                     : tool.status === "customer" ? { color: "text-amber-600 dark:text-amber-400", icon: AlertTriangle, label: "Customer" }
+                    : isMcp ? { color: "text-blue-600 dark:text-blue-400", icon: Globe, label: tool.serverName || "MCP" }
                     : { color: "text-muted-foreground", icon: FileCode, label: "Stub" };
                   const StatusIcon = cfg.icon;
                   return (
-                    <div key={tool.name} className="flex items-center justify-between gap-2 p-2 rounded-md border" data-testid={`tool-adapter-row-${idx}`}>
+                    <div key={`${tool.name}-${idx}`} className="flex items-center justify-between gap-2 p-2 rounded-md border" data-testid={`tool-adapter-row-${idx}`}>
                       <div className="flex items-center gap-2 min-w-0">
-                        <Wrench className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                        {isMcp ? <Globe className="w-3.5 h-3.5 text-blue-500 shrink-0" /> : <Wrench className="w-3.5 h-3.5 text-muted-foreground shrink-0" />}
                         <span className="text-sm truncate" data-testid={`tool-name-${idx}`}>{tool.name}</span>
                       </div>
                       <div className="flex items-center gap-1.5 shrink-0">
                         <Badge variant="outline" className={`text-[9px] ${cfg.color}`} data-testid={`tool-status-${idx}`}>
                           <StatusIcon className="w-2.5 h-2.5 mr-1" />{cfg.label}
                         </Badge>
-                        {tool.status !== "stub" && (
+                        {!isMcp && tool.status !== "stub" && (
                           <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => setToolAdapterOverrides((prev: any) => ({ ...prev, [tool.name]: "stub" }))} data-testid={`button-switch-to-stub-${idx}`}>
                             Use Stub
                           </Button>
                         )}
-                        {tool.status === "stub" && tool.connectorId && (
+                        {!isMcp && tool.status === "stub" && tool.connectorId && (
                           <Button size="sm" variant="ghost" className="h-6 px-1.5 text-[10px]" onClick={() => setToolAdapterOverrides((prev: any) => ({ ...prev, [tool.name]: "builtin" }))} data-testid={`button-attach-adapter-${idx}`}>
                             Attach
                           </Button>
