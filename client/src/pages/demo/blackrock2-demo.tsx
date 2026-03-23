@@ -88,10 +88,12 @@ interface EmailSnapshot {
   employeeId:        string | null;
   employeeName:      string | null;
   employeeRole:      string | null;
-  fromAddress:       string | null;
-  soxStatus:         string | null;
-  retentionPolicy:   string | null;
-  exceptionDetails:  { portal: string; reason: string }[] | null;
+  fromAddress:        string | null;
+  soxStatus:          string | null;
+  retentionPolicy:    string | null;
+  portalsProvisioned: number | null;
+  provisionedPortals: { name: string; role: string; authType: string; accountId: string }[] | null;
+  exceptionDetails:   { portal: string; reason: string }[] | null;
 }
 
 interface LiveEvent {
@@ -965,6 +967,12 @@ export default function BlackRock2Demo() {
                         <td className="px-3 py-2 text-muted-foreground w-36 bg-muted/30">Access removed</td>
                         <td className="px-3 py-2 font-mono text-emerald-400 font-semibold">{modalSnap.summaryStats?.portalsRemoved ?? "—"} ✓</td>
                       </tr>
+                      {(modalSnap.portalsProvisioned ?? 0) > 0 && (
+                        <tr className="border-b">
+                          <td className="px-3 py-2 text-muted-foreground w-36 bg-muted/30">New access granted</td>
+                          <td className="px-3 py-2 font-mono text-emerald-400 font-semibold">{modalSnap.portalsProvisioned} ✓</td>
+                        </tr>
+                      )}
                       <tr>
                         <td className="px-3 py-2 text-muted-foreground w-36 bg-muted/30">Deferred / exceptions</td>
                         <td className={`px-3 py-2 font-mono font-semibold ${(modalSnap.summaryStats?.openExceptions ?? 0) > 0 ? "text-amber-400" : "text-muted-foreground"}`}>
@@ -975,6 +983,33 @@ export default function BlackRock2Demo() {
                   </table>
                 </div>
               </div>
+
+              {/* Provisioning Summary — transfer case only */}
+              {(modalSnap.portalsProvisioned ?? 0) > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold text-emerald-400/80 uppercase tracking-widest mb-2">New Access Provisioned</p>
+                  <div className="border rounded-md overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b bg-muted/30">
+                          <th className="px-3 py-2 text-left text-muted-foreground font-medium">Portal</th>
+                          <th className="px-3 py-2 text-left text-muted-foreground font-medium">Role Granted</th>
+                          <th className="px-3 py-2 text-left text-muted-foreground font-medium">Auth</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(modalSnap.provisionedPortals ?? []).map((p, i) => (
+                          <tr key={`${p.name}-${i}`} className="border-b last:border-0">
+                            <td className="px-3 py-2 font-medium text-emerald-400">{p.name}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{p.role}</td>
+                            <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground">{p.authType}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
               {/* Open exceptions — driven from snapshot exceptionDetails */}
               {(modalSnap.summaryStats?.openExceptions ?? 0) > 0 && (
