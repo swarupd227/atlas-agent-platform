@@ -3,6 +3,7 @@ import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   Collapsible,
   CollapsibleContent,
@@ -68,6 +69,25 @@ interface ScenarioDef {
   finalPortals: Portal[];
 }
 
+interface EmailSnapshot {
+  subject:           string | null;
+  recipients:        string[] | null;
+  messageId:         string | null;
+  deliveryMethod:    string;
+  sentAt:            string | null;
+  summaryStats: {
+    totalPortals:    number;
+    portalsRemoved:  number;
+    portalsDeferred: number;
+    openExceptions:  number;
+    status:          string;
+  } | null;
+  evidencePackageId: string | null;
+  grcArchiveId:      string | null;
+  caseId:            string | null;
+  employeeId:        string | null;
+}
+
 interface LiveEvent {
   id: number;
   time: string;
@@ -77,6 +97,7 @@ interface LiveEvent {
   success?: boolean;
   message: string;
   portalName?: string;
+  emailSnapshot?: EmailSnapshot;
 }
 
 // ─── Agent name → node ID map ─────────────────────────────────────────────────
@@ -343,6 +364,8 @@ export default function BlackRock2Demo() {
   const [completedAgents, setCompletedAgents] = useState<Set<AgentNodeId>>(new Set());
   const [liveEvents, setLiveEvents]           = useState<LiveEvent[]>([]);
   const [liveAgentName, setLiveAgentName]     = useState<string | null>(null);
+  const [emailSnapshot, setEmailSnapshot]     = useState<EmailSnapshot | null>(null);
+  const [showEmailModal, setShowEmailModal]   = useState(false);
 
   const liveFeedRef = useRef<HTMLDivElement>(null);
   const esRef       = useRef<EventSource | null>(null);
@@ -371,10 +394,10 @@ export default function BlackRock2Demo() {
     setActiveAgent(null);
     setCompletedAgents(new Set());
 
-    const addEvent = (type: string, agentName: string, message: string, tool?: string, success?: boolean, portalName?: string) => {
+    const addEvent = (type: string, agentName: string, message: string, tool?: string, success?: boolean, portalName?: string, snap?: EmailSnapshot) => {
       const now = new Date();
       const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
-      setLiveEvents(prev => [...prev, { id: liveEventId.current++, time, agentName, type, tool, success, message, portalName }]);
+      setLiveEvents(prev => [...prev, { id: liveEventId.current++, time, agentName, type, tool, success, message, portalName, emailSnapshot: snap }]);
     };
 
     const es = new EventSource(`/demo-api/blackrock2/live-run?scenarioId=${scenarioId}`);
@@ -413,14 +436,19 @@ export default function BlackRock2Demo() {
         const portalSuffix = portalName ? ` → ${portalName}` : "";
 
         let msg: string;
+        let snap: EmailSnapshot | undefined;
         if (t === "send_offboarding_summary" && success) {
           const recipients: string[] = data?.emailRecipients ?? ["j.chen@blackrock.com", "sox-compliance@blackrock.com", "iam-team@blackrock.com"];
           const status: string = data?.emailStatus ?? "COMPLETED SUCCESSFULLY";
           msg = `✉ Summary email dispatched — ${status} — to: ${recipients.join(", ")}`;
+          if (data?.emailSnapshot) {
+            snap = data.emailSnapshot as EmailSnapshot;
+            setEmailSnapshot(snap);
+          }
         } else {
           msg = `${success ? "✓" : "✗"} ${t}${portalSuffix}: ${success ? "success" : errText}`;
         }
-        addEvent("tool_call_result", agentName, msg, t, success, portalName);
+        addEvent("tool_call_result", agentName, msg, t, success, portalName, snap);
       } else if (type === "final_analysis") {
         addEvent("final_analysis", agentName, `Analysis complete — ${data?.steps ?? 0} steps`);
       }
@@ -478,6 +506,8 @@ export default function BlackRock2Demo() {
     setCompletedAgents(new Set());
     setLiveEvents([]);
     liveEventId.current = 0;
+    setEmailSnapshot(null);
+    setShowEmailModal(false);
   };
 
   useEffect(() => { reset(); }, [selectedId]);
@@ -488,9 +518,19 @@ export default function BlackRock2Demo() {
     startLiveRun(selectedId);
   };
 
+  // ─── Modal helpers ───────────────────────────────────────────────────────────
+  const modalSnap         = emailSnapshot;
+  const modalStatus       = modalSnap?.summaryStats?.status ?? "COMPLETED SUCCESSFULLY";
+  const modalHasExc       = modalStatus.includes("EXCEPTIONS");
+  const modalDeferred     = portals.filter(p => p.status === "deferred" || p.status === "held" || p.status === "failed");
+  const modalSentAt       = modalSnap?.sentAt
+    ? new Date(modalSnap.sentAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "medium" })
+    : "—";
+
   // ─── Render ──────────────────────────────────────────────────────────────────
 
   return (
+    <>
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
       <div className="flex-none border-b bg-background">
@@ -684,6 +724,18 @@ export default function BlackRock2Demo() {
             </div>
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-muted-foreground font-mono hidden sm:inline">Claude Sonnet · MCP · AIM Offboarding Suite</span>
+              {emailSnapshot && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setShowEmailModal(true)}
+                  className="gap-1.5 border-sky-500/40 text-sky-400 hover:bg-sky-950/30"
+                  data-testid="button-bk2-view-email"
+                >
+                  <Mail className="w-3.5 h-3.5" />
+                  View Email
+                </Button>
+              )}
               {complete && (
                 <Button size="sm" variant="outline" onClick={reset} className="gap-1.5" data-testid="button-bk2-rerun">
                   <RotateCcw className="w-3.5 h-3.5" />
@@ -747,7 +799,12 @@ export default function BlackRock2Demo() {
                   }
                 }
                 return grouped.map(({ ev, count }) => (
-                  <div key={ev.id} className="flex items-start gap-2.5" data-testid={`bk2-live-event-${ev.id}`}>
+                  <div
+                    key={ev.id}
+                    className={`flex items-start gap-2.5 ${ev.tool === "send_offboarding_summary" && ev.success && ev.emailSnapshot ? "cursor-pointer group" : ""}`}
+                    data-testid={`bk2-live-event-${ev.id}`}
+                    onClick={ev.tool === "send_offboarding_summary" && ev.success && ev.emailSnapshot ? () => setShowEmailModal(true) : undefined}
+                  >
                     <span className="text-muted-foreground/60 shrink-0 pt-0.5 w-16">{ev.time}</span>
                     <span className={`leading-relaxed flex items-center gap-1.5 ${
                       ev.type === "run_start" || ev.type === "setup"     ? "text-muted-foreground" :
@@ -772,7 +829,10 @@ export default function BlackRock2Demo() {
                       {ev.type === "error"                                      && <XCircle      className="inline w-3 h-3 mr-0.5 text-red-400 shrink-0" />}
                       {ev.type === "agent_complete" && ev.message.startsWith("✓") && <CheckCircle2 className="inline w-3 h-3 mr-0.5 text-emerald-400 shrink-0" />}
                       {ev.type === "agent_complete" && !ev.message.startsWith("✓") && <AlertTriangle className="inline w-3 h-3 mr-0.5 text-amber-400 shrink-0" />}
-                      <span>{ev.message}</span>
+                      <span className={ev.tool === "send_offboarding_summary" && ev.success && ev.emailSnapshot ? "group-hover:underline underline-offset-2" : ""}>{ev.message}</span>
+                      {ev.tool === "send_offboarding_summary" && ev.success && ev.emailSnapshot && (
+                        <span className="ml-1 text-[9px] font-medium text-sky-400/70 group-hover:text-sky-400 shrink-0">View →</span>
+                      )}
                       {count > 1 && (
                         <span className="ml-1 text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-muted border border-border text-muted-foreground shrink-0">
                           ×{count}
@@ -818,5 +878,153 @@ export default function BlackRock2Demo() {
         </div>
       </div>
     </div>
+
+    {/* ─── Email Preview Modal ──────────────────────────────────────────────── */}
+    <Dialog open={showEmailModal} onOpenChange={setShowEmailModal}>
+      <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto p-0" data-testid="bk2-email-preview-modal">
+        <DialogHeader className="sr-only">
+          <DialogTitle>Offboarding Summary Email Preview</DialogTitle>
+        </DialogHeader>
+
+        {modalSnap && (
+          <div className="flex flex-col text-sm">
+            {/* Email header bar */}
+            <div className="bg-[#1a1a2e] text-white px-6 py-4 rounded-t-lg">
+              <div className="flex items-center gap-2 mb-3">
+                <Mail className="w-4 h-4 text-sky-400 shrink-0" />
+                <span className="text-xs font-semibold text-sky-400 uppercase tracking-widest">AIM Offboarding Summary Email</span>
+                {modalSnap.deliveryMethod === "resend" ? (
+                  <Badge className="ml-auto text-[10px] bg-emerald-700/60 text-emerald-300 border-0">Delivered</Badge>
+                ) : (
+                  <Badge className="ml-auto text-[10px] bg-slate-700/60 text-slate-300 border-0">Preview (mock)</Badge>
+                )}
+              </div>
+              <div className="space-y-1.5 text-[12px] text-slate-300">
+                <div className="flex gap-2"><span className="text-slate-500 w-14 shrink-0">From</span><span>ATLAS AIM &lt;aim-noreply@blackrock.com&gt;</span></div>
+                <div className="flex gap-2"><span className="text-slate-500 w-14 shrink-0">To</span><span className="break-all">{(modalSnap.recipients ?? []).join(", ")}</span></div>
+                <div className="flex gap-2"><span className="text-slate-500 w-14 shrink-0">Subject</span><span className="text-white font-medium">{modalSnap.subject ?? "—"}</span></div>
+                <div className="flex gap-2"><span className="text-slate-500 w-14 shrink-0">Sent</span><span>{modalSentAt}</span></div>
+              </div>
+            </div>
+
+            {/* Email body */}
+            <div className="bg-background px-6 py-5 space-y-5 rounded-b-lg">
+              {/* Status badge */}
+              <div>
+                <span className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${
+                  modalHasExc
+                    ? "bg-amber-950/40 text-amber-300 border-amber-500/40"
+                    : "bg-emerald-950/40 text-emerald-300 border-emerald-500/40"
+                }`}>
+                  {modalHasExc ? <AlertTriangle className="w-3 h-3" /> : <CheckCircle2 className="w-3 h-3" />}
+                  {modalStatus}
+                </span>
+              </div>
+
+              {/* Case details */}
+              <div>
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-2">Case Details</p>
+                <div className="border rounded-md overflow-hidden">
+                  <table className="w-full text-xs">
+                    <tbody>
+                      {([
+                        ["Employee",     `${scenario.employee.name} (${modalSnap.employeeId ?? scenario.employee.id})`],
+                        ["Role",         scenario.employee.title],
+                        ["Case ID",      modalSnap.caseId ?? "—"],
+                        ["Completed At", modalSentAt],
+                      ] as [string, string][]).map(([label, value]) => (
+                        <tr key={label} className="border-b last:border-0">
+                          <td className="px-3 py-2 text-muted-foreground w-36 bg-muted/30 shrink-0">{label}</td>
+                          <td className="px-3 py-2 font-mono">{value}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Portal summary */}
+              <div>
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-2">Portal Summary</p>
+                <div className="border rounded-md overflow-hidden">
+                  <table className="w-full text-xs">
+                    <tbody>
+                      <tr className="border-b">
+                        <td className="px-3 py-2 text-muted-foreground w-36 bg-muted/30">Total in scope</td>
+                        <td className="px-3 py-2 font-mono">{modalSnap.summaryStats?.totalPortals ?? "—"}</td>
+                      </tr>
+                      <tr className="border-b">
+                        <td className="px-3 py-2 text-muted-foreground w-36 bg-muted/30">Access removed</td>
+                        <td className="px-3 py-2 font-mono text-emerald-400 font-semibold">{modalSnap.summaryStats?.portalsRemoved ?? "—"} ✓</td>
+                      </tr>
+                      <tr>
+                        <td className="px-3 py-2 text-muted-foreground w-36 bg-muted/30">Deferred / exceptions</td>
+                        <td className={`px-3 py-2 font-mono font-semibold ${(modalSnap.summaryStats?.openExceptions ?? 0) > 0 ? "text-amber-400" : "text-muted-foreground"}`}>
+                          {modalSnap.summaryStats?.openExceptions ?? 0}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Open exceptions — scenario-aware */}
+              {(modalDeferred.length > 0 || (modalSnap.summaryStats?.openExceptions ?? 0) > 0) && (
+                <div>
+                  <p className="text-[10px] font-semibold text-amber-400/80 uppercase tracking-widest mb-2">Open Exceptions — Follow-up Required</p>
+                  <div className="space-y-1.5">
+                    {modalDeferred.length > 0 ? modalDeferred.map(p => (
+                      <div key={p.name} className="flex items-start gap-2.5 bg-amber-950/20 border border-amber-500/20 rounded px-3 py-2 text-xs">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                        <div>
+                          <span className="font-semibold text-amber-300">{p.name}</span>
+                          <span className="text-muted-foreground ml-2">
+                            {p.note ?? (p.status === "held" ? "HOLD — handover required before access removal" : p.status === "deferred" ? "DEFERRED — portal unreachable during maintenance window" : "DEFERRED — manual follow-up required")}
+                          </span>
+                        </div>
+                      </div>
+                    )) : (
+                      <div className="flex items-start gap-2.5 bg-amber-950/20 border border-amber-500/20 rounded px-3 py-2 text-xs">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                        <span className="text-muted-foreground">{modalSnap.summaryStats?.openExceptions} open exception(s) — see evidence package for details</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Compliance & Evidence */}
+              <div>
+                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest mb-2">Compliance &amp; Evidence</p>
+                <div className="border rounded-md overflow-hidden">
+                  <table className="w-full text-xs">
+                    <tbody>
+                      {([
+                        ["Evidence Pkg ID", modalSnap.evidencePackageId ?? "—"],
+                        ["GRC Archive",     modalSnap.grcArchiveId ?? "—"],
+                        ["SOX Section 404", "✓ Satisfied"],
+                        ["Retention",       isTransfer ? "CRITICAL_TIER_IMMUTABLE (10 yrs)" : "STANDARD_SOX (7 yrs)"],
+                      ] as [string, string][]).map(([label, value]) => (
+                        <tr key={label} className="border-b last:border-0">
+                          <td className="px-3 py-2 text-muted-foreground w-36 bg-muted/30 shrink-0">{label}</td>
+                          <td className="px-3 py-2 font-mono text-[11px] break-all">{value}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="border-t pt-4 text-[10px] text-muted-foreground space-y-1">
+                <p>Generated by BlackRock ATLAS Agent Orchestration Platform · AIM Identity &amp; Access Management · iam-team@blackrock.com</p>
+                {modalSnap.messageId && <p className="font-mono text-muted-foreground/50">Ref: {modalSnap.messageId}</p>}
+              </div>
+            </div>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
