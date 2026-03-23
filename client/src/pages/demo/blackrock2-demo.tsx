@@ -28,6 +28,7 @@ import {
   Zap,
   Terminal,
   ArrowLeftRight,
+  Mail,
 } from "lucide-react";
 import { BLACKROCK2_AGENTS } from "./blackrock2-constants";
 
@@ -410,7 +411,16 @@ export default function BlackRock2Demo() {
         };
         const errText = data?.error ? (errLabel[data.error] || data.error) : "failed";
         const portalSuffix = portalName ? ` → ${portalName}` : "";
-        addEvent("tool_call_result", agentName, `${success ? "✓" : "✗"} ${t}${portalSuffix}: ${success ? "success" : errText}`, t, success, portalName);
+
+        let msg: string;
+        if (t === "send_offboarding_summary" && success) {
+          const recipients: string[] = data?.emailRecipients ?? ["j.chen@blackrock.com", "sox-compliance@blackrock.com", "iam-team@blackrock.com"];
+          const status: string = data?.emailStatus ?? "COMPLETED SUCCESSFULLY";
+          msg = `✉ Summary email dispatched — ${status} — to: ${recipients.join(", ")}`;
+        } else {
+          msg = `${success ? "✓" : "✗"} ${t}${portalSuffix}: ${success ? "success" : errText}`;
+        }
+        addEvent("tool_call_result", agentName, msg, t, success, portalName);
       } else if (type === "final_analysis") {
         addEvent("final_analysis", agentName, `Analysis complete — ${data?.steps ?? 0} steps`);
       }
@@ -743,6 +753,7 @@ export default function BlackRock2Demo() {
                       ev.type === "run_start" || ev.type === "setup"     ? "text-muted-foreground" :
                       ev.type === "agent_start"                          ? "text-primary font-semibold" :
                       ev.type === "tool_call_start"                      ? "text-blue-400" :
+                      ev.type === "tool_call_result" && ev.success && ev.tool === "send_offboarding_summary" ? "text-sky-400" :
                       ev.type === "tool_call_result" && ev.success       ? "text-emerald-400" :
                       ev.type === "tool_call_result" && !ev.success      ? "text-red-400" :
                       ev.type === "agent_complete" && ev.message.startsWith("✓") ? "text-emerald-400" :
@@ -752,9 +763,10 @@ export default function BlackRock2Demo() {
                       ev.type === "error"                                ? "text-red-400" :
                       "text-foreground"
                     }`}>
-                      {ev.type === "tool_call_start"                            && <Zap         className="inline w-3 h-3 mr-0.5 text-blue-400 shrink-0" />}
-                      {ev.type === "tool_call_result" && ev.success             && <CheckCircle2 className="inline w-3 h-3 mr-0.5 text-emerald-400 shrink-0" />}
-                      {ev.type === "tool_call_result" && ev.success === false   && <XCircle      className="inline w-3 h-3 mr-0.5 text-red-400 shrink-0" />}
+                      {ev.type === "tool_call_start"                                                          && <Zap         className="inline w-3 h-3 mr-0.5 text-blue-400 shrink-0" />}
+                      {ev.type === "tool_call_result" && ev.success && ev.tool === "send_offboarding_summary" && <Mail        className="inline w-3 h-3 mr-0.5 text-sky-400 shrink-0" />}
+                      {ev.type === "tool_call_result" && ev.success && ev.tool !== "send_offboarding_summary" && <CheckCircle2 className="inline w-3 h-3 mr-0.5 text-emerald-400 shrink-0" />}
+                      {ev.type === "tool_call_result" && ev.success === false                                  && <XCircle      className="inline w-3 h-3 mr-0.5 text-red-400 shrink-0" />}
                       {ev.type === "agent_start"                                && <Cpu         className="inline w-3 h-3 mr-0.5 text-primary shrink-0" />}
                       {ev.type === "run_complete"                               && <CheckCircle2 className="inline w-3 h-3 mr-0.5 text-emerald-400 shrink-0" />}
                       {ev.type === "error"                                      && <XCircle      className="inline w-3 h-3 mr-0.5 text-red-400 shrink-0" />}
@@ -793,11 +805,11 @@ export default function BlackRock2Demo() {
                   <span className="text-emerald-400 font-semibold">
                     {isTransfer
                       ? deferredCount > 0
-                        ? `Transfer complete with exceptions — ${removedCount} FI portals revoked, ${provisionedCount} EQ portals provisioned, ${deferredCount} deferred (ICE Trade Vault handover pending). MiFID II audit package filed.`
-                        : `Transfer complete — ${removedCount} FI portals revoked, ${provisionedCount} EQ portals provisioned. MiFID II audit package filed.`
+                        ? `Transfer complete with exceptions — ${removedCount} FI portals revoked, ${provisionedCount} EQ portals provisioned, ${deferredCount} deferred (ICE Trade Vault handover pending). MiFID II audit package filed. Summary email sent.`
+                        : `Transfer complete — ${removedCount} FI portals revoked, ${provisionedCount} EQ portals provisioned. MiFID II audit package filed. Summary email sent.`
                       : failedCount > 0 || deferredCount > 0
-                        ? `Offboarding complete with exceptions — ${removedCount} portals removed, ${deferredCount + failedCount} deferred/unreachable`
-                        : `Offboarding complete — ${removedCount}/${portals.length} portals removed. SOX audit package filed.`}
+                        ? `Offboarding complete with exceptions — ${removedCount} portals removed, ${deferredCount + failedCount} deferred/unreachable. Summary email sent.`
+                        : `Offboarding complete — ${removedCount}/${portals.length} portals removed. SOX audit package filed. Summary email sent.`}
                   </span>
                 </div>
               )}

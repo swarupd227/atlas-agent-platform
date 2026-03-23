@@ -2798,6 +2798,7 @@ async function bk2LiveRunHandlerInner(req: Request, res: Response): Promise<void
           || "blocked")
         : null;
 
+      const isSummaryEmail = tool === "send_offboarding_summary";
       sendEvent("agent_event", {
         agentName: currentAgentName,
         type: "tool_call_result",
@@ -2808,6 +2809,12 @@ async function bk2LiveRunHandlerInner(req: Request, res: Response): Promise<void
           error: errorReason,
           portalName: responseData?.portalName || responseData?.portal || null,
           accountId: responseData?.newAccountId || responseData?.accountId || null,
+          ...(isSummaryEmail && success ? {
+            emailRecipients: responseData?.recipients ?? null,
+            emailSubject:    responseData?.subject    ?? null,
+            emailMessageId:  responseData?.messageId  ?? null,
+            emailStatus:     responseData?.summaryStats?.status ?? null,
+          } : {}),
         },
         success,
       });
