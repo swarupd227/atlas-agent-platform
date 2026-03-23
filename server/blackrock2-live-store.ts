@@ -127,6 +127,7 @@ const SCENARIOS: Record<Bk2LiveScenario, Bk2ScenarioSpec> = {
 };
 
 let currentScenario: Bk2ScenarioSpec | null = null;
+let lastEmailSnapshot: Record<string, unknown> | null = null;
 
 export function setBk2LiveScenario(scenarioId: Bk2LiveScenario): Bk2ScenarioSpec {
   currentScenario = SCENARIOS[scenarioId];
@@ -143,4 +144,16 @@ export function getBk2ScenarioSpec(scenarioId: Bk2LiveScenario): Bk2ScenarioSpec
 
 export function clearBk2LiveScenario(): void {
   currentScenario = null;
+}
+
+export function setLastEmailSnapshot(snapshot: Record<string, unknown>): void {
+  lastEmailSnapshot = snapshot;
+}
+
+export function getLastEmailSnapshot(): Record<string, unknown> | null {
+  return lastEmailSnapshot;
+}
+
+export function clearLastEmailSnapshot(): void {
+  lastEmailSnapshot = null;
 }
