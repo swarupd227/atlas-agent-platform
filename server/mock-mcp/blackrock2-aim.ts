@@ -777,6 +777,17 @@ router.post(["/send-offboarding-summary", "/send_offboarding_summary"], async (r
       openExceptions: exceptionLines.length,
       status,
     },
+    exceptionDetails: [
+      ...deferredPortals.map(p => ({
+        portal: p.name,
+        reason: p.hasPendingTrades
+          ? "DEFERRED — pending trade settlements (T+2)"
+          : "DEFERRED — portal unreachable during maintenance window",
+      })),
+      ...openExceptions
+        .filter((e: any) => !deferredPortals.some(p => p.name === e.portal))
+        .map((e: any) => ({ portal: e.portal, reason: e.reason })),
+    ],
     evidencePackageId,
     grcArchiveId,
     bodyPreview: textBody.slice(0, 400) + "...",

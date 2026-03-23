@@ -86,6 +86,7 @@ interface EmailSnapshot {
   grcArchiveId:      string | null;
   caseId:            string | null;
   employeeId:        string | null;
+  exceptionDetails:  { portal: string; reason: string }[] | null;
 }
 
 interface LiveEvent {
@@ -522,7 +523,6 @@ export default function BlackRock2Demo() {
   const modalSnap         = emailSnapshot;
   const modalStatus       = modalSnap?.summaryStats?.status ?? "COMPLETED SUCCESSFULLY";
   const modalHasExc       = modalStatus.includes("EXCEPTIONS");
-  const modalDeferred     = portals.filter(p => p.status === "deferred" || p.status === "held" || p.status === "failed");
   const modalSentAt       = modalSnap?.sentAt
     ? new Date(modalSnap.sentAt).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "medium" })
     : "—";
@@ -803,7 +803,10 @@ export default function BlackRock2Demo() {
                     key={ev.id}
                     className={`flex items-start gap-2.5 ${ev.tool === "send_offboarding_summary" && ev.success && ev.emailSnapshot ? "cursor-pointer group" : ""}`}
                     data-testid={`bk2-live-event-${ev.id}`}
+                    role={ev.tool === "send_offboarding_summary" && ev.success && ev.emailSnapshot ? "button" : undefined}
+                    tabIndex={ev.tool === "send_offboarding_summary" && ev.success && ev.emailSnapshot ? 0 : undefined}
                     onClick={ev.tool === "send_offboarding_summary" && ev.success && ev.emailSnapshot ? () => setShowEmailModal(true) : undefined}
+                    onKeyDown={ev.tool === "send_offboarding_summary" && ev.success && ev.emailSnapshot ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setShowEmailModal(true); } } : undefined}
                   >
                     <span className="text-muted-foreground/60 shrink-0 pt-0.5 w-16">{ev.time}</span>
                     <span className={`leading-relaxed flex items-center gap-1.5 ${
@@ -968,27 +971,28 @@ export default function BlackRock2Demo() {
                 </div>
               </div>
 
-              {/* Open exceptions — scenario-aware */}
-              {(modalDeferred.length > 0 || (modalSnap.summaryStats?.openExceptions ?? 0) > 0) && (
+              {/* Open exceptions — driven from snapshot exceptionDetails */}
+              {(modalSnap.summaryStats?.openExceptions ?? 0) > 0 && (
                 <div>
                   <p className="text-[10px] font-semibold text-amber-400/80 uppercase tracking-widest mb-2">Open Exceptions — Follow-up Required</p>
                   <div className="space-y-1.5">
-                    {modalDeferred.length > 0 ? modalDeferred.map(p => (
-                      <div key={p.name} className="flex items-start gap-2.5 bg-amber-950/20 border border-amber-500/20 rounded px-3 py-2 text-xs">
-                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
-                        <div>
-                          <span className="font-semibold text-amber-300">{p.name}</span>
-                          <span className="text-muted-foreground ml-2">
-                            {p.note ?? (p.status === "held" ? "HOLD — handover required before access removal" : p.status === "deferred" ? "DEFERRED — portal unreachable during maintenance window" : "DEFERRED — manual follow-up required")}
-                          </span>
+                    {(modalSnap.exceptionDetails ?? []).length > 0
+                      ? (modalSnap.exceptionDetails ?? []).map((exc, i) => (
+                        <div key={`${exc.portal}-${i}`} className="flex items-start gap-2.5 bg-amber-950/20 border border-amber-500/20 rounded px-3 py-2 text-xs">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="font-semibold text-amber-300">{exc.portal}</span>
+                            <span className="text-muted-foreground ml-2">{exc.reason}</span>
+                          </div>
                         </div>
-                      </div>
-                    )) : (
-                      <div className="flex items-start gap-2.5 bg-amber-950/20 border border-amber-500/20 rounded px-3 py-2 text-xs">
-                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
-                        <span className="text-muted-foreground">{modalSnap.summaryStats?.openExceptions} open exception(s) — see evidence package for details</span>
-                      </div>
-                    )}
+                      ))
+                      : (
+                        <div className="flex items-start gap-2.5 bg-amber-950/20 border border-amber-500/20 rounded px-3 py-2 text-xs">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />
+                          <span className="text-muted-foreground">{modalSnap.summaryStats?.openExceptions} open exception(s) — see evidence package for details</span>
+                        </div>
+                      )
+                    }
                   </div>
                 </div>
               )}
