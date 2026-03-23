@@ -817,10 +817,10 @@ If address validation fails: halt all updates, log the failure, create a complia
   return { agentCreated, serversEnsured };
 }
 
-demoRouter.post("/kinective/ensure-agent", async (_req: Request, res: Response) => {
+export async function kinectiveEnsureAgentHandler(_req: Request, res: Response): Promise<void> {
   try {
     const result = await ensureKinectiveAgentSetup();
-    return res.json({
+    res.json({
       success: true,
       agentId: KINECTIVE_AGENT_ID,
       agentCreated: result.agentCreated,
@@ -830,9 +830,11 @@ demoRouter.post("/kinective/ensure-agent", async (_req: Request, res: Response) 
     });
   } catch (err: any) {
     console.error("[kinective/ensure-agent] Error:", err?.message, err?.stack);
-    return res.status(500).json({ success: false, error: err?.message ?? "Setup failed" });
+    res.status(500).json({ success: false, error: err?.message ?? "Setup failed" });
   }
-});
+}
+
+demoRouter.post("/kinective/ensure-agent", kinectiveEnsureAgentHandler);
 
 // ── Kinective: SSE live-stream endpoint ──────────────────────────────────────
 
@@ -3168,3 +3170,4 @@ export async function moodysEnsureAgentsHandler(_req: Request, res: Response): P
 }
 
 demoRouter.post("/moodys/ensure-agents", moodysEnsureAgentsHandler);
+

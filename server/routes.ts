@@ -35695,6 +35695,12 @@ Return ONLY valid JSON array, no explanation.`;
   });
 
   // ── Kinective Demo: one-click COA pipeline run ──────────────────────────────
+  // ── Kinective ensure-agent (registered directly on app for reliable Express 5 routing) ──
+  app.post("/demo-api/kinective/ensure-agent", async (req, res) => {
+    const { kinectiveEnsureAgentHandler } = await import("./demo-routes");
+    return kinectiveEnsureAgentHandler(req, res);
+  });
+
   app.post("/demo-api/kinective/run-pipeline", async (req, res) => {
     try {
       const { scenario } = req.body || {};
