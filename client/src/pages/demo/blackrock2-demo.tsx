@@ -86,6 +86,8 @@ interface EmailSnapshot {
   grcArchiveId:      string | null;
   caseId:            string | null;
   employeeId:        string | null;
+  employeeName:      string | null;
+  employeeRole:      string | null;
   exceptionDetails:  { portal: string; reason: string }[] | null;
 }
 
@@ -931,8 +933,8 @@ export default function BlackRock2Demo() {
                   <table className="w-full text-xs">
                     <tbody>
                       {([
-                        ["Employee",     `${scenario.employee.name} (${modalSnap.employeeId ?? scenario.employee.id})`],
-                        ["Role",         scenario.employee.title],
+                        ["Employee",     `${modalSnap.employeeName ?? scenario.employee.name} (${modalSnap.employeeId ?? scenario.employee.id})`],
+                        ["Role",         modalSnap.employeeRole ?? scenario.employee.title],
                         ["Case ID",      modalSnap.caseId ?? "—"],
                         ["Completed At", modalSentAt],
                       ] as [string, string][]).map(([label, value]) => (

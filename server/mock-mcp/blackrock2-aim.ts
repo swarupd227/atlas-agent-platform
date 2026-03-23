@@ -770,6 +770,8 @@ router.post(["/send-offboarding-summary", "/send_offboarding_summary"], async (r
     subject: subjectLine,
     caseId,
     employeeId,
+    employeeName: s.employee,
+    employeeRole: s.role,
     summaryStats: {
       totalPortals,
       portalsRemoved,

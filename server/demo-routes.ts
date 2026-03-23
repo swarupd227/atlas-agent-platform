@@ -2825,6 +2825,8 @@ async function bk2LiveRunHandlerInner(req: Request, res: Response): Promise<void
               grcArchiveId:      responseData?.grcArchiveId      ?? null,
               caseId:            responseData?.caseId            ?? null,
               employeeId:        responseData?.employeeId        ?? null,
+              employeeName:      responseData?.employeeName      ?? null,
+              employeeRole:      responseData?.employeeRole      ?? null,
               exceptionDetails:  responseData?.exceptionDetails  ?? null,
             },
           } : {}),
