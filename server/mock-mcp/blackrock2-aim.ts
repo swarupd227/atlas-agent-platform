@@ -618,7 +618,7 @@ router.post(["/send-offboarding-summary", "/send_offboarding_summary"], async (r
   const totalPortals = s.portals.length;
   const deferredPortals = s.portals.filter((p) => !p.reachable || p.hasPendingTrades);
   const status = hasExceptions ? "COMPLETED WITH EXCEPTIONS" : "COMPLETED SUCCESSFULLY";
-  const grcArchiveId = `GRC-${confirmId("VAULT")}`;
+  const grcArchiveId: string = req.body.grcArchiveId || `GRC-${confirmId("VAULT")}`;
   const messageId = `aim-${caseId.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${Date.now().toString(36)}@blackrock.com`;
   const sentAt = new Date().toISOString();
 
