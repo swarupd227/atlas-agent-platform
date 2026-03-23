@@ -598,4 +598,190 @@ router.post(["/provision-access", "/provision_access"], (req: Request, res: Resp
   });
 });
 
+// ─── Tool: send_offboarding_summary ──────────────────────────────────────────
+router.post(["/send-offboarding-summary", "/send_offboarding_summary"], async (req: Request, res: Response) => {
+  const s = resolveScenario(req.body);
+  if (!s) return res.status(404).json({ error: "No active scenario" });
+
+  const caseId: string = req.body.caseId || s.caseId;
+  const employeeId: string = req.body.employeeId || s.empId;
+  const evidencePackageId: string = req.body.evidencePackageId || `AIM-EVP-${caseId}-${Date.now().toString(36).toUpperCase()}`;
+  const portalsRemoved: number = req.body.portalsRemoved ?? s.portals.filter((p) => p.reachable && !p.hasPendingTrades).length;
+  const openExceptions: any[] = req.body.openExceptions ?? [];
+  const recipientEmail: string = req.body.recipientEmail || "j.chen@blackrock.com";
+
+  const managerEmail = recipientEmail;
+  const complianceEmail = "sox-compliance@blackrock.com";
+  const iamEmail = "iam-team@blackrock.com";
+
+  const hasExceptions = openExceptions.length > 0 || s.portals.some((p) => !p.reachable || p.hasPendingTrades);
+  const totalPortals = s.portals.length;
+  const deferredPortals = s.portals.filter((p) => !p.reachable || p.hasPendingTrades);
+  const status = hasExceptions ? "COMPLETED WITH EXCEPTIONS" : "COMPLETED SUCCESSFULLY";
+  const grcArchiveId = `GRC-${confirmId("VAULT")}`;
+  const messageId = `aim-${caseId.toLowerCase().replace(/[^a-z0-9]/g, "-")}-${Date.now().toString(36)}@blackrock.com`;
+  const sentAt = new Date().toISOString();
+
+  const exceptionLines = [
+    ...deferredPortals.map(p =>
+      `  • ${p.name}: ${p.hasPendingTrades ? "DEFERRED — pending trade settlements (T+2)" : "DEFERRED — portal unreachable during maintenance window"}`
+    ),
+    ...openExceptions
+      .filter((e: any) => !deferredPortals.some(p => p.name === e.portal))
+      .map((e: any) => `  • ${e.portal}: ${e.reason}`),
+  ];
+
+  const subjectLine = `[AIM] ${status} — ${s.employee} (${employeeId}) — Case ${caseId}`;
+
+  const textBody = [
+    `BlackRock AIM Portal Offboarding — Completion Summary`,
+    `${"=".repeat(55)}`,
+    ``,
+    `Case ID       : ${caseId}`,
+    `Employee      : ${s.employee} (${employeeId})`,
+    `Role          : ${s.role}`,
+    `Case Status   : ${status}`,
+    `Completed At  : ${sentAt}`,
+    ``,
+    `Portals Summary`,
+    `─────────────────────────────────────`,
+    `Total portals in scope : ${totalPortals}`,
+    `Access removed         : ${portalsRemoved}`,
+    `Deferred / exceptions  : ${deferredPortals.length + openExceptions.filter((e: any) => !deferredPortals.some(p => p.name === e.portal)).length}`,
+    ``,
+    ...(exceptionLines.length > 0 ? [
+      `Open Exceptions (require follow-up):`,
+      ...exceptionLines,
+      ``,
+    ] : []),
+    `Compliance & Evidence`,
+    `─────────────────────────────────────`,
+    `Evidence Package ID  : ${evidencePackageId}`,
+    `GRC Vault Archive    : ${grcArchiveId}`,
+    `SOX Section 404      : Satisfied`,
+    `Splunk Rule          : Created`,
+    `Retention Policy     : ${s.criticalTier ? "CRITICAL_TIER_IMMUTABLE (10 years)" : "STANDARD_SOX (7 years)"}`,
+    ``,
+    `This notification was generated automatically by the BlackRock ATLAS Agent Orchestration`,
+    `Platform. The evidence package is immutable and timestamped in the GRC vault.`,
+    ``,
+    `─────────────────────────────────────`,
+    `BlackRock AIM | Identity & Access Management`,
+    `iam-team@blackrock.com | Ref: ${messageId}`,
+  ].join("\n");
+
+  const htmlBody = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><style>
+  body { font-family: Arial, sans-serif; font-size: 13px; color: #222; background: #f7f7f7; }
+  .wrapper { max-width: 620px; margin: 24px auto; background: #fff; border: 1px solid #ddd; border-radius: 4px; overflow: hidden; }
+  .header { background: #1a1a2e; color: #fff; padding: 20px 28px; }
+  .header h2 { margin: 0; font-size: 16px; font-weight: 600; }
+  .header p { margin: 4px 0 0; font-size: 12px; opacity: 0.7; }
+  .body { padding: 24px 28px; }
+  .status { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; margin-bottom: 18px; background: ${hasExceptions ? "#fff3cd" : "#d4edda"}; color: ${hasExceptions ? "#856404" : "#155724"}; border: 1px solid ${hasExceptions ? "#ffc107" : "#28a745"}; }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; }
+  td { padding: 7px 10px; border-bottom: 1px solid #f0f0f0; font-size: 13px; }
+  td:first-child { color: #666; width: 46%; }
+  .section-title { font-size: 12px; font-weight: 700; color: #555; text-transform: uppercase; letter-spacing: 0.05em; margin: 22px 0 8px; }
+  .exception { background: #fff8e1; border-left: 3px solid #f59e0b; padding: 8px 12px; margin: 4px 0; border-radius: 0 4px 4px 0; font-size: 12px; }
+  .footer { background: #f7f7f7; padding: 14px 28px; border-top: 1px solid #eee; font-size: 11px; color: #888; }
+</style></head>
+<body>
+<div class="wrapper">
+  <div class="header">
+    <h2>AIM Portal Offboarding — Completion Summary</h2>
+    <p>BlackRock ATLAS Agent Orchestration Platform</p>
+  </div>
+  <div class="body">
+    <div class="status">${status}</div>
+    <div class="section-title">Case Details</div>
+    <table>
+      <tr><td>Case ID</td><td><strong>${caseId}</strong></td></tr>
+      <tr><td>Employee</td><td><strong>${s.employee}</strong> (${employeeId})</td></tr>
+      <tr><td>Role</td><td>${s.role}</td></tr>
+      <tr><td>Completed At</td><td>${sentAt}</td></tr>
+    </table>
+    <div class="section-title">Portal Summary</div>
+    <table>
+      <tr><td>Total portals in scope</td><td>${totalPortals}</td></tr>
+      <tr><td>Access removed</td><td><strong style="color:#155724">${portalsRemoved}</strong></td></tr>
+      <tr><td>Deferred / exceptions</td><td><strong style="color:${exceptionLines.length > 0 ? "#856404" : "#155724"}">${exceptionLines.length}</strong></td></tr>
+    </table>
+    ${exceptionLines.length > 0 ? `
+    <div class="section-title">Open Exceptions — Follow-up Required</div>
+    ${deferredPortals.map(p => `<div class="exception"><strong>${p.name}:</strong> ${p.hasPendingTrades ? "DEFERRED — pending trade settlements (T+2)" : "DEFERRED — portal unreachable during maintenance window"}</div>`).join("")}
+    ${openExceptions.filter((e: any) => !deferredPortals.some(p => p.name === e.portal)).map((e: any) => `<div class="exception"><strong>${e.portal}:</strong> ${e.reason}</div>`).join("")}
+    ` : ""}
+    <div class="section-title">Compliance &amp; Evidence</div>
+    <table>
+      <tr><td>Evidence Package ID</td><td><code style="font-size:11px">${evidencePackageId}</code></td></tr>
+      <tr><td>GRC Vault Archive</td><td><code style="font-size:11px">${grcArchiveId}</code></td></tr>
+      <tr><td>SOX Section 404</td><td>✓ Satisfied</td></tr>
+      <tr><td>Retention Policy</td><td>${s.criticalTier ? "CRITICAL_TIER_IMMUTABLE (10 years)" : "STANDARD_SOX (7 years)"}</td></tr>
+    </table>
+    <p style="font-size:12px;color:#888;margin-top:18px">This notification was generated automatically by the ATLAS Agent Orchestration Platform. The evidence package is immutable and timestamped in the GRC vault.</p>
+  </div>
+  <div class="footer">BlackRock AIM | Identity &amp; Access Management &nbsp;·&nbsp; iam-team@blackrock.com &nbsp;·&nbsp; Ref: ${messageId}</div>
+</div>
+</body></html>`;
+
+  const resendApiKey = process.env.RESEND_API_KEY;
+  let delivered = false;
+  let deliveryMethod = "mock";
+  let providerMessageId: string | null = null;
+
+  if (resendApiKey) {
+    try {
+      const resendRes = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${resendApiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          from: "ATLAS AIM <aim-noreply@blackrock.com>",
+          to: [managerEmail, complianceEmail, iamEmail],
+          subject: subjectLine,
+          text: textBody,
+          html: htmlBody,
+        }),
+      });
+      if (resendRes.ok) {
+        const data: any = await resendRes.json();
+        providerMessageId = data?.id ?? null;
+        delivered = true;
+        deliveryMethod = "resend";
+      } else {
+        console.warn(`[AIM/send-offboarding-summary] Resend failed ${resendRes.status} — falling back to mock confirmation`);
+      }
+    } catch (err: any) {
+      console.warn(`[AIM/send-offboarding-summary] Resend error: ${err?.message} — falling back to mock confirmation`);
+    }
+  }
+
+  res.json({
+    success: true,
+    messageId: providerMessageId || messageId,
+    deliveryMethod,
+    delivered,
+    sentAt,
+    recipients: [managerEmail, complianceEmail, iamEmail],
+    subject: subjectLine,
+    caseId,
+    employeeId,
+    summaryStats: {
+      totalPortals,
+      portalsRemoved,
+      portalsDeferred: deferredPortals.length,
+      openExceptions: exceptionLines.length,
+      status,
+    },
+    evidencePackageId,
+    grcArchiveId,
+    bodyPreview: textBody.slice(0, 400) + "...",
+    message: `✓ Offboarding summary email sent to ${managerEmail}, ${complianceEmail}, and ${iamEmail}. Case ${caseId} — ${s.employee} — ${status}.`,
+  });
+});
+
 export default router;

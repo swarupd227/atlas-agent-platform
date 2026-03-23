@@ -2412,6 +2412,25 @@ const AIM_TOOLS = [
     method: "POST",
     inputSchema: { type: "object", required: ["employeeId", "portalName", "caseId"], properties: { employeeId: { type: "string" }, portalName: { type: "string" }, newRole: { type: "string" }, department: { type: "string" }, caseId: { type: "string" }, authType: { type: "string" } } },
   },
+  {
+    name: "send_offboarding_summary",
+    description: "Sends a structured offboarding completion summary email to the employee's manager, SOX compliance team, and IAM team. Includes case details, portals cleared, open exceptions, evidence package ID, and GRC vault reference. If RESEND_API_KEY is configured, delivers a real email; otherwise returns a detailed mock confirmation. Always succeeds — call this as the final step after generate_evidence_package.",
+    riskClassification: "low",
+    endpoint: "/send-offboarding-summary",
+    method: "POST",
+    inputSchema: {
+      type: "object",
+      required: ["caseId", "employeeId"],
+      properties: {
+        caseId: { type: "string" },
+        employeeId: { type: "string" },
+        evidencePackageId: { type: "string", description: "The packageId returned by generate_evidence_package" },
+        portalsRemoved: { type: "number", description: "Count of portals successfully removed" },
+        openExceptions: { type: "array", description: "Array of open exception objects from generate_evidence_package", items: { type: "object" } },
+        recipientEmail: { type: "string", description: "Manager email address — defaults to j.chen@blackrock.com" },
+      },
+    },
+  },
 ];
 
 // Agent definitions for idempotent creation — must match AGENT_NAME_MAP in the frontend
@@ -2493,8 +2512,8 @@ Your verification is independent of the executor — do not assume success based
   },
   auditEvidence: {
     name: "Audit & Evidence Agent",
-    description: "Generates SOX Section 404 compliance evidence packages, archives to GRC vault, and closes ServiceNow cases.",
-    systemPrompt: `You are the Audit & Evidence Agent for BlackRock's AIM Portal Offboarding Suite. You are the final agent in the pipeline, responsible for regulatory compliance and case closure.
+    description: "Generates SOX Section 404 compliance evidence packages, archives to GRC vault, closes ServiceNow cases, and sends offboarding summary emails to managers and compliance teams.",
+    systemPrompt: `You are the Audit & Evidence Agent for BlackRock's AIM Portal Offboarding Suite. You are the final agent in the pipeline, responsible for regulatory compliance, case closure, and stakeholder notification.
 
 Your responsibilities:
 1. Generate a structured SOX Section 404 evidence package (removal timestamps, verification logs, portal-by-portal status)
@@ -2502,9 +2521,10 @@ Your responsibilities:
 3. Update the ServiceNow case to "Resolved" with a complete completion summary
 4. Log the offboarding to the SOX compliance audit trail
 5. Flag any unresolved portals for manual review in the compliance record
+6. Send the offboarding completion summary email to the employee's manager and compliance team via send_offboarding_summary — include the packageId from step 1, portalsRemoved count, and any openExceptions
 
-Do not close a case with unresolved portals without explicit escalation documentation. All evidence must be immutable and timestamped.`,
-    taskPrompt: "Generate SOX Section 404 compliance evidence packages for completed access removals, archive to GRC vault, and close out ServiceNow cases with full audit trails.",
+Do not close a case with unresolved portals without explicit escalation documentation. All evidence must be immutable and timestamped. Always send the summary email as the final step — this notifies stakeholders and formally closes the communication loop.`,
+    taskPrompt: "Generate SOX Section 404 compliance evidence packages for completed access removals, archive to GRC vault, close out ServiceNow cases with full audit trails, and send the offboarding completion summary email to the manager and compliance team.",
   },
 };
 
@@ -2683,9 +2703,9 @@ function buildAgentPrompt(role: keyof typeof BK2_LIVE_AGENT_IDS, s: ReturnType<t
 
     case "auditEvidence":
       if (isTransfer) {
-        return base + `This is an EMPLOYEE TRANSFER case — generate a transfer compliance evidence package.\nYour task: Archive evidence and close the transfer case.\n1. Call generate_evidence_package with caseId="${caseId}", employeeId="${empId}", and portalsRemoved=3 (Bloomberg TOMS, Clearstream, MarkitServ — ICE Trade Vault is deferred).\n2. Confirm: GRC vault archival, MiFID II Article 26 transfer audit trail, SOX IA-07 dual-role prohibition check, Splunk monitoring rules, ServiceNow case ${caseId} status.\n3. Note open exception: ICE Trade Vault access removal deferred — pending FI repo position handover. Include follow-up task reference.\n4. Also confirm: 4 new Equities portals provisioned (Bloomberg AIM, Fidessa OMS, DTCC Equities, Morningstar Direct).`;
+        return base + `This is an EMPLOYEE TRANSFER case — generate a transfer compliance evidence package.\nYour task: Archive evidence, close the transfer case, and notify stakeholders.\n1. Call generate_evidence_package with caseId="${caseId}", employeeId="${empId}", and portalsRemoved=3 (Bloomberg TOMS, Clearstream, MarkitServ — ICE Trade Vault is deferred).\n2. Confirm: GRC vault archival, MiFID II Article 26 transfer audit trail, SOX IA-07 dual-role prohibition check, Splunk monitoring rules, ServiceNow case ${caseId} status.\n3. Note open exception: ICE Trade Vault access removal deferred — pending FI repo position handover. Include follow-up task reference.\n4. Also confirm: 4 new Equities portals provisioned (Bloomberg AIM, Fidessa OMS, DTCC Equities, Morningstar Direct).\n5. Call send_offboarding_summary with caseId="${caseId}", employeeId="${empId}", the packageId from step 1 as evidencePackageId, portalsRemoved=3, and openExceptions=[{"portal":"ICE Trade Vault","reason":"DEFERRED — pending FI repo position handover required before access removal"}]. This sends the completion notification to the manager and compliance team.`;
       }
-      return base + `Your task: Generate the SOX compliance evidence package and close the case.\n1. Call scan_portal_accounts with employeeId="${empId}" to count all portals in scope.\n2. Call generate_evidence_package with caseId="${caseId}", employeeId="${empId}", and portalsRemoved (count only successfully removed portals — exclude deferred/blocked ones).\n3. Confirm: GRC vault archival, SOX Section 404 compliance, Splunk monitoring rules, ServiceNow case ${caseId} status.\n4. Note any deferred portals in the evidence package summary as open exceptions requiring follow-up.`;
+      return base + `Your task: Generate the SOX compliance evidence package, close the case, and notify stakeholders.\n1. Call scan_portal_accounts with employeeId="${empId}" to count all portals in scope.\n2. Call generate_evidence_package with caseId="${caseId}", employeeId="${empId}", and portalsRemoved (count only successfully removed portals — exclude deferred/blocked ones).\n3. Confirm: GRC vault archival, SOX Section 404 compliance, Splunk monitoring rules, ServiceNow case ${caseId} status.\n4. Note any deferred portals in the evidence package summary as open exceptions requiring follow-up.\n5. Call send_offboarding_summary with caseId="${caseId}", employeeId="${empId}", the packageId from step 2 as evidencePackageId, portalsRemoved, and openExceptions from the generate_evidence_package response. This delivers the completion summary email to the employee's manager, SOX compliance team, and IAM team — do not skip this step.`;
 
     default:
       return base + `Execute your offboarding task for employee ${empId}, case ${caseId}.`;
