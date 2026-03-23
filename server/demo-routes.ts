@@ -891,10 +891,15 @@ Execute these steps in order:
 8. Call update_crm_contact with member_id "MBR-2026-84291" — success
 9. Call flag_address_change with member_id "MBR-2026-84291"
 10. Call update_card_address with member_id "MBR-2026-84291" — this will return a TIMEOUT error
-11. The card update failed. Now initiate rollback:
-    - Call log_action with action "SYSTEM_FAILURE", system "Card Management", details "PSCU card management timeout after 3 retries. Initiating rollback for data consistency."
-    - Call rollback_address_update with member_id "MBR-2026-84291", system "loan-origination", reason "Card management failure — rolling back for data consistency"
-    - Call rollback_address_update with member_id "MBR-2026-84291", system "crm", reason "Card management failure — rolling back for data consistency"
+11. The card update failed. Initiate full rollback across ALL systems updated before the failure:
+    - Call log_action with action "SYSTEM_FAILURE", system "Card Management", details "PSCU card management timeout after 3 retries. Initiating full rollback across all updated systems for data consistency."
+    - Call rollback_address_update with member_id "MBR-2026-84291", system "kinective-gateway", reason "Card management failure — full rollback for data consistency"
+    - Call rollback_address_update with member_id "MBR-2026-84291", system "digital-banking", reason "Card management failure — full rollback for data consistency"
+    - Call rollback_address_update with member_id "MBR-2026-84291", system "statement-vendor", reason "Card management failure — full rollback for data consistency"
+    - Call rollback_address_update with member_id "MBR-2026-84291", system "bill-pay", reason "Card management failure — full rollback for data consistency"
+    - Call rollback_address_update with member_id "MBR-2026-84291", system "fraud-detection", reason "Card management failure — full rollback for data consistency"
+    - Call rollback_address_update with member_id "MBR-2026-84291", system "loan-origination", reason "Card management failure — full rollback for data consistency"
+    - Call rollback_address_update with member_id "MBR-2026-84291", system "crm", reason "Card management failure — full rollback for data consistency"
 12. Call create_compliance_record with member_id "MBR-2026-84291", status "partial_failure"
 13. Call log_action with action "RETRY_SCHEDULED", system "ATLAS", details "Card management retry scheduled for next maintenance window. Ops ticket opened."
 

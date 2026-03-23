@@ -189,41 +189,30 @@ export function finalizeKinectiveSystemUpdates(scenario: KinectiveScenario): voi
   if (scenario === "system_failure") {
     const now = new Date().toISOString();
     for (const su of state.systemUpdates) {
-      const name = su.system.toLowerCase();
-      if (name.includes("card")) {
-        su.status = "failed";
-        su.error = "TIMEOUT: Connection to PSCU card management timed out after 3 retries";
-        su.confirmationId = null;
-      } else if (name.includes("loan") || name.includes("crm") || name.includes("salesforce")) {
+      if (su.status === "failed") {
+        // Card Management — already marked failed by getScenarioSystemUpdate, keep as-is
+        continue;
+      } else if (su.status === "rolled_back") {
+        // Already rolled back by an actual rollback_address_update tool call, keep as-is
+        continue;
+      } else if (su.status === "skipped") {
+        // Disabled system — keep as-is
+        continue;
+      } else if (su.status === "success") {
+        // Was successfully updated before Card Management failed — roll it back
         su.status = "rolled_back";
         su.confirmationId = null;
         if (!su.rolledBackAt) su.rolledBackAt = now;
         if (!state.rollbackLog.find((r) => r.system === su.system)) {
           state.rollbackLog.push({ system: su.system, status: "rolled_back", rolledBackAt: now });
         }
-      } else if (
-        name.includes("bill") ||
-        name.includes("fraud") ||
-        name.includes("bsa") ||
-        name.includes("compliance") ||
-        name.includes("signplus") ||
-        name.includes("archive") ||
-        name.includes("member") ||
-        name.includes("notification")
-      ) {
-        su.status = "skipped";
-        su.confirmationId = null;
       } else {
-        su.status = "rolled_back";
-        su.confirmationId = null;
-        if (!su.rolledBackAt) su.rolledBackAt = now;
-        if (!state.rollbackLog.find((r) => r.system === su.system)) {
-          state.rollbackLog.push({ system: su.system, status: "rolled_back", rolledBackAt: now });
-        }
+        // "pending" — never reached because Card Management failed first
+        su.status = "skipped";
       }
     }
     if (!state.auditLog.find((e) => e.action === "FULL_ROLLBACK")) {
-      addKinectiveAudit("FULL_ROLLBACK", "ATLAS Engine", "Card Management (PSCU) failure triggered full rollback across all updated systems (Gateway, Digital Banking, Statement Vendor, Loan Origination, CRM). COA-2026-00412 fully reverted — all systems restored to consistent pre-change state.");
+      addKinectiveAudit("FULL_ROLLBACK", "ATLAS Engine", "Card Management (PSCU) failure triggered full rollback across all 7 updated systems (Kinective Gateway, Digital Banking, Statement Vendor, Bill Pay, Fraud Detection, Loan Origination, CRM). COA-2026-00412 fully reverted — all systems restored to a consistent pre-change state.");
     }
     state.finalized = true;
     return;
