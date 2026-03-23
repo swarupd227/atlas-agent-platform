@@ -2695,7 +2695,7 @@ function buildAgentPrompt(role: keyof typeof BK2_LIVE_AGENT_IDS, s: ReturnType<t
 // POST /demo-api/blackrock2/ensure-agents — lightweight setup: creates agents, MCP server,
 // and deployments in the current environment without running any Claude cycles.
 // Safe to call from prod to bootstrap the demo before first live run.
-demoRouter.post("/blackrock2/ensure-agents", async (req: Request, res: Response) => {
+export async function bk2EnsureAgentsHandler(_req: Request, res: Response): Promise<void> {
   try {
     const mcpServerId = await ensureAimMcpServer();
     const agentEntries = Object.entries(BK2_LIVE_AGENT_IDS) as [keyof typeof BK2_LIVE_AGENT_IDS, string][];
@@ -2709,7 +2709,7 @@ demoRouter.post("/blackrock2/ensure-agents", async (req: Request, res: Response)
       results[role] = { agentId, deploymentId, agentName };
     }
 
-    return res.json({
+    res.json({
       success: true,
       mcpServerId,
       agentsConfigured: Object.keys(results).length,
@@ -2718,12 +2718,17 @@ demoRouter.post("/blackrock2/ensure-agents", async (req: Request, res: Response)
     });
   } catch (err: any) {
     console.error("[bk2-ensure-agents] Error:", err?.message);
-    return res.status(500).json({ success: false, error: err?.message || "Setup failed" });
+    res.status(500).json({ success: false, error: err?.message || "Setup failed" });
   }
-});
+}
+
+demoRouter.post("/blackrock2/ensure-agents", bk2EnsureAgentsHandler);
 
 // SSE: GET /demo-api/blackrock2/live-run?scenarioId=...
-demoRouter.get("/blackrock2/live-run", async (req: Request, res: Response) => {
+export async function bk2LiveRunHandler(req: Request, res: Response): Promise<void> {
+  return bk2LiveRunHandlerInner(req, res);
+}
+async function bk2LiveRunHandlerInner(req: Request, res: Response): Promise<void> {
   const scenarioId = (req.query.scenarioId as Bk2LiveScenario) || "happy_path";
 
   res.setHeader("Content-Type", "text/event-stream");
@@ -2740,37 +2745,24 @@ demoRouter.get("/blackrock2/live-run", async (req: Request, res: Response) => {
 
   let currentAgentName = "unknown";
   let aborted = false;
-
-  // Only process events from the 6 BK2 deployments — prevents background periodic agents
-  // (Weather Alert, AQ Sentinel, etc.) from polluting this SSE stream.
   const bk2DeploymentIds = new Set<string>();
 
   const onRuntimeEvent = (evt: { deploymentId: string; agentId: string; runId: string; result: any }) => {
     if (aborted) return;
-    // Always require a known BK2 deployment ID — empty set rejects everything (prevents
-    // background agents from firing into this SSE stream during the setup phase too).
     if (!bk2DeploymentIds.has(evt.deploymentId)) return;
 
     const steps: any[] = evt.result?.steps ?? [];
-    // Skip steps where mcpServer === "unknown" — those are unresolved tool names
-    // (Claude hallucinated a short alias that didn't match any registered tool).
-    // Real scenario blocks come from resolved tools that have a proper mcpServer name.
     const toolCallSteps = steps.filter((s: any) => s.type === "api_call" && s.mcpServer !== "unknown");
     for (const step of toolCallSteps) {
       const tool = step.mcpTool || step.output?.mcpTool || step.name || "unknown_tool";
       const stepCompleted = step.status === "completed" || step.status === "passed";
 
-      // Check the tool response body — a step can "complete" (HTTP 200) but carry semantic failure
       const responseData = step.output?.data ?? step.output ?? null;
       const bodySuccess = (() => {
         if (!responseData) return stepCompleted;
-        // Explicit success field (execute-access-removal returns success:false when blocked)
         if (typeof responseData.success === "boolean") return responseData.success;
-        // Portal health check — reachable:false means the portal is down
         if (typeof responseData.reachable === "boolean") return responseData.reachable;
-        // Verification status — "deferred" or "pending_approval" means not yet removed
         if (responseData.status === "deferred" || responseData.status === "pending_approval") return false;
-        // Pending settlements — check_pending_settlements returns hasPendingSettlements:true when blocked
         if (responseData.hasPendingSettlements === true) return false;
         return stepCompleted;
       })();
@@ -2793,7 +2785,6 @@ demoRouter.get("/blackrock2/live-run", async (req: Request, res: Response) => {
           tool,
           success,
           error: errorReason,
-          // Include portal/entity name so the frontend can disambiguate repeated tool calls
           portalName: responseData?.portalName || responseData?.portal || null,
           accountId: responseData?.newAccountId || responseData?.accountId || null,
         },
@@ -2828,7 +2819,6 @@ demoRouter.get("/blackrock2/live-run", async (req: Request, res: Response) => {
 
     sendEvent("setup", { message: `Ensuring all 6 BK2 agents exist in this environment...` });
     for (const [role, agentId] of agentEntries) {
-      // Idempotently create the agent in this DB if it doesn't exist (handles fresh prod DB)
       await ensureBk2Agent(agentId, role);
     }
 
@@ -2837,7 +2827,7 @@ demoRouter.get("/blackrock2/live-run", async (req: Request, res: Response) => {
       const agentName = agent?.name || BK2_AGENT_DEFINITIONS[role].name;
       const depId = await ensureBk2AgentDeployment(agentId, agentName, mcpServerId);
       deploymentIds[role] = depId;
-      bk2DeploymentIds.add(depId); // allow onRuntimeEvent to process events from this deployment
+      bk2DeploymentIds.add(depId);
     }
 
     sendEvent("setup", { message: `All 6 agents configured — starting execution for ${employee} (${empId}), case ${caseId}` });
@@ -2852,8 +2842,6 @@ demoRouter.get("/blackrock2/live-run", async (req: Request, res: Response) => {
 
       sendEvent("agent_start", { agentId, agentName: currentAgentName, role, deploymentId });
 
-      // Stop any lingering periodic auto-resume cycle for this deployment before running —
-      // prevents a background cycle from racing with runAgentOnce and polluting the SSE stream.
       if (isRuntimeActive(deploymentId)) {
         stopAgentRuntime(deploymentId);
       }
@@ -2879,7 +2867,9 @@ demoRouter.get("/blackrock2/live-run", async (req: Request, res: Response) => {
     runtimeEvents.off("agent_execution", onRuntimeEvent);
     if (!aborted) res.end();
   }
-});
+}
+
+demoRouter.get("/blackrock2/live-run", bk2LiveRunHandler);
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Moody's Credit Assessment — ensure-agents bootstrap

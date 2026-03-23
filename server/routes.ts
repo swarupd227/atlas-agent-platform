@@ -35963,6 +35963,16 @@ Log every action.`;
     return bk1LiveRunStreamHandler(req, res);
   });
 
+  // ── BK2 ensure-agents + live-run SSE (registered directly on app for reliable Express 5 routing)
+  app.post("/demo-api/blackrock2/ensure-agents", async (req, res) => {
+    const { bk2EnsureAgentsHandler } = await import("./demo-routes");
+    return bk2EnsureAgentsHandler(req, res);
+  });
+  app.get("/demo-api/blackrock2/live-run", async (req, res) => {
+    const { bk2LiveRunHandler } = await import("./demo-routes");
+    return bk2LiveRunHandler(req, res);
+  });
+
   // ── Moody's ensure-agents (registered directly on app for reliable Express 5 routing) ─
   app.post("/demo-api/moodys/ensure-agents", async (req, res) => {
     const { moodysEnsureAgentsHandler } = await import("./demo-routes");
