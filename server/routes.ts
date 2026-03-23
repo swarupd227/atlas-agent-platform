@@ -18392,7 +18392,7 @@ Eval Suites: ${evalSuites.length} configured`,
     permissions?: any;
     contextProfileName?: string | null;
     memoryProfileName?: string | null;
-    mcpServers?: Array<{ name: string; url: string | null; transportType: string; description?: string | null }>;
+    mcpServers?: Array<{ name: string; url: string | null; transportType: string; description?: string | null; tools?: Array<{ name: string; description: string }> }>;
     stopConditions?: string[];
     forbiddenOutputs?: string[];
   }
@@ -18467,6 +18467,13 @@ Eval Suites: ${evalSuites.length} configured`,
         lines.push(`    transport: "${s.transportType}"`);
         if (s.url) lines.push(`    url: "${s.url}"`);
         if (s.description) lines.push(`    description: "${s.description.replace(/"/g, '\\"').replace(/\n/g, " ")}"`);
+        if (s.tools && s.tools.length > 0) {
+          lines.push(`    tools:`);
+          for (const t of s.tools) {
+            lines.push(`      - name: "${t.name}"`);
+            if (t.description) lines.push(`        description: "${t.description.replace(/"/g, '\\"').replace(/\n/g, " ")}"`);
+          }
+        }
       }
     }
     if (extras?.stopConditions && extras.stopConditions.length > 0) {
@@ -19856,6 +19863,9 @@ ${nodeSetup}
     completionPromise: string;
     framework: string;
     blueprintJson?: Record<string, unknown>;
+    skills?: Array<{ name: string; domain?: string; description?: string }>;
+    mcpServers?: Array<{ name: string; url: string | null; transportType: string; tools?: Array<{ name: string; description: string }> }>;
+    singleFile?: string;
   }): Promise<{ entrypoint: string; toolAdapters: Record<string, string>; agentYaml?: string; dockerfile?: string; frameworkFiles?: Record<string, string>; aiGenerated: true } | null> {
     try {
       const toolsJson = JSON.stringify(ctx.tools.map(t => ({
@@ -19931,6 +19941,19 @@ The "frameworkFiles" field should contain any framework-specific config/manifest
 
       const fwInstr = frameworkInstructions[ctx.framework] || frameworkInstructions.generic;
 
+      const skillsCtx = (ctx.skills && ctx.skills.length > 0)
+        ? `\nLinked Skills (${ctx.skills.length}):\n${ctx.skills.map(s => `- ${s.name}${s.domain ? ` [${s.domain}]` : ""}${s.description ? `: ${s.description}` : ""}`).join("\n")}`
+        : "";
+
+      const mcpCtx = (ctx.mcpServers && ctx.mcpServers.length > 0)
+        ? `\nMCP Servers (${ctx.mcpServers.length}):\n${ctx.mcpServers.map(s => {
+            const toolList = (s.tools && s.tools.length > 0)
+              ? `\n  Tools:\n${s.tools.map(t => `    - ${t.name}${t.description ? `: ${t.description}` : ""}`).join("\n")}`
+              : "";
+            return `- ${s.name} (${s.transportType}${s.url ? `, ${s.url}` : ""})${toolList}`;
+          }).join("\n")}\n\nIMPORTANT: This agent uses MCP servers. Use the @modelcontextprotocol/sdk Client to connect to each server and call its tools. Generate the MCP client connection setup and call the specific tools listed above.`
+        : "";
+
       const userMsg = `Generate a complete, runnable autonomous agent in ${lang} using the ${provider} API (${clientLib}).
 
 Agent context:
@@ -19939,7 +19962,7 @@ Agent context:
 - System prompt: ${ctx.systemPrompt}
 - Max iterations: ${ctx.maxIterations}
 - Completion signal phrase: "${ctx.completionPromise}"
-- Framework: ${ctx.framework}${blueprintCtx}
+- Framework: ${ctx.framework}${blueprintCtx}${skillsCtx}${mcpCtx}
 
 Tools (${ctx.tools.length}):
 ${toolsJson}
@@ -20055,7 +20078,8 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
       const blueprintJson = (agent.blueprintJson && typeof agent.blueprintJson === "object")
         ? agent.blueprintJson as Record<string, unknown>
         : {};
-      const systemPrompt = (blueprintJson.systemPrompt as string)
+      const systemPrompt = (agent.systemPrompt as string | null | undefined)
+        || (blueprintJson.systemPrompt as string)
         || (blueprintJson.system_prompt as string)
         || (blueprintJson.prompt as string)
         || `You are ${agent.name}. ${agent.description || ""}`;
@@ -20194,10 +20218,19 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
       const memoryProfile = allMemoryProfiles.find(mp => mp.agentId === agent.id) || null;
 
       const mcpLinks = await storage.getAgentMcpServers(agent.id);
-      const mcpServerDetails: Array<{ name: string; url: string | null; transportType: string; description?: string | null }> = [];
+      const mcpServerDetails: Array<{ name: string; url: string | null; transportType: string; description?: string | null; tools?: Array<{ name: string; description: string }> }> = [];
       for (const link of mcpLinks) {
         const srv = await storage.getMcpServer(link.serverId);
-        if (srv) mcpServerDetails.push({ name: srv.name, url: srv.url, transportType: srv.transportType, description: srv.description });
+        if (srv) {
+          const srvTools = await storage.getMcpServerTools(link.serverId);
+          mcpServerDetails.push({
+            name: srv.name,
+            url: srv.url,
+            transportType: srv.transportType,
+            description: srv.description,
+            tools: srvTools.map(t => ({ name: t.name, description: t.description || "" })),
+          });
+        }
       }
 
       const yamlExtras: AgentYamlExtras = {
@@ -20275,6 +20308,8 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
           completionPromise,
           framework,
           blueprintJson,
+          skills: matchedSkills.map(s => ({ name: s.name, domain: s.domain, description: s.description })),
+          mcpServers: mcpServerDetails.map(s => ({ name: s.name, url: s.url, transportType: s.transportType, tools: s.tools })),
         });
       } catch { /* swallow — templates handle fallback */ }
 
@@ -21350,7 +21385,8 @@ clean:
       const blueprintJson = (agent.blueprintJson && typeof agent.blueprintJson === "object")
         ? agent.blueprintJson as Record<string, unknown>
         : {};
-      const systemPrompt = (blueprintJson.systemPrompt as string)
+      const systemPrompt = (agent.systemPrompt as string | null | undefined)
+        || (blueprintJson.systemPrompt as string)
         || (blueprintJson.system_prompt as string)
         || (blueprintJson.prompt as string)
         || `You are ${agent.name}. ${agent.description || ""}`;
@@ -21361,6 +21397,27 @@ clean:
         description: String(t.description || ""),
         parameters: (t.parameters || {}) as Record<string, unknown>,
       }));
+
+      const regenRtConfig = (agent.runtimeConfig as Record<string, unknown>) || {};
+      const regenRawSkills: Array<{ name: string }> = Array.isArray(regenRtConfig.matchedSkills)
+        ? (regenRtConfig.matchedSkills as Array<Record<string, unknown>>).map(s => ({ name: String(s.name || s) }))
+        : [];
+      const regenAllSkills = await storage.getSkills();
+      const regenSkillLookup = new Map(regenAllSkills.map(s => [s.name.toLowerCase(), s]));
+      const regenSkills = regenRawSkills.map(ms => {
+        const db = regenSkillLookup.get(ms.name.toLowerCase());
+        return { name: ms.name, domain: db?.domain || "general", description: db?.description || "" };
+      });
+
+      const regenMcpLinks = await storage.getAgentMcpServers(agent.id);
+      const regenMcpServers: Array<{ name: string; url: string | null; transportType: string; tools?: Array<{ name: string; description: string }> }> = [];
+      for (const link of regenMcpLinks) {
+        const srv = await storage.getMcpServer(link.serverId);
+        if (srv) {
+          const srvTools = await storage.getMcpServerTools(link.serverId);
+          regenMcpServers.push({ name: srv.name, url: srv.url, transportType: srv.transportType, tools: srvTools.map(t => ({ name: t.name, description: t.description || "" })) });
+        }
+      }
 
       let content = "";
       try {
@@ -21375,6 +21432,8 @@ clean:
           completionPromise: "TASK_COMPLETE",
           framework,
           blueprintJson,
+          skills: regenSkills,
+          mcpServers: regenMcpServers,
           singleFile: filePath,
         });
         if (aiResult) {
