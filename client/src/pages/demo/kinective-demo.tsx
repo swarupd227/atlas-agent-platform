@@ -992,7 +992,7 @@ function KinectiveLogFeed({ entries, running, complete }: { entries: KinectiveLo
           Live Agent Trace
           {running && (
             <Badge variant="outline" className="ml-auto bg-cyan-500/10 text-cyan-400 border-cyan-500/30 text-[10px] animate-pulse">
-              GPT-4.1 RUNNING
+              AI RUNNING
             </Badge>
           )}
           {!running && entries.length > 0 && (
@@ -1006,7 +1006,7 @@ function KinectiveLogFeed({ entries, running, complete }: { entries: KinectiveLo
         {entries.length === 0 && !running && !complete && (
           <div className="flex flex-col items-center justify-center h-full gap-2 text-center px-6">
             <Terminal className="w-6 h-6 text-zinc-600" />
-            <p className="text-xs text-zinc-500">GPT-4.1 agent tool calls will stream here in real time.</p>
+            <p className="text-xs text-zinc-500">AI agent tool calls will stream here in real time.</p>
           </div>
         )}
         {(entries.length > 0 || running) && (
