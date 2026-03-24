@@ -547,7 +547,7 @@ async function computeRatioSummary(): Promise<Record<string, any>> {
       const breach = breachMap.get(ratioId);
 
       bankRatios[ratioId] = {
-        value:      breach ? breach.current_value : latest,
+        value:      latest,  // always from ratio-trends latest quarter
         threshold:  RATIO_THRESHOLDS_MAP[ratioId],
         breached:   !!breach,
         qoqDelta:   breach
@@ -559,15 +559,14 @@ async function computeRatioSummary(): Promise<Record<string, any>> {
     }
     ratioTable[bankName] = bankRatios;
 
-    if (breaches.length > 0) {
-      const worst = breaches[0];
-      breachLeaderboard.push({
-        bankName,
-        breachCount: breaches.length,
-        worstRatio:  worst.ratio_id,
-        severity:    worst.severity,
-      });
-    }
+    // Include all banks in leaderboard (zero-breach banks get breachCount=0)
+    const worst = breaches[0] ?? null;
+    breachLeaderboard.push({
+      bankName,
+      breachCount: breaches.length,
+      worstRatio:  worst?.ratio_id ?? null,
+      severity:    worst?.severity ?? null,
+    });
   }
 
   breachLeaderboard.sort((a, b) => b.breachCount - a.breachCount);
