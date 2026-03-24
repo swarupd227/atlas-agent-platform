@@ -40,31 +40,37 @@ const RATIO_THRESHOLDS: Record<string, number> = {
   accruing_past_due_90_pct: 0.2, classified_to_tier1: 25.0, net_stable_funding_ratio: 100.0,
 };
 
-function stressMultiplier(idx: number): number {
-  if (idx === 9) return 2.2;
-  if (idx === 7) return 1.5;
-  if (idx === 8) return 1.3;
-  return 0.7 + idx * 0.05;
+// Stress level per bank: 1.0 = baseline, higher = more stress
+const BANK_STRESS: number[] = [1.1, 1.2, 1.4, 1.0, 1.15, 1.1, 1.25, 1.5, 1.7, 2.2];
+
+// Resolve bank by id OR name (LLMs sometimes pass the name as bank_id)
+function resolveBank(key: string | undefined): typeof BANKS {
+  if (!key) return BANKS;
+  const lower = key.toLowerCase();
+  const byId   = BANKS.filter(b => b.id.toLowerCase() === lower);
+  if (byId.length) return byId;
+  const byName = BANKS.filter(b => b.name.toLowerCase().includes(lower) || lower.includes(b.name.toLowerCase()));
+  return byName.length ? byName : BANKS; // fall back to all banks when unresolvable
 }
 
 // GET /ratio-trends — 8-quarter time series for all 18 ratios per bank
 router.get("/ratio-trends", (req: Request, res: Response) => {
   const { bank_id, ratio_id } = req.query;
-  const banks = bank_id ? BANKS.filter(b => b.id === bank_id) : BANKS;
+  const banks  = resolveBank(bank_id as string | undefined);
   const ratios = ratio_id ? [ratio_id as string] : RATIO_NAMES;
 
   const data = banks.map(bank => {
     const bIdx = BANKS.findIndex(b => b.id === bank.id);
-    const sm = stressMultiplier(bIdx);
+    const sm   = BANK_STRESS[bIdx] ?? 1.1;
 
     const ratioData: Record<string, any[]> = {};
     for (const ratio of ratios) {
-      const base = RATIO_THRESHOLDS[ratio] ?? 1.0;
+      const base  = RATIO_THRESHOLDS[ratio] ?? 1.0;
       const trend: any[] = [];
       for (let qi = 0; qi < QUARTERS.length; qi++) {
-        const rng = seededRng(bIdx * 100 + qi * 7 + ratio.charCodeAt(0));
-        const stressRamp = qi >= 4 ? (sm - 1) * (qi - 3) * 0.2 : 0;
-        const value = +(base * (0.7 + rng() * 0.6) * (1 + stressRamp)).toFixed(2);
+        const rng       = seededRng(bIdx * 100 + qi * 7 + ratio.charCodeAt(0));
+        const stressRamp = qi >= 4 ? (sm - 1) * (qi - 3) * 0.25 : 0;
+        const value     = +(base * (0.75 + rng() * 0.5) * (1 + stressRamp)).toFixed(2);
         trend.push({ quarter: QUARTERS[qi], value });
       }
       ratioData[ratio] = trend;
@@ -79,39 +85,40 @@ router.get("/ratio-trends", (req: Request, res: Response) => {
 // GET /threshold-breaches — breached ratios with severity and QoQ delta
 router.get("/threshold-breaches", (req: Request, res: Response) => {
   const { bank_id, quarter } = req.query;
-  const banks = bank_id ? BANKS.filter(b => b.id === bank_id) : BANKS;
-  const q = (quarter as string) || QUARTERS[QUARTERS.length - 1];
+  const banks = resolveBank(bank_id as string | undefined);
+  const q     = (quarter as string) || QUARTERS[QUARTERS.length - 1];
 
   const data = banks.map(bank => {
     const bIdx = BANKS.findIndex(b => b.id === bank.id);
-    const sm = stressMultiplier(bIdx);
-    const rng = seededRng(bIdx * 321 + q.charCodeAt(5));
+    const sm   = BANK_STRESS[bIdx] ?? 1.1;
+    const rng  = seededRng(bIdx * 321 + q.charCodeAt(5));
 
     const breaches: any[] = [];
     for (const ratio of RATIO_NAMES) {
       const threshold = RATIO_THRESHOLDS[ratio] ?? 1.0;
-      const breachProbability = Math.min(0.8, (sm - 1) * 0.35 + 0.05);
+      // Breach probability: ranges from ~15% for low-stress to ~60% for high-stress
+      const breachProbability = Math.min(0.65, 0.10 + (sm - 1.0) * 0.35);
       if (rng() < breachProbability) {
-        const severity = sm > 2 ? "CRITICAL" : sm > 1.5 ? "HIGH" : "MEDIUM";
-        const value = +(threshold * (1.1 + rng() * 0.4 * sm)).toFixed(2);
-        const priorQ = +(threshold * (0.95 + rng() * 0.3)).toFixed(2);
+        const severity  = sm >= 2.0 ? "CRITICAL" : sm >= 1.5 ? "HIGH" : "MEDIUM";
+        const value     = +(threshold * (1.05 + rng() * 0.35 * sm)).toFixed(2);
+        const priorQ    = +(threshold * (0.95 + rng() * 0.25)).toFixed(2);
         breaches.push({
-          ratio_id: ratio,
+          ratio_id:     ratio,
           current_value: value,
           threshold,
-          qoq_delta: +(value - priorQ).toFixed(2),
+          qoq_delta:    +(value - priorQ).toFixed(2),
           severity,
-          peer_median: +(threshold * (0.8 + rng() * 0.3)).toFixed(2),
+          peer_median:  +(threshold * (0.82 + rng() * 0.25)).toFixed(2),
         });
       }
     }
 
     return {
-      bank_id: bank.id,
-      bank_name: bank.name,
-      quarter: q,
+      bank_id:     bank.id,
+      bank_name:   bank.name,
+      quarter:     q,
       breach_count: breaches.length,
-      breaches: breaches.sort((a, b) => {
+      breaches:    breaches.sort((a, b) => {
         const order = { CRITICAL: 0, HIGH: 1, MEDIUM: 2 };
         return order[a.severity as keyof typeof order] - order[b.severity as keyof typeof order];
       }),

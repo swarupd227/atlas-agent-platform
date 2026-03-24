@@ -77,7 +77,8 @@ function PipelineHeader({
 
   const { data, isLoading } = useQuery<any>({
     queryKey: ["/demo-api/fitch/agent-runs"],
-    refetchInterval: liveRunning ? 5000 : 60000,
+    refetchInterval: liveRunning ? 20000 : false,
+    placeholderData: (prev: any) => prev,
   });
 
   if (isLoading) {

@@ -1,8 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
-  Play, CheckCircle2, Bot, Database, Activity, AlertTriangle, TrendingDown, TrendingUp, Minus,
+  CheckCircle2, Bot, Database, Activity, AlertTriangle, TrendingDown, TrendingUp, Minus,
 } from "lucide-react";
 import {
   FITCH_AGENTS, FITCH_MCP_SERVERS, FITCH_BANKS, FITCH_RISK_TIER_COLORS,
@@ -14,7 +13,7 @@ interface Props {
   onScreenChange: (screen: number) => void;
 }
 
-function AgentPipelinePanel({ state, trigger }: { state: FitchPipelineState; trigger: () => void }) {
+function AgentPipelinePanel({ state }: { state: FitchPipelineState }) {
   const isRunning = state.status === "running";
   const isComplete = state.status === "complete";
 
@@ -25,17 +24,8 @@ function AgentPipelinePanel({ state, trigger }: { state: FitchPipelineState; tri
           <Activity className="w-4 h-4 text-rose-400" />
           <CardTitle className="text-sm font-medium">Live Pipeline — 6 GPT-4.1 Agents</CardTitle>
           <Badge variant="secondary" className="text-[10px]">4 MCP Servers · 15 Tools</Badge>
+          {isRunning && <Badge className="text-[10px] bg-amber-500/20 text-amber-300 border-amber-500/30 animate-pulse">⬤ Running…</Badge>}
           {isComplete && <Badge className="text-[10px] bg-green-500/20 text-green-300 border-green-500/30">✓ Complete</Badge>}
-          <Button
-            size="sm"
-            data-testid="fitch-s1-run-pipeline-btn"
-            className="ml-auto h-7 text-xs gap-1.5 bg-rose-700 hover:bg-rose-600"
-            onClick={trigger}
-            disabled={isRunning}
-          >
-            <Play className={`w-3 h-3 ${isRunning ? "animate-pulse" : ""}`} />
-            {isRunning ? "Running…" : "▶ Run Assessment Pipeline"}
-          </Button>
         </div>
         <p className="text-[11px] text-muted-foreground">
           FFIEC ingest → ratio engine → transcript NLP → news signals → composite scoring → report assembly.
@@ -48,7 +38,7 @@ function AgentPipelinePanel({ state, trigger }: { state: FitchPipelineState; tri
             <div className="w-10 h-10 rounded-full bg-rose-500/10 flex items-center justify-center mb-3">
               <Bot className="w-5 h-5 text-rose-400/60" />
             </div>
-            <p className="text-sm text-muted-foreground">Click ▶ Run Assessment Pipeline to start live GPT-4.1 execution</p>
+            <p className="text-sm text-muted-foreground">Click <span className="text-rose-400 font-medium">▶ Run Pipeline</span> above to start live GPT-4.1 execution</p>
             <p className="text-[11px] text-muted-foreground/60 mt-1">Each agent calls real MCP tools and produces structured JSON output</p>
           </div>
         )}
@@ -99,7 +89,7 @@ function AgentPipelinePanel({ state, trigger }: { state: FitchPipelineState; tri
 }
 
 export default function FitchS1CommandCenter({ onScreenChange }: Props) {
-  const { state, trigger } = useFitchPipeline();
+  const { state } = useFitchPipeline();
 
   const riskScorerResult = state.results.find(r => r.role === "risk_scorer");
   const scores: Record<string, any> = riskScorerResult?.resultSummary?.scores ?? {};
@@ -126,7 +116,7 @@ export default function FitchS1CommandCenter({ onScreenChange }: Props) {
       </div>
 
       {/* Pipeline runner */}
-      <AgentPipelinePanel state={state} trigger={trigger} />
+      <AgentPipelinePanel state={state} />
 
       {/* Risk Dashboard — 10-bank composite scores (live from risk_scorer) */}
       <Card>
