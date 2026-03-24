@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,9 @@ import {
   CheckCircle, XCircle, CheckCircle2, Zap, Loader2, Terminal, ArrowRight,
   ExternalLink, Clock,
 } from "lucide-react";
+import {
+  useFitchPipeline, type FitchPipelineState, type FitchToolEvent,
+} from "./fitch-constants";
 import FitchS1CommandCenter from "./fitch-s1-command-center";
 import FitchS2FfiecIngest from "./fitch-s2-ffiec-ingest";
 import FitchS3RiskScoring from "./fitch-s3-risk-scoring";
@@ -40,29 +43,21 @@ const PIPELINE_METRIC: Record<string, (rs: any) => string> = {
   transcript_analyst:  rs => rs?.banksScored        ? `${rs.banksScored} banks scored`              : "—",
   news_processor:      rs => rs?.banksMonitored     ? `${rs.banksMonitored} banks monitored`        : "—",
   risk_scorer:         rs => rs?.banksScored        ? `${rs.banksScored} banks scored`              : "—",
-  report_generator:    rs => rs?.svbComparison?.daysAdvanceWarning ? `${rs.svbComparison.daysAdvanceWarning}d advance warning` : "—",
+  report_generator:    rs => rs?.svbComparison?.daysAdvanceWarning
+                               ? `${rs.svbComparison.daysAdvanceWarning}d advance warning`
+                               : "—",
 };
 
-const STATUS_MAP: Record<string, { icon: any; dot: string; label: string }> = {
-  completed: { icon: CheckCircle2, dot: "bg-green-400",            label: "complete" },
-  running:   { icon: Loader2,      dot: "bg-rose-400 animate-pulse", label: "running"  },
-  failed:    { icon: XCircle,      dot: "bg-red-400",               label: "failed"   },
-  idle:      { icon: Clock,        dot: "bg-muted-foreground/30",   label: "idle"     },
+const STATUS_MAP: Record<string, { dot: string; label: string }> = {
+  completed: { dot: "bg-green-400",              label: "complete" },
+  running:   { dot: "bg-rose-400 animate-pulse",  label: "running"  },
+  failed:    { dot: "bg-red-400",                 label: "failed"   },
+  idle:      { dot: "bg-muted-foreground/30",     label: "idle"     },
 };
-
-interface LiveEvent {
-  id: number;
-  time: string;
-  agentName: string;
-  type: string;
-  tool?: string;
-  success?: boolean;
-  message: string;
-}
 
 function formatRelative(iso: string | null): string {
   if (!iso) return "—";
-  const diff = Date.now() - new Date(iso).getTime();
+  const diff  = Date.now() - new Date(iso).getTime();
   const mins  = Math.floor(diff / 60000);
   const hours = Math.floor(diff / 3600000);
   if (mins < 1)   return "just now";
@@ -71,11 +66,15 @@ function formatRelative(iso: string | null): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-function PipelineHeader({ liveRunning, activeAgentName, onRunPipeline }: {
-  liveRunning: boolean;
-  activeAgentName: string | null;
+function PipelineHeader({
+  pipelineState,
+  onRunPipeline,
+}: {
+  pipelineState: FitchPipelineState;
   onRunPipeline: () => void;
 }) {
+  const liveRunning = pipelineState.status === "running";
+
   const { data, isLoading } = useQuery<any>({
     queryKey: ["/demo-api/fitch/agent-runs"],
     refetchInterval: liveRunning ? 5000 : 60000,
@@ -83,7 +82,7 @@ function PipelineHeader({ liveRunning, activeAgentName, onRunPipeline }: {
 
   if (isLoading) {
     return (
-      <div className="flex items-center gap-1 py-3 border-b border-border/50 overflow-x-auto">
+      <div className="flex items-center gap-1 pb-3 pt-2 border-b border-border/50 overflow-x-auto">
         {Array.from({ length: 6 }).map((_, i) => (
           <div key={i} className="flex items-center gap-1 flex-1">
             <div className="flex-1 h-16 rounded-lg bg-muted/20 animate-pulse min-w-[100px]" />
@@ -100,11 +99,15 @@ function PipelineHeader({ liveRunning, activeAgentName, onRunPipeline }: {
     <div className="border-b border-border/50 pb-3">
       <div className="flex items-stretch gap-1 pt-2 overflow-x-auto">
         {runs.map((run, i) => {
-          const isCurrentlyRunning = liveRunning && activeAgentName === run.agentName;
+          const isCurrentlyRunning = liveRunning && pipelineState.currentRole === run.key;
           const statusToShow = isCurrentlyRunning ? "running" : (run.runStatus || run.agentStatus);
           const statusConf = STATUS_MAP[statusToShow] || STATUS_MAP.idle;
-          const metric = PIPELINE_METRIC[run.key]?.(run.resultSummary);
-          const role   = PIPELINE_ROLE[run.key] || "";
+
+          const result = pipelineState.results.find(r => r.role === run.key);
+          const metric = result?.resultSummary
+            ? PIPELINE_METRIC[run.key]?.(result.resultSummary)
+            : PIPELINE_METRIC[run.key]?.(run.resultSummary);
+          const role = PIPELINE_ROLE[run.key] || "";
 
           return (
             <div key={run.key || i} className="flex items-center gap-1 flex-1 min-w-0">
@@ -158,7 +161,6 @@ function PipelineHeader({ liveRunning, activeAgentName, onRunPipeline }: {
           );
         })}
 
-        {/* Run button */}
         <div className="shrink-0 flex items-center pl-2">
           <Button
             size="sm"
@@ -179,41 +181,46 @@ function PipelineHeader({ liveRunning, activeAgentName, onRunPipeline }: {
   );
 }
 
-function LiveFeedPanel({ events, activeAgentName, running, onClose }: {
-  events: LiveEvent[];
-  activeAgentName: string | null;
-  running: boolean;
+function getEventStyle(ev: FitchToolEvent & { synthType?: string }): string {
+  const t = ev.synthType;
+  if (t === "run_start" || t === "setup")    return "text-blue-400";
+  if (t === "agent_start")                  return "text-indigo-300 font-semibold";
+  if (t === "agent_complete" && ev.success) return "text-green-400";
+  if (t === "agent_complete" && !ev.success)return "text-red-400";
+  if (t === "run_complete")                 return "text-rose-400 font-semibold";
+  if (ev.success)                           return "text-emerald-400/80";
+  return "text-red-400/80";
+}
+
+function getEventIcon(ev: FitchToolEvent & { synthType?: string }) {
+  const t = ev.synthType;
+  if (t === "run_start" || t === "setup")    return <Zap className="w-3 h-3 text-blue-400 shrink-0 mt-0.5" />;
+  if (t === "agent_start")                  return <Play className="w-3 h-3 text-indigo-300 shrink-0 mt-0.5" />;
+  if (t === "agent_complete" && ev.success) return <CheckCircle className="w-3 h-3 text-green-400 shrink-0 mt-0.5" />;
+  if (t === "agent_complete" && !ev.success)return <XCircle className="w-3 h-3 text-red-400 shrink-0 mt-0.5" />;
+  if (t === "run_complete")                 return <CheckCircle2 className="w-3 h-3 text-rose-400 shrink-0 mt-0.5" />;
+  if (ev.success)                           return <span className="w-3 h-3 text-[8px] text-emerald-400 shrink-0 mt-0.5 flex items-center justify-center">✓</span>;
+  return <span className="w-3 h-3 text-[8px] text-red-400 shrink-0 mt-0.5 flex items-center justify-center">✗</span>;
+}
+
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}`;
+}
+
+function LiveFeedPanel({
+  pipelineState,
+  onClose,
+}: {
+  pipelineState: FitchPipelineState;
   onClose: () => void;
 }) {
   const feedRef = useRef<HTMLDivElement>(null);
+  const running = pipelineState.status === "running";
 
   useEffect(() => {
     if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
-  }, [events]);
-
-  const getEventStyle = (ev: LiveEvent) => {
-    if (ev.type === "run_start" || ev.type === "setup")    return "text-blue-400";
-    if (ev.type === "agent_start")                         return "text-indigo-300 font-semibold";
-    if (ev.type === "agent_complete" && ev.success)        return "text-green-400";
-    if (ev.type === "agent_complete" && !ev.success)       return "text-red-400";
-    if (ev.type === "run_complete")                        return "text-rose-400 font-semibold";
-    if (ev.type === "error")                               return "text-red-400";
-    if (ev.type === "tool_call_result" && ev.success)      return "text-emerald-400/80";
-    if (ev.type === "tool_call_result" && !ev.success)     return "text-red-400/80";
-    return "text-muted-foreground";
-  };
-
-  const getEventIcon = (ev: LiveEvent) => {
-    if (ev.type === "run_start" || ev.type === "setup")    return <Zap className="w-3 h-3 text-blue-400 shrink-0 mt-0.5" />;
-    if (ev.type === "agent_start")                         return <Play className="w-3 h-3 text-indigo-300 shrink-0 mt-0.5" />;
-    if (ev.type === "agent_complete" && ev.success)        return <CheckCircle className="w-3 h-3 text-green-400 shrink-0 mt-0.5" />;
-    if (ev.type === "agent_complete" && !ev.success)       return <XCircle className="w-3 h-3 text-red-400 shrink-0 mt-0.5" />;
-    if (ev.type === "run_complete")                        return <CheckCircle2 className="w-3 h-3 text-rose-400 shrink-0 mt-0.5" />;
-    if (ev.type === "error")                               return <XCircle className="w-3 h-3 text-red-400 shrink-0 mt-0.5" />;
-    if (ev.type === "tool_call_result" && ev.success)      return <span className="w-3 h-3 text-[8px] text-emerald-400 shrink-0 mt-0.5 flex items-center justify-center">✓</span>;
-    if (ev.type === "tool_call_result" && !ev.success)     return <span className="w-3 h-3 text-[8px] text-red-400 shrink-0 mt-0.5 flex items-center justify-center">✗</span>;
-    return <Terminal className="w-3 h-3 text-muted-foreground/50 shrink-0 mt-0.5" />;
-  };
+  }, [pipelineState.toolEvents.length]);
 
   return (
     <div className="border border-border/50 rounded-lg bg-black/40 overflow-hidden mb-4" data-testid="fitch-live-feed">
@@ -221,8 +228,8 @@ function LiveFeedPanel({ events, activeAgentName, running, onClose }: {
         <div className="flex items-center gap-2">
           <div className={`w-2 h-2 rounded-full ${running ? "bg-rose-400 animate-pulse" : "bg-muted-foreground/40"}`} />
           <span className="text-[11px] font-medium font-mono">Live Pipeline Execution</span>
-          {activeAgentName && running && (
-            <span className="text-[10px] text-muted-foreground/70">— {activeAgentName}</span>
+          {pipelineState.currentRole && running && (
+            <span className="text-[10px] text-muted-foreground/70">— {pipelineState.currentRole}</span>
           )}
         </div>
         <button onClick={onClose} className="text-muted-foreground/50 hover:text-foreground transition-colors text-[10px]">
@@ -230,18 +237,18 @@ function LiveFeedPanel({ events, activeAgentName, running, onClose }: {
         </button>
       </div>
       <div ref={feedRef} className="h-48 overflow-y-auto px-3 py-2 space-y-1 font-mono">
-        {events.length === 0 && (
+        {pipelineState.toolEvents.length === 0 && (
           <p className="text-[10px] text-muted-foreground/40 italic">Waiting for pipeline to start…</p>
         )}
-        {events.map(ev => (
-          <div key={ev.id} className="flex items-start gap-2" data-testid={`fitch-live-event-${ev.id}`}>
-            {getEventIcon(ev)}
+        {pipelineState.toolEvents.map((ev, idx) => (
+          <div key={idx} className="flex items-start gap-2" data-testid={`fitch-live-event-${idx}`}>
+            {getEventIcon(ev as any)}
             <div className="flex-1 min-w-0">
-              <span className="text-[9px] text-muted-foreground/40 mr-2">{ev.time}</span>
-              {ev.type === "tool_call_result" && ev.tool && (
-                <span className="text-[9px] text-muted-foreground/60 mr-1">[{ev.tool}]</span>
-              )}
-              <span className={`text-[10px] ${getEventStyle(ev)}`}>{ev.message}</span>
+              <span className="text-[9px] text-muted-foreground/40 mr-2">{formatTime(ev.timestamp)}</span>
+              <span className="text-[9px] text-muted-foreground/60 mr-1">[{ev.tool}]</span>
+              <span className={`text-[10px] ${getEventStyle(ev as any)}`}>
+                {ev.agentName} → {ev.tool} → {ev.success ? (ev.recordCount != null ? `${ev.recordCount} records` : "OK") : "failed"}
+              </span>
             </div>
           </div>
         ))}
@@ -251,107 +258,42 @@ function LiveFeedPanel({ events, activeAgentName, running, onClose }: {
             <span className="text-[10px] text-rose-400/70 animate-pulse">Agents running…</span>
           </div>
         )}
+        {pipelineState.status === "error" && pipelineState.error && (
+          <div className="flex items-center gap-2 text-red-400">
+            <Terminal className="w-3 h-3 shrink-0" />
+            <span className="text-[10px]">Error: {pipelineState.error}</span>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
 export default function FitchDemo() {
-  const [activeScreen, setActiveScreen]   = useState(1);
-  const [liveRunning, setLiveRunning]     = useState(false);
-  const [liveComplete, setLiveComplete]   = useState(false);
-  const [liveEvents, setLiveEvents]       = useState<LiveEvent[]>([]);
-  const [liveAgentName, setLiveAgentName] = useState<string | null>(null);
-  const [showLiveFeed, setShowLiveFeed]   = useState(false);
+  const [activeScreen, setActiveScreen] = useState(1);
+  const [showLiveFeed, setShowLiveFeed] = useState(false);
+  const queryClient                     = useQueryClient();
 
-  const esRef       = useRef<EventSource | null>(null);
-  const liveEventId = useRef(0);
-  const queryClient = useQueryClient();
+  const { state, trigger } = useFitchPipeline();
 
-  const screen    = SCREENS.find(s => s.id === activeScreen)!;
-  const ScreenIcon = screen.icon;
+  const liveRunning  = state.status === "running";
+  const liveComplete = state.status === "complete";
 
-  const addEvent = useCallback((type: string, agentName: string, message: string, tool?: string, success?: boolean) => {
-    const now  = new Date();
-    const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
-    setLiveEvents(prev => [...prev, { id: liveEventId.current++, time, agentName, type, tool, success, message }]);
-  }, []);
+  const prevStatusRef = useRef(state.status);
+  useEffect(() => {
+    if (prevStatusRef.current === "running" && state.status === "complete") {
+      queryClient.invalidateQueries({ queryKey: ["/demo-api/fitch/agent-runs"] });
+    }
+    prevStatusRef.current = state.status;
+  }, [state.status, queryClient]);
 
-  const stopLiveRun = useCallback(() => {
-    if (esRef.current) { esRef.current.close(); esRef.current = null; }
-    setLiveAgentName(null);
-  }, []);
-
-  const startLiveRun = useCallback(() => {
-    stopLiveRun();
-    setLiveEvents([]);
-    liveEventId.current = 0;
-    setLiveRunning(true);
-    setLiveComplete(false);
+  const handleRunPipeline = () => {
     setShowLiveFeed(true);
+    trigger();
+  };
 
-    const es = new EventSource("/demo-api/fitch/live-run");
-    esRef.current = es;
-
-    es.addEventListener("run_start", (e) => {
-      const d = JSON.parse(e.data);
-      addEvent("run_start", "AQEWS Runtime", d.message || "Starting AQEWS pipeline…");
-    });
-    es.addEventListener("setup", (e) => {
-      const d = JSON.parse(e.data);
-      addEvent("setup", "AQEWS Runtime", d.message || "Setting up MCP servers…");
-    });
-    es.addEventListener("agent_start", (e) => {
-      const d = JSON.parse(e.data);
-      setLiveAgentName(d.agentName);
-      addEvent("agent_start", d.agentName, `▶ Starting ${d.agentName}`);
-      queryClient.invalidateQueries({ queryKey: ["/demo-api/fitch/agent-runs"] });
-    });
-    es.addEventListener("agent_event", (e) => {
-      const d = JSON.parse(e.data);
-      if (d.type === "tool_call_result") {
-        const label = d.success
-          ? `${d.data?.tool || d.tool} → ${d.data?.recordCount != null ? `${d.data.recordCount} records` : "OK"}`
-          : `${d.data?.tool || d.tool} → ${d.data?.error || "failed"}`;
-        addEvent("tool_call_result", d.agentName, label, d.data?.tool || d.tool, d.success);
-      } else {
-        addEvent(d.type || "agent_event", d.agentName, d.data?.message || "Agent thinking…");
-      }
-    });
-    es.addEventListener("agent_complete", (e) => {
-      const d = JSON.parse(e.data);
-      setLiveAgentName(null);
-      addEvent("agent_complete", d.agentName, `${d.success ? "✓ Complete" : "✗ Failed"}: ${d.agentName}`, undefined, d.success);
-      queryClient.invalidateQueries({ queryKey: ["/demo-api/fitch/agent-runs"] });
-    });
-    es.addEventListener("run_complete", () => {
-      addEvent("run_complete", "AQEWS Runtime", "All 6 AQEWS agents completed — early warning scores ready", undefined, true);
-      es.close();
-      esRef.current = null;
-      setLiveRunning(false);
-      setLiveComplete(true);
-      setLiveAgentName(null);
-      queryClient.invalidateQueries({ queryKey: ["/demo-api/fitch/agent-runs"] });
-    });
-    es.addEventListener("error", (e: any) => {
-      const d = e.data ? JSON.parse(e.data) : {};
-      addEvent("error", "AQEWS Runtime", `Error: ${d.message || "Pipeline error"}`);
-      es.close();
-      esRef.current = null;
-      setLiveRunning(false);
-      setLiveAgentName(null);
-    });
-    es.onerror = () => {
-      if (es.readyState === EventSource.CLOSED) {
-        setLiveRunning(false);
-        esRef.current = null;
-        setLiveAgentName(null);
-      }
-    };
-  }, [addEvent, stopLiveRun, queryClient]);
-
-  useEffect(() => () => { stopLiveRun(); }, [stopLiveRun]);
-
+  const screen     = SCREENS.find(s => s.id === activeScreen)!;
+  const ScreenIcon = screen.icon;
   const goNext = () => setActiveScreen(s => Math.min(6, s + 1));
   const goPrev = () => setActiveScreen(s => Math.max(1, s - 1));
 
@@ -362,20 +304,19 @@ export default function FitchDemo() {
         <div className="px-6 pt-3">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             {/* Title */}
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <Shield className="w-5 h-5 text-rose-400" />
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h1 className="text-sm font-semibold">Fitch Ratings</h1>
-                    <Badge variant="secondary" className="text-[10px]">Asset Quality Early Warning System</Badge>
-                    <Badge className="text-[10px] bg-rose-500/20 text-rose-300 border-rose-500/30">Live Demo</Badge>
-                    {liveComplete && <Badge className="text-[10px] bg-green-500/20 text-green-300 border-green-500/30">✓ Run Complete</Badge>}
-                  </div>
-                  <p className="text-[10px] text-muted-foreground">
-                    6 GPT-4.1 agents · 4 MCP servers · 15 tools · SVB 182-day advance warning
-                  </p>
+            <div className="flex items-center gap-2">
+              <Shield className="w-5 h-5 text-rose-400" />
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h1 className="text-sm font-semibold">Fitch Ratings</h1>
+                  <Badge variant="secondary" className="text-[10px]">Asset Quality Early Warning System</Badge>
+                  <Badge className="text-[10px] bg-rose-500/20 text-rose-300 border-rose-500/30">Live Demo</Badge>
+                  {liveComplete && <Badge className="text-[10px] bg-green-500/20 text-green-300 border-green-500/30">✓ Run Complete</Badge>}
+                  {state.status === "error" && <Badge className="text-[10px] bg-red-500/20 text-red-300 border-red-500/30">⚠ Error</Badge>}
                 </div>
+                <p className="text-[10px] text-muted-foreground">
+                  6 GPT-4.1 agents · 4 MCP servers · 15 tools · SVB 182-day advance warning
+                </p>
               </div>
             </div>
 
@@ -408,9 +349,8 @@ export default function FitchDemo() {
 
           {/* Pipeline header — 6 agent steps + Run button */}
           <PipelineHeader
-            liveRunning={liveRunning}
-            activeAgentName={liveAgentName}
-            onRunPipeline={startLiveRun}
+            pipelineState={state}
+            onRunPipeline={handleRunPipeline}
           />
 
           {/* Current screen context bar */}
@@ -427,12 +367,10 @@ export default function FitchDemo() {
       {/* Screen content */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden">
         <div className="p-6">
-          {/* Live feed panel */}
+          {/* Live feed panel — driven by shared useFitchPipeline state */}
           {showLiveFeed && (
             <LiveFeedPanel
-              events={liveEvents}
-              activeAgentName={liveAgentName}
-              running={liveRunning}
+              pipelineState={state}
               onClose={() => setShowLiveFeed(false)}
             />
           )}
