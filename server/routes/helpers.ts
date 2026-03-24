@@ -820,3 +820,240 @@ RULES:
 
   return parts.join("\n");
 }
+
+
+// ============================================================
+// Outcome KPI helpers (moved from routes.ts)
+// ============================================================
+
+export interface KpiReEvalResult {
+  kpiId: string;
+  kpiName: string;
+  oldValue: number;
+  newValue: number;
+  trend: string;
+  breached: boolean;
+}
+
+export function computeConstraintGraph(
+  outcome: {
+    riskTier?: string | null;
+    approvalGates?: any;
+    pricingModel?: string | null;
+    pricePerUnit?: number | null;
+    pricingTiers?: any;
+    slaConfig?: any;
+    maxDriftPercent?: number | null;
+    autoPauseTrigger?: boolean | null;
+    riskThreshold?: number | null;
+  },
+  kpis: Array<{
+    id: string;
+    name: string;
+    unit: string;
+    target: number;
+    slaThreshold?: number | null;
+    baseline?: number | null;
+    expression?: string | null;
+  }>
+): Record<string, any> {
+  const performanceConstraints: any[] = [];
+  const latencyConstraints: any[] = [];
+  const complianceConstraints: any[] = [];
+  const commercialConstraints: any[] = [];
+
+  for (const kpi of kpis) {
+    const nameLower = (kpi.name || "").toLowerCase();
+    const unitLower = (kpi.unit || "").toLowerCase();
+
+    if (nameLower.includes("latency") || nameLower.includes("response time") || nameLower.includes("processing time") || unitLower.includes("ms") || unitLower.includes("seconds")) {
+      latencyConstraints.push({
+        source: "kpi",
+        kpiId: kpi.id,
+        kpiName: kpi.name,
+        target: kpi.target,
+        slaThreshold: kpi.slaThreshold,
+        unit: kpi.unit,
+        expression: kpi.expression,
+        propagatesTo: ["agent_design", "deployment", "self_healing"],
+      });
+    } else if (
+      nameLower.includes("accuracy") || nameLower.includes("success") ||
+      nameLower.includes("rate") || nameLower.includes("score") ||
+      nameLower.includes("quality") || nameLower.includes("resolution") ||
+      unitLower === "percent" || unitLower === "%"
+    ) {
+      performanceConstraints.push({
+        source: "kpi",
+        kpiId: kpi.id,
+        kpiName: kpi.name,
+        target: kpi.target,
+        slaThreshold: kpi.slaThreshold,
+        unit: kpi.unit,
+        baseline: kpi.baseline,
+        expression: kpi.expression,
+        propagatesTo: ["agent_design", "eval_studio", "deployment", "self_healing"],
+      });
+    } else {
+      performanceConstraints.push({
+        source: "kpi",
+        kpiId: kpi.id,
+        kpiName: kpi.name,
+        target: kpi.target,
+        slaThreshold: kpi.slaThreshold,
+        unit: kpi.unit,
+        baseline: kpi.baseline,
+        expression: kpi.expression,
+        propagatesTo: ["agent_design", "eval_studio"],
+      });
+    }
+  }
+
+  const slaConfig = (outcome.slaConfig || {}) as Record<string, any>;
+  if (slaConfig.maxP95LatencyMs) {
+    latencyConstraints.push({
+      source: "sla_config",
+      metric: "maxP95LatencyMs",
+      value: slaConfig.maxP95LatencyMs,
+      unit: "ms",
+      propagatesTo: ["agent_design", "deployment", "self_healing"],
+    });
+  }
+
+  complianceConstraints.push({
+    source: "outcome",
+    riskTier: outcome.riskTier || "MEDIUM",
+    propagatesTo: ["agent_design", "deployment", "eval_studio"],
+  });
+
+  if (outcome.approvalGates) {
+    complianceConstraints.push({
+      source: "approval_gates",
+      gates: outcome.approvalGates,
+      propagatesTo: ["agent_design", "deployment"],
+    });
+  }
+
+  if (outcome.maxDriftPercent != null) {
+    complianceConstraints.push({
+      source: "drift_policy",
+      maxDriftPercent: outcome.maxDriftPercent,
+      autoPauseTrigger: outcome.autoPauseTrigger,
+      propagatesTo: ["self_healing", "deployment"],
+    });
+  }
+
+  if (outcome.riskThreshold != null) {
+    complianceConstraints.push({
+      source: "risk_threshold",
+      threshold: outcome.riskThreshold,
+      propagatesTo: ["agent_design", "eval_studio"],
+    });
+  }
+
+  if (outcome.pricingModel) {
+    commercialConstraints.push({
+      source: "pricing",
+      pricingModel: outcome.pricingModel,
+      pricePerUnit: outcome.pricePerUnit,
+      propagatesTo: ["deployment", "self_healing"],
+    });
+  }
+
+  if (outcome.pricingTiers) {
+    commercialConstraints.push({
+      source: "pricing_tiers",
+      tiers: outcome.pricingTiers,
+      propagatesTo: ["deployment"],
+    });
+  }
+
+  return {
+    version: 1,
+    generatedAt: new Date().toISOString(),
+    performanceConstraints,
+    latencyConstraints,
+    complianceConstraints,
+    commercialConstraints,
+    summary: {
+      totalConstraints: performanceConstraints.length + latencyConstraints.length + complianceConstraints.length + commercialConstraints.length,
+      categories: {
+        performance: performanceConstraints.length,
+        latency: latencyConstraints.length,
+        compliance: complianceConstraints.length,
+        commercial: commercialConstraints.length,
+      },
+    },
+  };
+}
+
+export async function recomputeOutcomeKpis(outcomeId: string): Promise<{
+  updated: number;
+  totalRuns: number;
+  totalEvents: number;
+  changes: KpiReEvalResult[];
+  kpis: any[];
+}> {
+  const kpis = await storage.getKpisByOutcome(outcomeId);
+  const agents = await storage.getAgents();
+  const traces = await storage.getTraces();
+  const outcomeEvents = await storage.getOutcomeEvents();
+  const boundAgents = agents.filter(a => a.outcomeId === outcomeId);
+  const boundAgentIds = new Set(boundAgents.map(a => a.id));
+  const relevantTraces = traces.filter(t => boundAgentIds.has(t.agentId));
+  const relevantEvents = outcomeEvents.filter(e => e.outcomeId === outcomeId);
+
+  if (relevantTraces.length === 0 && relevantEvents.length === 0) {
+    return { updated: 0, totalRuns: 0, totalEvents: 0, changes: [], kpis };
+  }
+
+  const totalTraces = relevantTraces.length;
+  const failedTraces = relevantTraces.filter(t => t.status === "failed" || t.status === "error").length;
+  const changes: KpiReEvalResult[] = [];
+
+  for (const kpi of kpis) {
+    const kpiNameLower = (kpi.name || "").toLowerCase();
+    let newValue: number | null = null;
+
+    if (kpiNameLower.includes("success") || kpiNameLower.includes("accuracy") || kpiNameLower.includes("rate")) {
+      if (totalTraces > 0) {
+        newValue = Math.round(((totalTraces - failedTraces) / totalTraces) * 10000) / 100;
+      }
+    } else if (kpiNameLower.includes("latency") || kpiNameLower.includes("time") || kpiNameLower.includes("response")) {
+      if (totalTraces > 0) {
+        const avgLatencyMs = relevantTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / totalTraces;
+        const unitLower = (kpi.unit || "").toLowerCase();
+        if (unitLower === "minutes" || unitLower === "min") {
+          newValue = Math.round((avgLatencyMs / 60000) * 100) / 100;
+        } else if (unitLower === "seconds" || unitLower === "sec" || unitLower === "s") {
+          newValue = Math.round((avgLatencyMs / 1000) * 10) / 10;
+        } else {
+          newValue = Math.round(avgLatencyMs);
+        }
+      }
+    } else if (kpiNameLower.includes("volume") || kpiNameLower.includes("count") || kpiNameLower.includes("throughput") ||
+               kpiNameLower.includes("resolution") || kpiNameLower.includes("processed") || kpiNameLower.includes("moderated") ||
+               kpiNameLower.includes("qualified") || kpiNameLower.includes("invoices")) {
+      newValue = relevantEvents.length > 0 ? relevantEvents.length : totalTraces;
+    } else if (kpiNameLower.includes("cost")) {
+      if (totalTraces > 0) {
+        newValue = parseFloat(relevantTraces.reduce((s, t) => s + (t.costUsd || 0), 0).toFixed(4));
+      }
+    }
+
+    if (newValue !== null && newValue !== kpi.currentValue) {
+      const oldValue = kpi.currentValue || 0;
+      const trend = newValue > oldValue ? "up" : newValue < oldValue ? "down" : (kpi.trend || "stable");
+      const breached = kpi.slaThreshold != null && (
+        kpiNameLower.includes("latency") || kpiNameLower.includes("time") || kpiNameLower.includes("cost")
+          ? newValue > kpi.slaThreshold
+          : newValue < kpi.slaThreshold
+      );
+      await storage.updateKpi(kpi.id, { currentValue: newValue, trend });
+      changes.push({ kpiId: kpi.id, kpiName: kpi.name, oldValue, newValue, trend, breached });
+    }
+  }
+
+  const updatedKpis = await storage.getKpisByOutcome(outcomeId);
+  return { updated: changes.length, totalRuns: totalTraces, totalEvents: relevantEvents.length, changes, kpis: updatedKpis };
+}
