@@ -3,7 +3,7 @@ import OpenAI from "openai";
 import { z } from "zod";
 import { storage } from "../storage";
 import { checkPermission } from "../permissions";
-import { resolveOntologyTags, generateKpiAlignedEvalSuite } from "./helpers";
+import { resolveOntologyTags, generateKpiAlignedEvalSuite, handleZodError } from "./helpers";
 import {
   insertAgentTemplateSchema,
   insertEvalSuiteSchema,
