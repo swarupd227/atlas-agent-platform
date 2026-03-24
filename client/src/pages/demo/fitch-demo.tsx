@@ -1,9 +1,9 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Shield, BarChart2, Activity, MessageSquare, AlertTriangle, FileText,
-  ChevronLeft, ChevronRight, TrendingDown, Database,
+  ChevronLeft, ChevronRight, Users,
 } from "lucide-react";
 import FitchS1CommandCenter from "./fitch-s1-command-center";
 import FitchS2FfiecIngest from "./fitch-s2-ffiec-ingest";
@@ -13,42 +13,12 @@ import FitchS5SvbBacktest from "./fitch-s5-svb-backtest";
 import FitchS6ReportAssembly from "./fitch-s6-report-assembly";
 
 const SCREENS = [
-  {
-    id: 1,
-    label: "Command Center",
-    icon: Activity,
-    description: "Portfolio overview, live pipeline runner, watch list",
-  },
-  {
-    id: 2,
-    label: "FFIEC Ingest",
-    icon: Database,
-    description: "Call Report data ingestion, CAMELS sub-scoring",
-  },
-  {
-    id: 3,
-    label: "Risk Scoring",
-    icon: BarChart2,
-    description: "Composite CAMELS scores, portfolio risk distribution",
-  },
-  {
-    id: 4,
-    label: "NLP Signals",
-    icon: MessageSquare,
-    description: "Earnings transcripts, SEC filings, news sentiment",
-  },
-  {
-    id: 5,
-    label: "SVB Backtest",
-    icon: AlertTriangle,
-    description: "SVB early warning validation — the wow moment",
-  },
-  {
-    id: 6,
-    label: "Report Assembly",
-    icon: FileText,
-    description: "AI-assembled credit assessment packages",
-  },
+  { id: 1, label: "Risk Dashboard",    icon: Activity,      description: "10-bank composite risk scores — live from Composite Risk Scorer" },
+  { id: 2, label: "Ratio Deep-Dive",   icon: BarChart2,     description: "18 CAMELS ratios with breach flags and peer median — live from Financial Ratio Engine" },
+  { id: 3, label: "NLP Signals",       icon: MessageSquare, description: "Transcript sentiment · MD&A language · News sigma-spikes" },
+  { id: 4, label: "Peer Benchmarking", icon: Users,         description: "G-SIB cohort comparison and peer divergence — live from Composite Risk Scorer" },
+  { id: 5, label: "SVB Backtest",      icon: AlertTriangle, description: "SVB 182-day advance warning — from Assessment Report Generator (get_svb_backtest_data)" },
+  { id: 6, label: "Assessment Package",icon: FileText,      description: "Analyst-ready credit packages — live from Assessment Report Generator" },
 ] as const;
 
 export default function FitchDemo() {
@@ -77,7 +47,7 @@ export default function FitchDemo() {
                     <Badge className="text-[10px] bg-rose-500/20 text-rose-300 border-rose-500/30">Live Demo</Badge>
                   </div>
                   <p className="text-[10px] text-muted-foreground">
-                    6 GPT-4.1 agents · 4 MCP servers · 15 tools · SVB backtesting
+                    6 GPT-4.1 agents · 4 MCP servers · 15 tools · SVB 182-day advance warning
                   </p>
                 </div>
               </div>
@@ -94,7 +64,7 @@ export default function FitchDemo() {
                     key={s.id}
                     data-testid={`fitch-nav-screen-${s.id}`}
                     onClick={() => setActiveScreen(s.id)}
-                    className={`text-[10px] px-2.5 py-1 rounded transition-all ${
+                    className={`text-[10px] px-2.5 py-1 rounded transition-all whitespace-nowrap ${
                       activeScreen === s.id
                         ? "bg-rose-600 text-white font-medium"
                         : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
@@ -125,11 +95,11 @@ export default function FitchDemo() {
       <div className="flex-1 overflow-y-auto overflow-x-hidden">
         <div className="p-6">
           {activeScreen === 1 && <FitchS1CommandCenter onScreenChange={setActiveScreen} />}
-          {activeScreen === 2 && <FitchS2FfiecIngest />}
-          {activeScreen === 3 && <FitchS3RiskScoring />}
-          {activeScreen === 4 && <FitchS4NlpSignals />}
-          {activeScreen === 5 && <FitchS5SvbBacktest />}
-          {activeScreen === 6 && <FitchS6ReportAssembly />}
+          {activeScreen === 2 && <FitchS2FfiecIngest onScreenChange={setActiveScreen} />}
+          {activeScreen === 3 && <FitchS3RiskScoring onScreenChange={setActiveScreen} />}
+          {activeScreen === 4 && <FitchS4NlpSignals onScreenChange={setActiveScreen} />}
+          {activeScreen === 5 && <FitchS5SvbBacktest onScreenChange={setActiveScreen} />}
+          {activeScreen === 6 && <FitchS6ReportAssembly onScreenChange={setActiveScreen} />}
         </div>
       </div>
     </div>

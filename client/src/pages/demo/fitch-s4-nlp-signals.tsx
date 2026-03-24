@@ -1,277 +1,164 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { MessageSquare, FileText, Newspaper, TrendingDown, AlertTriangle, CheckCircle2 } from "lucide-react";
-import { useFitchPipeline, FITCH_AGENTS } from "./fitch-constants";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useFitchPipeline, FITCH_BANKS, FITCH_RISK_TIER_COLORS } from "./fitch-constants";
 import FitchEmptyState from "./fitch-empty-state";
-import {
-  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
-  BarChart, Bar, Cell,
-} from "recharts";
 
-const SENTIMENT_TREND = [
-  { quarter: "2022-Q1", earnings: 0.12, filings: 0.08, news: 0.05 },
-  { quarter: "2022-Q2", earnings: -0.04, filings: -0.08, news: -0.12 },
-  { quarter: "2022-Q3", earnings: -0.18, filings: -0.22, news: -0.28 },
-  { quarter: "2022-Q4", earnings: -0.31, filings: -0.38, news: -0.41 },
-  { quarter: "2023-Q1", earnings: -0.44, filings: -0.52, news: -0.58 },
-];
+interface Props {
+  onScreenChange: (screen: number) => void;
+}
 
-const SVB_PHRASES = [
-  { phrase: "deposit outflows", count: 28, signal: "HIGH" },
-  { phrase: "HTM securities",   count: 24, signal: "HIGH" },
-  { phrase: "unrealized losses",count: 19, signal: "HIGH" },
-  { phrase: "liquidity pressure",count: 16, signal: "HIGH" },
-  { phrase: "wholesale funding", count: 12, signal: "MEDIUM" },
-  { phrase: "capital raise",    count: 9,  signal: "MEDIUM" },
-  { phrase: "VC clients",       count: 8,  signal: "MEDIUM" },
-];
-
-const TRANSCRIPT_SAMPLES = [
-  {
-    bank: "Silicon Valley Bank",
-    quarter: "2022-Q3",
-    sentiment: -0.31,
-    tone: "Defensive",
-    excerpt: "We remain well-capitalized. The HTM portfolio, while carrying unrealized losses, will be held to maturity and does not impact regulatory capital.",
-    riskPhrases: ["HTM portfolio","unrealized losses","deposit outflows"],
-    flag: true,
-  },
-  {
-    bank: "Silicon Valley Bank",
-    quarter: "2022-Q4",
-    sentiment: -0.44,
-    tone: "Defensive",
-    excerpt: "We are taking proactive steps to diversify our deposit base and reduce reliance on the venture capital ecosystem. Liquidity remains adequate.",
-    riskPhrases: ["diversify deposit base","venture capital ecosystem","liquidity"],
-    flag: true,
-  },
-  {
-    bank: "Pacific Western Bank",
-    quarter: "2024-Q3",
-    sentiment: -0.22,
-    tone: "Cautious",
-    excerpt: "We are conducting additional stress tests on our CRE office portfolio given remote work trends affecting property values.",
-    riskPhrases: ["stress tests","CRE office","remote work"],
-    flag: false,
-  },
-];
-
-const SIGNAL_COLORS: Record<string, string> = {
-  HIGH: "bg-rose-500/20 text-rose-400 border-rose-500/30",
-  MEDIUM: "bg-amber-500/20 text-amber-400 border-amber-500/30",
-  LOW: "bg-green-500/20 text-green-400 border-green-500/30",
-};
-
-export default function FitchS4NlpSignals() {
+export default function FitchS4PeerBenchmarking({ onScreenChange }: Props) {
   const { state } = useFitchPipeline();
-  const transcriptAgent = FITCH_AGENTS.find(a => a.role === "transcript_analyst")!;
-  const newsAgent = FITCH_AGENTS.find(a => a.role === "news_processor")!;
+  const [selectedBank, setSelectedBank] = useState(FITCH_BANKS[0].name);
 
-  const transcriptResult = state.results.find(r => r.role === "transcript_analyst");
-  const newsResult = state.results.find(r => r.role === "news_processor");
-  const liveTranscript = transcriptResult?.resultSummary;
-  const liveNews = newsResult?.resultSummary;
+  const result = state.results.find(r => r.role === "risk_scorer");
+  const liveData = result?.resultSummary;
+  const hasResults = !!liveData;
 
-  const { data } = useQuery<any>({
-    queryKey: ["/demo-api/fitch/nlp-signals"],
-    refetchInterval: 120_000,
-  });
-
-  const hasRun = !!transcriptResult || !!newsResult;
-  const isIdle = state.status === "idle" && !hasRun;
-
-  const transcriptsAnalyzed = liveTranscript?.transcriptsAnalyzed ?? 0;
-  const filingsProcessed = liveTranscript?.filingsProcessed ?? 0;
-  const negativeShifts = liveTranscript?.negativeShifts ?? 0;
-  const materialWeakness = liveTranscript?.materialWeaknessFlags ?? 0;
-  const articlesScanned = liveNews?.articlesScanned ?? 0;
-  const highImpactEvents = liveNews?.highImpactEvents ?? 0;
-  const avgSentiment = liveTranscript?.avgSentimentScore ?? null;
-
-  const topRiskPhrases: string[] = liveTranscript?.topRiskPhrases ?? [];
-  const leadingIndicators: any[] = liveNews?.leadingIndicators ?? [];
-
-  if (isIdle) {
-    return (
-      <div className="flex flex-col gap-4">
-        <div className="grid grid-cols-2 gap-3">
-          {[transcriptAgent, newsAgent].map(agent => (
-            <Card key={agent.role} className={`${agent.borderColor} ${agent.bgColor}`}>
-              <CardContent className="p-3">
-                <div className="flex items-center gap-2">
-                  <MessageSquare className={`w-4 h-4 ${agent.color}`} />
-                  <span className={`text-[11px] font-semibold ${agent.color}`}>{agent.name}</span>
-                </div>
-                <p className="text-[10px] text-muted-foreground mt-1">{agent.description}</p>
-                <div className="flex flex-wrap gap-1 mt-2">
-                  {agent.tools.map(t => <span key={t} className="text-[9px] font-mono bg-muted/30 text-muted-foreground/60 px-1 py-0.5 rounded">{t}</span>)}
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-        <FitchEmptyState agentName="Transcript & Filing Analyst + News Signal Processor" agentRole="transcript_analyst" />
-      </div>
-    );
-  }
+  const scores: Record<string, any> = liveData?.scores ?? {};
+  const bankData = scores[selectedBank] ?? {};
+  const peerDivergence: number = bankData.peerDivergence ?? 0;
+  const tier: keyof typeof FITCH_RISK_TIER_COLORS = bankData.tier ?? "Green";
+  const colors = FITCH_RISK_TIER_COLORS[tier] ?? FITCH_RISK_TIER_COLORS.Green;
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Agent headers */}
-      <div className="grid grid-cols-2 gap-3">
-        {[transcriptAgent, newsAgent].map(agent => {
-          const result = state.results.find(r => r.role === agent.role);
-          const isCurrent = state.currentRole === agent.role;
-          return (
-            <Card key={agent.role} className={`${agent.borderColor} ${agent.bgColor}`}>
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <div className="flex-1">
+          <h2 className="text-sm font-semibold">G-SIB Peer Benchmarking</h2>
+          <p className="text-[11px] text-muted-foreground">
+            Bank vs G-SIB cohort — composite scores and peer divergence — live from Composite Risk Scorer
+          </p>
+        </div>
+        {hasResults && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-muted-foreground">Bank:</span>
+            <Select value={selectedBank} onValueChange={setSelectedBank}>
+              <SelectTrigger data-testid="fitch-s4-bank-select" className="h-7 text-[11px] w-[180px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {FITCH_BANKS.map(b => (
+                  <SelectItem key={b.id} value={b.name} className="text-[11px]">{b.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+      </div>
+
+      {!hasResults ? (
+        <FitchEmptyState
+          agentName="Composite Risk Scorer"
+          agentRole="risk_scorer"
+          description="Run the pipeline to generate peer benchmarking data for all 10 banks vs the G-SIB cohort median."
+          onGoToCommandCenter={() => onScreenChange(1)}
+        />
+      ) : (
+        <>
+          {/* Selected bank summary */}
+          <div className="grid grid-cols-4 gap-3">
+            <Card className={`border ${colors.border}`}>
               <CardContent className="p-3">
-                <div className="flex items-center gap-2">
-                  <MessageSquare className={`w-4 h-4 ${agent.color}`} />
-                  <span className={`text-[11px] font-semibold ${agent.color}`}>{agent.name}</span>
-                  {isCurrent && <Badge className="ml-auto bg-amber-500/20 text-amber-300 border-amber-500/30 animate-pulse text-[9px]">Running…</Badge>}
-                  {result && !isCurrent && <CheckCircle2 className="w-3.5 h-3.5 text-green-400 ml-auto" />}
-                </div>
-                <p className="text-[10px] text-muted-foreground mt-1">{agent.description}</p>
-                <div className="flex flex-wrap gap-1 mt-2">
-                  {agent.tools.map(t => <span key={t} className="text-[9px] font-mono bg-muted/30 text-muted-foreground/60 px-1 py-0.5 rounded">{t}</span>)}
-                </div>
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Composite Score</p>
+                <p className={`text-2xl font-bold ${colors.text}`}>{bankData.score ?? "—"}</p>
+                <Badge className={`text-[9px] mt-1 ${colors.badge}`}>{tier}</Badge>
               </CardContent>
             </Card>
-          );
-        })}
-      </div>
-
-      {/* Stats */}
-      <div className="grid grid-cols-4 gap-3">
-        <Card>
-          <CardContent className="p-3">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Transcripts Analyzed</p>
-            <p className="text-2xl font-bold">{transcriptsAnalyzed.toLocaleString()}</p>
-            <p className="text-[11px] text-muted-foreground">Earnings calls this quarter</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-3">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Negative Tone Shifts</p>
-            <p className="text-2xl font-bold text-amber-400">{negativeShifts}</p>
-            <p className="text-[11px] text-muted-foreground">Defensive tone detected</p>
-          </CardContent>
-        </Card>
-        <Card className="border-rose-500/30">
-          <CardContent className="p-3">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Material Weakness Flags</p>
-            <p className="text-2xl font-bold text-rose-400">{materialWeakness}</p>
-            <p className="text-[11px] text-muted-foreground">From 10-K/10-Q filings</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-3">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">High-Impact News</p>
-            <p className="text-2xl font-bold text-amber-400">{highImpactEvents}</p>
-            <p className="text-[11px] text-muted-foreground">Credit-relevant events</p>
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="flex gap-4">
-        {/* Sentiment trend */}
-        <Card className="flex-[6]">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">NLP Sentiment Trend — SVB (2022-Q1 to 2023-Q1)</CardTitle>
-            <p className="text-[11px] text-muted-foreground">Earnings calls, SEC filings, and news — sentiment deterioration 2 quarters before failure</p>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={200}>
-              <AreaChart data={SENTIMENT_TREND} margin={{ left: 0, right: 12, top: 4, bottom: 0 }}>
-                <XAxis dataKey="quarter" tick={{ fontSize: 9 }} />
-                <YAxis tick={{ fontSize: 10 }} domain={[-0.8, 0.3]} />
-                <Tooltip formatter={(v: any) => [v.toFixed(3), ""]} />
-                <Legend iconSize={8} wrapperStyle={{ fontSize: 10 }} />
-                <Area type="monotone" dataKey="earnings" name="Earnings Call" stroke="#6366f1" fill="#6366f1" fillOpacity={0.15} />
-                <Area type="monotone" dataKey="filings"  name="SEC Filings"  stroke="#ef4444" fill="#ef4444"  fillOpacity={0.15} />
-                <Area type="monotone" dataKey="news"     name="News"          stroke="#f59e0b" fill="#f59e0b"  fillOpacity={0.15} />
-              </AreaChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        {/* Risk phrase frequency */}
-        <Card className="flex-[4]">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Risk Phrase Frequency</CardTitle>
-            <p className="text-[11px] text-muted-foreground">SVB transcripts & filings 2022-Q3 to 2023-Q1</p>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col gap-1.5 mt-1">
-              {SVB_PHRASES.map(p => (
-                <div key={p.phrase} className="flex items-center gap-2">
-                  <span className="text-[10px] text-muted-foreground/80 w-36 truncate">{p.phrase}</span>
-                  <div className="flex-1 bg-muted/30 rounded-full h-1.5">
-                    <div className="h-1.5 rounded-full bg-rose-400" style={{ width: `${(p.count / 30) * 100}%` }} />
-                  </div>
-                  <span className="text-[10px] w-5 text-right text-rose-400">{p.count}</span>
-                  <span className={`text-[9px] px-1 py-0.5 rounded border ${SIGNAL_COLORS[p.signal]}`}>{p.signal}</span>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Transcript samples */}
-      <Card>
-        <CardHeader className="pb-2">
-          <div className="flex items-center gap-2">
-            <FileText className="w-4 h-4 text-emerald-400" />
-            <CardTitle className="text-sm font-medium">Earnings Call Transcript Excerpts — NLP Flagged</CardTitle>
+            <Card>
+              <CardContent className="p-3">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Trajectory</p>
+                <p className="text-lg font-bold">{bankData.trajectory ?? "—"}</p>
+                {bankData.delta != null && (
+                  <p className={`text-[10px] ${bankData.delta > 0 ? "text-rose-400" : "text-emerald-400"}`}>
+                    {bankData.delta > 0 ? "+" : ""}{bankData.delta.toFixed(1)} pts QoQ
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-3">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Breach Count</p>
+                <p className={`text-2xl font-bold ${(bankData.breachCount ?? 0) > 5 ? "text-rose-400" : (bankData.breachCount ?? 0) > 2 ? "text-amber-400" : "text-foreground"}`}>
+                  {bankData.breachCount ?? 0}
+                </p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-3">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Peer Divergence</p>
+                <p className={`text-2xl font-bold ${peerDivergence > 15 ? "text-rose-400" : peerDivergence > 8 ? "text-amber-400" : "text-emerald-400"}`}>
+                  {peerDivergence > 0 ? "+" : ""}{peerDivergence.toFixed(1)}
+                </p>
+                <p className="text-[9px] text-muted-foreground/60">vs G-SIB median</p>
+              </CardContent>
+            </Card>
           </div>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col gap-3">
-            {TRANSCRIPT_SAMPLES.map((ts, i) => (
-              <div key={i} className={`rounded-lg border p-3 ${ts.flag ? "border-rose-500/30 bg-rose-500/[0.03]" : "border-border/30"}`}>
-                <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                  <span className="text-[11px] font-semibold">{ts.bank}</span>
-                  <Badge variant="secondary" className="text-[9px]">{ts.quarter}</Badge>
-                  <span className={`text-[10px] px-1.5 py-0.5 rounded border ${ts.tone === "Defensive" ? SIGNAL_COLORS.HIGH : SIGNAL_COLORS.MEDIUM}`}>{ts.tone}</span>
-                  <span className={`text-[10px] font-mono ml-auto ${ts.sentiment < -0.3 ? "text-rose-400" : ts.sentiment < -0.1 ? "text-amber-400" : "text-green-400"}`}>
-                    sentiment: {ts.sentiment.toFixed(2)}
-                  </span>
-                </div>
-                <p className="text-[11px] text-muted-foreground/80 italic leading-relaxed mb-2">"{ts.excerpt}"</p>
-                <div className="flex flex-wrap gap-1">
-                  {ts.riskPhrases.map(p => (
-                    <span key={p} className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-400 border border-rose-500/20">{p}</span>
-                  ))}
-                </div>
+
+          {/* All-bank ranking */}
+          <Card>
+            <CardHeader className="pb-2">
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-sm font-medium">G-SIB Cohort — Composite Score Ranking</CardTitle>
+                <Badge variant="secondary" className="text-[10px] ml-auto">Click row to select bank</Badge>
               </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Leading indicators */}
-      {leadingIndicators.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-center gap-2">
-              <Newspaper className="w-4 h-4 text-amber-400" />
-              <CardTitle className="text-sm font-medium">Leading Indicators — News Signal Processor</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-col gap-2">
-              {leadingIndicators.map((ind: any, i: number) => (
-                <div key={i} className="flex items-center gap-3 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                  <p className="text-[11px]">{ind.signal}</p>
-                  <Badge variant="secondary" className="ml-auto text-[9px]">{ind.banks_affected} banks · {ind.lead_time_quarters}Q lead</Badge>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+            </CardHeader>
+            <CardContent className="p-0">
+              <table className="w-full text-[11px]">
+                <thead>
+                  <tr className="border-b border-border/50">
+                    <th className="text-left text-[10px] text-muted-foreground font-normal px-4 py-2">#</th>
+                    <th className="text-left text-[10px] text-muted-foreground font-normal px-3 py-2">Bank</th>
+                    <th className="text-right text-[10px] text-muted-foreground font-normal px-3 py-2">Score</th>
+                    <th className="text-center text-[10px] text-muted-foreground font-normal px-3 py-2">Tier</th>
+                    <th className="text-left text-[10px] text-muted-foreground font-normal px-3 py-2">Trajectory</th>
+                    <th className="text-right text-[10px] text-muted-foreground font-normal px-3 py-2">Peer Divergence</th>
+                    <th className="text-right text-[10px] text-muted-foreground font-normal px-4 py-2">Breaches</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {FITCH_BANKS
+                    .map(bank => ({ bank, s: scores[bank.name] ?? {} }))
+                    .sort((a, b) => (b.s.score ?? 0) - (a.s.score ?? 0))
+                    .map(({ bank, s }, i) => {
+                      const t: keyof typeof FITCH_RISK_TIER_COLORS = s.tier ?? "Green";
+                      const tc = FITCH_RISK_TIER_COLORS[t] ?? FITCH_RISK_TIER_COLORS.Green;
+                      const isSelected = bank.name === selectedBank;
+                      return (
+                        <tr
+                          key={bank.id}
+                          data-testid={`fitch-peer-row-${bank.id}`}
+                          onClick={() => setSelectedBank(bank.name)}
+                          className={`border-b border-border/30 last:border-none cursor-pointer hover:bg-muted/20 ${isSelected ? "bg-muted/30" : ""}`}
+                        >
+                          <td className="px-4 py-2 text-muted-foreground/50">{i + 1}</td>
+                          <td className="px-3 py-2 font-medium">{bank.name}</td>
+                          <td className={`px-3 py-2 text-right font-bold ${tc.text}`}>{s.score ?? "—"}</td>
+                          <td className="px-3 py-2 text-center">
+                            <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${tc.badge}`}>{t}</span>
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground/70">{s.trajectory ?? "—"}</td>
+                          <td className="px-3 py-2 text-right font-mono">
+                            <span className={(s.peerDivergence ?? 0) > 15 ? "text-rose-400" : (s.peerDivergence ?? 0) > 8 ? "text-amber-400" : "text-emerald-400"}>
+                              {(s.peerDivergence ?? 0) > 0 ? "+" : ""}{(s.peerDivergence ?? 0).toFixed(1)}
+                            </span>
+                          </td>
+                          <td className="px-4 py-2 text-right">
+                            <span className={(s.breachCount ?? 0) > 5 ? "text-rose-400 font-bold" : (s.breachCount ?? 0) > 2 ? "text-amber-400" : "text-muted-foreground"}>
+                              {s.breachCount ?? 0}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
+        </>
       )}
     </div>
   );

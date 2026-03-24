@@ -10,197 +10,151 @@ function seededRng(seed: number) {
   };
 }
 
-const BANK_NAMES: Record<string, string> = {
-  "RSSD-3511777": "Silicon Valley Bank",
-  "RSSD-1029867": "Pacific Western Bank",
-  "RSSD-1462895": "Signature Bank",
-  "RSSD-3232316": "First National Community Bancorp",
-  "RSSD-2928050": "Heartland Financial",
-};
-
-const EARNINGS_CALL_EXCERPTS: Record<string, string[]> = {
-  "RSSD-3511777": [
-    "Our HTM securities portfolio now represents 56% of total assets, primarily in longer-duration MBS and Treasuries. Rising rates have created meaningful unrealized losses that, while GAAP OCI, do affect tangible book value.",
-    "We are seeing elevated deposit outflows from our venture-backed client segment. We remain well-capitalized and have taken steps to shore up liquidity through FHLB advances.",
-    "The pace of VC investment has slowed, affecting client deposit behavior. We're diversifying our funding base and reducing reliance on wholesale markets.",
-  ],
-  "RSSD-1029867": [
-    "Deposit costs have risen materially as we compete with higher-yielding alternatives. Our loan-to-deposit ratio is approaching 90%, limiting our flexibility.",
-    "CRE office exposure represents 28% of our loan portfolio. We are conducting stress tests on our office properties given remote work trends.",
-    "We've seen some credit migration in our construction book, with two loans downgraded to substandard. We've increased reserves accordingly.",
-  ],
-  "RSSD-1462895": [
-    "Crypto-adjacent deposit accounts now represent approximately 20% of total deposits, introducing concentration risk in this customer segment.",
-    "We have actively managed interest rate risk through swaps and caps on the asset side of the balance sheet.",
-    "NYCB's recent comments on multifamily loan performance are consistent with our observation of increased stress in that segment.",
-  ],
-  "RSSD-3232316": [
-    "Net interest margin has compressed by 18 basis points quarter-over-quarter as deposit costs continue to reprice.",
-    "Our CRE portfolio is performing well. LTV ratios average 58% across the book with minimal past-due exposure.",
-    "We grew our capital ratios this quarter through retained earnings and a modest common equity issuance.",
-  ],
-};
-
-const FILING_RISK_PHRASES = [
-  "concentration risk", "credit deterioration", "rising deposit costs", "unrealized losses",
-  "CRE exposure", "liquidity pressure", "office portfolio stress", "interest rate risk",
-  "wholesale funding dependence", "regulatory scrutiny", "loan loss provision",
+const BANKS = [
+  { id: "RSSD-0000001", name: "JPMorgan Chase"   },
+  { id: "RSSD-0000002", name: "Bank of America"  },
+  { id: "RSSD-0000003", name: "Wells Fargo"      },
+  { id: "RSSD-0000004", name: "Citigroup"        },
+  { id: "RSSD-0000005", name: "Goldman Sachs"    },
+  { id: "RSSD-0000006", name: "Morgan Stanley"   },
+  { id: "RSSD-0000007", name: "U.S. Bancorp"     },
+  { id: "RSSD-0000008", name: "Truist Financial" },
+  { id: "RSSD-0000009", name: "PNC Financial"    },
+  { id: "RSSD-0000010", name: "RegionalBank-West"},
 ];
 
-const POSITIVE_PHRASES = [
-  "well-capitalized", "strong loan performance", "diversified revenue", "capital accretion",
-  "stable deposit base", "improving efficiency ratio", "robust credit quality",
-  "disciplined underwriting", "credit reserve build", "solid core deposit franchise",
-];
+function stressMultiplier(idx: number): number {
+  if (idx === 9) return 2.2;
+  if (idx === 7) return 1.5;
+  if (idx === 8) return 1.3;
+  return 0.7 + idx * 0.05;
+}
 
-router.get("/earnings-call-transcripts", (req: Request, res: Response) => {
-  const { bank_id, quarter, sentiment_filter } = req.query;
-  const bankName = BANK_NAMES[bank_id as string] || "Community Bank";
-  const rng = seededRng((bank_id as string || "").length * 53 + 7777);
+// GET /transcript-sentiment
+router.get("/transcript-sentiment", (req: Request, res: Response) => {
+  const { bank_id, quarter } = req.query;
+  const banks = bank_id ? BANKS.filter(b => b.id === bank_id) : BANKS;
+  const q = (quarter as string) || "2024-Q2";
 
-  const quarters = quarter ? [quarter as string] : ["2023-Q3","2023-Q4","2024-Q1","2024-Q2","2024-Q3","2024-Q4"];
-  const excerpts = EARNINGS_CALL_EXCERPTS[bank_id as string] || [
-    "Loan growth moderated this quarter as we remained disciplined on pricing and structure.",
-    "Credit quality metrics are stable. Our allowance coverage ratio is within our target range.",
-    "We are closely monitoring our CRE exposure given industry-wide headwinds.",
-  ];
-
-  const transcripts = quarters.slice(0, 4).map((q, i) => {
-    const sentimentScore = +(-0.3 + rng() * 0.8).toFixed(3);
-    const sentiment = sentimentScore > 0.2 ? "positive" : sentimentScore > -0.1 ? "neutral" : "negative";
-
-    if (sentiment_filter && sentiment !== sentiment_filter) return null;
-
-    const riskPhrases = FILING_RISK_PHRASES.filter(() => rng() > 0.6).slice(0, 4);
-    const positivePhrases = POSITIVE_PHRASES.filter(() => rng() > 0.6).slice(0, 3);
-
+  const data = banks.map(bank => {
+    const bIdx = BANKS.findIndex(b => b.id === bank.id);
+    const sm = stressMultiplier(bIdx);
+    const rng = seededRng(bIdx * 901 + q.charCodeAt(5));
+    const base = -0.3 - (sm - 1) * 0.8;
     return {
-      bank_id,
-      bank_name: bankName,
+      bank_id: bank.id,
+      bank_name: bank.name,
       quarter: q,
-      event_type: "earnings_call",
-      sentiment_score: sentimentScore,
-      sentiment_label: sentiment,
-      speaker_excerpt: excerpts[i % excerpts.length],
-      risk_phrases_detected: riskPhrases,
-      positive_phrases_detected: positivePhrases,
-      management_tone: sentimentScore > 0.1 ? "confident" : sentimentScore > -0.15 ? "cautious" : "defensive",
-      analyst_questions_negative: Math.floor(rng() * 6),
-      analyst_questions_total: Math.floor(rng() * 5) + 5,
-      forward_guidance: rng() > 0.5 ? "maintained" : "lowered",
-      word_count: Math.floor(rng() * 3000) + 5000,
-      source: "Refinitiv StreetEvents",
+      sentiment: {
+        credit_quality:   +Math.max(-2, Math.min(2, base + rng() * 0.6 - 0.3)).toFixed(2),
+        forward_guidance: +Math.max(-2, Math.min(2, base + rng() * 0.8 - 0.4)).toFixed(2),
+        sector_concerns:  +Math.max(-2, Math.min(2, base * 1.2 + rng() * 0.5 - 0.25)).toFixed(2),
+        composite:        +Math.max(-2, Math.min(2, base * 1.1 + rng() * 0.4 - 0.2)).toFixed(2),
+      },
+      tone_classification: sm > 1.8 ? "Defensive" : sm > 1.2 ? "Cautious" : "Constructive",
+      flagged_phrases: sm > 1.5 ? ["deposit outflows", "unrealized losses", "liquidity pressure"] :
+                       sm > 1.1 ? ["margin compression", "credit normalization"] : [],
     };
-  }).filter(Boolean);
-
-  res.json({
-    status: "ok",
-    bank_id,
-    transcript_count: transcripts.length,
-    avg_sentiment: +((transcripts as any[]).reduce((s, t) => s + t.sentiment_score, 0) / (transcripts.length || 1)).toFixed(3),
-    transcripts,
   });
+
+  res.json({ data, count: data.length, quarter: q });
 });
 
-router.get("/sec-filings", (req: Request, res: Response) => {
-  const { bank_id, filing_type, flag_filter } = req.query;
-  const bankName = BANK_NAMES[bank_id as string] || "Community Bank";
-  const rng = seededRng((bank_id as string || "").length * 37 + 4444);
+// GET /filing-language-changes
+router.get("/filing-language-changes", (req: Request, res: Response) => {
+  const { bank_id, filing_year } = req.query;
+  const banks = bank_id ? BANKS.filter(b => b.id === bank_id) : BANKS;
+  const year = (filing_year as string) || "2024";
 
-  const filingTypes = filing_type ? [filing_type as string] : ["10-K","10-Q","8-K"];
-  const filings: any[] = [];
-
-  for (const ft of filingTypes) {
-    const count = ft === "10-K" ? 2 : ft === "10-Q" ? 4 : 3;
-    for (let i = 0; i < count; i++) {
-      const riskDisclosures: string[] = [];
-      const flags: string[] = [];
-
-      if (rng() > 0.5) { riskDisclosures.push("Interest rate risk may adversely affect net interest income and the fair value of our securities portfolio."); flags.push("interest_rate_risk"); }
-      if (rng() > 0.6) { riskDisclosures.push("Our commercial real estate portfolio is subject to deterioration in property values and tenant credit quality."); flags.push("cre_concentration"); }
-      if (rng() > 0.7) { riskDisclosures.push("We have identified material weakness related to internal controls over financial reporting."); flags.push("material_weakness"); }
-      if (rng() > 0.65) { riskDisclosures.push("Deposit outflows could require us to liquidate securities at a loss."); flags.push("liquidity_risk"); }
-
-      const flagged = flag_filter ? flags.includes(flag_filter as string) : true;
-      if (!flagged && flag_filter) continue;
-
-      filings.push({
-        bank_id,
-        bank_name: bankName,
-        filing_type: ft,
-        period: `${2023 + Math.floor(rng() * 2)}-Q${Math.ceil(rng() * 4)}`,
-        filing_date: `${2023 + Math.floor(rng() * 2)}-${String(Math.ceil(rng() * 12)).padStart(2,"0")}-15`,
-        risk_disclosures: riskDisclosures,
-        risk_flags: flags,
-        new_risk_language: rng() > 0.6,
-        auditor_going_concern: rng() > 0.9,
-        restatement: rng() > 0.95,
-        sec_comment_letter_open: rng() > 0.85,
-        sentiment_score: +(-0.4 + rng() * 0.7).toFixed(3),
-        source: "SEC EDGAR",
-        accession: `0001564590-${Math.floor(rng() * 99999999).toString().padStart(8,"0")}-${Math.floor(rng() * 99999)}`,
-      });
-    }
-  }
-
-  res.json({
-    status: "ok",
-    bank_id,
-    filing_count: filings.length,
-    material_weakness_count: filings.filter(f => f.risk_flags.includes("material_weakness")).length,
-    filings,
-  });
-});
-
-router.get("/news-sentiment", (req: Request, res: Response) => {
-  const { bank_id, days_back: daysStr, min_relevance } = req.query;
-  const bankName = BANK_NAMES[bank_id as string] || "Community Bank";
-  const rng = seededRng((bank_id as string || "").length * 19 + 2222);
-  const daysBack = parseInt(daysStr as string) || 30;
-  const minRelevance = parseFloat(min_relevance as string) || 0;
-
-  const headlines = [
-    { title: `${bankName} Reports Q4 Earnings Beat, NIM Compression Continues`, sentiment: -0.12 },
-    { title: `${bankName} Increases Loan Loss Reserves Amid Office Market Pressure`, sentiment: -0.42 },
-    { title: `Regulators Scrutinize CRE Concentrations at Mid-Size Banks Including ${bankName}`, sentiment: -0.55 },
-    { title: `${bankName} CEO Comments on Deposit Stability at Banking Conference`, sentiment: 0.18 },
-    { title: `${bankName} Prices $200M Subordinated Notes to Bolster Capital Buffer`, sentiment: 0.05 },
-    { title: `FDIC Publishes Problem Bank List; Regional Banks Face Increased Scrutiny`, sentiment: -0.48 },
-    { title: `${bankName} Expands C&I Portfolio, Reduces Reliance on CRE`, sentiment: 0.25 },
-    { title: `Banking Sector Stress: Analysts Downgrade ${bankName} on Asset Quality Concerns`, sentiment: -0.62 },
-  ];
-
-  const now = Date.now();
-  const articles = headlines.map((h, i) => {
-    const relevance = +(0.5 + rng() * 0.5).toFixed(2);
-    if (relevance < minRelevance) return null;
-    const daysAgo = Math.floor(rng() * daysBack);
+  const data = banks.map(bank => {
+    const bIdx = BANKS.findIndex(b => b.id === bank.id);
+    const sm = stressMultiplier(bIdx);
+    const rng = seededRng(bIdx * 444 + parseInt(year));
     return {
-      bank_id,
-      bank_name: bankName,
-      headline: h.title,
-      published_at: new Date(now - daysAgo * 86400000).toISOString().split("T")[0],
-      source: ["Wall Street Journal","Bloomberg","Reuters","American Banker","SNL Financial"][Math.floor(rng() * 5)],
-      sentiment_score: +(h.sentiment + (rng() - 0.5) * 0.15).toFixed(3),
-      relevance_score: relevance,
-      topics_detected: ["CRE","capital","liquidity","credit quality","NIM","deposits"].filter(() => rng() > 0.5),
-      event_type: i % 3 === 0 ? "earnings" : i % 3 === 1 ? "regulatory" : "market_event",
-      impact_level: Math.abs(h.sentiment) > 0.4 ? "high" : Math.abs(h.sentiment) > 0.2 ? "medium" : "low",
+      bank_id: bank.id,
+      bank_name: bank.name,
+      filing_year: year,
+      new_risk_factors: Math.round(sm * (1 + rng() * 4)),
+      strengthened_language_count: Math.round(sm * (2 + rng() * 6)),
+      mda_sentiment_shift: +(-0.1 * sm + rng() * 0.15 - 0.075).toFixed(3),
+      new_topics: sm > 1.5 ? ["deposit concentration", "HTM portfolio", "interest rate exposure"] :
+                  sm > 1.1 ? ["credit normalization", "margin pressure"] : ["operational resilience"],
+      material_weakness_flag: sm > 2.0,
+      going_concern_language: sm > 2.1,
     };
-  }).filter(Boolean);
-
-  const avgSentiment = +((articles as any[]).reduce((s, a) => s + a.sentiment_score, 0) / (articles.length || 1)).toFixed(3);
-
-  res.json({
-    status: "ok",
-    bank_id,
-    period_days: daysBack,
-    article_count: articles.length,
-    avg_sentiment: avgSentiment,
-    negative_articles: (articles as any[]).filter(a => a.sentiment_score < -0.2).length,
-    positive_articles: (articles as any[]).filter(a => a.sentiment_score > 0.2).length,
-    articles,
   });
+
+  res.json({ data, count: data.length });
+});
+
+// GET /news-signals
+router.get("/news-signals", (req: Request, res: Response) => {
+  const { bank_id, days_back } = req.query;
+  const banks = bank_id ? BANKS.filter(b => b.id === bank_id) : BANKS;
+  const days = parseInt(days_back as string) || 90;
+
+  const data = banks.map(bank => {
+    const bIdx = BANKS.findIndex(b => b.id === bank.id);
+    const sm = stressMultiplier(bIdx);
+    const rng = seededRng(bIdx * 211 + days);
+    const total = Math.round(20 + rng() * 180);
+    const crisisCount = sm > 2 ? Math.round(total * 0.15) : 0;
+    const materialCount = Math.round(total * 0.08 * sm);
+    const emergingCount = Math.round(total * 0.15 * (sm > 1.2 ? sm : 1));
+    return {
+      bank_id: bank.id,
+      bank_name: bank.name,
+      days_covered: days,
+      article_count: total,
+      classifications: {
+        routine:  Math.max(0, total - crisisCount - materialCount - emergingCount),
+        emerging: Math.max(0, emergingCount),
+        material: Math.max(0, materialCount),
+        crisis:   Math.max(0, crisisCount),
+      },
+      overall_classification: sm > 2 ? "crisis" : sm > 1.6 ? "material" : sm > 1.2 ? "emerging" : "routine",
+      top_topics: sm > 1.5 ? ["regulatory scrutiny", "deposit flight", "liquidity"] :
+                  sm > 1.1 ? ["margin pressure", "credit quality"] : ["strategy", "earnings"],
+      sigma_spike: +(sm * (0.5 + rng() * 2)).toFixed(2),
+    };
+  });
+
+  res.json({ data, count: data.length });
+});
+
+// GET /news-volume-trend — rolling 13-week volume + σ-deviation per bank
+router.get("/news-volume-trend", (req: Request, res: Response) => {
+  const { bank_id } = req.query;
+  const banks = bank_id ? BANKS.filter(b => b.id === bank_id) : BANKS;
+
+  const data = banks.map(bank => {
+    const bIdx = BANKS.findIndex(b => b.id === bank.id);
+    const sm = stressMultiplier(bIdx);
+    const rng = seededRng(bIdx * 155);
+    const baseVol = Math.round(15 + rng() * 40);
+
+    const weeks: any[] = [];
+    let prevVol = baseVol;
+    for (let w = 13; w >= 1; w--) {
+      const rngW = seededRng(bIdx * 155 + w * 17);
+      const spike = w <= 3 && sm > 1.5 ? sm * 1.8 : 1;
+      const vol = Math.round(prevVol * (0.85 + rngW() * 0.3) * spike);
+      weeks.push({ week_offset: -w, article_count: vol, sigma_deviation: +((vol / baseVol - 1) / 0.3).toFixed(2) });
+      prevVol = vol;
+    }
+
+    return {
+      bank_id: bank.id,
+      bank_name: bank.name,
+      baseline_weekly_volume: baseVol,
+      current_week_volume: weeks[12].article_count,
+      current_sigma: weeks[12].sigma_deviation,
+      sigma_alert: Math.abs(weeks[12].sigma_deviation) > 2.0,
+      trend: weeks,
+    };
+  });
+
+  res.json({ data, count: data.length });
 });
 
 export default router;

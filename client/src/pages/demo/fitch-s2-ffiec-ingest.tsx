@@ -1,227 +1,236 @@
-import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Database, TrendingUp, TrendingDown, Activity, CheckCircle2, AlertTriangle } from "lucide-react";
-import { useFitchPipeline, FITCH_AGENTS } from "./fitch-constants";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { CheckCircle2, AlertTriangle, XCircle, TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { useFitchPipeline, FITCH_BANKS, FITCH_RATIO_DEFS } from "./fitch-constants";
 import FitchEmptyState from "./fitch-empty-state";
-import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LineChart, Line, Legend,
-} from "recharts";
 
-const CAMELS_COMPONENTS = [
-  { id: "capital",   label: "Capital Adequacy",  weight: "20%", color: "#6366f1", description: "Tier-1 ratio, CET1, leverage ratio" },
-  { id: "assets",    label: "Asset Quality",     weight: "30%", color: "#ef4444", description: "NPL ratio, NCO rate, classified assets" },
-  { id: "mgmt",      label: "Management",        weight: "10%", color: "#8b5cf6", description: "Risk governance, control environment" },
-  { id: "earnings",  label: "Earnings",          weight: "15%", color: "#f59e0b", description: "ROA, ROE, NIM, efficiency ratio" },
-  { id: "liquidity", label: "Liquidity",         weight: "20%", color: "#3b82f6", description: "LTD ratio, wholesale funding, HTM losses" },
-  { id: "sensitivity", label: "Sensitivity",    weight: "5%",  color: "#06b6d4", description: "Rate gap, duration, CRE concentration" },
-];
+interface Props {
+  onScreenChange: (screen: number) => void;
+}
 
-const SAMPLE_CAMELS_CHART = [
-  { bank: "SVB",      capital: 28, assets: 45, earnings: 22, liquidity: 69, sensitivity: 38 },
-  { bank: "PacWest",  capital: 22, assets: 38, earnings: 18, liquidity: 42, sensitivity: 31 },
-  { bank: "Signature",capital: 25, assets: 32, earnings: 20, liquidity: 36, sensitivity: 28 },
-  { bank: "Heartland",capital: 18, assets: 24, earnings: 15, liquidity: 28, sensitivity: 22 },
-  { bank: "Columbia", capital: 16, assets: 19, earnings: 12, liquidity: 24, sensitivity: 19 },
-];
+function BreachIcon({ breached, severity }: { breached: boolean; severity?: string }) {
+  if (!breached) return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />;
+  if (severity === "CRITICAL") return <XCircle className="w-3.5 h-3.5 text-rose-400" />;
+  return <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />;
+}
 
-const TREND_DATA = [
-  { quarter: "2023-Q1", watchList: 18, critical: 3, highRisk: 22 },
-  { quarter: "2023-Q2", watchList: 21, critical: 4, highRisk: 26 },
-  { quarter: "2023-Q3", watchList: 28, critical: 5, highRisk: 29 },
-  { quarter: "2023-Q4", watchList: 31, critical: 5, highRisk: 31 },
-  { quarter: "2024-Q1", watchList: 34, critical: 5, highRisk: 30 },
-  { quarter: "2024-Q2", watchList: 33, critical: 6, highRisk: 31 },
-  { quarter: "2024-Q3", watchList: 36, critical: 6, highRisk: 31 },
-  { quarter: "2024-Q4", watchList: 37, critical: 6, highRisk: 31 },
-];
+function SeverityBadge({ severity }: { severity?: string }) {
+  if (!severity) return null;
+  const map: Record<string, string> = {
+    CRITICAL: "bg-rose-500/20 text-rose-300 border-rose-500/30",
+    HIGH:     "bg-amber-500/20 text-amber-300 border-amber-500/30",
+    MEDIUM:   "bg-yellow-500/20 text-yellow-300 border-yellow-500/30",
+  };
+  return (
+    <span className={`text-[9px] px-1.5 py-0.5 rounded border font-medium ${map[severity] ?? map.MEDIUM}`}>
+      {severity}
+    </span>
+  );
+}
 
-export default function FitchS2FfiecIngest() {
+export default function FitchS2RatioDeepDive({ onScreenChange }: Props) {
   const { state } = useFitchPipeline();
-  const agentDef = FITCH_AGENTS.find(a => a.role === "ffiec_ingestor")!;
+  const [selectedBank, setSelectedBank] = useState(FITCH_BANKS[0].name);
 
-  const { data } = useQuery<any>({
-    queryKey: ["/demo-api/fitch/ffiec-ingest"],
-    refetchInterval: 120_000,
-  });
-
-  const result = state.results.find(r => r.role === "ffiec_ingestor");
+  const result = state.results.find(r => r.role === "ratio_engine");
   const liveData = result?.resultSummary;
-  const isCurrent = state.currentRole === "ffiec_ingestor";
+  const hasResults = !!liveData;
 
-  const hasRun = !!result;
-  const isIdle = state.status === "idle" && !hasRun;
+  const ratioTable: Record<string, Record<string, any>> = liveData?.ratioTable ?? {};
+  const breachLeaderboard: any[] = liveData?.breachLeaderboard ?? [];
+  const bankRatios: Record<string, any> = ratioTable[selectedBank] ?? {};
 
-  const banksIngested = liveData?.banksIngested ?? 0;
-  const watchListCount = liveData?.watchListCount ?? 0;
-  const dataQuality = liveData?.dataQualityScore ?? 0;
-  const topFlags: string[] = liveData?.topWatchFlags ?? [];
-
-  if (isIdle) {
-    return (
-      <div className="flex flex-col gap-4">
-        <Card className={`${agentDef.borderColor} ${agentDef.bgColor}`}>
-          <CardContent className="p-4">
-            <div className="flex items-center gap-3">
-              <Database className={`w-5 h-5 ${agentDef.color}`} />
-              <div>
-                <h3 className={`text-sm font-semibold ${agentDef.color}`}>{agentDef.name}</h3>
-                <p className="text-[11px] text-muted-foreground">{agentDef.description}</p>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-1.5 mt-3">
-              {agentDef.tools.map(t => (
-                <span key={t} className="text-[9px] font-mono bg-muted/30 text-muted-foreground/70 px-1.5 py-0.5 rounded">{t}</span>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-        <FitchEmptyState agentName={agentDef.name} agentRole="ffiec_ingestor" />
-      </div>
-    );
-  }
+  const sortedRatios = [...FITCH_RATIO_DEFS].sort((a, b) => {
+    const aBreached = bankRatios[a.id]?.breached ? 1 : 0;
+    const bBreached = bankRatios[b.id]?.breached ? 1 : 0;
+    return bBreached - aBreached;
+  });
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Agent header */}
-      <Card className={`${agentDef.borderColor} ${agentDef.bgColor}`}>
-        <CardContent className="p-4">
-          <div className="flex items-center gap-3 flex-wrap">
-            <Database className={`w-5 h-5 ${agentDef.color}`} />
-            <div>
-              <h3 className={`text-sm font-semibold ${agentDef.color}`}>{agentDef.name}</h3>
-              <p className="text-[11px] text-muted-foreground">{agentDef.description}</p>
-            </div>
-            {isCurrent && <Badge className="ml-auto bg-amber-500/20 text-amber-300 border-amber-500/30 animate-pulse">Processing…</Badge>}
-            {result && !isCurrent && <Badge className="ml-auto bg-green-500/20 text-green-300 border-green-500/30">✓ Complete</Badge>}
+      {/* Header */}
+      <div className="flex items-center gap-3">
+        <div className="flex-1">
+          <h2 className="text-sm font-semibold">18-Ratio Deep-Dive</h2>
+          <p className="text-[11px] text-muted-foreground">CAMELS-derived ratios with G-SIB peer benchmarks — live from Financial Ratio Engine</p>
+        </div>
+        {hasResults && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-muted-foreground">Bank:</span>
+            <Select value={selectedBank} onValueChange={setSelectedBank}>
+              <SelectTrigger data-testid="fitch-s2-bank-select" className="h-7 text-[11px] w-[180px]">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {FITCH_BANKS.map(b => (
+                  <SelectItem key={b.id} value={b.name} className="text-[11px]">{b.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
-          <div className="flex flex-wrap gap-1.5 mt-3">
-            {agentDef.tools.map(t => (
-              <span key={t} className="text-[9px] font-mono bg-muted/30 text-muted-foreground/70 px-1.5 py-0.5 rounded">{t}</span>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Stats row */}
-      <div className="grid grid-cols-4 gap-3">
-        <Card>
-          <CardContent className="p-3">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Banks Ingested</p>
-            <p className="text-2xl font-bold text-blue-400">{banksIngested.toLocaleString()}</p>
-            <p className="text-[11px] text-muted-foreground">FFIEC-reporting institutions</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-3">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Watch List</p>
-            <p className="text-2xl font-bold text-amber-400">{watchListCount}</p>
-            <p className="text-[11px] text-muted-foreground">Flagged for elevated review</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-3">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Data Quality</p>
-            <p className="text-2xl font-bold text-green-400">{dataQuality}%</p>
-            <p className="text-[11px] text-muted-foreground">Field completion rate</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-3">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Data Points</p>
-            <p className="text-2xl font-bold">{(liveData?.totalDataPoints ?? 24800).toLocaleString()}</p>
-            <p className="text-[11px] text-muted-foreground">This quarter's ingestion</p>
-          </CardContent>
-        </Card>
+        )}
       </div>
 
-      <div className="flex gap-4">
-        {/* CAMELS scoring model */}
-        <Card className="flex-[5]">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">CAMELS Composite Score — Top 5 Flagged Banks</CardTitle>
-            <p className="text-[11px] text-muted-foreground">Per-component risk scores (higher = more risk)</p>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={SAMPLE_CAMELS_CHART} margin={{ left: 0, right: 12, top: 4, bottom: 0 }}>
-                <XAxis dataKey="bank" tick={{ fontSize: 10 }} />
-                <YAxis tick={{ fontSize: 10 }} domain={[0, 80]} />
-                <Tooltip />
-                <Legend iconSize={8} wrapperStyle={{ fontSize: 10 }} />
-                <Bar dataKey="capital"   name="Capital"   fill="#6366f1" stackId="a" />
-                <Bar dataKey="assets"    name="Assets"    fill="#ef4444" stackId="a" />
-                <Bar dataKey="earnings"  name="Earnings"  fill="#f59e0b" stackId="a" />
-                <Bar dataKey="liquidity" name="Liquidity" fill="#3b82f6" stackId="a" radius={[4,4,0,0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-
-        {/* Watch list trend */}
-        <Card className="flex-[5]">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Watch List Trend — 8 Quarters</CardTitle>
-            <p className="text-[11px] text-muted-foreground">Banks at elevated and critical risk levels</p>
-          </CardHeader>
-          <CardContent>
-            <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={TREND_DATA} margin={{ left: 0, right: 12, top: 4, bottom: 0 }}>
-                <XAxis dataKey="quarter" tick={{ fontSize: 9 }} />
-                <YAxis tick={{ fontSize: 10 }} />
-                <Tooltip />
-                <Legend iconSize={8} wrapperStyle={{ fontSize: 10 }} />
-                <Line type="monotone" dataKey="watchList" name="Watch List" stroke="#f59e0b" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="critical"  name="Critical"   stroke="#ef4444" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="highRisk"  name="High Risk"  stroke="#f97316" strokeWidth={2} dot={false} strokeDasharray="4 2" />
-              </LineChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* CAMELS component breakdown */}
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm font-medium">CAMELS Component Weighting — Scoring Model</CardTitle>
-        </CardHeader>
-        <CardContent>
+      {!hasResults ? (
+        <FitchEmptyState
+          agentName="Financial Ratio Engine"
+          agentRole="ratio_engine"
+          description="Run the pipeline to compute 18 CAMELS ratios with breach flags for all 10 banks."
+          onGoToCommandCenter={() => onScreenChange(1)}
+        />
+      ) : (
+        <>
+          {/* Summary cards */}
           <div className="grid grid-cols-3 gap-3">
-            {CAMELS_COMPONENTS.map(c => (
-              <div key={c.id} className="flex items-start gap-2 p-2 rounded-lg bg-muted/20">
-                <div className="w-2 h-2 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: c.color }} />
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] font-medium">{c.label}</span>
-                    <Badge variant="secondary" className="text-[9px]">{c.weight}</Badge>
-                  </div>
-                  <p className="text-[10px] text-muted-foreground">{c.description}</p>
-                </div>
-              </div>
-            ))}
+            <Card>
+              <CardContent className="p-3">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Banks Analyzed</p>
+                <p className="text-2xl font-bold">{liveData.banksAnalyzed ?? FITCH_BANKS.length}</p>
+              </CardContent>
+            </Card>
+            <Card className="border-amber-500/20">
+              <CardContent className="p-3">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Total Breaches</p>
+                <p className="text-2xl font-bold text-amber-400">{liveData.totalBreaches ?? 0}</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="p-3">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Breach Leaderboard</p>
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  {breachLeaderboard[0] ? `${breachLeaderboard[0].bankName}: ${breachLeaderboard[0].breachCount} breaches` : "—"}
+                </p>
+              </CardContent>
+            </Card>
           </div>
-        </CardContent>
-      </Card>
 
-      {/* Top watch flags */}
-      {topFlags.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 text-amber-400" />
-              <CardTitle className="text-sm font-medium">Top Systemic Risk Flags This Quarter</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap gap-2">
-              {topFlags.map((flag: string) => (
-                <span key={flag} className="text-[11px] px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                  {flag.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase())}
-                </span>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
+          {/* Ratio table */}
+          <Card>
+            <CardHeader className="pb-2">
+              <div className="flex items-center gap-2">
+                <CardTitle className="text-sm font-medium">
+                  {selectedBank} — 18 Ratios
+                </CardTitle>
+                <Badge variant="secondary" className="text-[10px] ml-auto">Sorted by breach severity</Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="border-b border-border/50">
+                      <th className="text-left text-[10px] text-muted-foreground font-normal px-4 py-2">Ratio</th>
+                      <th className="text-right text-[10px] text-muted-foreground font-normal px-3 py-2">Value</th>
+                      <th className="text-right text-[10px] text-muted-foreground font-normal px-3 py-2">Threshold</th>
+                      <th className="text-center text-[10px] text-muted-foreground font-normal px-3 py-2">Status</th>
+                      <th className="text-right text-[10px] text-muted-foreground font-normal px-3 py-2">QoQ Δ</th>
+                      <th className="text-right text-[10px] text-muted-foreground font-normal px-3 py-2">Peer Median</th>
+                      <th className="text-center text-[10px] text-muted-foreground font-normal px-3 py-2">Schedule</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedRatios.map((ratio) => {
+                      const r = bankRatios[ratio.id] ?? {};
+                      const val = r.value;
+                      const threshold = r.threshold ?? ratio.threshold;
+                      const breached: boolean = r.breached ?? false;
+                      const qoqDelta: number = r.qoqDelta ?? 0;
+                      const peerMedian = r.peerMedian;
+
+                      return (
+                        <tr
+                          key={ratio.id}
+                          data-testid={`fitch-ratio-row-${ratio.id}`}
+                          className={`border-b border-border/30 last:border-none hover:bg-muted/20 ${breached ? "bg-rose-500/[0.02]" : ""}`}
+                        >
+                          <td className="px-4 py-2">
+                            <div>
+                              <span className="font-medium">{ratio.name}</span>
+                              <span className="text-[9px] text-muted-foreground/50 ml-1.5 font-mono">{ratio.id}</span>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono">
+                            {val != null ? (
+                              <span className={breached ? "text-rose-400 font-bold" : "text-foreground"}>
+                                {val.toFixed(2)}{ratio.unit}
+                              </span>
+                            ) : "—"}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-muted-foreground/70">
+                            {threshold.toFixed(2)}{ratio.unit}
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <BreachIcon breached={breached} severity={r.severity} />
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono">
+                            {val != null ? (
+                              <span className={qoqDelta > 0 ? "text-rose-400" : qoqDelta < 0 ? "text-emerald-400" : "text-muted-foreground"}>
+                                {qoqDelta > 0 ? "+" : ""}{qoqDelta.toFixed(2)}
+                              </span>
+                            ) : "—"}
+                          </td>
+                          <td className="px-3 py-2 text-right font-mono text-muted-foreground/70">
+                            {peerMedian != null ? `${peerMedian.toFixed(2)}${ratio.unit}` : "—"}
+                          </td>
+                          <td className="px-3 py-2 text-center">
+                            <span className="text-[9px] font-mono bg-muted/30 px-1 py-0.5 rounded text-muted-foreground/70">
+                              {ratio.schedule}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Breach leaderboard */}
+          {breachLeaderboard.length > 0 && (
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Breach Leaderboard — All Banks</CardTitle>
+              </CardHeader>
+              <CardContent className="p-0">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="border-b border-border/50">
+                      <th className="text-left text-[10px] text-muted-foreground font-normal px-4 py-2">#</th>
+                      <th className="text-left text-[10px] text-muted-foreground font-normal px-3 py-2">Bank</th>
+                      <th className="text-right text-[10px] text-muted-foreground font-normal px-3 py-2">Breaches</th>
+                      <th className="text-left text-[10px] text-muted-foreground font-normal px-3 py-2">Worst Ratio</th>
+                      <th className="text-center text-[10px] text-muted-foreground font-normal px-3 py-2">Severity</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {breachLeaderboard.map((entry: any, i: number) => (
+                      <tr
+                        key={entry.bankName}
+                        data-testid={`fitch-breach-row-${i}`}
+                        className="border-b border-border/30 last:border-none hover:bg-muted/20"
+                      >
+                        <td className="px-4 py-2 text-muted-foreground/50">{i + 1}</td>
+                        <td className="px-3 py-2 font-medium">{entry.bankName}</td>
+                        <td className="px-3 py-2 text-right">
+                          <span className={entry.breachCount > 5 ? "text-rose-400 font-bold" : entry.breachCount > 2 ? "text-amber-400" : "text-foreground"}>
+                            {entry.breachCount}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 font-mono text-muted-foreground/70">{entry.worstRatio ?? "—"}</td>
+                        <td className="px-3 py-2 text-center">
+                          <SeverityBadge severity={entry.severity} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </CardContent>
+            </Card>
+          )}
+        </>
       )}
     </div>
   );

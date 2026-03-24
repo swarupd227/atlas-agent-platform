@@ -10,199 +10,182 @@ function seededRng(seed: number) {
   };
 }
 
-const BANK_NAMES: Record<string, string> = {
-  "RSSD-3511777": "Silicon Valley Bank",
-  "RSSD-1029867": "Pacific Western Bank",
-  "RSSD-1462895": "Signature Bank",
-  "RSSD-3232316": "First National Community Bancorp",
-  "RSSD-2928050": "Heartland Financial",
-  "RSSD-3116158": "Columbia Banking System",
-  "RSSD-1012081": "Banner Bank",
+const BANKS = [
+  { id: "RSSD-0000001", name: "JPMorgan Chase"   },
+  { id: "RSSD-0000002", name: "Bank of America"  },
+  { id: "RSSD-0000003", name: "Wells Fargo"      },
+  { id: "RSSD-0000004", name: "Citigroup"        },
+  { id: "RSSD-0000005", name: "Goldman Sachs"    },
+  { id: "RSSD-0000006", name: "Morgan Stanley"   },
+  { id: "RSSD-0000007", name: "U.S. Bancorp"     },
+  { id: "RSSD-0000008", name: "Truist Financial" },
+  { id: "RSSD-0000009", name: "PNC Financial"    },
+  { id: "RSSD-0000010", name: "RegionalBank-West"},
+];
+
+const QUARTERS = ["2022-Q3","2022-Q4","2023-Q1","2023-Q2","2023-Q3","2023-Q4","2024-Q1","2024-Q2"];
+
+const RATIO_NAMES = [
+  "npl_ratio","nco_rate","allowance_to_loans","cet1_ratio","tier1_leverage","rwa_density",
+  "roa","roe","nim","efficiency_ratio","loan_deposit_ratio","liquid_assets_to_total",
+  "cre_to_total_loans","commercial_concentration","provision_to_avg_loans",
+  "accruing_past_due_90_pct","classified_to_tier1","net_stable_funding_ratio",
+];
+
+const RATIO_THRESHOLDS: Record<string, number> = {
+  npl_ratio: 1.5, nco_rate: 0.5, allowance_to_loans: 0.8, cet1_ratio: 8.0,
+  tier1_leverage: 5.0, rwa_density: 0.8, roa: 0.5, roe: 5.0, nim: 1.5,
+  efficiency_ratio: 75.0, loan_deposit_ratio: 90.0, liquid_assets_to_total: 10.0,
+  cre_to_total_loans: 35.0, commercial_concentration: 50.0, provision_to_avg_loans: 0.5,
+  accruing_past_due_90_pct: 0.2, classified_to_tier1: 25.0, net_stable_funding_ratio: 100.0,
 };
 
-router.get("/early-warning-scores", (req: Request, res: Response) => {
-  const { bank_id, threshold, sector_filter } = req.query;
-  const rng = seededRng((bank_id as string || "ALL").length * 17 + 8888);
-  const thresholdVal = parseFloat(threshold as string) || 0;
+function stressMultiplier(idx: number): number {
+  if (idx === 9) return 2.2;
+  if (idx === 7) return 1.5;
+  if (idx === 8) return 1.3;
+  return 0.7 + idx * 0.05;
+}
 
-  const banks = bank_id
-    ? [{ id: bank_id as string, name: BANK_NAMES[bank_id as string] || "Unknown Bank" }]
-    : Object.entries(BANK_NAMES).map(([id, name]) => ({ id, name }));
+// GET /ratio-trends — 8-quarter time series for all 18 ratios per bank
+router.get("/ratio-trends", (req: Request, res: Response) => {
+  const { bank_id, ratio_id } = req.query;
+  const banks = bank_id ? BANKS.filter(b => b.id === bank_id) : BANKS;
+  const ratios = ratio_id ? [ratio_id as string] : RATIO_NAMES;
 
-  const scores = banks.map(bank => {
-    const capitalScore    = +(rng() * 40 + 10).toFixed(1);
-    const assetQuality    = +(rng() * 45 + 8).toFixed(1);
-    const earningsScore   = +(rng() * 35 + 5).toFixed(1);
-    const liquidityScore  = +(rng() * 50 + 5).toFixed(1);
-    const sensitivityScore = +(rng() * 30 + 5).toFixed(1);
-    const nlpScore        = +(rng() * 40 + 5).toFixed(1);
-    const composite       = +((capitalScore * 0.20 + assetQuality * 0.30 + earningsScore * 0.15 + liquidityScore * 0.20 + sensitivityScore * 0.10 + nlpScore * 0.05) / 10 * 100).toFixed(1);
-    const riskLevel       = composite > 65 ? "CRITICAL" : composite > 45 ? "HIGH" : composite > 25 ? "MEDIUM" : "LOW";
+  const data = banks.map(bank => {
+    const bIdx = BANKS.findIndex(b => b.id === bank.id);
+    const sm = stressMultiplier(bIdx);
 
-    if (composite < thresholdVal) return null;
+    const ratioData: Record<string, any[]> = {};
+    for (const ratio of ratios) {
+      const base = RATIO_THRESHOLDS[ratio] ?? 1.0;
+      const trend: any[] = [];
+      for (let qi = 0; qi < QUARTERS.length; qi++) {
+        const rng = seededRng(bIdx * 100 + qi * 7 + ratio.charCodeAt(0));
+        const stressRamp = qi >= 4 ? (sm - 1) * (qi - 3) * 0.2 : 0;
+        const value = +(base * (0.7 + rng() * 0.6) * (1 + stressRamp)).toFixed(2);
+        trend.push({ quarter: QUARTERS[qi], value });
+      }
+      ratioData[ratio] = trend;
+    }
 
-    const sectors = ["regional_bank","community_bank","thrift","credit_union"];
-    const sector = sectors[Math.floor(rng() * sectors.length)];
-    if (sector_filter && sector !== sector_filter) return null;
+    return { bank_id: bank.id, bank_name: bank.name, ratios: ratioData };
+  });
+
+  res.json({ data, count: data.length, quarters: QUARTERS });
+});
+
+// GET /threshold-breaches — breached ratios with severity and QoQ delta
+router.get("/threshold-breaches", (req: Request, res: Response) => {
+  const { bank_id, quarter } = req.query;
+  const banks = bank_id ? BANKS.filter(b => b.id === bank_id) : BANKS;
+  const q = (quarter as string) || QUARTERS[QUARTERS.length - 1];
+
+  const data = banks.map(bank => {
+    const bIdx = BANKS.findIndex(b => b.id === bank.id);
+    const sm = stressMultiplier(bIdx);
+    const rng = seededRng(bIdx * 321 + q.charCodeAt(5));
+
+    const breaches: any[] = [];
+    for (const ratio of RATIO_NAMES) {
+      const threshold = RATIO_THRESHOLDS[ratio] ?? 1.0;
+      const breachProbability = Math.min(0.8, (sm - 1) * 0.35 + 0.05);
+      if (rng() < breachProbability) {
+        const severity = sm > 2 ? "CRITICAL" : sm > 1.5 ? "HIGH" : "MEDIUM";
+        const value = +(threshold * (1.1 + rng() * 0.4 * sm)).toFixed(2);
+        const priorQ = +(threshold * (0.95 + rng() * 0.3)).toFixed(2);
+        breaches.push({
+          ratio_id: ratio,
+          current_value: value,
+          threshold,
+          qoq_delta: +(value - priorQ).toFixed(2),
+          severity,
+          peer_median: +(threshold * (0.8 + rng() * 0.3)).toFixed(2),
+        });
+      }
+    }
 
     return {
       bank_id: bank.id,
       bank_name: bank.name,
-      composite_risk_score: composite,
-      risk_level: riskLevel,
-      component_scores: {
-        capital_adequacy: capitalScore,
-        asset_quality: assetQuality,
-        earnings_stability: earningsScore,
-        liquidity_risk: liquidityScore,
-        rate_sensitivity: sensitivityScore,
-        nlp_sentiment: nlpScore,
-      },
-      trend: rng() > 0.5 ? "deteriorating" : rng() > 0.3 ? "stable" : "improving",
-      trend_change_90d: +((rng() - 0.35) * 20).toFixed(1),
-      peer_percentile: Math.floor(rng() * 100),
-      sector,
-      prior_rating: ["A","A-","BBB+","BBB","BBB-","BB+"][Math.floor(rng() * 6)],
-      watch_list: composite > 55,
-      as_of: "2024-Q4",
+      quarter: q,
+      breach_count: breaches.length,
+      breaches: breaches.sort((a, b) => {
+        const order = { CRITICAL: 0, HIGH: 1, MEDIUM: 2 };
+        return order[a.severity as keyof typeof order] - order[b.severity as keyof typeof order];
+      }),
     };
-  }).filter(Boolean);
-
-  res.json({
-    status: "ok",
-    bank_count: scores.length,
-    high_risk_count: (scores as any[]).filter(s => s.composite_risk_score > 45).length,
-    critical_count: (scores as any[]).filter(s => s.risk_level === "CRITICAL").length,
-    avg_composite_score: +((scores as any[]).reduce((s, b) => s + b.composite_risk_score, 0) / (scores.length || 1)).toFixed(1),
-    generated_at: new Date().toISOString(),
-    scores,
   });
+
+  res.json({ data, count: data.length });
 });
 
+// GET /svb-backtest — SVB Q1 2022→Mar 2023 score timeline (spec-required)
 router.get("/svb-backtest", (_req: Request, res: Response) => {
-  const quarters = ["2022-Q1","2022-Q2","2022-Q3","2022-Q4","2023-Q1"];
-  const composites = [22.4, 31.8, 46.2, 61.5, 87.3];
-  const npmSignals  = [2.1, 2.0, 1.9, 1.6, 1.4];
-  const liquiditySignals = [12.3, 18.4, 28.9, 41.2, 68.7];
-  const nlpSignals       = [5.2, 10.1, 18.3, 27.8, 51.4];
-  const actualOutcomes   = ["Normal","Elevated","Warning","High Alert","FDIC Seizure"];
-
-  const data = quarters.map((q, i) => ({
-    quarter: q,
-    composite_risk_score: composites[i],
-    risk_level: composites[i] > 65 ? "CRITICAL" : composites[i] > 45 ? "HIGH" : composites[i] > 25 ? "MEDIUM" : "LOW",
-    component_scores: {
-      capital_adequacy: +(8 + i * 3.2).toFixed(1),
-      asset_quality: +(6.2 + i * 2.1).toFixed(1),
-      earnings_stability: +(5.1 + i * 1.9).toFixed(1),
-      liquidity_risk: liquiditySignals[i],
-      rate_sensitivity: +(12.4 + i * 8.3).toFixed(1),
-      nlp_sentiment: nlpSignals[i],
+  const timeline = [
+    {
+      quarter: "2022-Q1",
+      composite_score: 38,
+      tier: "ELEVATED",
+      color: "amber",
+      labeled_events: ["Rate hike cycle begins", "HTM unrealized losses start accumulating"],
+      metrics: { cet1: 15.2, npl: 0.22, liquidity_coverage: 128, nim: 2.1, deposit_beta: 0.18 },
     },
-    nim: npmSignals[i],
-    unrealized_loss_equity_pct: +((-2) + i * (-11.4)).toFixed(1),
-    wholesale_funding_pct: +(18 + i * 9.4).toFixed(1),
-    htv_securities_pct: +(44 + i * 2.3).toFixed(1),
-    actual_outcome: actualOutcomes[i],
-    system_alert_triggered: composites[i] >= 46.2,
-    alert_would_fire_at_score: 40,
-    days_before_failure: i < 4 ? [365, 273, 182, 91, 0][i] : 0,
-    source_data: "FFIEC Call Report + SEC 10-K/10-Q (public record)",
-    disclaimer: "Illustrative — reconstructed from SVB's actual FFIEC Call Report filings for backtesting purposes.",
-  }));
-
-  const firstAlert = data.find(d => d.system_alert_triggered);
-
-  res.json({
-    status: "ok",
-    institution: "Silicon Valley Bank",
-    rssd_id: "RSSD-3511777",
-    backtest_period: "2022-Q1 to 2023-Q1",
-    failure_date: "2023-03-10",
-    fdic_intervention: "FDIC receivership — March 10, 2023",
-    early_warning_signal_quarters: firstAlert ? firstAlert.quarter : null,
-    days_advance_warning: firstAlert ? firstAlert.days_before_failure : null,
-    model_accuracy_note: "Model would have flagged SVB at HIGH risk in 2022-Q3, 2 quarters before failure",
-    disclaimer: "Illustrative — reconstructed from SVB's actual FFIEC Call Report filings for backtesting purposes. Not investment advice.",
-    quarterly_data: data,
-  });
-});
-
-router.get("/stress-test", (req: Request, res: Response) => {
-  const { bank_id, scenario } = req.query;
-  const bankName = BANK_NAMES[bank_id as string] || "Community Bank";
-  const rng = seededRng((bank_id as string || "").length * 61 + 1111);
-
-  const scenarios = scenario ? [scenario as string] : ["baseline","adverse","severely_adverse"];
-  const results: any[] = [];
-
-  for (const sc of scenarios) {
-    const stressFactor = sc === "baseline" ? 0 : sc === "adverse" ? 0.35 : 0.65;
-    results.push({
-      scenario: sc,
-      bank_id,
-      bank_name: bankName,
-      pre_provision_net_revenue_mm: +((150 + rng() * 300) * (1 - stressFactor * 0.4)).toFixed(1),
-      loan_losses_mm: +((30 + rng() * 100) * (1 + stressFactor * 2.5)).toFixed(1),
-      net_income_impact_mm: +((-20 - rng() * 80) * (1 + stressFactor * 3)).toFixed(1),
-      capital_depletion_bps: Math.floor(rng() * 50 + stressFactor * 200),
-      projected_cet1_post_stress: +(10.2 - stressFactor * 3.5 - rng() * 1.5).toFixed(2),
-      projected_tier1_post_stress: +(11.8 - stressFactor * 4.0 - rng() * 1.5).toFixed(2),
-      liquidity_buffer_days: Math.floor(90 - stressFactor * 60 + rng() * 20),
-      npl_projected: +(0.9 + stressFactor * 4.2 + rng() * 1.0).toFixed(2),
-      passes_stress_test: (10.2 - stressFactor * 3.5) >= 4.5,
-    });
-  }
+    {
+      quarter: "2022-Q2",
+      composite_score: 45,
+      tier: "ELEVATED",
+      color: "amber",
+      labeled_events: ["HTM losses accelerating", "Deposit concentration flagged by NLP"],
+      metrics: { cet1: 14.8, npl: 0.28, liquidity_coverage: 118, nim: 1.9, deposit_beta: 0.24 },
+    },
+    {
+      quarter: "2022-Q3",
+      composite_score: 62,
+      tier: "HIGH",
+      color: "orange",
+      labeled_events: ["Earnings call sentiment drops — RED ALERT", "3 new 10-K risk factors"],
+      metrics: { cet1: 14.1, npl: 0.38, liquidity_coverage: 108, nim: 1.7, deposit_beta: 0.31 },
+      first_alert: true,
+      days_before_fdic: 182,
+    },
+    {
+      quarter: "2022-Q4",
+      composite_score: 74,
+      tier: "HIGH",
+      color: "red",
+      labeled_events: ["News σ-spike ×4", "Deposit outflow velocity increases", "Unrealized losses = 28% equity"],
+      metrics: { cet1: 13.2, npl: 0.51, liquidity_coverage: 94, nim: 1.5, deposit_beta: 0.41 },
+    },
+    {
+      quarter: "2023-Q1 (pre-seizure)",
+      composite_score: 81,
+      tier: "CRITICAL",
+      color: "critical",
+      labeled_events: ["Securities sale announced", "Rating Watch Negative triggered", "Deposit run accelerates"],
+      metrics: { cet1: 12.1, npl: 0.68, liquidity_coverage: 72, nim: 1.4, deposit_beta: 0.61 },
+    },
+    {
+      quarter: "Mar 10 2023",
+      composite_score: 89,
+      tier: "FDIC SEIZURE",
+      color: "black",
+      labeled_events: ["Capital raise fails", "FDIC seizure", "Bank closed — total loss"],
+      metrics: { cet1: null, npl: null, liquidity_coverage: 0, nim: null, deposit_beta: null },
+      fdic_seizure: true,
+    },
+  ];
 
   res.json({
-    status: "ok",
-    bank_id,
-    bank_name: bankName,
-    as_of: "2024-Q4",
-    methodology: "Fed DFAST-aligned 9-quarter stress horizon",
-    results,
-  });
-});
-
-router.get("/rating-history", (req: Request, res: Response) => {
-  const { bank_id } = req.query;
-  const bankName = BANK_NAMES[bank_id as string] || "Community Bank";
-  const rng = seededRng((bank_id as string || "").length * 43 + 6666);
-
-  const ratings = ["A+","A","A-","BBB+","BBB","BBB-","BB+","BB","BB-","B+"];
-  const outlooks = ["Stable","Positive","Negative","Watch Negative"];
-  const history: any[] = [];
-
-  let currentRating = ratings[Math.floor(rng() * 6)];
-  const dates = ["2021-06","2022-01","2022-07","2023-01","2023-06","2024-01","2024-07","2024-12"];
-
-  for (const date of dates) {
-    const drift = rng() > 0.7 ? (rng() > 0.5 ? -1 : 1) : 0;
-    const newIdx = Math.max(0, Math.min(9, ratings.indexOf(currentRating) - drift));
-    currentRating = ratings[newIdx];
-    history.push({
-      date,
-      rating: currentRating,
-      outlook: outlooks[Math.floor(rng() * outlooks.length)],
-      action: drift > 0 ? "Upgrade" : drift < 0 ? "Downgrade" : "Affirm",
-      rationale: drift < 0
-        ? "Deteriorating asset quality and elevated CRE concentration"
-        : drift > 0
-        ? "Improved capital position and stable deposit base"
-        : "Rating affirmed; credit profile stable",
-      analyst: ["J. Peterson","M. Chen","R. Williams","K. Patel"][Math.floor(rng() * 4)],
-    });
-  }
-
-  res.json({
-    status: "ok",
-    bank_id,
-    bank_name: bankName,
-    current_rating: currentRating,
-    rating_history_count: history.length,
-    downgrades_last_3y: history.filter(h => h.action === "Downgrade").length,
-    upgrades_last_3y: history.filter(h => h.action === "Upgrade").length,
-    history,
+    bank: "Silicon Valley Bank",
+    bank_id: "SVB-HISTORICAL",
+    data_source: "Reconstructed from SVB FFIEC Call Report filings (public record). Illustrative — for backtesting purposes only.",
+    first_alert_quarter: "2022-Q3",
+    days_advance_warning: 182,
+    final_score: 89,
+    model_auc_roc: 0.94,
+    timeline,
   });
 });
 

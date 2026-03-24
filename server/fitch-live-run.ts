@@ -4,55 +4,145 @@ import { runAgentOnce, stopAgentRuntime, isRuntimeActive, runtimeEvents } from "
 
 const BASE_URL = `http://localhost:${process.env.PORT || 5000}`;
 
-// ─── MCP Server definitions ────────────────────────────────────────────────────
+// ─── MCP Server definitions (tool names must match mock router GET endpoints) ──
 
 const FITCH_MCP_SERVER_DEFS = [
   {
     name:        "Fitch FFIEC Data Platform",
-    description: "FFIEC Call Report data ingestion: quarterly financial metrics, peer benchmarks, CRE concentration data, and loan tape analytics for U.S. banks.",
+    description: "FFIEC Call Report data: RC-N/RC-C/RI-B/RC-R schedules, NPA data, charge-offs, capital adequacy, and G-SIB peer cohort ratios for U.S. banks.",
     url:         `${BASE_URL}/api/mock/fitch-ffiec-data`,
     tools: [
-      { name: "get_call_report_data",  description: "Retrieve FFIEC Call Report metrics by bank and period — capital, asset quality, earnings, liquidity, sensitivity.", endpoint: "call-report-data",  method: "GET", inputSchema: { type: "object", properties: { bank_id: { type: "string" }, reporting_period: { type: "string" }, metric_category: { type: "string", enum: ["capital_adequacy","asset_quality","earnings","liquidity","sensitivity"] }, limit: { type: "number" } } } },
-      { name: "get_peer_benchmark",    description: "Retrieve peer-group benchmark percentiles for any metric against community/regional bank cohort.", endpoint: "peer-benchmark",    method: "GET", inputSchema: { type: "object", properties: { bank_id: { type: "string" }, asset_size_tier: { type: "string" }, metric: { type: "string" } } } },
-      { name: "get_cre_concentration", description: "Retrieve CRE loan portfolio segmentation — multifamily, office, retail, construction — with LTV and delinquency rates.", endpoint: "cre-concentration", method: "GET", inputSchema: { type: "object", properties: { bank_id: { type: "string" }, segment: { type: "string" } } } },
-      { name: "get_loan_tape",         description: "Retrieve individual loan-level data: balance, rate type, LTV, DSCR, risk rating, past due status, and geography.", endpoint: "loan-tape",         method: "GET", inputSchema: { type: "object", properties: { bank_id: { type: "string" }, portfolio: { type: "string" }, min_balance: { type: "number" }, limit: { type: "number" } } } },
+      {
+        name: "get_call_report_schedules",
+        description: "Retrieve FFIEC RC-N/RC-C/RI-B/RC-R schedule summary per bank per quarter.",
+        endpoint: "call-report-schedules",
+        method: "GET",
+        inputSchema: { type: "object", properties: { bank_id: { type: "string" }, quarter: { type: "string" } } },
+      },
+      {
+        name: "get_npa_schedule",
+        description: "Retrieve nonaccrual loans, 90+ past due, and NPA-to-assets ratio per bank.",
+        endpoint: "npa-schedule",
+        method: "GET",
+        inputSchema: { type: "object", properties: { bank_id: { type: "string" }, quarter: { type: "string" } } },
+      },
+      {
+        name: "get_charge_off_schedule",
+        description: "Retrieve gross and net charge-offs by loan category per bank.",
+        endpoint: "charge-off-schedule",
+        method: "GET",
+        inputSchema: { type: "object", properties: { bank_id: { type: "string" }, quarter: { type: "string" } } },
+      },
+      {
+        name: "get_capital_adequacy",
+        description: "Retrieve CET1, tier 1, total capital, RWA, leverage ratios, and ACL per bank.",
+        endpoint: "capital-adequacy",
+        method: "GET",
+        inputSchema: { type: "object", properties: { bank_id: { type: "string" }, quarter: { type: "string" } } },
+      },
+      {
+        name: "get_peer_cohort_ratios",
+        description: "Retrieve G-SIB cohort median values for all 18 ratios for benchmarking.",
+        endpoint: "peer-cohort-ratios",
+        method: "GET",
+        inputSchema: { type: "object", properties: { quarter: { type: "string" }, cohort_tier: { type: "string" } } },
+      },
     ],
   },
   {
     name:        "Fitch NLP Intelligence Engine",
-    description: "Natural language processing of earnings call transcripts, SEC filings, and news articles to extract credit-relevant signals and management tone.",
+    description: "NLP processing of earnings transcripts, SEC filings, and news articles for credit-relevant signals.",
     url:         `${BASE_URL}/api/mock/fitch-nlp-engine`,
     tools: [
-      { name: "get_earnings_transcripts", description: "Retrieve earnings call transcript analysis with sentiment scoring, risk phrase detection, and management tone classification.", endpoint: "earnings-call-transcripts", method: "GET", inputSchema: { type: "object", properties: { bank_id: { type: "string" }, quarter: { type: "string" }, sentiment_filter: { type: "string", enum: ["positive","neutral","negative"] } } } },
-      { name: "get_sec_filings",          description: "Retrieve SEC 10-K/10-Q/8-K filing analysis with risk factor extraction, new language detection, and auditor flags.", endpoint: "sec-filings",              method: "GET", inputSchema: { type: "object", properties: { bank_id: { type: "string" }, filing_type: { type: "string", enum: ["10-K","10-Q","8-K"] }, flag_filter: { type: "string" } } } },
-      { name: "get_news_sentiment",       description: "Retrieve real-time news sentiment analysis — article headlines, sentiment scores, impact level, and topic tags.", endpoint: "news-sentiment",         method: "GET", inputSchema: { type: "object", properties: { bank_id: { type: "string" }, days_back: { type: "number" }, min_relevance: { type: "number" } } } },
+      {
+        name: "get_transcript_sentiment",
+        description: "Retrieve earnings call transcript sentiment scores (−2 to +2) per bank per dimension: credit quality, forward guidance, sector concerns.",
+        endpoint: "transcript-sentiment",
+        method: "GET",
+        inputSchema: { type: "object", properties: { bank_id: { type: "string" }, quarter: { type: "string" } } },
+      },
+      {
+        name: "get_filing_language_changes",
+        description: "Retrieve count of new and strengthened risk factors in 10-K YoY per bank.",
+        endpoint: "filing-language-changes",
+        method: "GET",
+        inputSchema: { type: "object", properties: { bank_id: { type: "string" }, filing_year: { type: "string" } } },
+      },
+      {
+        name: "get_news_signals",
+        description: "Retrieve article-level news classification (routine/emerging/material/crisis) per bank.",
+        endpoint: "news-signals",
+        method: "GET",
+        inputSchema: { type: "object", properties: { bank_id: { type: "string" }, days_back: { type: "number" } } },
+      },
+      {
+        name: "get_news_volume_trend",
+        description: "Retrieve rolling 13-week news volume and sigma-deviation per bank.",
+        endpoint: "news-volume-trend",
+        method: "GET",
+        inputSchema: { type: "object", properties: { bank_id: { type: "string" } } },
+      },
     ],
   },
   {
     name:        "Fitch Analytics Engine",
-    description: "Composite risk scoring, SVB backtesting data, stress testing, and rating history for U.S. banks.",
+    description: "Ratio trend analysis, threshold breach detection, and SVB backtesting data.",
     url:         `${BASE_URL}/api/mock/fitch-analytics`,
     tools: [
-      { name: "get_early_warning_scores", description: "Retrieve composite CAMELS-derived early warning risk scores for one or all monitored institutions.", endpoint: "early-warning-scores", method: "GET", inputSchema: { type: "object", properties: { bank_id: { type: "string" }, threshold: { type: "number" }, sector_filter: { type: "string" } } } },
-      { name: "get_svb_backtest_data",    description: "Retrieve SVB backtesting quarterly data showing how the early warning model would have flagged SVB before failure.", endpoint: "svb-backtest",         method: "GET", inputSchema: { type: "object", properties: {} } },
-      { name: "get_stress_test",          description: "Retrieve stress test results under baseline, adverse, and severely adverse scenarios.", endpoint: "stress-test",          method: "GET", inputSchema: { type: "object", properties: { bank_id: { type: "string" }, scenario: { type: "string", enum: ["baseline","adverse","severely_adverse"] } } } },
-      { name: "get_rating_history",       description: "Retrieve Fitch historical rating actions and rationale for a bank.", endpoint: "rating-history",        method: "GET", inputSchema: { type: "object", properties: { bank_id: { type: "string" } } } },
+      {
+        name: "get_ratio_trends",
+        description: "Retrieve 8-quarter time series for all 18 CAMELS-derived ratios per bank.",
+        endpoint: "ratio-trends",
+        method: "GET",
+        inputSchema: { type: "object", properties: { bank_id: { type: "string" }, ratio_id: { type: "string" } } },
+      },
+      {
+        name: "get_threshold_breaches",
+        description: "Retrieve list of breached ratios with severity (CRITICAL/HIGH/MEDIUM) and QoQ delta per bank.",
+        endpoint: "threshold-breaches",
+        method: "GET",
+        inputSchema: { type: "object", properties: { bank_id: { type: "string" }, quarter: { type: "string" } } },
+      },
+      {
+        name: "get_svb_backtest_data",
+        description: "Retrieve SVB Q1 2022→Mar 2023 score timeline showing 182-day advance warning before FDIC seizure.",
+        endpoint: "svb-backtest",
+        method: "GET",
+        inputSchema: { type: "object", properties: {} },
+      },
     ],
   },
   {
     name:        "Fitch Report Engine",
-    description: "Credit assessment report generation: templates, historical reports, compliance checklists, and full package assembly.",
+    description: "Credit assessment report templates, prior analyst notes, and Fitch Viability Rating history.",
     url:         `${BASE_URL}/api/mock/fitch-report-engine`,
     tools: [
-      { name: "get_report_templates",    description: "Retrieve available credit assessment report templates — full package, watch alert, peer comparison, stress test.", endpoint: "report-templates",    method: "GET", inputSchema: { type: "object", properties: { report_type: { type: "string" } } } },
-      { name: "get_historical_reports",  description: "Retrieve past credit assessment reports for a bank — rating at publication, analyst, and status.", endpoint: "historical-reports",  method: "GET", inputSchema: { type: "object", properties: { bank_id: { type: "string" }, report_type: { type: "string" }, limit: { type: "number" } } } },
-      { name: "generate_report_package", description: "Generate a full credit assessment package using composite scores, CAMELS data, and peer benchmarks.", endpoint: "generate-package",    method: "POST", inputSchema: { type: "object", properties: { bank_id: { type: "string" }, report_type: { type: "string" }, composite_score: { type: "number" }, trend: { type: "string" }, component_scores: { type: "object" } }, required: ["bank_id"] } },
-      { name: "get_compliance_checklist", description: "Retrieve regulatory compliance checklist items with pass/fail status.", endpoint: "compliance-checklist", method: "GET", inputSchema: { type: "object", properties: { bank_id: { type: "string" }, checklist_type: { type: "string" } } } },
+      {
+        name: "get_report_template",
+        description: "Retrieve the AQEWS quarterly assessment package structure scaffold.",
+        endpoint: "report-template",
+        method: "GET",
+        inputSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "get_analyst_notes",
+        description: "Retrieve prior quarter analyst observations and action flags per bank.",
+        endpoint: "analyst-notes",
+        method: "GET",
+        inputSchema: { type: "object", properties: { bank_id: { type: "string" } } },
+      },
+      {
+        name: "get_rating_history",
+        description: "Retrieve last 8 quarters of Fitch Viability Rating actions per bank.",
+        endpoint: "rating-history",
+        method: "GET",
+        inputSchema: { type: "object", properties: { bank_id: { type: "string" } } },
+      },
     ],
   },
 ];
 
-// ─── Agent definitions ────────────────────────────────────────────────────────
+// ─── Agent definitions per spec ───────────────────────────────────────────────
 
 interface FitchAgentDef {
   name: string;
@@ -63,256 +153,265 @@ interface FitchAgentDef {
   maxToolIterations: number;
 }
 
+const BANK_LIST = [
+  "JPMorgan Chase (RSSD-0000001)", "Bank of America (RSSD-0000002)",
+  "Wells Fargo (RSSD-0000003)",    "Citigroup (RSSD-0000004)",
+  "Goldman Sachs (RSSD-0000005)",  "Morgan Stanley (RSSD-0000006)",
+  "U.S. Bancorp (RSSD-0000007)",   "Truist Financial (RSSD-0000008)",
+  "PNC Financial (RSSD-0000009)",  "RegionalBank-West (RSSD-0000010)",
+].join(", ");
+
 const FITCH_AGENT_DEFS: Record<string, FitchAgentDef> = {
+
+  // ── Agent 1: FFIEC Data Ingestor ────────────────────────────────────────────
   ffiec_ingestor: {
-    name:        "FFIEC Data Ingestor",
-    description: "Ingests and normalizes quarterly FFIEC Call Report data for all monitored U.S. banks, computing CAMELS sub-scores.",
+    name:           "FFIEC Data Ingestor",
+    description:    "Ingests and normalizes quarterly FFIEC Call Report data (RC-N, RC-C, RI-B, RC-R) for the 10-bank G-SIB cohort.",
     mcpServerNames: ["Fitch FFIEC Data Platform"],
     maxToolIterations: 8,
-    systemPrompt: `You are the FFIEC Data Ingestor for Fitch's Asset Quality Early Warning System. Your role is to ingest and normalize quarterly regulatory data for the bank portfolio.
+    systemPrompt: `You are the FFIEC Data Ingestor for Fitch's Asset Quality Early Warning System.
 
 Your task sequence:
-1. Call get_call_report_data with the target bank_id and metric_category="capital_adequacy" to retrieve capital ratios
-2. Call get_call_report_data again with metric_category="asset_quality" for NPL ratios and classified assets
-3. Call get_call_report_data with metric_category="liquidity" for funding structure
-4. Call get_peer_benchmark to obtain peer comparisons for key metrics
+1. Call get_call_report_schedules to retrieve RC-N/RC-C/RI-B/RC-R summary for the 10-bank cohort
+2. Call get_npa_schedule to retrieve nonaccrual loan and NPA data for all banks
+3. Call get_charge_off_schedule to retrieve gross/net charge-off data by category
+4. Call get_capital_adequacy to retrieve CET1, tier1, and ACL ratios for the cohort
 
-After calling these tools, analyze the data and produce a comprehensive CAMELS sub-score summary.
+After calling all four tools, analyze the data and populate the JSON below with REAL values from the tool responses.
 
-IMPORTANT: End your final response with ONLY this JSON block:
+CRITICAL: You MUST end your response with a JSON code block (triple-backtick json) containing the exact schema below, populated with real values from the tool data:
+
 \`\`\`json
 {
-  "banksIngested": 847,
-  "quartersProcessed": 4,
-  "totalDataPoints": 24800,
-  "camelsScoringComplete": true,
-  "avgCapitalRatio": 11.4,
-  "avgNplRatio": 0.82,
-  "watchListCount": 23,
-  "dataQualityScore": 98.4,
-  "ingestDurationSeconds": 142,
-  "topWatchFlags": ["cre_concentration", "liquidity_pressure", "earnings_decline"],
-  "portfolioBreakdown": {
-    "low_risk": 512,
-    "medium_risk": 298,
-    "high_risk": 31,
-    "critical": 6
-  }
+  "banksIngested": 10,
+  "ratioInputsReady": 18,
+  "schedulesProcessed": 4,
+  "quarterRef": "2024-Q2",
+  "bankSummaries": [
+    { "bankId": "RSSD-0000001", "bankName": "JPMorgan Chase", "nplRatio": 0.42, "cet1": 13.1, "ncoRate": 0.18, "capitalStatus": "Well Capitalized" }
+  ]
 }
 \`\`\`
-Adjust numbers to be consistent with what the tool data shows. watchListCount should be realistic (< 5% of total).`,
-    taskPrompt: "Run the FFIEC data ingestion cycle. Call get_call_report_data for capital_adequacy and asset_quality categories, then get_peer_benchmark for tier comparison. Produce the ingestion summary JSON.",
+(Replace with actual values from the tool data. Include all 10 banks in bankSummaries.)
+
+Use actual bank IDs and values from the tool responses. bankSummaries must include all 10 banks.`,
+    taskPrompt: "Ingest FFIEC Call Report data for all 10 banks in the cohort: " + BANK_LIST + ". Call get_call_report_schedules, get_npa_schedule, get_charge_off_schedule, and get_capital_adequacy. Produce the ingestion summary JSON.",
   },
 
+  // ── Agent 2: Financial Ratio Engine ─────────────────────────────────────────
   ratio_engine: {
-    name:        "Financial Ratio Engine",
-    description: "Computes derived financial ratios and trend vectors from raw Call Report data, flagging statistical anomalies.",
+    name:           "Financial Ratio Engine",
+    description:    "Computes 18 CAMELS-derived financial ratios, trend vectors, and threshold breach flags for all 10 banks.",
     mcpServerNames: ["Fitch FFIEC Data Platform", "Fitch Analytics Engine"],
     maxToolIterations: 8,
-    systemPrompt: `You are the Financial Ratio Engine for Fitch's Asset Quality Early Warning System. You compute derived financial ratios, detect trend breaks, and flag anomalies across the monitored bank portfolio.
+    systemPrompt: `You are the Financial Ratio Engine for Fitch's Asset Quality Early Warning System.
 
 Your task sequence:
-1. Call get_call_report_data with metric_category="earnings" for profitability metrics
-2. Call get_call_report_data with metric_category="sensitivity" for interest rate risk data
-3. Call get_cre_concentration to assess commercial real estate portfolio segmentation
-4. Call get_early_warning_scores to see current portfolio risk distribution
+1. Call get_peer_cohort_ratios to retrieve the G-SIB median for all 18 ratios
+2. Call get_ratio_trends to retrieve 8-quarter time series for all 18 ratios per bank
+3. Call get_threshold_breaches to retrieve breached ratios with severity and QoQ delta per bank
 
-Analyze the data, compute trend vectors (QoQ and YoY changes), and flag statistical outliers.
+After all tool calls, compute a ratioTable with all 18 ratios for each bank. Populate the JSON with REAL values from the tool data.
 
-IMPORTANT: End your final response with ONLY this JSON block:
+The 18 ratios are: npl_ratio, nco_rate, allowance_to_loans, cet1_ratio, tier1_leverage, rwa_density, roa, roe, nim, efficiency_ratio, loan_deposit_ratio, liquid_assets_to_total, cre_to_total_loans, commercial_concentration, provision_to_avg_loans, accruing_past_due_90_pct, classified_to_tier1, net_stable_funding_ratio
+
+CRITICAL: End your response with a JSON code block (triple-backtick json):
+
 \`\`\`json
 {
-  "ratiosComputed": 18,
-  "banksAnalyzed": 847,
-  "anomaliesDetected": 14,
-  "trendBreaks": 8,
-  "avgNim": 3.12,
-  "avgRoa": 0.98,
-  "avgEfficiencyRatio": 64.2,
-  "creConcentrationBreach": 31,
-  "rateRiskFlags": 19,
-  "keyTrends": {
-    "nimCompression": -0.18,
-    "nplDrift": 0.12,
-    "provisioning": "increasing",
-    "capitalAccretion": "stable"
+  "banksAnalyzed": <integer>,
+  "totalBreaches": <integer>,
+  "ratioTable": {
+    "<bankName>": {
+      "<ratioId>": { "value": <float>, "threshold": <float>, "breached": <boolean>, "qoqDelta": <float>, "peerMedian": <float> }
+    }
   },
-  "outliers": [
-    { "bank_id": "RSSD-3511777", "metric": "liquidity_risk", "zscore": 4.2, "direction": "deteriorating" },
-    { "bank_id": "RSSD-1029867", "metric": "cre_concentration", "zscore": 3.1, "direction": "deteriorating" }
+  "breachLeaderboard": [
+    { "bankName": "<name>", "breachCount": <integer>, "worstRatio": "<ratioId>", "severity": "CRITICAL|HIGH|MEDIUM" }
   ]
 }
 \`\`\`
-Make the outliers realistic — use the actual bank IDs from the data.`,
-    taskPrompt: "Run the financial ratio computation cycle. Call get_call_report_data for earnings and sensitivity metrics, get_cre_concentration for portfolio segmentation, and get_early_warning_scores for baseline risk view. Produce the ratio engine JSON output.",
+
+ratioTable must contain entries for all 10 banks and all 18 ratios.`,
+    taskPrompt: "Compute financial ratios for all 10 banks in the G-SIB cohort. Call get_peer_cohort_ratios for benchmarks, get_ratio_trends for time series, and get_threshold_breaches for breach detection. Produce the ratio analysis JSON.",
   },
 
+  // ── Agent 3: Transcript & Filing Analyst ─────────────────────────────────────
   transcript_analyst: {
-    name:        "Transcript & Filing Analyst",
-    description: "Parses earnings call transcripts and SEC filings to detect management tone shifts, new risk disclosures, and regulatory flags.",
+    name:           "Transcript & Filing Analyst",
+    description:    "NLP analysis of earnings call transcripts and SEC 10-K filings for management tone shifts and new risk disclosures.",
     mcpServerNames: ["Fitch NLP Intelligence Engine"],
-    maxToolIterations: 8,
-    systemPrompt: `You are the Transcript & Filing Analyst for Fitch's Asset Quality Early Warning System. You use NLP to extract credit-relevant signals from management communications and regulatory filings.
+    maxToolIterations: 6,
+    systemPrompt: `You are the Transcript & Filing Analyst for Fitch's Asset Quality Early Warning System.
 
 Your task sequence:
-1. Call get_earnings_transcripts for the target bank to retrieve recent earnings call sentiment
-2. Call get_sec_filings to check for new risk language, material weaknesses, and going concern flags
-3. Call get_earnings_transcripts with a second bank for comparison
+1. Call get_transcript_sentiment to retrieve earnings call sentiment scores per bank (credit quality, forward guidance, sector concerns composite)
+2. Call get_filing_language_changes to retrieve new/strengthened risk factors in 10-K filings YoY per bank
 
-Analyze management tone, detect new risk disclosures, and flag any "hedging language" shifts.
+After both tool calls, analyze management tone, detect new risk disclosures, and populate the JSON with REAL values from the tool data.
 
-IMPORTANT: End your final response with ONLY this JSON block:
+CRITICAL: End your response with a JSON code block (triple-backtick json):
+
 \`\`\`json
 {
-  "transcriptsAnalyzed": 312,
-  "filingsProcessed": 847,
-  "avgSentimentScore": -0.12,
-  "negativeShifts": 28,
-  "materialWeaknessFlags": 3,
-  "goingConcernFlags": 1,
-  "newRiskLanguage": 41,
-  "defensiveToneCount": 19,
-  "topRiskPhrases": ["CRE concentration", "deposit outflows", "unrealized losses", "liquidity pressure"],
-  "sentimentByCategory": {
-    "capital": 0.08,
-    "asset_quality": -0.31,
-    "liquidity": -0.24,
-    "management_outlook": -0.09
+  "banksScored": <integer>,
+  "sentimentScores": {
+    "<bankName>": {
+      "creditQuality": <float -2 to 2>,
+      "forwardGuidance": <float -2 to 2>,
+      "sectorConcerns": <float -2 to 2>,
+      "composite": <float -2 to 2>
+    }
+  },
+  "filingFlags": {
+    "<bankName>": {
+      "newRiskFactors": <integer>,
+      "strengthenedLanguage": <integer>,
+      "mdaShift": <float>
+    }
   }
 }
 \`\`\`
-Numbers should be consistent with what the NLP tools return. Sentiment scores in range [-1, 1].`,
-    taskPrompt: "Run the transcript and filing NLP analysis. Call get_earnings_transcripts for key banks and get_sec_filings to detect new risk disclosures. Produce the NLP analysis JSON summary.",
+
+Include all 10 banks in sentimentScores and filingFlags.`,
+    taskPrompt: "Analyze earnings transcripts and 10-K filings for all 10 banks. Call get_transcript_sentiment and get_filing_language_changes. Produce the NLP sentiment summary JSON.",
   },
 
+  // ── Agent 4: News Signal Processor ───────────────────────────────────────────
   news_processor: {
-    name:        "News Signal Processor",
-    description: "Continuously monitors financial news for credit-relevant events, sentiment shifts, and regulatory developments.",
-    mcpServerNames: ["Fitch NLP Intelligence Engine", "Fitch Analytics Engine"],
-    maxToolIterations: 7,
-    systemPrompt: `You are the News Signal Processor for Fitch's Asset Quality Early Warning System. You monitor real-time news and market signals to detect credit-relevant events before they appear in regulatory filings.
+    name:           "News Signal Processor",
+    description:    "Monitors financial news for credit-relevant events, sigma-spikes, and classification of articles by severity.",
+    mcpServerNames: ["Fitch NLP Intelligence Engine"],
+    maxToolIterations: 6,
+    systemPrompt: `You are the News Signal Processor for Fitch's Asset Quality Early Warning System.
 
 Your task sequence:
-1. Call get_news_sentiment to retrieve recent news sentiment for the bank portfolio
-2. Call get_rating_history to cross-reference news events with past rating actions
-3. Call get_news_sentiment with days_back=7 for the most recent high-impact signals
+1. Call get_news_signals to retrieve article-level news classification (routine/emerging/material/crisis) per bank
+2. Call get_news_volume_trend to retrieve rolling 13-week volume and sigma-deviation per bank
 
-Identify market intelligence that may lead the regulatory data by 1–3 quarters.
+After both tool calls, identify emerging risks and sigma-spike alerts. Populate the JSON with REAL values from the tool data.
 
-IMPORTANT: End your final response with ONLY this JSON block:
+CRITICAL: End your response with a JSON code block (triple-backtick json):
+
 \`\`\`json
 {
-  "articlesScanned": 2840,
-  "relevantArticles": 412,
-  "avgMarketSentiment": -0.18,
-  "negativeSignals": 89,
-  "positiveSignals": 47,
-  "highImpactEvents": 7,
-  "regulatoryMentions": 31,
-  "eventsByType": {
-    "earnings": 142,
-    "regulatory": 68,
-    "market_event": 89,
-    "credit_action": 23
+  "banksMonitored": <integer>,
+  "newsSeverity": {
+    "<bankName>": {
+      "score": <float>,
+      "classification": "routine|emerging|material|crisis",
+      "sigmaSpike": <float>,
+      "articleCount": <integer>
+    }
   },
-  "topNegativeBanks": ["RSSD-3511777", "RSSD-1029867", "RSSD-1462895"],
-  "leadingIndicators": [
-    { "signal": "Deposit outflow language increasing", "banks_affected": 8, "lead_time_quarters": 2 },
-    { "signal": "CRE loss mention surge", "banks_affected": 12, "lead_time_quarters": 1 }
+  "emergingRisks": [
+    { "bankName": "<name>", "topic": "<topic>", "classification": "<class>", "sigmaSpike": <float> }
   ]
 }
 \`\`\`
-Keep articlesScanned plausible (hundreds to low thousands). Use real bank IDs in topNegativeBanks.`,
-    taskPrompt: "Run the news signal processing cycle. Call get_news_sentiment for portfolio-wide coverage and get_rating_history for context. Produce the news signal JSON summary.",
+
+Include all 10 banks in newsSeverity. emergingRisks should list banks with classification != routine.`,
+    taskPrompt: "Monitor news signals for all 10 banks. Call get_news_signals and get_news_volume_trend. Produce the news signal summary JSON.",
   },
 
+  // ── Agent 5: Composite Risk Scorer ──────────────────────────────────────────
   risk_scorer: {
-    name:        "Composite Risk Scorer",
-    description: "Fuses CAMELS sub-scores, NLP sentiment, and market signals into a composite early warning score for each bank.",
-    mcpServerNames: ["Fitch Analytics Engine"],
+    name:           "Composite Risk Scorer",
+    description:    "Fuses CAMELS ratios, NLP sentiment, news signals, and peer benchmarks into a composite 0–100 early warning score per bank.",
+    mcpServerNames: ["Fitch FFIEC Data Platform", "Fitch Analytics Engine"],
     maxToolIterations: 8,
-    systemPrompt: `You are the Composite Risk Scorer for Fitch's Asset Quality Early Warning System. You fuse all upstream signal streams into a composite CAMELS-enhanced risk score for each institution.
+    systemPrompt: `You are the Composite Risk Scorer for Fitch's Asset Quality Early Warning System.
+
+You will receive prior agent outputs in the task prompt. Use them to compute composite scores.
 
 Your task sequence:
-1. Call get_early_warning_scores with threshold=0 to retrieve all current scores
-2. Call get_stress_test for the top-risk institution to validate under adverse conditions
-3. Call get_svb_backtest_data to verify that the model's SVB signal would have triggered at appropriate time
+1. Call get_threshold_breaches for each bank to retrieve current breach counts and severity
+2. Call get_ratio_trends to see deteriorating trajectories
+3. Call get_peer_cohort_ratios to compute peer divergence scores
 
-Compute final composite scores, rank institutions by risk, and identify any requiring immediate escalation.
+Scoring formula (weighted):
+- 55% structured data (FFIEC ratios + breaches from prior FFIEC Ingestor + Ratio Engine outputs)
+- 20% transcript sentiment (from Transcript Analyst output)
+- 10% filing language changes (from Transcript Analyst output)
+- 10% news severity (from News Signal Processor output)
+- 5% peer divergence (from current tool calls)
 
-IMPORTANT: End your final response with ONLY this JSON block:
+Risk tiers: Green (0–39), Amber (40–59), Amber-High (60–74), Red (75–100)
+
+CRITICAL: End your response with a JSON code block (triple-backtick json):
+
 \`\`\`json
 {
-  "scoringComplete": true,
-  "institutionsScored": 847,
-  "criticalRisk": 6,
-  "highRisk": 31,
-  "mediumRisk": 298,
-  "lowRisk": 512,
-  "avgCompositeScore": 28.4,
-  "svbBacktestValidated": true,
-  "svbEarlyWarningQuarter": "2022-Q3",
-  "svbDaysAdvanceWarning": 182,
-  "topRiskInstitutions": [
-    { "bank_id": "RSSD-3511777", "name": "Silicon Valley Bank", "score": 87.3, "trend": "deteriorating", "primary_driver": "liquidity_risk" },
-    { "bank_id": "RSSD-1029867", "name": "Pacific Western Bank",  "score": 61.2, "trend": "deteriorating", "primary_driver": "asset_quality" },
-    { "bank_id": "RSSD-1462895", "name": "Signature Bank",       "score": 54.8, "trend": "deteriorating", "primary_driver": "cre_concentration" }
-  ],
-  "modelAccuracy": { "precision": 0.91, "recall": 0.87, "auc_roc": 0.94, "backtestPeriod": "2018-2024" }
+  "portfolioScored": <integer>,
+  "scores": {
+    "<bankName>": {
+      "score": <integer 0-100>,
+      "tier": "Green|Amber|Amber-High|Red",
+      "trajectory": "Improving|Stable|Deteriorating",
+      "delta": <float>,
+      "breachCount": <integer>,
+      "peerDivergence": <float>
+    }
+  },
+  "watchList": ["<bankName>", ...],
+  "redAlerts": ["<bankName>", ...]
 }
 \`\`\`
-Use actual bank IDs and names from the data. SVB score should be the highest (> 80) to dramatize the backtest finding.`,
-    taskPrompt: "Run the composite risk scoring cycle. Call get_early_warning_scores for the full portfolio, get_stress_test for high-risk banks, and get_svb_backtest_data to validate the SVB signal. Produce the composite scoring JSON.",
+
+scores must include all 10 banks. RegionalBank-West should score highest (>70) given its elevated stress profile. redAlerts = banks scoring >= 75. watchList = banks scoring 60–74.`,
+    taskPrompt: "Compute composite risk scores for all 10 banks using prior agent outputs. Call get_threshold_breaches for breach context, get_ratio_trends for trajectory, and get_peer_cohort_ratios for peer divergence. Apply the weighted formula and produce the composite scoring JSON.",
   },
 
+  // ── Agent 6: Assessment Report Generator ────────────────────────────────────
   report_generator: {
-    name:        "Assessment Report Generator",
-    description: "Assembles full credit assessment packages including CAMELS narrative, peer comparison tables, and rating recommendation.",
+    name:           "Assessment Report Generator",
+    description:    "Assembles analyst-ready credit assessment packages including SVB backtesting comparison and rating recommendations.",
     mcpServerNames: ["Fitch Report Engine", "Fitch Analytics Engine"],
     maxToolIterations: 8,
-    systemPrompt: `You are the Assessment Report Generator for Fitch's Asset Quality Early Warning System. You assemble full credit assessment packages for flagged institutions, ready for analyst review.
+    systemPrompt: `You are the Assessment Report Generator for Fitch's Asset Quality Early Warning System.
+
+You will receive prior agent outputs in the task prompt. Use them to assemble credit packages.
 
 Your task sequence:
-1. Call get_report_templates to retrieve the available assessment package formats
-2. Call get_compliance_checklist for a flagged bank to assess regulatory compliance status
-3. Call get_historical_reports for context on prior assessments
-4. Call generate_report_package with the composite score and trend data to produce the full assessment
+1. Call get_report_template to retrieve the AQEWS quarterly assessment package scaffold
+2. Call get_analyst_notes to retrieve prior quarter analyst observations for the watch-list banks
+3. Call get_svb_backtest_data to retrieve the SVB Q1 2022→Mar 2023 score timeline showing 182-day advance warning
+4. Call get_rating_history to retrieve Fitch Viability Rating history for flagged banks
 
-Produce well-structured credit assessment packages ready for senior analyst review.
+After all tool calls, assemble the assessment package and produce the JSON with REAL values from tool data and prior agent outputs.
 
-IMPORTANT: End your final response with ONLY this JSON block:
+CRITICAL: End your response with a JSON code block (triple-backtick json):
+
 \`\`\`json
 {
-  "packagesGenerated": 37,
-  "watchAlerts": 6,
-  "fullAssessments": 31,
-  "avgTurnaroundHours": 2.4,
-  "analystHoursSaved": 412,
-  "ratingActions": {
-    "upgraded": 3,
-    "downgraded": 8,
-    "watch_negative": 6,
-    "affirmed": 20
+  "reportGenerated": true,
+  "watchList": ["<bankName>", ...],
+  "recommendation": "Watch|Active Monitor|Immediate Review",
+  "svbComparison": {
+    "svbTimeline": [
+      { "quarter": "<quarter>", "compositeScore": <integer>, "tier": "<tier>", "labeledEvents": ["<event>"] }
+    ],
+    "parallelsFound": ["<parallel narrative>"]
   },
-  "topPackage": {
-    "bank_id": "RSSD-3511777",
-    "bank_name": "Silicon Valley Bank",
-    "rating": "BB",
-    "action": "Rating Watch Negative",
-    "outlook": "Negative",
-    "analyst": "J. Peterson",
-    "pages": 28
-  },
-  "totalPagesGenerated": 1014,
-  "processingTimeSec": 84
+  "assessmentPackage": {
+    "executiveSummary": "<concise 2-3 sentence executive summary>",
+    "ratioHighlights": [
+      { "ratio": "<ratioId>", "finding": "<finding text>", "severity": "CRITICAL|HIGH|MEDIUM" }
+    ],
+    "nlpHighlights": [
+      { "bank": "<bankName>", "signal": "<signal text>", "source": "transcript|filing|news" }
+    ],
+    "analystNote": "<one paragraph analyst recommendation>"
+  }
 }
 \`\`\`
-packagesGenerated should be < 50. ratingActions should sum to packagesGenerated. Keep numbers consistent.`,
-    taskPrompt: "Run the report generation cycle. Call get_report_templates, get_compliance_checklist for a flagged bank, and generate_report_package with composite scores. Produce the report generation JSON summary.",
+
+svbComparison.svbTimeline must contain all 6 quarters from the get_svb_backtest_data tool (Q1 2022 through Mar 10 2023). parallelsFound should note similarities between top-risk banks in the current portfolio and SVB's pre-seizure pattern.`,
+    taskPrompt: "Generate credit assessment packages using all prior agent outputs. Call get_report_template, get_analyst_notes for watch-list banks, get_svb_backtest_data (REQUIRED — SVB timeline goes on Screen 5), and get_rating_history. Produce the assessment report JSON.",
   },
 };
 
-// ─── Module-level ID cache ────────────────────────────────────────────────────
+// ─── Module-level ID caches ───────────────────────────────────────────────────
 
 const _fitchServerIdByName: Record<string, string> = {};
 const _fitchAgentIdByName: Record<string, string> = {};
@@ -409,7 +508,12 @@ export async function ensureFitchAgents(): Promise<void> {
           maturityFactors:   {},
         } as any);
       } else {
-        const needsUpdate = (agent as any).modelProvider !== "openai" || (agent as any).modelName !== "gpt-4.1" || !(agent as any).systemPrompt;
+        const needsUpdate =
+          (agent as any).modelProvider !== "openai" ||
+          (agent as any).modelName !== "gpt-4.1" ||
+          !(agent as any).systemPrompt ||
+          !(agent as any).systemPrompt.includes("get_call_report_schedules") &&
+          def.name === "FFIEC Data Ingestor";
         if (needsUpdate) {
           await storage.updateAgent((agent as any).id, {
             modelProvider:     "openai",
@@ -422,6 +526,19 @@ export async function ensureFitchAgents(): Promise<void> {
       }
 
       _fitchAgentIdByName[def.name] = (agent as any).id;
+
+      // Ensure MCP server links
+      const agentId = (agent as any).id;
+      const mcpServerIds = def.mcpServerNames.map(n => _fitchServerIdByName[n]).filter(Boolean);
+      if (mcpServerIds.length > 0) {
+        const existingLinks = await storage.getAgentMcpServers(agentId).catch(() => [] as any[]);
+        const linkedIds = new Set((existingLinks || []).map((l: any) => l.serverId));
+        for (const sid of mcpServerIds) {
+          if (!linkedIds.has(sid)) {
+            await storage.createAgentMcpServer({ agentId, serverId: sid, assignedBy: "fitch-live-demo" });
+          }
+        }
+      }
     }
 
     console.log("[fitch-live] Agents and MCP servers ensured successfully");
@@ -545,7 +662,7 @@ export async function fitchLiveRunHandler(req: Request, res: Response): Promise<
 
     sendEvent("setup", { message: "Ensuring 6 pipeline agents and 4 MCP servers are registered..." });
     await ensureFitchAgents();
-    sendEvent("setup", { message: "All 6 pipeline agents ready with 4 MCP servers (15 tools)" });
+    sendEvent("setup", { message: "All 6 pipeline agents ready — 4 MCP servers (15 tools) confirmed" });
 
     const agentOrder = [
       "ffiec_ingestor",
@@ -571,7 +688,7 @@ export async function fitchLiveRunHandler(req: Request, res: Response): Promise<
 
     sendEvent("setup", { message: "Deployments configured — executing assessment pipeline..." });
 
-    // Accumulate resultSummaries from each agent for downstream context injection
+    // Accumulate resultSummaries for downstream context injection
     const priorSummaries: Record<string, Record<string, any>> = {};
 
     for (const role of agentOrder) {
@@ -594,13 +711,13 @@ export async function fitchLiveRunHandler(req: Request, res: Response): Promise<
         await new Promise(r => setTimeout(r, 300));
       }
 
-      // Build task prompt — inject prior summaries for composite scorer and report generator
+      // Inject prior summaries for composite scorer and report generator
       let taskPrompt = def.taskPrompt;
       if ((role === "risk_scorer" || role === "report_generator") && Object.keys(priorSummaries).length > 0) {
         const context = Object.entries(priorSummaries)
-          .map(([r, s]) => `[${r}]: ${JSON.stringify(s)}`)
+          .map(([r, s]) => `[${FITCH_AGENT_DEFS[r]?.name ?? r}]: ${JSON.stringify(s)}`)
           .join("\n");
-        taskPrompt = `PRIOR AGENT OUTPUTS:\n${context}\n\nYOUR TASK:\n${def.taskPrompt}`;
+        taskPrompt = `PRIOR AGENT OUTPUTS (use these to inform scoring and report generation):\n${context}\n\nYOUR TASK:\n${def.taskPrompt}`;
       }
 
       const result = await runAgentOnce(deploymentId, taskPrompt, def.maxToolIterations);
@@ -608,7 +725,6 @@ export async function fitchLiveRunHandler(req: Request, res: Response): Promise<
       if (result.message) {
         const parsed = extractJson(result.message);
         if (parsed) {
-          // Store in prior summaries for downstream agents
           priorSummaries[role] = parsed;
           try {
             const runs = await storage.getAgentRuntimeRuns(agentId);
@@ -624,7 +740,7 @@ export async function fitchLiveRunHandler(req: Request, res: Response): Promise<
 
       sendEvent("agent_complete", {
         agentId,
-        agentName: def.name,
+        agentName:     def.name,
         role,
         success:       result.success,
         message:       result.message?.slice(0, 400),
