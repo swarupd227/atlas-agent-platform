@@ -2,7 +2,7 @@ import { Router } from "express";
 import OpenAI from "openai";
 import { z } from "zod";
 import { storage } from "../storage";
-import { checkPermission } from "../permissions";
+import { checkPermission, getRequestRole } from "../permissions";
 import { resolveOntologyTags, generateKpiAlignedEvalSuite, handleZodError } from "./helpers";
 import {
   insertAgentTemplateSchema,
