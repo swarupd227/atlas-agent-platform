@@ -200,10 +200,15 @@ export function useFitchPipeline(): {
           role: d.role,
           agentName: d.agentName,
           success: d.success,
-          resultSummary: null,
+          resultSummary: d.resultSummary ?? null,
           completedAt: new Date().toISOString(),
           toolsCalled: agentTools,
         });
+      } else {
+        // Update resultSummary if we received one and didn't have it yet
+        if (d.resultSummary && !existing.resultSummary) {
+          existing.resultSummary = d.resultSummary;
+        }
       }
       notifyListeners();
     });

@@ -626,8 +626,9 @@ export async function fitchLiveRunHandler(req: Request, res: Response): Promise<
         agentId,
         agentName: def.name,
         role,
-        success:   result.success,
-        message:   result.message?.slice(0, 400),
+        success:       result.success,
+        message:       result.message?.slice(0, 400),
+        resultSummary: priorSummaries[role] ?? null,
       });
     }
 

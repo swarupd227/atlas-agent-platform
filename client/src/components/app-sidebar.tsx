@@ -278,6 +278,14 @@ export function AppSidebar() {
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild data-active={location.startsWith("/demo/fitch")}>
+                      <Link href="/demo/fitch" data-testid="link-nav-fitch-demo">
+                        <Shield className="w-4 h-4" />
+                        <span>Fitch - Asset Quality Early Warning</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
                 </SidebarMenu>
               </SidebarGroupContent>
             </CollapsibleContent>
