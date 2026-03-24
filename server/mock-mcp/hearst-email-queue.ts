@@ -86,7 +86,7 @@ router.get("/fatigue-rules", (req: Request, res: Response) => {
       {
         ruleId: "fat-001",
         name: "Weekly Send Cap",
-        description: "No subscriber receives more than 5 emails per 7-day rolling window across all Hearst brands",
+        description: "No subscriber receives more than 5 emails per 7-day rolling window across all XYZ brands",
         type: "frequency_cap",
         threshold: 5,
         window: "7_days",

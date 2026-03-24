@@ -259,7 +259,7 @@ function LiveFeedPanel({ events, activeAgentName, running, onClose }: {
   );
 }
 
-export default function HearstDemo() {
+export default function XYZDemo() {
   const [activeScreen, setActiveScreen]       = useState<ScreenId>("command-center");
   const [pendingBrand, setPendingBrand]       = useState<string | null>(null);
   const [liveRunning, setLiveRunning]         = useState(false);
@@ -385,7 +385,7 @@ export default function HearstDemo() {
             <span className="text-[10px] font-bold text-[#E91E8C]">H</span>
           </div>
           <div>
-            <h1 className="text-sm font-bold leading-none">Hearst NBA Email Orchestration</h1>
+            <h1 className="text-sm font-bold leading-none">XYZ NBA Email Orchestration</h1>
             <p className="text-[11px] text-muted-foreground mt-0.5">Atlas AI Agent Platform · 8 brands · 6.2M subscribers</p>
           </div>
           <Badge className="text-[10px] bg-green-500/20 text-green-400 border-green-500/30 ml-2">Live</Badge>

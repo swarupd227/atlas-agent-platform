@@ -10,7 +10,7 @@ import {
   Play, Activity, Database, ChevronDown, User, Check, SendHorizonal, Pause,
 } from "lucide-react";
 import {
-  ensureHearstAgentConfig,
+  ensureXYZAgentConfig,
   useNBARun,
   HEARST_PERSONAS,
   type NBARunStep,
@@ -76,10 +76,10 @@ const TRIGGER_LABEL: Record<string, string> = {
 };
 
 const TOOL_SERVER_COLORS: Record<string, string> = {
-  "Hearst Data Platform": "text-indigo-400",
-  "Hearst CMS":           "text-violet-400",
-  "Hearst Email Queue":   "text-blue-400",
-  "Hearst Analytics":     "text-cyan-400",
+  "XYZ Data Platform": "text-indigo-400",
+  "XYZ CMS":           "text-violet-400",
+  "XYZ Email Queue":   "text-blue-400",
+  "XYZ Analytics":     "text-cyan-400",
 };
 
 function TickerStep({ step, index }: { step: NBARunStep; index: number }) {
@@ -385,7 +385,7 @@ export default function Screen1CommandCenter({ onBrandClick }: Props) {
   useEffect(() => {
     if (bootstrapRan.current) return;
     bootstrapRan.current = true;
-    ensureHearstAgentConfig();
+    ensureXYZAgentConfig();
   }, []);
 
   const { data, isLoading } = useQuery<any>({ queryKey: ["/demo-api/hearst/command-center"] });

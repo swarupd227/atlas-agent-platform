@@ -175,8 +175,8 @@ function getServerDefinitions(): MockMcpServerDef[] {
       ],
     },
     {
-      name: "Hearst Data Platform MCP Server",
-      description: "Hearst subscriber data platform: ESP event streams, website behavior from Adobe Analytics, subscription status, purchase history, and demographic enrichment from Experian/Acxiom. Covers 6.2M subscribers across 12 Hearst brands.",
+      name: "XYZ Data Platform MCP Server",
+      description: "XYZ subscriber data platform: ESP event streams, website behavior from Adobe Analytics, subscription status, purchase history, and demographic enrichment from Experian/Acxiom. Covers 6.2M subscribers across 12 XYZ brands.",
       baseUrl: `${BASE_URL}/api/mock/hearst-data-platform`,
       tools: [
         {
@@ -188,7 +188,7 @@ function getServerDefinitions(): MockMcpServerDef[] {
             type: "object",
             properties: {
               subscriberId: { type: "string", description: "Subscriber ID to filter events for (omit for portfolio view)" },
-              brand: { type: "string", description: "Filter by Hearst brand name" },
+              brand: { type: "string", description: "Filter by XYZ brand name" },
               limit: { type: "number", description: "Max events to return (default 50, max 200)" },
               lookback_days: { type: "number", description: "How many days back to look (default 30)" },
             },
@@ -209,7 +209,7 @@ function getServerDefinitions(): MockMcpServerDef[] {
         },
         {
           name: "get_subscription_status",
-          description: "Get current subscription status, tier (free/premium/vip), MRR, lifetime value, and churn risk for a subscriber across all Hearst brands.",
+          description: "Get current subscription status, tier (free/premium/vip), MRR, lifetime value, and churn risk for a subscriber across all XYZ brands.",
           endpoint: "/subscription-status",
           method: "GET",
           inputSchema: {
@@ -247,19 +247,19 @@ function getServerDefinitions(): MockMcpServerDef[] {
       ],
     },
     {
-      name: "Hearst CMS MCP Server",
-      description: "Hearst content management system: editorial calendar, email-sendable article inventory with topic tagging and freshness scoring, newsletter archives, and historical content performance metrics by audience segment.",
+      name: "XYZ CMS MCP Server",
+      description: "XYZ content management system: editorial calendar, email-sendable article inventory with topic tagging and freshness scoring, newsletter archives, and historical content performance metrics by audience segment.",
       baseUrl: `${BASE_URL}/api/mock/hearst-cms`,
       tools: [
         {
           name: "get_editorial_calendar",
-          description: "Retrieve upcoming and recent editorial calendar entries across Hearst brands. Returns scheduled publish dates, content categories, and target audiences.",
+          description: "Retrieve upcoming and recent editorial calendar entries across XYZ brands. Returns scheduled publish dates, content categories, and target audiences.",
           endpoint: "/editorial-calendar",
           method: "GET",
           inputSchema: {
             type: "object",
             properties: {
-              brand: { type: "string", description: "Filter by Hearst brand name" },
+              brand: { type: "string", description: "Filter by XYZ brand name" },
               lookback_days: { type: "number", description: "Days back/forward to include (default 14)" },
               limit: { type: "number", description: "Max entries (default 30)" },
             },
@@ -273,7 +273,7 @@ function getServerDefinitions(): MockMcpServerDef[] {
           inputSchema: {
             type: "object",
             properties: {
-              brand: { type: "string", description: "Filter by Hearst brand name" },
+              brand: { type: "string", description: "Filter by XYZ brand name" },
               category: { type: "string", description: "Filter by content category" },
               email_sendable: { type: "string", enum: ["true", "false"], description: "Filter to email-sendable articles only" },
               limit: { type: "number", description: "Max articles (default 50)" },
@@ -288,7 +288,7 @@ function getServerDefinitions(): MockMcpServerDef[] {
           inputSchema: {
             type: "object",
             properties: {
-              brand: { type: "string", description: "Filter by Hearst brand name" },
+              brand: { type: "string", description: "Filter by XYZ brand name" },
               limit: { type: "number", description: "Max newsletters (default 20)" },
             },
           },
@@ -302,7 +302,7 @@ function getServerDefinitions(): MockMcpServerDef[] {
             type: "object",
             properties: {
               articleId: { type: "string", description: "Specific article ID to get performance for" },
-              brand: { type: "string", description: "Filter by Hearst brand name" },
+              brand: { type: "string", description: "Filter by XYZ brand name" },
               limit: { type: "number", description: "Max records (default 30)" },
             },
           },
@@ -310,19 +310,19 @@ function getServerDefinitions(): MockMcpServerDef[] {
       ],
     },
     {
-      name: "Hearst Email Queue MCP Server",
-      description: "Hearst email operations: pending email campaign queues across all 12 brands with priority scores and recipient estimates, fatigue management rules (frequency caps, cool-down periods, score thresholds), and business rules (compliance, exclusivity, priority ordering).",
+      name: "XYZ Email Queue MCP Server",
+      description: "XYZ email operations: pending email campaign queues across all 12 brands with priority scores and recipient estimates, fatigue management rules (frequency caps, cool-down periods, score thresholds), and business rules (compliance, exclusivity, priority ordering).",
       baseUrl: `${BASE_URL}/api/mock/hearst-email-queue`,
       tools: [
         {
           name: "get_brand_email_queues",
-          description: "Retrieve all pending email campaigns queued across Hearst brands for today and tomorrow. Returns subject lines, priority scores, recipient estimates, target segments, and predicted revenue.",
+          description: "Retrieve all pending email campaigns queued across XYZ brands for today and tomorrow. Returns subject lines, priority scores, recipient estimates, target segments, and predicted revenue.",
           endpoint: "/brand-email-queues",
           method: "GET",
           inputSchema: {
             type: "object",
             properties: {
-              brand: { type: "string", description: "Filter to a specific Hearst brand" },
+              brand: { type: "string", description: "Filter to a specific XYZ brand" },
               limit: { type: "number", description: "Max queue entries (default 60)" },
             },
           },
@@ -344,8 +344,8 @@ function getServerDefinitions(): MockMcpServerDef[] {
       ],
     },
     {
-      name: "Hearst Analytics MCP Server",
-      description: "Hearst email analytics: detailed send-level logs from SFMC with delivery, open, and click metrics; post-click conversion events (subscriptions, paywall, purchases); deliverability KPIs (inbox placement, sender reputation, DKIM/SPF/DMARC); and affiliate revenue attribution from Skimlinks/Amazon Associates.",
+      name: "XYZ Analytics MCP Server",
+      description: "XYZ email analytics: detailed send-level logs from SFMC with delivery, open, and click metrics; post-click conversion events (subscriptions, paywall, purchases); deliverability KPIs (inbox placement, sender reputation, DKIM/SPF/DMARC); and affiliate revenue attribution from Skimlinks/Amazon Associates.",
       baseUrl: `${BASE_URL}/api/mock/hearst-analytics`,
       tools: [
         {
@@ -356,7 +356,7 @@ function getServerDefinitions(): MockMcpServerDef[] {
           inputSchema: {
             type: "object",
             properties: {
-              brand: { type: "string", description: "Filter by Hearst brand" },
+              brand: { type: "string", description: "Filter by XYZ brand" },
               limit: { type: "number", description: "Max log entries (default 50)" },
               lookback_days: { type: "number", description: "Lookback window in days (default 7)" },
             },
@@ -370,7 +370,7 @@ function getServerDefinitions(): MockMcpServerDef[] {
           inputSchema: {
             type: "object",
             properties: {
-              brand: { type: "string", description: "Filter by Hearst brand" },
+              brand: { type: "string", description: "Filter by XYZ brand" },
               limit: { type: "number", description: "Max conversions (default 30)" },
               lookback_days: { type: "number", description: "Lookback window in days (default 30)" },
             },
@@ -378,7 +378,7 @@ function getServerDefinitions(): MockMcpServerDef[] {
         },
         {
           name: "get_deliverability_metrics",
-          description: "Retrieve deliverability KPIs per Hearst brand: inbox placement rate, spam rate, sender reputation score, DKIM/SPF/DMARC pass rates, and ISP-level breakdown (Gmail, Outlook, Yahoo, Apple Mail).",
+          description: "Retrieve deliverability KPIs per XYZ brand: inbox placement rate, spam rate, sender reputation score, DKIM/SPF/DMARC pass rates, and ISP-level breakdown (Gmail, Outlook, Yahoo, Apple Mail).",
           endpoint: "/deliverability",
           method: "GET",
           inputSchema: { type: "object", properties: {} },
@@ -391,7 +391,7 @@ function getServerDefinitions(): MockMcpServerDef[] {
           inputSchema: {
             type: "object",
             properties: {
-              brand: { type: "string", description: "Filter by Hearst brand" },
+              brand: { type: "string", description: "Filter by XYZ brand" },
               lookback_days: { type: "number", description: "Lookback window in days (default 30)" },
             },
           },

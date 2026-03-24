@@ -29,7 +29,7 @@ export const HEARST_MCP_SERVER_IDS = {
 const HEARST_MCP_SERVERS = [
   {
     id:          HEARST_MCP_SERVER_IDS.dataPlatform,
-    name:        "Hearst Data Platform",
+    name:        "XYZ Data Platform",
     description: "Subscriber ESP events, website behavior, subscription status, purchase history, and demographic data.",
     url:         `${BASE_URL}/api/mock/hearst-data-platform`,
     tools: [
@@ -42,8 +42,8 @@ const HEARST_MCP_SERVERS = [
   },
   {
     id:          HEARST_MCP_SERVER_IDS.cms,
-    name:        "Hearst CMS",
-    description: "Editorial calendar, article inventory, newsletter archives, and content performance for all 12 Hearst brands.",
+    name:        "XYZ CMS",
+    description: "Editorial calendar, article inventory, newsletter archives, and content performance for all 12 XYZ brands.",
     url:         `${BASE_URL}/api/mock/hearst-cms`,
     tools: [
       { name: "get_editorial_calendar",   description: "Retrieve today's editorial calendar — scheduled articles, send windows, embargo dates.", endpoint: "editorial-calendar",   method: "GET", inputSchema: { type: "object", properties: { brand: { type: "string" }, date: { type: "string" } } } },
@@ -54,7 +54,7 @@ const HEARST_MCP_SERVERS = [
   },
   {
     id:          HEARST_MCP_SERVER_IDS.emailQueue,
-    name:        "Hearst Email Queue",
+    name:        "XYZ Email Queue",
     description: "Brand email queues, subscriber fatigue rules, and portfolio-wide business rules for NBA email orchestration.",
     url:         `${BASE_URL}/api/mock/hearst-email-queue`,
     tools: [
@@ -65,7 +65,7 @@ const HEARST_MCP_SERVERS = [
   },
   {
     id:          HEARST_MCP_SERVER_IDS.analytics,
-    name:        "Hearst Analytics",
+    name:        "XYZ Analytics",
     description: "Historical send logs, conversion analytics, deliverability metrics, and affiliate revenue attribution.",
     url:         `${BASE_URL}/api/mock/hearst-analytics`,
     tools: [
@@ -79,7 +79,7 @@ const HEARST_MCP_SERVERS = [
 
 // ─── Agent definitions ────────────────────────────────────────────────────────
 
-interface HearstAgentDef {
+interface XYZAgentDef {
   name: string;
   description: string;
   systemPrompt: string;
@@ -88,13 +88,13 @@ interface HearstAgentDef {
   maxToolIterations: number;
 }
 
-const HEARST_AGENT_DEFS: Record<keyof typeof HEARST_AGENT_IDS, HearstAgentDef> = {
+const HEARST_AGENT_DEFS: Record<keyof typeof HEARST_AGENT_IDS, XYZAgentDef> = {
   subscriberProfileEngine: {
     name:        "Subscriber Profile Engine",
     description: "Refreshes subscriber profiles, calculates affinity vectors, and flags fatigue risk across the 6.2M subscriber portfolio.",
     mcpServerIds: ["dataPlatform"],
     maxToolIterations: 8,
-    systemPrompt: `You are the Subscriber Profile Engine for Hearst's NBA Email Orchestration platform, processing a portfolio of 6.2M subscribers across 12 Hearst brands.
+    systemPrompt: `You are the Subscriber Profile Engine for XYZ's NBA Email Orchestration platform, processing a portfolio of 6.2M subscribers across 12 XYZ brands.
 
 Your nightly task is to refresh subscriber profiles:
 1. Call get_esp_events to analyze recent engagement signals (opens, clicks, bounces)
@@ -122,10 +122,10 @@ Adjust numbers based on what you see in the tool results. Keep them realistic an
 
   contentInventory: {
     name:        "Content Inventory Agent",
-    description: "Scores today's CMS content across all 12 Hearst brands for email-sendability and produces ranked candidate lists.",
+    description: "Scores today's CMS content across all 12 XYZ brands for email-sendability and produces ranked candidate lists.",
     mcpServerIds: ["cms", "emailQueue"],
     maxToolIterations: 8,
-    systemPrompt: `You are the Content Inventory Agent for Hearst's NBA Email Orchestration platform. You scan and score all content across 12 Hearst brands for email-sendability.
+    systemPrompt: `You are the Content Inventory Agent for XYZ's NBA Email Orchestration platform. You scan and score all content across 12 XYZ brands for email-sendability.
 
 Your task:
 1. Call get_editorial_calendar to see what content is scheduled today
@@ -152,7 +152,7 @@ IMPORTANT: End your final response with ONLY this JSON block:
 }
 \`\`\`
 Adjust numbers based on tool results. topCandidates should reflect articles you saw in the data.`,
-    taskPrompt: "Run today's content inventory scan for all 12 Hearst brands. Call get_editorial_calendar, get_cms_articles, get_newsletter_archives, get_content_performance, and get_brand_email_queues. Produce the JSON summary.",
+    taskPrompt: "Run today's content inventory scan for all 12 XYZ brands. Call get_editorial_calendar, get_cms_articles, get_newsletter_archives, get_content_performance, and get_brand_email_queues. Produce the JSON summary.",
   },
 
   nbaEmailDecision: {
@@ -160,7 +160,7 @@ Adjust numbers based on tool results. topCandidates should reflect articles you 
     description: "Applies a multi-factor AI scoring model to make SEND, PERSONALIZE, or HOLD decisions for each subscriber.",
     mcpServerIds: ["dataPlatform", "emailQueue"],
     maxToolIterations: 10,
-    systemPrompt: `You are the Next-Best-Action (NBA) Email Decision Agent for Hearst — the central intelligence of the nightly email pipeline. You make SEND, PERSONALIZE, or HOLD decisions for 6.2M subscribers.
+    systemPrompt: `You are the Next-Best-Action (NBA) Email Decision Agent for XYZ — the central intelligence of the nightly email pipeline. You make SEND, PERSONALIZE, or HOLD decisions for 6.2M subscribers.
 
 Decision process:
 1. Call get_esp_events to read recent engagement signals
@@ -203,7 +203,7 @@ Adjust based on tool data. All pct fields within brandAiGroups must sum to 100.`
     description: "Determines the optimal send window for each subscriber based on timezone, engagement history, and deliverability data.",
     mcpServerIds: ["dataPlatform", "analytics"],
     maxToolIterations: 7,
-    systemPrompt: `You are the Send Time Optimizer for Hearst's NBA Email Orchestration platform. You determine the optimal send time for each subscriber across 5 global timezone clusters.
+    systemPrompt: `You are the Send Time Optimizer for XYZ's NBA Email Orchestration platform. You determine the optimal send time for each subscriber across 5 global timezone clusters.
 
 Process:
 1. Call get_website_behavior to understand subscriber daily engagement patterns
@@ -234,7 +234,7 @@ Adjust lift values based on the deliverability data you see. APAC typically show
     description: "Closes the feedback loop by analyzing yesterday's send outcomes and updating model weights for future NBA decisions.",
     mcpServerIds: ["analytics"],
     maxToolIterations: 8,
-    systemPrompt: `You are the Performance & Learning Agent for Hearst's NBA Email Orchestration platform. You close the feedback loop by analyzing yesterday's email send outcomes.
+    systemPrompt: `You are the Performance & Learning Agent for XYZ's NBA Email Orchestration platform. You close the feedback loop by analyzing yesterday's email send outcomes.
 
 Process:
 1. Call get_send_logs to retrieve yesterday's full send log across all brands
@@ -287,20 +287,20 @@ function extractJson(text: string): Record<string, any> | null {
 }
 
 // ─── Module-level server ID cache (name → actual DB id) ──────────────────────
-// Populated by ensureHearstAgents() so the SSE handler can look up real IDs.
+// Populated by ensureXYZAgents() so the SSE handler can look up real IDs.
 
 const _hearstServerIdByName: Record<string, string> = {};
 
-export function getHearstActualServerIds(keys: (keyof typeof HEARST_MCP_SERVER_IDS)[]): string[] {
+export function getXYZActualServerIds(keys: (keyof typeof HEARST_MCP_SERVER_IDS)[]): string[] {
   return keys.map(k => {
     const def = HEARST_MCP_SERVERS.find(s => s.id === HEARST_MCP_SERVER_IDS[k]);
     return def ? (_hearstServerIdByName[def.name] || HEARST_MCP_SERVER_IDS[k]) : HEARST_MCP_SERVER_IDS[k];
   });
 }
 
-// ─── Ensure Hearst Agents ─────────────────────────────────────────────────────
+// ─── Ensure XYZ Agents ─────────────────────────────────────────────────────
 
-export async function ensureHearstAgents(): Promise<void> {
+export async function ensureXYZAgents(): Promise<void> {
   try {
     // 1. Ensure MCP servers + tools exist (name-based lookup to avoid UUID mismatch)
     const allServers = await storage.getMcpServers().catch(() => [] as any[]);
@@ -319,7 +319,7 @@ export async function ensureHearstAgents(): Promise<void> {
           allowlisted:   true,
           addedBy:       "hearst-live-demo",
           capabilities:  { tools: true, resources: false, prompts: false, sampling: false },
-          serverInfo:    { vendor: "Hearst Communications", version: "1.0.0" },
+          serverInfo:    { vendor: "XYZ Communications", version: "1.0.0" },
         });
       } else if (server.url !== serverDef.url) {
         await storage.updateMcpServer(server.id, { url: serverDef.url });
@@ -369,7 +369,7 @@ export async function ensureHearstAgents(): Promise<void> {
           maxToolIterations: def.maxToolIterations,
           toolAccessClass:   "standard",
           department:        "Editorial & Audience",
-          owner:             "Hearst Digital Team",
+          owner:             "XYZ Digital Team",
           healthScore:       97,
           successRate:       0.96,
           maturityFactors:   {},
@@ -395,13 +395,13 @@ export async function ensureHearstAgents(): Promise<void> {
 
     console.log("[hearst-live] Agents and MCP servers ensured successfully");
   } catch (err: any) {
-    console.error("[hearst-live] ensureHearstAgents error:", err?.message);
+    console.error("[hearst-live] ensureXYZAgents error:", err?.message);
   }
 }
 
 // ─── Deployment helper ────────────────────────────────────────────────────────
 
-async function ensureHearstAgentDeployment(
+async function ensureXYZAgentDeployment(
   agentId: string,
   agentName: string,
   mcpServerIds: string[],
@@ -515,10 +515,10 @@ export async function hearstLiveRunHandler(req: Request, res: Response): Promise
   });
 
   try {
-    sendEvent("run_start", { message: "Starting Hearst NBA nightly pipeline..." });
+    sendEvent("run_start", { message: "Starting XYZ NBA nightly pipeline..." });
 
     sendEvent("setup", { message: "Ensuring pipeline agents and MCP servers are registered..." });
-    await ensureHearstAgents();
+    await ensureXYZAgents();
     sendEvent("setup", { message: "All 5 pipeline agents ready with 4 MCP servers (16 tools)" });
 
     const agentEntries = Object.entries(HEARST_AGENT_IDS) as [keyof typeof HEARST_AGENT_IDS, string][];
@@ -526,11 +526,11 @@ export async function hearstLiveRunHandler(req: Request, res: Response): Promise
 
     for (const [role, agentId] of agentEntries) {
       const def = HEARST_AGENT_DEFS[role];
-      // Use actual DB server IDs (resolved from the name cache populated by ensureHearstAgents)
-      const mcpServerIds = getHearstActualServerIds(def.mcpServerIds);
+      // Use actual DB server IDs (resolved from the name cache populated by ensureXYZAgents)
+      const mcpServerIds = getXYZActualServerIds(def.mcpServerIds);
       const agent = await storage.getAgent(agentId);
       const agentName = agent?.name || def.name;
-      const depId = await ensureHearstAgentDeployment(agentId, agentName, mcpServerIds);
+      const depId = await ensureXYZAgentDeployment(agentId, agentName, mcpServerIds);
       deploymentIds[role] = depId;
       hearstDeploymentIds.add(depId);
     }

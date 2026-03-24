@@ -587,7 +587,7 @@ export async function ensureFitchAgents(): Promise<void> {
           allowlisted:   true,
           addedBy:       "fitch-live-demo",
           capabilities:  { tools: true, resources: false, prompts: false, sampling: false },
-          serverInfo:    { vendor: "Fitch Ratings", version: "1.0.0" },
+          serverInfo:    { vendor: "ABC Ratings", version: "1.0.0" },
         });
       } else if (server.url !== serverDef.url) {
         await storage.updateMcpServer(server.id, { url: serverDef.url });
@@ -635,7 +635,7 @@ export async function ensureFitchAgents(): Promise<void> {
           maxToolIterations: def.maxToolIterations,
           toolAccessClass:   "standard",
           department:        "Credit Analytics",
-          owner:             "Fitch Ratings — Structured Finance",
+          owner:             "ABC Ratings — Structured Finance",
           healthScore:       98,
           successRate:       0.97,
           maturityFactors:   {},

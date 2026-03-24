@@ -72,7 +72,7 @@ function WorldMap({ hotspots, animating }: { hotspots: Hotspot[]; animating: boo
         );
       })}
       {/* Legend */}
-      <text x="15" y="228" fill="#64748B" fontSize="8">Hearst subscriber density by city</text>
+      <text x="15" y="228" fill="#64748B" fontSize="8">XYZ subscriber density by city</text>
     </svg>
   );
 }

@@ -98,7 +98,7 @@ router.get("/api/2.0/segments", (_req: Request, res: Response) => {
       },
       definition: seg.definition,
       compatibility: { valid: true, message: "Compatible" },
-      reportSuiteName: "Fitch Ratings Production",
+      reportSuiteName: "ABC Ratings Production",
       modified: new Date().toISOString(),
     })),
     totalPages: 1,

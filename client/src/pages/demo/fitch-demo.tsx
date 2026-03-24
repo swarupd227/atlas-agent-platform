@@ -309,7 +309,7 @@ export default function FitchDemo() {
               <Shield className="w-5 h-5 text-rose-400" />
               <div>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <h1 className="text-sm font-semibold">Fitch Ratings</h1>
+                  <h1 className="text-sm font-semibold">ABC Ratings</h1>
                   <Badge variant="secondary" className="text-[10px]">Asset Quality Early Warning System</Badge>
                   <Badge className="text-[10px] bg-rose-500/20 text-rose-300 border-rose-500/30">Live Demo</Badge>
                   {liveComplete && <Badge className="text-[10px] bg-green-500/20 text-green-300 border-green-500/30">✓ Run Complete</Badge>}

@@ -1,8 +1,8 @@
 /**
- * Hearst: Next Best Action — Agent Team Constants
+ * XYZ: Next Best Action — Agent Team Constants
  *
- * Multi-brand email optimization agent team for Hearst Media.
- * Builds unified subscriber profiles across all Hearst brands
+ * Multi-brand email optimization agent team for XYZ Media.
+ * Builds unified subscriber profiles across all XYZ brands
  * (Cosmopolitan, Esquire, Elle, Harper's Bazaar, Men's Health,
  * Women's Health, Oprah Daily, etc.) and drives personalized
  * engagement decisions.
@@ -22,7 +22,7 @@ export const HEARST_AGENTS = {
   subscriberProfileEngine: {
     id: "3a2e02ad-f07a-42ff-9c16-d9b4956dc34d",
     name: "Subscriber Profile Engine",
-    description: "Builds unified engagement profiles per subscriber across all Hearst brands with affinity vectors, channel preferences, optimal send time, fatigue score, and lifecycle stage.",
+    description: "Builds unified engagement profiles per subscriber across all XYZ brands with affinity vectors, channel preferences, optimal send time, fatigue score, and lifecycle stage.",
     autonomyMode: "autonomous",
     riskTier: "MEDIUM",
     department: "Audience Development",
@@ -30,7 +30,7 @@ export const HEARST_AGENTS = {
   contentInventory: {
     id: "92584a77-d150-4436-9083-a108584bc021",
     name: "Content Inventory Agent",
-    description: "Catalogs all email-sendable content across all Hearst brands with topic tagging, freshness scoring, and historical performance data. Produces a ContentCatalog with topic tags, brand attribution, freshness score, and past CTR segmented by audience type.",
+    description: "Catalogs all email-sendable content across all XYZ brands with topic tagging, freshness scoring, and historical performance data. Produces a ContentCatalog with topic tags, brand attribution, freshness score, and past CTR segmented by audience type.",
     autonomyMode: "autonomous",
     riskTier: "MEDIUM",
     department: "Audience Development",
@@ -69,22 +69,22 @@ export const HEARST_AGENTS = {
 export const HEARST_MCP_SERVERS = {
   dataPlatform: {
     id: "087a3dd1-9f39-4a03-a3cf-af6ec3458cde",
-    name: "Hearst Data Platform MCP Server",
+    name: "XYZ Data Platform MCP Server",
     tools: ["get_esp_events", "get_website_behavior", "get_subscription_status", "get_purchase_history", "get_demographic_data"],
   },
   cms: {
     id: "7bef66a7-25fd-4aca-afa0-d70c80ee5d28",
-    name: "Hearst CMS MCP Server",
+    name: "XYZ CMS MCP Server",
     tools: ["get_editorial_calendar", "get_cms_articles", "get_newsletter_archives", "get_content_performance"],
   },
   emailQueue: {
     id: "12957574-8fea-4060-a05e-87bd779da5c9",
-    name: "Hearst Email Queue MCP Server",
+    name: "XYZ Email Queue MCP Server",
     tools: ["get_brand_email_queues", "get_fatigue_rules", "get_business_rules"],
   },
   analytics: {
     id: "1a24362d-f0eb-4b52-8d47-067b0408494f",
-    name: "Hearst Analytics MCP Server",
+    name: "XYZ Analytics MCP Server",
     tools: ["get_send_logs", "get_conversion_data", "get_deliverability_metrics", "get_affiliate_revenue"],
   },
 } as const;
@@ -104,7 +104,7 @@ export const HEARST_DATA_TOOLS = {
   },
   get_purchase_history: {
     id: "8a2500af-d3d9-4023-a3cf-5751858d3652",
-    description: "Transaction and entitlement history across Hearst properties",
+    description: "Transaction and entitlement history across XYZ properties",
   },
   get_demographic_data: {
     id: "0d102d8f-4202-4d52-b1a8-ba188d21c8cd",
@@ -115,7 +115,7 @@ export const HEARST_DATA_TOOLS = {
 export const HEARST_CMS_TOOLS = {
   get_editorial_calendar: {
     id: "b27b1a5f-b202-4f0f-8314-ecc6f8c9d74a",
-    description: "Editorial calendar feeds across all Hearst brands with publish dates and content categories",
+    description: "Editorial calendar feeds across all XYZ brands with publish dates and content categories",
   },
   get_cms_articles: {
     id: "7689bd7f-63df-4ec1-a486-23da73ad15e1",
@@ -134,7 +134,7 @@ export const HEARST_CMS_TOOLS = {
 export const HEARST_EMAIL_QUEUE_TOOLS = {
   get_brand_email_queues: {
     id: "f99a3d89-f3b3-41a6-a8da-b5e9bd0d59cf",
-    description: "Pending email campaigns from all Hearst brand queues with priority and target segments",
+    description: "Pending email campaigns from all XYZ brand queues with priority and target segments",
   },
   get_fatigue_rules: {
     id: "a5bb1d4b-8dd7-4672-8955-697986f95cc3",
@@ -220,13 +220,13 @@ export const HEARST_COMMON_CONFIG = {
   complianceTags: ["CCPA", "CAN-SPAM", "GDPR"],
 } as const;
 
-const NBA_ORCHESTRATOR_SYSTEM_PROMPT = `You are the NBA Email Decision Orchestrator for Hearst Media's Audience Development team. Your role is to make the Next Best Action (NBA) email decision for a specific subscriber.
+const NBA_ORCHESTRATOR_SYSTEM_PROMPT = `You are the NBA Email Decision Orchestrator for XYZ Media's Audience Development team. Your role is to make the Next Best Action (NBA) email decision for a specific subscriber.
 
 Given a subscriber's context, you must call your tools in this order:
 
 1. Call get_esp_events (with the subscriber's ID) to retrieve their recent email engagement history — opens, clicks, unsubscribes from Salesforce Marketing Cloud.
 2. Call get_subscription_status (with the subscriber's ID) to confirm their tier (free/premium/vip), monthly recurring revenue, and churn risk.
-3. Call get_cms_articles with email_sendable="true" to retrieve today's email-sendable content inventory across all Hearst brands.
+3. Call get_cms_articles with email_sendable="true" to retrieve today's email-sendable content inventory across all XYZ brands.
 4. Call get_fatigue_rules to check the current fatigue management rules — weekly send caps, cool-down periods, fatigue score thresholds.
 5. Call get_brand_email_queues to see what campaigns are actively queued for today with their priority scores and predicted revenue.
 6. Call get_conversion_data to check recent post-click conversion performance — which brands and content types are currently driving subscription upgrades and paywall conversions. This informs the revenue_potential component of the score.
@@ -270,7 +270,7 @@ export const HEARST_PERSONAS = [
   { id: "jennifer-k", label: "Jennifer K. — Austin, TX",   tier: "Premium", stage: "VIP" },
 ] as const;
 
-export type HearstPersonaId = (typeof HEARST_PERSONAS)[number]["id"];
+export type XYZPersonaId = (typeof HEARST_PERSONAS)[number]["id"];
 
 // ─── NBA Run types ──────────────────────────────────────────────────────────
 export interface NBARunStep {
@@ -463,7 +463,7 @@ export function useNBARun(subscriberId: string): {
 // ─── Bootstrap ──────────────────────────────────────────────────────────────
 let _bootstrapDone = false;
 
-export async function ensureHearstAgentConfig(): Promise<void> {
+export async function ensureXYZAgentConfig(): Promise<void> {
   if (_bootstrapDone) return;
   _bootstrapDone = true;
 

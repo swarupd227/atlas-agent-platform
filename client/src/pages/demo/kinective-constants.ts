@@ -6,12 +6,12 @@ export const KINECTIVE_AGENT = {
 export const KINECTIVE_MCP_SERVERS = {
   signplus: {
     id: "342cbdc9-6757-4600-9ca5-abe22aab5212",
-    name: "Kinective SignPlus MCP Server",
+    name: "XNective SignPlus MCP Server",
     tools: ["get_form_data", "archive_signed_document", "get_signing_status"],
   },
   gatewayCore: {
     id: "ad15b89f-b45a-4eeb-9dc4-86f7769f4451",
-    name: "Kinective Gateway Core MCP Server",
+    name: "XNective Gateway Core MCP Server",
     tools: ["update_member_address", "get_member_profile"],
   },
   usps: {
