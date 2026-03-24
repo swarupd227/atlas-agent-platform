@@ -36214,6 +36214,31 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
     { id: "roadandtrack",     name: "Road & Track",     color: "#64748B", shortName: "R&T",   subscribers: 290000 },
   ];
 
+  // POST /demo-api/hearst/setup — idempotent: re-runs ensureHearstAgents and returns status
+  app.post("/demo-api/hearst/setup", async (_req, res) => {
+    try {
+      await ensureHearstAgents();
+      const agents = await Promise.all(
+        Object.entries(HEARST_AGENT_IDS).map(async ([key, id]) => {
+          const agent = await storage.getAgent(id);
+          return { key, id, name: agent?.name ?? key, found: !!agent };
+        })
+      );
+      const allServers = await storage.getMcpServers();
+      const hearstServers = allServers.filter((s: any) =>
+        s.name?.startsWith("Hearst")
+      );
+      return res.json({
+        ok: true,
+        agents: { total: agents.length, found: agents.filter((a) => a.found).length, detail: agents },
+        mcpServers: { total: hearstServers.length, names: hearstServers.map((s: any) => s.name) },
+        message: "ensureHearstAgents() completed — agents, MCP servers, tools and links are verified.",
+      });
+    } catch (err: any) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
   // GET /demo-api/hearst/agents — real agent status from platform
   app.get("/demo-api/hearst/agents", async (_req, res) => {
     try {
