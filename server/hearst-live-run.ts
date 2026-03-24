@@ -291,7 +291,7 @@ function extractJson(text: string): Record<string, any> | null {
 
 const _hearstServerIdByName: Record<string, string> = {};
 
-export function getXYZActualServerIds(keys: (keyof typeof HEARST_MCP_SERVER_IDS)[]): string[] {
+export function getHearstActualServerIds(keys: (keyof typeof HEARST_MCP_SERVER_IDS)[]): string[] {
   return keys.map(k => {
     const def = HEARST_MCP_SERVERS.find(s => s.id === HEARST_MCP_SERVER_IDS[k]);
     return def ? (_hearstServerIdByName[def.name] || HEARST_MCP_SERVER_IDS[k]) : HEARST_MCP_SERVER_IDS[k];
@@ -300,7 +300,7 @@ export function getXYZActualServerIds(keys: (keyof typeof HEARST_MCP_SERVER_IDS)
 
 // ─── Ensure XYZ Agents ─────────────────────────────────────────────────────
 
-export async function ensureXYZAgents(): Promise<void> {
+export async function ensureHearstAgents(): Promise<void> {
   try {
     // 1. Ensure MCP servers + tools exist (name-based lookup to avoid UUID mismatch)
     const allServers = await storage.getMcpServers().catch(() => [] as any[]);
@@ -527,7 +527,7 @@ export async function hearstLiveRunHandler(req: Request, res: Response): Promise
     for (const [role, agentId] of agentEntries) {
       const def = HEARST_AGENT_DEFS[role];
       // Use actual DB server IDs (resolved from the name cache populated by ensureXYZAgents)
-      const mcpServerIds = getXYZActualServerIds(def.mcpServerIds);
+      const mcpServerIds = getHearstActualServerIds(def.mcpServerIds);
       const agent = await storage.getAgent(agentId);
       const agentName = agent?.name || def.name;
       const depId = await ensureXYZAgentDeployment(agentId, agentName, mcpServerIds);
