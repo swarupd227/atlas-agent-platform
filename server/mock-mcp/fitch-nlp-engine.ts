@@ -30,10 +30,20 @@ function stressMultiplier(idx: number): number {
   return 0.7 + idx * 0.05;
 }
 
+// Resolve bank by RSSD ID or by name (agents sometimes pass names instead of IDs)
+function resolveBank(key: string | undefined): typeof BANKS {
+  if (!key) return BANKS;
+  const lower = key.toLowerCase();
+  const byId = BANKS.filter(b => b.id.toLowerCase() === lower);
+  if (byId.length) return byId;
+  const byName = BANKS.filter(b => b.name.toLowerCase().includes(lower) || lower.includes(b.name.toLowerCase()));
+  return byName.length ? byName : BANKS;
+}
+
 // GET /transcript-sentiment
 router.get("/transcript-sentiment", (req: Request, res: Response) => {
   const { bank_id, quarter } = req.query;
-  const banks = bank_id ? BANKS.filter(b => b.id === bank_id) : BANKS;
+  const banks = resolveBank(bank_id as string | undefined);
   const q = (quarter as string) || "2024-Q2";
 
   const data = banks.map(bank => {
@@ -63,7 +73,7 @@ router.get("/transcript-sentiment", (req: Request, res: Response) => {
 // GET /filing-language-changes
 router.get("/filing-language-changes", (req: Request, res: Response) => {
   const { bank_id, filing_year } = req.query;
-  const banks = bank_id ? BANKS.filter(b => b.id === bank_id) : BANKS;
+  const banks = resolveBank(bank_id as string | undefined);
   const year = (filing_year as string) || "2024";
 
   const data = banks.map(bank => {
@@ -90,7 +100,7 @@ router.get("/filing-language-changes", (req: Request, res: Response) => {
 // GET /news-signals
 router.get("/news-signals", (req: Request, res: Response) => {
   const { bank_id, days_back } = req.query;
-  const banks = bank_id ? BANKS.filter(b => b.id === bank_id) : BANKS;
+  const banks = resolveBank(bank_id as string | undefined);
   const days = parseInt(days_back as string) || 90;
 
   const data = banks.map(bank => {
@@ -125,7 +135,7 @@ router.get("/news-signals", (req: Request, res: Response) => {
 // GET /news-volume-trend — rolling 13-week volume + σ-deviation per bank
 router.get("/news-volume-trend", (req: Request, res: Response) => {
   const { bank_id } = req.query;
-  const banks = bank_id ? BANKS.filter(b => b.id === bank_id) : BANKS;
+  const banks = resolveBank(bank_id as string | undefined);
 
   const data = banks.map(bank => {
     const bIdx = BANKS.findIndex(b => b.id === bank.id);
