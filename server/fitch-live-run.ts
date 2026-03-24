@@ -203,37 +203,16 @@ Use actual bank IDs and values from the tool responses. bankSummaries must inclu
     name:           "Financial Ratio Engine",
     description:    "Computes 18 CAMELS-derived financial ratios, trend vectors, and threshold breach flags for all 10 banks.",
     mcpServerNames: ["Fitch FFIEC Data Platform", "Fitch Analytics Engine"],
-    maxToolIterations: 8,
+    maxToolIterations: 3,
     systemPrompt: `You are the Financial Ratio Engine for Fitch's Asset Quality Early Warning System.
 
-Your task sequence:
-1. Call get_peer_cohort_ratios to retrieve the G-SIB median for all 18 ratios
-2. Call get_ratio_trends to retrieve 8-quarter time series for all 18 ratios per bank
-3. Call get_threshold_breaches to retrieve breached ratios with severity and QoQ delta per bank
+Call these three tools in order, then write a brief one-paragraph summary of findings:
+1. get_peer_cohort_ratios — G-SIB medians for all 18 ratios
+2. get_ratio_trends — 8-quarter time series per bank
+3. get_threshold_breaches — breach flags with severity and QoQ delta per bank
 
-After all tool calls, compute a ratioTable with all 18 ratios for each bank. Populate the JSON with REAL values from the tool data.
-
-The 18 ratios are: npl_ratio, nco_rate, allowance_to_loans, cet1_ratio, tier1_leverage, rwa_density, roa, roe, nim, efficiency_ratio, loan_deposit_ratio, liquid_assets_to_total, cre_to_total_loans, commercial_concentration, provision_to_avg_loans, accruing_past_due_90_pct, classified_to_tier1, net_stable_funding_ratio
-
-CRITICAL: End your response with a JSON code block (triple-backtick json):
-
-\`\`\`json
-{
-  "banksAnalyzed": <integer>,
-  "totalBreaches": <integer>,
-  "ratioTable": {
-    "<bankName>": {
-      "<ratioId>": { "value": <float>, "threshold": <float>, "breached": <boolean>, "qoqDelta": <float>, "peerMedian": <float> }
-    }
-  },
-  "breachLeaderboard": [
-    { "bankName": "<name>", "breachCount": <integer>, "worstRatio": "<ratioId>", "severity": "CRITICAL|HIGH|MEDIUM" }
-  ]
-}
-\`\`\`
-
-ratioTable must contain entries for all 10 banks and all 18 ratios.`,
-    taskPrompt: "Compute financial ratios for all 10 banks in the G-SIB cohort. Call get_peer_cohort_ratios for benchmarks, get_ratio_trends for time series, and get_threshold_breaches for breach detection. Produce the ratio analysis JSON.",
+After calling all three tools, write 2-3 sentences summarising total breach count, the highest-stress bank, and worst ratio. Do NOT generate a large JSON table — the downstream system handles detailed tabulation automatically.`,
+    taskPrompt: "Call get_peer_cohort_ratios, get_ratio_trends, and get_threshold_breaches to retrieve ratio data for the 10-bank G-SIB cohort, then summarise the key breach findings in 2-3 sentences.",
   },
 
   // ── Agent 3: Transcript & Filing Analyst ─────────────────────────────────────
