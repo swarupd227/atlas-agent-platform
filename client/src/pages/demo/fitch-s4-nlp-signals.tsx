@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { MessageSquare, FileText, Newspaper, TrendingDown, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { useFitchPipeline, FITCH_AGENTS } from "./fitch-constants";
+import FitchEmptyState from "./fitch-empty-state";
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
   BarChart, Bar, Cell,
@@ -77,16 +78,43 @@ export default function FitchS4NlpSignals() {
     refetchInterval: 120_000,
   });
 
-  const transcriptsAnalyzed = liveTranscript?.transcriptsAnalyzed ?? 312;
-  const filingsProcessed = liveTranscript?.filingsProcessed ?? 847;
-  const negativeShifts = liveTranscript?.negativeShifts ?? 28;
-  const materialWeakness = liveTranscript?.materialWeaknessFlags ?? 3;
-  const articlesScanned = liveNews?.articlesScanned ?? 2840;
-  const highImpactEvents = liveNews?.highImpactEvents ?? 7;
-  const avgSentiment = liveTranscript?.avgSentimentScore ?? -0.12;
+  const hasRun = !!transcriptResult || !!newsResult;
+  const isIdle = state.status === "idle" && !hasRun;
+
+  const transcriptsAnalyzed = liveTranscript?.transcriptsAnalyzed ?? 0;
+  const filingsProcessed = liveTranscript?.filingsProcessed ?? 0;
+  const negativeShifts = liveTranscript?.negativeShifts ?? 0;
+  const materialWeakness = liveTranscript?.materialWeaknessFlags ?? 0;
+  const articlesScanned = liveNews?.articlesScanned ?? 0;
+  const highImpactEvents = liveNews?.highImpactEvents ?? 0;
+  const avgSentiment = liveTranscript?.avgSentimentScore ?? null;
 
   const topRiskPhrases: string[] = liveTranscript?.topRiskPhrases ?? [];
   const leadingIndicators: any[] = liveNews?.leadingIndicators ?? [];
+
+  if (isIdle) {
+    return (
+      <div className="flex flex-col gap-4">
+        <div className="grid grid-cols-2 gap-3">
+          {[transcriptAgent, newsAgent].map(agent => (
+            <Card key={agent.role} className={`${agent.borderColor} ${agent.bgColor}`}>
+              <CardContent className="p-3">
+                <div className="flex items-center gap-2">
+                  <MessageSquare className={`w-4 h-4 ${agent.color}`} />
+                  <span className={`text-[11px] font-semibold ${agent.color}`}>{agent.name}</span>
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-1">{agent.description}</p>
+                <div className="flex flex-wrap gap-1 mt-2">
+                  {agent.tools.map(t => <span key={t} className="text-[9px] font-mono bg-muted/30 text-muted-foreground/60 px-1 py-0.5 rounded">{t}</span>)}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+        <FitchEmptyState agentName="Transcript & Filing Analyst + News Signal Processor" agentRole="transcript_analyst" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4">

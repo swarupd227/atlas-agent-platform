@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { FileText, CheckCircle2, Clock, TrendingDown, Users, Zap, AlertTriangle } from "lucide-react";
 import { useFitchPipeline, FITCH_AGENTS } from "./fitch-constants";
+import FitchEmptyState from "./fitch-empty-state";
 
 const RATING_ACTION_COLORS: Record<string, string> = {
   "Rating Watch Negative": "bg-rose-500/20 text-rose-400 border-rose-500/30",
@@ -92,12 +93,39 @@ export default function FitchS6ReportAssembly() {
     refetchInterval: 120_000,
   });
 
-  const packagesGenerated = liveData?.packagesGenerated ?? data?.packagesGenerated ?? 37;
-  const analystHoursSaved = liveData?.analystHoursSaved ?? data?.analystHoursSaved ?? 412;
-  const avgTurnaround = liveData?.avgTurnaroundHours ?? data?.avgTurnaroundHours ?? 2.4;
-  const totalPages = liveData?.totalPagesGenerated ?? data?.totalPagesGenerated ?? 1014;
-  const ratingActions = liveData?.ratingActions ?? data?.ratingActions ?? { upgraded: 3, downgraded: 8, watch_negative: 6, affirmed: 20 };
+  const hasRun = !!result;
+  const isIdle = state.status === "idle" && !hasRun;
+
+  const packagesGenerated = liveData?.packagesGenerated ?? 0;
+  const analystHoursSaved = liveData?.analystHoursSaved ?? 0;
+  const avgTurnaround = liveData?.avgTurnaroundHours ?? null;
+  const totalPages = liveData?.totalPagesGenerated ?? 0;
+  const ratingActions = liveData?.ratingActions ?? { upgraded: 0, downgraded: 0, watch_negative: 0, affirmed: 0 };
   const topPkg = liveData?.topPackage ?? null;
+
+  if (isIdle) {
+    return (
+      <div className="flex flex-col gap-4">
+        <Card className={`${agentDef.borderColor} ${agentDef.bgColor}`}>
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <FileText className={`w-5 h-5 ${agentDef.color}`} />
+              <div>
+                <h3 className={`text-sm font-semibold ${agentDef.color}`}>{agentDef.name}</h3>
+                <p className="text-[11px] text-muted-foreground">{agentDef.description}</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-1.5 mt-3">
+              {agentDef.tools.map(t => (
+                <span key={t} className="text-[9px] font-mono bg-muted/30 text-muted-foreground/70 px-1.5 py-0.5 rounded">{t}</span>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+        <FitchEmptyState agentName={agentDef.name} agentRole="report_generator" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4">

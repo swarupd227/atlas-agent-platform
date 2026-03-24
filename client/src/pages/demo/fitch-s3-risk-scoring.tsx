@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AlertTriangle, TrendingDown, Shield, BarChart2, Activity, CheckCircle2 } from "lucide-react";
 import { useFitchPipeline, FITCH_AGENTS, FITCH_DEMO_BANK_NAME, FITCH_DEMO_BANK_ID } from "./fitch-constants";
+import FitchEmptyState from "./fitch-empty-state";
 import {
   RadarChart, Radar, PolarGrid, PolarAngleAxis, ResponsiveContainer, Tooltip,
   ScatterChart, Scatter, XAxis, YAxis, ZAxis, Cell,
@@ -54,13 +55,40 @@ export default function FitchS3RiskScoring() {
     refetchInterval: 120_000,
   });
 
-  const institutionsScored = liveData?.institutionsScored ?? data?.institutionsScored ?? 847;
-  const criticalCount = liveData?.criticalRisk ?? data?.criticalRisk ?? 6;
-  const highCount = liveData?.highRisk ?? data?.highRisk ?? 31;
-  const avgScore = liveData?.avgCompositeScore ?? data?.avgCompositeScore ?? 28.4;
-  const modelAuc = liveData?.modelAccuracy?.auc_roc ?? 0.94;
+  const hasRun = !!result;
+  const isIdle = state.status === "idle" && !hasRun;
+
+  const institutionsScored = liveData?.institutionsScored ?? 0;
+  const criticalCount = liveData?.criticalRisk ?? 0;
+  const highCount = liveData?.highRisk ?? 0;
+  const avgScore = liveData?.avgCompositeScore ?? 0;
+  const modelAuc = liveData?.modelAccuracy?.auc_roc ?? null;
   const svbValidated = liveData?.svbBacktestValidated ?? false;
   const topRisks: any[] = liveData?.topRiskInstitutions ?? [];
+
+  if (isIdle) {
+    return (
+      <div className="flex flex-col gap-4">
+        <Card className={`${agentDef.borderColor} ${agentDef.bgColor}`}>
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <BarChart2 className={`w-5 h-5 ${agentDef.color}`} />
+              <div>
+                <h3 className={`text-sm font-semibold ${agentDef.color}`}>{agentDef.name}</h3>
+                <p className="text-[11px] text-muted-foreground">{agentDef.description}</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-1.5 mt-3">
+              {agentDef.tools.map(t => (
+                <span key={t} className="text-[9px] font-mono bg-muted/30 text-muted-foreground/70 px-1.5 py-0.5 rounded">{t}</span>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+        <FitchEmptyState agentName={agentDef.name} agentRole="risk_scorer" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4">

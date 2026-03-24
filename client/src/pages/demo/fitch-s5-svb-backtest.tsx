@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { AlertTriangle, TrendingUp, Clock, Shield, Activity, CheckCircle2 } from "lucide-react";
 import { useFitchPipeline, FITCH_AGENTS } from "./fitch-constants";
+import FitchEmptyState from "./fitch-empty-state";
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend,
   ReferenceLine, Area,
@@ -104,9 +105,35 @@ export default function FitchS5SvbBacktest() {
     refetchInterval: 300_000,
   });
 
-  const svbEarlyWarning = liveData?.svbEarlyWarningQuarter ?? "2022-Q3";
-  const daysAdvance = liveData?.svbDaysAdvanceWarning ?? 182;
+  const hasRun = !!result;
+  const isIdle = state.status === "idle" && !hasRun;
+
+  const svbEarlyWarning = liveData?.svbEarlyWarningQuarter ?? null;
+  const daysAdvance = liveData?.svbDaysAdvanceWarning ?? null;
   const modelValidated = liveData?.svbBacktestValidated ?? false;
+
+  if (isIdle) {
+    return (
+      <div className="flex flex-col gap-4">
+        <Card className="border-rose-500/20">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <AlertTriangle className="w-5 h-5 text-rose-400" />
+              <div>
+                <h3 className="text-sm font-semibold text-rose-300">SVB Backtesting — Illustrative Validation</h3>
+                <p className="text-[11px] text-muted-foreground">Reconstructed from SVB FFIEC Call Report filings (public record)</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <FitchEmptyState
+          agentName="Composite Risk Scorer"
+          agentRole="risk_scorer"
+          description="The SVB backtest wow-moment is validated by the Composite Risk Scorer agent. Run the pipeline to see the system flag SVB 182 days before FDIC seizure."
+        />
+      </div>
+    );
+  }
 
   const alertQuarterIdx = SVB_QUARTERLY.findIndex(q => q.alert_triggered);
 
@@ -123,7 +150,7 @@ export default function FitchS5SvbBacktest() {
                 {modelValidated && <Badge className="bg-green-500/20 text-green-300 border-green-500/30">✓ Agent Validated</Badge>}
               </div>
               <p className="text-[11px] text-muted-foreground/80">
-                Reconstructed from SVB's actual FFIEC Call Report filings (public record). Shows how the Fitch AQEWS model would have flagged SVB in <strong className="text-amber-400">{svbEarlyWarning}</strong> — approximately <strong className="text-amber-400">{daysAdvance} days</strong> before the FDIC seizure on March 10, 2023.
+                Reconstructed from SVB's actual FFIEC Call Report filings (public record). Shows how the Fitch AQEWS model would have flagged SVB{svbEarlyWarning ? <> in <strong className="text-amber-400">{svbEarlyWarning}</strong></> : ""} — approximately <strong className="text-amber-400">{daysAdvance ?? "182"} days</strong> before the FDIC seizure on March 10, 2023.
               </p>
               <p className="text-[10px] text-muted-foreground/50 mt-1">
                 Illustrative — reconstructed from SVB's actual FFIEC Call Report filings for backtesting purposes. Not investment advice.
@@ -138,14 +165,14 @@ export default function FitchS5SvbBacktest() {
         <Card>
           <CardContent className="p-3">
             <p className="text-[10px] text-muted-foreground uppercase tracking-wide">First Alert Quarter</p>
-            <p className="text-xl font-bold text-amber-400">{svbEarlyWarning}</p>
+            <p className="text-xl font-bold text-amber-400">{svbEarlyWarning ?? "—"}</p>
             <p className="text-[11px] text-muted-foreground">Score breached 40 threshold</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-3">
             <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Advance Warning</p>
-            <p className="text-xl font-bold text-amber-400">{daysAdvance} days</p>
+            <p className="text-xl font-bold text-amber-400">{daysAdvance ?? "—"} {daysAdvance ? "days" : ""}</p>
             <p className="text-[11px] text-muted-foreground">Before FDIC seizure</p>
           </CardContent>
         </Card>

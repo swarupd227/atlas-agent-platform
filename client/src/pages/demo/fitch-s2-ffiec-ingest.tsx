@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Database, TrendingUp, TrendingDown, Activity, CheckCircle2, AlertTriangle } from "lucide-react";
 import { useFitchPipeline, FITCH_AGENTS } from "./fitch-constants";
+import FitchEmptyState from "./fitch-empty-state";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LineChart, Line, Legend,
 } from "recharts";
@@ -48,10 +49,37 @@ export default function FitchS2FfiecIngest() {
   const liveData = result?.resultSummary;
   const isCurrent = state.currentRole === "ffiec_ingestor";
 
-  const banksIngested = liveData?.banksIngested ?? data?.banksIngested ?? 847;
-  const watchListCount = liveData?.watchListCount ?? data?.watchListCount ?? 37;
-  const dataQuality = liveData?.dataQualityScore ?? data?.dataQualityScore ?? 98.4;
-  const topFlags: string[] = liveData?.topWatchFlags ?? data?.topWatchFlags ?? ["cre_concentration","liquidity_pressure","earnings_decline"];
+  const hasRun = !!result;
+  const isIdle = state.status === "idle" && !hasRun;
+
+  const banksIngested = liveData?.banksIngested ?? 0;
+  const watchListCount = liveData?.watchListCount ?? 0;
+  const dataQuality = liveData?.dataQualityScore ?? 0;
+  const topFlags: string[] = liveData?.topWatchFlags ?? [];
+
+  if (isIdle) {
+    return (
+      <div className="flex flex-col gap-4">
+        <Card className={`${agentDef.borderColor} ${agentDef.bgColor}`}>
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <Database className={`w-5 h-5 ${agentDef.color}`} />
+              <div>
+                <h3 className={`text-sm font-semibold ${agentDef.color}`}>{agentDef.name}</h3>
+                <p className="text-[11px] text-muted-foreground">{agentDef.description}</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-1.5 mt-3">
+              {agentDef.tools.map(t => (
+                <span key={t} className="text-[9px] font-mono bg-muted/30 text-muted-foreground/70 px-1.5 py-0.5 rounded">{t}</span>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+        <FitchEmptyState agentName={agentDef.name} agentRole="ffiec_ingestor" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4">

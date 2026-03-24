@@ -571,6 +571,9 @@ export async function fitchLiveRunHandler(req: Request, res: Response): Promise<
 
     sendEvent("setup", { message: "Deployments configured — executing assessment pipeline..." });
 
+    // Accumulate resultSummaries from each agent for downstream context injection
+    const priorSummaries: Record<string, Record<string, any>> = {};
+
     for (const role of agentOrder) {
       if (aborted) break;
 
@@ -591,11 +594,22 @@ export async function fitchLiveRunHandler(req: Request, res: Response): Promise<
         await new Promise(r => setTimeout(r, 300));
       }
 
-      const result = await runAgentOnce(deploymentId, def.taskPrompt, def.maxToolIterations);
+      // Build task prompt — inject prior summaries for composite scorer and report generator
+      let taskPrompt = def.taskPrompt;
+      if ((role === "risk_scorer" || role === "report_generator") && Object.keys(priorSummaries).length > 0) {
+        const context = Object.entries(priorSummaries)
+          .map(([r, s]) => `[${r}]: ${JSON.stringify(s)}`)
+          .join("\n");
+        taskPrompt = `PRIOR AGENT OUTPUTS:\n${context}\n\nYOUR TASK:\n${def.taskPrompt}`;
+      }
+
+      const result = await runAgentOnce(deploymentId, taskPrompt, def.maxToolIterations);
 
       if (result.message) {
         const parsed = extractJson(result.message);
         if (parsed) {
+          // Store in prior summaries for downstream agents
+          priorSummaries[role] = parsed;
           try {
             const runs = await storage.getAgentRuntimeRuns(agentId);
             if (runs.length > 0) {
