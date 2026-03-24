@@ -27,6 +27,7 @@ import hearstCmsRouter from "./mock-mcp/hearst-cms";
 import hearstEmailQueueRouter from "./mock-mcp/hearst-email-queue";
 import hearstAnalyticsRouter from "./mock-mcp/hearst-analytics";
 import blackrock2AimRouter from "./mock-mcp/blackrock2-aim";
+import { hearstLiveRunHandler, ensureHearstAgents } from "./hearst-live-run";
 import { registerMockMcpServers } from "./mock-mcp/register";
 import type { RedactionLevel } from "./permissions";
 import {
@@ -36963,12 +36964,18 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
     return res.json({ waterfall, brandRevenue, aiInsights, lastWeekRevenue, thisWeekRevenue, lift });
   });
 
+  // GET /demo-api/hearst/live-run — SSE live pipeline execution
+  app.get("/demo-api/hearst/live-run", hearstLiveRunHandler);
+
   // ============================================================
   // END HEARST DEMO ROUTES
   // ============================================================
 
   // Start the job worker
   startWorker();
+
+  // Ensure Hearst NBA agents + MCP servers are registered
+  ensureHearstAgents().catch((err: any) => console.error("[startup] ensureHearstAgents:", err?.message));
 
   return httpServer;
 }
