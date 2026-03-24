@@ -25,6 +25,7 @@ import {
   type KpiReEvalResult,
 } from "./routes/helpers";
 import { ensureHearstAgents } from "./hearst-live-run";
+import { ensureFitchAgents } from "./fitch-live-run";
 import { checkPermission, getRequestRole } from "./permissions";
 import { getSecurityMode, hashPassword, comparePassword, generateToken, verifyToken, setAuthCookie, clearAuthCookie } from "./auth";
 import { users } from "@shared/schema";
@@ -87,31 +88,40 @@ export const industryEvalFrameworks: Record<string, {
     description: "Claims processing accuracy, underwriting guideline adherence, NAIC compliance, policyholder communication quality",
     dimensions: [
       { id: "claims_accuracy", name: "Claims Processing Accuracy", description: "Validates claim assessment accuracy, coverage determination, policy interpretation", weight: 2, scoringCriteria: ["Coverage correctly determined", "Policy exclusions applied", "Deductible calculated", "Benefit limits enforced"] },
-      { id: "underwriting_adherence", name: "Underwriting Guideline Adherence", description: "Validates risk assessment against underwriting guidelines", weight: 2.5, scoringCriteria: ["Risk factors correctly weighted", "Underwriting rules applied", "Exceptions documented", "Pricing within band"] },
-      { id: "naic_compliance", name: "NAIC Compliance", description: "Adherence to NAIC model regulations and state-specific insurance law", weight: 2, scoringCriteria: ["State filing requirements met", "Disclosure timing correct", "Cancellation procedures followed", "Reserve calculations valid"] },
-      { id: "policyholder_communication", name: "Policyholder Communication Quality", description: "Clarity, accuracy, and regulatory compliance of policyholder communications", weight: 1.5, scoringCriteria: ["Plain language used", "Coverage explained clearly", "Rights and responsibilities stated", "Complaint procedure included"] },
+      { id: "underwriting_adherence", name: "Underwriting Guideline Adherence", description: "Fair underwriting practices, anti-discrimination, actuarial soundness", weight: 2.5, scoringCriteria: ["Risk classification appropriate", "No prohibited factor usage", "Actuarial justification present", "Rate filing compliance"] },
+      { id: "naic_compliance", name: "NAIC Compliance", description: "Adherence to National Association of Insurance Commissioners model regulations", weight: 2, scoringCriteria: ["Model law requirements met", "Consumer protection standards", "Market conduct compliance"] },
+      { id: "policyholder_communication", name: "Policyholder Communication Quality", description: "Clear, accurate, and compliant policyholder communications", weight: 1.5, scoringCriteria: ["Plain language used", "Required notices included", "Response timeframes met", "Appeal rights explained"] },
     ],
   },
   manufacturing: {
     id: "manufacturing",
     label: "Manufacturing",
-    description: "Safety protocol adherence, quality control accuracy, production efficiency recommendations, regulatory compliance (OSHA, ISO)",
+    description: "Safety protocol adherence, quality control precision, supply chain risk assessment accuracy",
     dimensions: [
-      { id: "safety_compliance", name: "Safety Protocol Adherence", description: "Validates agent recommendations against OSHA and facility safety standards", weight: 3, scoringCriteria: ["OSHA standards referenced", "PPE requirements specified", "Hazard identification complete", "Emergency procedures included"] },
-      { id: "quality_accuracy", name: "Quality Control Accuracy", description: "Tests accuracy of defect detection, root cause analysis, and quality recommendations", weight: 2.5, scoringCriteria: ["Defect patterns correctly identified", "Root cause analysis logical", "Statistical process control applied", "ISO 9001 principles followed"] },
-      { id: "efficiency_recommendations", name: "Production Efficiency Recommendations", description: "Validates that recommendations would improve throughput, reduce waste, and optimize resources", weight: 2, scoringCriteria: ["Bottleneck correctly identified", "Waste reduction quantified", "Resource utilization improved", "OEE impact estimated"] },
-      { id: "regulatory_compliance", name: "Regulatory Compliance", description: "OSHA, EPA, ISO, and sector-specific regulatory adherence", weight: 2, scoringCriteria: ["OSHA 300 log requirements", "Environmental permits considered", "ISO certification requirements met", "Reporting deadlines respected"] },
+      { id: "safety_protocol", name: "Safety Protocol Adherence", description: "Ensures compliance with OSHA, ISO 45001, machine safety standards", weight: 3, scoringCriteria: ["OSHA requirements referenced", "PPE requirements stated", "Lockout/tagout procedures", "Hazard communication complete"] },
+      { id: "quality_control", name: "Quality Control Precision", description: "Validates dimensional accuracy, tolerances, and QC checkpoint adherence", weight: 2, scoringCriteria: ["Tolerance class appropriate", "Measurement units correct", "QC checkpoint documented", "Non-conformance flagged"] },
+      { id: "supply_chain_risk", name: "Supply Chain Risk Assessment", description: "Accuracy of supply chain risk identification and mitigation recommendations", weight: 1.5, scoringCriteria: ["Single-source risks identified", "Lead time impacts assessed", "Alternative suppliers noted", "Geopolitical risks flagged"] },
     ],
   },
-  media: {
-    id: "media",
-    label: "Media & Publishing",
-    description: "Content accuracy, audience relevance, brand safety, editorial standard adherence",
+  retail: {
+    id: "retail",
+    label: "Retail",
+    description: "Customer sentiment preservation, product recommendation relevance, return policy compliance",
     dimensions: [
-      { id: "content_accuracy", name: "Content Accuracy", description: "Factual accuracy, source verification, editorial standards", weight: 2.5, scoringCriteria: ["Facts independently verifiable", "Sources cited and credible", "No misleading statistics", "Corrections policy applied"] },
-      { id: "audience_relevance", name: "Audience Relevance", description: "Content alignment with target audience needs and preferences", weight: 2, scoringCriteria: ["Audience segment correctly identified", "Tone appropriate for audience", "Engagement factors considered", "Personalization applied"] },
-      { id: "brand_safety", name: "Brand Safety", description: "Content safety for brand reputation and advertiser requirements", weight: 2, scoringCriteria: ["No hate speech or extremism", "Advertiser-safe content", "Platform content policies met", "GARM standards applied"] },
-      { id: "editorial_standards", name: "Editorial Standard Adherence", description: "Style guide compliance, editorial policy adherence", weight: 1.5, scoringCriteria: ["Style guide followed", "Editorial voice consistent", "SEO requirements met", "Legal review flags raised"] },
+      { id: "sentiment_preservation", name: "Customer Sentiment Preservation", description: "Maintains positive customer experience while enforcing policies", weight: 1.5, scoringCriteria: ["Empathetic language used", "Resolution offered", "Escalation path available", "Brand voice maintained"] },
+      { id: "recommendation_relevance", name: "Product Recommendation Relevance", description: "Accuracy and relevance of product recommendations", weight: 2, scoringCriteria: ["Preference matching", "Price range appropriate", "Availability confirmed", "Complementary items relevant"] },
+      { id: "return_policy_compliance", name: "Return Policy Compliance", description: "Accurate application of return and exchange policies", weight: 2, scoringCriteria: ["Return window verified", "Condition requirements stated", "Refund method correct", "Exceptions applied properly"] },
+    ],
+  },
+  technology_saas: {
+    id: "technology_saas",
+    label: "Technology / SaaS",
+    description: "API accuracy, error handling quality, documentation completeness, security best practices",
+    dimensions: [
+      { id: "api_accuracy", name: "API Accuracy", description: "Validates API response correctness, schema compliance, and error codes", weight: 2.5, scoringCriteria: ["Response schema valid", "Status codes correct", "Error messages descriptive", "Pagination handled"] },
+      { id: "error_handling", name: "Error Handling Quality", description: "Graceful degradation, meaningful error messages, retry logic", weight: 2, scoringCriteria: ["Graceful degradation", "Retry logic appropriate", "Error categorization correct", "User-friendly messages"] },
+      { id: "documentation_completeness", name: "Documentation Completeness", description: "Completeness and accuracy of generated documentation", weight: 1.5, scoringCriteria: ["All endpoints documented", "Examples provided", "Edge cases noted", "Authentication explained"] },
+      { id: "security_practices", name: "Security Best Practices", description: "Authentication, authorization, input sanitization, and secret management", weight: 3, scoringCriteria: ["Input sanitized", "Auth tokens validated", "Secrets not exposed", "OWASP Top 10 addressed"] },
     ],
   },
 };
@@ -272,6 +282,7 @@ export async function registerRoutes(
 
   // Ensure Hearst NBA agents + MCP servers are registered
   ensureHearstAgents().catch((err: any) => console.error("[startup] ensureHearstAgents:", err?.message));
+  ensureFitchAgents().catch((err: any) => console.error("[startup] ensureFitchAgents:", err?.message));
 
   return httpServer;
 }
