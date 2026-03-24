@@ -258,7 +258,7 @@ export function AppSidebar() {
                     <SidebarMenuButton asChild data-active={location.startsWith("/demo/kinective-coa")}>
                       <Link href="/demo/kinective-coa" data-testid="link-nav-kinective-demo">
                         <MapPin className="w-4 h-4" />
-                        <span>Kinective - Change of Address</span>
+                        <span>XNective - Change of Address</span>
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
@@ -274,7 +274,7 @@ export function AppSidebar() {
                     <SidebarMenuButton asChild data-active={location.startsWith("/demo/hearst")}>
                       <Link href="/demo/hearst" data-testid="link-nav-hearst-demo">
                         <Mail className="w-4 h-4" />
-                        <span>Hearst - NBA Email Orchestration</span>
+                        <span>XYZ - NBA Email Orchestration</span>
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
@@ -282,7 +282,7 @@ export function AppSidebar() {
                     <SidebarMenuButton asChild data-active={location.startsWith("/demo/fitch")}>
                       <Link href="/demo/fitch" data-testid="link-nav-fitch-demo">
                         <Shield className="w-4 h-4" />
-                        <span>Fitch - Asset Quality Early Warning</span>
+                        <span>ABC - Asset Quality Early Warning</span>
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
