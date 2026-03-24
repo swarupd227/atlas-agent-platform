@@ -509,7 +509,7 @@ const RATIO_THRESHOLDS_MAP: Record<string, number> = {
 };
 
 async function computeRatioSummary(): Promise<Record<string, any>> {
-  const base = "http://localhost:5000/api/mock";
+  const base = `${BASE_URL}/api/mock`;
   const [trendsRes, breachesRes, peersRes] = await Promise.all([
     fetch(`${base}/fitch-analytics/ratio-trends`).then(r => r.json()),
     fetch(`${base}/fitch-analytics/threshold-breaches`).then(r => r.json()),
