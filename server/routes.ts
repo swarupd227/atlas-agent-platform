@@ -28,7 +28,7 @@ import hearstEmailQueueRouter from "./mock-mcp/hearst-email-queue";
 import hearstAnalyticsRouter from "./mock-mcp/hearst-analytics";
 import blackrock2AimRouter from "./mock-mcp/blackrock2-aim";
 import { hearstLiveRunHandler, ensureHearstAgents } from "./hearst-live-run";
-import { fitchLiveRunHandler, ensureFitchAgents } from "./fitch-live-run";
+import { fitchLiveRunHandler, ensureFitchAgents, getFitchPipelineAgentNames, getFitchAgentIdByName } from "./fitch-live-run";
 import fitchFfiecDataRouter from "./mock-mcp/fitch-ffiec-data";
 import fitchNlpEngineRouter from "./mock-mcp/fitch-nlp-engine";
 import fitchAnalyticsRouter from "./mock-mcp/fitch-analytics";
@@ -37019,97 +37019,47 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
     }
   });
 
-  // GET /demo-api/fitch/command-center
-  app.get("/demo-api/fitch/command-center", async (_req, res) => {
+  // GET /demo-api/fitch/agent-runs — All 6 Fitch agent last runs from real platform tables
+  app.get("/demo-api/fitch/agent-runs", async (_req, res) => {
     try {
-      res.json({
-        portfolioSize: 847,
-        criticalAlerts: 6,
-        highAlerts: 31,
-        totalInstitutions: 847,
-        lastRefresh: new Date().toISOString(),
-        avgRiskScore: 28.4,
-        svbEarlyWarningQuarter: "2022-Q3",
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+      await ensureFitchAgents();
 
-  // GET /demo-api/fitch/ffiec-ingest
-  app.get("/demo-api/fitch/ffiec-ingest", async (_req, res) => {
-    try {
-      res.json({
-        institutionsIngested: 847,
-        totalRecords: 412380,
-        callReportPeriods: 20,
-        dataQualityScore: 98.7,
-        lastRefresh: new Date().toISOString(),
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+      const pipeline = getFitchPipelineAgentNames();
 
-  // GET /demo-api/fitch/risk-scoring
-  app.get("/demo-api/fitch/risk-scoring", async (_req, res) => {
-    try {
-      res.json({
-        institutionsScored: 847,
-        criticalRisk: 6,
-        highRisk: 31,
-        avgCompositeScore: 28.4,
-        modelAccuracy: { auc_roc: 0.94 },
-        svbBacktestValidated: true,
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+      const results = await Promise.all(
+        pipeline.map(async ({ key, name }) => {
+          const agentId = getFitchAgentIdByName(name);
+          if (!agentId) {
+            return { key, agentId: null, agentName: name, agentStatus: "idle", runId: null, runStatus: null, triggerType: null, startedAt: null, completedAt: null, latencyMs: null, resultSummary: null };
+          }
+          const [agent, runs] = await Promise.all([
+            storage.getAgent(agentId),
+            storage.getAgentRuntimeRuns(agentId),
+          ]);
 
-  // GET /demo-api/fitch/nlp-signals
-  app.get("/demo-api/fitch/nlp-signals", async (_req, res) => {
-    try {
-      res.json({
-        transcriptsAnalyzed: 312,
-        filingsProcessed: 847,
-        negativeShifts: 28,
-        materialWeaknessFlags: 3,
-        articlesScanned: 2840,
-        highImpactEvents: 7,
-        avgSentimentScore: -0.12,
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+          const lastRun = runs
+            .filter((r: any) => r.status === "completed" && r.completedAt)
+            .sort((a: any, b: any) => new Date(b.completedAt!).getTime() - new Date(a.completedAt!).getTime())[0];
 
-  // GET /demo-api/fitch/svb-backtest
-  app.get("/demo-api/fitch/svb-backtest", async (_req, res) => {
-    try {
-      res.json({
-        svbEarlyWarningQuarter: "2022-Q3",
-        svbDaysAdvanceWarning: 182,
-        svbFinalScore: 87.3,
-        modelAucRoc: 0.94,
-      });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+          return {
+            key,
+            agentId,
+            agentName: agent?.name || name,
+            agentStatus: (agent as any)?.status || "active",
+            runId: lastRun?.id || null,
+            runStatus: lastRun?.status || null,
+            triggerType: lastRun?.triggerType || null,
+            startedAt: lastRun?.startedAt || null,
+            completedAt: lastRun?.completedAt || null,
+            latencyMs: lastRun?.latencyMs || null,
+            resultSummary: lastRun?.resultSummary || null,
+          };
+        })
+      );
 
-  // GET /demo-api/fitch/report-assembly
-  app.get("/demo-api/fitch/report-assembly", async (_req, res) => {
-    try {
-      res.json({
-        packagesGenerated: 37,
-        analystHoursSaved: 412,
-        avgTurnaroundHours: 2.4,
-        totalPagesGenerated: 1014,
-        ratingActions: { upgraded: 3, downgraded: 8, watch_negative: 6, affirmed: 20 },
-      });
+      return res.json({ agentRuns: results });
     } catch (err: any) {
-      res.status(500).json({ error: err.message });
+      return res.status(500).json({ error: err.message });
     }
   });
 

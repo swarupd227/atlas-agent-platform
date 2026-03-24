@@ -420,6 +420,22 @@ export function getFitchAgentIdByName(name: string): string | undefined {
   return _fitchAgentIdByName[name];
 }
 
+export const FITCH_PIPELINE_KEYS = [
+  "ffiec_ingestor",
+  "ratio_engine",
+  "transcript_analyst",
+  "news_processor",
+  "risk_scorer",
+  "report_generator",
+] as const;
+
+export function getFitchPipelineAgentNames(): Array<{ key: string; name: string }> {
+  return FITCH_PIPELINE_KEYS.map(key => ({
+    key,
+    name: FITCH_AGENT_DEFS[key]?.name || key,
+  }));
+}
+
 // ─── Helper: extract JSON from LLM output ────────────────────────────────────
 
 function extractJson(text: string): Record<string, any> | null {
