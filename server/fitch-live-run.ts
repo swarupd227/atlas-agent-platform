@@ -220,40 +220,15 @@ After calling all three tools, write 2-3 sentences summarising total breach coun
     name:           "Transcript & Filing Analyst",
     description:    "NLP analysis of earnings call transcripts and SEC 10-K filings for management tone shifts and new risk disclosures.",
     mcpServerNames: ["Fitch NLP Intelligence Engine"],
-    maxToolIterations: 6,
+    maxToolIterations: 3,
     systemPrompt: `You are the Transcript & Filing Analyst for Fitch's Asset Quality Early Warning System.
 
-Your task sequence:
-1. Call get_transcript_sentiment to retrieve earnings call sentiment scores per bank (credit quality, forward guidance, sector concerns composite)
-2. Call get_filing_language_changes to retrieve new/strengthened risk factors in 10-K filings YoY per bank
+Call these two tools in order, then write a brief summary:
+1. get_transcript_sentiment — earnings call sentiment scores across all banks
+2. get_filing_language_changes — new/strengthened risk factors in 10-K filings YoY
 
-After both tool calls, analyze management tone, detect new risk disclosures, and populate the JSON with REAL values from the tool data.
-
-CRITICAL: End your response with a JSON code block (triple-backtick json):
-
-\`\`\`json
-{
-  "banksScored": <integer>,
-  "sentimentScores": {
-    "<bankName>": {
-      "creditQuality": <float -2 to 2>,
-      "forwardGuidance": <float -2 to 2>,
-      "sectorConcerns": <float -2 to 2>,
-      "composite": <float -2 to 2>
-    }
-  },
-  "filingFlags": {
-    "<bankName>": {
-      "newRiskFactors": <integer>,
-      "strengthenedLanguage": <integer>,
-      "mdaShift": <float>
-    }
-  }
-}
-\`\`\`
-
-Include all 10 banks in sentimentScores and filingFlags.`,
-    taskPrompt: "Analyze earnings transcripts and 10-K filings for all 10 banks. Call get_transcript_sentiment and get_filing_language_changes. Produce the NLP sentiment summary JSON.",
+After calling both tools, write 2-3 sentences summarising which banks show the most negative sentiment, the most strengthened filing language, and any management tone red-flags. Do NOT generate a large JSON table — the downstream system handles detailed tabulation automatically.`,
+    taskPrompt: "Call get_transcript_sentiment and get_filing_language_changes to retrieve NLP data for the 10-bank cohort, then summarise the key tone and filing language findings in 2-3 sentences.",
   },
 
   // ── Agent 4: News Signal Processor ───────────────────────────────────────────
@@ -261,36 +236,15 @@ Include all 10 banks in sentimentScores and filingFlags.`,
     name:           "News Signal Processor",
     description:    "Monitors financial news for credit-relevant events, sigma-spikes, and classification of articles by severity.",
     mcpServerNames: ["Fitch NLP Intelligence Engine"],
-    maxToolIterations: 6,
+    maxToolIterations: 3,
     systemPrompt: `You are the News Signal Processor for Fitch's Asset Quality Early Warning System.
 
-Your task sequence:
-1. Call get_news_signals to retrieve article-level news classification (routine/emerging/material/crisis) per bank
-2. Call get_news_volume_trend to retrieve rolling 13-week volume and sigma-deviation per bank
+Call these two tools in order, then write a brief summary:
+1. get_news_signals — article-level news classification (routine/emerging/material/crisis) per bank
+2. get_news_volume_trend — rolling 13-week volume and sigma-deviation per bank
 
-After both tool calls, identify emerging risks and sigma-spike alerts. Populate the JSON with REAL values from the tool data.
-
-CRITICAL: End your response with a JSON code block (triple-backtick json):
-
-\`\`\`json
-{
-  "banksMonitored": <integer>,
-  "newsSeverity": {
-    "<bankName>": {
-      "score": <float>,
-      "classification": "routine|emerging|material|crisis",
-      "sigmaSpike": <float>,
-      "articleCount": <integer>
-    }
-  },
-  "emergingRisks": [
-    { "bankName": "<name>", "topic": "<topic>", "classification": "<class>", "sigmaSpike": <float> }
-  ]
-}
-\`\`\`
-
-Include all 10 banks in newsSeverity. emergingRisks should list banks with classification != routine.`,
-    taskPrompt: "Monitor news signals for all 10 banks. Call get_news_signals and get_news_volume_trend. Produce the news signal summary JSON.",
+After calling both tools, write 2-3 sentences summarising which banks have sigma-spikes, which have crisis or material news classifications, and the overall news risk picture. Do NOT generate a large JSON table — the downstream system handles detailed tabulation automatically.`,
+    taskPrompt: "Call get_news_signals and get_news_volume_trend to retrieve news data for the 10-bank cohort, then summarise the key sigma-spike and classification findings in 2-3 sentences.",
   },
 
   // ── Agent 5: Composite Risk Scorer ──────────────────────────────────────────
@@ -473,6 +427,83 @@ function computeRiskScores(priorSummaries: Record<string, Record<string, any>>):
   }
 
   return { portfolioScored: 10, banksScored: 10, scores, watchList, redAlerts };
+}
+
+// ─── Server-side transcript sentiment computation ─────────────────────────────
+// Fallback for transcript_analyst. Fetches mock NLP endpoints and maps
+// snake_case API fields → camelCase fields the frontend expects.
+
+async function computeTranscriptSentiment(): Promise<Record<string, any>> {
+  const base = `${BASE_URL}/api/mock`;
+  const [sentimentRes, filingRes] = await Promise.all([
+    fetch(`${base}/fitch-nlp-engine/transcript-sentiment`).then(r => r.json()),
+    fetch(`${base}/fitch-nlp-engine/filing-language-changes`).then(r => r.json()),
+  ]);
+
+  const sentimentScores: Record<string, any> = {};
+  for (const entry of sentimentRes.data ?? []) {
+    sentimentScores[entry.bank_name] = {
+      creditQuality:   entry.sentiment?.credit_quality   ?? 0,
+      forwardGuidance: entry.sentiment?.forward_guidance ?? 0,
+      sectorConcerns:  entry.sentiment?.sector_concerns  ?? 0,
+      composite:       entry.sentiment?.composite        ?? 0,
+    };
+  }
+
+  const filingFlags: Record<string, any> = {};
+  for (const entry of filingRes.data ?? []) {
+    filingFlags[entry.bank_name] = {
+      newRiskFactors:       entry.new_risk_factors            ?? 0,
+      strengthenedLanguage: entry.strengthened_language_count ?? 0,
+      mdaShift:             entry.mda_sentiment_shift         ?? 0,
+    };
+  }
+
+  return { banksScored: 10, sentimentScores, filingFlags };
+}
+
+// ─── Server-side news severity computation ────────────────────────────────────
+// Fallback for news_processor. Fetches mock NLP endpoints and maps
+// snake_case API fields → camelCase fields the frontend expects.
+
+async function computeNewsSeverity(): Promise<Record<string, any>> {
+  const base = `${BASE_URL}/api/mock`;
+  const [signalsRes, trendRes] = await Promise.all([
+    fetch(`${base}/fitch-nlp-engine/news-signals`).then(r => r.json()),
+    fetch(`${base}/fitch-nlp-engine/news-volume-trend`).then(r => r.json()),
+  ]);
+
+  const trendByBank: Record<string, any> = {};
+  for (const entry of trendRes.data ?? []) {
+    trendByBank[entry.bank_name] = entry;
+  }
+
+  const newsSeverity: Record<string, any> = {};
+  const emergingRisks: any[] = [];
+
+  for (const entry of signalsRes.data ?? []) {
+    const trend = trendByBank[entry.bank_name] ?? {};
+    const classification: string = entry.overall_classification ?? "routine";
+    const sigmaSpike: number = +(entry.sigma_spike ?? trend.current_sigma ?? 0).toFixed(2);
+
+    newsSeverity[entry.bank_name] = {
+      classification,
+      articleCount: entry.article_count ?? 0,
+      sigmaSpike,
+      score: classification === "crisis" ? 90 : classification === "material" ? 70 : classification === "emerging" ? 50 : 20,
+    };
+
+    if (classification !== "routine") {
+      emergingRisks.push({
+        bankName:       entry.bank_name,
+        topic:          (entry.top_topics ?? [])[0] ?? "credit risk",
+        classification,
+        sigmaSpike,
+      });
+    }
+  }
+
+  return { banksMonitored: 10, newsSeverity, emergingRisks };
 }
 
 // ─── Server-side ratio table computation ──────────────────────────────────────
@@ -888,6 +919,33 @@ export async function fitchLiveRunHandler(req: Request, res: Response): Promise<
         if (allZero) {
           console.log("[fitch-live] risk_scorer produced all-zero scores — using server-side computation");
           priorSummaries[role] = computeRiskScores(priorSummaries);
+        }
+      }
+
+      // For transcript_analyst: guarantee sentimentScores and filingFlags are populated.
+      // The LLM prompt no longer generates JSON, so the server-side fallback always runs.
+      if (role === "transcript_analyst") {
+        const hasSentiment = Object.keys(priorSummaries[role]?.sentimentScores ?? {}).length > 0;
+        if (!hasSentiment) {
+          console.log("[fitch-live] transcript_analyst missing sentimentScores — computing server-side");
+          try {
+            priorSummaries[role] = await computeTranscriptSentiment();
+          } catch (e: any) {
+            console.warn("[fitch-live] computeTranscriptSentiment failed:", e?.message);
+          }
+        }
+      }
+
+      // For news_processor: guarantee newsSeverity and emergingRisks are populated.
+      if (role === "news_processor") {
+        const hasNews = Object.keys(priorSummaries[role]?.newsSeverity ?? {}).length > 0;
+        if (!hasNews) {
+          console.log("[fitch-live] news_processor missing newsSeverity — computing server-side");
+          try {
+            priorSummaries[role] = await computeNewsSeverity();
+          } catch (e: any) {
+            console.warn("[fitch-live] computeNewsSeverity failed:", e?.message);
+          }
         }
       }
 
