@@ -496,6 +496,85 @@ function computeRiskScores(priorSummaries: Record<string, Record<string, any>>):
   return { portfolioScored: 10, banksScored: 10, scores, watchList, redAlerts };
 }
 
+// ─── Server-side ratio table computation ──────────────────────────────────────
+// Fallback for ratio_engine when LLM fails to produce a 180-entry ratioTable.
+// Fetches from the same mock endpoints the agent uses, then assembles the data.
+
+const RATIO_THRESHOLDS_MAP: Record<string, number> = {
+  npl_ratio: 1.5, nco_rate: 0.5, allowance_to_loans: 0.8, cet1_ratio: 8.0,
+  tier1_leverage: 5.0, rwa_density: 0.8, roa: 0.5, roe: 5.0, nim: 1.5,
+  efficiency_ratio: 75.0, loan_deposit_ratio: 90.0, liquid_assets_to_total: 10.0,
+  cre_to_total_loans: 35.0, commercial_concentration: 50.0, provision_to_avg_loans: 0.5,
+  accruing_past_due_90_pct: 0.2, classified_to_tier1: 25.0, net_stable_funding_ratio: 100.0,
+};
+
+async function computeRatioSummary(): Promise<Record<string, any>> {
+  const base = "http://localhost:5000/api/mock";
+  const [trendsRes, breachesRes, peersRes] = await Promise.all([
+    fetch(`${base}/fitch-analytics/ratio-trends`).then(r => r.json()),
+    fetch(`${base}/fitch-analytics/threshold-breaches`).then(r => r.json()),
+    fetch(`${base}/fitch-ffiec-data/peer-cohort-ratios`).then(r => r.json()),
+  ]);
+
+  const trendsByBank = new Map<string, Record<string, any[]>>();
+  for (const entry of trendsRes.data ?? []) {
+    trendsByBank.set(entry.bank_name, entry.ratios ?? {});
+  }
+
+  const breachesByBank = new Map<string, any[]>();
+  let totalBreaches = 0;
+  for (const entry of breachesRes.data ?? []) {
+    breachesByBank.set(entry.bank_name, entry.breaches ?? []);
+    totalBreaches += entry.breach_count ?? 0;
+  }
+
+  const peerMedians: Record<string, number> = peersRes.medians ?? {};
+  const ratioIds = Object.keys(RATIO_THRESHOLDS_MAP);
+
+  const ratioTable: Record<string, Record<string, any>> = {};
+  const breachLeaderboard: any[] = [];
+
+  for (const bankName of FITCH_BANK_NAMES) {
+    const trends = trendsByBank.get(bankName) ?? {};
+    const breaches = breachesByBank.get(bankName) ?? [];
+    const breachMap = new Map<string, any>(breaches.map((b: any) => [b.ratio_id, b]));
+
+    const bankRatios: Record<string, any> = {};
+    for (const ratioId of ratioIds) {
+      const series: any[] = trends[ratioId] ?? [];
+      const latest = series.length > 0 ? series[series.length - 1].value : null;
+      const prev   = series.length > 1 ? series[series.length - 2].value : null;
+      const breach = breachMap.get(ratioId);
+
+      bankRatios[ratioId] = {
+        value:      breach ? breach.current_value : latest,
+        threshold:  RATIO_THRESHOLDS_MAP[ratioId],
+        breached:   !!breach,
+        qoqDelta:   breach
+          ? breach.qoq_delta
+          : (latest != null && prev != null ? +(latest - prev).toFixed(2) : 0),
+        peerMedian: peerMedians[ratioId] ?? null,
+        severity:   breach?.severity ?? null,
+      };
+    }
+    ratioTable[bankName] = bankRatios;
+
+    if (breaches.length > 0) {
+      const worst = breaches[0];
+      breachLeaderboard.push({
+        bankName,
+        breachCount: breaches.length,
+        worstRatio:  worst.ratio_id,
+        severity:    worst.severity,
+      });
+    }
+  }
+
+  breachLeaderboard.sort((a, b) => b.breachCount - a.breachCount);
+
+  return { banksAnalyzed: FITCH_BANK_NAMES.length, totalBreaches, ratioTable, breachLeaderboard };
+}
+
 // ─── Helper: extract JSON from LLM output ────────────────────────────────────
 
 function extractJson(text: string): Record<string, any> | null {
@@ -811,6 +890,22 @@ export async function fitchLiveRunHandler(req: Request, res: Response): Promise<
         const parsed = extractJson(result.message);
         if (parsed) {
           priorSummaries[role] = parsed;
+        }
+      }
+
+      // For ratio_engine: guarantee a full ratioTable by falling back to server-side computation
+      // when the LLM either skips the JSON block or produces an incomplete/malformed table.
+      // (The LLM must emit 180 entries — 10 banks × 18 ratios — which is unreliable in practice.)
+      if (role === "ratio_engine") {
+        const table = priorSummaries[role]?.ratioTable;
+        const tableEmpty = !table || Object.keys(table).length === 0;
+        if (tableEmpty) {
+          console.log("[fitch-live] ratio_engine missing ratioTable — computing server-side");
+          try {
+            priorSummaries[role] = await computeRatioSummary();
+          } catch (e: any) {
+            console.warn("[fitch-live] computeRatioSummary failed:", e?.message);
+          }
         }
       }
 
