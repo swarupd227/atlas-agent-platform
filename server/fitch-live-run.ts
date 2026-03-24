@@ -641,21 +641,13 @@ export async function ensureFitchAgents(): Promise<void> {
           maturityFactors:   {},
         } as any);
       } else {
-        const needsUpdate =
-          (agent as any).modelProvider !== "openai" ||
-          (agent as any).modelName !== "gpt-4.1" ||
-          !(agent as any).systemPrompt ||
-          !(agent as any).systemPrompt.includes("get_call_report_schedules") &&
-          def.name === "FFIEC Data Ingestor";
-        if (needsUpdate) {
-          await storage.updateAgent((agent as any).id, {
-            modelProvider:     "openai",
-            modelName:         "gpt-4.1",
-            systemPrompt:      def.systemPrompt,
-            runtimeConfig:     { prompt: def.taskPrompt, scheduleIntervalMinutes: 0 },
-            maxToolIterations: def.maxToolIterations,
-          } as any);
-        }
+        await storage.updateAgent((agent as any).id, {
+          modelProvider:     "openai",
+          modelName:         "gpt-4.1",
+          systemPrompt:      def.systemPrompt,
+          runtimeConfig:     { prompt: def.taskPrompt, scheduleIntervalMinutes: 0 },
+          maxToolIterations: def.maxToolIterations,
+        } as any);
       }
 
       _fitchAgentIdByName[def.name] = (agent as any).id;
