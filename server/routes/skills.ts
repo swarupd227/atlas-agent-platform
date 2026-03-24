@@ -1,6 +1,6 @@
 import { Router } from "express";
 import OpenAI from "openai";
-import { z } from "zod";
+import { z, ZodError } from "zod";
 import { storage } from "../storage";
 import { checkPermission } from "../permissions";
 import { resolveOntologyTags } from "./helpers";
