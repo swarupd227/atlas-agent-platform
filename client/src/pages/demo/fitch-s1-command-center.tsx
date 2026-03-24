@@ -22,14 +22,14 @@ function AgentPipelinePanel({ state }: { state: FitchPipelineState }) {
       <CardHeader className="pb-2">
         <div className="flex items-center gap-2 flex-wrap">
           <Activity className="w-4 h-4 text-rose-400" />
-          <CardTitle className="text-sm font-medium">Live Pipeline — 6 GPT-4.1 Agents</CardTitle>
+          <CardTitle className="text-sm font-medium">Live Pipeline — 6 AI Agents</CardTitle>
           <Badge variant="secondary" className="text-[10px]">4 MCP Servers · 15 Tools</Badge>
           {isRunning && <Badge className="text-[10px] bg-amber-500/20 text-amber-300 border-amber-500/30 animate-pulse">⬤ Running…</Badge>}
           {isComplete && <Badge className="text-[10px] bg-green-500/20 text-green-300 border-green-500/30">✓ Complete</Badge>}
         </div>
         <p className="text-[11px] text-muted-foreground">
           FFIEC ingest → ratio engine → transcript NLP → news signals → composite scoring → report assembly.
-          2–4 min total. All screens populate from live GPT-4.1 agent output.
+          2–4 min total. All screens populate from live AI agent output.
         </p>
       </CardHeader>
       <CardContent className="pt-0">
@@ -38,7 +38,7 @@ function AgentPipelinePanel({ state }: { state: FitchPipelineState }) {
             <div className="w-10 h-10 rounded-full bg-rose-500/10 flex items-center justify-center mb-3">
               <Bot className="w-5 h-5 text-rose-400/60" />
             </div>
-            <p className="text-sm text-muted-foreground">Click <span className="text-rose-400 font-medium">▶ Run Pipeline</span> above to start live GPT-4.1 execution</p>
+            <p className="text-sm text-muted-foreground">Click <span className="text-rose-400 font-medium">▶ Run Pipeline</span> above to start live AI agent execution</p>
             <p className="text-[11px] text-muted-foreground/60 mt-1">Each agent calls real MCP tools and produces structured JSON output</p>
           </div>
         )}

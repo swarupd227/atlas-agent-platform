@@ -316,7 +316,7 @@ export default function FitchDemo() {
                   {state.status === "error" && <Badge className="text-[10px] bg-red-500/20 text-red-300 border-red-500/30">⚠ Error</Badge>}
                 </div>
                 <p className="text-[10px] text-muted-foreground">
-                  6 GPT-4.1 agents · 4 MCP servers · 15 tools · SVB 182-day advance warning
+                  6 AI agents · 4 MCP servers · 15 tools · SVB 182-day advance warning
                 </p>
               </div>
             </div>
