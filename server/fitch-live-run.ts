@@ -639,7 +639,16 @@ export async function fitchLiveRunHandler(req: Request, res: Response): Promise<
     for (const step of toolCallSteps) {
       const tool = step.mcpTool || step.name || "unknown_tool";
       const success = step.status === "completed" || step.status === "passed";
-      const responseData = step.output?.data ?? step.output ?? null;
+      const rawOutput = step.output ?? null;
+
+      // count comes from the response envelope, not the inner data array
+      const dataArray = Array.isArray(rawOutput?.data) ? rawOutput.data
+        : Array.isArray(rawOutput) ? rawOutput : null;
+      const recordCount =
+        rawOutput?.count          ??
+        rawOutput?.record_count   ??
+        rawOutput?.total          ??
+        (dataArray != null ? dataArray.length : null);
 
       sendEvent("agent_event", {
         agentName: currentAgentName,
@@ -648,9 +657,9 @@ export async function fitchLiveRunHandler(req: Request, res: Response): Promise<
         data: {
           tool,
           success,
-          error:       success ? null : (step.error || "failed"),
-          serverName:  step.mcpServer || null,
-          recordCount: responseData?.record_count ?? responseData?.count ?? null,
+          error:      success ? null : (step.error || "failed"),
+          serverName: step.mcpServer || null,
+          recordCount,
         },
         success,
       });
