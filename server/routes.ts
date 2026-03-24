@@ -28,6 +28,11 @@ import hearstEmailQueueRouter from "./mock-mcp/hearst-email-queue";
 import hearstAnalyticsRouter from "./mock-mcp/hearst-analytics";
 import blackrock2AimRouter from "./mock-mcp/blackrock2-aim";
 import { hearstLiveRunHandler, ensureHearstAgents } from "./hearst-live-run";
+import { fitchLiveRunHandler, ensureFitchAgents } from "./fitch-live-run";
+import fitchFfiecDataRouter from "./mock-mcp/fitch-ffiec-data";
+import fitchNlpEngineRouter from "./mock-mcp/fitch-nlp-engine";
+import fitchAnalyticsRouter from "./mock-mcp/fitch-analytics";
+import fitchReportEngineRouter from "./mock-mcp/fitch-report-engine";
 import { registerMockMcpServers } from "./mock-mcp/register";
 import type { RedactionLevel } from "./permissions";
 import {
@@ -1098,6 +1103,10 @@ export async function registerRoutes(
   app.use("/api/mock/hearst-email-queue", hearstEmailQueueRouter);
   app.use("/api/mock/hearst-analytics", hearstAnalyticsRouter);
   app.use("/api/mock/bk2-aim", blackrock2AimRouter);
+  app.use("/api/mock/fitch-ffiec-data", fitchFfiecDataRouter);
+  app.use("/api/mock/fitch-nlp-engine", fitchNlpEngineRouter);
+  app.use("/api/mock/fitch-analytics", fitchAnalyticsRouter);
+  app.use("/api/mock/fitch-report-engine", fitchReportEngineRouter);
 
   app.post("/api/mock-mcp/register", async (_req, res) => {
     try {
@@ -36994,6 +37003,121 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
 
   // ============================================================
   // END HEARST DEMO ROUTES
+  // ============================================================
+
+  // ============================================================
+  // FITCH AQEWS DEMO ROUTES (Task #81)
+  // ============================================================
+
+  // POST /demo-api/fitch/setup
+  app.post("/demo-api/fitch/setup", async (_req, res) => {
+    try {
+      await ensureFitchAgents();
+      res.json({ success: true, message: "Fitch agents ready" });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /demo-api/fitch/command-center
+  app.get("/demo-api/fitch/command-center", async (_req, res) => {
+    try {
+      res.json({
+        portfolioSize: 847,
+        criticalAlerts: 6,
+        highAlerts: 31,
+        totalInstitutions: 847,
+        lastRefresh: new Date().toISOString(),
+        avgRiskScore: 28.4,
+        svbEarlyWarningQuarter: "2022-Q3",
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /demo-api/fitch/ffiec-ingest
+  app.get("/demo-api/fitch/ffiec-ingest", async (_req, res) => {
+    try {
+      res.json({
+        institutionsIngested: 847,
+        totalRecords: 412380,
+        callReportPeriods: 20,
+        dataQualityScore: 98.7,
+        lastRefresh: new Date().toISOString(),
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /demo-api/fitch/risk-scoring
+  app.get("/demo-api/fitch/risk-scoring", async (_req, res) => {
+    try {
+      res.json({
+        institutionsScored: 847,
+        criticalRisk: 6,
+        highRisk: 31,
+        avgCompositeScore: 28.4,
+        modelAccuracy: { auc_roc: 0.94 },
+        svbBacktestValidated: true,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /demo-api/fitch/nlp-signals
+  app.get("/demo-api/fitch/nlp-signals", async (_req, res) => {
+    try {
+      res.json({
+        transcriptsAnalyzed: 312,
+        filingsProcessed: 847,
+        negativeShifts: 28,
+        materialWeaknessFlags: 3,
+        articlesScanned: 2840,
+        highImpactEvents: 7,
+        avgSentimentScore: -0.12,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /demo-api/fitch/svb-backtest
+  app.get("/demo-api/fitch/svb-backtest", async (_req, res) => {
+    try {
+      res.json({
+        svbEarlyWarningQuarter: "2022-Q3",
+        svbDaysAdvanceWarning: 182,
+        svbFinalScore: 87.3,
+        modelAucRoc: 0.94,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /demo-api/fitch/report-assembly
+  app.get("/demo-api/fitch/report-assembly", async (_req, res) => {
+    try {
+      res.json({
+        packagesGenerated: 37,
+        analystHoursSaved: 412,
+        avgTurnaroundHours: 2.4,
+        totalPagesGenerated: 1014,
+        ratingActions: { upgraded: 3, downgraded: 8, watch_negative: 6, affirmed: 20 },
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // GET /demo-api/fitch/live-run — SSE live pipeline execution
+  app.get("/demo-api/fitch/live-run", fitchLiveRunHandler);
+
+  // ============================================================
+  // END FITCH DEMO ROUTES
   // ============================================================
 
   // Start the job worker

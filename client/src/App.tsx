@@ -94,6 +94,7 @@ import BlackRock2Demo from "@/pages/demo/blackrock2-demo";
 import KinectiveDemo from "@/pages/demo/kinective-demo";
 import MoodysDemo from "@/pages/demo/moodys-demo";
 import HearstDemo from "@/pages/demo/hearst-demo";
+import FitchDemo from "@/pages/demo/fitch-demo";
 import { Shield, LogOut } from "lucide-react";
 
 function HeaderControls() {
@@ -215,6 +216,7 @@ function DashboardRouter() {
       <Route path="/demo/kinective" component={KinectiveDemo} />
       <Route path="/demo/moodys" component={MoodysDemo} />
       <Route path="/demo/hearst" component={HearstDemo} />
+      <Route path="/demo/fitch" component={FitchDemo} />
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>
