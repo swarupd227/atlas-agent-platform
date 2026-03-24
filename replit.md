@@ -46,6 +46,21 @@ The Nous Agent Orchestrator uses a modern web stack: React, Vite, Tailwind CSS, 
 - **Hearst NBA Email Demo**: Demo for Next-Best-Action email decisioning across 12 Hearst brands (Cosmopolitan, Elle, Esquire, etc.) covering 6.2M subscribers. **Now fully live**: 5 GPT-4.1 agents (Subscriber Profile Engine, Content Inventory, NBA Email Decision, Send Time Optimizer, Performance & Learning) execute in real time via 4 MCP servers and 16 tools. Live execution module in `server/hearst-live-run.ts`; SSE endpoint at `GET /demo-api/hearst/live-run`; triggered by "Run Live Pipeline" button in the Hearst demo UI. Agents produce structured JSON `resultSummary` stored in DB and picked up by all 6 screen REST endpoints. 4 mock MCP servers (`server/mock-mcp/hearst-data-platform.ts`, `hearst-cms.ts`, `hearst-email-queue.ts`, `hearst-analytics.ts`) with 16 GET endpoints mounted at `/api/mock/hearst-*`. Frontend at `/demo/hearst` with 6 screens (Command Center, Brand Deep-Dive, Subscriber Explorer, Send Time Map, Fatigue Protection, Revenue Attribution) plus live feed panel.
 - **Outcome Builder Platform Intelligence**: When a user creates an outcome via the AI chat or Quick Create form, the platform calls `/api/outcomes/intelligence` which returns matched live agents (by keyword overlap), matching agent templates (by industry), tool catalog coverage (green/amber/red per proposed tool), real platform policies, composite risk score with rationale, and a governance readiness score (0–100). The proposal panel renders Platform Match collapsible cards (Tier 1: live agents with Accept/Reject, Tier 2: templates with Accept/Reject), tool coverage chips on each proposed agent, composite risk pill + rationale, real policies panel, and a Governance Readiness Score card that gates the Create button. The Outcome Detail page shows a 4-tile Platform Intelligence Strip (Agent Health, Drift Status, Policy Activity, Approval Queue) that deep-links to the correct tabs.
 
+## Backend Architecture — routes.ts Split (Phase 1 Complete)
+
+The monolithic `server/routes.ts` is being progressively split into domain-specific Express Router modules under `server/routes/`. Phase 1 extracted the following self-contained domains:
+
+| Module | Path | Routes / Notes |
+|---|---|---|
+| `helpers.ts` | `server/routes/helpers.ts` | `routeAIComplete`, `checkPatchSafety`, `handleZodError`, `resolveOntologyTags`, `generateKpiAlignedEvalSuite` |
+| `billing.ts` | `server/routes/billing.ts` | Billing metering pipeline (`/api/outcome-events`, flywheel metrics, acceptance patterns) |
+| `tool-connectors.ts` | `server/routes/tool-connectors.ts` | Tool connectors CRUD, alerts, design-time checks, audit events, admin routes, job queue + SSE stream |
+| `governance-proxy.ts` | `server/routes/governance-proxy.ts` | Policy resolver, tool proxy, A2A delegation with rate limiting |
+| `llm-providers.ts` | `server/routes/llm-providers.ts` | LLM provider management, agent triggers, webhook handler |
+| `demo.ts` | `server/routes/demo.ts` | TTS narration, BlackRock/Hearst/Fitch/Moodys/Kinective demo routes |
+
+Each module is mounted with `app.use(router)` in `registerRoutes`. The `industryEvalFrameworks` export remains in `routes.ts` (required by `worker.ts`). routes.ts reduced from 37,326 → 33,323 lines.
+
 ## External Dependencies
 - **OpenAI**: Primary LLM provider for agent runtime, evaluations, AI enhancements, and embeddings.
 - **Anthropic**: Secondary LLM provider for Claude models with tool calling.
