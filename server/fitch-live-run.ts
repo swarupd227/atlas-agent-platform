@@ -493,7 +493,7 @@ function computeRiskScores(priorSummaries: Record<string, Record<string, any>>):
     else if (score >= 60) watchList.push(bankName);
   }
 
-  return { portfolioScored: 10, scores, watchList, redAlerts };
+  return { portfolioScored: 10, banksScored: 10, scores, watchList, redAlerts };
 }
 
 // ─── Helper: extract JSON from LLM output ────────────────────────────────────
