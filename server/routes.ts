@@ -289,20 +289,3 @@ export async function registerRoutes(
   return httpServer;
 }
 
-function extractResponseText(result: any): string {
-  const analysisStep = result.steps?.find((s: any) => s.type === "ai_analysis");
-  if (analysisStep?.output) {
-    const out = analysisStep.output;
-    if (typeof out === "string") return out;
-    if (out.summary) return out.summary;
-    if (out.analysis) return typeof out.analysis === "string" ? out.analysis : out.analysis.summary || JSON.stringify(out.analysis);
-    return JSON.stringify(out);
-  }
-  if (result.summary?.summary) return result.summary.summary;
-  if (result.summary?.error) return result.summary.error;
-  const planStep = result.steps?.find((s: any) => s.type === "ai_planning");
-  if (planStep?.output?.reasoning && typeof planStep.output.reasoning === "string" && planStep.output.reasoning !== "Tool calls planned") {
-    return planStep.output.reasoning;
-  }
-  return "I couldn't generate a response. Please try again.";
-}

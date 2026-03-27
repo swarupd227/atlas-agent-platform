@@ -1057,3 +1057,66 @@ export async function recomputeOutcomeKpis(outcomeId: string): Promise<{
   const updatedKpis = await storage.getKpisByOutcome(outcomeId);
   return { updated: changes.length, totalRuns: totalTraces, totalEvents: relevantEvents.length, changes, kpis: updatedKpis };
 }
+
+export async function resolvePolicyBundle(agentId: string) {
+  const agent = await storage.getAgent(agentId);
+  const allPolicies = await storage.getPolicies();
+  const activePolicies = allPolicies.filter(p => p.status === "active");
+
+  const orgPolicies = activePolicies.filter(p => p.scopeType === "org");
+  const outcomePolicies = agent?.outcomeId
+    ? activePolicies.filter(p => p.scopeType === "outcome" && p.scopeId === agent.outcomeId)
+    : [];
+  const agentPolicies = activePolicies.filter(p => p.scopeType === "agent" && p.scopeId === agentId);
+  const envPolicies = agent?.environment
+    ? activePolicies.filter(p => p.scopeType === "env" && p.scopeId === agent.environment)
+    : [];
+
+  const toolAllowlist: string[] = [];
+  const blockedTools: string[] = [];
+  const guardrails: string[] = [];
+  const redactPatterns: string[] = [];
+
+  const allScoped = [...orgPolicies, ...outcomePolicies, ...agentPolicies, ...envPolicies];
+  for (const p of allScoped) {
+    const pj = p.policyJson as Record<string, unknown> | null;
+    if (!pj) continue;
+    if (Array.isArray(pj.toolAllowlist)) toolAllowlist.push(...(pj.toolAllowlist as string[]));
+    if (Array.isArray(pj.blockedTools)) blockedTools.push(...(pj.blockedTools as string[]));
+    if (Array.isArray(pj.guardrails)) guardrails.push(...(pj.guardrails as string[]));
+    if (Array.isArray(pj.redactPatterns)) redactPatterns.push(...(pj.redactPatterns as string[]));
+  }
+
+  return {
+    appliedPolicies: allScoped.map(p => ({ id: p.id, name: p.name, scope: p.scopeType, domain: p.domain })),
+    toolAllowlist: Array.from(new Set(toolAllowlist)),
+    blockedTools: Array.from(new Set(blockedTools)),
+    guardrails: Array.from(new Set(guardrails)),
+    redactPatterns: Array.from(new Set(redactPatterns)),
+    agentConfig: agent ? {
+      autonomyMode: agent.autonomyMode,
+      riskTier: agent.riskTier,
+      modelProvider: agent.modelProvider,
+      modelName: agent.modelName,
+      toolAccessClass: agent.toolAccessClass,
+    } : null,
+  };
+}
+
+export function extractResponseText(result: any): string {
+  const analysisStep = result.steps?.find((s: any) => s.type === "ai_analysis");
+  if (analysisStep?.output) {
+    const out = analysisStep.output;
+    if (typeof out === "string") return out;
+    if (out.summary) return out.summary;
+    if (out.analysis) return typeof out.analysis === "string" ? out.analysis : out.analysis.summary || JSON.stringify(out.analysis);
+    return JSON.stringify(out);
+  }
+  if (result.summary?.summary) return result.summary.summary;
+  if (result.summary?.error) return result.summary.error;
+  const planStep = result.steps?.find((s: any) => s.type === "ai_planning");
+  if (planStep?.output?.reasoning && typeof planStep.output.reasoning === "string" && planStep.output.reasoning !== "Tool calls planned") {
+    return planStep.output.reasoning;
+  }
+  return "I couldn't generate a response. Please try again.";
+}
