@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { createHash as createHashCrypto, randomBytes } from "crypto";
 import { storage } from "../storage";
 import { db } from "../db";
 import { desc, eq, and } from "drizzle-orm";
@@ -716,8 +717,6 @@ function hashCode(str: string): number {
   // ══════════════════════════════════════════════════════
   // AGENT API GATEWAY
   // ══════════════════════════════════════════════════════
-
-  const { createHash: createHashCrypto, randomBytes } = await import("crypto");
 
   function generateApiKey(): { raw: string; hash: string; prefix: string } {
     const raw = `nous_${randomBytes(32).toString("hex")}`;
