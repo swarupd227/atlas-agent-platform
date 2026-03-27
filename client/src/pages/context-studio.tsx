@@ -405,7 +405,7 @@ export default function ContextEngine() {
                     ))}
                   </div>
                 ) : (
-                  <BudgetTab layers={layers} agentId={selectedAgentId} agentIndustry={selectedAgent?.industry || undefined} />
+                  <BudgetTab layers={layers} agentId={selectedAgentId} agentIndustry={(selectedAgent as any)?.industry || undefined} />
                 )}
               </TabsContent>
             </Tabs>

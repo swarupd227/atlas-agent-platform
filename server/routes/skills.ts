@@ -73,7 +73,7 @@ const router = Router();
 
   router.get("/api/ontology/concepts/:id", async (req, res) => {
     try {
-      const concept = await storage.getOntologyConcept(req.params.id);
+      const concept = await storage.getOntologyConcept(req.params.id as string);
       if (!concept) return res.status(404).json({ message: "Concept not found" });
       res.json(concept);
     } catch (err: any) {
@@ -179,7 +179,7 @@ const router = Router();
 
   router.put("/api/ontology/concepts/:id", async (req, res) => {
     try {
-      const existing = await storage.getOntologyConcept(req.params.id);
+      const existing = await storage.getOntologyConcept(req.params.id as string);
       if (!existing) return res.status(404).json({ message: "Concept not found" });
 
       const previousSnapshot = {
@@ -202,7 +202,7 @@ const router = Router();
         versionHistory: [...currentHistory, previousSnapshot],
       };
 
-      const updated = await storage.updateOntologyConcept(req.params.id, updateData);
+      const updated = await storage.updateOntologyConcept(req.params.id as string, updateData);
       if (!updated) return res.status(404).json({ message: "Concept not found" });
 
       const oldRegs = Array.isArray(existing.linkedRegulations) ? existing.linkedRegulations : [];
@@ -214,7 +214,7 @@ const router = Router();
           const allAgents = await storage.getAgents();
           const linkedAgents = allAgents.filter(a => {
             const tags = Array.isArray(a.ontologyTags) ? (a.ontologyTags as Array<{ conceptId: string }>) : [];
-            return tags.some(t => t.conceptId === req.params.id);
+            return tags.some(t => t.conceptId === req.params.id as string);
           });
 
           for (const linkedAgent of linkedAgents) {
@@ -295,7 +295,7 @@ const router = Router();
         const allAgents = await storage.getAgents();
         const affectedAgents = allAgents.filter(a => {
           const tags = Array.isArray(a.ontologyTags) ? (a.ontologyTags as Array<{ conceptId: string }>) : [];
-          return tags.some(t => t.conceptId === req.params.id);
+          return tags.some(t => t.conceptId === req.params.id as string);
         });
 
         const changedFields: string[] = [];
@@ -358,7 +358,7 @@ const router = Router();
       const allAgentsForCount = await storage.getAgents();
       const affectedCount = allAgentsForCount.filter(a => {
         const tags = Array.isArray(a.ontologyTags) ? (a.ontologyTags as Array<{ conceptId: string }>) : [];
-        return tags.some(t => t.conceptId === req.params.id);
+        return tags.some(t => t.conceptId === req.params.id as string);
       }).length;
       res.json({ ...updated, affectedAgentsCount: affectedCount });
     } catch (err: any) {
@@ -377,7 +377,7 @@ const router = Router();
 
   router.get("/api/ontology/concepts/:id/versions", async (req, res) => {
     try {
-      const concept = await storage.getOntologyConcept(req.params.id);
+      const concept = await storage.getOntologyConcept(req.params.id as string);
       if (!concept) return res.status(404).json({ message: "Concept not found" });
       const history = Array.isArray(concept.versionHistory) ? concept.versionHistory : [];
       res.json({
@@ -391,12 +391,12 @@ const router = Router();
 
   router.get("/api/ontology/concepts/:id/linked-agents", async (req, res) => {
     try {
-      const concept = await storage.getOntologyConcept(req.params.id);
+      const concept = await storage.getOntologyConcept(req.params.id as string);
       if (!concept) return res.status(404).json({ message: "Concept not found" });
       const allAgents = await storage.getAgents();
       const linked = allAgents.filter(a => {
         const tags = Array.isArray(a.ontologyTags) ? (a.ontologyTags as Array<{ conceptId: string }>) : [];
-        return tags.some(t => t.conceptId === req.params.id);
+        return tags.some(t => t.conceptId === req.params.id as string);
       }).map(a => ({
         id: a.id,
         name: a.name,
@@ -413,9 +413,9 @@ const router = Router();
 
   router.post("/api/agents/:id/clear-revalidation", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id as string);
       if (!agent) return res.status(404).json({ message: "Agent not found" });
-      const updated = await storage.updateAgent(req.params.id, {
+      const updated = await storage.updateAgent(req.params.id as string, {
         requiresRevalidation: false,
         revalidationReason: null,
       });
@@ -424,7 +424,7 @@ const router = Router();
         actorId: "system",
         action: "agent.revalidation_cleared",
         objectType: "agent",
-        objectId: req.params.id,
+        objectId: req.params.id as string,
         details: JSON.stringify({
           agentName: agent.name,
           previousReason: agent.revalidationReason,
@@ -467,7 +467,7 @@ const router = Router();
       if (action === "remove") {
         let removedCount = 0;
         const affectedConceptIds = new Set(orphaned.map(o => o.conceptId));
-        for (const cid of affectedConceptIds) {
+        for (const cid of Array.from(affectedConceptIds)) {
           const c = concepts.find(c => c.id === cid);
           const rels = Array.isArray(c?.relationships) ? (c!.relationships as any[]) : [];
           const cleanedRels = rels
@@ -491,7 +491,7 @@ const router = Router();
       if (action === "create_stubs") {
         const createdConcepts: string[] = [];
         const uniqueTargets = new Set(orphaned.map(o => o.relationship.targetId || "").filter(Boolean));
-        for (const targetLabel of uniqueTargets) {
+        for (const targetLabel of Array.from(uniqueTargets)) {
           if (conceptLabelMap.has(targetLabel.toLowerCase())) continue;
           const newId = `custom-${targetLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
           if (conceptIdSet.has(newId)) continue;
@@ -500,6 +500,7 @@ const router = Router();
               id: newId,
               industryId,
               label: targetLabel,
+              ontologyName: targetLabel,
               category: "Custom",
               description: `Auto-created stub for relationship target: ${targetLabel}`,
               properties: [],
@@ -525,12 +526,12 @@ const router = Router();
 
   router.delete("/api/ontology/concepts/:id", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      const concept = await storage.getOntologyConcept(req.params.id);
+      const concept = await storage.getOntologyConcept(req.params.id as string);
       if (!concept) return res.status(404).json({ message: "Concept not found" });
       if (concept.source !== "custom-extension" && concept.source !== "ai-subdomain") {
         return res.status(403).json({ message: "Only custom or AI-generated subdomain concepts can be deleted" });
       }
-      const deleted = await storage.deleteOntologyConcept(req.params.id);
+      const deleted = await storage.deleteOntologyConcept(req.params.id as string);
       if (!deleted) return res.status(404).json({ message: "Concept not found" });
       res.json({ message: "Concept deleted" });
     } catch (err: any) {
@@ -574,7 +575,7 @@ const router = Router();
 
   router.put("/api/ontology/enhancements/:id", async (req, res) => {
     try {
-      const updated = await storage.updateOntologyEnhancement(req.params.id, req.body);
+      const updated = await storage.updateOntologyEnhancement(req.params.id as string, req.body);
       if (!updated) return res.status(404).json({ message: "Enhancement not found" });
       res.json(updated);
     } catch (err: any) {
@@ -694,7 +695,7 @@ const router = Router();
       const validTerms: ValidTerm[] = [];
       const processedTerms = new Set<string>();
 
-      function levenshtein(a: string, b: string): number {
+      const levenshtein = function(a: string, b: string): number {
         const matrix: number[][] = [];
         for (let i = 0; i <= a.length; i++) matrix[i] = [i];
         for (let j = 0; j <= b.length; j++) matrix[0][j] = j;
@@ -802,7 +803,7 @@ const router = Router();
 
   router.get("/api/ontology/parameter-matches/:serverId", async (req, res) => {
     try {
-      const matches = await storage.getMcpParameterMatches(req.params.serverId);
+      const matches = await storage.getMcpParameterMatches(req.params.serverId as string);
       res.json(matches);
     } catch (err: any) {
       res.status(500).json({ message: err.message || "Failed to fetch parameter matches" });
@@ -1084,7 +1085,7 @@ Return ONLY a valid JSON object with a "skills" array.`
   });
 
   router.get("/api/skills/:id", async (req, res) => {
-    const skill = await storage.getSkill(req.params.id);
+    const skill = await storage.getSkill(req.params.id as string);
     if (!skill) return res.status(404).json({ error: "Skill not found" });
     res.json(skill);
   });
@@ -1133,7 +1134,7 @@ Return ONLY a valid JSON object with a "skills" array.`
     try {
       const patchSchema = insertSkillSchema.partial();
       const data = patchSchema.parse(req.body);
-      const updated = await storage.updateSkill(req.params.id, data);
+      const updated = await storage.updateSkill(req.params.id as string, data);
       if (!updated) return res.status(404).json({ error: "Skill not found" });
 
       let ontologyTagValidation = undefined;
@@ -1173,7 +1174,7 @@ Return ONLY a valid JSON object with a "skills" array.`
 
   router.post("/api/skills/:id/validate-ontology-tags", async (req, res) => {
     try {
-      const skill = await storage.getSkill(req.params.id);
+      const skill = await storage.getSkill(req.params.id as string);
       if (!skill) return res.status(404).json({ error: "Skill not found" });
 
       const tagsToValidate: string[] = req.body.tags || (skill.tags as string[] | null) || [];
@@ -1213,19 +1214,19 @@ Return ONLY a valid JSON object with a "skills" array.`
   });
 
   router.delete("/api/skills/:id", async (req, res) => {
-    await storage.deleteSkill(req.params.id);
+    await storage.deleteSkill(req.params.id as string);
     res.json({ success: true });
   });
 
   // Skill Versions
   router.get("/api/skills/:skillId/versions", async (req, res) => {
-    const versions = await storage.getSkillVersions(req.params.skillId);
+    const versions = await storage.getSkillVersions(req.params.skillId as string);
     res.json(versions);
   });
 
   router.post("/api/skills/:skillId/versions", async (req, res) => {
     try {
-      const data = insertSkillVersionSchema.parse({ ...req.body, skillId: req.params.skillId });
+      const data = insertSkillVersionSchema.parse({ ...req.body, skillId: req.params.skillId as string });
       const version = await storage.createSkillVersion(data);
       res.json(version);
     } catch (e: any) {
@@ -1236,7 +1237,7 @@ Return ONLY a valid JSON object with a "skills" array.`
 
   router.patch("/api/skill-versions/:id", async (req, res) => {
     try {
-      const updated = await storage.updateSkillVersion(req.params.id, req.body);
+      const updated = await storage.updateSkillVersion(req.params.id as string, req.body);
       if (!updated) return res.status(404).json({ error: "Version not found" });
       res.json(updated);
     } catch (e: any) {
@@ -1247,7 +1248,7 @@ Return ONLY a valid JSON object with a "skills" array.`
   // Knowledge Graph Query Templates for Skills
   router.get("/api/skills/:skillId/knowledge-queries", async (req, res) => {
     try {
-      const skill = await storage.getSkill(req.params.skillId);
+      const skill = await storage.getSkill(req.params.skillId as string);
       if (!skill) return res.status(404).json({ error: "Skill not found" });
       const queries = (skill.knowledgeQueries as any[]) || [];
       res.json(queries);
@@ -1258,7 +1259,7 @@ Return ONLY a valid JSON object with a "skills" array.`
 
   router.post("/api/skills/:skillId/knowledge-queries", async (req, res) => {
     try {
-      const skill = await storage.getSkill(req.params.skillId);
+      const skill = await storage.getSkill(req.params.skillId as string);
       if (!skill) return res.status(404).json({ error: "Skill not found" });
       const { name, description, queryPattern, variables, category } = req.body;
       if (!name || !queryPattern) return res.status(400).json({ error: "name and queryPattern are required" });
@@ -1272,7 +1273,7 @@ Return ONLY a valid JSON object with a "skills" array.`
         category: category || "general",
         createdAt: new Date().toISOString(),
       };
-      const updated = await storage.updateSkill(req.params.skillId, {
+      const updated = await storage.updateSkill(req.params.skillId as string, {
         knowledgeQueries: [...existing, newTemplate] as any,
       });
       res.status(201).json(newTemplate);
@@ -1283,13 +1284,13 @@ Return ONLY a valid JSON object with a "skills" array.`
 
   router.patch("/api/skills/:skillId/knowledge-queries/:queryId", async (req, res) => {
     try {
-      const skill = await storage.getSkill(req.params.skillId);
+      const skill = await storage.getSkill(req.params.skillId as string);
       if (!skill) return res.status(404).json({ error: "Skill not found" });
       const existing = (skill.knowledgeQueries as any[]) || [];
-      const idx = existing.findIndex((q: any) => q.id === req.params.queryId);
+      const idx = existing.findIndex((q: any) => q.id === req.params.queryId as string);
       if (idx === -1) return res.status(404).json({ error: "Query template not found" });
-      existing[idx] = { ...existing[idx], ...req.body, id: req.params.queryId };
-      await storage.updateSkill(req.params.skillId, { knowledgeQueries: existing as any });
+      existing[idx] = { ...existing[idx], ...req.body, id: req.params.queryId as string };
+      await storage.updateSkill(req.params.skillId as string, { knowledgeQueries: existing as any });
       res.json(existing[idx]);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1298,11 +1299,11 @@ Return ONLY a valid JSON object with a "skills" array.`
 
   router.delete("/api/skills/:skillId/knowledge-queries/:queryId", async (req, res) => {
     try {
-      const skill = await storage.getSkill(req.params.skillId);
+      const skill = await storage.getSkill(req.params.skillId as string);
       if (!skill) return res.status(404).json({ error: "Skill not found" });
       const existing = (skill.knowledgeQueries as any[]) || [];
-      const filtered = existing.filter((q: any) => q.id !== req.params.queryId);
-      await storage.updateSkill(req.params.skillId, { knowledgeQueries: filtered as any });
+      const filtered = existing.filter((q: any) => q.id !== req.params.queryId as string);
+      await storage.updateSkill(req.params.skillId as string, { knowledgeQueries: filtered as any });
       res.json({ success: true });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1329,7 +1330,7 @@ Return ONLY a valid JSON object with a "skills" array.`
   });
 
   router.get("/api/skill-chains/:id", async (req, res) => {
-    const chain = await storage.getSkillChain(req.params.id);
+    const chain = await storage.getSkillChain(req.params.id as string);
     if (!chain) return res.status(404).json({ error: "Chain not found" });
     res.json(chain);
   });
@@ -1348,7 +1349,7 @@ Return ONLY a valid JSON object with a "skills" array.`
   router.patch("/api/skill-chains/:id", async (req, res) => {
     try {
       const data = insertSkillChainSchema.partial().parse(req.body);
-      const updated = await storage.updateSkillChain(req.params.id, data);
+      const updated = await storage.updateSkillChain(req.params.id as string, data);
       if (!updated) return res.status(404).json({ error: "Chain not found" });
       res.json(updated);
     } catch (e: any) {
@@ -1359,7 +1360,7 @@ Return ONLY a valid JSON object with a "skills" array.`
 
   router.delete("/api/skill-chains/:id", async (req, res) => {
     try {
-      const deleted = await storage.deleteSkillChain(req.params.id);
+      const deleted = await storage.deleteSkillChain(req.params.id as string);
       if (!deleted) return res.status(404).json({ error: "Chain not found" });
       res.json({ success: true });
     } catch (e: any) {
@@ -1544,7 +1545,7 @@ Simulate how the agent would handle the scenario. Return JSON:
 
   router.get("/api/golden-datasets/:id", async (req, res) => {
     try {
-      const dataset = await storage.getGoldenDataset(req.params.id);
+      const dataset = await storage.getGoldenDataset(req.params.id as string);
       if (!dataset) return res.status(404).json({ error: "Dataset not found" });
       res.json(dataset);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -1563,7 +1564,7 @@ Simulate how the agent would handle the scenario. Return JSON:
 
   router.patch("/api/golden-datasets/:id", async (req, res) => {
     try {
-      const updated = await storage.updateGoldenDataset(req.params.id, req.body);
+      const updated = await storage.updateGoldenDataset(req.params.id as string, req.body);
       if (!updated) return res.status(404).json({ error: "Dataset not found" });
       res.json(updated);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -1571,7 +1572,7 @@ Simulate how the agent would handle the scenario. Return JSON:
 
   router.delete("/api/golden-datasets/:id", async (req, res) => {
     try {
-      const deleted = await storage.deleteGoldenDataset(req.params.id);
+      const deleted = await storage.deleteGoldenDataset(req.params.id as string);
       if (!deleted) return res.status(404).json({ error: "Dataset not found" });
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -1580,14 +1581,14 @@ Simulate how the agent would handle the scenario. Return JSON:
   // Golden Test Cases CRUD
   router.get("/api/golden-datasets/:datasetId/test-cases", async (req, res) => {
     try {
-      const testCases = await storage.getGoldenTestCases(req.params.datasetId);
+      const testCases = await storage.getGoldenTestCases(req.params.datasetId as string);
       res.json(testCases);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   router.post("/api/golden-datasets/:datasetId/test-cases", async (req, res) => {
     try {
-      const parsed = insertGoldenTestCaseSchema.parse({ ...req.body, datasetId: req.params.datasetId });
+      const parsed = insertGoldenTestCaseSchema.parse({ ...req.body, datasetId: req.params.datasetId as string });
       const tc = await storage.createGoldenTestCase(parsed);
       res.json(tc);
     } catch (e: any) {
@@ -1598,7 +1599,7 @@ Simulate how the agent would handle the scenario. Return JSON:
 
   router.patch("/api/golden-test-cases/:id", async (req, res) => {
     try {
-      const updated = await storage.updateGoldenTestCase(req.params.id, req.body);
+      const updated = await storage.updateGoldenTestCase(req.params.id as string, req.body);
       if (!updated) return res.status(404).json({ error: "Test case not found" });
       res.json(updated);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -1606,7 +1607,7 @@ Simulate how the agent would handle the scenario. Return JSON:
 
   router.delete("/api/golden-test-cases/:id", async (req, res) => {
     try {
-      const deleted = await storage.deleteGoldenTestCase(req.params.id);
+      const deleted = await storage.deleteGoldenTestCase(req.params.id as string);
       if (!deleted) return res.status(404).json({ error: "Test case not found" });
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -1614,7 +1615,7 @@ Simulate how the agent would handle the scenario. Return JSON:
 
   router.get("/api/golden-datasets/:datasetId/data-records", async (req, res) => {
     try {
-      const records = await storage.getGoldenDataRecords(req.params.datasetId);
+      const records = await storage.getGoldenDataRecords(req.params.datasetId as string);
       res.json(records);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
@@ -1623,7 +1624,7 @@ Simulate how the agent would handle the scenario. Return JSON:
     try {
       const record = await storage.createGoldenDataRecord({
         ...req.body,
-        datasetId: req.params.datasetId,
+        datasetId: req.params.datasetId as string,
       });
       res.status(201).json(record);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -1635,7 +1636,7 @@ Simulate how the agent would handle the scenario. Return JSON:
       if (!Array.isArray(records) || records.length === 0) {
         return res.status(400).json({ error: "records array is required" });
       }
-      const withDatasetId = records.map((r: any) => ({ ...r, datasetId: req.params.datasetId }));
+      const withDatasetId = records.map((r: any) => ({ ...r, datasetId: req.params.datasetId as string }));
       const created = await storage.bulkCreateGoldenDataRecords(withDatasetId);
       res.status(201).json({ created: created.length, records: created });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -1643,7 +1644,7 @@ Simulate how the agent would handle the scenario. Return JSON:
 
   router.delete("/api/golden-data-records/:id", async (req, res) => {
     try {
-      const deleted = await storage.deleteGoldenDataRecord(req.params.id);
+      const deleted = await storage.deleteGoldenDataRecord(req.params.id as string);
       if (!deleted) return res.status(404).json({ error: "Data record not found" });
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -1656,7 +1657,7 @@ Simulate how the agent would handle the scenario. Return JSON:
       if (!dataset) return res.status(404).json({ error: "Golden dataset not found" });
 
       const suiteId = req.query.suiteId as string | undefined;
-      const minWeight = req.query.minWeight ? parseFloat(req.query.minWeight as string) : undefined;
+      const minWeight = req.query.minWeight as string ? parseFloat(req.query.minWeight as string) : undefined;
       const tagsParam = req.query.tags as string | undefined;
       const filterTags = tagsParam ? tagsParam.split(",").map(t => t.trim()) : undefined;
 
@@ -2339,7 +2340,7 @@ Return JSON with the enhanced fields: { "name": string, "inputScenario": string,
 
   router.get("/api/context-profiles/:id", async (req, res) => {
     try {
-      const profile = await storage.getContextProfile(req.params.id);
+      const profile = await storage.getContextProfile(req.params.id as string);
       if (!profile) return res.status(404).json({ error: "Not found" });
       res.json(profile);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2359,7 +2360,7 @@ Return JSON with the enhanced fields: { "name": string, "inputScenario": string,
   router.patch("/api/context-profiles/:id", async (req, res) => {
     try {
       const validated = insertContextProfileSchema.partial().parse(req.body);
-      const existing = await storage.getContextProfile(req.params.id);
+      const existing = await storage.getContextProfile(req.params.id as string);
       if (!existing) return res.status(404).json({ error: "Not found" });
 
       const prevHistory = Array.isArray(existing.versionHistory) ? existing.versionHistory as any[] : [];
@@ -2377,7 +2378,7 @@ Return JSON with the enhanced fields: { "name": string, "inputScenario": string,
         version: newVersion,
         versionHistory: [...prevHistory, snapshot],
       };
-      const updated = await storage.updateContextProfile(req.params.id, updateData);
+      const updated = await storage.updateContextProfile(req.params.id as string, updateData);
       if (!updated) return res.status(404).json({ error: "Not found" });
       res.json(updated);
     } catch (e: any) {
@@ -2388,7 +2389,7 @@ Return JSON with the enhanced fields: { "name": string, "inputScenario": string,
 
   router.delete("/api/context-profiles/:id", async (req, res) => {
     try {
-      const ok = await storage.deleteContextProfile(req.params.id);
+      const ok = await storage.deleteContextProfile(req.params.id as string);
       if (!ok) return res.status(404).json({ error: "Not found" });
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2396,7 +2397,7 @@ Return JSON with the enhanced fields: { "name": string, "inputScenario": string,
 
   router.post("/api/context-profiles/:id/optimize", async (req, res) => {
     try {
-      const profile = await storage.getContextProfile(req.params.id);
+      const profile = await storage.getContextProfile(req.params.id as string);
       if (!profile) return res.status(404).json({ error: "Not found" });
       const sources = Array.isArray(profile.sources) ? profile.sources as any[] : [];
       const total = profile.totalCapacity || 128000;
@@ -2429,7 +2430,7 @@ Return JSON with the enhanced fields: { "name": string, "inputScenario": string,
 
   router.get("/api/memory-profiles/:id", async (req, res) => {
     try {
-      const profile = await storage.getMemoryProfile(req.params.id);
+      const profile = await storage.getMemoryProfile(req.params.id as string);
       if (!profile) return res.status(404).json({ error: "Not found" });
       res.json(profile);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2449,7 +2450,7 @@ Return JSON with the enhanced fields: { "name": string, "inputScenario": string,
   router.patch("/api/memory-profiles/:id", async (req, res) => {
     try {
       const validated = insertMemoryProfileSchema.partial().parse(req.body);
-      const existing = await storage.getMemoryProfile(req.params.id);
+      const existing = await storage.getMemoryProfile(req.params.id as string);
       if (!existing) return res.status(404).json({ error: "Not found" });
 
       const prevHistory = Array.isArray(existing.versionHistory) ? existing.versionHistory as any[] : [];
@@ -2466,7 +2467,7 @@ Return JSON with the enhanced fields: { "name": string, "inputScenario": string,
         version: newVersion,
         versionHistory: [...prevHistory, snapshot],
       };
-      const updated = await storage.updateMemoryProfile(req.params.id, updateData);
+      const updated = await storage.updateMemoryProfile(req.params.id as string, updateData);
       if (!updated) return res.status(404).json({ error: "Not found" });
       res.json(updated);
     } catch (e: any) {
@@ -2477,7 +2478,7 @@ Return JSON with the enhanced fields: { "name": string, "inputScenario": string,
 
   router.delete("/api/memory-profiles/:id", async (req, res) => {
     try {
-      const ok = await storage.deleteMemoryProfile(req.params.id);
+      const ok = await storage.deleteMemoryProfile(req.params.id as string);
       if (!ok) return res.status(404).json({ error: "Not found" });
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2541,7 +2542,7 @@ Return a JSON object with:
 
   router.get("/api/rag-pipelines/:id", async (req, res) => {
     try {
-      const pipeline = await storage.getRagPipeline(req.params.id);
+      const pipeline = await storage.getRagPipeline(req.params.id as string);
       if (!pipeline) return res.status(404).json({ error: "Not found" });
       res.json(pipeline);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2560,7 +2561,7 @@ Return a JSON object with:
 
   router.patch("/api/rag-pipelines/:id", async (req, res) => {
     try {
-      const updated = await storage.updateRagPipeline(req.params.id, req.body);
+      const updated = await storage.updateRagPipeline(req.params.id as string, req.body);
       if (!updated) return res.status(404).json({ error: "Not found" });
       res.json(updated);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2568,7 +2569,7 @@ Return a JSON object with:
 
   router.delete("/api/rag-pipelines/:id", async (req, res) => {
     try {
-      const ok = await storage.deleteRagPipeline(req.params.id);
+      const ok = await storage.deleteRagPipeline(req.params.id as string);
       if (!ok) return res.status(404).json({ error: "Not found" });
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2583,7 +2584,7 @@ Return a JSON object with:
 
   router.get("/api/knowledge-connectors/:id", async (req, res) => {
     try {
-      const connector = await storage.getKnowledgeConnector(req.params.id);
+      const connector = await storage.getKnowledgeConnector(req.params.id as string);
       if (!connector) return res.status(404).json({ error: "Not found" });
       res.json(connector);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2602,7 +2603,7 @@ Return a JSON object with:
 
   router.patch("/api/knowledge-connectors/:id", async (req, res) => {
     try {
-      const updated = await storage.updateKnowledgeConnector(req.params.id, req.body);
+      const updated = await storage.updateKnowledgeConnector(req.params.id as string, req.body);
       if (!updated) return res.status(404).json({ error: "Not found" });
       res.json(updated);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2610,7 +2611,7 @@ Return a JSON object with:
 
   router.delete("/api/knowledge-connectors/:id", async (req, res) => {
     try {
-      const ok = await storage.deleteKnowledgeConnector(req.params.id);
+      const ok = await storage.deleteKnowledgeConnector(req.params.id as string);
       if (!ok) return res.status(404).json({ error: "Not found" });
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2625,7 +2626,7 @@ Return a JSON object with:
 
   router.get("/api/entity-resolutions/:id", async (req, res) => {
     try {
-      const resolution = await storage.getEntityResolution(req.params.id);
+      const resolution = await storage.getEntityResolution(req.params.id as string);
       if (!resolution) return res.status(404).json({ error: "Not found" });
       res.json(resolution);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2644,7 +2645,7 @@ Return a JSON object with:
 
   router.patch("/api/entity-resolutions/:id", async (req, res) => {
     try {
-      const updated = await storage.updateEntityResolution(req.params.id, req.body);
+      const updated = await storage.updateEntityResolution(req.params.id as string, req.body);
       if (!updated) return res.status(404).json({ error: "Not found" });
       res.json(updated);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2652,7 +2653,7 @@ Return a JSON object with:
 
   router.delete("/api/entity-resolutions/:id", async (req, res) => {
     try {
-      const ok = await storage.deleteEntityResolution(req.params.id);
+      const ok = await storage.deleteEntityResolution(req.params.id as string);
       if (!ok) return res.status(404).json({ error: "Not found" });
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2667,7 +2668,7 @@ Return a JSON object with:
 
   router.get("/api/relationship-extractions/:id", async (req, res) => {
     try {
-      const extraction = await storage.getRelationshipExtraction(req.params.id);
+      const extraction = await storage.getRelationshipExtraction(req.params.id as string);
       if (!extraction) return res.status(404).json({ error: "Not found" });
       res.json(extraction);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2686,7 +2687,7 @@ Return a JSON object with:
 
   router.patch("/api/relationship-extractions/:id", async (req, res) => {
     try {
-      const updated = await storage.updateRelationshipExtraction(req.params.id, req.body);
+      const updated = await storage.updateRelationshipExtraction(req.params.id as string, req.body);
       if (!updated) return res.status(404).json({ error: "Not found" });
       res.json(updated);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2694,7 +2695,7 @@ Return a JSON object with:
 
   router.delete("/api/relationship-extractions/:id", async (req, res) => {
     try {
-      const ok = await storage.deleteRelationshipExtraction(req.params.id);
+      const ok = await storage.deleteRelationshipExtraction(req.params.id as string);
       if (!ok) return res.status(404).json({ error: "Not found" });
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2709,7 +2710,7 @@ Return a JSON object with:
 
   router.get("/api/temporal-graph-entries/:id", async (req, res) => {
     try {
-      const entry = await storage.getTemporalGraphEntry(req.params.id);
+      const entry = await storage.getTemporalGraphEntry(req.params.id as string);
       if (!entry) return res.status(404).json({ error: "Not found" });
       res.json(entry);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2728,7 +2729,7 @@ Return a JSON object with:
 
   router.patch("/api/temporal-graph-entries/:id", async (req, res) => {
     try {
-      const updated = await storage.updateTemporalGraphEntry(req.params.id, req.body);
+      const updated = await storage.updateTemporalGraphEntry(req.params.id as string, req.body);
       if (!updated) return res.status(404).json({ error: "Not found" });
       res.json(updated);
     } catch (e: any) { res.status(500).json({ error: e.message }); }
@@ -2736,7 +2737,7 @@ Return a JSON object with:
 
   router.delete("/api/temporal-graph-entries/:id", async (req, res) => {
     try {
-      const ok = await storage.deleteTemporalGraphEntry(req.params.id);
+      const ok = await storage.deleteTemporalGraphEntry(req.params.id as string);
       if (!ok) return res.status(404).json({ error: "Not found" });
       res.json({ success: true });
     } catch (e: any) { res.status(500).json({ error: e.message }); }

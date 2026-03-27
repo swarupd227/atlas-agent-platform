@@ -1,4 +1,5 @@
 import { Router } from "express";
+import * as nodeCrypto from "node:crypto";
 import { storage } from "../storage";
 import { db } from "../db";
 import { desc, eq } from "drizzle-orm";
@@ -966,7 +967,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
       if (!deleted) return res.status(500).json({ error: "Failed to delete policy" });
       await storage.createAuditEvent({
         action: "policy_deleted",
-        userId: "system",
+        actorId: "system",
         objectType: "policy",
         objectId: policy.id,
         details: `Policy "${policy.name}" deleted`,
@@ -1205,7 +1206,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
       details: `Approval "${approval.objectName || approval.type}" ${status || "updated"} by ${decidedBy || "system"}${constraintsJson ? " with constraints" : ""}`,
       sequenceNum: allEvents.length + 1,
       previousHash: prevHash?.eventHash || null,
-      eventHash: `sha256:${crypto.createHash("sha256").update(`${Date.now()}-${approval.id}-${status}`).digest("hex").slice(0, 16)}`,
+      eventHash: `sha256:${nodeCrypto.createHash("sha256").update(`${Date.now()}-${approval.id}-${status}`).digest("hex").slice(0, 16)}`,
     });
 
     if (status === "approved" && approval.objectType === "patch" && approval.objectId) {
@@ -1469,7 +1470,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
           sequenceNum: event.sequenceNum,
         };
         const canonicalPayload = JSON.stringify(canonicalObj, Object.keys(canonicalObj).sort());
-        const computedHash = crypto.createHash("sha256")
+        const computedHash = nodeCrypto.createHash("sha256")
           .update((event.previousHash || "GENESIS") + canonicalPayload)
           .digest("hex");
 
@@ -2917,7 +2918,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
 
       const alerts: KillChainAlert[] = [];
 
-      for (const [agentId, drifts] of agentDriftMap.entries()) {
+      for (const [agentId, drifts] of Array.from(agentDriftMap.entries())) {
         const agent = boundAgents.find(a => a.id === agentId)!;
 
         for (const drift of drifts) {

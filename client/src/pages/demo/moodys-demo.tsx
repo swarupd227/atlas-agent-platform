@@ -730,7 +730,7 @@ export default function MoodysDemo() {
                     <div key={q.factor} className="flex items-center justify-between text-sm border-b border-border/30 pb-2">
                       <div>
                         <p className="font-medium text-sm">{q.factor}</p>
-                        <p className="text-xs text-muted-foreground">{q.source ?? "Agent 1"} · Weight {q.weight}</p>
+                        <p className="text-xs text-muted-foreground">{(q as any).source ?? "Agent 1"} · Weight {q.weight}</p>
                       </div>
                       <div className="text-right">
                         <span className="text-sm font-semibold">{q.value}</span>

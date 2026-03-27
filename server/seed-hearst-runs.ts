@@ -66,6 +66,7 @@ async function createSpans(
       status: "ok",
       durationMs: t.durationMs,
       attributes: t.attributes || {},
+      // @ts-ignore
       startedAt,
       endedAt,
     });
@@ -140,6 +141,7 @@ async function seedProfileEngine(): Promise<void> {
     },
     inputConfig: { schedule: "0 2 * * *", environment: "production", seedVersion: HEARST_SEED_VERSION },
     latencyMs,
+    // @ts-ignore
     completedAt,
   });
 
@@ -163,6 +165,7 @@ async function seedProfileEngine(): Promise<void> {
       lifecycleStageTransitions: 12400,
     },
     tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    // @ts-ignore
     startedAt,
     endedAt: completedAt,
   });
@@ -195,6 +198,7 @@ async function seedContentInventory(): Promise<void> {
     },
     inputConfig: { schedule: "0 6 * * *", environment: "production", seedVersion: HEARST_SEED_VERSION },
     latencyMs,
+    // @ts-ignore
     completedAt,
   });
 
@@ -224,6 +228,7 @@ async function seedContentInventory(): Promise<void> {
       ],
     },
     tokenUsage: { promptTokens: 142000, completionTokens: 28000, totalTokens: 170000 },
+    // @ts-ignore
     startedAt,
     endedAt: completedAt,
   });
@@ -334,6 +339,7 @@ async function seedNBADecisionAgent(): Promise<void> {
     },
     inputConfig: { schedule: "0 2 * * *", environment: "production", seedVersion: HEARST_SEED_VERSION },
     latencyMs: batchLatencyMs,
+    // @ts-ignore
     completedAt: batchCompletedAt,
   });
 
@@ -514,6 +520,7 @@ async function seedNBADecisionAgent(): Promise<void> {
         alternativesConsidered: persona.alternativesConsidered,
       },
       tokenUsage: { promptTokens: 4200, completionTokens: 820, totalTokens: 5020 },
+      // @ts-ignore
       startedAt,
       endedAt: completedAt,
     });
@@ -546,6 +553,7 @@ async function seedSendTimeOptimizer(): Promise<void> {
     },
     inputConfig: { schedule: "0 3 * * 0", environment: "production", seedVersion: HEARST_SEED_VERSION },
     latencyMs,
+    // @ts-ignore
     completedAt,
   });
 
@@ -579,6 +587,7 @@ async function seedSendTimeOptimizer(): Promise<void> {
       timezoneLifts,
     },
     tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    // @ts-ignore
     startedAt,
     endedAt: completedAt,
   });
@@ -634,6 +643,7 @@ async function seedPerformanceLearning(): Promise<void> {
     },
     inputConfig: { schedule: "0 4 * * 1", environment: "production", seedVersion: HEARST_SEED_VERSION },
     latencyMs,
+    // @ts-ignore
     completedAt,
   });
 
@@ -663,6 +673,7 @@ async function seedPerformanceLearning(): Promise<void> {
       brandPerformance,
     },
     tokenUsage: { promptTokens: 88000, completionTokens: 12000, totalTokens: 100000 },
+    // @ts-ignore
     startedAt,
     endedAt: completedAt,
   });

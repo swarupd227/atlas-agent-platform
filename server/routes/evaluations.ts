@@ -68,7 +68,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
       const allTags: string[] = [...(tags || [])];
       if (compTags.length > 0) allTags.push(...compTags);
       if (Array.isArray(ontTags)) allTags.push(...ontTags.map((t: any) => typeof t === "string" ? t : t.conceptLabel || t));
-      const uniqueTags = [...new Set(allTags.filter(Boolean))];
+      const uniqueTags = Array.from(new Set(allTags.filter(Boolean)));
 
       let mcpServerNames: string[] = [];
       try {
@@ -305,7 +305,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
       }
 
       const concepts: Array<{ id: string; label: string; category: string; properties: any }> = [];
-      for (const cid of conceptIds) {
+      for (const cid of Array.from(conceptIds)) {
         const concept = await storage.getOntologyConcept(cid);
         if (concept) {
           concepts.push({
@@ -374,7 +374,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
         issues: Array<{ field: string; issue: string; conceptProperty?: string }>;
       }> = [];
 
-      function extractKeys(data: unknown): string[] {
+      const extractKeys = function(data: unknown): string[] {
         if (!data || typeof data !== "object") return [];
         if (Array.isArray(data)) {
           const keys: string[] = [];
@@ -399,10 +399,10 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
           const conceptProps = conceptPropertyNames.get(concept.id);
           if (!conceptProps || conceptProps.size === 0) continue;
 
-          const overlappingKeys = [...conceptProps].filter(p => allCaseKeys.has(p));
+          const overlappingKeys = Array.from(conceptProps).filter(p => allCaseKeys.has(p));
           if (overlappingKeys.length === 0 && allCaseKeys.size > 0) continue;
 
-          for (const propName of conceptProps) {
+          for (const propName of Array.from(conceptProps)) {
             if (inputKeys.length > 0 && overlappingKeys.length > 0 && !inputKeys.includes(propName)) {
               issues.push({
                 field: "inputData",
@@ -474,7 +474,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
       }
 
       const sortedRuns = [...runs].sort((a, b) =>
-        new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime()
+        new Date((b as any).startedAt || b.completedAt || 0).getTime() - new Date((a as any).startedAt || a.completedAt || 0).getTime()
       );
       const latestRun = sortedRuns[0];
       const previousRun = sortedRuns[1];
@@ -571,7 +571,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
           kpiRegressionGroups.set(r.kpiId, existing);
         }
 
-        for (const [kpiId, kpiRegs] of kpiRegressionGroups.entries()) {
+        for (const [kpiId, kpiRegs] of Array.from(kpiRegressionGroups.entries())) {
           const kpi = kpiMap.get(kpiId);
           const kpiName = kpi?.name || kpiRegs[0]?.kpiName || kpiId;
           const prevScores = kpiRegs.filter(r => r.previousScore !== undefined).map(r => r.previousScore!);
@@ -644,6 +644,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
         try {
           await storage.createImprovementRecommendation({
             agentId: suite.agentId,
+            title: "KPI Drift SLA Breach Detected",
             type: "kpi_drift_sla_breach",
             description: `Eval drift analysis detected KPI SLA breach risk: ${affectedKpis.filter(k => k.wouldBreachSla).map(k => k.kpiName).join(", ")}. Pass rate dropped ${driftAnalysis.passRateDrop}%. ${regressions.length} test case(s) regressed.`,
             severity: "critical",
@@ -723,7 +724,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
       name: `${source.name} (Fork)`,
       description: source.description,
       agentId: source.agentId,
-      blueprintJson: source.blueprintJson,
+      blueprintJson: source.blueprintJson as any,
       patternType: source.patternType,
       tags: source.tags,
       forkedFromId: source.id,
@@ -1128,8 +1129,8 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
               if (newVersion <= 1) return { added: 0, removed: 0, changed: 0, summary: "Initial version" };
               const prevHistory = existingHistory as any[];
               const prevVersion = prevHistory.length > 0 ? prevHistory[prevHistory.length - 1] : null;
-              const currentNodes = Array.isArray(blueprint.nodes) ? blueprint.nodes.length : 0;
-              const currentEdges = Array.isArray(blueprint.edges) ? blueprint.edges.length : 0;
+              const currentNodes = Array.isArray((blueprint as any).nodes) ? (blueprint as any).nodes.length : 0;
+              const currentEdges = Array.isArray((blueprint as any).edges) ? (blueprint as any).edges.length : 0;
               const prevNodes = prevVersion?.nodeCount || currentNodes;
               const prevEdges = prevVersion?.edgeCount || currentEdges;
               const added = Math.max(0, currentNodes - prevNodes) + Math.max(0, currentEdges - prevEdges);
@@ -1210,7 +1211,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
 
       if (agentMcpServerIds.length > 0) {
         const checkedServerIds = new Set<string>();
-        for (const serverId of agentMcpServerIds) {
+        for (const serverId of Array.from(agentMcpServerIds)) {
           if (checkedServerIds.has(serverId)) continue;
           checkedServerIds.add(serverId);
 

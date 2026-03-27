@@ -481,7 +481,7 @@ const router = Router();
       }
 
       const industryAcceptanceRates = new Map<string, number>();
-      for (const [industry, stats] of industryEventStats.entries()) {
+      for (const [industry, stats] of Array.from(industryEventStats.entries())) {
         industryAcceptanceRates.set(industry, stats.total > 0 ? (stats.accepted / stats.total) * 100 : 100);
       }
 
@@ -499,13 +499,13 @@ const router = Router();
         }
       }
 
-      for (const [outcomeId, stats] of outcomeEventStats.entries()) {
+      for (const [outcomeId, stats] of Array.from(outcomeEventStats.entries())) {
         if (stats.total < 5) continue;
 
         const outcomeAcceptanceRate = Math.round((stats.accepted / stats.total) * 10000) / 100;
 
         const outcomeIndustries = new Set<string>();
-        for (const agentId of stats.agentIds) {
+        for (const agentId of Array.from(stats.agentIds)) {
           outcomeIndustries.add(agentIndustryMap.get(agentId) || "general");
         }
         const primaryIndustry = outcomeIndustries.values().next().value || "general";
@@ -519,7 +519,7 @@ const router = Router();
         const outcome = outcomes.find(o => o.id === outcomeId);
         const outcomeName = outcome?.name || outcomeId;
 
-        const topRejections = Array.from(stats.topRejections.entries())
+        const topRejections = Array.from<[string, number]>(stats.topRejections.entries())
           .sort((a, b) => b[1] - a[1])
           .slice(0, 5)
           .map(([reason, count]) => ({ reason, count }));
@@ -535,7 +535,7 @@ const router = Router();
           suggestedActions.push(`Focus on top rejection reason: "${topRejections[0].reason}" (${topRejections[0].count} occurrences)`);
         }
 
-        for (const agentId of stats.agentIds) {
+        for (const agentId of Array.from(stats.agentIds)) {
           const hasExisting = existingRecs.some(
             r => r.agentId === agentId && r.source === "acceptance_signal" && r.status === "pending"
           );
@@ -698,7 +698,7 @@ const router = Router();
         pipeline: z.any().optional(),
       });
       const data = patchSchema.parse(req.body);
-      const updated = await storage.updateAgentProposal(req.params.id, data);
+      const updated = await storage.updateAgentProposal(req.params.id as string, data);
       if (!updated) return res.status(404).json({ error: "Proposal not found" });
       res.json(updated);
     } catch (error) {
@@ -709,7 +709,7 @@ const router = Router();
 
   router.delete("/api/agent-proposals/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
-      const deleted = await storage.deleteAgentProposal(req.params.id);
+      const deleted = await storage.deleteAgentProposal(req.params.id as string);
       if (!deleted) return res.status(404).json({ error: "Proposal not found" });
       res.json({ success: true });
     } catch (error) {
@@ -842,7 +842,7 @@ You MUST incorporate this feedback into the new plan. Adjust the agents, roles, 
         trustTier: s.trustTier,
       }));
 
-      function extractSchemaEntityHints(inputSchema: any): string[] {
+      const extractSchemaEntityHints = function(inputSchema: any): string[] {
         if (!inputSchema || typeof inputSchema !== "object") return [];
         const hints = new Set<string>();
         const props = inputSchema.properties || {};
@@ -860,7 +860,7 @@ You MUST incorporate this feedback into the new plan. Adjust the agents, roles, 
         return Array.from(hints);
       }
 
-      function parseDeclaredStageCount(description: string): number | null {
+      const parseDeclaredStageCount = function(description: string): number | null {
         if (!description) return null;
         const nStepMatch = description.match(/(\d+)[- ]step/i);
         if (nStepMatch) return parseInt(nStepMatch[1], 10);
@@ -869,7 +869,7 @@ You MUST incorporate this feedback into the new plan. Adjust the agents, roles, 
         return null;
       }
 
-      function parseDeclaredStages(description: string): string[] {
+      const parseDeclaredStages = function(description: string): string[] {
         if (!description) return [];
         const parts = description.split("→");
         if (parts.length < 3) return [];
@@ -886,7 +886,7 @@ You MUST incorporate this feedback into the new plan. Adjust the agents, roles, 
         }).filter(s => s.length > 0);
       }
 
-      function extractCoveredSystemsFromText(textParts: string[]): string[] {
+      const extractCoveredSystemsFromText = function(textParts: string[]): string[] {
         // Generic words that are NOT system names — any proper-noun group starting with these is skipped
         const genericFirstWords = new Set([
           "The", "A", "An", "This", "All", "Each", "New", "Old", "Synthetic", "Worker",
@@ -903,13 +903,13 @@ You MUST incorporate this feedback into the new plan. Adjust the agents, roles, 
         const systems = new Set<string>();
         for (const text of textParts) {
           if (!text) continue;
-          for (const match of text.matchAll(propNounPattern)) {
+          for (const match of Array.from(text.matchAll(propNounPattern))) {
             const name = match[1].trim();
             const firstWord = name.split(" ")[0];
             if (!genericFirstWords.has(firstWord) && name.length > 3) {
               // Strip trailing generic words from multi-word matches
               const words = name.split(" ");
-              const trimmed = words.filter((w, i) => i === 0 || !genericFirstWords.has(w)).join(" ");
+              const trimmed = words.filter((w: string, i: number) => i === 0 || !genericFirstWords.has(w)).join(" ");
               systems.add(trimmed.trim());
             }
           }
@@ -1370,7 +1370,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         return;
       }
 
-      function normalizeAgent(a: any): any {
+      const normalizeAgent = function(a: any): any {
         if (!a) return a;
         return {
           ...a,
@@ -1390,7 +1390,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         };
       }
 
-      function normalizePipeline(p: any): any {
+      const normalizePipeline = function(p: any): any {
         if (!p) return null;
         return {
           ...p,
@@ -1408,7 +1408,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         };
       }
 
-      function findCoveringServer(systemName: string, coverageMap: Record<string, string>): string | null {
+      const findCoveringServer = function(systemName: string, coverageMap: Record<string, string>): string | null {
         const nameLower = systemName.toLowerCase().trim();
         for (const [coveredName, serverName] of Object.entries(coverageMap)) {
           const coveredLower = coveredName.toLowerCase().trim();
@@ -1488,7 +1488,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         aggregator: "fan_out",
       };
 
-      function suggestPatternType(agent: any): string {
+      const suggestPatternType = function(agent: any): string {
         const combined = `${agent.role || ""} ${agent.name || ""} ${agent.description || ""}`.toLowerCase();
         for (const [keyword, pattern] of Object.entries(ROLE_PATTERN_MAP)) {
           if (combined.includes(keyword)) return pattern;
@@ -1611,9 +1611,9 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
 
       const allMcpServers = await storage.getMcpServers();
 
-      async function linkMcpBindings(agentId: string, bindings?: Array<{ server: string; tool: string }>) {
+      const linkMcpBindings = async function(agentId: string, bindings?: Array<{ server: string; tool: string }>) {
         if (!bindings?.length) return;
-        const serverNames = [...new Set(bindings.map(b => b.server))];
+        const serverNames = Array.from(new Set(bindings.map(b => b.server)));
         for (const serverName of serverNames) {
           const matched = allMcpServers.find(s =>
             s.name.toLowerCase().includes(serverName.toLowerCase()) ||
@@ -1630,7 +1630,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         }
       }
 
-      function composeTaskPrompt(agent: z.infer<typeof agentProposalSchema>, isOrchestrator: boolean): string {
+      const composeTaskPrompt = function(agent: z.infer<typeof agentProposalSchema>, isOrchestrator: boolean): string {
         const lines: string[] = [];
         lines.push(`Role: ${agent.role || agent.name}`);
         lines.push(`Goal: ${agent.description}`);
@@ -1666,7 +1666,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         return lines.join("\n");
       }
 
-      function composeSystemPrompt(agent: z.infer<typeof agentProposalSchema>, isOrchestrator: boolean): string {
+      const composeSystemPrompt = function(agent: z.infer<typeof agentProposalSchema>, isOrchestrator: boolean): string {
         if (agent.systemPrompt && agent.systemPrompt.trim().length > 0) {
           return agent.systemPrompt;
         }
@@ -3127,7 +3127,7 @@ Respond in JSON: { "testCases": [{ "name": string, "inputData": object, "expecte
       const agent = agentId ? await storage.getAgent(agentId) : null;
 
       const agentOntologyTags = agent && Array.isArray(agent.ontologyTags) ? agent.ontologyTags as string[] : [];
-      const agentIndustry = agent?.industry || "";
+      const agentIndustry = (agent as any)?.industry || "";
       const policyBindings = agent && Array.isArray(agent.policyBindings) ? agent.policyBindings as Array<{ policyName?: string; enforcement?: string }> : [];
       const ontologyContext = agentOntologyTags.length > 0
         ? `\n\nDomain Ontology Terms (USE these exact terms in test case names and descriptions):\n${agentOntologyTags.map(t => `- ${t}`).join("\n")}`

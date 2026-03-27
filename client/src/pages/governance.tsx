@@ -4521,7 +4521,7 @@ export default function Governance() {
                               <div className="flex flex-col gap-1">
                                 <span className="text-[11px] font-medium text-muted-foreground">{agentsInvolved.size} agent{agentsInvolved.size !== 1 ? "s" : ""} bound</span>
                                 <div className="flex flex-wrap gap-1">
-                                  {[...agentsInvolved.values()].slice(0, 4).map((name, idx) => (
+                                  {Array.from(agentsInvolved.values()).slice(0, 4).map((name, idx) => (
                                     <Badge key={idx} variant="secondary" className="text-[9px]" data-testid={`badge-agent-${fw.regulationId}-${idx}`}>{name}</Badge>
                                   ))}
                                   {agentsInvolved.size > 4 && (
@@ -4981,7 +4981,7 @@ function PolicyDetailDialog({ policyId, open, onOpenChange, onDelete, onToggleSt
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel data-testid="button-cancel-delete">Cancel</AlertDialogCancel>
-              <AlertDialogAction className="bg-destructive text-destructive-foreground" onClick={() => { onDelete(policyId); setDeleteConfirmOpen(false); onOpenChange(false); }} data-testid="button-confirm-delete">
+              <AlertDialogAction className="bg-destructive text-destructive-foreground" onClick={() => { onDelete?.(policyId); setDeleteConfirmOpen(false); onOpenChange(false); }} data-testid="button-confirm-delete">
                 Delete
               </AlertDialogAction>
             </AlertDialogFooter>

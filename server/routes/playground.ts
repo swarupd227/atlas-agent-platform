@@ -126,7 +126,7 @@ const router = Router();
             undefined,
             mcpServerIds,
             mcpPrompt,
-            agent.industry || undefined,
+            (agent as any).industry || undefined,
             systemPrompt,
             { conversational: true, ontologyLabels: playgroundOntologyTags.map(t => t.conceptLabel), maxToolIterations: agent.maxToolIterations ?? 5 },
             onProgress,

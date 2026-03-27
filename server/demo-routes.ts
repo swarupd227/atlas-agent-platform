@@ -56,7 +56,7 @@ export const demoRouter = Router();
 
 demoRouter.get("/servicenow/requests/:id", (_req: Request, res: Response) => {
   const state = getState();
-  if (_req.params.id !== state.servicenow.id) {
+  if (_req.params.id as string !== state.servicenow.id) {
     return res.status(404).json({ error: "Request not found" });
   }
   res.json(state.servicenow);
@@ -77,7 +77,7 @@ demoRouter.get("/servicenow/requests", (req: Request, res: Response) => {
 
 demoRouter.post("/servicenow/requests/:id/approve-step", (req: Request, res: Response) => {
   const state = getState();
-  if (req.params.id !== state.servicenow.id) {
+  if (req.params.id as string !== state.servicenow.id) {
     return res.status(404).json({ error: "Request not found" });
   }
   const result = approveStep();
@@ -85,7 +85,7 @@ demoRouter.post("/servicenow/requests/:id/approve-step", (req: Request, res: Res
 });
 
 demoRouter.post("/servicenow/requests/:id/complete", (req: Request, res: Response) => {
-  const result = completeRequest(req.params.id);
+  const result = completeRequest(req.params.id as string);
   res.json(result);
 });
 
@@ -95,13 +95,13 @@ demoRouter.get("/aquera/connectors", (_req: Request, res: Response) => {
 });
 
 demoRouter.get("/aquera/connectors/:app", (req: Request, res: Response) => {
-  const connector = getState().aquera.find((c) => c.app === req.params.app);
+  const connector = getState().aquera.find((c) => c.app === req.params.app as string);
   if (!connector) return res.status(404).json({ error: "Connector not found" });
   res.json(connector);
 });
 
 demoRouter.post("/aquera/connectors/:id/activate", (req: Request, res: Response) => {
-  const result = activateIdentity(req.params.id);
+  const result = activateIdentity(req.params.id as string);
   res.json(result);
 });
 
@@ -195,8 +195,8 @@ demoRouter.get("/aquera/scim/status", (req: Request, res: Response) => {
   const state = getState();
   const connectors = state.aquera.map((c) => ({
     connector: c.app,
-    status: c.status,
-    lastSync: c.lastSync,
+    status: (c as any).status,
+    lastSync: (c as any).lastSync,
   }));
   res.json({ identityId: id, connectors, allRegistered: connectors.every((c) => c.status === "registered") });
 });
@@ -207,7 +207,7 @@ demoRouter.post("/aquera/scim/deregister", (req: Request, res: Response) => {
 
 // ── RadiantOne (orchestrator & worker agent tools) ───────────────────────────
 demoRouter.post("/radiantone/identities/:id/activate", (req: Request, res: Response) => {
-  const result = activateIdentity(req.params.id || req.body.identityId || "BMSA-SYNTH-001");
+  const result = activateIdentity(req.params.id as string || req.body.identityId || "BMSA-SYNTH-001");
   res.json(result);
 });
 
@@ -313,7 +313,7 @@ demoRouter.get("/brainwave/certifications", (_req: Request, res: Response) => {
 });
 
 demoRouter.post("/brainwave/certify/:identityId", (req: Request, res: Response) => {
-  const result = certifyIdentity(req.params.identityId);
+  const result = certifyIdentity(req.params.identityId as string);
   res.json(result);
 });
 
@@ -334,7 +334,7 @@ demoRouter.post("/brainwave/escalate", (req: Request, res: Response) => {
 });
 
 demoRouter.post("/brainwave/recertification/:identityId", (req: Request, res: Response) => {
-  const result = certifyIdentity(req.params.identityId);
+  const result = certifyIdentity(req.params.identityId as string);
   res.json({ ...result, certificationCampaign: "Q1-2026-SyntheticWorker", dueDate: new Date(Date.now() + 86400000 * 30).toISOString() });
 });
 
@@ -565,7 +565,7 @@ demoRouter.get("/kinective/rollback-log", (_req: Request, res: Response) => {
 
 demoRouter.post("/kinective/reset", (req: Request, res: Response) => {
   const scenario = (req.body.scenario || "happy") as KinectiveScenario;
-  resetKinectiveDemo(scenario);
+  resetKinectiveDemo(scenario as any);
   res.json({ success: true, scenario });
 });
 
@@ -791,8 +791,8 @@ If address validation fails: halt all updates, log the failure, create a complia
         });
       } else {
         const existing = existingTools.find((t: any) => t.name === tool.name);
-        const existingEndpoint = existing?.annotations?.endpoint;
-        if (existing && existingEndpoint !== tool.endpoint) {
+        const existingEndpoint = (existing as any)?.annotations?.endpoint;
+        if (existing && existingEndpoint !== (tool as any).endpoint) {
           await storage.updateMcpServerTool(existing.id, {
             description: tool.description,
             annotations: { endpoint: tool.endpoint, method: tool.method },
@@ -1025,7 +1025,7 @@ demoRouter.get("/kinective/stream", async (req: Request, res: Response) => {
     }
 
     sendEvent("run_start", { scenario, message: `COA pipeline starting — scenario: ${scenario}` });
-    resetKinectiveDemo(scenario);
+    resetKinectiveDemo(scenario as any);
     setKinectiveRunning(true);
     const thisGeneration = getRunGeneration();
 

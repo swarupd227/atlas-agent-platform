@@ -528,7 +528,7 @@ const router = Router();
 
       const industries: any[] = [];
 
-      for (const [industry, events] of eventsByIndustry.entries()) {
+      for (const [industry, events] of Array.from(eventsByIndustry.entries())) {
         const totalEvents = events.length;
         const accepted = events.filter(e => e.billable === true).length;
         const acceptanceRate = totalEvents > 0 ? Math.round((accepted / totalEvents) * 10000) / 100 : 0;
@@ -550,7 +550,7 @@ const router = Router();
           if (ev.outcomeId) industryOutcomeIds.add(ev.outcomeId);
         }
         const disputeCategories = new Map<string, number>();
-        for (const oid of industryOutcomeIds) {
+        for (const oid of Array.from(industryOutcomeIds)) {
           const disputes = disputesByOutcome.get(oid) || [];
           for (const d of disputes) {
             disputeCategories.set(d.category, (disputeCategories.get(d.category) || 0) + 1);
@@ -583,7 +583,7 @@ const router = Router();
         const industryRejectionTotal = Array.from(rejectionReasons.values()).reduce((s, c) => s + c, 0);
         const distinctiveFailureModes: any[] = [];
         if (overallRejectionTotal > 0 && industryRejectionTotal > 0) {
-          for (const [reason, count] of rejectionReasons.entries()) {
+          for (const [reason, count] of Array.from(rejectionReasons.entries())) {
             const industryRate = count / industryRejectionTotal;
             const overallCount = overallRejectionReasons.get(reason) || 0;
             const overallRate = overallCount / overallRejectionTotal;

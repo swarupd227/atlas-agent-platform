@@ -7,6 +7,7 @@ import type { AgentTemplate, OutcomeContract, KpiDefinition } from "@shared/sche
 import { useIndustry, type IndustryId } from "@/components/industry-provider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
@@ -983,7 +984,7 @@ export default function AgentWizard() {
   });
 
   useEffect(() => {
-    if (industry?.id && industry.id !== "custom" && industry.id !== "cross_industry" && wizardState.industryId !== industry.id) {
+    if (industry?.id && industry.id !== "custom" && (industry.id as string) !== "cross_industry" && wizardState.industryId !== industry.id) {
       const preset = INDUSTRY_PRESETS[industry.id];
       const ctx = INDUSTRY_CONTEXT_CONFIG[industry.id];
       if (preset && ctx && !wizardState.industryAutoApplied) {
@@ -1113,8 +1114,8 @@ export default function AgentWizard() {
 
     const existingStop = wizardState.guardrailsConfig.stopConditions;
     const existingEscal = wizardState.guardrailsConfig.escalationTriggers;
-    const mergedStop = [...new Set([...existingStop, ...outcomeStopConditions])];
-    const mergedEscal = [...new Set([...existingEscal, ...outcomeEscalationTriggers])];
+    const mergedStop = Array.from(new Set([...existingStop, ...outcomeStopConditions]));
+    const mergedEscal = Array.from(new Set([...existingEscal, ...outcomeEscalationTriggers]));
 
     const kpiThresholds = outcomeKpis
       .filter(k => k.slaThreshold != null)

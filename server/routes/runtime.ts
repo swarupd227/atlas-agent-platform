@@ -43,6 +43,7 @@ import {
 } from "@shared/schema";
 import {
   checkPermission,
+  hasPermission,
   getRequestRole,
   getTraceRedactionLevel,
   getRedactionLevel,
@@ -921,7 +922,7 @@ function hashCode(str: string): number {
 
       const result = await executePromptWithMcp(
         agent.id,
-        undefined,
+        "" as string,
         undefined,
         mcpServerIds,
         testMessage,
@@ -1021,7 +1022,7 @@ function hashCode(str: string): number {
 
       const result = await executePromptWithMcp(
         agent.id,
-        undefined,
+        "" as string,
         undefined,
         mcpServerIds,
         userMessage,
@@ -1117,7 +1118,7 @@ function hashCode(str: string): number {
 
       const result = await executePromptWithMcp(
         agent.id,
-        undefined,
+        "" as string,
         undefined,
         mcpServerIds,
         userMessage,
@@ -1231,7 +1232,7 @@ function hashCode(str: string): number {
 
       const result = await executePromptWithMcp(
         agent.id,
-        undefined,
+        "" as string,
         undefined,
         mcpServerIds,
         historyContext,
@@ -2610,7 +2611,7 @@ if __name__ == "__main__":
   function generateTsToolAdapter(tool: { name: string; description?: string; parameters?: Record<string, unknown> }, adapterType: "builtin" | "customer" | "stub" = "builtin"): string {
     const interfaceName = tool.name.charAt(0).toUpperCase() + tool.name.slice(1) + "Args";
     const hasParams = tool.parameters && typeof tool.parameters === "object" && Object.keys(tool.parameters).length > 0;
-    const interfaceBlock = hasParams ? jsonSchemaToTsInterface(interfaceName, tool.parameters) + "\n\n" : `export interface ${interfaceName} {\n  [key: string]: unknown;\n}\n\n`;
+    const interfaceBlock = hasParams ? jsonSchemaToTsInterface(interfaceName, tool.parameters!) + "\n\n" : `export interface ${interfaceName} {\n  [key: string]: unknown;\n}\n\n`;
     const argType = interfaceName;
     const schemaJson = JSON.stringify(tool.parameters || {}, null, 2);
 
@@ -2702,7 +2703,7 @@ export default ${tool.name};
   function generatePyToolAdapter(tool: { name: string; description?: string; parameters?: Record<string, unknown> }, adapterType: "builtin" | "customer" | "stub" = "builtin"): string {
     const className = tool.name.charAt(0).toUpperCase() + tool.name.slice(1) + "Args";
     const hasParams = tool.parameters && typeof tool.parameters === "object" && Object.keys(tool.parameters).length > 0;
-    const dataclassBlock = hasParams ? jsonSchemaToDataclass(className, tool.parameters) + "\n\n" : `@dataclass\nclass ${className}:\n    pass\n\n`;
+    const dataclassBlock = hasParams ? jsonSchemaToDataclass(className, tool.parameters!) + "\n\n" : `@dataclass\nclass ${className}:\n    pass\n\n`;
     const dataclassImport = `from dataclasses import dataclass\nfrom typing import Any, Optional\n\n`;
     const schemaDict = JSON.stringify(tool.parameters || {}, null, 2);
 
@@ -3356,7 +3357,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
           const kpis = await storage.getKpisByOutcome(agent.outcomeId);
           outcomeData = {
             name: outcome.name,
-            kpis: kpis.map(k => ({ name: k.name, target: Number(k.targetValue) || 0, operator: k.operator || ">=", unit: k.unit })),
+            kpis: kpis.map(k => ({ name: k.name, target: Number(k.target) || 0, operator: k.targetOperator || ">=", unit: k.unit })),
           };
         }
       }
@@ -3679,7 +3680,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
           hasGraph: hasMultiNodeGraph,
         };
 
-        function validateAiEntrypoint(code: string, opts: typeof entrypointOpts): boolean {
+        const validateAiEntrypoint = function(code: string, opts: typeof entrypointOpts): boolean {
           if (!code || code.length < 200) return false;
           if (opts.hasPolicies && !code.includes("policy")) return false;
           if (opts.hasGraph && !code.includes("transition")) return false;
@@ -3768,7 +3769,7 @@ export function checkStopConditions(content: string): PolicyResult {
     }
   }
   for (const policy of policies) {
-    const rules = policy.rules;
+    const rules = (policy as any).rules;
     if (!rules) continue;
     const sc = rules.stopConditions || rules.stop_conditions || [];
     for (const cond of sc) {
@@ -3789,7 +3790,7 @@ export function checkForbiddenOutputs(content: string): PolicyResult {
     } catch { /* invalid regex */ }
   }
   for (const policy of policies) {
-    const rules = policy.rules;
+    const rules = (policy as any).rules;
     if (!rules) continue;
     const fo = rules.forbiddenOutputs || rules.forbidden_outputs || [];
     for (const pattern of fo) {
@@ -3805,7 +3806,7 @@ export function checkForbiddenOutputs(content: string): PolicyResult {
 
 export async function evaluatePolicy(ctx: PolicyContext): Promise<PolicyResult> {
   for (const policy of policies) {
-    const rules = policy.rules;
+    const rules = (policy as any).rules;
     if (!rules) continue;
     if (rules.blockedTools && ctx.toolName && rules.blockedTools.includes(ctx.toolName)) {
       return { allowed: false, reason: \\\`Tool "\\\${ctx.toolName}" blocked by policy "\\\${policy.name}"\\\`, policyName: policy.name };
@@ -3891,7 +3892,7 @@ export function listPolicies(): Array<{ name: string; domain: string | null }> {
             const hasForbiddenPatterns = policyForbiddenOutputs.length > 0;
             const hasStopConds = policyStopConditions.length > 0;
             const policyEnforcementTests = linkedPolicies.length > 0
-              ? `\n  test("listPolicies returns populated array", async () => {\n    const policy = await import("../src/runtime/policy");\n    const policies = policy.listPolicies();\n    expect(Array.isArray(policies)).toBe(true);\n    expect(policies.length).toBeGreaterThan(0);\n  });\n\n  test("evaluatePolicy allows unlisted tool call", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = await policy.evaluatePolicy({ agentName: "test", action: "tool_call", toolName: "__safe_unlisted_tool__" });\n    expect(result.allowed).toBe(true);\n  });\n\n  test("onBeforeToolCall blocks tool if in blockedTools list", async () => {\n    const fs = await import("fs");\n    const path = await import("path");\n    const raw = fs.readFileSync(path.resolve(__dirname, "../src/agent/policies.json"), "utf-8");\n    const policies = JSON.parse(raw);\n    const blockedTool = policies.flatMap((p: any) => (p.rules?.blockedTools || [])).find(Boolean);\n    if (!blockedTool) return;\n    const policy = await import("../src/runtime/policy");\n    const result = await policy.onBeforeToolCall(blockedTool, {});\n    expect(result.allowed).toBe(false);\n    expect(result.reason).toContain("blocked");\n  });\n`
+              ? `\n  test("listPolicies returns populated array", async () => {\n    const policy = await import("../src/runtime/policy");\n    const policies = policy.listPolicies();\n    expect(Array.isArray(policies)).toBe(true);\n    expect(policies.length).toBeGreaterThan(0);\n  });\n\n  test("evaluatePolicy allows unlisted tool call", async () => {\n    const policy = await import("../src/runtime/policy");\n    const result = await policy.evaluatePolicy({ agentName: "test", action: "tool_call", toolName: "__safe_unlisted_tool__" });\n    expect(result.allowed).toBe(true);\n  });\n\n  test("onBeforeToolCall blocks tool if in blockedTools list", async () => {\n    const fs = await import("fs");\n    const path = await import("path");\n    const raw = fs.readFileSync(path.resolve(__dirname, "../src/agent/policies.json"), "utf-8");\n    const policies = JSON.parse(raw);\n    const blockedTool = policies.flatMap((p: any) => ((p as any).rules?.blockedTools || [])).find(Boolean);\n    if (!blockedTool) return;\n    const policy = await import("../src/runtime/policy");\n    const result = await policy.onBeforeToolCall(blockedTool, {});\n    expect(result.allowed).toBe(false);\n    expect(result.reason).toContain("blocked");\n  });\n`
               : "";
             const forbiddenOutputTests = hasForbiddenPatterns
               ? `\n  test("checkForbiddenOutputs blocks matching forbidden pattern", async () => {\n    const policy = await import("../src/runtime/policy");\n    // Use the first configured forbidden pattern to verify blocking\n    const testInput = ${JSON.stringify(policyForbiddenOutputs[0] || "BLOCKED")};\n    const result = policy.checkForbiddenOutputs(testInput);\n    expect(result.allowed).toBe(false);\n    expect(result.reason).toBeDefined();\n  });\n`
@@ -4688,7 +4689,7 @@ clean:
       } catch { /* AI unavailable */ }
 
       if (!content) {
-        content = generateDeterministicFile(filePath, format, llmProvider, framework, agent.name);
+        content = generateDeterministicFile(filePath, format, llmProvider, framework, agent.name) ?? "";
       }
 
       if (!content) {
@@ -4879,7 +4880,7 @@ clean:
           const tools = await storage.getMcpServerTools(server.id);
           mcpIntegrations.push({
             serverName: server.name,
-            serverType: server.serverType,
+            serverType: (server as any).serverType,
             tools: tools.map(t => t.name),
           });
         }
@@ -5085,7 +5086,7 @@ clean:
           output: checks.map(c => `[PASS] ${c}`).join("\n"),
         });
       } else {
-        const evalSuites = await storage.getEvalSuites(agent.id);
+        const evalSuites = await storage.getEvalSuites();
         const suiteCount = evalSuites?.length || 0;
         const lines = [
           `Eval suites found: ${suiteCount}`,
@@ -6533,7 +6534,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
       for (const key of allowedFields) {
         if (key in req.body) sanitized[key] = req.body[key];
       }
-      const server = await storage.updateMcpServer(req.params.id, sanitized);
+      const server = await storage.updateMcpServer(req.params.id as string, sanitized);
       if (!server) return res.status(404).json({ message: "MCP server not found" });
       res.json(server);
     } catch (e) {
@@ -6543,10 +6544,10 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
   router.delete("/api/mcp-servers/:id", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
-      await storage.deleteMcpServerToolsByServer(req.params.id);
-      await storage.deleteMcpServerResourcesByServer(req.params.id);
-      await storage.deleteMcpServerPromptsByServer(req.params.id);
-      await storage.deleteMcpServer(req.params.id);
+      await storage.deleteMcpServerToolsByServer(req.params.id as string);
+      await storage.deleteMcpServerResourcesByServer(req.params.id as string);
+      await storage.deleteMcpServerPromptsByServer(req.params.id as string);
+      await storage.deleteMcpServer(req.params.id as string);
       res.json({ success: true });
     } catch (e) {
       res.status(500).json({ message: "Failed to delete MCP server" });
@@ -6555,7 +6556,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
   router.post("/api/mcp-servers/:id/initialize", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
-      const server = await storage.getMcpServer(req.params.id);
+      const server = await storage.getMcpServer(req.params.id as string);
       if (!server) return res.status(404).json({ message: "MCP server not found" });
 
       const negotiatedVersion = server.expectedProtocolVersion || "2025-03-26";
@@ -6571,7 +6572,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
         protocolVersion: negotiatedVersion,
       };
 
-      const updated = await storage.updateMcpServer(req.params.id, {
+      const updated = await storage.updateMcpServer(req.params.id as string, {
         negotiatedProtocolVersion: negotiatedVersion,
         capabilities,
         serverInfo,
@@ -6809,7 +6810,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
   router.post("/api/mcp-servers/:id/resources", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
-      const server = await storage.getMcpServer(req.params.id);
+      const server = await storage.getMcpServer(req.params.id as string);
       if (!server) return res.status(404).json({ message: "MCP server not found" });
 
       const parsed = insertMcpServerResourceSchema.safeParse({
@@ -6847,7 +6848,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
   router.post("/api/mcp-servers/:id/prompts", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
-      const server = await storage.getMcpServer(req.params.id);
+      const server = await storage.getMcpServer(req.params.id as string);
       if (!server) return res.status(404).json({ message: "MCP server not found" });
 
       const parsed = insertMcpServerPromptSchema.safeParse({
@@ -6880,18 +6881,18 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
         return res.status(400).json({ message: "Request body must be a non-empty object with capability name keys" });
       }
 
-      const server = await storage.getMcpServer(req.params.id);
+      const server = await storage.getMcpServer(req.params.id as string);
       if (!server) return res.status(404).json({ message: "MCP server not found" });
 
       const existing = (server.capabilities as Record<string, unknown>) || {};
       const merged = { ...existing, ...req.body };
 
-      const updated = await storage.updateMcpServer(req.params.id, { capabilities: merged });
+      const updated = await storage.updateMcpServer(req.params.id as string, { capabilities: merged });
 
       await storage.createAuditEvent({
         action: "mcp_server.capabilities_updated",
         objectType: "mcp_server",
-        objectId: req.params.id,
+        objectId: req.params.id as string,
         actorId: "user",
         details: JSON.stringify({ addedCapabilities: Object.keys(req.body) }),
       });
@@ -6974,7 +6975,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
         const hasToolPermissionsPolicy = boundDomains.has("tool_permissions");
         const hasDataHandlingPolicy = boundDomains.has("data_handling");
 
-        for (const [, tool] of toolsToCheck) {
+        for (const [, tool] of Array.from(toolsToCheck)) {
           const risk = (tool.riskClassification || "low").toLowerCase();
           const isHighRisk = risk === "high" || risk === "critical";
 
@@ -7137,7 +7138,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
       await storage.createAuditEvent({
         action: "mcp_server.auth_updated",
         objectType: "mcp_server",
-        objectId: req.params.id,
+        objectId: req.params.id as string,
         actorId: "system",
         details: JSON.stringify({ authType: data.authType }),
       });
@@ -7150,12 +7151,12 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
   router.post("/api/mcp-servers/:id/enable-production", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
-      const server = await storage.getMcpServer(req.params.id);
+      const server = await storage.getMcpServer(req.params.id as string);
       if (!server) return res.status(404).json({ message: "MCP server not found" });
       const requestedBy = (req.body && req.body.requestedBy) || "platform_admin";
 
       if (server.allowlisted) {
-        const updated = await storage.updateMcpServer(req.params.id, { status: "production-enabled" });
+        const updated = await storage.updateMcpServer(req.params.id as string, { status: "production-enabled" });
         await storage.createAuditEvent({
           action: "mcp_server.production_enabled",
           objectType: "mcp_server",
@@ -7199,7 +7200,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
   router.post("/api/mcp-servers/:id/sync-catalogs", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
-      const server = await storage.getMcpServer(req.params.id);
+      const server = await storage.getMcpServer(req.params.id as string);
       if (!server) return res.status(404).json({ message: "MCP server not found" });
 
       const tools = await storage.getMcpServerTools(req.params.id as string);
@@ -7428,7 +7429,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
   router.post("/api/mcp-servers/:id/assurance-check", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
-      const server = await storage.getMcpServer(req.params.id);
+      const server = await storage.getMcpServer(req.params.id as string);
       if (!server) return res.status(404).json({ message: "MCP server not found" });
 
       const tools = await storage.getMcpServerTools(req.params.id as string);
@@ -7917,7 +7918,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
   router.post("/api/mcp-servers/:id/behavioral-audit", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
-      const server = await storage.getMcpServer(req.params.id);
+      const server = await storage.getMcpServer(req.params.id as string);
       if (!server) return res.status(404).json({ message: "MCP server not found" });
 
       const tools = await storage.getMcpServerTools(req.params.id as string);
@@ -8040,7 +8041,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
   router.patch("/api/mcp-resources/:id", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
       const parsed = mcpResourcePatchSchema.parse(req.body);
-      const resource = await storage.getMcpServerResourceById(req.params.id);
+      const resource = await storage.getMcpServerResourceById(req.params.id as string);
       if (!resource) return res.status(404).json({ message: "Resource not found" });
 
       if (parsed.sensitivityLevel) {
@@ -8078,7 +8079,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
       if (!["approve", "deny"].includes(approvalAction)) {
         return res.status(400).json({ message: "action must be 'approve' or 'deny'" });
       }
-      const resource = await storage.getMcpServerResourceById(req.params.id);
+      const resource = await storage.getMcpServerResourceById(req.params.id as string);
       if (!resource) return res.status(404).json({ message: "Resource not found" });
 
       const role = getRequestRole(req);
@@ -8108,7 +8109,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
   router.post("/api/mcp-resources/:id/request-approval", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
-      const resource = await storage.getMcpServerResourceById(req.params.id);
+      const resource = await storage.getMcpServerResourceById(req.params.id as string);
       if (!resource) return res.status(404).json({ message: "Resource not found" });
 
       if (resource.sensitivityLevel === "public") {
@@ -8178,7 +8179,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
   router.patch("/api/mcp-prompts/:id", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
       const parsed = mcpPromptPatchSchema.parse(req.body);
-      const prompt = await storage.getMcpServerPromptById(req.params.id);
+      const prompt = await storage.getMcpServerPromptById(req.params.id as string);
       if (!prompt) return res.status(404).json({ message: "Prompt not found" });
 
       const role = getRequestRole(req);
@@ -8221,7 +8222,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
       if (!["approve", "deny"].includes(approvalAction)) {
         return res.status(400).json({ message: "action must be 'approve' or 'deny'" });
       }
-      const prompt = await storage.getMcpServerPromptById(req.params.id);
+      const prompt = await storage.getMcpServerPromptById(req.params.id as string);
       if (!prompt) return res.status(404).json({ message: "Prompt not found" });
 
       const role = getRequestRole(req);
@@ -8251,7 +8252,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
   router.post("/api/mcp-prompts/:id/request-approval", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
-      const prompt = await storage.getMcpServerPromptById(req.params.id);
+      const prompt = await storage.getMcpServerPromptById(req.params.id as string);
       if (!prompt) return res.status(404).json({ message: "Prompt not found" });
 
       const refs = prompt.embeddedResourceRefs as string[] | null;
@@ -8402,7 +8403,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
   router.patch("/api/mcp-elicitations/:id/respond", async (req, res) => {
     const role = getRequestRole(req);
-    if (!checkPermission(role, "approve_changes")) {
+    if (!hasPermission(role, "approve_changes")) {
       return res.status(403).json({ error: "Insufficient permissions to respond to elicitations" });
     }
     try {
@@ -8447,7 +8448,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
   router.post("/api/mcp-elicitations/:id/url-complete", async (req, res) => {
     const role = getRequestRole(req);
-    if (!checkPermission(role, "approve_changes")) {
+    if (!hasPermission(role, "approve_changes")) {
       return res.status(403).json({ error: "Insufficient permissions" });
     }
     const elicitation = await storage.getMcpElicitation(req.params.id);
@@ -8497,8 +8498,8 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
       }
       const policies = await storage.getPolicies();
       const matchingPolicies = policies.filter(p =>
-        p.status === "active" && p.rules &&
-        JSON.stringify(p.rules).toLowerCase().includes(toolName.toLowerCase())
+        p.status === "active" && (p as any).rules &&
+        JSON.stringify((p as any).rules).toLowerCase().includes(toolName.toLowerCase())
       );
       if (matchingPolicies.length > 0) {
         riskFlags.push("policy_match");
@@ -8551,7 +8552,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
   router.get("/api/approval-queue", async (req, res) => {
     const role = getRequestRole(req);
-    if (!checkPermission(role, "approve_changes")) {
+    if (!hasPermission(role, "approve_changes")) {
       return res.status(403).json({ error: "Insufficient permissions to view approval queue" });
     }
     const [allApprovals, pendingElicitations] = await Promise.all([
@@ -8915,7 +8916,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
   router.patch("/api/marketplace/install-requests/:id/approve", checkPermission("manage_security"), async (req, res) => {
     try {
-      const request = await storage.getMarketplaceInstallRequest(req.params.id);
+      const request = await storage.getMarketplaceInstallRequest(req.params.id as string);
       if (!request) return res.status(404).json({ message: "Install request not found" });
       if (request.status !== "pending") return res.status(400).json({ message: "Request is not pending" });
 
@@ -8931,7 +8932,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
         riskTier: server.riskTier || "MEDIUM",
       });
 
-      await storage.updateMarketplaceInstallRequest(req.params.id, {
+      await storage.updateMarketplaceInstallRequest(req.params.id as string, {
         status: "approved",
         approvedBy: req.body.approvedBy || "system",
         approvedAt: new Date(),
@@ -8957,7 +8958,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
         ontologyTags: resolveOntologyTags("marketplace_server", "marketplace.install_approved"),
       });
 
-      res.json({ request: await storage.getMarketplaceInstallRequest(req.params.id), mcpServer });
+      res.json({ request: await storage.getMarketplaceInstallRequest(req.params.id as string), mcpServer });
     } catch (e) {
       handleZodError(res, e);
     }
@@ -8965,11 +8966,11 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
   router.patch("/api/marketplace/install-requests/:id/reject", checkPermission("manage_security"), async (req, res) => {
     try {
-      const request = await storage.getMarketplaceInstallRequest(req.params.id);
+      const request = await storage.getMarketplaceInstallRequest(req.params.id as string);
       if (!request) return res.status(404).json({ message: "Install request not found" });
       if (request.status !== "pending") return res.status(400).json({ message: "Request is not pending" });
 
-      await storage.updateMarketplaceInstallRequest(req.params.id, {
+      await storage.updateMarketplaceInstallRequest(req.params.id as string, {
         status: "rejected",
         rejectedReason: req.body.reason || "Rejected by security admin",
       });
@@ -8992,7 +8993,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
         ontologyTags: resolveOntologyTags("marketplace_server", "marketplace.install_rejected"),
       });
 
-      res.json(await storage.getMarketplaceInstallRequest(req.params.id));
+      res.json(await storage.getMarketplaceInstallRequest(req.params.id as string));
     } catch (e) {
       handleZodError(res, e);
     }
@@ -9064,13 +9065,13 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
   });
 
   router.patch("/api/mcp-apps/:id", checkPermission("manage_mcp_servers"), async (req, res) => {
-    const updated = await storage.updateMcpApp(req.params.id, req.body);
+    const updated = await storage.updateMcpApp(req.params.id as string, req.body);
     if (!updated) return res.status(404).json({ message: "MCP App not found" });
     res.json(updated);
   });
 
   router.delete("/api/mcp-apps/:id", checkPermission("manage_mcp_servers"), async (req, res) => {
-    const deleted = await storage.deleteMcpApp(req.params.id);
+    const deleted = await storage.deleteMcpApp(req.params.id as string);
     if (!deleted) return res.status(404).json({ message: "MCP App not found" });
     res.json({ success: true });
   });
@@ -9346,9 +9347,9 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
             });
           });
 
-          const allMatchingAgents = [...new Map(
+          const allMatchingAgents = Array.from(new Map(
             [...boundAgents, ...complianceTaggedAgents].map(a => [a.id, a])
-          ).values()];
+          ).values());
 
           agentCoverage.push({
             controlId: control.requirementRef,
@@ -9813,7 +9814,7 @@ Return ONLY a valid JSON object.`
   // Push regulatory policy to governance policy packs
   router.post("/api/regulatory-policies/:id/push-to-governance", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      const policy = await storage.getRegulatoryPolicy(req.params.id);
+      const policy = await storage.getRegulatoryPolicy(req.params.id as string);
       if (!policy) return res.status(404).json({ message: "Policy not found" });
 
       const regulation = await storage.getRegulation(policy.regulationId);
@@ -10234,7 +10235,7 @@ Return ONLY a valid JSON object.`
         issueType: issueType || "drift",
         issueDescription: description || `${metric} drifted by ${Math.abs(driftPercent || 0).toFixed(1)}% (baseline: ${baseline}, current: ${current}). Suite: ${suiteName || "N/A"}.`,
         stage: "detected",
-        triggeredBy: "monitoring_system",
+        triggerSource: "monitoring_system",
       });
 
       const industryKey = industry || "financial_services";
@@ -10420,7 +10421,7 @@ Return ONLY a valid JSON object.`
 
             if (classificationCategory === "knowledge_base_staleness" && evidenceBundle.knowledgeBases) {
               const kbs = evidenceBundle.knowledgeBases as Array<{ name: string; status: string; updatedAt?: string; chunkCount?: number }>;
-              const totalChunks = kbs.reduce((sum: number, kb: any) => sum + (kb.chunkCount || 0), 0);
+              const totalChunks = kbs.reduce((sum: number, kb: any) => sum + ((kb as any).chunkCount || 0), 0);
               const hasNoLinkedDocs = kbs.length === 0;
               if (hasNoLinkedDocs || totalChunks < 10) {
                 classificationCategory = "knowledge_gap";
@@ -10570,12 +10571,12 @@ Return ONLY a valid JSON object.`
                   }
                 }
               } catch (ragErr) {
-                console.error("RAG tuning recommendation failed (non-blocking):", ragErr.message);
+                console.error("RAG tuning recommendation failed (non-blocking):", (ragErr as Error).message);
               }
             }
           }
         } catch (classifyErr) {
-          console.error("Auto root cause classification failed (non-blocking):", classifyErr.message);
+          console.error("Auto root cause classification failed (non-blocking):", (classifyErr as Error).message);
         }
       }
 
@@ -10757,7 +10758,7 @@ Return ONLY a valid JSON object.`
               status: kb.status,
               updatedAt: kb.updatedAt,
               createdAt: kb.createdAt,
-              chunkCount: kb.chunkCount,
+              chunkCount: (kb as any).chunkCount,
             });
           }
         }
@@ -10775,7 +10776,7 @@ Return ONLY a valid JSON object.`
           }));
         }
 
-        const totalKbChunks = kbDetails.reduce((sum: number, kb: any) => sum + (kb.chunkCount || 0), 0);
+        const totalKbChunks = kbDetails.reduce((sum: number, kb: any) => sum + ((kb as any).chunkCount || 0), 0);
         const ontologyTags = (agent.ontologyTags || []) as Array<{ conceptId: string; conceptLabel: string }>;
         const ontologyConceptCount = ontologyTags.length;
         if (ontologyConceptCount > 0 && totalKbChunks > 0) {
@@ -11240,13 +11241,13 @@ Respond with JSON:
       }
 
       let totalBoostWeight = 0;
-      for (const [, weight] of boostTargets) totalBoostWeight += weight;
+      for (const [, weight] of Array.from(boostTargets)) totalBoostWeight += weight;
 
       const boostBudget = Math.round(totalCapacity * 0.1);
       const nonBoostedSources = sources.filter((s: any) => !boostTargets.has(s.category || s.name));
       const totalNonBoosted = nonBoostedSources.reduce((s: number, src: any) => s + (Number(src.tokenAllocation) || 0), 0);
 
-      for (const [srcName, weight] of boostTargets) {
+      for (const [srcName, weight] of Array.from(boostTargets)) {
         const boostAmount = Math.round((weight / totalBoostWeight) * boostBudget);
         if (recommendedAllocations[srcName] !== undefined) {
           recommendedAllocations[srcName] += boostAmount;
@@ -12088,7 +12089,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       }
 
       if (outcomeId) {
-        const outcome = await storage.getOutcomeContract(outcomeId);
+        const outcome = await (storage as any).getOutcomeContract(outcomeId);
         if (outcome) {
           const kpis = await db.select().from(kpiDefinitions).where(eq(kpiDefinitions.outcomeId, outcomeId));
 
@@ -12566,7 +12567,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
             sourceMap[key] = { kbName: kb.kbName || key, totalChunks: 0, totalTokens: 0, totalSimilarity: 0, similarityCount: 0, qualities: [], count: 0 };
           }
           const src = sourceMap[key];
-          src.totalChunks += kb.chunkCount || 0;
+          src.totalChunks += (kb as any).chunkCount || 0;
           src.totalTokens += kb.tokenCount || 0;
           if (kb.avgSimilarity != null) {
             src.totalSimilarity += kb.avgSimilarity;
@@ -13069,20 +13070,20 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         "they", "them", "their", "about", "also", "up", "down",
       ]);
 
-      function extractKeyTerms(text: string): string[] {
+      const extractKeyTerms = function(text: string): string[] {
         if (!text) return [];
         const str = typeof text === "string" ? text : JSON.stringify(text);
         const words = str.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter(w => w.length > 2 && !stopwords.has(w));
-        return [...new Set(words)];
+        return Array.from(new Set(words));
       }
 
-      function findMissingTermsWithKbAttribution(terms: string[]): { missingTerms: string[]; relevantKbIds: string[] } {
+      const findMissingTermsWithKbAttribution = function(terms: string[]): { missingTerms: string[]; relevantKbIds: string[] } {
         const kbsWithTerm = new Set<string>();
         const missing: string[] = [];
         for (const term of terms) {
           let found = false;
-          for (const [kbId, contents] of perKbCorpus.entries()) {
-            if (contents.some(content => content.includes(term))) {
+          for (const [kbId, contents] of Array.from(perKbCorpus.entries())) {
+            if (contents.some((content: string) => content.includes(term))) {
               found = true;
               break;
             }
@@ -13091,11 +13092,11 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
             missing.push(term);
           }
         }
-        for (const [kbId, contents] of perKbCorpus.entries()) {
-          const hasAnyTerm = terms.some(term => contents.some(c => c.includes(term)));
+        for (const [kbId, contents] of Array.from(perKbCorpus.entries())) {
+          const hasAnyTerm = terms.some(term => contents.some((c: string) => c.includes(term)));
           if (hasAnyTerm) kbsWithTerm.add(kbId);
         }
-        const relevantKbIds = kbsWithTerm.size > 0 ? [...kbsWithTerm] : linkedKbIds;
+        const relevantKbIds = kbsWithTerm.size > 0 ? Array.from(kbsWithTerm) : linkedKbIds;
         return { missingTerms: missing, relevantKbIds };
       }
 
@@ -13116,7 +13117,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         const inputStr = typeof inputData === "string" ? inputData : JSON.stringify(inputData || {});
         const inputTerms = extractKeyTerms(inputStr);
         const reasonTerms = extractKeyTerms(caseResult.failingReason || "");
-        const allTerms = [...new Set([...inputTerms, ...reasonTerms])];
+        const allTerms = Array.from(new Set([...inputTerms, ...reasonTerms]));
         const { missingTerms, relevantKbIds } = findMissingTermsWithKbAttribution(allTerms);
 
         for (const term of missingTerms) {
@@ -13141,7 +13142,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         });
       }
 
-      const topMissingTopics = [...allMissingTermsMap.entries()]
+      const topMissingTopics = Array.from(allMissingTermsMap.entries())
         .sort((a, b) => b[1] - a[1])
         .slice(0, 10)
         .map(([term]) => term);

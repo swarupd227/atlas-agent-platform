@@ -2202,7 +2202,7 @@ export default function OutcomeDiscover() {
                             {platformIntel.matchedAgents.filter((r) => r.matches.length > 0).flatMap((r) => {
                               const rRoleLower = r.role.toLowerCase();
                               const agentDef = (proposal?.proposedAgents || []).find((pa: { role?: string; name?: string }) => (pa.role || pa.name || "").toLowerCase() === rRoleLower);
-                              const agentTools: string[] = agentDef?.requiredTools || agentDef?.tools || [];
+                              const agentTools: string[] = (agentDef as any)?.requiredTools || (agentDef as any)?.tools || [];
                               return r.matches.slice(0, 2).map((a) => {
                                 const agentDecision = agentDecisions[a.id];
                                 const agentToolChips = agentTools.map((toolName) => {

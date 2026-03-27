@@ -504,7 +504,7 @@ const router = Router();
 
   router.delete("/api/outcomes/:id", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {
-      const deleted = await storage.deleteOutcome(req.params.id);
+      const deleted = await storage.deleteOutcome(req.params.id as string);
       if (!deleted) return res.status(404).json({ message: "Not found" });
       res.json({ success: true });
     } catch (e: any) {
@@ -888,7 +888,7 @@ const router = Router();
     const outcomeAudits = auditEvents.filter(e =>
       e.objectId === req.params.id ||
       e.objectType === "outcome" ||
-      (e.action === "agent.config_changed" && boundAgentIds.has(e.objectId))
+      (e.action === "agent.config_changed" && boundAgentIds.has(e.objectId as string))
     );
     const outcomeApprovals = approvals.filter(a => a.objectId === req.params.id);
     res.json({ auditEvents: outcomeAudits, approvals: outcomeApprovals });
@@ -1034,7 +1034,7 @@ const router = Router();
       const totalBillable = outcomeEvents.filter(e => e.billable).length;
       const totalRevenue = totalBillable * (outcome.pricePerUnit || 0);
 
-      function hashStr(s: string) {
+      const hashStr = function(s: string) {
         let h = 0;
         for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
         return Math.abs(h);
@@ -1299,11 +1299,11 @@ const router = Router();
       const meteredRevenue = totalMetered * pricePerUnit;
 
       const relevantInvoices = invoices.filter(inv =>
-        inv.lineItems?.some((li: any) => li.outcomeId === outcomeId)
+        (inv as any).lineItems?.some((li: any) => li.outcomeId === outcomeId)
       );
-      const totalInvoiced = relevantInvoices.reduce((s, inv) => s + (inv.totalAmount || 0), 0);
-      const totalCollected = relevantInvoices.filter(inv => inv.status === "paid").reduce((s, inv) => s + (inv.totalAmount || 0), 0);
-      const totalDisputed = relevantInvoices.filter(inv => inv.status === "disputed").reduce((s, inv) => s + (inv.totalAmount || 0), 0);
+      const totalInvoiced = relevantInvoices.reduce((s, inv) => s + ((inv as any).totalAmount || 0), 0);
+      const totalCollected = relevantInvoices.filter(inv => inv.status === "paid").reduce((s, inv) => s + ((inv as any).totalAmount || 0), 0);
+      const totalDisputed = relevantInvoices.filter(inv => inv.status === "disputed").reduce((s, inv) => s + ((inv as any).totalAmount || 0), 0);
 
       const pipeline = [
         { stage: "captured", label: "Captured", count: totalCaptured, amount: totalCaptured * pricePerUnit },
@@ -1333,10 +1333,10 @@ const router = Router();
         invoices: relevantInvoices.map(inv => ({
           id: inv.id,
           status: inv.status,
-          totalAmount: inv.totalAmount,
+          totalAmount: (inv as any).totalAmount,
           periodStart: inv.periodStart,
           periodEnd: inv.periodEnd,
-          lineItemCount: (inv.lineItems as any[])?.length || 0,
+          lineItemCount: ((inv as any).lineItems as any[])?.length || 0,
         })),
         recentEvents: eventDetails,
         summary: {

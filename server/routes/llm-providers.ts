@@ -46,7 +46,7 @@ const router = Router();
       const usageByProvider: Record<string, { totalTokens: number; totalCost: number; totalRuns: number }> = {};
 
       for (const trace of allTraces) {
-        const summary = (trace.resultSummary as any) || {};
+        const summary = (trace.outputSummary as any) || {};
         const providerUsed = summary.llmProvider || "openai";
         if (!usageByProvider[providerUsed]) {
           usageByProvider[providerUsed] = { totalTokens: 0, totalCost: 0, totalRuns: 0 };

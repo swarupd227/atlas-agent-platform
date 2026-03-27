@@ -10,11 +10,11 @@ let pgvectorState: "unknown" | "available" | "unavailable" = "unknown";
 let initPromise: Promise<void> | null = null;
 
 export function isPgvectorAvailable(): boolean {
-  return pgvectorState === "available";
+  return (pgvectorState as string) === "available";
 }
 
 export async function ensurePgVector(): Promise<boolean> {
-  if (pgvectorState !== "unknown") return pgvectorState === "available";
+  if (pgvectorState !== "unknown") return (pgvectorState as string) === "available";
 
   if (!initPromise) {
     initPromise = (async () => {
@@ -41,7 +41,7 @@ export async function ensurePgVector(): Promise<boolean> {
     })();
   }
   await initPromise;
-  return pgvectorState === "available";
+  return (pgvectorState as string) === "available";
 }
 
 export async function generateEmbeddings(texts: string[]): Promise<number[][]> {

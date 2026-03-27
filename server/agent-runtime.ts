@@ -244,7 +244,7 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
 
   if (layerBudgets.capabilities > 0) try {
     // Explicit assignment: if the agent has preloadedSkills, resolve those first
-    const rawPreloaded = agent.preloadedSkills;
+    const rawPreloaded = (agent as any).preloadedSkills;
     const preloadedEntries: Array<{ skillId: string }> = Array.isArray(rawPreloaded) ? rawPreloaded as Array<{ skillId: string }> : [];
     const explicitSkillIds = preloadedEntries.map(ps => ps.skillId).filter(Boolean);
 
@@ -562,12 +562,12 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
       for (const t of completedTraces) {
         const steps = Array.isArray(t.stepsJson) ? t.stepsJson as any[] : [];
         const TOOL_STEP_TYPES = new Set(["tool_call", "api_call", "mcpTool", "mcp_tool", "tool_use"]);
-        const toolsUsed = [...new Set(
+        const toolsUsed = Array.from(new Set(
           steps
             .filter((s: any) => TOOL_STEP_TYPES.has(s.type) || s.toolName || s.tool_name)
             .map((s: any) => s.toolName || s.mcpTool || s.tool_name || s.name || s.tool || "unknown")
             .filter((n: string) => n !== "unknown")
-        )].slice(0, 3);
+        )).slice(0, 3);
         const rawDecisions = Array.isArray(t.decisions) ? t.decisions as any[] : [];
         const keyDecisions = rawDecisions.slice(0, 2).map((d: any) => d.decision || d.action || d.label || String(d)).filter(Boolean);
         let summary = `- ${t.inputSummary?.substring(0, 60) || "Scheduled run"} → ${t.status}`;
@@ -1434,7 +1434,7 @@ After receiving tool results, provide a structured analysis with key findings, s
     for (const serverId of mcpServerIds) {
       const server = await storage.getMcpServer(serverId);
       if (server) {
-        mcpServerVersions[serverId] = { name: server.name, lastSyncedAt: server.lastSyncedAt ? server.lastSyncedAt.toISOString() : null };
+        mcpServerVersions[serverId] = { name: server.name, lastSyncedAt: (server as any)?.lastSyncedAt ? (server as any).lastSyncedAt.toISOString() : null };
       }
       const tools = await storage.getMcpServerTools(serverId);
       for (const tool of tools) {
@@ -1472,8 +1472,8 @@ After receiving tool results, provide a structured analysis with key findings, s
   if (blueprintId) {
     try {
       const bp = await storage.getBlueprint(blueprintId);
-      blueprintVersionHash = bp?.workflowJson
-        ? createHash("sha256").update(canonicalJsonStringify(bp.workflowJson)).digest("hex")
+      blueprintVersionHash = (bp as any)?.workflowJson
+        ? createHash("sha256").update(canonicalJsonStringify((bp as any).workflowJson)).digest("hex")
         : createHash("sha256").update(blueprintId).digest("hex");
     } catch {
       blueprintVersionHash = createHash("sha256").update(blueprintId).digest("hex");
@@ -1564,7 +1564,7 @@ function computeExecutionTiers(
   }
 
   const queue: string[] = [];
-  for (const [nodeId, deg] of inDegree) {
+  for (const [nodeId, deg] of Array.from(inDegree)) {
     if (deg === 0) queue.push(nodeId);
   }
 
@@ -1623,7 +1623,7 @@ function buildTiersFromParallelGroups(
 function buildTiersFromExecutionGraph(
   executionGraph: Array<{ stage: number; agents: string[]; waitForAll?: boolean }>,
 ): ExecutionTier[] {
-  const sorted = [...executionGraph].sort((a, b) => a.stage - b.stage);
+  const sorted = Array.from(executionGraph).sort((a, b) => a.stage - b.stage);
   return sorted.map((stage, idx) => ({
     tierIndex: idx,
     agents: stage.agents.map(agentId => ({ agentId })),
@@ -1837,7 +1837,7 @@ export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ st
       } catch {}
     }
 
-    function resolveRoleToId(roleName: string): string | null {
+    const resolveRoleToId = function(roleName: string): string | null {
       const match = teamMembers.find(a =>
         a.name.toLowerCase().includes(roleName.toLowerCase()) ||
         roleName.toLowerCase().includes(a.name.toLowerCase().split(" ")[0].toLowerCase())
@@ -2227,7 +2227,7 @@ async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: Runti
       ...((result as any).contextSectionMetrics || []),
     ];
 
-    let fullProvenanceSnapshot = result.provenanceSnapshot || {};
+    let fullProvenanceSnapshot = (result as any).provenanceSnapshot || {};
     fullProvenanceSnapshot = {
       ...fullProvenanceSnapshot,
       memoryIdsLoaded,
@@ -2256,7 +2256,7 @@ async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: Runti
       outputSummary: outputText,
       stepsJson: result.steps,
       promptInputs: {
-        ...(result.promptInputs || {
+        ...((result as any).promptInputs || {
           systemPrompt: enrichedContext || agent.agentSystemPrompt || agent.prompt,
           userMessage: agent.prompt,
           contextVariables: { industry: agent.industry || "general", teamExecution: isTeam },
@@ -2270,7 +2270,7 @@ async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: Runti
         input: s.input || {},
         output: s.output,
       })),
-      retrievedDocs: result.retrievedDocs || null,
+      retrievedDocs: (result as any).retrievedDocs || null,
       provenanceSnapshot: fullProvenanceSnapshot,
       provenanceHash: fullProvenanceHash,
     });

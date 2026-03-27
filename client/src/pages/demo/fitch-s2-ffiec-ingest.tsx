@@ -59,7 +59,7 @@ export default function FitchS2RatioDeepDive({ onScreenChange }: Props) {
         {hasResults && (
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-muted-foreground">Bank:</span>
-            <Select value={selectedBank} onValueChange={setSelectedBank}>
+            <Select value={selectedBank} onValueChange={(v) => setSelectedBank(v as any)}>
               <SelectTrigger data-testid="fitch-s2-bank-select" className="h-7 text-[11px] w-[180px]">
                 <SelectValue />
               </SelectTrigger>

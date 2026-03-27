@@ -1523,7 +1523,7 @@ export default function OutcomeDetail() {
               >
                 <Sparkles className="w-3.5 h-3.5 mr-1.5" /> Use AI Plan
               </Button>
-              <Link href={`/agents/wizard?outcomeId=${outcomeId}&outcomeName=${encodeURIComponent(outcome.name)}&riskTier=${encodeURIComponent(outcome.riskTier)}${outcome.industryId ? `&industryId=${encodeURIComponent(outcome.industryId)}` : ""}&fromOutcome=true&description=${encodeURIComponent(`Agent created for outcome: ${outcome.name}. ${outcome.description || ""}`.trim())}`}>
+              <Link href={`/agents/wizard?outcomeId=${outcomeId}&outcomeName=${encodeURIComponent(outcome.name)}&riskTier=${encodeURIComponent(outcome.riskTier)}${(outcome as any).industryId ? `&industryId=${encodeURIComponent((outcome as any).industryId)}` : ""}&fromOutcome=true&description=${encodeURIComponent(`Agent created for outcome: ${outcome.name}. ${outcome.description || ""}`.trim())}`}>
                 <Button size="sm" variant="outline" data-testid="button-create-agent-for-outcome">
                   <Bot className="w-3.5 h-3.5 mr-1.5" /> Create Manually
                 </Button>
@@ -2243,7 +2243,7 @@ export default function OutcomeDetail() {
               </div>
 
               <div className="flex justify-end">
-                <Link href={`/agents/wizard?outcomeId=${outcomeId}&outcomeName=${encodeURIComponent(outcome.name)}&riskTier=${encodeURIComponent(outcome.riskTier)}${outcome.industryId ? `&industryId=${encodeURIComponent(outcome.industryId)}` : ""}&fromOutcome=true&description=${encodeURIComponent(`Agent created for outcome: ${outcome.name}. ${outcome.description || ""}`.trim())}`}>
+                <Link href={`/agents/wizard?outcomeId=${outcomeId}&outcomeName=${encodeURIComponent(outcome.name)}&riskTier=${encodeURIComponent(outcome.riskTier)}${(outcome as any).industryId ? `&industryId=${encodeURIComponent((outcome as any).industryId)}` : ""}&fromOutcome=true&description=${encodeURIComponent(`Agent created for outcome: ${outcome.name}. ${outcome.description || ""}`.trim())}`}>
                   <Button variant="ghost" size="sm" className="text-muted-foreground" data-testid="button-create-agent-from-outcome">
                     <Bot className="w-3.5 h-3.5 mr-1" /> Add Agent Manually
                   </Button>
@@ -5231,7 +5231,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
               try {
                 const mcpServersRes = await fetch("/api/mcp-servers");
                 const mcpServers = await mcpServersRes.json();
-                const serverNames = [...new Set(worker.mcpToolBindings.map(b => b.server))];
+                const serverNames = Array.from(new Set(worker.mcpToolBindings.map(b => b.server)));
                 for (const serverName of serverNames) {
                   const matched = mcpServers.find((s: any) =>
                     s.name.toLowerCase().includes(serverName.toLowerCase()) ||

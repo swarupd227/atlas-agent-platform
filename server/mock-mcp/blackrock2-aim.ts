@@ -322,7 +322,7 @@ router.post(["/execute-access-removal", "/execute-removal", "/execute_access_rem
     auditEventId: `AUD-${confirmId("SOX")}`,
     caseId,
     removedAt: new Date().toISOString(),
-    ...(isSwiftAdmin && {
+    ...(isSwiftAdmin ? {
       swiftAdminDetails: {
         adminRoleRevoked: true,
         bicCredentialInvalidated: true,
@@ -330,7 +330,7 @@ router.post(["/execute-access-removal", "/execute-removal", "/execute_access_rem
         hsmKeySerial: `HSM-${Math.floor(Math.random() * 99999 + 10000)}`,
         revocationCert: `REV-CERT-${uuid4().slice(0, 12).toUpperCase()}`,
       },
-    }),
+    } : {}),
   });
 });
 

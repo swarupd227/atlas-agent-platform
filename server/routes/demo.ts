@@ -441,7 +441,7 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
       };
       const zonePeaks: Record<string, number> = { eastUs: 7, centralUs: 8, westUs: 10, europe: 2, apac: 21 };
 
-      function gaussWeight(h: number, peak: number): number {
+      const gaussWeight = function(h: number, peak: number): number {
         const d = Math.min(Math.abs(h - peak), 24 - Math.abs(h - peak));
         return Math.exp(-d * d / 3.0);
       }
@@ -617,7 +617,7 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
       const personaId = req.params.id;
 
       // Deterministic timeline helper: uses sine function keyed by persona+day
-      function detTimeline(personaSeed: number, openThreshold: number, visitThreshold: number, purchaseThreshold: number, openBrands: string[]) {
+      const detTimeline = function(personaSeed: number, openThreshold: number, visitThreshold: number, purchaseThreshold: number, openBrands: string[]) {
         return Array.from({ length: 30 }, (_, i) => {
           const d = new Date();
           d.setDate(d.getDate() - (29 - i));
@@ -1281,7 +1281,7 @@ Log every action.`;
           version: "1.0.0",
           status: "active",
           rolloutStrategy: "direct",
-          trafficPercentage: 100,
+          // trafficPercentage (not in schema): 100,
         });
       }
       if (isRuntimeActive(deployment.id)) {

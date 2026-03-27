@@ -524,7 +524,7 @@ export default function EvalDetail() {
                 {typeLabels[suite.type] || suite.type}
               </Badge>
             )}
-            {(suite.type === "kpi_aligned" || (suite.ontologyTags && typeof suite.ontologyTags === "object" && (suite.ontologyTags as Record<string, unknown>).kpiAligned)) && (
+            {(suite.type === "kpi_aligned" || (Boolean(suite.ontologyTags) && typeof suite.ontologyTags === "object" && Boolean((suite.ontologyTags as Record<string, unknown>).kpiAligned))) && (
               <Badge variant="outline" className="text-[11px] bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/20" data-testid="badge-kpi-aligned">
                 <Target className="w-3 h-3 mr-1" />
                 KPI-Aligned

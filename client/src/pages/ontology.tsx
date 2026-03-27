@@ -602,16 +602,16 @@ export default function OntologyExplorer() {
   }
 
   async function handleAcceptKgSuggestion(concept: ConceptView, suggestion: KgSuggestion, idx: number) {
-    setKgPendingIdx(prev => new Set([...prev, idx]));
+    setKgPendingIdx(prev => new Set(Array.from(prev).concat([idx])));
     try {
       await acceptSingleKgRelationship(concept, suggestion, idx);
-      setKgAccepted(prev => new Set([...prev, idx]));
+      setKgAccepted(prev => new Set(Array.from(prev).concat([idx])));
       queryClient.invalidateQueries({ queryKey: ["/api/ontology/concepts", industryId] });
       toast({ title: "Relationship added", description: `Added "${suggestion.targetEntity}" relationship.` });
     } catch (err: any) {
       toast({ title: "Failed to add relationship", description: err.message, variant: "destructive" });
     } finally {
-      setKgPendingIdx(prev => { const next = new Set([...prev]); next.delete(idx); return next; });
+      setKgPendingIdx(prev => { const next = new Set(Array.from(prev)); next.delete(idx); return next; });
     }
   }
 
@@ -622,15 +622,15 @@ export default function OntologyExplorer() {
     for (let idx = 0; idx < kgSuggestions.length; idx++) {
       if (kgDismissed.has(idx) || kgAccepted.has(idx)) continue;
       const suggestion = kgSuggestions[idx];
-      setKgPendingIdx(prev => new Set([...prev, idx]));
+      setKgPendingIdx(prev => new Set(Array.from(prev).concat([idx])));
       try {
         await acceptSingleKgRelationship(concept, suggestion, idx);
-        setKgAccepted(prev => new Set([...prev, idx]));
+        setKgAccepted(prev => new Set(Array.from(prev).concat([idx])));
         added++;
       } catch {
         skipped++;
       } finally {
-        setKgPendingIdx(prev => { const next = new Set([...prev]); next.delete(idx); return next; });
+        setKgPendingIdx(prev => { const next = new Set(Array.from(prev)); next.delete(idx); return next; });
       }
     }
     queryClient.invalidateQueries({ queryKey: ["/api/ontology/concepts", industryId] });

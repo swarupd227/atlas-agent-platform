@@ -639,7 +639,6 @@ export async function ensureFitchAgents(): Promise<void> {
           annotations:        { endpoint: tool.endpoint, method: tool.method },
           enabled:            true,
           riskClassification: "low",
-          requiresApproval:   false,
         });
       }
     }

@@ -284,7 +284,7 @@ export default function KnowledgeBaseDetail() {
   });
 
   const addUrlMutation = useMutation({
-    mutationFn: async (data: { url: string; name: string; crawl: boolean; crawlDepth: number; maxPages: number }) => {
+    mutationFn: async (data: any) => {
       const res = await apiRequest("POST", `/api/knowledge-bases/${kbId}/sources/url`, data);
       return res.json();
     },

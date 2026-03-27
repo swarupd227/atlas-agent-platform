@@ -788,7 +788,7 @@ export default function AgentExport() {
                     <div className="flex flex-col gap-1.5">
                       <span className="text-[10px] font-medium text-muted-foreground uppercase">Agent</span>
                       <span className="text-xs font-medium truncate">{agent.name}</span>
-                      {agent.industry && <Badge variant="outline" className="text-[9px] w-fit">{agent.industry}</Badge>}
+                      {(agent as any).industry && <Badge variant="outline" className="text-[9px] w-fit">{(agent as any).industry}</Badge>}
                       {agent.riskTier && <Badge variant="outline" className="text-[9px] w-fit">Risk: {agent.riskTier}</Badge>}
                     </div>
                   </>
@@ -1400,7 +1400,7 @@ function ConfigureStep({
                       <CheckCircle className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
                       <span className="text-xs text-emerald-700 dark:text-emerald-400">Approval created.</span>
                       <Link href={`/approvals/${exportApprovalId}`}>
-                        <Button variant="link" size="sm" className="h-auto p-0 text-xs" data-testid="button-view-approval">View</Button>
+                        <Button variant="ghost" size="sm" className="h-auto p-0 text-xs" data-testid="button-view-approval">View</Button>
                       </Link>
                     </div>
                   )}

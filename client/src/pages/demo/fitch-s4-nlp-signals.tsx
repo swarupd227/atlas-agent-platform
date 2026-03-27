@@ -36,7 +36,7 @@ export default function FitchS4PeerBenchmarking({ onScreenChange }: Props) {
         {hasResults && (
           <div className="flex items-center gap-2">
             <span className="text-[10px] text-muted-foreground">Bank:</span>
-            <Select value={selectedBank} onValueChange={setSelectedBank}>
+            <Select value={selectedBank} onValueChange={(v) => setSelectedBank(v as any)}>
               <SelectTrigger data-testid="fitch-s4-bank-select" className="h-7 text-[11px] w-[180px]">
                 <SelectValue />
               </SelectTrigger>
@@ -131,7 +131,7 @@ export default function FitchS4PeerBenchmarking({ onScreenChange }: Props) {
                         <tr
                           key={bank.id}
                           data-testid={`fitch-peer-row-${bank.id}`}
-                          onClick={() => setSelectedBank(bank.name)}
+                          onClick={() => setSelectedBank(bank.name as any)}
                           className={`border-b border-border/30 last:border-none cursor-pointer hover:bg-muted/20 ${isSelected ? "bg-muted/30" : ""}`}
                         >
                           <td className="px-4 py-2 text-muted-foreground/50">{i + 1}</td>

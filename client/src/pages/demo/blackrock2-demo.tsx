@@ -505,7 +505,7 @@ export default function BlackRock2Demo() {
       const d = JSON.parse(e.data);
       const nodeId = AGENT_NAME_MAP[d.agentName];
       if (nodeId) {
-        setCompletedAgents(prev => new Set([...prev, nodeId]));
+        setCompletedAgents(prev => new Set(Array.from(prev).concat([nodeId])));
         setActiveAgent(null);
       }
       addEvent("agent_complete", d.agentName, `${d.success ? "✓ Complete" : "✗ Failed"}: ${d.message}`);

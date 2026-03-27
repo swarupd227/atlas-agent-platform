@@ -1142,7 +1142,7 @@ function AgentDetailInner() {
     if (deployRecommendation && !deployRecommendation.allowDirectDeploy) {
       setDeployStrategyDialogOpen(true);
     } else {
-      deployMutation.mutate();
+      deployMutation.mutate(undefined as any);
     }
   };
 
@@ -4818,7 +4818,7 @@ function AgentDetailInner() {
                     </CardContent>
                   </Card>
 
-                  {ra.agentCardData && (
+                  {Boolean(ra.agentCardData) && (
                     <Card className="md:col-span-2">
                       <CardHeader className="pb-2">
                         <CardTitle className="text-base">Agent Card Details</CardTitle>
@@ -4910,7 +4910,7 @@ function AgentDetailInner() {
                     </Select>
                   </div>
                   <Button
-                    onClick={() => assignMcpMutation.mutate()}
+                    onClick={() => assignMcpMutation.mutate(undefined as any)}
                     disabled={!selectedMcpServerId || assignMcpMutation.isPending}
                     data-testid="button-confirm-assign-mcp"
                   >
@@ -5407,7 +5407,7 @@ function AgentDetailInner() {
                       <FileText className="w-3 h-3 mr-1" />System prompt
                     </Badge>
                   )}
-                  {agent.runtimeConfig && (
+                  {Boolean(agent.runtimeConfig) && (
                     <Badge variant="secondary" className="text-xs" data-testid="badge-template-runtime">
                       <Settings className="w-3 h-3 mr-1" />Runtime config
                     </Badge>
@@ -5510,7 +5510,7 @@ function AgentDetailInner() {
               variant="outline"
               className="w-full border-amber-500/30 text-amber-600 hover:bg-amber-500/10"
               disabled={deployMutation.isPending}
-              onClick={() => deployMutation.mutate()}
+              onClick={() => deployMutation.mutate(undefined as any)}
               data-testid="button-deploy-full-override"
             >
               <AlertTriangle className="w-4 h-4 mr-1.5" />

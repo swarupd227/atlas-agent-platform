@@ -1306,7 +1306,7 @@ export default function HealingOperations() {
                               <div>
                                 <div className="flex flex-wrap items-center gap-2">
                                   <p className="text-sm font-medium">Shadow Replay Running</p>
-                                  {shadowValidation.autoTriggered && (
+                                  {!!shadowValidation.autoTriggered && (
                                     <Badge variant="outline" className="text-[10px] bg-purple-500/15 text-purple-600 border-purple-500/20" data-testid="badge-shadow-replay-auto-triggered-detail">Auto-triggered</Badge>
                                   )}
                                 </div>
@@ -1331,7 +1331,7 @@ export default function HealingOperations() {
                                     Failed
                                   </Badge>
                                 )}
-                                {shadowValidation.autoTriggered && (
+                                {!!shadowValidation.autoTriggered && (
                                   <Badge variant="outline" className="bg-purple-500/15 text-purple-600 dark:text-purple-400" data-testid="badge-shadow-replay-auto-triggered-result">Auto-triggered</Badge>
                                 )}
                                 <span className="text-sm font-medium" data-testid="text-shadow-replay-pass-rate">

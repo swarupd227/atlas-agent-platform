@@ -195,6 +195,7 @@ export default function Outcomes() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [showAllOutcomes, setShowAllOutcomes] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const { data: outcomes, isLoading } = useQuery<OutcomeContract[]>({
     queryKey: ["/api/outcomes"],

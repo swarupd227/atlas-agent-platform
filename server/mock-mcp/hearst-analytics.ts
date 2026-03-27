@@ -65,7 +65,7 @@ router.get("/conversion-data", (req: Request, res: Response) => {
 
   const brandsToUse = brand ? [brand as string] : BRANDS;
   const conversionTypes = ["subscription_start", "subscription_upgrade", "paywall_conversion", "event_registration", "digital_purchase", "affiliate_click_purchase"];
-  const conversions = [];
+  const conversions: any[] = [];
 
   for (let i = 0; i < limit; i++) {
     const b = brandsToUse[Math.floor(rng() * brandsToUse.length)];

@@ -179,7 +179,7 @@ const router = Router();
       const testCases: Array<{ name: string; inputData: unknown; expectedOutput: unknown; tags: string[] }> = [];
 
       const oTags = Array.isArray(agent.ontologyTags) ? agent.ontologyTags as string[] : [];
-      const domainPrefix = oTags.length > 0 ? oTags[0] : (agent.industry || agent.name);
+      const domainPrefix = oTags.length > 0 ? oTags[0] : ((agent as any).industry || agent.name);
       const domainTags = oTags.length > 0 ? oTags.slice(0, 3) : [];
 
       testCases.push({
@@ -684,9 +684,9 @@ const router = Router();
 
   router.delete("/api/agents/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id as string);
       if (!agent) return res.status(404).json({ message: "Agent not found" });
-      await storage.deleteAgent(req.params.id);
+      await storage.deleteAgent(req.params.id as string);
       const delTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
       await storage.createAuditEvent({
         actorType: "user",
@@ -892,7 +892,6 @@ const router = Router();
           tokenEstimate: estimateTokens(preview), previewContent: preview,
           sourceLabel: "Skills", sourceUrl: "/skills",
           itemCount: relevantSkills.length + mcpLinks.length,
-          skillSources,
         });
       } catch { layers.push({ id: "capabilities", name: "Agent Capabilities", description: "Linked skills and MCP server tools available to this agent", status: "not_configured", tokenEstimate: 0, previewContent: "Could not load capabilities." }); }
 
@@ -929,7 +928,7 @@ const router = Router();
         lines.push(`## EXECUTION HISTORY (last ${recentCompleted.length} completed runs)`);
         recentCompleted.forEach((t: any, i: number) => {
           const steps = Array.isArray(t.stepsJson) ? t.stepsJson as any[] : [];
-          const toolsUsed = [...new Set(steps.filter((s: any) => s.type === "tool_call").map((s: any) => s.toolName || s.name || "unknown"))].slice(0, 3);
+          const toolsUsed = Array.from(new Set(steps.filter((s: any) => s.type === "tool_call").map((s: any) => s.toolName || s.name || "unknown"))).slice(0, 3);
           const rawDecisions = Array.isArray(t.decisions) ? t.decisions as any[] : [];
           const keyDecisions = rawDecisions.slice(0, 2).map((d: any) => d.decision || d.action || d.label || d.description || JSON.stringify(d)).filter(Boolean);
           lines.push(`\nRun ${i + 1}: ${t.inputSummary?.substring(0, 80) || "Scheduled run"}`);
@@ -1089,7 +1088,7 @@ const router = Router();
         ruleCount: memGovRules.length,
         hasProfile: hasMemoryProfile,
         compliant: memGovRules.length > 0 && hasMemoryProfile,
-        regulations: [...new Set(memGovRules.map(r => r.regulation))],
+        regulations: Array.from(new Set(memGovRules.map(r => r.regulation))),
       };
 
       res.json({
@@ -1251,7 +1250,7 @@ const router = Router();
           score: oc.score,
           canonicalCount: oc.canonicalCount || 0,
           deprecatedCount: oc.deprecatedCount || 0,
-          timestamp: trace.createdAt?.toISOString?.() || trace.createdAt || new Date().toISOString(),
+          timestamp: trace.startedAt?.toISOString?.() || (trace.startedAt ? String(trace.startedAt) : new Date().toISOString()),
           deprecatedTermsUsed: oc.deprecatedTermsUsed || [],
         });
 
@@ -1313,7 +1312,7 @@ const router = Router();
   router.get("/api/traces/:id", checkPermission("view_traces"), async (req, res) => {
     const role = getRequestRole(req);
     const level = getRedactionLevel(role);
-    const trace = await storage.getTrace(req.params.id);
+    const trace = await storage.getTrace(req.params.id as string);
     if (!trace) return res.status(404).json({ error: "Trace not found" });
     res.json(redactPayload(trace, level));
   });
@@ -1330,7 +1329,7 @@ const router = Router();
 
   router.get("/api/provenance/:traceId", checkPermission("view_traces"), async (req, res) => {
     try {
-      const trace = await storage.getTrace(req.params.traceId);
+      const trace = await storage.getTrace(req.params.traceId as string);
       if (!trace) return res.status(404).json({ error: "Trace not found" });
 
       let integrityStatus: any = { valid: false, checks: {} };
@@ -1371,7 +1370,7 @@ const router = Router();
         auditEventId: trace.auditEventId || null,
         retrievedDocs: trace.retrievedDocs || null,
         integrity: integrityStatus,
-        capturedAt: (trace.provenanceSnapshot as any)?.capturedAt || trace.createdAt,
+        capturedAt: (trace.provenanceSnapshot as any)?.capturedAt || trace.startedAt,
       });
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1380,7 +1379,7 @@ const router = Router();
 
   router.get("/api/provenance/:traceId/reconstruct", checkPermission("view_traces"), async (req, res) => {
     try {
-      const trace = await storage.getTrace(req.params.traceId);
+      const trace = await storage.getTrace(req.params.traceId as string);
       if (!trace) return res.status(404).json({ error: "Trace not found" });
 
       const snapshot = (trace.provenanceSnapshot || {}) as any;
@@ -1397,7 +1396,7 @@ const router = Router();
               name: bp.name,
               versionHistory: bp.versionHistory,
               currentVersion: bp.version,
-              workflowJson: bp.workflowJson,
+              workflowJson: bp.blueprintJson,
             };
           } else {
             unavailable.push("blueprint");
@@ -1450,7 +1449,7 @@ const router = Router();
             available.policies.push({
               ...ps,
               currentStatus: policy?.status || "unknown",
-              rules: policy?.rules || null,
+              rules: (policy as any)?.rules || null,
               stillAvailable: !!policy,
             });
           } catch {
@@ -1512,7 +1511,7 @@ const router = Router();
       res.json({
         traceId: trace.id,
         agentId: trace.agentId,
-        executedAt: (snapshot.capturedAt || trace.createdAt),
+        executedAt: (snapshot.capturedAt || trace.startedAt),
         provenanceHash: trace.provenanceHash,
         available,
         unavailable,
@@ -1525,7 +1524,7 @@ const router = Router();
 
   router.get("/api/provenance/:traceId/diff", checkPermission("view_traces"), async (req, res) => {
     try {
-      const trace = await storage.getTrace(req.params.traceId);
+      const trace = await storage.getTrace(req.params.traceId as string);
       if (!trace) return res.status(404).json({ error: "Trace not found" });
 
       const snapshot = (trace.provenanceSnapshot || {}) as any;
@@ -1591,7 +1590,7 @@ const router = Router();
           const blueprints = await storage.getBlueprints();
           const bp = blueprints.find(b => b.id === snapshot.blueprintId);
           if (bp) {
-            const currentHash = nodeCrypto.createHash("sha256").update(canonicalJsonStringify(bp.workflowJson || {})).digest("hex");
+            const currentHash = nodeCrypto.createHash("sha256").update(canonicalJsonStringify(bp.blueprintJson || {})).digest("hex");
             const changed = snapshot.blueprintVersionHash && currentHash !== snapshot.blueprintVersionHash;
             diffs.push({
               component: "blueprint",
@@ -1607,7 +1606,7 @@ const router = Router();
       res.json({
         traceId: trace.id,
         agentId: trace.agentId,
-        executedAt: snapshot.capturedAt || trace.createdAt,
+        executedAt: snapshot.capturedAt || trace.startedAt,
         diffs,
         totalComponents: diffs.length,
         changedComponents: diffs.filter(d => d.changed).length,
@@ -1681,7 +1680,7 @@ const router = Router();
 
   router.get("/api/provenance/:traceId/export", checkPermission("view_traces"), async (req, res) => {
     try {
-      const trace = await storage.getTrace(req.params.traceId);
+      const trace = await storage.getTrace(req.params.traceId as string);
       if (!trace) return res.status(404).json({ error: "Trace not found" });
 
       const format = (req.query.format as string) || "generic";
@@ -1726,7 +1725,7 @@ const router = Router();
         exportedAt: new Date().toISOString(),
         traceId: trace.id,
         agentId: trace.agentId,
-        executedAt: snapshot.capturedAt || trace.createdAt,
+        executedAt: snapshot.capturedAt || trace.startedAt,
         tamperEvidence: integritySection,
         chainOfCustody,
       };
@@ -1739,7 +1738,7 @@ const router = Router();
           ...baseExport,
           title: "Investment Decision Reconstruction",
           agentIdentity: { agentId: trace.agentId, versionId: trace.versionId, industry: snapshot.industryContext },
-          decisionTimestamp: snapshot.capturedAt || trace.createdAt,
+          decisionTimestamp: snapshot.capturedAt || trace.startedAt,
           modelUsed: trace.modelId || "gpt-4.1",
           dataSources: kbSources,
           reasoningChain: (trace.stepsJson as any[])?.filter((s: any) => s.type === "ai_analysis" || s.type === "ai_planning").map((s: any) => ({ step: s.name, output: s.output })) || [],
@@ -1838,7 +1837,7 @@ const router = Router();
         return {
           traceId: trace.id,
           agentId: trace.agentId,
-          executedAt: snapshot.capturedAt || trace.createdAt,
+          executedAt: snapshot.capturedAt || trace.startedAt,
           status: trace.status,
           provenanceHash: trace.provenanceHash,
           auditEventId: trace.auditEventId,
@@ -2534,7 +2533,7 @@ const router = Router();
 
   router.post("/api/deployments/:id/routing", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
-      const deployment = await storage.getDeployment(req.params.id);
+      const deployment = await storage.getDeployment(req.params.id as string);
       if (!deployment) return res.status(404).json({ message: "Deployment not found" });
 
       const { shadowEnabled, canaryPercent, action } = req.body;
@@ -2839,6 +2838,7 @@ const router = Router();
               value: `${ontologyToolResults.length} tool(s) below threshold`,
               detail: ontologyToolResults.map(t => `${t.toolName}: ${Math.round(t.score * 100)}%`).join(", "),
               enforced: true,
+              threshold: undefined,
             });
           } else {
             checks.push({
@@ -2847,6 +2847,7 @@ const router = Router();
               value: "All tools aligned",
               detail: "All referenced tools meet 50% ontology alignment threshold",
               enforced: true,
+              threshold: undefined,
             });
           }
         }
@@ -3105,7 +3106,7 @@ const router = Router();
           const evalPrompt = `You are evaluating a skill called "${skill.name}" (domain: ${skill.domain || "general"}, industry: ${skill.industry || "general"}).
 
 Skill description: ${skill.description || "No description"}
-${skill.instructions ? `Skill instructions: ${skill.instructions}` : ""}
+${(skill as any).instructions ? `Skill instructions: ${(skill as any).instructions}` : ""}
 
 Test case: "${tc.name}"
 Input scenario: ${JSON.stringify(tc.inputData)}

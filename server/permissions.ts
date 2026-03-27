@@ -8,7 +8,8 @@ type RoleId =
   | "ops_sre"
   | "compliance_security"
   | "expert_validator"
-  | "finance";
+  | "finance"
+  | "domain_expert";
 
 type PermissionAction =
   | "create_modify_outcomes"
@@ -20,7 +21,10 @@ type PermissionAction =
   | "export_audit_bundle"
   | "approve_changes"
   | "billing_invoices"
-  | "manage_mcp_servers";
+  | "manage_mcp_servers"
+  | "manage_security"
+  | "manage_agents"
+  | "view_agents";
 
 type AccessLevel = "full" | "conditional" | "denied";
 
@@ -36,6 +40,9 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     approve_changes: "full",
     billing_invoices: "full",
     manage_mcp_servers: "full",
+    manage_security: "full",
+    manage_agents: "full",
+    view_agents: "full",
   },
   outcome_owner: {
     create_modify_outcomes: "full",
@@ -48,6 +55,9 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     approve_changes: "denied",
     billing_invoices: "conditional",
     manage_mcp_servers: "denied",
+    manage_security: "denied",
+    manage_agents: "denied",
+    view_agents: "conditional",
   },
   agent_engineer: {
     create_modify_outcomes: "conditional",
@@ -60,6 +70,9 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     approve_changes: "denied",
     billing_invoices: "denied",
     manage_mcp_servers: "conditional",
+    manage_security: "denied",
+    manage_agents: "full",
+    view_agents: "full",
   },
   ops_sre: {
     create_modify_outcomes: "denied",
@@ -72,6 +85,9 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     approve_changes: "denied",
     billing_invoices: "denied",
     manage_mcp_servers: "denied",
+    manage_security: "conditional",
+    manage_agents: "conditional",
+    view_agents: "full",
   },
   compliance_security: {
     create_modify_outcomes: "conditional",
@@ -84,6 +100,9 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     approve_changes: "denied",
     billing_invoices: "denied",
     manage_mcp_servers: "full",
+    manage_security: "full",
+    manage_agents: "conditional",
+    view_agents: "full",
   },
   expert_validator: {
     create_modify_outcomes: "conditional",
@@ -96,6 +115,9 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     approve_changes: "full",
     billing_invoices: "denied",
     manage_mcp_servers: "conditional",
+    manage_security: "denied",
+    manage_agents: "conditional",
+    view_agents: "full",
   },
   finance: {
     create_modify_outcomes: "denied",
@@ -108,6 +130,24 @@ const PERMISSION_MATRIX: Record<RoleId, Record<PermissionAction, AccessLevel>> =
     approve_changes: "denied",
     billing_invoices: "full",
     manage_mcp_servers: "denied",
+    manage_security: "denied",
+    manage_agents: "denied",
+    view_agents: "denied",
+  },
+  domain_expert: {
+    create_modify_outcomes: "conditional",
+    create_modify_blueprints: "denied",
+    deploy_staging_pilot: "denied",
+    deploy_prod: "denied",
+    create_modify_policies: "conditional",
+    view_traces: "conditional",
+    export_audit_bundle: "conditional",
+    approve_changes: "conditional",
+    billing_invoices: "denied",
+    manage_mcp_servers: "denied",
+    manage_security: "denied",
+    manage_agents: "denied",
+    view_agents: "full",
   },
 };
 
@@ -140,6 +180,11 @@ export function checkPermission(action: PermissionAction) {
     (req as any).userRole = role;
     next();
   };
+}
+
+export function hasPermission(role: RoleId, action: PermissionAction): boolean {
+  const access = PERMISSION_MATRIX[role]?.[action];
+  return access !== "denied" && access !== undefined;
 }
 
 export type RedactionLevel = "R0" | "R1" | "R2";
