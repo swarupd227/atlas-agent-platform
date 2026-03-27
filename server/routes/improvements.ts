@@ -26,12 +26,16 @@ import {
   handleZodError,
   buildAgentSystemPrompt,
   generateKpiAlignedEvalSuite,
+  checkPatchSafety,
+  runParameterMatching,
+  extractResponseText,
 } from "./helpers";
 import {
   executeTeamPipeline,
   runAgentOnce,
+  executePromptWithMcp,
 } from "../agent-runtime";
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import Anthropic from "@anthropic-ai/sdk";
 import multer from "multer";
 

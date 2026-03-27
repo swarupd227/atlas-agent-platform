@@ -3,7 +3,7 @@ import * as crypto from "crypto";
 import { storage } from "../storage";
 import { db } from "../db";
 import { desc, eq, and } from "drizzle-orm";
-import { conversations, messages as chatMessages } from "@shared/schema";
+import { conversations, messages as chatMessages, traceSpans, kpiDefinitions } from "@shared/schema";
 import { z, ZodError } from "zod";
 import {
   insertLoggingIntegrationSchema,
@@ -55,7 +55,9 @@ import {
   buildAgentSystemPrompt,
   resolvePolicyBundle,
   extractResponseText,
+  runParameterMatching,
 } from "./helpers";
+import { proxyToolCall } from "./governance-proxy";
 import {
   executePromptWithMcp,
   executeTeamPipeline,

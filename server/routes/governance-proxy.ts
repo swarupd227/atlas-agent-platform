@@ -31,7 +31,7 @@ const router = Router();
     return { allowed: true, remaining: limit - bucket.timestamps.length };
   }
 
-  async function proxyToolCall(
+  export async function proxyToolCall(
     toolName: string,
     toolInput: Record<string, unknown>,
     policyBundle: Awaited<ReturnType<typeof resolvePolicyBundle>>,

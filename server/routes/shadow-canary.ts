@@ -10,6 +10,7 @@ import {
   isRuntimeActive,
   getActiveRuntimes,
   executeTeamPipeline,
+  type RuntimeAgent,
 } from "../agent-runtime";
 
 const openai = new OpenAI({

@@ -2,8 +2,8 @@ import { Router } from "express";
 import OpenAI from "openai";
 import { z, ZodError } from "zod";
 import { storage } from "../storage";
-import { checkPermission } from "../permissions";
-import { resolveOntologyTags } from "./helpers";
+import { checkPermission, getOntologySensitivityKeys, invalidateOntologySensitivityCache } from "../permissions";
+import { resolveOntologyTags, runParameterMatching } from "./helpers";
 import { executeKGQueryTemplate } from "../agent-runtime";
 import {
   insertSkillSchema,

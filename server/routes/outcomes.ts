@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { storage } from "../storage";
 import { db } from "../db";
-import { desc } from "drizzle-orm";
+import { desc, eq } from "drizzle-orm";
 import { outcomeContracts, kpiDefinitions } from "@shared/schema";
 import { z, ZodError } from "zod";
 import {
@@ -13,6 +13,8 @@ import {
   resolveOntologyTags,
   computeConstraintGraph,
   recomputeOutcomeKpis,
+  handleZodError,
+  generateKpiAlignedEvalSuite,
 } from "./helpers";
 
 const router = Router();

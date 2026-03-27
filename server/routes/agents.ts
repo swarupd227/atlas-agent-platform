@@ -30,12 +30,14 @@ import {
   recomputeOutcomeKpis,
   computeConstraintGraph,
 } from "./helpers";
+import * as nodeCrypto from "crypto";
 import {
   startAgentRuntime,
   stopAgentRuntime,
   runAgentOnce,
   isRuntimeActive,
   checkOntologyCompliance,
+  canonicalJsonStringify,
 } from "../agent-runtime";
 import OpenAI from "openai";
 
@@ -1337,7 +1339,7 @@ const router = Router();
         const storedHash = trace.provenanceHash;
         let snapshotHashMatch = false;
         if (snapshot && storedHash) {
-          const recomputed = crypto.createHash("sha256")
+          const recomputed = nodeCrypto.createHash("sha256")
             .update(canonicalJsonStringify(snapshot))
             .digest("hex");
           snapshotHashMatch = recomputed === storedHash;
@@ -1589,7 +1591,7 @@ const router = Router();
           const blueprints = await storage.getBlueprints();
           const bp = blueprints.find(b => b.id === snapshot.blueprintId);
           if (bp) {
-            const currentHash = crypto.createHash("sha256").update(canonicalJsonStringify(bp.workflowJson || {})).digest("hex");
+            const currentHash = nodeCrypto.createHash("sha256").update(canonicalJsonStringify(bp.workflowJson || {})).digest("hex");
             const changed = snapshot.blueprintVersionHash && currentHash !== snapshot.blueprintVersionHash;
             diffs.push({
               component: "blueprint",
@@ -1640,7 +1642,7 @@ const router = Router();
 
         let snapshotHashMatch = false;
         if (snapshot && storedHash) {
-          const recomputed = crypto.createHash("sha256")
+          const recomputed = nodeCrypto.createHash("sha256")
             .update(canonicalJsonStringify(snapshot))
             .digest("hex");
           snapshotHashMatch = recomputed === storedHash;
@@ -1693,7 +1695,7 @@ const router = Router();
       };
       try {
         if (trace.provenanceHash && trace.provenanceSnapshot) {
-          const recomputed = crypto.createHash("sha256")
+          const recomputed = nodeCrypto.createHash("sha256")
             .update(canonicalJsonStringify(trace.provenanceSnapshot))
             .digest("hex");
           integritySection.chainVerified = recomputed === trace.provenanceHash;
@@ -1941,7 +1943,7 @@ const router = Router();
             const maxSeq = auditEvents.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
             const lastHash = auditEvents.length > 0 ? auditEvents[auditEvents.length - 1].eventHash || "" : "";
             const eventData = `${maxSeq + 1}:ontology_bypass:${data.agentId}:${Date.now()}`;
-            const eventHash = `sha256:${crypto.createHash("sha256").update(eventData + lastHash).digest("hex")}`;
+            const eventHash = `sha256:${nodeCrypto.createHash("sha256").update(eventData + lastHash).digest("hex")}`;
 
             await storage.createAuditEvent({
               actorType: "user",
@@ -2120,7 +2122,7 @@ const router = Router();
       const lastHash = auditEvents.length > 0 ? auditEvents[auditEvents.length - 1].eventHash || "" : "";
       const crypto = await import("crypto");
       const eventData = `${maxSeq + 1}:deployment_${action}:${targetId || scope}:${Date.now()}`;
-      const eventHash = `sha256:${crypto.createHash("sha256").update(eventData + lastHash).digest("hex")}`;
+      const eventHash = `sha256:${nodeCrypto.createHash("sha256").update(eventData + lastHash).digest("hex")}`;
 
       const auditEvent = await storage.createAuditEvent({
         actorType: "user",
@@ -2293,7 +2295,7 @@ const router = Router();
           const maxSeqNum = auditEventsAll.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
           const lastHashVal = auditEventsAll.length > 0 ? auditEventsAll[auditEventsAll.length - 1].eventHash || "" : "";
           const evtData = `${maxSeqNum + 1}:eval_gate_blocked:${source.id}:${Date.now()}`;
-          const evtHash = `sha256:${crypto.createHash("sha256").update(evtData + lastHashVal).digest("hex")}`;
+          const evtHash = `sha256:${nodeCrypto.createHash("sha256").update(evtData + lastHashVal).digest("hex")}`;
 
           await storage.createAuditEvent({
             actorType: "system",
@@ -2331,7 +2333,7 @@ const router = Router();
         const maxSeqNum = auditEventsAll.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
         const lastHashVal = auditEventsAll.length > 0 ? auditEventsAll[auditEventsAll.length - 1].eventHash || "" : "";
         const evtData = `${maxSeqNum + 1}:eval_gate_bypassed:${source.id}:${Date.now()}`;
-        const evtHash = `sha256:${crypto.createHash("sha256").update(evtData + lastHashVal).digest("hex")}`;
+        const evtHash = `sha256:${nodeCrypto.createHash("sha256").update(evtData + lastHashVal).digest("hex")}`;
 
         await storage.createAuditEvent({
           actorType: "user",
@@ -2410,7 +2412,7 @@ const router = Router();
             const maxSeqNum2 = auditEventsAll2.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
             const lastHashVal2 = auditEventsAll2.length > 0 ? auditEventsAll2[auditEventsAll2.length - 1].eventHash || "" : "";
             const evtData2 = `${maxSeqNum2 + 1}:ontology_bypass:${source.id}:${Date.now()}`;
-            const evtHash2 = `sha256:${crypto.createHash("sha256").update(evtData2 + lastHashVal2).digest("hex")}`;
+            const evtHash2 = `sha256:${nodeCrypto.createHash("sha256").update(evtData2 + lastHashVal2).digest("hex")}`;
 
             await storage.createAuditEvent({
               actorType: "user",
@@ -2628,7 +2630,7 @@ const router = Router();
       const crypto = await import("crypto");
       const lastHash = allEvents.length > 0 ? allEvents[allEvents.length - 1].eventHash || "" : "";
       const eventData = `${maxSeq + 1}:routing_change:${deployment.id}:${Date.now()}`;
-      const eventHash = `sha256:${crypto.createHash("sha256").update(eventData + lastHash).digest("hex")}`;
+      const eventHash = `sha256:${nodeCrypto.createHash("sha256").update(eventData + lastHash).digest("hex")}`;
 
       await storage.createAuditEvent({
         actorType: "system",
@@ -2874,7 +2876,7 @@ const router = Router();
       const lastHash = auditEvents.length > 0 ? auditEvents[auditEvents.length - 1].eventHash || "" : "";
       const crypto = await import("crypto");
       const eventData = `${maxSeq + 1}:deployment_rollback:${deployment.id}:${Date.now()}`;
-      const eventHash = `sha256:${crypto.createHash("sha256").update(eventData + lastHash).digest("hex")}`;
+      const eventHash = `sha256:${nodeCrypto.createHash("sha256").update(eventData + lastHash).digest("hex")}`;
 
       await storage.createAuditEvent({
         actorType: "system",
@@ -2985,7 +2987,7 @@ const router = Router();
       const lastHash = auditEvents.length > 0 ? auditEvents[auditEvents.length - 1].eventHash || "" : "";
       const crypto = await import("crypto");
       const eventData = `${maxSeq + 1}:auto_promote:${deployment.id}:${Date.now()}`;
-      const eventHash = `sha256:${crypto.createHash("sha256").update(eventData + lastHash).digest("hex")}`;
+      const eventHash = `sha256:${nodeCrypto.createHash("sha256").update(eventData + lastHash).digest("hex")}`;
 
       await storage.createAuditEvent({
         actorType: "system",
