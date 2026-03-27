@@ -19,6 +19,7 @@ import agentsRouter from "./routes/agents";
 import governanceRouter from "./routes/governance";
 import improvementsRouter from "./routes/improvements";
 import runtimeRouter from "./routes/runtime";
+import playgroundRouter from "./routes/playground";
 import {
   computeConstraintGraph,
   recomputeOutcomeKpis,
@@ -268,6 +269,7 @@ export async function registerRoutes(
   app.use(governanceRouter);    // includes billingRouter + governance domain routes
   app.use(improvementsRouter);
   app.use(runtimeRouter);
+  app.use(playgroundRouter);
 
   // ── Remaining router modules ─────────────────────────────────
   app.use(llmProvidersRouter);
