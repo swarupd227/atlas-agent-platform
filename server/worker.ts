@@ -3,7 +3,7 @@ import type { Job } from "@shared/schema";
 import { EventEmitter } from "events";
 import { checkOntologyCompliance, executeScheduledAgentCycle } from "./agent-runtime";
 import { industryEvalFrameworks } from "./routes";
-import { runLlmJudge, buildAgentContext } from "./eval-judge";
+import { runLlmJudge, runAgentOnInput, buildAgentContext } from "./eval-judge";
 
 export const jobEvents = new EventEmitter();
 jobEvents.setMaxListeners(50);
@@ -219,20 +219,26 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
 
       kpiCaseScores.push(kpiScoreEntry);
     } else {
+      const agentRun = await runAgentOnInput(
+        (agent as any).systemPrompt,
+        inputData,
+      );
       const judgeResult = await runLlmJudge(
         tc.name,
         inputData,
         (tc.expectedOutput as Record<string, unknown>) || null,
         agentCtx,
+        agentRun.output,
         industryDimsForJudge,
       );
       isPassed = judgeResult.isPassed;
-      latencyMs = judgeResult.latencyMs;
+      latencyMs = agentRun.latencyMs + judgeResult.latencyMs;
       actualOutput = {
         status: isPassed ? "pass" : "fail",
         matched: isPassed,
         confidence: judgeResult.confidence,
         reason: judgeResult.reason,
+        agentOutput: agentRun.output || null,
       };
 
       if (industryFramework && judgeResult.dimensionResults) {

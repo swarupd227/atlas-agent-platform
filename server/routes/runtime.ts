@@ -59,7 +59,7 @@ import {
   runParameterMatching,
 } from "./helpers";
 import { proxyToolCall } from "./governance-proxy";
-import { runLlmJudge, buildAgentContext } from "../eval-judge";
+import { runLlmJudge, runAgentOnInput, buildAgentContext } from "../eval-judge";
 import {
   executePromptWithMcp,
   executeTeamPipeline,
@@ -6245,14 +6245,19 @@ clean:
                     for (const tc of testCases) {
                       const inputData = (tc.inputData as Record<string, unknown>) || {};
                       const expectedOutput = (tc.expectedOutput as Record<string, unknown>) || null;
+                      const agentRun = await runAgentOnInput(
+                        (agent as any).systemPrompt,
+                        inputData,
+                      );
                       const judgeResult = await runLlmJudge(
                         tc.name,
                         inputData,
                         expectedOutput,
                         agentCtxForEval,
+                        agentRun.output,
                       );
                       if (judgeResult.isPassed) passedCases++;
-                      totalLatencyMs += judgeResult.latencyMs;
+                      totalLatencyMs += agentRun.latencyMs + judgeResult.latencyMs;
                     }
                   }
 
