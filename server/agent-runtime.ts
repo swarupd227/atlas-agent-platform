@@ -2623,14 +2623,15 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
       }
       const existing = await storage.getActiveScheduledRunForDeployment(deploymentId);
       if (!existing) {
+        const firstRunAt = skipInitialCycle ? new Date() : new Date(Date.now() + intervalMs);
         await storage.createJob({
           type: "agent_scheduled_run",
           status: "queued",
           agentId: deployment.agentId,
           payload: { deploymentId, agentId: deployment.agentId, intervalMs, agentName: agent.name },
-          scheduledFor: new Date(),
+          scheduledFor: firstRunAt,
         });
-        console.log(`[agent-runtime] Scheduled durable runtime for ${agent.name} (every ${intervalMs / 1000}s)`);
+        console.log(`[agent-runtime] Scheduled durable runtime for ${agent.name} (every ${intervalMs / 1000}s, next: ${firstRunAt.toISOString()})`);
       } else {
         console.log(`[agent-runtime] Durable runtime already scheduled for ${agent.name} (next run: ${existing.scheduledFor?.toISOString() ?? "queued"})`);
       }
