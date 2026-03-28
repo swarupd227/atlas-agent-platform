@@ -3726,7 +3726,7 @@ function CostModelingPanel({ industryCtx, industryLabel }: {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {benchmarks.map(([key, bm]) => {
             const midpoint = (bm.low + bm.high) / 2;
-            const estimatedCost = +(midpoint * (0.85 + Math.random() * 0.3)).toFixed(2);
+            const estimatedCost = +midpoint.toFixed(2);
             const inRange = estimatedCost >= bm.low && estimatedCost <= bm.high;
             const belowRange = estimatedCost < bm.low;
             const statusColor = belowRange

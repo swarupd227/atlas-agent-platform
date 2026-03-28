@@ -235,18 +235,6 @@ const REGULATORY_ALERTS: Record<string, Array<{ id: string; title: string; body:
   ],
 };
 
-function generateTimeSeriesData(days: number, baseValue: number, variance: number, trend: "up" | "down" | "stable" = "stable") {
-  return Array.from({ length: days }, (_, i) => {
-    const date = new Date();
-    date.setDate(date.getDate() - (days - 1 - i));
-    const trendFactor = trend === "up" ? i * 0.5 : trend === "down" ? -i * 0.3 : 0;
-    const value = Math.max(0, baseValue + trendFactor + (Math.random() - 0.5) * variance);
-    return {
-      date: date.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-      value: Math.round(value * 100) / 100,
-    };
-  });
-}
 
 function RunDetailPanel({ run }: { run: any }) {
   const steps = run.stepsJson || [];
@@ -568,6 +556,20 @@ export default function Monitor() {
     queryKey: ["/api/healing-pipelines"],
   });
 
+  const successRateSeriesUrl = `/api/monitor/series?metric=successRate&days=7${selectedAgentId ? `&agentId=${selectedAgentId}` : ""}`;
+  const latencySeriesUrl = `/api/monitor/series?metric=latencyMs&days=7${selectedAgentId ? `&agentId=${selectedAgentId}` : ""}`;
+  const costSeriesUrl = `/api/monitor/series?metric=costUsd&days=7${selectedAgentId ? `&agentId=${selectedAgentId}` : ""}`;
+
+  const { data: successRateSeries } = useQuery<Array<{ date: string; value: number }>>({
+    queryKey: [successRateSeriesUrl],
+  });
+  const { data: latencySeries } = useQuery<Array<{ date: string; value: number }>>({
+    queryKey: [latencySeriesUrl],
+  });
+  const { data: costSeries } = useQuery<Array<{ date: string; value: number }>>({
+    queryKey: [costSeriesUrl],
+  });
+
   const { toast } = useToast();
 
   const remediateMutation = useMutation({
@@ -863,12 +865,12 @@ export default function Monitor() {
   };
 
   const chartDefinitions = [
-    { id: "success-rate", title: "Success Rate", currentValue: `${successRate}%`, color: "#10b981", type: "area" as const, data: generateTimeSeriesData(7, 95, 3, "stable") },
-    { id: "p95-latency", title: "P95 Latency", currentValue: formatMs(avgLatency || 800), color: "#3b82f6", type: "line" as const, data: generateTimeSeriesData(7, 800, 200, "stable") },
-    { id: "cost-per-run", title: "Cost per Run", currentValue: `$0.12`, color: "#8b5cf6", type: "bar" as const, data: generateTimeSeriesData(7, 0.12, 0.05) },
-    { id: "policy-violations", title: "Policy Violations", currentValue: `${policyViolationCount}`, color: "#ef4444", type: "area" as const, data: generateTimeSeriesData(7, 3, 2) },
-    { id: "drift-score", title: "Hallucination/Drift Score", currentValue: "92%", color: "#f59e0b", type: "line" as const, data: generateTimeSeriesData(7, 92, 5, "down") },
-    { id: "kpi-confidence", title: "KPI Confidence", currentValue: "87%", color: "#10b981", type: "area" as const, data: generateTimeSeriesData(7, 87, 8, "up") },
+    { id: "success-rate", title: "Success Rate", currentValue: `${successRate}%`, color: "#10b981", type: "area" as const, data: successRateSeries ?? [] },
+    { id: "p95-latency", title: "P95 Latency", currentValue: formatMs(avgLatency || 800), color: "#3b82f6", type: "line" as const, data: latencySeries ?? [] },
+    { id: "cost-per-run", title: "Cost per Run", currentValue: `$0.12`, color: "#8b5cf6", type: "bar" as const, data: costSeries ?? [] },
+    { id: "policy-violations", title: "Policy Violations", currentValue: `${policyViolationCount}`, color: "#ef4444", type: "area" as const, data: [] },
+    { id: "drift-score", title: "Hallucination/Drift Score", currentValue: "92%", color: "#f59e0b", type: "line" as const, data: [] },
+    { id: "kpi-confidence", title: "KPI Confidence", currentValue: "87%", color: "#10b981", type: "area" as const, data: [] },
   ];
 
   const changeSignals = (() => {

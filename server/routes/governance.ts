@@ -2,7 +2,7 @@ import { Router } from "express";
 import * as nodeCrypto from "node:crypto";
 import { storage } from "../storage";
 import { db } from "../db";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { z, ZodError } from "zod";
 import {
   insertPolicySchema,
@@ -3587,5 +3587,64 @@ Eval Suites: ${evalSuites.length} configured`,
     }
   });
 
+  router.get("/api/monitor/series", async (req, res) => {
+    try {
+      const metric = String(req.query.metric || "successRate");
+      const days = Math.min(Math.max(parseInt(String(req.query.days || "7"), 10) || 7, 1), 365);
+      const agentId = req.query.agentId ? String(req.query.agentId) : null;
+
+      const validMetrics = ["successRate", "latencyMs", "costUsd"];
+      if (!validMetrics.includes(metric)) {
+        return res.status(400).json({ error: `metric must be one of: ${validMetrics.join(", ")}` });
+      }
+
+      let rows: Array<{ date: string; value: number }>;
+
+      if (metric === "successRate") {
+        const result = await db.execute(sql`
+          SELECT
+            TO_CHAR(DATE(started_at), 'Mon DD') AS date,
+            ROUND(
+              (COUNT(CASE WHEN status = 'completed' THEN 1 END)::numeric / NULLIF(COUNT(*), 0)) * 100,
+              2
+            ) AS value
+          FROM run_traces
+          WHERE started_at >= NOW() - (${days} || ' days')::interval
+            ${agentId ? sql`AND agent_id = ${agentId}` : sql``}
+          GROUP BY DATE(started_at)
+          ORDER BY DATE(started_at) ASC
+        `);
+        rows = (result.rows as any[]).map(r => ({ date: r.date, value: Number(r.value) }));
+      } else if (metric === "latencyMs") {
+        const result = await db.execute(sql`
+          SELECT
+            TO_CHAR(DATE(started_at), 'Mon DD') AS date,
+            ROUND(AVG(latency_ms)::numeric, 2) AS value
+          FROM run_traces
+          WHERE started_at >= NOW() - (${days} || ' days')::interval
+            ${agentId ? sql`AND agent_id = ${agentId}` : sql``}
+          GROUP BY DATE(started_at)
+          ORDER BY DATE(started_at) ASC
+        `);
+        rows = (result.rows as any[]).map(r => ({ date: r.date, value: Number(r.value) }));
+      } else {
+        const result = await db.execute(sql`
+          SELECT
+            TO_CHAR(DATE(started_at), 'Mon DD') AS date,
+            ROUND(AVG(cost_usd)::numeric, 4) AS value
+          FROM run_traces
+          WHERE started_at >= NOW() - (${days} || ' days')::interval
+            ${agentId ? sql`AND agent_id = ${agentId}` : sql``}
+          GROUP BY DATE(started_at)
+          ORDER BY DATE(started_at) ASC
+        `);
+        rows = (result.rows as any[]).map(r => ({ date: r.date, value: Number(r.value) }));
+      }
+
+      res.json(rows);
+    } catch (e: any) {
+      res.status(500).json({ message: e.message || "Failed to fetch monitor series" });
+    }
+  });
 
 export default router;

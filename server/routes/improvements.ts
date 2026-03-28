@@ -4370,7 +4370,7 @@ Eval Suites: ${evalSuites.length} configured`,
           guardrails: { maxPolicyViolationIncrease: 0, maxLatencyIncrease: "20%", minSuccessRate: 0.85 },
           status: se.status,
           results: se.results,
-          startedAt: new Date(Date.now() - Math.random() * 7 * 86400000),
+          startedAt: new Date(),
           completedAt: se.status === "completed" ? new Date() : null,
         });
         createdExps.push(exp);
