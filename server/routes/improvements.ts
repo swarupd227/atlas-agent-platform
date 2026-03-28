@@ -2219,6 +2219,11 @@ ${(() => {
   if (ctx.currentProposal) {
     parts.push(`CURRENT PROPOSAL TO REFINE (the user is asking to update or improve this):\n${JSON.stringify(ctx.currentProposal, null, 2)}`);
   }
+  if (ctx.platformIntelDecisions && (ctx.platformIntelDecisions.accepted?.length > 0 || ctx.platformIntelDecisions.rejected?.length > 0)) {
+    const accepted = (ctx.platformIntelDecisions.accepted || []).map((d: any) => `  - ${d.type === 'template' ? 'Template' : 'Agent'}: "${d.name}" (id: ${d.id})`).join('\n');
+    const rejected = (ctx.platformIntelDecisions.rejected || []).map((d: any) => `  - ${d.type === 'template' ? 'Template' : 'Agent'}: "${d.name}" (id: ${d.id})`).join('\n');
+    parts.push(`PLATFORM INTELLIGENCE DECISIONS (user has reviewed AI-suggested agents and templates):\nACCEPTED (incorporate these into the proposal — reference them by name):\n${accepted || '  (none)'}\nREJECTED (do NOT propose these again — suggest alternatives if needed):\n${rejected || '  (none)'}`);
+  }
   return parts.length > 0 ? `STRUCTURED CONTEXT FROM USER INPUTS:\n${parts.join('\n\n')}` : 'No additional structured context provided yet.';
 })()}
 
@@ -2234,6 +2239,7 @@ Guidelines:
 - Reference existing templates when a match exists
 - CRITICAL: If STRUCTURED CONTEXT FROM USER INPUTS is present above, you MUST use it: incorporate process steps, pain points, actor names, timing data, and identified opportunities directly into the proposal. Do not ignore this data.
 - CRITICAL: If CURRENT PROPOSAL TO REFINE is present, output a new full proposal JSON that addresses the user's latest request while preserving the parts they haven't asked to change. Always output the complete JSON, not a partial update.
+- CRITICAL: If PLATFORM INTELLIGENCE DECISIONS is present, you MUST respect it: reference accepted agents/templates by name in your proposal and do NOT re-propose any rejected agent or template. If a user rejected an agent, acknowledge it and suggest a meaningfully different alternative approach instead.
 - CRITICAL: Always include a regulatoryConstraints array in the proposal with 4–8 EXTERNAL statutory or regulatory frameworks (e.g. SOX, GDPR, FINRA, HIPAA, PCI-DSS, NIST). Do NOT put internal platform governance policies in this array — those go in applicablePolicies. Do not dump generic industry regulations; select only those genuinely relevant to this specific outcome. For each, include 2-4 specific requirements.
 - CRITICAL: Always include an applicablePolicies array. Review the ACTIVE PLATFORM GOVERNANCE POLICIES listed above — prioritize COMPLIANCE PACK POLICIES (those listed under "COMPLIANCE PACK POLICIES") over standalone ones. Select ONLY the policies genuinely applicable to this specific outcome. For each selected policy include: policyId (the exact UUID shown after "id:"), name exactly as listed (including any [Framework] prefix), domain, a one-sentence rationale, and packName (if the policy name has a [Framework] prefix extract the compliance pack name from it, e.g. "[SOX]" → "SOX Compliance Pack", "[MiFID II]" → "MiFID II Compliance Pack", "[HIPAA]" → "HIPAA Compliance Pack"; for standalone policies set packName to null). If no policies apply, return an empty array.`;
 

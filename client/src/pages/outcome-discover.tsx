@@ -781,6 +781,33 @@ export default function OutcomeDiscover() {
       if (proposal) {
         discoveryContext.currentProposal = proposal;
       }
+      const hasAnyDecision = Object.keys(agentDecisions).length > 0 || Object.keys(templateDecisions).length > 0;
+      if (hasAnyDecision) {
+        const allAgentMatches = platformIntel?.matchedAgents.flatMap(r => r.matches) ?? [];
+        const allTemplateMatches = platformIntel?.matchedTemplates ?? [];
+        discoveryContext.platformIntelDecisions = {
+          accepted: [
+            ...Object.entries(agentDecisions).filter(([, d]) => d === 'accepted').map(([id]) => {
+              const a = allAgentMatches.find(m => m.id === id);
+              return { type: 'agent', id, name: a?.name ?? id };
+            }),
+            ...Object.entries(templateDecisions).filter(([, d]) => d === 'accepted').map(([id]) => {
+              const t = allTemplateMatches.find(m => m.id === id);
+              return { type: 'template', id, name: t?.name ?? id };
+            }),
+          ],
+          rejected: [
+            ...Object.entries(agentDecisions).filter(([, d]) => d === 'rejected').map(([id]) => {
+              const a = allAgentMatches.find(m => m.id === id);
+              return { type: 'agent', id, name: a?.name ?? id };
+            }),
+            ...Object.entries(templateDecisions).filter(([, d]) => d === 'rejected').map(([id]) => {
+              const t = allTemplateMatches.find(m => m.id === id);
+              return { type: 'template', id, name: t?.name ?? id };
+            }),
+          ],
+        };
+      }
 
       const res = await fetch("/api/ai/outcome-discover", {
         method: "POST",
@@ -850,9 +877,15 @@ export default function OutcomeDiscover() {
       riskThreshold: proposal.outcomeContract.riskThreshold,
       maxDriftPercent: proposal.outcomeContract.maxDriftPercent,
       approvalGates: proposal.outcomeContract.approvalGates ?? [],
-      slaConfig: proposal.outcomeContract.slaDescription
-        ? { ...(proposal.outcomeContract as any).slaConfig, slaDescription: proposal.outcomeContract.slaDescription }
-        : ((proposal.outcomeContract as any).slaConfig ?? undefined),
+      slaConfig: (() => {
+        const base = (proposal.outcomeContract as any).slaConfig ?? {};
+        const withSla = proposal.outcomeContract.slaDescription
+          ? { ...base, slaDescription: proposal.outcomeContract.slaDescription }
+          : base;
+        return processSteps.length > 0
+          ? { ...withSla, processFlow: processSteps }
+          : (Object.keys(withSla).length > 0 ? withSla : undefined);
+      })(),
     });
   }
 

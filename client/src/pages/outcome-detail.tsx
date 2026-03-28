@@ -428,6 +428,7 @@ export default function OutcomeDetail() {
   const [evidenceWindow, setEvidenceWindow] = useState("7d");
   const [impactNetworkOpen, setImpactNetworkOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [processAnalysisOpen, setProcessAnalysisOpen] = useState(false);
   const [, setLocation] = useLocation();
 
   const deleteOutcomeMutation = useMutation({
@@ -1690,6 +1691,64 @@ export default function OutcomeDetail() {
 
         {/* Tab 1: KPI Delivery */}
         <TabsContent value="kpi-delivery" className="space-y-6" data-testid="tabcontent-kpi-delivery">
+          {(() => {
+            const processFlow = sla.processFlow as Array<{ description: string; actor: string; timeMins: number; painPoints?: string; improvementIdeas?: string }> | undefined;
+            if (!processFlow || processFlow.length === 0) return null;
+            const totalMins = processFlow.reduce((s, step) => s + (step.timeMins || 0), 0);
+            return (
+              <Card data-testid="card-process-analysis">
+                <CardHeader className="pb-2">
+                  <button
+                    className="flex items-center justify-between w-full text-left"
+                    onClick={() => setProcessAnalysisOpen(v => !v)}
+                    data-testid="button-toggle-process-analysis"
+                    type="button"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Workflow className="w-4 h-4 text-primary/70" />
+                      <CardTitle className="text-sm font-semibold">Process Analysis</CardTitle>
+                      <Badge variant="secondary" className="text-[10px] h-4 px-1.5">{processFlow.length} steps</Badge>
+                      <span className="text-xs text-muted-foreground flex items-center gap-1">
+                        <Clock className="w-3 h-3" />{totalMins} min total
+                      </span>
+                    </div>
+                    {processAnalysisOpen ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+                  </button>
+                </CardHeader>
+                {processAnalysisOpen && (
+                  <CardContent className="pt-0">
+                    <div className="flex flex-col gap-3" data-testid="list-process-steps">
+                      {processFlow.map((step, i) => (
+                        <div key={i} className="flex gap-3 p-3 rounded-lg bg-muted/40 border border-border/50" data-testid={`process-step-${i}`}>
+                          <div className="flex items-center justify-center w-6 h-6 rounded-full bg-primary/10 text-primary text-xs font-semibold shrink-0 mt-0.5">{i + 1}</div>
+                          <div className="flex flex-col gap-1 min-w-0 flex-1">
+                            <p className="text-sm font-medium text-foreground">{step.description}</p>
+                            <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                              {step.actor && (
+                                <span className="flex items-center gap-1">
+                                  <Users className="w-3 h-3" />{step.actor}
+                                </span>
+                              )}
+                              {step.timeMins != null && (
+                                <span className="flex items-center gap-1">
+                                  <Clock className="w-3 h-3" />{step.timeMins} min
+                                </span>
+                              )}
+                            </div>
+                            {step.painPoints && (
+                              <p className="text-xs text-amber-600 dark:text-amber-400 flex items-start gap-1 mt-0.5">
+                                <AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" />{step.painPoints}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                )}
+              </Card>
+            );
+          })()}
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div>
               <h2 className="text-lg font-semibold">KPI Delivery</h2>
