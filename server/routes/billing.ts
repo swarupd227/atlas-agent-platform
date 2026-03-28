@@ -25,7 +25,8 @@ const router = Router();
       const parsed = eventSchema.parse(req.body);
       const { outcomeId, agentId, traceId, type, payload, unitCount, unitValue } = parsed;
 
-      const outcome = await storage.getOutcome(outcomeId);
+      const orgId = getOrgId(req);
+      const outcome = await storage.getOutcome(outcomeId, orgId);
       if (!outcome) {
         return res.status(404).json({ error: "Outcome not found" });
       }
@@ -109,6 +110,7 @@ const router = Router();
       const signedHash = crypto.createHash("sha256").update(hashPayload).digest("hex");
 
       const event = await storage.createOutcomeEvent({
+        organizationId: orgId ?? undefined,
         outcomeId,
         agentId: agentId || null,
         traceId: traceId || null,
@@ -122,6 +124,7 @@ const router = Router();
       });
 
       await storage.createAuditEvent({
+        organizationId: orgId ?? undefined,
         action: "outcome_event_ingested",
         objectType: "outcome_event",
         objectId: event.id,
@@ -194,6 +197,7 @@ const router = Router();
               flywheelAutoSync = { suiteId, testCaseId: tc.id, trigger: "event_rejection" };
 
               await storage.createAuditEvent({
+                organizationId: orgId ?? undefined,
                 actorType: "system",
                 action: "flywheel_auto_sync",
                 objectType: "eval_test_case",
@@ -279,8 +283,8 @@ const router = Router();
     if (!event.traceId) return res.status(404).json({ error: "No trace linked to this event" });
     const trace = await storage.getTrace(event.traceId);
     if (!trace) return res.status(404).json({ error: "Linked trace not found" });
-    const outcome = await storage.getOutcome(event.outcomeId);
-    const agent = event.agentId ? await storage.getAgent(event.agentId) : null;
+    const outcome = await storage.getOutcome(event.outcomeId, getOrgId(req));
+    const agent = event.agentId ? await storage.getAgent(event.agentId, getOrgId(req)) : null;
     res.json({
       event,
       trace,
@@ -641,7 +645,8 @@ const router = Router();
         return res.status(400).json({ error: "outcomeId is required" });
       }
 
-      const outcome = await storage.getOutcome(outcomeId);
+      const orgId = getOrgId(req);
+      const outcome = await storage.getOutcome(outcomeId, orgId);
       if (!outcome) {
         return res.status(404).json({ error: "Outcome not found" });
       }
@@ -691,6 +696,7 @@ const router = Router();
 
       // Create the invoice
       const invoice = await storage.createInvoice({
+        organizationId: orgId ?? undefined,
         outcomeId,
         outcomeName: outcome.name,
         periodStart: pStart,
@@ -711,6 +717,7 @@ const router = Router();
           linkedCount++;
         } catch (linkErr: any) {
           await storage.createAuditEvent({
+            organizationId: orgId ?? undefined,
             action: "invoice_event_link_failed",
             objectType: "outcome_event",
             objectId: event.id,
@@ -730,6 +737,7 @@ const router = Router();
 
       // Audit event
       await storage.createAuditEvent({
+        organizationId: orgId ?? undefined,
         action: "invoice_generated",
         objectType: "invoice",
         objectId: invoice.id,
@@ -740,6 +748,7 @@ const router = Router();
 
       // Notification audit event for finance users
       await storage.createAuditEvent({
+        organizationId: orgId ?? undefined,
         action: "invoice_ready_notification",
         objectType: "invoice",
         objectId: invoice.id,
