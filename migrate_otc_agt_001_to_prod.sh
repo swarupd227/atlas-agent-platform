@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-# ATLAS — Quote & Configuration Agent (OTC-AGT-001) — Prod Migration Script
+# ATLAS — Quote & Configuration Agent (OTC-AGT-001) — Production Migration
 # Generated: 2026-03-28
 #
-# USAGE:
-#   export PROD_URL="https://your-prod-domain.replit.app"
+# SINGLE COMMAND TO RUN:
 #   bash migrate_otc_agt_001_to_prod.sh
 #
 # REQUIREMENTS: curl, jq
@@ -12,7 +11,8 @@
 
 set -euo pipefail
 
-BASE_URL="${PROD_URL:-http://localhost:5000}"
+BASE_URL="https://agent-lifecycle-management-platform.replit.app"
+
 echo ""
 echo "=================================================="
 echo " ATLAS — OTC-AGT-001 Quote & Configuration Agent"
@@ -21,20 +21,19 @@ echo "=================================================="
 echo ""
 
 if ! command -v jq &> /dev/null; then
-  echo "ERROR: jq is required. Install with: apt-get install jq  OR  brew install jq"
+  echo "ERROR: jq is required."
+  echo "  macOS:  brew install jq"
+  echo "  Linux:  sudo apt-get install jq"
   exit 1
 fi
 
-# Helper: POST to API, print label + id to stderr, return just the id on stdout
+# Helper: POST to endpoint, print label to stderr, return ID on stdout
 post_api() {
-  local label="$1"
-  local endpoint="$2"
-  local payload_file="$3"
-  local response
+  local label="$1" endpoint="$2" payload_file="$3"
+  local response id
   response=$(curl -s -X POST "${BASE_URL}${endpoint}" \
     -H "Content-Type: application/json" \
     -d @"${payload_file}")
-  local id
   id=$(echo "$response" | jq -r '.id // empty')
   if [ -z "$id" ] || [ "$id" = "null" ]; then
     echo "  ✗ FAILED: $label" >&2
@@ -45,15 +44,15 @@ post_api() {
   echo "$id"
 }
 
-TMPDIR_WORK=$(mktemp -d)
-trap "rm -rf $TMPDIR_WORK" EXIT
+WORK=$(mktemp -d)
+trap "rm -rf $WORK" EXIT
 
 # =============================================================================
 # STEP 1: Create 6 Skills
 # =============================================================================
-echo "STEP 1: Creating Skills..."
+echo "STEP 1: Creating 6 Skills..." >&2
 
-cat > "$TMPDIR_WORK/skill_product_catalog.json" <<'ENDJSON'
+cat > "$WORK/s1.json" <<'ENDJSON'
 {
   "name": "Product Catalog Retrieval",
   "description": "Performs RAG-based retrieval over product master data, configuration rules, compatibility matrices, and Bill of Materials (BOM) to validate customer requests against available SKUs and bundle options. Surfaces upsell and cross-sell opportunities based on product family relationships.",
@@ -67,13 +66,13 @@ cat > "$TMPDIR_WORK/skill_product_catalog.json" <<'ENDJSON'
   "tags": ["cpq", "product-catalog", "rag", "configuration", "bom", "order-to-cash"],
   "agentTypeCompatibility": ["single", "team"],
   "allowedTools": ["catalog.search_sku", "catalog.validate_config_rules", "catalog.get_bom", "catalog.list_compatible_products", "catalog.get_product_family"],
-  "markdownBody": "# Product Catalog Retrieval Skill\n\n## Purpose\nRetrieves and validates product configurations against the enterprise product master, surfacing compatible options and identifying incompatible combinations before pricing.\n\n## Process\n1. Normalize requested SKUs against product master catalog\n2. Validate configuration rules (mandatory/optional options, incompatibility constraints)\n3. Identify compatible product families for upsell/cross-sell\n4. Retrieve BOM for each configured item\n5. Flag discontinued or region-restricted products\n\n## Outputs\n- Validated product configuration with BOM\n- List of compatible alternatives and upsell options\n- Configuration conflict warnings\n\n## Error Handling\n- If product stale: force refresh from ERP master\n- If SKU not found: suggest nearest alternatives via semantic search\n- If config conflict: surface specific rule violation with remediation options",
+  "markdownBody": "# Product Catalog Retrieval Skill\n\n## Purpose\nRetrieves and validates product configurations against the enterprise product master, surfacing compatible options and identifying incompatible combinations before pricing.\n\n## Process\n1. Normalize requested SKUs against product master catalog\n2. Validate configuration rules (mandatory/optional options, incompatibility constraints)\n3. Identify compatible product families for upsell/cross-sell\n4. Retrieve BOM for each configured item\n5. Flag discontinued or region-restricted products\n\n## Outputs\n- Validated product configuration with BOM\n- List of compatible alternatives and upsell options\n- Configuration conflict warnings\n\n## Error Handling\n- If product stale: force refresh from ERP master (see Runbook: Product Catalog Stale Data)\n- If SKU not found: suggest nearest alternatives via semantic search\n- If config conflict: surface specific rule violation with remediation options",
   "status": "active"
 }
 ENDJSON
-SKILL_PRODUCT_CATALOG=$(post_api "Product Catalog Retrieval" "/api/skills" "$TMPDIR_WORK/skill_product_catalog.json")
+S1=$(post_api "Product Catalog Retrieval" "/api/skills" "$WORK/s1.json")
 
-cat > "$TMPDIR_WORK/skill_pricing_engine.json" <<'ENDJSON'
+cat > "$WORK/s2.json" <<'ENDJSON'
 {
   "name": "Pricing Engine",
   "description": "Applies multi-tier pricing logic, volume discount stacking, contract-specific rate cards, promotional offer evaluation, and currency conversion to produce a validated line-item price for each configured product or bundle. Enforces Robinson-Patman and ASC 606 revenue recognition compliance constraints.",
@@ -87,13 +86,13 @@ cat > "$TMPDIR_WORK/skill_pricing_engine.json" <<'ENDJSON'
   "tags": ["cpq", "pricing", "discounts", "revenue-recognition", "order-to-cash", "sox"],
   "agentTypeCompatibility": ["single", "team"],
   "allowedTools": ["pricing.get_base_price", "pricing.apply_volume_tiers", "pricing.apply_contract_rates", "pricing.apply_promotions", "pricing.convert_currency", "pricing.validate_discount_stack"],
-  "markdownBody": "# Pricing Engine Skill\n\n## Purpose\nCalculates the validated, compliant price for each quote line item, applying all relevant pricing rules in the correct order of precedence.\n\n## Pricing Hierarchy\n1. Contract-specific rate card\n2. Volume tier pricing (quantity breaks)\n3. Customer segment pricing\n4. Promotional calendar offers\n5. Manual discount (subject to approval thresholds)\n\n## Compliance Constraints\n- Robinson-Patman: No price discrimination without documented justification\n- ASC 606 / IFRS 15: Allocate bundle prices by Standalone Selling Price (SSP)\n- FCPA / UK Bribery: Flag excessive discounts >40% to government accounts for mandatory review\n\n## Error Handling\n- Pricing rule sync failure: fall back to last-synced cached prices, flag staleness warning on quote",
+  "markdownBody": "# Pricing Engine Skill\n\n## Purpose\nCalculates the validated, compliant price for each quote line item, applying all relevant pricing rules in the correct order of precedence.\n\n## Pricing Hierarchy\n1. Contract-specific rate card (if contract ID present)\n2. Volume tier pricing (based on quantity breaks in price list)\n3. Customer segment pricing (enterprise, SMB, government)\n4. Promotional calendar offers (time-bound)\n5. Manual discount (subject to approval thresholds)\n\n## Compliance Constraints\n- Robinson-Patman: Ensure no price discrimination for equivalent customers without documented justification\n- ASC 606 / IFRS 15: Apply correct transaction price allocation for bundles (SSP)\n- FCPA / UK Bribery: Flag excessive discounts >40% to government accounts for mandatory review\n\n## Error Handling\n- Pricing rule sync failure: fall back to last-synced cached prices, flag quote with staleness warning (see Runbook: Pricing Rule Sync Failure)",
   "status": "active"
 }
 ENDJSON
-SKILL_PRICING_ENGINE=$(post_api "Pricing Engine" "/api/skills" "$TMPDIR_WORK/skill_pricing_engine.json")
+S2=$(post_api "Pricing Engine" "/api/skills" "$WORK/s2.json")
 
-cat > "$TMPDIR_WORK/skill_approval_routing.json" <<'ENDJSON'
+cat > "$WORK/s3.json" <<'ENDJSON'
 {
   "name": "Approval Routing",
   "description": "Evaluates quote attributes against the discount approval matrix and non-standard term thresholds, determines the correct approver role(s), and routes the approval request with all supporting context. Manages escalation when approvers do not respond within SLA.",
@@ -107,13 +106,13 @@ cat > "$TMPDIR_WORK/skill_approval_routing.json" <<'ENDJSON'
   "tags": ["cpq", "approvals", "discount-governance", "sox", "escalation", "order-to-cash"],
   "agentTypeCompatibility": ["single", "team"],
   "allowedTools": ["approval.evaluate_thresholds", "approval.lookup_approver", "approval.create_request", "approval.escalate", "notification.send_approval_request"],
-  "markdownBody": "# Approval Routing Skill\n\n## Purpose\nDetermines whether a quote requires human approval based on discount depth or non-standard terms, routes to the correct approver, and manages SLA-based escalation.\n\n## Approval Thresholds\n| Discount Level | Approver Role |\n|---|---|\n| 0-10% | Auto-approved |\n| 10-20% | Deal Desk Manager |\n| 20-35% | VP of Sales |\n| 35%+ | CFO or Revenue Committee |\n| Government accounts >20% | Legal + CFO mandatory |\n| Non-standard payment terms | Finance Controller |\n| Non-standard legal terms | General Counsel |\n\n## SOX Compliance\n- All approval decisions logged with: approver identity, timestamp, decision rationale\n- Audit trail maintained for 7 years per SOX requirements\n\n## Error Handling\n- Approval timeout: escalate per matrix, log incident\n- Approver unavailable: delegate to backup approver in directory",
+  "markdownBody": "# Approval Routing Skill\n\n## Purpose\nDetermines whether a quote requires human approval based on discount depth or non-standard terms, routes to the correct approver, and manages SLA-based escalation.\n\n## Approval Thresholds\n| Discount Level | Approver Role |\n|---|---|\n| 0-10% | Auto-approved |\n| 10-20% | Deal Desk Manager |\n| 20-35% | VP of Sales |\n| 35%+ | CFO or Revenue Committee |\n| Government accounts >20% | Legal + CFO mandatory |\n| Non-standard payment terms | Finance Controller |\n| Non-standard legal terms | General Counsel |\n\n## SOX Compliance\n- All approval decisions logged with: approver identity, timestamp, decision rationale\n- Audit trail maintained for 7 years per SOX requirements\n\n## Error Handling\n- Approval timeout: escalate per matrix, log incident (see Runbook: Approval Timeout)\n- Approver unavailable: delegate to backup approver in directory",
   "status": "active"
 }
 ENDJSON
-SKILL_APPROVAL_ROUTING=$(post_api "Approval Routing" "/api/skills" "$TMPDIR_WORK/skill_approval_routing.json")
+S3=$(post_api "Approval Routing" "/api/skills" "$WORK/s3.json")
 
-cat > "$TMPDIR_WORK/skill_quote_doc_gen.json" <<'ENDJSON'
+cat > "$WORK/s4.json" <<'ENDJSON'
 {
   "name": "Quote Document Generation",
   "description": "Produces formatted quote documents (PDF/DOCX) with itemized line items, configured pricing, applicable terms and conditions, validity period, and required signature blocks. Supports templates by industry, region, and customer segment with dynamic field population.",
@@ -127,13 +126,13 @@ cat > "$TMPDIR_WORK/skill_quote_doc_gen.json" <<'ENDJSON'
   "tags": ["cpq", "quote-generation", "documents", "pdf", "terms-conditions", "order-to-cash"],
   "agentTypeCompatibility": ["single", "team"],
   "allowedTools": ["doc.select_template", "doc.populate_line_items", "doc.apply_terms", "doc.generate_pdf", "doc.generate_docx", "doc.create_signature_block"],
-  "markdownBody": "# Quote Document Generation Skill\n\n## Purpose\nAssembles a professionally formatted, legally compliant quote document from validated line items, pricing, and applicable terms.\n\n## Template Selection Logic\n1. Match customer segment (enterprise, SMB, public sector, partner)\n2. Match region (NA, EMEA, APAC) for regional legal terms\n3. Match industry vertical for industry-specific clauses\n4. Apply custom branding if account-specific template exists\n\n## Document Sections\n- Header: Quote ID, version, validity date, sales rep details\n- Customer block: Billing address, contract reference, account manager\n- Line items table: SKU, description, quantity, unit price, discount, extended price\n- Bundle allocation: ASC 606 / IFRS 15 SSP allocation if bundled items\n- Terms and conditions: Payment terms, delivery SLA, warranty, governing law\n- Signature block: Customer acceptance, internal approval stamp\n\n## Error Handling\n- If template not found: use default regional template, flag for review\n- If generation error: retry up to 3 times, then create incident ticket",
+  "markdownBody": "# Quote Document Generation Skill\n\n## Purpose\nAssembles a professionally formatted, legally compliant quote document from validated line items, pricing, and applicable terms — ready for customer delivery.\n\n## Template Selection Logic\n1. Match customer segment (enterprise, SMB, public sector, partner)\n2. Match region (NA, EMEA, APAC) for regional legal terms\n3. Match industry vertical for industry-specific clauses\n4. Apply custom branding if account-specific template exists\n\n## Document Sections\n- Header: Quote ID, version, validity date, sales rep details\n- Customer block: Billing address, contract reference, account manager\n- Line items table: SKU, description, quantity, unit price, discount, extended price\n- Bundle allocation: ASC 606 / IFRS 15 SSP allocation if bundled items\n- Terms and conditions: Payment terms, delivery SLA, warranty, governing law\n- Pricing notes: Discount justification reference, promotion codes applied\n- Signature block: Customer acceptance, internal approval stamp\n\n## Error Handling\n- If template not found: use default regional template, flag for review\n- If generation error: retry up to 3 times, then create incident ticket (see Runbook: Quote Generation Error)",
   "status": "active"
 }
 ENDJSON
-SKILL_QUOTE_DOC_GEN=$(post_api "Quote Document Generation" "/api/skills" "$TMPDIR_WORK/skill_quote_doc_gen.json")
+S4=$(post_api "Quote Document Generation" "/api/skills" "$WORK/s4.json")
 
-cat > "$TMPDIR_WORK/skill_customer_context.json" <<'ENDJSON'
+cat > "$WORK/s5.json" <<'ENDJSON'
 {
   "name": "Customer Context",
   "description": "Retrieves a 360-degree customer profile including account history, active contracts, past quote win/loss data, credit tier, preferred pricing channel, and relationship manager details. Personalizes the quote strategy based on customer segment and deal history.",
@@ -147,13 +146,13 @@ cat > "$TMPDIR_WORK/skill_customer_context.json" <<'ENDJSON'
   "tags": ["cpq", "customer-360", "crm", "personalization", "order-to-cash", "gdpr"],
   "agentTypeCompatibility": ["single", "team"],
   "allowedTools": ["crm.get_account", "crm.get_active_contracts", "crm.get_quote_history", "crm.get_credit_tier", "crm.get_preferred_channel"],
-  "markdownBody": "# Customer Context Skill\n\n## Purpose\nRetrieves the comprehensive customer profile needed to personalize the quote, validate credit standing, and apply contract-specific pricing and terms.\n\n## Data Retrieved\n- Account profile: Segment, vertical, region, annual spend, relationship tier\n- Active contracts: MSA, framework agreements, rate cards, expiry dates\n- Quote history: Last 24 months — won/lost, average discount, preferred product families\n- Credit tier: A/B/C/D tier, credit limit, payment history\n- Preferred channel: Email, customer portal, EDI, API\n\n## GDPR Compliance\n- Data accessed only for active quote processing (documented legitimate interest)\n- Right to erasure: Customer data not retained in quote cache beyond document validity period\n- Data minimization: Only fields required for quote personalization are retrieved\n\n## Error Handling\n- If CRM unavailable: proceed with limited context, flag quote for manual review before send\n- If contract expired: surface renewal opportunity alongside quote",
+  "markdownBody": "# Customer Context Skill\n\n## Purpose\nRetrieves the comprehensive customer profile needed to personalize the quote, validate credit standing, and apply contract-specific pricing and terms.\n\n## Data Retrieved\n- Account profile: Segment, vertical, region, annual spend, relationship tier\n- Active contracts: MSA, framework agreements, rate cards, expiry dates\n- Quote history: Last 24 months — won/lost, average discount, preferred product families\n- Credit tier: A/B/C/D tier, credit limit, payment history\n- Preferred channel: Email, customer portal, EDI, API\n- Key contacts: Economic buyer, technical buyer, legal reviewer\n\n## GDPR Compliance\n- Data accessed only for active quote processing (documented legitimate interest)\n- Right to erasure: Customer data not retained in quote cache beyond document validity period\n- Data minimization: Only fields required for personalization are retrieved\n\n## Error Handling\n- If CRM unavailable: proceed with limited context, flag quote for manual review before send\n- If contract expired: surface renewal opportunity alongside quote",
   "status": "active"
 }
 ENDJSON
-SKILL_CUSTOMER_CONTEXT=$(post_api "Customer Context" "/api/skills" "$TMPDIR_WORK/skill_customer_context.json")
+S5=$(post_api "Customer Context" "/api/skills" "$WORK/s5.json")
 
-cat > "$TMPDIR_WORK/skill_channel_adaptation.json" <<'ENDJSON'
+cat > "$WORK/s6.json" <<'ENDJSON'
 {
   "name": "Channel Adaptation",
   "description": "Formats and delivers the completed quote through the customer preferred communication channel — email (formatted HTML), customer portal (structured JSON), EDI (ANSI X12 850/855), or REST API response. Adapts content format, file attachments, and metadata to channel requirements.",
@@ -167,20 +166,20 @@ cat > "$TMPDIR_WORK/skill_channel_adaptation.json" <<'ENDJSON'
   "tags": ["cpq", "multi-channel", "edi", "email", "portal", "api", "order-to-cash"],
   "agentTypeCompatibility": ["single", "team"],
   "allowedTools": ["channel.send_email", "channel.push_to_portal", "channel.send_edi", "channel.post_api_response", "channel.track_delivery"],
-  "markdownBody": "# Channel Adaptation Skill\n\n## Purpose\nDelivers the completed quote to the customer through their preferred channel, adapting format, structure, and metadata to channel-specific requirements.\n\n## Supported Channels\n| Channel | Format | Use Case |\n|---|---|---|\n| Email | HTML + PDF attachment | SMB, mid-market direct |\n| Customer Portal | Structured JSON | Enterprise self-service |\n| EDI (ANSI X12 855) | EDI transaction set | Large enterprise, retail |\n| REST API | JSON response | Partner integrations, marketplace |\n\n## Quote Status Lifecycle\ndrafted -> approved -> sent -> viewed -> accepted / expired / revised\n\n## Delivery Tracking\n- Each channel delivery generates a tracking event logged to quote audit trail\n- Email: delivery receipt + open tracking\n- EDI: acknowledgment (997 FA) tracked\n\n## Error Handling\n- If primary channel fails: retry once, then fall back to email\n- Log delivery failure, notify sales rep for manual delivery",
+  "markdownBody": "# Channel Adaptation Skill\n\n## Purpose\nDelivers the completed quote to the customer through their preferred channel, adapting format, structure, and metadata to channel-specific requirements.\n\n## Supported Channels\n| Channel | Format | Use Case |\n|---|---|---|\n| Email | HTML + PDF attachment | SMB, mid-market direct |\n| Customer Portal | Structured JSON | Enterprise self-service |\n| EDI (ANSI X12 855) | EDI transaction set | Large enterprise, retail |\n| REST API | JSON response | Partner integrations, marketplace |\n\n## Quote Status Lifecycle\ndrafted -> approved -> sent -> viewed -> accepted / expired / revised\n\n## Delivery Tracking\n- Each channel delivery generates a tracking event logged to quote audit trail\n- Email: delivery receipt + open tracking\n- Portal: view event on quote record\n- EDI: acknowledgment (997 FA) tracked\n- API: HTTP 200 confirmation logged\n\n## Error Handling\n- If primary channel fails: retry once, then fall back to email\n- Log delivery failure, notify sales rep for manual delivery",
   "status": "active"
 }
 ENDJSON
-SKILL_CHANNEL_ADAPTATION=$(post_api "Channel Adaptation" "/api/skills" "$TMPDIR_WORK/skill_channel_adaptation.json")
+S6=$(post_api "Channel Adaptation" "/api/skills" "$WORK/s6.json")
 
-echo ""
+echo "" >&2
 
 # =============================================================================
 # STEP 2: Create Knowledge Base
 # =============================================================================
-echo "STEP 2: Creating Knowledge Base..."
+echo "STEP 2: Creating Knowledge Base..." >&2
 
-cat > "$TMPDIR_WORK/kb.json" <<'ENDJSON'
+cat > "$WORK/kb.json" <<'ENDJSON'
 {
   "name": "Quote & Configuration Knowledge Base",
   "description": "Primary RAG knowledge base for the Quote & Configuration Agent (OTC-AGT-001). Covers product catalog configuration rules, pricing master data, contract library, quote templates, historical win/loss analysis, and competitor intelligence. Supports retrieval for product validation, pricing calculation, and quote personalization.",
@@ -194,16 +193,16 @@ cat > "$TMPDIR_WORK/kb.json" <<'ENDJSON'
   "chunkOverlap": 64
 }
 ENDJSON
-KB_ID=$(post_api "Quote & Configuration Knowledge Base" "/api/knowledge-bases" "$TMPDIR_WORK/kb.json")
+KB=$(post_api "Quote & Configuration Knowledge Base" "/api/knowledge-bases" "$WORK/kb.json")
 
-echo ""
+echo "" >&2
 
 # =============================================================================
-# STEP 3: Create Compliance Policies
+# STEP 3: Create 5 Compliance Policies
 # =============================================================================
-echo "STEP 3: Creating Compliance Policies..."
+echo "STEP 3: Creating 5 Compliance Policies..." >&2
 
-cat > "$TMPDIR_WORK/policy_sox.json" <<'ENDJSON'
+cat > "$WORK/p1.json" <<'ENDJSON'
 {
   "name": "SOX Pricing Audit Trail",
   "domain": "audit_compliance",
@@ -226,9 +225,9 @@ cat > "$TMPDIR_WORK/policy_sox.json" <<'ENDJSON'
   "ontologyRefs": [{"entity": "Quote", "attribute": "approval", "regulationRef": "SOX"}]
 }
 ENDJSON
-POLICY_SOX=$(post_api "SOX Pricing Audit Trail" "/api/policies" "$TMPDIR_WORK/policy_sox.json")
+P1=$(post_api "SOX Pricing Audit Trail" "/api/policies" "$WORK/p1.json")
 
-cat > "$TMPDIR_WORK/policy_robinson_patman.json" <<'ENDJSON'
+cat > "$WORK/p2.json" <<'ENDJSON'
 {
   "name": "Robinson-Patman Price Discrimination Control",
   "domain": "pricing_compliance",
@@ -249,9 +248,9 @@ cat > "$TMPDIR_WORK/policy_robinson_patman.json" <<'ENDJSON'
   "ontologyRefs": [{"entity": "Discount", "attribute": "discriminatory_pricing"}]
 }
 ENDJSON
-POLICY_ROBINSON_PATMAN=$(post_api "Robinson-Patman Price Discrimination Control" "/api/policies" "$TMPDIR_WORK/policy_robinson_patman.json")
+P2=$(post_api "Robinson-Patman Price Discrimination Control" "/api/policies" "$WORK/p2.json")
 
-cat > "$TMPDIR_WORK/policy_gdpr.json" <<'ENDJSON'
+cat > "$WORK/p3.json" <<'ENDJSON'
 {
   "name": "GDPR Customer Data Handling in Quotes",
   "domain": "data_privacy",
@@ -274,9 +273,9 @@ cat > "$TMPDIR_WORK/policy_gdpr.json" <<'ENDJSON'
   "ontologyRefs": [{"entity": "Customer", "attribute": "personal_data"}]
 }
 ENDJSON
-POLICY_GDPR=$(post_api "GDPR Customer Data Handling in Quotes" "/api/policies" "$TMPDIR_WORK/policy_gdpr.json")
+P3=$(post_api "GDPR Customer Data Handling in Quotes" "/api/policies" "$WORK/p3.json")
 
-cat > "$TMPDIR_WORK/policy_asc606.json" <<'ENDJSON'
+cat > "$WORK/p4.json" <<'ENDJSON'
 {
   "name": "ASC 606 / IFRS 15 Revenue Recognition Compliance",
   "domain": "revenue_recognition",
@@ -298,9 +297,9 @@ cat > "$TMPDIR_WORK/policy_asc606.json" <<'ENDJSON'
   "ontologyRefs": [{"entity": "Quote", "attribute": "bundle_allocation"}, {"entity": "Price List", "attribute": "ssp"}]
 }
 ENDJSON
-POLICY_ASC606=$(post_api "ASC 606 / IFRS 15 Revenue Recognition Compliance" "/api/policies" "$TMPDIR_WORK/policy_asc606.json")
+P4=$(post_api "ASC 606 / IFRS 15 Revenue Recognition Compliance" "/api/policies" "$WORK/p4.json")
 
-cat > "$TMPDIR_WORK/policy_anti_bribery.json" <<'ENDJSON'
+cat > "$WORK/p5.json" <<'ENDJSON'
 {
   "name": "Anti-Bribery Discount Control (FCPA / UK Bribery Act)",
   "domain": "anti_bribery",
@@ -323,16 +322,16 @@ cat > "$TMPDIR_WORK/policy_anti_bribery.json" <<'ENDJSON'
   "ontologyRefs": [{"entity": "Customer", "attribute": "government_flag"}, {"entity": "Discount", "attribute": "government_threshold"}]
 }
 ENDJSON
-POLICY_ANTI_BRIBERY=$(post_api "Anti-Bribery Discount Control (FCPA / UK Bribery Act)" "/api/policies" "$TMPDIR_WORK/policy_anti_bribery.json")
+P5=$(post_api "Anti-Bribery Discount Control (FCPA / UK Bribery Act)" "/api/policies" "$WORK/p5.json")
 
-echo ""
+echo "" >&2
 
 # =============================================================================
-# STEP 4: Create the Agent (base fields, no dynamic IDs yet)
+# STEP 4: Create Agent (base fields)
 # =============================================================================
-echo "STEP 4: Creating Quote & Configuration Agent (OTC-AGT-001)..."
+echo "STEP 4: Creating Quote & Configuration Agent (OTC-AGT-001)..." >&2
 
-cat > "$TMPDIR_WORK/agent_base.json" <<'ENDJSON'
+cat > "$WORK/agent.json" <<'ENDJSON'
 {
   "name": "Quote & Configuration Agent",
   "agentType": "single",
@@ -368,14 +367,6 @@ cat > "$TMPDIR_WORK/agent_base.json" <<'ENDJSON'
       {"id": "channel.send_edi", "name": "EDI Quote Transmission", "description": "Transmit quote via ANSI X12 855 EDI to trading partner", "rateLimit": 20, "timeout": 20000}
     ]
   },
-  "runtimeConfig": {
-    "maxToolIterations": 15,
-    "timeoutMs": 60000,
-    "latencyTargetMs": 30000,
-    "retryPolicy": {"maxRetries": 2, "backoffMs": 1000},
-    "humanInLoopEvents": ["approval_required", "pricing_rule_stale", "config_conflict_unresolvable"],
-    "auditLevel": "full"
-  },
   "rollbackPlan": {
     "version": "1.0.0",
     "procedure": "Void in-flight quotes, revert to manual CPQ workflow via Deal Desk, notify affected sales reps",
@@ -383,28 +374,21 @@ cat > "$TMPDIR_WORK/agent_base.json" <<'ENDJSON'
   }
 }
 ENDJSON
-AGENT_ID=$(post_api "Quote & Configuration Agent" "/api/agents" "$TMPDIR_WORK/agent_base.json")
+AGENT=$(post_api "Quote & Configuration Agent" "/api/agents" "$WORK/agent.json")
 
-echo ""
+echo "" >&2
 
 # =============================================================================
-# STEP 5: PATCH agent with dynamic IDs (skills, policies, KB, blueprint)
+# STEP 5: PATCH agent with all dynamic IDs
 # =============================================================================
-echo "STEP 5: Updating agent with skill IDs, policy bindings, KB config, and blueprint..."
+echo "STEP 5: Wiring skills, policies, KB config, and blueprint to agent..." >&2
 
 jq -n \
-  --arg kb  "$KB_ID" \
-  --arg s1  "$SKILL_PRODUCT_CATALOG" \
-  --arg s2  "$SKILL_PRICING_ENGINE" \
-  --arg s3  "$SKILL_APPROVAL_ROUTING" \
-  --arg s4  "$SKILL_QUOTE_DOC_GEN" \
-  --arg s5  "$SKILL_CUSTOMER_CONTEXT" \
-  --arg s6  "$SKILL_CHANNEL_ADAPTATION" \
-  --arg p1  "$POLICY_SOX" \
-  --arg p2  "$POLICY_ROBINSON_PATMAN" \
-  --arg p3  "$POLICY_GDPR" \
-  --arg p4  "$POLICY_ASC606" \
-  --arg p5  "$POLICY_ANTI_BRIBERY" \
+  --arg kb "$KB" \
+  --arg s1 "$S1" --arg s2 "$S2" --arg s3 "$S3" \
+  --arg s4 "$S4" --arg s5 "$S5" --arg s6 "$S6" \
+  --arg p1 "$P1" --arg p2 "$P2" --arg p3 "$P3" \
+  --arg p4 "$P4" --arg p5 "$P5" \
   '{
     preloadedSkills: [
       {skillId: $s1, loadOrder: 1},
@@ -431,18 +415,28 @@ jq -n \
       chunkStrategy: "fixed_with_overlap",
       sources: [{type: "knowledge_base", id: $kb, description: "Product catalog, pricing rules, contract library, quote templates"}]
     },
+    runtimeConfig: {
+      prompt: "Process an incoming customer quote request end-to-end through the CPQ (Configure-Price-Quote) workflow for the Order-to-Cash process.\n\n## What You Do On Each Invocation\n\nYou receive a structured quote request containing one or more of: product names or SKUs, requested quantities, required delivery date, target region, customer account identifier, contract reference, and any special pricing or configuration requests.\n\n## Step-by-Step Execution\n\n**Step 1 — Validate the Product Configuration**\nUse the Product Catalog Retrieval skill to:\n- Normalize requested product names to canonical SKUs from the enterprise product master\n- Validate all configuration rules (mandatory/optional options, incompatibility constraints, BOM requirements)\n- Identify discontinued or region-restricted products and surface alternatives\n- Suggest compatible upsell or cross-sell products from the same product family\n\n**Step 2 — Build Bundle Proposal**\nAnalyze the validated configuration and:\n- Propose the optimal product/service bundle that satisfies the customer stated needs\n- Present clear trade-offs between bundle options (e.g., standard vs. premium tier, single vs. multi-year)\n- Surface upsell opportunities with ROI justification where pricing data supports it\n- Flag any technically incompatible combinations before proceeding\n\n**Step 3 — Calculate Pricing**\nUse the Pricing Engine skill to apply the full pricing stack:\n1. Look up base price from ERP price list for each SKU\n2. Apply volume tier breaks if quantities qualify for discounted tiers\n3. Apply contract-specific rate card if a contract ID was provided (overrides list price)\n4. Apply active promotional calendar offers if applicable\n5. Apply any manually requested discount (flag if above approval threshold)\n6. Convert to target currency if multi-currency quote requested\n7. Calculate per-line extended price, blended effective discount rate, and total quote value\n8. For bundled items: allocate transaction price by Standalone Selling Price (SSP) per ASC 606/IFRS 15\n\n**Step 4 — Check Approval Requirements**\nUse the Approval Routing skill to evaluate:\n- Is the effective discount within the auto-approval limit? (0-10%: auto-approve)\n- Does the discount require Deal Desk approval? (10-20%)\n- Does the discount require VP Sales approval? (20-35%)\n- Does the discount require CFO/Revenue Committee approval? (35%+)\n- Is this a government or SOE account with discount >20%? Mandatory dual approval (VP Sales + General Counsel) per FCPA/UK Bribery Act\n- Are there non-standard payment terms, SLA modifications, liability caps, or IP terms? Finance Controller or General Counsel required\n\n**Step 5 — Route for Human Approval (if required)**\nIf any approval threshold is triggered:\n- Create an approval request with: quote summary, line items, pricing breakdown, discount justification, customer context\n- Notify the designated approver via their preferred channel (email/Slack/portal)\n- Pause processing and await approval decision\n- Log the approval request with full audit trail per SOX requirements\n- If no response within 4 business hours: escalate to the next approver level\n- Resume processing immediately upon approval; terminate if rejected (return rejection rationale)\n\n**Step 6 — Generate Quote Document**\nUse the Quote Document Generation skill to produce:\n- A formatted PDF quote with: Quote ID (format Q-YYYY-NNNNNN), validity period (default 30 days), itemized line items with per-line pricing, applied discount details, bundle SSP allocation, applicable terms and conditions matched to customer segment and region, and signature block\n- A DOCX version for negotiation if requested\n- A structured JSON summary for CRM ingestion\n\n**Step 7 — Deliver via Preferred Channel**\nUse the Channel Adaptation skill to deliver via customer configured preferred channel:\n- Email: formatted HTML email with PDF attachment, log delivery receipt\n- Customer Portal: push structured quote JSON for self-service viewing and acceptance\n- EDI: transmit ANSI X12 855, track 997 FA acknowledgment\n- REST API: return JSON response to calling system, log HTTP 200 confirmation\n\n**Step 8 — Update Quote Status and Track**\n- Update CRM quote status to sent with timestamp and channel confirmation\n- Set quote expiry reminder for T-7 days before validity expires\n- On acceptance: update CRM to accepted and emit quote.accepted event to Order Validation Agent (OTC-AGT-002)\n- On revision request: increment quote version and restart from Step 1 with revised parameters\n- On expiry: update CRM to expired, notify sales rep for re-engagement\n\n## Compliance Checkpoints (Non-Negotiable)\n- SOX: Every pricing decision, discount, and approval action written to immutable audit log\n- Robinson-Patman: Verify no materially identical customer receives different price without documented justification code\n- GDPR: Access only required customer PII fields; do not cache beyond quote validity period\n- ASC 606 / IFRS 15: Show explicit SSP-based allocation for all bundled line items\n- FCPA / UK Bribery Act: Enforce 20% hard limit for GOV/SOE customers; require dual approval above that threshold",
+      scheduleIntervalMinutes: 0,
+      maxToolIterations: 15,
+      timeoutMs: 60000,
+      latencyTargetMs: 30000,
+      retryPolicy: {"maxRetries": 2, "backoffMs": 1000},
+      humanInLoopEvents: ["approval_required", "pricing_rule_stale", "config_conflict_unresolvable"],
+      auditLevel: "full"
+    },
     blueprintJson: {
       nodes: [
-        {id: "receive_request",    type: "input_capture",  label: "Receive Customer Request",           description: "Capture customer products, quantities, delivery preferences, contract identifiers"},
-        {id: "catalog_validation", type: "skill_invoke",   label: "Product Catalog Validation",         skillId: $s1, description: "Match request to catalog, validate configurability rules, identify compatible alternatives"},
-        {id: "bundle_proposal",    type: "llm_generate",   label: "Bundle Proposal with Trade-offs",    description: "Propose product/service bundles with upsell/cross-sell options and trade-off analysis"},
-        {id: "pricing_calculation",type: "skill_invoke",   label: "Pricing & Discount Calculation",     skillId: $s2, description: "Apply multi-tier pricing, volume discounts, contract rates, promotional offers, currency conversion"},
-        {id: "approval_check",     type: "skill_invoke",   label: "Approval Threshold Check",           skillId: $s3, description: "Evaluate discount and term thresholds against approval matrix"},
-        {id: "approval_gate",      type: "human_in_loop",  label: "Human Approval Gate",                description: "Route to approver if thresholds exceeded; block until approved", condition: "discountExceedsThreshold OR nonStandardTerms OR govAccountAbove20pct"},
-        {id: "quote_generation",   type: "skill_invoke",   label: "Quote Document Generation",          skillId: $s4, description: "Produce formatted PDF/DOCX quote with line items, terms, validity period"},
-        {id: "channel_delivery",   type: "skill_invoke",   label: "Channel Delivery",                   skillId: $s6, description: "Deliver quote via customer preferred channel (email, portal, EDI, API)"},
-        {id: "status_tracking",    type: "tool_call",      label: "Quote Status Tracking",              tool: "crm.update_quote_status", description: "Update CRM quote status and track acceptance/expiry"},
-        {id: "handoff_to_ovc",     type: "event_emit",     label: "Handoff to Order Validation Agent",  event: "quote.accepted", target: "OTC-AGT-002", description: "Emit handoff event to Order Validation & Promise Agent on quote acceptance"}
+        {id: "receive_request",     type: "input_capture",  label: "Receive Customer Request",          description: "Capture customer products, quantities, delivery preferences, contract identifiers"},
+        {id: "catalog_validation",  type: "skill_invoke",   label: "Product Catalog Validation",        skillId: $s1, description: "Match request to catalog, validate configurability rules, identify compatible alternatives"},
+        {id: "bundle_proposal",     type: "llm_generate",   label: "Bundle Proposal with Trade-offs",   description: "Propose product/service bundles with upsell/cross-sell options and trade-off analysis"},
+        {id: "pricing_calculation", type: "skill_invoke",   label: "Pricing & Discount Calculation",    skillId: $s2, description: "Apply multi-tier pricing, volume discounts, contract rates, promotional offers, currency conversion"},
+        {id: "approval_check",      type: "skill_invoke",   label: "Approval Threshold Check",          skillId: $s3, description: "Evaluate discount and term thresholds against approval matrix"},
+        {id: "approval_gate",       type: "human_in_loop",  label: "Human Approval Gate",               description: "Route to approver if thresholds exceeded; block until approved", condition: "discountExceedsThreshold OR nonStandardTerms OR govAccountAbove20pct"},
+        {id: "quote_generation",    type: "skill_invoke",   label: "Quote Document Generation",         skillId: $s4, description: "Produce formatted PDF/DOCX quote with line items, terms, validity period"},
+        {id: "channel_delivery",    type: "skill_invoke",   label: "Channel Delivery",                  skillId: $s6, description: "Deliver quote via customer preferred channel (email, portal, EDI, API)"},
+        {id: "status_tracking",     type: "tool_call",      label: "Quote Status Tracking",             tool: "crm.update_quote_status", description: "Update CRM quote status and track acceptance/expiry"},
+        {id: "handoff_to_ovc",      type: "event_emit",     label: "Handoff to Order Validation Agent", event: "quote.accepted", target: "OTC-AGT-002", description: "Emit handoff event to Order Validation & Promise Agent on quote acceptance"}
       ],
       edges: [
         {from: "receive_request",     to: "catalog_validation"},
@@ -456,47 +450,49 @@ jq -n \
         {from: "status_tracking",     to: "handoff_to_ovc",    condition: "quote.accepted"}
       ]
     }
-  }' > "$TMPDIR_WORK/agent_update.json"
+  }' > "$WORK/agent_patch.json"
 
-UPDATE_RESPONSE=$(curl -s -X PATCH "${BASE_URL}/api/agents/${AGENT_ID}" \
+PATCH_RESP=$(curl -s -X PATCH "${BASE_URL}/api/agents/${AGENT}" \
   -H "Content-Type: application/json" \
-  -d @"$TMPDIR_WORK/agent_update.json")
-UPDATE_ID=$(echo "$UPDATE_RESPONSE" | jq -r '.id // empty')
-if [ -z "$UPDATE_ID" ]; then
-  echo "  ✗ FAILED: Agent PATCH with skills/policies/blueprint"
-  echo "  Response: $UPDATE_RESPONSE"
+  -d @"$WORK/agent_patch.json")
+PATCH_ID=$(echo "$PATCH_RESP" | jq -r '.id // empty')
+if [ -z "$PATCH_ID" ]; then
+  echo "  ✗ FAILED: Agent PATCH" >&2
+  echo "    Response: $PATCH_RESP" >&2
   exit 1
 fi
-echo "  ✓ Agent updated with 6 skills, 5 policies, KB config, and 10-node blueprint"
-echo ""
+echo "  ✓ Agent wired with 6 skills, 5 policies, KB, and 10-node blueprint" >&2
+
+echo "" >&2
 
 # =============================================================================
 # STEP 6: Link Knowledge Base to Agent
 # =============================================================================
-echo "STEP 6: Linking Knowledge Base to Agent..."
+echo "STEP 6: Linking Knowledge Base to Agent..." >&2
 
-jq -n --arg kb "$KB_ID" \
+jq -n --arg kb "$KB" \
   '{knowledgeBaseId: $kb, priority: 1, retrievalConfig: {topK: 8, scoreThreshold: 0.72, hybridSearch: true, reranker: "cross-encoder"}}' \
-  > "$TMPDIR_WORK/kb_link.json"
+  > "$WORK/kb_link.json"
 
-KB_LINK_RESPONSE=$(curl -s -X POST "${BASE_URL}/api/agents/${AGENT_ID}/knowledge-bases" \
+KB_LINK=$(curl -s -X POST "${BASE_URL}/api/agents/${AGENT}/knowledge-bases" \
   -H "Content-Type: application/json" \
-  -d @"$TMPDIR_WORK/kb_link.json")
-KB_LINK_ID=$(echo "$KB_LINK_RESPONSE" | jq -r '.id // empty')
+  -d @"$WORK/kb_link.json")
+KB_LINK_ID=$(echo "$KB_LINK" | jq -r '.id // empty')
 if [ -z "$KB_LINK_ID" ]; then
-  echo "  ✗ FAILED: KB link"
-  echo "  Response: $KB_LINK_RESPONSE"
+  echo "  ✗ FAILED: KB link" >&2
+  echo "    Response: $KB_LINK" >&2
   exit 1
 fi
-echo "  ✓ Knowledge Base linked to Agent → $KB_LINK_ID"
-echo ""
+echo "  ✓ Knowledge Base linked → $KB_LINK_ID" >&2
+
+echo "" >&2
 
 # =============================================================================
-# STEP 7: Create Evaluation (Golden) Dataset
+# STEP 7: Create Evaluation Dataset
 # =============================================================================
-echo "STEP 7: Creating Evaluation Dataset..."
+echo "STEP 7: Creating Evaluation Dataset..." >&2
 
-cat > "$TMPDIR_WORK/golden_dataset.json" <<'ENDJSON'
+cat > "$WORK/dataset.json" <<'ENDJSON'
 {
   "name": "Quote & Configuration Agent Evaluation Dataset",
   "description": "Evaluation benchmark for OTC-AGT-001. Contains 500+ historical quote requests with known correct configurations and prices. Covers happy-path direct quotes, edge cases (discontinued products, cross-region pricing, multi-currency), approval boundary tests (at/above/below discount thresholds), bundle conflict scenarios (incompatible product combinations), and regression cases from previously mis-priced quotes. Latency benchmark: quote generation under 30 seconds.",
@@ -537,36 +533,36 @@ cat > "$TMPDIR_WORK/golden_dataset.json" <<'ENDJSON'
   "status": "active"
 }
 ENDJSON
-GOLDEN_DATASET_ID=$(post_api "Quote & Configuration Evaluation Dataset" "/api/golden-datasets" "$TMPDIR_WORK/golden_dataset.json")
+DS=$(post_api "Quote & Configuration Evaluation Dataset" "/api/golden-datasets" "$WORK/dataset.json")
 
-echo ""
+echo "" >&2
 
 # =============================================================================
 # SUMMARY
 # =============================================================================
-echo "=================================================="
-echo " MIGRATION COMPLETE"
-echo "=================================================="
-echo ""
-echo "Resource Summary:"
-echo "  Agent (OTC-AGT-001):              $AGENT_ID"
-echo "  Knowledge Base:                    $KB_ID"
-echo "  Golden Evaluation Dataset:         $GOLDEN_DATASET_ID"
-echo ""
-echo "Skills (6):"
-echo "  Product Catalog Retrieval:         $SKILL_PRODUCT_CATALOG"
-echo "  Pricing Engine:                    $SKILL_PRICING_ENGINE"
-echo "  Approval Routing:                  $SKILL_APPROVAL_ROUTING"
-echo "  Quote Document Generation:         $SKILL_QUOTE_DOC_GEN"
-echo "  Customer Context:                  $SKILL_CUSTOMER_CONTEXT"
-echo "  Channel Adaptation:                $SKILL_CHANNEL_ADAPTATION"
-echo ""
-echo "Policies (5):"
-echo "  SOX Pricing Audit Trail:           $POLICY_SOX"
-echo "  Robinson-Patman Control:           $POLICY_ROBINSON_PATMAN"
-echo "  GDPR Customer Data Handling:       $POLICY_GDPR"
-echo "  ASC 606 / IFRS 15 Compliance:      $POLICY_ASC606"
-echo "  Anti-Bribery (FCPA/UK Bribery):    $POLICY_ANTI_BRIBERY"
-echo ""
-echo "All resources created at: $BASE_URL"
-echo "=================================================="
+echo "==================================================" >&2
+echo " MIGRATION COMPLETE" >&2
+echo "==================================================" >&2
+echo "" >&2
+echo "Resource Summary:" >&2
+echo "  Agent (OTC-AGT-001):              $AGENT" >&2
+echo "  Knowledge Base:                    $KB" >&2
+echo "  Golden Evaluation Dataset:         $DS" >&2
+echo "" >&2
+echo "Skills (6):" >&2
+echo "  Product Catalog Retrieval:         $S1" >&2
+echo "  Pricing Engine:                    $S2" >&2
+echo "  Approval Routing:                  $S3" >&2
+echo "  Quote Document Generation:         $S4" >&2
+echo "  Customer Context:                  $S5" >&2
+echo "  Channel Adaptation:                $S6" >&2
+echo "" >&2
+echo "Policies (5):" >&2
+echo "  SOX Pricing Audit Trail:           $P1" >&2
+echo "  Robinson-Patman Control:           $P2" >&2
+echo "  GDPR Customer Data Handling:       $P3" >&2
+echo "  ASC 606 / IFRS 15 Compliance:      $P4" >&2
+echo "  Anti-Bribery (FCPA/UK Bribery):    $P5" >&2
+echo "" >&2
+echo "All resources created at: $BASE_URL" >&2
+echo "==================================================" >&2
