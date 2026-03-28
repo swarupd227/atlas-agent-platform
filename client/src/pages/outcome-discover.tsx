@@ -605,15 +605,22 @@ export default function OutcomeDiscover() {
         selectedFormTemplate.name,
       ].flatMap((s) => s.split(/[&/,]+/).map((p) => p.trim()).filter(Boolean)).slice(0, 4)
     : [];
-  // Tool names: prefer DB template toolNames → fallback to industry integration systems
   const formIntelIndustryProfile = INDUSTRIES.find((i) => i.id === formIntelIndustry);
-  const formIntelTools: string[] = selectedLibTemplate?.toolNames?.length
-    ? selectedLibTemplate.toolNames.filter(Boolean) as string[]
-    : (formIntelIndustryProfile?.integrationSystems || industry?.integrationSystems || []).slice(0, 6).map((s) => s.name);
-  // Autonomy mode: DB template complexity mapping > static template risk-tier mapping
+  // Tool names: DB lib template toolNames → static template tools config → industry integration systems
+  const formIntelTools: string[] = (() => {
+    if (selectedLibTemplate?.toolNames?.length) {
+      return selectedLibTemplate.toolNames.filter(Boolean) as string[];
+    }
+    if (selectedFormTemplate?.tools?.length) {
+      return selectedFormTemplate.tools;
+    }
+    return (formIntelIndustryProfile?.integrationSystems || industry?.integrationSystems || []).slice(0, 6).map((s) => s.name);
+  })();
+  // Autonomy mode: DB lib template complexity → static template complexity → risk-tier heuristic
   const formIntelAutonomy: string[] = (() => {
-    if (selectedLibTemplate?.complexity) {
-      const c = selectedLibTemplate.complexity.toLowerCase();
+    const complexity = selectedLibTemplate?.complexity || selectedFormTemplate?.complexity;
+    if (complexity) {
+      const c = complexity.toLowerCase();
       if (c === "complex") return ["fully_autonomous"];
       if (c === "moderate") return ["assisted"];
       return ["supervised"];
@@ -624,11 +631,10 @@ export default function OutcomeDiscover() {
     return ["supervised"];
   })();
   const formIntelRiskTiers = [formRiskTier || selectedFormTemplate?.riskTier || "MEDIUM"];
-  // Approval gate count: from DB template complianceCertifications; for static templates use risk-tier heuristic
+  // Approval gate count: DB lib template certs → static template certs → risk-tier heuristic
   const formIntelGateCount: string = (() => {
-    if (selectedLibTemplate) {
-      return String((selectedLibTemplate.complianceCertifications || []).length);
-    }
+    const certs = selectedLibTemplate?.complianceCertifications ?? selectedFormTemplate?.complianceCertifications;
+    if (certs !== undefined) return String(certs.length);
     const t = formRiskTier || selectedFormTemplate?.riskTier || "MEDIUM";
     if (t === "CRITICAL") return "2";
     if (t === "HIGH") return "1";

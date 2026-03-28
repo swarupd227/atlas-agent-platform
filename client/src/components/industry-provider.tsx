@@ -299,6 +299,9 @@ export interface OutcomeTemplate {
   maxDriftPercent: number;
   kpis: OutcomeTemplateKpi[];
   slaDescription: string;
+  tools?: string[];
+  complexity?: "simple" | "moderate" | "complex";
+  complianceCertifications?: string[];
 }
 
 export const OUTCOME_TEMPLATES: OutcomeTemplate[] = [
@@ -309,6 +312,9 @@ export const OUTCOME_TEMPLATES: OutcomeTemplate[] = [
     industry: "technology_saas",
     subVertical: "Software Deployment & Patch Management",
     riskTier: "HIGH",
+    complexity: "complex",
+    tools: ["Intune", "SCCM", "Ansible", "ServiceNow", "Jenkins", "Puppet"],
+    complianceCertifications: ["SOC 2", "ISO 27001"],
     pricingModel: "PER_OUTCOME_EVENT",
     pricePerUnit: 2.50,
     riskThreshold: 0.70,
@@ -329,6 +335,9 @@ export const OUTCOME_TEMPLATES: OutcomeTemplate[] = [
     description: "Detect, diagnose, and remediate production incidents automatically with AI-driven root cause analysis. Reduce MTTR and minimize customer impact through autonomous healing workflows.",
     industry: "technology_saas",
     riskTier: "HIGH",
+    complexity: "complex",
+    tools: ["PagerDuty", "Datadog", "Slack", "Zendesk", "GitHub", "AWS CloudWatch"],
+    complianceCertifications: ["SOC 2", "ISO 27001"],
     pricingModel: "PER_OUTCOME_EVENT",
     pricePerUnit: 5.00,
     riskThreshold: 0.80,
@@ -347,6 +356,9 @@ export const OUTCOME_TEMPLATES: OutcomeTemplate[] = [
     description: "Automate KYC document verification, risk scoring, and compliance checks to reduce onboarding time from days to hours while maintaining full BSA/AML regulatory compliance.",
     industry: "financial_services",
     riskTier: "HIGH",
+    complexity: "complex",
+    tools: ["Plaid", "Jumio", "Salesforce", "DocuSign", "Alloy", "Stripe Identity"],
+    complianceCertifications: ["BSA/AML", "SOC 2", "GLBA"],
     pricingModel: "PER_OUTCOME_EVENT",
     pricePerUnit: 8.00,
     riskThreshold: 0.80,
@@ -365,6 +377,9 @@ export const OUTCOME_TEMPLATES: OutcomeTemplate[] = [
     description: "Automate claims intake, adjudication, and settlement for standard claims with AI-driven fraud detection and compliance checks. Achieve straight-through processing for majority of claims.",
     industry: "insurance",
     riskTier: "HIGH",
+    complexity: "complex",
+    tools: ["Guidewire", "Duck Creek", "Salesforce", "DocuSign", "Verisk", "ISO ClaimSearch"],
+    complianceCertifications: ["SOC 2", "NAIC Model Laws"],
     pricingModel: "PER_OUTCOME_EVENT",
     pricePerUnit: 4.00,
     riskThreshold: 0.75,
@@ -383,6 +398,9 @@ export const OUTCOME_TEMPLATES: OutcomeTemplate[] = [
     description: "Automate clinical documentation completeness scoring, gap identification, and coding accuracy to improve quality reporting and reduce claim denials.",
     industry: "healthcare",
     riskTier: "HIGH",
+    complexity: "complex",
+    tools: ["Epic", "Cerner", "Nuance DAX", "3M CDI", "HealthHelp", "Optum"],
+    complianceCertifications: ["HIPAA", "SOC 2"],
     pricingModel: "PER_OUTCOME_EVENT",
     pricePerUnit: 3.50,
     riskThreshold: 0.85,
@@ -401,6 +419,9 @@ export const OUTCOME_TEMPLATES: OutcomeTemplate[] = [
     description: "Predict equipment failures 48+ hours in advance using sensor data analysis, reduce unplanned downtime, and optimize maintenance scheduling for maximum OEE.",
     industry: "manufacturing",
     riskTier: "MEDIUM",
+    complexity: "moderate",
+    tools: ["OSIsoft PI", "Siemens MindSphere", "PTC ThingWorx", "SAP PM", "GE Predix"],
+    complianceCertifications: ["ISO 9001"],
     pricingModel: "PER_OUTCOME_EVENT",
     pricePerUnit: 6.00,
     riskThreshold: 0.75,
@@ -419,6 +440,9 @@ export const OUTCOME_TEMPLATES: OutcomeTemplate[] = [
     description: "Optimize demand forecasting accuracy using AI to reduce overstock and stockout rates, lower inventory carrying costs, and improve fill rates across all channels.",
     industry: "retail",
     riskTier: "MEDIUM",
+    complexity: "moderate",
+    tools: ["SAP IBP", "Oracle Demand Mgmt", "Salesforce Commerce", "Shopify", "NetSuite"],
+    complianceCertifications: [],
     pricingModel: "FIXED_MONTHLY",
     pricePerUnit: 2000.00,
     riskThreshold: 0.70,
