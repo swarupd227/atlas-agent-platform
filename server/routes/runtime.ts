@@ -50,6 +50,7 @@ import {
   redactPayload,
   redactWithOntologyKeys,
 } from "../permissions";
+import { getOrgId } from "../auth";
 import {
   resolveOntologyTags,
   handleZodError,
@@ -733,7 +734,7 @@ function hashCode(str: string): number {
 
   // GET /api/runtime/runs/:id — full trace with steps
   router.get("/api/runtime/runs/:id", async (req, res) => {
-    const trace = await storage.getTrace(req.params.id);
+    const trace = await storage.getTrace(req.params.id, getOrgId(req));
     if (!trace) return res.status(404).json({ message: "Run not found" });
 
     const steps = await storage.getRunSteps(req.params.id);

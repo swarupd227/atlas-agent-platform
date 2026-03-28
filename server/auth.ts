@@ -39,8 +39,18 @@ declare global {
   }
 }
 
+let _defaultOrgId: string | undefined;
+
+export function setDefaultOrgId(id: string) {
+  _defaultOrgId = id;
+}
+
+export function getDefaultOrgId(): string | undefined {
+  return _defaultOrgId;
+}
+
 export function getOrgId(req: Request): string | undefined {
-  if (getSecurityMode() === "demo") return undefined;
+  if (getSecurityMode() === "demo") return _defaultOrgId;
   return req.authUser?.organizationId;
 }
 

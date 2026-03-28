@@ -1052,7 +1052,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     if (!policy) return res.status(404).json({ error: "Policy not found" });
 
     const { traceIds, agentId, limit: traceLimit } = req.body;
-    let traces = await storage.getTraces();
+    let traces = await storage.getTraces(getOrgId(req));
 
     if (traceIds && Array.isArray(traceIds) && traceIds.length > 0) {
       traces = traces.filter(t => traceIds.includes(t.id));
@@ -1130,11 +1130,12 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     const approval = await storage.getApproval(req.params.id as string, getOrgId(req));
     if (!approval) return res.status(404).json({ message: "Approval not found" });
 
-    const agents = await storage.getAgents();
-    const outcomes = await storage.getOutcomes();
+    const orgId = getOrgId(req);
+    const agents = await storage.getAgents(orgId);
+    const outcomes = await storage.getOutcomes(orgId);
     const evalSuites = await storage.getEvalSuites();
-    const policies = await storage.getPolicies();
-    const auditEvents = await storage.getAuditEvents();
+    const policies = await storage.getPolicies(orgId);
+    const auditEvents = await storage.getAuditEvents(orgId);
 
     const agent = approval.agentId ? agents.find(a => a.id === approval.agentId) : agents.find(a => a.id === approval.objectId);
     const outcome = approval.outcomeId ? outcomes.find(o => o.id === approval.outcomeId) : null;
@@ -1196,18 +1197,14 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
 
     const updated = await storage.updateApproval(req.params.id as string, updateData, getOrgId(req));
 
-    const allEvents = await storage.getAuditEvents();
-    const prevHash = allEvents.length > 0 ? allEvents[allEvents.length - 1] : null;
     await storage.createAuditEvent({
+      organizationId: getOrgId(req) ?? null,
       actorType: "expert_validator",
       actorId: decidedBy || "system",
       action: `approval_${status || "updated"}`,
       objectType: "approval",
       objectId: approval.id,
       details: `Approval "${approval.objectName || approval.type}" ${status || "updated"} by ${decidedBy || "system"}${constraintsJson ? " with constraints" : ""}`,
-      sequenceNum: allEvents.length + 1,
-      previousHash: prevHash?.eventHash || null,
-      eventHash: `sha256:${nodeCrypto.createHash("sha256").update(`${Date.now()}-${approval.id}-${status}`).digest("hex").slice(0, 16)}`,
     });
 
     if (status === "approved" && approval.objectType === "patch" && approval.objectId) {
@@ -1527,6 +1524,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     const { type, startDate, endDate, includeHashes, objectFilter, redaction } = req.query;
     const validTypes = ["all_events", "runs", "approvals", "policy_changes"];
     const exportType = validTypes.includes(type as string) ? (type as string) : "all_events";
+    const orgId = getOrgId(req);
     let data: any[] = [];
     const start = startDate ? new Date(startDate as string) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const end = endDate ? new Date(endDate as string) : new Date();
@@ -1535,21 +1533,21 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     }
 
     if (exportType === "runs") {
-      const allRuns = await storage.getTraces();
+      const allRuns = await storage.getTraces(orgId);
       data = allRuns.filter(r => {
         if (!r.startedAt) return false;
         const d = new Date(r.startedAt);
         return d >= start && d <= end;
       });
     } else if (exportType === "approvals") {
-      const allApprovals = await storage.getApprovals();
+      const allApprovals = await storage.getApprovals(orgId);
       data = allApprovals.filter(a => {
         if (!a.createdAt) return false;
         const d = new Date(a.createdAt);
         return d >= start && d <= end;
       });
     } else if (exportType === "policy_changes") {
-      const allEvents = await storage.getAuditEvents();
+      const allEvents = await storage.getAuditEvents(orgId);
       data = allEvents.filter(e => {
         if (!e.createdAt) return false;
         const d = new Date(e.createdAt);
@@ -1557,7 +1555,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
         return isPolicy && d >= start && d <= end;
       });
     } else {
-      const allEvents = await storage.getAuditEvents();
+      const allEvents = await storage.getAuditEvents(orgId);
       data = allEvents.filter(e => {
         if (!e.createdAt) return false;
         const d = new Date(e.createdAt);
@@ -1840,17 +1838,18 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
   });
 
   router.get("/api/invoices/:id", async (req, res) => {
-    const invoice = await storage.getInvoice(req.params.id);
+    const invoice = await storage.getInvoice(req.params.id, getOrgId(req));
     if (!invoice) return res.status(404).json({ error: "Invoice not found" });
     res.json(invoice);
   });
 
   router.get("/api/invoices/:id/line-items", async (req, res) => {
-    const invoice = await storage.getInvoice(req.params.id);
+    const invoice = await storage.getInvoice(req.params.id, getOrgId(req));
     if (!invoice) return res.status(404).json({ error: "Invoice not found" });
     const events = await storage.getOutcomeEventsByInvoice(req.params.id);
-    const traces = await storage.getTraces();
-    const agents = await storage.getAgents();
+    const orgId = getOrgId(req);
+    const traces = await storage.getTraces(orgId);
+    const agents = await storage.getAgents(orgId);
     const lineItems = events.map(event => {
       const trace = event.traceId ? traces.find(t => t.id === event.traceId) : null;
       const agent = event.agentId ? agents.find(a => a.id === event.agentId) : null;
@@ -1864,14 +1863,15 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     res.json({ invoice, lineItems });
   });
 
-  router.get("/api/billing/metering-dashboard", async (_req, res) => {
+  router.get("/api/billing/metering-dashboard", async (req, res) => {
     try {
-      const allInvoices = await storage.getInvoices();
-      const allEvents = await storage.getOutcomeEvents();
+      const orgId = getOrgId(req);
+      const allInvoices = await storage.getInvoices(orgId);
+      const allEvents = await storage.getOutcomeEvents(orgId);
       const allDisputes = await storage.getBillingDisputes();
-      const outcomes = await storage.getOutcomes();
-      const allAgents = await storage.getAgents();
-      const allTraces = await storage.getTraces();
+      const outcomes = await storage.getOutcomes(orgId);
+      const allAgents = await storage.getAgents(orgId);
+      const allTraces = await storage.getTraces(orgId);
       const agentOutcomeMap = new Map(allAgents.map(a => [a.id, a.outcomeId]));
       const INFRA_OVERHEAD_RATE = 0.15;
       const TOOL_CALL_COST_RATE = 0.001;
@@ -2026,19 +2026,20 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
 
   router.get("/api/billing/cost-attribution", async (req, res) => {
     try {
+      const orgId = getOrgId(req);
       const period = (req.query.period as string) || "90d";
       const now = new Date();
       let cutoff: Date | null = null;
       if (period === "30d") cutoff = new Date(now.getTime() - 30 * 86400000);
       else if (period === "90d") cutoff = new Date(now.getTime() - 90 * 86400000);
 
-      const allTraces = await storage.getTraces();
+      const allTraces = await storage.getTraces(orgId);
       const filteredTraces = cutoff
         ? allTraces.filter(t => t.startedAt && new Date(t.startedAt) >= cutoff!)
         : allTraces;
 
-      const agents = await storage.getAgents();
-      const outcomes = await storage.getOutcomes();
+      const agents = await storage.getAgents(orgId);
+      const outcomes = await storage.getOutcomes(orgId);
       const agentMap = new Map(agents.map(a => [a.id, a]));
       const outcomeMap = new Map(outcomes.map(o => [o.id, o]));
 
@@ -2204,21 +2205,22 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
 
   router.get("/api/billing/margin-analysis", async (req, res) => {
     try {
+      const orgId = getOrgId(req);
       const period = (req.query.period as string) || "90d";
       const now = new Date();
       let cutoff: Date | null = null;
       if (period === "30d") cutoff = new Date(now.getTime() - 30 * 86400000);
       else if (period === "90d") cutoff = new Date(now.getTime() - 90 * 86400000);
 
-      const allTraces = await storage.getTraces();
+      const allTraces = await storage.getTraces(orgId);
       const filteredTraces = cutoff
         ? allTraces.filter(t => t.startedAt && new Date(t.startedAt) >= cutoff!)
         : allTraces;
 
-      const agents = await storage.getAgents();
-      const outcomes = await storage.getOutcomes();
-      const allInvoices = await storage.getInvoices();
-      const allEvents = await storage.getOutcomeEvents();
+      const agents = await storage.getAgents(orgId);
+      const outcomes = await storage.getOutcomes(orgId);
+      const allInvoices = await storage.getInvoices(orgId);
+      const allEvents = await storage.getOutcomeEvents(orgId);
       const agentMap = new Map(agents.map(a => [a.id, a]));
       const outcomeMap = new Map(outcomes.map(o => [o.id, o]));
 
@@ -2379,17 +2381,18 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
 
   router.get("/api/billing/margin-alerts", async (req, res) => {
     try {
+      const orgId = getOrgId(req);
       const period = (req.query.period as string) || "90d";
       const now = new Date();
       let cutoff: Date | null = null;
       if (period === "30d") cutoff = new Date(now.getTime() - 30 * 86400000);
       else if (period === "90d") cutoff = new Date(now.getTime() - 90 * 86400000);
 
-      const agents = await storage.getAgents();
-      const outcomes = await storage.getOutcomes();
-      const rawTraces = await storage.getTraces();
+      const agents = await storage.getAgents(orgId);
+      const outcomes = await storage.getOutcomes(orgId);
+      const rawTraces = await storage.getTraces(orgId);
       const allTraces = cutoff ? rawTraces.filter(t => t.startedAt && new Date(t.startedAt) >= cutoff!) : rawTraces;
-      const allInvoices = await storage.getInvoices();
+      const allInvoices = await storage.getInvoices(orgId);
       const agentMap = new Map(agents.map(a => [a.id, a]));
 
       const INFRA_OVERHEAD_RATE = 0.15;

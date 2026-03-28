@@ -267,14 +267,14 @@ const router = Router();
 
   // GET single outcome event
   router.get("/api/outcome-events/:id", async (req, res) => {
-    const event = await storage.getOutcomeEvent(req.params.id);
+    const event = await storage.getOutcomeEvent(req.params.id, getOrgId(req));
     if (!event) return res.status(404).json({ error: "Outcome event not found" });
     res.json(event);
   });
 
   // GET outcome event -> trace drill-down
   router.get("/api/outcome-events/:id/trace", async (req, res) => {
-    const event = await storage.getOutcomeEvent(req.params.id);
+    const event = await storage.getOutcomeEvent(req.params.id, getOrgId(req));
     if (!event) return res.status(404).json({ error: "Outcome event not found" });
     if (!event.traceId) return res.status(404).json({ error: "No trace linked to this event" });
     const trace = await storage.getTrace(event.traceId);

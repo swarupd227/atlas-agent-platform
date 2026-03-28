@@ -5,7 +5,7 @@ import { serveStatic } from "./static";
 import { createServer } from "http";
 import { seedDatabase } from "./seed";
 import { autoResumeRuntimes } from "./agent-runtime";
-import { authMiddleware, seedDefaultAdmin, getSecurityMode } from "./auth";
+import { authMiddleware, seedDefaultAdmin, getSecurityMode, setDefaultOrgId } from "./auth";
 import { storage } from "./storage";
 
 process.on("uncaughtException", (err) => {
@@ -141,6 +141,9 @@ app.use((req, res, next) => {
           console.error("Default org seed error:", err);
           return undefined;
         });
+        if (defaultOrg?.id) {
+          setDefaultOrgId(defaultOrg.id);
+        }
         await seedDefaultAdmin(defaultOrg?.id).catch((err) => {
           console.error("Admin seed error:", err);
         });

@@ -1,6 +1,7 @@
 import { eq, desc, inArray, and, like, or, sql, isNull, lte, asc } from "drizzle-orm";
 import { createHash } from "crypto";
 import { db } from "./db";
+import { getDefaultOrgId } from "./auth";
 import {
   users, agents, outcomeContracts, kpiDefinitions, deployments,
   runTraces, evalSuites, policies, approvals, auditEvents, invoices, outcomeEvents,
@@ -193,7 +194,7 @@ export interface IStorage {
   getDeploymentsByPromotedFrom(promotedFrom: string): Promise<Deployment[]>;
 
   getTraces(orgId?: string): Promise<RunTrace[]>;
-  getTrace(id: string): Promise<RunTrace | undefined>;
+  getTrace(id: string, orgId?: string): Promise<RunTrace | undefined>;
   getTracesByAgent(agentId: string): Promise<RunTrace[]>;
   getRecentCompletedTracesByAgent(agentId: string, limit?: number): Promise<RunTrace[]>;
   createTrace(trace: InsertRunTrace): Promise<RunTrace>;
@@ -217,12 +218,12 @@ export interface IStorage {
   createAuditEvent(event: InsertAuditEvent): Promise<AuditEvent>;
 
   getInvoices(orgId?: string): Promise<Invoice[]>;
-  getInvoice(id: string): Promise<Invoice | undefined>;
+  getInvoice(id: string, orgId?: string): Promise<Invoice | undefined>;
   createInvoice(invoice: InsertInvoice): Promise<Invoice>;
   updateInvoice(id: string, data: Partial<Invoice>): Promise<Invoice | undefined>;
 
   getOutcomeEvents(orgId?: string): Promise<OutcomeEvent[]>;
-  getOutcomeEvent(id: string): Promise<OutcomeEvent | undefined>;
+  getOutcomeEvent(id: string, orgId?: string): Promise<OutcomeEvent | undefined>;
   getOutcomeEventsByInvoice(invoiceId: string): Promise<OutcomeEvent[]>;
   getOutcomeEventsByOutcome(outcomeId: string): Promise<OutcomeEvent[]>;
   createOutcomeEvent(event: InsertOutcomeEvent): Promise<OutcomeEvent>;
@@ -889,8 +890,11 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(runTraces);
   }
 
-  async getTrace(id: string) {
-    const [trace] = await db.select().from(runTraces).where(eq(runTraces.id, id));
+  async getTrace(id: string, orgId?: string) {
+    const clause = orgId
+      ? and(eq(runTraces.id, id), eq(runTraces.organizationId, orgId))
+      : eq(runTraces.id, id);
+    const [trace] = await db.select().from(runTraces).where(clause);
     return trace;
   }
 
@@ -986,6 +990,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createAuditEvent(event: InsertAuditEvent) {
+    const orgId = event.organizationId ?? getDefaultOrgId() ?? null;
     const [lastEvent] = await db.select({
       sequenceNum: auditEvents.sequenceNum,
       eventHash: auditEvents.eventHash,
@@ -1008,6 +1013,7 @@ export class DatabaseStorage implements IStorage {
 
     const [created] = await db.insert(auditEvents).values({
       ...event,
+      organizationId: orgId,
       sequenceNum: seqNum,
       previousHash: prevHash,
       eventHash,
@@ -1022,13 +1028,17 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(invoices);
   }
 
-  async getInvoice(id: string) {
-    const [invoice] = await db.select().from(invoices).where(eq(invoices.id, id));
+  async getInvoice(id: string, orgId?: string) {
+    const clause = orgId
+      ? and(eq(invoices.id, id), eq(invoices.organizationId, orgId))
+      : eq(invoices.id, id);
+    const [invoice] = await db.select().from(invoices).where(clause);
     return invoice;
   }
 
   async createInvoice(invoice: InsertInvoice) {
-    const [created] = await db.insert(invoices).values(invoice).returning();
+    const orgId = invoice.organizationId ?? getDefaultOrgId() ?? null;
+    const [created] = await db.insert(invoices).values({ ...invoice, organizationId: orgId }).returning();
     return created;
   }
 
@@ -1044,8 +1054,11 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(outcomeEvents);
   }
 
-  async getOutcomeEvent(id: string) {
-    const [event] = await db.select().from(outcomeEvents).where(eq(outcomeEvents.id, id));
+  async getOutcomeEvent(id: string, orgId?: string) {
+    const clause = orgId
+      ? and(eq(outcomeEvents.id, id), eq(outcomeEvents.organizationId, orgId))
+      : eq(outcomeEvents.id, id);
+    const [event] = await db.select().from(outcomeEvents).where(clause);
     return event;
   }
 
@@ -1058,7 +1071,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createOutcomeEvent(event: InsertOutcomeEvent) {
-    const [created] = await db.insert(outcomeEvents).values(event).returning();
+    const orgId = event.organizationId ?? getDefaultOrgId() ?? null;
+    const [created] = await db.insert(outcomeEvents).values({ ...event, organizationId: orgId }).returning();
     return created;
   }
 

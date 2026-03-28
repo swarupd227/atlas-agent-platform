@@ -1313,7 +1313,7 @@ const router = Router();
   router.get("/api/traces/:id", checkPermission("view_traces"), async (req, res) => {
     const role = getRequestRole(req);
     const level = getRedactionLevel(role);
-    const trace = await storage.getTrace(req.params.id as string);
+    const trace = await storage.getTrace(req.params.id as string, getOrgId(req));
     if (!trace) return res.status(404).json({ error: "Trace not found" });
     res.json(redactPayload(trace, level));
   });
