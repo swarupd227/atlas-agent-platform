@@ -10,6 +10,7 @@ import {
   setAuthCookie,
   clearAuthCookie,
 } from "../auth";
+import { storage } from "../storage";
 
 const router = Router();
 
@@ -45,9 +46,9 @@ router.post("/api/auth/login", async (req, res) => {
     if (!valid) {
       return res.status(401).json({ message: "Invalid credentials" });
     }
-    const token = generateToken({ userId: user.id, username: user.username, role: user.role || "agent_engineer", email: user.email });
+    const token = generateToken({ userId: user.id, username: user.username, role: user.role || "agent_engineer", email: user.email, organizationId: user.organizationId ?? undefined });
     setAuthCookie(res, token);
-    return res.json({ success: true, user: { id: user.id, username: user.username, role: user.role, email: user.email } });
+    return res.json({ success: true, user: { id: user.id, username: user.username, role: user.role, email: user.email, organizationId: user.organizationId } });
   } catch (err: any) {
     return res.status(500).json({ message: err.message });
   }
@@ -70,15 +71,17 @@ router.post("/api/auth/register", async (req, res) => {
     }
     const hashed = await hashPassword(password);
     const assignedRole = isBootstrap ? "admin" : (role || "agent_engineer");
+    const defaultOrg = await storage.seedDefaultOrganization();
     const [newUser] = await db.insert(users).values({
       username,
       password: hashed,
       email: email || null,
       role: assignedRole,
+      organizationId: defaultOrg.id,
     }).returning();
-    const token = generateToken({ userId: newUser.id, username: newUser.username, role: newUser.role || "agent_engineer", email: newUser.email });
+    const token = generateToken({ userId: newUser.id, username: newUser.username, role: newUser.role || "agent_engineer", email: newUser.email, organizationId: newUser.organizationId ?? undefined });
     setAuthCookie(res, token);
-    return res.json({ success: true, user: { id: newUser.id, username: newUser.username, role: newUser.role, email: newUser.email } });
+    return res.json({ success: true, user: { id: newUser.id, username: newUser.username, role: newUser.role, email: newUser.email, organizationId: newUser.organizationId } });
   } catch (err: any) {
     if (err.message?.includes("unique")) {
       return res.status(409).json({ message: "Username already exists" });

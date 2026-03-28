@@ -3188,14 +3188,32 @@ export class DatabaseStorage implements IStorage {
 
   async seedDefaultOrganization(): Promise<Organization> {
     const slug = "default";
-    const existing = await this.getOrganizationBySlug(slug);
-    if (existing) return existing;
-    return this.createOrganization({
-      name: "Default Organization",
-      slug,
-      plan: "enterprise",
-      settings: {},
-    });
+    let org = await this.getOrganizationBySlug(slug);
+    if (!org) {
+      org = await this.createOrganization({
+        name: "Default Organization",
+        slug,
+        plan: "enterprise",
+        status: "active",
+      });
+    }
+    const orgId = org.id;
+    await Promise.all([
+      db.update(agents).set({ organizationId: orgId }).where(isNull(agents.organizationId)),
+      db.update(users).set({ organizationId: orgId }).where(isNull(users.organizationId)),
+      db.update(outcomeContracts).set({ organizationId: orgId }).where(isNull(outcomeContracts.organizationId)),
+      db.update(deployments).set({ organizationId: orgId }).where(isNull(deployments.organizationId)),
+      db.update(runTraces).set({ organizationId: orgId }).where(isNull(runTraces.organizationId)),
+      db.update(policies).set({ organizationId: orgId }).where(isNull(policies.organizationId)),
+      db.update(approvals).set({ organizationId: orgId }).where(isNull(approvals.organizationId)),
+      db.update(auditEvents).set({ organizationId: orgId }).where(isNull(auditEvents.organizationId)),
+      db.update(invoices).set({ organizationId: orgId }).where(isNull(invoices.organizationId)),
+      db.update(outcomeEvents).set({ organizationId: orgId }).where(isNull(outcomeEvents.organizationId)),
+      db.update(incidents).set({ organizationId: orgId }).where(isNull(incidents.organizationId)),
+      db.update(knowledgeBases).set({ organizationId: orgId }).where(isNull(knowledgeBases.organizationId)),
+      db.update(skills).set({ organizationId: orgId }).where(isNull(skills.organizationId)),
+    ]);
+    return org;
   }
 }
 

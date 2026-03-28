@@ -120,7 +120,7 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
   next();
 }
 
-export async function seedDefaultAdmin() {
+export async function seedDefaultAdmin(defaultOrgId?: string) {
   if (getSecurityMode() !== "production") return;
 
   try {
@@ -133,6 +133,7 @@ export async function seedDefaultAdmin() {
       password: hashed,
       email: "admin@nous.ai",
       role: "admin",
+      organizationId: defaultOrgId ?? null,
     });
     console.log("[auth] Default admin user created — username: admin, password: admin123");
   } catch (err: any) {
