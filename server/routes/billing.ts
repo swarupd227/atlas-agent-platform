@@ -3,6 +3,7 @@ import { storage } from "../storage";
 import { z } from "zod";
 import { checkPermission } from "../permissions";
 import { generateKpiAlignedEvalSuite } from "./helpers";
+import { getOrgId } from "../auth";
 
 const router = Router();
 
@@ -259,8 +260,8 @@ const router = Router();
   });
 
   // GET all outcome events
-  router.get("/api/outcome-events", async (_req, res) => {
-    const events = await storage.getOutcomeEvents();
+  router.get("/api/outcome-events", async (req, res) => {
+    const events = await storage.getOutcomeEvents(getOrgId(req));
     res.json(events);
   });
 

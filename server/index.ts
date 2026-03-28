@@ -140,6 +140,9 @@ app.use((req, res, next) => {
         await seedDefaultAdmin().catch((err) => {
           console.error("Admin seed error:", err);
         });
+        await storage.seedDefaultOrganization().catch((err) => {
+          console.error("Default org seed error:", err);
+        });
         await seedDemoMcpServer(storage).catch((err) => {
           console.error("Demo MCP seed error:", err);
         });

@@ -22,6 +22,7 @@ import {
   redactPayload,
   redactWithOntologyKeys,
 } from "../permissions";
+import { getOrgId } from "../auth";
 import {
   resolveOntologyTags,
   generateKpiAlignedEvalSuite,
@@ -48,8 +49,8 @@ const openai = new OpenAI({
 
 const router = Router();
 
-  router.get("/api/agents", async (_req, res) => {
-    const agents = await storage.getAgents();
+  router.get("/api/agents", async (req, res) => {
+    const agents = await storage.getAgents(getOrgId(req));
     res.json(agents);
   });
 
@@ -1305,7 +1306,7 @@ const router = Router();
   router.get("/api/traces", checkPermission("view_traces"), async (req, res) => {
     const role = getRequestRole(req);
     const level = getRedactionLevel(role);
-    const traces = await storage.getTraces();
+    const traces = await storage.getTraces(getOrgId(req));
     res.json(traces.map(t => redactPayload(t, level)));
   });
 

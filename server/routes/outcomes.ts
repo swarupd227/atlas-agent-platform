@@ -9,6 +9,7 @@ import {
   insertKpiDefinitionSchema,
 } from "@shared/schema";
 import { checkPermission, getRequestRole } from "../permissions";
+import { getOrgId } from "../auth";
 import {
   resolveOntologyTags,
   computeConstraintGraph,
@@ -19,8 +20,8 @@ import {
 
 const router = Router();
 
-  router.get("/api/outcomes", async (_req, res) => {
-    const outcomes = await storage.getOutcomes();
+  router.get("/api/outcomes", async (req, res) => {
+    const outcomes = await storage.getOutcomes(getOrgId(req));
     res.json(outcomes);
   });
 

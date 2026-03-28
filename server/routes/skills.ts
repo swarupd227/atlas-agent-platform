@@ -3,6 +3,7 @@ import OpenAI from "openai";
 import { z, ZodError } from "zod";
 import { storage } from "../storage";
 import { checkPermission, getOntologySensitivityKeys, invalidateOntologySensitivityCache } from "../permissions";
+import { getOrgId } from "../auth";
 import { resolveOntologyTags, runParameterMatching } from "./helpers";
 import { executeKGQueryTemplate } from "../agent-runtime";
 import {
@@ -1079,8 +1080,8 @@ Return ONLY a valid JSON object with a "skills" array.`
   });
 
   // Skills CRUD
-  router.get("/api/skills", async (_req, res) => {
-    const allSkills = await storage.getSkills();
+  router.get("/api/skills", async (req, res) => {
+    const allSkills = await storage.getSkills(getOrgId(req));
     res.json(allSkills);
   });
 

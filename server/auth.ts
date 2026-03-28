@@ -28,6 +28,7 @@ export interface TokenPayload {
   username: string;
   role: string;
   email: string | null;
+  organizationId?: string;
 }
 
 declare global {
@@ -36,6 +37,11 @@ declare global {
       authUser?: TokenPayload;
     }
   }
+}
+
+export function getOrgId(req: Request): string | undefined {
+  if (getSecurityMode() === "demo") return undefined;
+  return req.authUser?.organizationId;
 }
 
 export function generateToken(payload: TokenPayload): string {

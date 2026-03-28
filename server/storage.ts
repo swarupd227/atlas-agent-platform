@@ -161,6 +161,7 @@ import {
   contextEconomics, type ContextEconomics, type InsertContextEconomics,
   contextRecommendations, type ContextRecommendation, type InsertContextRecommendation,
   agentTriggers, type AgentTrigger, type InsertAgentTrigger,
+  organizations, type Organization, type InsertOrganization,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -168,11 +169,11 @@ export interface IStorage {
   getUserByUsername(username: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
 
-  getAgents(): Promise<Agent[]>;
+  getAgents(orgId?: string): Promise<Agent[]>;
   getAgent(id: string): Promise<Agent | undefined>;
   createAgent(agent: InsertAgent): Promise<Agent>;
 
-  getOutcomes(): Promise<OutcomeContract[]>;
+  getOutcomes(orgId?: string): Promise<OutcomeContract[]>;
   getOutcome(id: string): Promise<OutcomeContract | undefined>;
   createOutcome(outcome: InsertOutcomeContract): Promise<OutcomeContract>;
 
@@ -185,14 +186,14 @@ export interface IStorage {
   updateOutcome(id: string, data: Partial<OutcomeContract>): Promise<OutcomeContract | undefined>;
   deleteOutcome(id: string): Promise<boolean>;
 
-  getDeployments(): Promise<Deployment[]>;
+  getDeployments(orgId?: string): Promise<Deployment[]>;
   getDeployment(id: string): Promise<Deployment | undefined>;
   createDeployment(deployment: InsertDeployment): Promise<Deployment>;
   updateDeployment(id: string, data: Partial<Deployment>): Promise<Deployment | undefined>;
   getDeploymentsByAgentId(agentId: string, status?: string): Promise<Deployment[]>;
   getDeploymentsByPromotedFrom(promotedFrom: string): Promise<Deployment[]>;
 
-  getTraces(): Promise<RunTrace[]>;
+  getTraces(orgId?: string): Promise<RunTrace[]>;
   getTrace(id: string): Promise<RunTrace | undefined>;
   getTracesByAgent(agentId: string): Promise<RunTrace[]>;
   getRecentCompletedTracesByAgent(agentId: string, limit?: number): Promise<RunTrace[]>;
@@ -202,26 +203,26 @@ export interface IStorage {
   getEvalsByAgent(agentId: string): Promise<EvalSuite[]>;
   createEvalSuite(suite: InsertEvalSuite): Promise<EvalSuite>;
 
-  getPolicies(): Promise<Policy[]>;
+  getPolicies(orgId?: string): Promise<Policy[]>;
   getPolicy(id: string): Promise<Policy | undefined>;
   createPolicy(policy: InsertPolicy): Promise<Policy>;
   updatePolicy(id: string, data: Partial<Policy>): Promise<Policy | undefined>;
   deletePolicy(id: string): Promise<boolean>;
 
-  getApprovals(): Promise<Approval[]>;
+  getApprovals(orgId?: string): Promise<Approval[]>;
   getApproval(id: string): Promise<Approval | undefined>;
   createApproval(approval: InsertApproval): Promise<Approval>;
   updateApproval(id: string, data: Partial<Approval>): Promise<Approval | undefined>;
 
-  getAuditEvents(): Promise<AuditEvent[]>;
+  getAuditEvents(orgId?: string): Promise<AuditEvent[]>;
   createAuditEvent(event: InsertAuditEvent): Promise<AuditEvent>;
 
-  getInvoices(): Promise<Invoice[]>;
+  getInvoices(orgId?: string): Promise<Invoice[]>;
   getInvoice(id: string): Promise<Invoice | undefined>;
   createInvoice(invoice: InsertInvoice): Promise<Invoice>;
   updateInvoice(id: string, data: Partial<Invoice>): Promise<Invoice | undefined>;
 
-  getOutcomeEvents(): Promise<OutcomeEvent[]>;
+  getOutcomeEvents(orgId?: string): Promise<OutcomeEvent[]>;
   getOutcomeEvent(id: string): Promise<OutcomeEvent | undefined>;
   getOutcomeEventsByInvoice(invoiceId: string): Promise<OutcomeEvent[]>;
   getOutcomeEventsByOutcome(outcomeId: string): Promise<OutcomeEvent[]>;
@@ -297,7 +298,7 @@ export interface IStorage {
 
   verifyAuditChainIntegrity(): Promise<{ valid: boolean; totalEvents: number; verifiedEvents: number; brokenAt?: number }>;
 
-  getIncidents(): Promise<Incident[]>;
+  getIncidents(orgId?: string): Promise<Incident[]>;
   getIncident(id: string): Promise<Incident | undefined>;
   getIncidentsByAgent(agentId: string): Promise<Incident[]>;
   createIncident(incident: InsertIncident): Promise<Incident>;
@@ -524,7 +525,7 @@ export interface IStorage {
   createOntologyEnhancement(enhancement: InsertOntologyEnhancement): Promise<OntologyEnhancement>;
   updateOntologyEnhancement(id: string, data: Partial<OntologyEnhancement>): Promise<OntologyEnhancement | undefined>;
 
-  getSkills(): Promise<Skill[]>;
+  getSkills(orgId?: string): Promise<Skill[]>;
   getSkill(id: string): Promise<Skill | undefined>;
   getSkillsByIds(ids: string[]): Promise<Skill[]>;
   createSkill(skill: InsertSkill): Promise<Skill>;
@@ -690,7 +691,7 @@ export interface IStorage {
   updateAgentChannel(id: string, data: Partial<AgentChannel>): Promise<AgentChannel | undefined>;
   deleteAgentChannel(id: string): Promise<boolean>;
 
-  getKnowledgeBases(): Promise<KnowledgeBase[]>;
+  getKnowledgeBases(orgId?: string): Promise<KnowledgeBase[]>;
   getKnowledgeBase(id: string): Promise<KnowledgeBase | undefined>;
   createKnowledgeBase(kb: InsertKnowledgeBase): Promise<KnowledgeBase>;
   updateKnowledgeBase(id: string, data: Partial<KnowledgeBase>): Promise<KnowledgeBase | undefined>;
@@ -743,6 +744,13 @@ export interface IStorage {
   updateAgentTrigger(id: string, data: Partial<AgentTrigger>): Promise<AgentTrigger | undefined>;
   deleteAgentTrigger(id: string): Promise<boolean>;
   getAgentTriggersByType(triggerType: string): Promise<AgentTrigger[]>;
+
+  getOrganizations(): Promise<Organization[]>;
+  getOrganization(id: string): Promise<Organization | undefined>;
+  getOrganizationBySlug(slug: string): Promise<Organization | undefined>;
+  createOrganization(org: InsertOrganization): Promise<Organization>;
+  updateOrganization(id: string, data: Partial<Organization>): Promise<Organization | undefined>;
+  seedDefaultOrganization(): Promise<Organization>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -761,7 +769,10 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getAgents() {
+  async getAgents(orgId?: string) {
+    if (orgId) {
+      return db.select().from(agents).where(eq(agents.organizationId, orgId)).orderBy(desc(agents.updatedAt), desc(agents.createdAt));
+    }
     return db.select().from(agents).orderBy(desc(agents.updatedAt), desc(agents.createdAt));
   }
 
@@ -775,7 +786,10 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getOutcomes() {
+  async getOutcomes(orgId?: string) {
+    if (orgId) {
+      return db.select().from(outcomeContracts).where(eq(outcomeContracts.organizationId, orgId));
+    }
     return db.select().from(outcomeContracts);
   }
 
@@ -828,7 +842,10 @@ export class DatabaseStorage implements IStorage {
     return !!deleted;
   }
 
-  async getDeployments() {
+  async getDeployments(orgId?: string) {
+    if (orgId) {
+      return db.select().from(deployments).where(eq(deployments.organizationId, orgId));
+    }
     return db.select().from(deployments);
   }
 
@@ -859,7 +876,10 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(deployments).where(eq(deployments.promotedFrom, promotedFrom));
   }
 
-  async getTraces() {
+  async getTraces(orgId?: string) {
+    if (orgId) {
+      return db.select().from(runTraces).where(eq(runTraces.organizationId, orgId));
+    }
     return db.select().from(runTraces);
   }
 
@@ -897,7 +917,10 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getPolicies() {
+  async getPolicies(orgId?: string) {
+    if (orgId) {
+      return db.select().from(policies).where(eq(policies.organizationId, orgId));
+    }
     return db.select().from(policies);
   }
 
@@ -921,7 +944,10 @@ export class DatabaseStorage implements IStorage {
     return !!deleted;
   }
 
-  async getApprovals() {
+  async getApprovals(orgId?: string) {
+    if (orgId) {
+      return db.select().from(approvals).where(eq(approvals.organizationId, orgId));
+    }
     return db.select().from(approvals);
   }
 
@@ -940,7 +966,10 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async getAuditEvents() {
+  async getAuditEvents(orgId?: string) {
+    if (orgId) {
+      return db.select().from(auditEvents).where(eq(auditEvents.organizationId, orgId));
+    }
     return db.select().from(auditEvents);
   }
 
@@ -974,7 +1003,10 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getInvoices() {
+  async getInvoices(orgId?: string) {
+    if (orgId) {
+      return db.select().from(invoices).where(eq(invoices.organizationId, orgId));
+    }
     return db.select().from(invoices);
   }
 
@@ -993,7 +1025,10 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async getOutcomeEvents() {
+  async getOutcomeEvents(orgId?: string) {
+    if (orgId) {
+      return db.select().from(outcomeEvents).where(eq(outcomeEvents.organizationId, orgId));
+    }
     return db.select().from(outcomeEvents);
   }
 
@@ -1306,7 +1341,10 @@ export class DatabaseStorage implements IStorage {
     return { valid, totalEvents: events.length, verifiedEvents: sorted.length, brokenAt };
   }
 
-  async getIncidents() {
+  async getIncidents(orgId?: string) {
+    if (orgId) {
+      return db.select().from(incidents).where(eq(incidents.organizationId, orgId));
+    }
     return db.select().from(incidents);
   }
 
@@ -2187,7 +2225,10 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async getSkills() {
+  async getSkills(orgId?: string) {
+    if (orgId) {
+      return db.select().from(skills).where(eq(skills.organizationId, orgId));
+    }
     return db.select().from(skills);
   }
   async getSkill(id: string) {
@@ -2884,7 +2925,10 @@ export class DatabaseStorage implements IStorage {
     return result.length > 0;
   }
 
-  async getKnowledgeBases(): Promise<KnowledgeBase[]> {
+  async getKnowledgeBases(orgId?: string): Promise<KnowledgeBase[]> {
+    if (orgId) {
+      return db.select().from(knowledgeBases).where(eq(knowledgeBases.organizationId, orgId)).orderBy(desc(knowledgeBases.createdAt));
+    }
     return db.select().from(knowledgeBases).orderBy(desc(knowledgeBases.createdAt));
   }
 
@@ -3116,6 +3160,42 @@ export class DatabaseStorage implements IStorage {
 
   async getAgentTriggersByType(triggerType: string): Promise<AgentTrigger[]> {
     return db.select().from(agentTriggers).where(eq(agentTriggers.triggerType, triggerType));
+  }
+
+  async getOrganizations(): Promise<Organization[]> {
+    return db.select().from(organizations);
+  }
+
+  async getOrganization(id: string): Promise<Organization | undefined> {
+    const [org] = await db.select().from(organizations).where(eq(organizations.id, id));
+    return org;
+  }
+
+  async getOrganizationBySlug(slug: string): Promise<Organization | undefined> {
+    const [org] = await db.select().from(organizations).where(eq(organizations.slug, slug));
+    return org;
+  }
+
+  async createOrganization(org: InsertOrganization): Promise<Organization> {
+    const [created] = await db.insert(organizations).values(org).returning();
+    return created;
+  }
+
+  async updateOrganization(id: string, data: Partial<Organization>): Promise<Organization | undefined> {
+    const [updated] = await db.update(organizations).set(data).where(eq(organizations.id, id)).returning();
+    return updated;
+  }
+
+  async seedDefaultOrganization(): Promise<Organization> {
+    const slug = "default";
+    const existing = await this.getOrganizationBySlug(slug);
+    if (existing) return existing;
+    return this.createOrganization({
+      name: "Default Organization",
+      slug,
+      plan: "enterprise",
+      settings: {},
+    });
   }
 }
 

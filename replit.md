@@ -67,6 +67,22 @@ The monolithic `server/routes.ts` is being progressively split into domain-speci
 
 Each module is mounted with `app.use(router)` in `registerRoutes`. The `industryEvalFrameworks` export remains in `routes.ts` (required by `worker.ts`). routes.ts reduced from 37,326 → 26,566 lines (-29%).
 
+## Multi-Tenancy (Task #97)
+
+Organization-level data isolation has been implemented across the schema and storage layer:
+
+**Schema changes**: An `organizations` table was added (`shared/schema.ts`) with `id`, `name`, `slug`, `plan`, `settings`, `createdAt`. A nullable `organization_id` column was added to 12 core tables: `agents`, `users`, `outcomeContracts`, `deployments`, `runTraces`, `policies`, `approvals`, `auditEvents`, `invoices`, `outcomeEvents`, `incidents`, `knowledgeBases`, `skills`.
+
+**Storage layer**: `IStorage` updated with `getOrganizations`, `getOrganization`, `getOrganizationBySlug`, `createOrganization`, `updateOrganization`, `seedDefaultOrganization`. All 12 core list methods (`getAgents`, `getOutcomes`, `getDeployments`, `getTraces`, `getPolicies`, `getApprovals`, `getAuditEvents`, `getInvoices`, `getOutcomeEvents`, `getIncidents`, `getSkills`, `getKnowledgeBases`) now accept optional `orgId?: string` parameter and apply WHERE filter when provided.
+
+**Auth layer**: `TokenPayload` interface extended with `organizationId?: string`. A `getOrgId(req)` helper was added to `server/auth.ts` — returns `undefined` in demo mode (`SECURITY_MODE=demo`), or `req.authUser?.organizationId` in production mode.
+
+**Route wiring**: Primary user-facing list endpoints in `agents.ts`, `governance.ts`, `billing.ts`, `outcomes.ts`, `skills.ts`, and `kb-routes.ts` now call `storage.getX(getOrgId(req))`. Internal analytics/computation calls remain unfiltered for cross-cutting aggregations.
+
+**Seeding**: `storage.seedDefaultOrganization()` called at server startup (idempotent) to ensure a default org row exists for development.
+
+**Isolation design**: In demo mode (`SECURITY_MODE=demo`) — no filtering (all records returned, backward compatible). In production mode — filtered to user's org. Platform-level tables (templates, regulations, ontology, MCP marketplace) remain global/unfiltered.
+
 ## External Dependencies
 - **OpenAI**: Primary LLM provider for agent runtime, evaluations, AI enhancements, and embeddings.
 - **Anthropic**: Secondary LLM provider for Claude models with tool calling.

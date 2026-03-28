@@ -13,6 +13,7 @@ import {
   insertComplianceReportSchema,
   insertIncidentSchema,
 } from "@shared/schema";
+import { getOrgId } from "../auth";
 import {
   checkPermission,
   getRequestRole,
@@ -33,8 +34,8 @@ const openai = new OpenAI({
 const router = Router();
 router.use(billingRouter);
 
-  router.get("/api/policies", async (_req, res) => {
-    const policies = await storage.getPolicies();
+  router.get("/api/policies", async (req, res) => {
+    const policies = await storage.getPolicies(getOrgId(req));
     res.json(policies);
   });
 
@@ -1120,8 +1121,8 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     });
   });
 
-  router.get("/api/approvals", async (_req, res) => {
-    const approvals = await storage.getApprovals();
+  router.get("/api/approvals", async (req, res) => {
+    const approvals = await storage.getApprovals(getOrgId(req));
     res.json(approvals);
   });
 
@@ -1400,7 +1401,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
   router.get("/api/audit-events", async (req, res) => {
     const role = getRequestRole(req);
     const level = getRedactionLevel(role);
-    const events = await storage.getAuditEvents();
+    const events = await storage.getAuditEvents(getOrgId(req));
 
     const entityType = req.query.entity_type as string | undefined;
     const regulation = req.query.regulation as string | undefined;
@@ -1685,8 +1686,8 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     }
   });
 
-  router.get("/api/invoices", async (_req, res) => {
-    const invoices = await storage.getInvoices();
+  router.get("/api/invoices", async (req, res) => {
+    const invoices = await storage.getInvoices(getOrgId(req));
     res.json(invoices);
   });
 
@@ -3208,8 +3209,8 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     }
   });
 
-  router.get("/api/incidents", async (_req, res) => {
-    const allIncidents = await storage.getIncidents();
+  router.get("/api/incidents", async (req, res) => {
+    const allIncidents = await storage.getIncidents(getOrgId(req));
     res.json(allIncidents);
   });
 
