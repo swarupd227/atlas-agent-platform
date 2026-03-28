@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { ZodError } from "zod";
-import { getDefaultProvider } from "../llm-provider";
+import { completeWithFallback } from "../llm-provider";
 import { storage } from "../storage";
 
 const openai = new OpenAI({
@@ -12,8 +12,7 @@ async function routeAIComplete(
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
   options?: { model?: string; maxTokens?: number; responseFormat?: "text" | "json"; temperature?: number },
 ): Promise<{ content: string; tokensUsed: { prompt: number; completion: number; total: number }; costUsd: number }> {
-  const provider = getDefaultProvider();
-  const result = await provider.complete(messages, {
+  const result = await completeWithFallback(messages, {
     model: options?.model,
     maxTokens: options?.maxTokens || 4096,
     responseFormat: options?.responseFormat,

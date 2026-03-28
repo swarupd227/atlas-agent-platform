@@ -4,7 +4,7 @@ import { EventEmitter } from "events";
 import { checkOntologyCompliance, executeScheduledAgentCycle } from "./agent-runtime";
 import { industryEvalFrameworks } from "./routes";
 import { runLlmJudge, runAgentOnInput, buildAgentContext } from "./eval-judge";
-import { getDefaultProvider, getProvider } from "./llm-provider";
+import { getDefaultProvider, getProvider, completeWithFallback } from "./llm-provider";
 
 export const jobEvents = new EventEmitter();
 jobEvents.setMaxListeners(50);
@@ -801,12 +801,14 @@ async function processShadowReplay(job: Job): Promise<Record<string, unknown>> {
       }
 
       const replayStart = Date.now();
-      const replayResult = await provider.complete(
+      const fallbackProvider = getProvider(provider.providerName === "openai" ? "anthropic" : "openai");
+      const replayResult = await completeWithFallback(
         [
           { role: "system", content: agent.systemPrompt || "You are a helpful AI assistant." },
           { role: "user", content: userMessage },
         ],
         { temperature: 0, maxTokens: 1000 },
+        [provider, fallbackProvider],
       );
       const replayLatencyMs = Date.now() - replayStart;
       const replayCostUsd = replayResult.costUsd;

@@ -1,4 +1,4 @@
-import { getDefaultProvider } from "./llm-provider";
+import { completeWithFallback } from "./llm-provider";
 
 export interface CriterionResult {
   criterion: string;
@@ -35,7 +35,6 @@ export async function runAgentOnInput(
   systemPrompt: string | null | undefined,
   inputData: Record<string, unknown>,
 ): Promise<AgentRunResult> {
-  const provider = getDefaultProvider();
   const start = Date.now();
 
   let userMessage: string;
@@ -52,7 +51,7 @@ export async function runAgentOnInput(
   }
 
   try {
-    const result = await provider.complete(
+    const result = await completeWithFallback(
       [
         { role: "system", content: systemPrompt || "You are a helpful AI assistant." },
         { role: "user", content: userMessage },
@@ -77,7 +76,6 @@ export async function runLlmJudge(
   actualOutput: string | null,
   industryDimensions?: Array<{ id: string; name: string; scoringCriteria: string[] }>,
 ): Promise<LlmJudgeResult> {
-  const provider = getDefaultProvider();
   const start = Date.now();
 
   const hasDimensions = industryDimensions && industryDimensions.length > 0;
@@ -128,7 +126,7 @@ Agent context:
 ${agentContext || "(no additional context)"}${criteriaBlock}`;
 
   try {
-    const result = await provider.complete(
+    const result = await completeWithFallback(
       [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },

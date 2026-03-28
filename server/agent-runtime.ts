@@ -5,7 +5,7 @@ import OpenAI from "openai";
 import { createHash } from "crypto";
 import { sql } from "drizzle-orm";
 import { searchKnowledgeBaseChunks } from "./embeddings";
-import { getProvider, buildCanonicalTools, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
+import { getProvider, completeWithFallback, buildCanonicalTools, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
 
 export function canonicalJsonStringify(obj: any): string {
   if (obj === null || obj === undefined) return JSON.stringify(obj);
@@ -911,6 +911,8 @@ export async function executePromptWithMcp(
   const providerName = options?.modelProvider || "openai";
   const modelName = options?.modelName || "gpt-4.1";
   const llmProvider = getProvider(providerName);
+  const fallbackProviderName = providerName === "openai" ? "anthropic" : "openai";
+  const fallbackLlmProvider = getProvider(fallbackProviderName);
   const canonicalTools = buildCanonicalTools(availableTools);
 
   let kbContext = "";
@@ -1038,9 +1040,13 @@ After receiving tool results, provide a structured analysis with key findings, s
   let totalPromptTokens = 0;
   let totalCompletionTokens = 0;
   let totalTokens = 0;
+  let totalCostUsd = 0;
+  let costCapReached = false;
+  const runtimeConfig = options?.runtimeConfig || {};
+  const maxCostPerRunUsd: number = typeof runtimeConfig.maxCostPerRunUsd === "number" ? runtimeConfig.maxCostPerRunUsd : 1.0;
 
   try {
-    const planResult = await llmProvider.complete(
+    const planResult = await completeWithFallback(
       [
         { role: "system", content: systemMessage },
         { role: "user", content: prompt },
@@ -1050,11 +1056,13 @@ After receiving tool results, provide a structured analysis with key findings, s
         tools: canonicalTools.length > 0 ? canonicalTools : undefined,
         maxTokens: 4096,
       },
+      [llmProvider, fallbackLlmProvider],
     );
 
     totalPromptTokens += planResult.tokensUsed.prompt;
     totalCompletionTokens += planResult.tokensUsed.completion;
     totalTokens += planResult.tokensUsed.total;
+    totalCostUsd += planResult.costUsd;
 
     let currentContent = planResult.content;
     let currentToolCalls: CanonicalToolCall[] = planResult.toolCalls;
@@ -1183,20 +1191,29 @@ After receiving tool results, provide a structured analysis with key findings, s
         }),
       );
 
+      if (totalCostUsd >= maxCostPerRunUsd) {
+        costCapReached = true;
+        console.warn(`[agent-runtime] Per-run cost cap reached: $${totalCostUsd.toFixed(4)} >= $${maxCostPerRunUsd} (maxCostPerRunUsd). Stopping tool loop.`);
+        currentToolCalls = [];
+        break;
+      }
+
       if (iterationsUsed < MAX_TOOL_ITERATIONS) {
         try {
-          const continueResult = await llmProvider.complete(
+          const continueResult = await completeWithFallback(
             conversationMessages,
             {
               model: modelName,
               tools: canonicalTools.length > 0 ? canonicalTools : undefined,
               maxTokens: 4096,
             },
+            [llmProvider, fallbackLlmProvider],
           );
 
           totalPromptTokens += continueResult.tokensUsed.prompt;
           totalCompletionTokens += continueResult.tokensUsed.completion;
           totalTokens += continueResult.tokensUsed.total;
+          totalCostUsd += continueResult.costUsd;
 
           currentContent = continueResult.content;
           currentToolCalls = continueResult.toolCalls;
@@ -1281,18 +1298,20 @@ After receiving tool results, provide a structured analysis with key findings, s
           ...(currentContent && currentToolCalls.length === 0 ? [{ role: "assistant" as const, content: currentContent }] : []),
           { role: "user" as const, content: analysisPrompt },
         ];
-        const analysisResult = await llmProvider.complete(
+        const analysisResult = await completeWithFallback(
           analysisMessages,
           {
             model: modelName,
             maxTokens: hasRecordData || hasOutputSchema ? 16384 : 4096,
             ...(isConversational ? {} : { responseFormat: "json" as const }),
           },
+          [llmProvider, fallbackLlmProvider],
         );
 
         totalPromptTokens += analysisResult.tokensUsed.prompt;
         totalCompletionTokens += analysisResult.tokensUsed.completion;
         totalTokens += analysisResult.tokensUsed.total;
+        totalCostUsd += analysisResult.costUsd;
 
         const rawContent = analysisResult.content || (isConversational ? "I couldn't generate a response." : "{}");
         
@@ -1500,7 +1519,7 @@ After receiving tool results, provide a structured analysis with key findings, s
 
   return {
     steps,
-    success: failedSteps.length === 0,
+    success: failedSteps.length === 0 && !costCapReached,
     summary: {
       totalSteps: steps.length,
       passedSteps: steps.filter(s => s.status === "completed").length,
@@ -1512,12 +1531,13 @@ After receiving tool results, provide a structured analysis with key findings, s
       toolsUsed: toolCallResults.filter(r => !r.error).map(r => ({ server: r.serverName, tool: r.toolName })),
       analysis: analysisOutput,
       source: "mcp_integration",
-      costUsd: estimatedCostUsd,
+      costUsd: totalCostUsd > 0 ? totalCostUsd : estimatedCostUsd,
       tokenUsage: {
         promptTokens: totalPromptTokens,
         completionTokens: totalCompletionTokens,
         totalTokens,
       },
+      ...(costCapReached ? { costCapReached: true, costCapUsd: maxCostPerRunUsd, totalCostUsd } : {}),
       ...(ontologyComplianceResult ? { ontologyCompliance: ontologyComplianceResult } : {}),
     },
     promptInputs: {

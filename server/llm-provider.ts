@@ -102,6 +102,116 @@ function estimateCost(
   return (promptTokens / 1000) * model.costPer1kInput + (completionTokens / 1000) * model.costPer1kOutput;
 }
 
+// ---------------------------------------------------------------------------
+// Retry + exponential backoff
+// ---------------------------------------------------------------------------
+
+const MAX_RETRIES = 3;
+const RETRY_BASE_DELAY_MS = 1000;
+const RETRYABLE_STATUS_CODES = new Set([429, 502, 503, 504]);
+const RETRYABLE_ERROR_CODES = new Set(["ECONNRESET", "ETIMEDOUT", "ENOTFOUND", "ECONNREFUSED"]);
+
+function isRetryable(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const e = err as Error & { status?: number; code?: string; constructor: { name: string } };
+  if (e.status !== undefined && RETRYABLE_STATUS_CODES.has(e.status)) return true;
+  if (e.code !== undefined && RETRYABLE_ERROR_CODES.has(e.code)) return true;
+  if (e.constructor.name === "RateLimitError") return true;
+  if (e.constructor.name === "APIConnectionError") return true;
+  if (e.constructor.name === "APIConnectionTimeoutError") return true;
+  return false;
+}
+
+async function withRetry<T>(fn: () => Promise<T>, providerName: string): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (attempt === MAX_RETRIES || !isRetryable(err)) {
+        throw err;
+      }
+      const baseDelay = RETRY_BASE_DELAY_MS * Math.pow(2, attempt);
+      const jitter = Math.random() * baseDelay;
+      const delayMs = Math.floor(jitter);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[llm-provider] ${providerName} transient error (attempt ${attempt + 1}/${MAX_RETRIES}), retrying in ${delayMs}ms: ${msg}`);
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastErr;
+}
+
+// ---------------------------------------------------------------------------
+// Circuit breaker
+// ---------------------------------------------------------------------------
+
+const CB_FAILURE_THRESHOLD = 5;
+const CB_WINDOW_MS = 60_000;
+const CB_OPEN_DURATION_MS = 30_000;
+
+interface CircuitState {
+  failures: number[];
+  openUntil: number;
+  halfOpen: boolean;
+}
+
+const circuitStates: Record<string, CircuitState> = {};
+
+function getCircuit(providerName: string): CircuitState {
+  if (!circuitStates[providerName]) {
+    circuitStates[providerName] = { failures: [], openUntil: 0, halfOpen: false };
+  }
+  return circuitStates[providerName];
+}
+
+function cbCheck(providerName: string): void {
+  const now = Date.now();
+  const circuit = getCircuit(providerName);
+  if (circuit.openUntil > 0) {
+    if (now >= circuit.openUntil) {
+      circuit.halfOpen = true;
+      circuit.openUntil = 0;
+      console.info(`[llm-provider] Circuit HALF-OPEN for "${providerName}", allowing probe request`);
+    } else {
+      throw new Error(
+        `[llm-provider] Circuit breaker OPEN for provider "${providerName}". ` +
+        `Too many failures. Will retry after ${new Date(circuit.openUntil).toISOString()}.`
+      );
+    }
+  }
+}
+
+function cbRecordSuccess(providerName: string): void {
+  const circuit = getCircuit(providerName);
+  if (circuit.halfOpen || circuit.failures.length > 0) {
+    console.info(`[llm-provider] Circuit CLOSED for "${providerName}" after successful probe`);
+  }
+  circuit.failures = [];
+  circuit.openUntil = 0;
+  circuit.halfOpen = false;
+}
+
+function cbRecordFailure(providerName: string): void {
+  const now = Date.now();
+  const circuit = getCircuit(providerName);
+  circuit.failures = circuit.failures.filter((t) => now - t < CB_WINDOW_MS);
+  circuit.failures.push(now);
+  if (circuit.halfOpen || circuit.failures.length >= CB_FAILURE_THRESHOLD) {
+    circuit.openUntil = now + CB_OPEN_DURATION_MS;
+    circuit.halfOpen = false;
+    console.warn(
+      `[llm-provider] Circuit OPENED for "${providerName}" (${circuit.failures.length} failures in ${CB_WINDOW_MS / 1000}s window). ` +
+      `Blocking calls until ${new Date(circuit.openUntil).toISOString()}.`
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Provider interface
+// ---------------------------------------------------------------------------
+
 export interface LLMProvider {
   readonly providerName: string;
   complete(messages: LLMMessage[], options?: LLMCompletionOptions): Promise<LLMCompletionResult>;
@@ -109,6 +219,10 @@ export interface LLMProvider {
   healthCheck(): Promise<{ ok: boolean; latencyMs: number; error?: string }>;
   getInfo(): LLMProviderInfo;
 }
+
+// ---------------------------------------------------------------------------
+// OpenAI provider
+// ---------------------------------------------------------------------------
 
 class OpenAIProvider implements LLMProvider {
   readonly providerName = "openai";
@@ -157,14 +271,27 @@ class OpenAIProvider implements LLMProvider {
           }))
         : undefined;
 
-    const response = await this.client.chat.completions.create({
-      model,
-      messages: openaiMessages,
-      tools: openaiTools,
-      max_completion_tokens: options?.maxTokens || 4096,
-      ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
-      ...(options?.responseFormat === "json" ? { response_format: { type: "json_object" as const } } : {}),
-    });
+    cbCheck(this.providerName);
+
+    let response: OpenAI.ChatCompletion;
+    try {
+      response = await withRetry(
+        () =>
+          this.client.chat.completions.create({
+            model,
+            messages: openaiMessages,
+            tools: openaiTools,
+            max_completion_tokens: options?.maxTokens || 4096,
+            ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
+            ...(options?.responseFormat === "json" ? { response_format: { type: "json_object" as const } } : {}),
+          }),
+        this.providerName,
+      );
+      cbRecordSuccess(this.providerName);
+    } catch (err) {
+      cbRecordFailure(this.providerName);
+      throw err;
+    }
 
     const choice = response.choices[0];
     const promptTokens = response.usage?.prompt_tokens || 0;
@@ -240,6 +367,10 @@ class OpenAIProvider implements LLMProvider {
     };
   }
 }
+
+// ---------------------------------------------------------------------------
+// Anthropic provider
+// ---------------------------------------------------------------------------
 
 class AnthropicProvider implements LLMProvider {
   readonly providerName = "anthropic";
@@ -317,14 +448,27 @@ class AnthropicProvider implements LLMProvider {
       systemPrompt += "\n\nIMPORTANT: You must respond with valid JSON only. Do not include any text outside the JSON object.";
     }
 
-    const response = await this.client.messages.create({
-      model,
-      max_tokens: options?.maxTokens || 4096,
-      ...(systemPrompt ? { system: systemPrompt } : {}),
-      messages: anthropicMessages,
-      ...(anthropicTools ? { tools: anthropicTools } : {}),
-      ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
-    });
+    cbCheck(this.providerName);
+
+    let response: Anthropic.Message;
+    try {
+      response = await withRetry(
+        () =>
+          this.client.messages.create({
+            model,
+            max_tokens: options?.maxTokens || 4096,
+            ...(systemPrompt ? { system: systemPrompt } : {}),
+            messages: anthropicMessages,
+            ...(anthropicTools ? { tools: anthropicTools } : {}),
+            ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
+          }),
+        this.providerName,
+      );
+      cbRecordSuccess(this.providerName);
+    } catch (err) {
+      cbRecordFailure(this.providerName);
+      throw err;
+    }
 
     let textContent = "";
     const toolCalls: CanonicalToolCall[] = [];
@@ -384,6 +528,10 @@ class AnthropicProvider implements LLMProvider {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Provider registry
+// ---------------------------------------------------------------------------
+
 const providerInstances: Record<string, LLMProvider> = {};
 
 export function getProvider(providerName: string): LLMProvider {
@@ -418,6 +566,48 @@ export function getProvider(providerName: string): LLMProvider {
 export function getDefaultProvider(): LLMProvider {
   const defaultName = process.env.DEFAULT_LLM_PROVIDER || "openai";
   return getProvider(defaultName);
+}
+
+/**
+ * Attempt to complete a request using providers in order.
+ * If the first provider fails (circuit open, all retries exhausted), the next
+ * provider in the list is tried. Logs each cascade step.
+ *
+ * @param messages   Chat messages
+ * @param options    Completion options (model, temperature, etc.)
+ * @param providers  Ordered list of providers to try. Defaults to the
+ *                   configured default provider followed by the other available
+ *                   provider (OpenAI ↔ Anthropic).
+ */
+export async function completeWithFallback(
+  messages: LLMMessage[],
+  options?: LLMCompletionOptions,
+  providers?: LLMProvider[],
+): Promise<LLMCompletionResult> {
+  let providerList: LLMProvider[];
+  if (providers && providers.length > 0) {
+    providerList = providers;
+  } else {
+    const primary = getDefaultProvider();
+    const fallbackName = primary.providerName === "openai" ? "anthropic" : "openai";
+    providerList = [primary, getProvider(fallbackName)];
+  }
+
+  const errors: string[] = [];
+  for (const provider of providerList) {
+    try {
+      const result = await provider.complete(messages, options);
+      return result;
+    } catch (err: any) {
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`${provider.providerName}: ${msg}`);
+      console.warn(
+        `[llm-provider] completeWithFallback: provider "${provider.providerName}" failed, cascading to next. Error: ${msg}`
+      );
+    }
+  }
+
+  throw new Error(`[llm-provider] All providers failed. Errors: ${errors.join(" | ")}`);
 }
 
 export function getAvailableProviders(): LLMProviderInfo[] {
