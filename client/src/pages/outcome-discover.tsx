@@ -528,6 +528,7 @@ export default function OutcomeDiscover() {
           riskThreshold: formRiskThreshold,
           maxDriftPercent: formMaxDriftPercent,
           ...(formSlaDescription ? { slaConfig: { slaDescription: formSlaDescription } } : {}),
+          approvalGates: [],
         },
         kpis: formKpis.map((k) => ({
           name: k.name,
@@ -1255,6 +1256,10 @@ export default function OutcomeDiscover() {
                         <Input id="form-max-drift" type="number" value={formMaxDriftPercent} onChange={(e) => setFormMaxDriftPercent(Number(e.target.value) || 0)} data-testid="input-form-max-drift" />
                       </div>
                     </div>
+                    <div className="flex flex-col gap-1.5">
+                      <Label htmlFor="form-sla-desc">SLA Description</Label>
+                      <Textarea id="form-sla-desc" value={formSlaDescription} onChange={(e) => setFormSlaDescription(e.target.value)} placeholder="Describe the SLA commitment — e.g. 99.5% uptime with 15-minute response time..." rows={2} data-testid="input-form-sla" />
+                    </div>
                   </div>
                 </div>
 
@@ -1353,10 +1358,6 @@ export default function OutcomeDiscover() {
                       <Label htmlFor="form-price">Price per Unit</Label>
                       <Input id="form-price" type="number" step="0.01" value={formPricePerUnit} onChange={(e) => setFormPricePerUnit(Number(e.target.value) || 0)} data-testid="input-form-price" />
                     </div>
-                  </div>
-                  <div className="flex flex-col gap-1.5">
-                    <Label htmlFor="form-sla">SLA Description</Label>
-                    <Input id="form-sla" value={formSlaDescription} onChange={(e) => setFormSlaDescription(e.target.value)} placeholder="Describe the SLA terms..." data-testid="input-form-sla" />
                   </div>
                 </div>
 
