@@ -188,6 +188,17 @@ function cbCheck(providerName: string): void {
         `Too many failures. Will retry after ${new Date(circuit.openUntil).toISOString()}.`
       );
     }
+  } else if (circuit.halfOpen) {
+    // openUntil was cleared by the first post-open request, but circuit is still half-open.
+    // Block any concurrent requests while probe is in flight.
+    if (circuit.probeInFlight) {
+      throw new Error(
+        `[llm-provider] Circuit HALF-OPEN for "${providerName}": probe already in flight. ` +
+        `Blocking concurrent request until probe resolves.`
+      );
+    }
+    // Guard against edge case: halfOpen but no probe claimed yet
+    circuit.probeInFlight = true;
   }
 }
 

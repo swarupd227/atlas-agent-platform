@@ -911,7 +911,7 @@ export async function executePromptWithMcp(
   const providerName = options?.modelProvider || "openai";
   const modelName = options?.modelName || "gpt-4.1";
   const llmProvider = getProvider(providerName);
-  const fallbackProviderName = providerName === "openai" ? "anthropic" : "openai";
+  const fallbackProviderName = llmProvider.providerName === "openai" ? "anthropic" : "openai";
   const fallbackLlmProvider = getProvider(fallbackProviderName);
   const canonicalTools = buildCanonicalTools(availableTools);
 
