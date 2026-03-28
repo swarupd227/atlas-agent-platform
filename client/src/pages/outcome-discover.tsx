@@ -599,12 +599,17 @@ export default function OutcomeDiscover() {
 
   // Quick Create form intel query — use template industry with fallback to platform industry
   const formIntelIndustry = selectedLibTemplate?.industry || selectedFormTemplate?.industry || industry?.id || "cross_industry";
-  const formIntelRoles: string[] = selectedFormTemplate
-    ? [
-        ...(selectedFormTemplate.subVertical ? [selectedFormTemplate.subVertical] : []),
-        selectedFormTemplate.name,
-      ].flatMap((s) => s.split(/[&/,]+/).map((p) => p.trim()).filter(Boolean)).slice(0, 4)
-    : [];
+  const formIntelRoles: string[] = (() => {
+    const src = selectedLibTemplate
+      ? [selectedLibTemplate.name]
+      : selectedFormTemplate
+      ? [
+          ...(selectedFormTemplate.subVertical ? [selectedFormTemplate.subVertical] : []),
+          selectedFormTemplate.name,
+        ]
+      : [];
+    return src.flatMap((s) => s.split(/[&/,]+/).map((p) => p.trim()).filter(Boolean)).slice(0, 4);
+  })();
   const formIntelIndustryProfile = INDUSTRIES.find((i) => i.id === formIntelIndustry);
   // Tool names: DB lib template toolNames → static template tools config → industry integration systems
   const formIntelTools: string[] = (() => {
@@ -1190,7 +1195,7 @@ export default function OutcomeDiscover() {
 
             {formStep === 1 && (
               <div className="flex flex-col gap-4" data-testid="form-step-template">
-                <Card className="hover-elevate cursor-pointer" onClick={() => { setFormName(""); setFormDescription(""); setFormStep(2); }} data-testid="card-form-blank">
+                <Card className="hover-elevate cursor-pointer" onClick={() => { setFormName(""); setFormDescription(""); setSelectedFormTemplate(null); setSelectedLibTemplate(null); setFormStep(2); }} data-testid="card-form-blank">
                   <CardContent className="flex items-center gap-3 p-4 bg-gradient-to-r from-primary/[0.03] to-transparent border-l-2 border-l-primary/30">
                     <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
                       <Target className="w-4.5 h-4.5 text-primary" />
