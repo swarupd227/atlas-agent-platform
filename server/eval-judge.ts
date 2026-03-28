@@ -150,7 +150,7 @@ ${agentContext || "(no additional context)"}${criteriaBlock}`;
       return { isPassed: false, confidence: 0.5, reason: "Evaluator response was not valid JSON", latencyMs };
     }
 
-    const isPassed = Boolean(parsed.passed);
+    const isPassed = parsed.passed === true;
     const confidence = typeof parsed.confidence === "number"
       ? Math.max(0, Math.min(1, parsed.confidence))
       : 0.7;
