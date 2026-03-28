@@ -60,7 +60,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { OutcomeContract } from "@shared/schema";
-import { useIndustry, OUTCOME_TEMPLATES, type OutcomeTemplate, type OutcomeTemplateKpi } from "@/components/industry-provider";
+import { useIndustry, OUTCOME_TEMPLATES, INDUSTRIES, type OutcomeTemplate, type OutcomeTemplateKpi } from "@/components/industry-provider";
 import { useSpeechToText } from "@/hooks/use-speech-to-text";
 import type { IndustryId } from "@/components/industry-provider";
 import type { LucideIcon } from "lucide-react";
@@ -595,7 +595,7 @@ export default function OutcomeDiscover() {
       .catch(() => setLoadingIntel(false));
   }, [proposal, industry?.id]);
 
-  // Quick Create form intel query (Step 2 only) — use template industry with fallback to platform industry
+  // Quick Create form intel query — use template industry with fallback to platform industry
   const formIntelIndustry = selectedFormTemplate?.industry || industry?.id || "cross_industry";
   const formIntelRoles: string[] = selectedFormTemplate
     ? [
@@ -603,16 +603,31 @@ export default function OutcomeDiscover() {
         selectedFormTemplate.name,
       ].flatMap((s) => s.split(/[&/,]+/).map((p) => p.trim()).filter(Boolean)).slice(0, 4)
     : [];
+  // Derive tool names from the selected template's industry profile (fallback to workspace industry)
+  const formIntelIndustryProfile = INDUSTRIES.find((i) => i.id === formIntelIndustry);
+  const formIntelTools = (formIntelIndustryProfile?.integrationSystems || industry?.integrationSystems || []).slice(0, 6).map((s) => s.name);
+  // Derive autonomy mode from the active risk tier
+  const formIntelAutonomy: string[] = (() => {
+    const t = formRiskTier || selectedFormTemplate?.riskTier || "MEDIUM";
+    if (t === "CRITICAL" || t === "HIGH") return ["fully_autonomous"];
+    if (t === "MEDIUM") return ["assisted"];
+    return ["supervised"];
+  })();
+  const formIntelRiskTiers = [formRiskTier || selectedFormTemplate?.riskTier || "MEDIUM"];
   const { data: formIntel, isPending: formIntelPending, isError: formIntelError } = useQuery<PlatformIntelResponse>({
-    queryKey: ["/api/outcomes/intelligence/form", formIntelIndustry, formIntelRoles.join(",")],
+    queryKey: ["/api/outcomes/intelligence/form", formIntelIndustry, formIntelRoles.join(","), formIntelRiskTiers[0], formIntelTools.join(",")],
     queryFn: async () => {
       const params = new URLSearchParams({ industry: formIntelIndustry });
       if (formIntelRoles.length > 0) params.set("proposedAgentRoles", JSON.stringify(formIntelRoles));
+      if (formIntelTools.length > 0) params.set("proposedTools", formIntelTools.join(","));
+      params.set("autonomyModes", JSON.stringify(formIntelAutonomy));
+      params.set("riskTiers", JSON.stringify(formIntelRiskTiers));
+      params.set("proposedApprovalGatesCount", "0");
       const r = await fetch(`/api/outcomes/intelligence?${params}`);
       if (!r.ok) throw new Error("Failed to fetch form intel");
       return r.json();
     },
-    enabled: builderMode === "form" && formStep === 2,
+    enabled: builderMode === "form",
   });
 
   const createOutcomeMutation = useMutation({
@@ -1173,7 +1188,10 @@ export default function OutcomeDiscover() {
                       <Card key={t.id} className="hover-elevate cursor-pointer" onClick={() => selectTemplate(t)} data-testid={`card-form-template-${t.id}`}>
                         <CardContent className="flex items-start gap-3 p-4">
                           <div className="flex-1 flex flex-col gap-1.5">
-                            <p className="font-medium">{t.name}</p>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="font-medium">{t.name}</p>
+                              <Badge variant="outline" className="text-[9px] border-primary/30 text-primary">Recommended</Badge>
+                            </div>
                             <p className="text-sm text-muted-foreground line-clamp-2">{t.description}</p>
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <Badge variant="outline" className="text-xs">{industryLabel(t.industry)}</Badge>
@@ -1199,7 +1217,10 @@ export default function OutcomeDiscover() {
                       <Card key={t.id} className="hover-elevate cursor-pointer" onClick={() => selectTemplate(t)} data-testid={`card-form-template-${t.id}`}>
                         <CardContent className="flex items-start gap-3 p-4">
                           <div className="flex-1 flex flex-col gap-1.5">
-                            <p className="font-medium">{t.name}</p>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <p className="font-medium">{t.name}</p>
+                              <Badge variant="outline" className="text-[9px] border-primary/30 text-primary">Recommended</Badge>
+                            </div>
                             <p className="text-sm text-muted-foreground line-clamp-2">{t.description}</p>
                             <div className="flex items-center gap-1.5 flex-wrap">
                               <Badge variant="outline" className="text-xs">{industryLabel(t.industry)}</Badge>
@@ -1213,6 +1234,55 @@ export default function OutcomeDiscover() {
                     ))}
                   </div>
                 )}
+                {(() => {
+                  const staticNames = new Set(OUTCOME_TEMPLATES.map((t) => t.name.toLowerCase().trim()));
+                  const libTemplates = (formIntel?.matchedTemplates || []).filter(
+                    (t) => !staticNames.has(t.name.toLowerCase().trim())
+                  );
+                  if (libTemplates.length === 0) return null;
+                  return (
+                    <div className="flex flex-col gap-2.5">
+                      <div className="flex items-center gap-2">
+                        <div className="w-1 h-4 rounded-full bg-violet-500/60" />
+                        <p className="text-sm font-medium">From Library</p>
+                        <Badge variant="outline" className="text-[10px]">{libTemplates.length}</Badge>
+                      </div>
+                      {libTemplates.map((t) => (
+                        <Card
+                          key={t.id}
+                          className="hover-elevate cursor-pointer"
+                          onClick={() => {
+                            setFormName(t.name);
+                            setFormDescription(t.description || "");
+                            setFormRiskTier(t.defaultRiskTier || "MEDIUM");
+                            setSelectedFormTemplate(null);
+                            setFormStep(2);
+                          }}
+                          data-testid={`card-form-lib-template-${t.id}`}
+                        >
+                          <CardContent className="flex items-start gap-3 p-4">
+                            <div className="flex-1 flex flex-col gap-1.5">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="font-medium">{t.name}</p>
+                                <Badge variant="outline" className="text-[9px] border-violet-500/40 text-violet-600 dark:text-violet-400">From Library</Badge>
+                              </div>
+                              {t.description && <p className="text-sm text-muted-foreground line-clamp-2">{t.description}</p>}
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {t.industry && <Badge variant="outline" className="text-xs">{industryLabel(t.industry)}</Badge>}
+                                {t.defaultRiskTier && <Badge variant="outline" className="text-xs">{t.defaultRiskTier}</Badge>}
+                                {t.complexity && <Badge variant="outline" className="text-xs capitalize">{t.complexity}</Badge>}
+                                {t.deploymentCount > 0 && (
+                                  <Badge variant="outline" className="text-xs text-emerald-600 dark:text-emerald-400 border-emerald-500/40">{t.deploymentCount} deploys</Badge>
+                                )}
+                              </div>
+                            </div>
+                            <ChevronRight className="w-4 h-4 text-muted-foreground mt-1 shrink-0" />
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
@@ -1444,7 +1514,50 @@ export default function OutcomeDiscover() {
                         </div>
                       </div>
                     )}
-                    {formIntel && !formIntel.matchedAgents.some((r) => r.matches.length > 0) && formIntel.matchedTemplates.length === 0 && formIntel.matchedPolicies.length === 0 && (
+                    {formIntel && formIntel.toolCoverage.length > 0 && (
+                      <div className="flex flex-col gap-1" data-testid="form-intel-tool-coverage">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide">Tool Coverage</span>
+                          <span className="text-[9px] text-muted-foreground">
+                            {formIntel.toolCoverage.filter((t) => t.status !== "missing").length}/{formIntel.toolCoverage.length} in MCP catalog
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-1">
+                          {formIntel.toolCoverage.map((tc, i) => (
+                            <span
+                              key={i}
+                              className={`inline-flex items-center gap-0.5 text-[9px] px-1 py-0.5 rounded border ${
+                                tc.status === "exists" ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" :
+                                tc.status === "partial" ? "border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/5" :
+                                "border-red-500/40 text-red-600 dark:text-red-400 bg-red-500/5"
+                              }`}
+                              title={
+                                tc.status === "exists" ? `Registered · risk: ${tc.matchedTool?.riskClassification || "low"}` :
+                                tc.status === "partial" ? `Partial match → ${tc.matchedTool?.name || tc.proposedName}` :
+                                "Not registered in MCP catalog"
+                              }
+                              data-testid={`form-intel-tool-chip-${i}`}
+                            >
+                              {tc.status === "exists" ? <Check className="w-2 h-2" /> : tc.status === "partial" ? <Minus className="w-2 h-2" /> : <X className="w-2 h-2" />}
+                              <span className="truncate max-w-[80px]">{tc.proposedName}</span>
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {formIntel && formIntel.compositeRisk && (
+                      <div className="flex items-center gap-2 p-1.5 rounded bg-background/50" data-testid="form-intel-composite-risk">
+                        <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide shrink-0">Composite Risk</span>
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
+                          formIntel.compositeRisk.level === "CRITICAL" ? "bg-red-500/10 text-red-600 dark:text-red-400" :
+                          formIntel.compositeRisk.level === "HIGH" ? "bg-orange-500/10 text-orange-600 dark:text-orange-400" :
+                          formIntel.compositeRisk.level === "MEDIUM" ? "bg-amber-500/10 text-amber-600 dark:text-amber-400" :
+                          "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                        }`}>{formIntel.compositeRisk.level}</span>
+                        <span className="text-[9px] text-muted-foreground italic truncate">{formIntel.compositeRisk.rationale.join(" · ")}</span>
+                      </div>
+                    )}
+                    {formIntel && !formIntel.matchedAgents.some((r) => r.matches.length > 0) && formIntel.matchedTemplates.length === 0 && formIntel.matchedPolicies.length === 0 && formIntel.toolCoverage.length === 0 && (
                       <div className="flex items-center gap-2 p-2 rounded bg-background/30 text-muted-foreground/70" data-testid="text-form-intel-no-matches">
                         <Cpu className="w-3 h-3 shrink-0" />
                         <span className="text-[10px] italic">No platform matches yet for this industry. Matches appear once agents, templates, or policies are configured for this domain.</span>
@@ -1452,7 +1565,7 @@ export default function OutcomeDiscover() {
                     )}
                     <div className="px-3 pb-2">
                       <p className="text-[10px] text-muted-foreground/70 italic leading-relaxed" data-testid="text-form-intel-risk-note">
-                        Risk tier shown reflects the template declaration. Tool-level risk compliance is verified after agent assignment via the platform policy engine.
+                        Composite risk is derived from tool-level MCP catalog data and autonomy mode.
                       </p>
                     </div>
                     </div>
