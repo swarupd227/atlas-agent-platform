@@ -56,6 +56,7 @@ export const kpiDefinitions = pgTable("kpi_definitions", {
   confidence: real("confidence").default(0),
   trend: text("trend").default("stable"),
   expression: text("expression"),
+  measurement: text("measurement"),
 });
 
 export const insertKpiDefinitionSchema = createInsertSchema(kpiDefinitions).omit({ id: true });

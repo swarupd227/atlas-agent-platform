@@ -527,6 +527,7 @@ export default function OutcomeDiscover() {
           pricePerUnit: formPricePerUnit,
           riskThreshold: formRiskThreshold,
           maxDriftPercent: formMaxDriftPercent,
+          ...(formSlaDescription ? { slaConfig: { slaDescription: formSlaDescription } } : {}),
         },
         kpis: formKpis.map((k) => ({
           name: k.name,
@@ -624,6 +625,7 @@ export default function OutcomeDiscover() {
           baseline: k.currentBaseline ?? 0,
           slaThreshold: target * 0.9,
           weight: 1.0,
+          measurement: k.measurement ?? "",
         };
       });
       const governanceConstraints = industry?.defaultGovernancePolicies || [];
@@ -800,6 +802,10 @@ export default function OutcomeDiscover() {
       pricePerUnit: proposal.outcomeContract.pricePerUnit,
       riskThreshold: proposal.outcomeContract.riskThreshold,
       maxDriftPercent: proposal.outcomeContract.maxDriftPercent,
+      approvalGates: proposal.outcomeContract.approvalGates ?? [],
+      slaConfig: proposal.outcomeContract.slaDescription
+        ? { slaDescription: proposal.outcomeContract.slaDescription }
+        : undefined,
     });
   }
 

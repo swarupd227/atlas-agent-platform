@@ -1203,6 +1203,12 @@ export default function OutcomeDetail() {
         {outcome.description && (
           <p className="text-sm text-muted-foreground ml-11">{outcome.description}</p>
         )}
+        {sla.slaDescription && (
+          <p className="text-xs text-muted-foreground ml-11 flex items-center gap-1.5 mt-0.5" data-testid="text-sla-description">
+            <FileCheck className="w-3.5 h-3.5 shrink-0 text-primary/60" />
+            <span><span className="font-medium text-foreground/70">SLA: </span>{sla.slaDescription}</span>
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -1832,6 +1838,11 @@ export default function OutcomeDetail() {
                             <span className="text-[11px] text-muted-foreground">
                               Weight: {((kpi.weight || 1) * 100).toFixed(0)}% | Unit: {kpi.unit}
                             </span>
+                            {kpi.measurement && (
+                              <span className="text-[11px] text-muted-foreground/80 italic" data-testid={`text-measurement-${kpi.id}`}>
+                                Measured by: {kpi.measurement}
+                              </span>
+                            )}
                             <div className="flex items-center gap-4 mt-1 flex-wrap">
                               <div className="flex flex-col gap-0.5">
                                 <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Current</span>
