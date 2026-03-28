@@ -155,13 +155,14 @@ interface CircuitState {
   failures: number[];
   openUntil: number;
   halfOpen: boolean;
+  probeInFlight: boolean;
 }
 
 const circuitStates: Record<string, CircuitState> = {};
 
 function getCircuit(providerName: string): CircuitState {
   if (!circuitStates[providerName]) {
-    circuitStates[providerName] = { failures: [], openUntil: 0, halfOpen: false };
+    circuitStates[providerName] = { failures: [], openUntil: 0, halfOpen: false, probeInFlight: false };
   }
   return circuitStates[providerName];
 }
@@ -171,9 +172,16 @@ function cbCheck(providerName: string): void {
   const circuit = getCircuit(providerName);
   if (circuit.openUntil > 0) {
     if (now >= circuit.openUntil) {
+      if (circuit.probeInFlight) {
+        throw new Error(
+          `[llm-provider] Circuit HALF-OPEN for "${providerName}": probe already in flight. ` +
+          `Blocking concurrent request until probe resolves.`
+        );
+      }
       circuit.halfOpen = true;
       circuit.openUntil = 0;
-      console.info(`[llm-provider] Circuit HALF-OPEN for "${providerName}", allowing probe request`);
+      circuit.probeInFlight = true;
+      console.info(`[llm-provider] Circuit HALF-OPEN for "${providerName}", allowing single probe request`);
     } else {
       throw new Error(
         `[llm-provider] Circuit breaker OPEN for provider "${providerName}". ` +
@@ -191,11 +199,13 @@ function cbRecordSuccess(providerName: string): void {
   circuit.failures = [];
   circuit.openUntil = 0;
   circuit.halfOpen = false;
+  circuit.probeInFlight = false;
 }
 
 function cbRecordFailure(providerName: string): void {
   const now = Date.now();
   const circuit = getCircuit(providerName);
+  circuit.probeInFlight = false;
   circuit.failures = circuit.failures.filter((t) => now - t < CB_WINDOW_MS);
   circuit.failures.push(now);
   if (circuit.halfOpen || circuit.failures.length >= CB_FAILURE_THRESHOLD) {

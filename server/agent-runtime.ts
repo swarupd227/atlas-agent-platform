@@ -1064,6 +1064,11 @@ After receiving tool results, provide a structured analysis with key findings, s
     totalTokens += planResult.tokensUsed.total;
     totalCostUsd += planResult.costUsd;
 
+    if (totalCostUsd >= maxCostPerRunUsd) {
+      costCapReached = true;
+      console.warn(`[agent-runtime] Per-run cost cap reached after planning: $${totalCostUsd.toFixed(4)} >= $${maxCostPerRunUsd}. Skipping tool execution.`);
+    }
+
     let currentContent = planResult.content;
     let currentToolCalls: CanonicalToolCall[] = planResult.toolCalls;
     let currentRawMessage = planResult.rawAssistantMessage;
@@ -1108,7 +1113,7 @@ After receiving tool results, provide a structured analysis with key findings, s
       { role: "user", content: prompt },
     ];
 
-    while (currentToolCalls.length > 0 && iterationsUsed < MAX_TOOL_ITERATIONS) {
+    while (currentToolCalls.length > 0 && iterationsUsed < MAX_TOOL_ITERATIONS && !costCapReached) {
       iterationsUsed++;
       const iterationLabel = iterationsUsed > 1 ? ` (iteration ${iterationsUsed})` : "";
 
@@ -1253,7 +1258,7 @@ After receiving tool results, provide a structured analysis with key findings, s
       }
     }
 
-    if (toolCallResults.length > 0) {
+    if (toolCallResults.length > 0 && !costCapReached) {
       steps.push({
         id: `step_${steps.length + 1}`,
         name: "AI Analysis",
@@ -1519,7 +1524,7 @@ After receiving tool results, provide a structured analysis with key findings, s
 
   return {
     steps,
-    success: failedSteps.length === 0 && !costCapReached,
+    success: failedSteps.length === 0,
     summary: {
       totalSteps: steps.length,
       passedSteps: steps.filter(s => s.status === "completed").length,
