@@ -867,7 +867,7 @@ export default function Monitor() {
   const chartDefinitions = [
     { id: "success-rate", title: "Success Rate", currentValue: `${successRate}%`, color: "#10b981", type: "area" as const, data: successRateSeries ?? [] },
     { id: "p95-latency", title: "P95 Latency", currentValue: formatMs(avgLatency || 800), color: "#3b82f6", type: "line" as const, data: latencySeries ?? [] },
-    { id: "cost-per-run", title: "Cost per Run", currentValue: `$0.12`, color: "#8b5cf6", type: "bar" as const, data: costSeries ?? [] },
+    { id: "cost-per-run", title: "Cost per Run", currentValue: costSeries && costSeries.length > 0 ? `$${costSeries[costSeries.length - 1].value.toFixed(4)}` : "—", color: "#8b5cf6", type: "bar" as const, data: costSeries ?? [] },
     { id: "policy-violations", title: "Policy Violations", currentValue: `${policyViolationCount}`, color: "#ef4444", type: "area" as const, data: [] },
     { id: "drift-score", title: "Hallucination/Drift Score", currentValue: "92%", color: "#f59e0b", type: "line" as const, data: [] },
     { id: "kpi-confidence", title: "KPI Confidence", currentValue: "87%", color: "#10b981", type: "area" as const, data: [] },
