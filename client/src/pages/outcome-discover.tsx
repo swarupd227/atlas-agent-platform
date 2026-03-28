@@ -1606,7 +1606,7 @@ export default function OutcomeDiscover() {
                 )}
 
                 <div className="flex items-center justify-between gap-2 pt-2">
-                  <Button variant="outline" onClick={() => setFormStep(1)} data-testid="button-form-back-template">
+                  <Button variant="outline" onClick={() => { setSelectedFormTemplate(null); setSelectedLibTemplate(null); setFormStep(1); }} data-testid="button-form-back-template">
                     <ChevronLeft className="w-4 h-4 mr-1" /> Back
                   </Button>
                   <Button onClick={() => createFormOutcomeMutation.mutate()} disabled={!canProceedToReview || createFormOutcomeMutation.isPending} data-testid="button-form-create">
