@@ -1212,7 +1212,7 @@ export default function OutcomeDetail() {
         )}
         {(() => {
           const roi = outcome.roiEstimate as { annualizedSavingsMin: number; annualizedSavingsMax: number; paybackPeriodMonths: number | null; assumptionsSummary: string } | null | undefined;
-          if (!roi || !roi.annualizedSavingsMin) return null;
+          if (!roi || roi.annualizedSavingsMin == null || roi.annualizedSavingsMax == null) return null;
           const fmtK = (n: number) => n >= 1000000 ? `$${(n / 1000000).toFixed(1)}M` : `$${Math.round(n / 1000)}K`;
           return (
             <div className="ml-11 mt-1 flex items-center gap-3 flex-wrap" data-testid="roi-estimate-summary">
