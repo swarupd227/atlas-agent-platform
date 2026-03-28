@@ -220,7 +220,7 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
       kpiCaseScores.push(kpiScoreEntry);
     } else {
       const agentRun = await runAgentOnInput(
-        (agent as any).systemPrompt,
+        agent.systemPrompt,
         inputData,
       );
       const judgeResult = await runLlmJudge(

@@ -6246,7 +6246,7 @@ clean:
                       const inputData = (tc.inputData as Record<string, unknown>) || {};
                       const expectedOutput = (tc.expectedOutput as Record<string, unknown>) || null;
                       const agentRun = await runAgentOnInput(
-                        (agent as any).systemPrompt,
+                        agent.systemPrompt,
                         inputData,
                       );
                       const judgeResult = await runLlmJudge(
