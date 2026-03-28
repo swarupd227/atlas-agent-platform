@@ -4,7 +4,7 @@ import { EventEmitter } from "events";
 import { checkOntologyCompliance, executeScheduledAgentCycle } from "./agent-runtime";
 import { industryEvalFrameworks } from "./routes";
 import { runLlmJudge, runAgentOnInput, buildAgentContext } from "./eval-judge";
-import { getDefaultProvider } from "./llm-provider";
+import { getDefaultProvider, getProvider } from "./llm-provider";
 
 export const jobEvents = new EventEmitter();
 jobEvents.setMaxListeners(50);
@@ -760,7 +760,7 @@ async function processShadowReplay(job: Job): Promise<Record<string, unknown>> {
   await storage.updateJob(job.id, { progress: 30 });
   jobEvents.emit("progress", { jobId: job.id, agentId, progress: 30, step: "replaying_traces" });
 
-  const provider = getDefaultProvider();
+  const provider = agent.modelProvider ? getProvider(agent.modelProvider) : getDefaultProvider();
   const agentCtx = buildAgentContext(agent);
 
   interface TraceReplayResult {
@@ -883,12 +883,8 @@ async function processShadowReplay(job: Job): Promise<Record<string, unknown>> {
   const divergences = perTraceResults
     .filter(r => !r.isPassed)
     .map(r => {
-      const origTools = new Set(r.originalToolCallNames);
-      const replayTools = new Set(r.replayToolCallNames);
       const toolsDiverged =
-        r.originalToolCallNames.length !== r.replayToolCallNames.length ||
-        r.originalToolCallNames.some(t => !replayTools.has(t)) ||
-        r.replayToolCallNames.some(t => !origTools.has(t));
+        JSON.stringify(r.originalToolCallNames) !== JSON.stringify(r.replayToolCallNames);
       return {
         traceId: r.traceId,
         type: toolsDiverged ? "tool_divergence" : "output_mismatch",
