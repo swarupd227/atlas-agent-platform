@@ -86,18 +86,10 @@ app.use((req, res, next) => {
 });
 
 (async () => {
-  await seedDatabase().catch((err) => {
-    console.error("Seed error:", err);
-  });
-  await seedDefaultAdmin().catch((err) => {
-    console.error("Admin seed error:", err);
-  });
+  // Import demo routes so the router is available before listening
   const { seedDemoMcpServer, seedWorkerMcpEndpoints, demoRouter } = await import("./demo-routes");
-  await seedDemoMcpServer(storage).catch((err) => { console.error("Demo MCP seed error:", err); });
-  await seedWorkerMcpEndpoints(storage).catch((err) => { console.error("Worker MCP endpoint seed error:", err); });
-  const { registerMockMcpServers } = await import("./mock-mcp/register");
-  await registerMockMcpServers().catch((err) => { console.error("Mock MCP register error:", err); });
   app.use("/demo-api", demoRouter);
+
   log(`Security mode: ${getSecurityMode()}`);
   await registerRoutes(httpServer, app);
 
@@ -138,16 +130,42 @@ app.use((req, res, next) => {
     () => {
       log(`serving on port ${port}`);
       serverReady = true;
-      import("./permissions").then(({ getOntologySensitivityKeys }) => {
-        getOntologySensitivityKeys().then(({ keys }) => {
-          if (keys.length > 0) log(`Primed ontology sensitivity cache with ${keys.length} keys`);
-        }).catch(() => {});
-      });
-      setTimeout(() => {
-        autoResumeRuntimes().catch(err => {
-          console.error("[startup] Failed to auto-resume agent runtimes:", err.message);
+
+      // Run all database seeding and background initialization AFTER the port
+      // is open so health checks pass immediately on deployment
+      (async () => {
+        await seedDatabase().catch((err) => {
+          console.error("Seed error:", err);
         });
-      }, 5000);
+        await seedDefaultAdmin().catch((err) => {
+          console.error("Admin seed error:", err);
+        });
+        await seedDemoMcpServer(storage).catch((err) => {
+          console.error("Demo MCP seed error:", err);
+        });
+        await seedWorkerMcpEndpoints(storage).catch((err) => {
+          console.error("Worker MCP endpoint seed error:", err);
+        });
+        const { registerMockMcpServers } = await import("./mock-mcp/register");
+        await registerMockMcpServers().catch((err) => {
+          console.error("Mock MCP register error:", err);
+        });
+        import("./permissions").then(({ getOntologySensitivityKeys }) => {
+          getOntologySensitivityKeys()
+            .then(({ keys }) => {
+              if (keys.length > 0)
+                log(`Primed ontology sensitivity cache with ${keys.length} keys`);
+            })
+            .catch(() => {});
+        });
+        setTimeout(() => {
+          autoResumeRuntimes().catch((err) => {
+            console.error("[startup] Failed to auto-resume agent runtimes:", err.message);
+          });
+        }, 5000);
+      })().catch((err) => {
+        console.error("[startup] Background initialization error:", err);
+      });
     },
   );
 })();
