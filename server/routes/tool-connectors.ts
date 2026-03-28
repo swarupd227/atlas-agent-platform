@@ -331,7 +331,7 @@ router.delete("/api/tool-connectors/:id", async (req, res) => {
       const page = parseInt(req.query.page as string) || 1;
       const limit = parseInt(req.query.limit as string) || 50;
 
-      let events = await storage.getAuditEvents();
+      let events = await storage.getAuditEvents(getOrgId(req));
 
       if (actorType) {
         events = events.filter(e => e.actorType === actorType);
@@ -379,7 +379,7 @@ router.delete("/api/tool-connectors/:id", async (req, res) => {
     try {
       const { actorType, action, objectType, search, startDate, endDate } = req.query;
 
-      let events = await storage.getAuditEvents();
+      let events = await storage.getAuditEvents(getOrgId(req));
 
       if (actorType) {
         events = events.filter(e => e.actorType === actorType);

@@ -330,7 +330,7 @@ const router = Router();
 
       const allTraces = await storage.getTraces(getOrgId(req));
       const allInvoices = await storage.getInvoices();
-      const outcomes = await storage.getOutcomes();
+      const outcomes = await storage.getOutcomes(getOrgId(req));
       const INFRA_OVERHEAD_RATE = 0.15;
       const TOOL_CALL_COST_RATE = 0.001;
 
@@ -438,7 +438,7 @@ const router = Router();
         }
       }
 
-      const allOutcomeEvents = await storage.getOutcomeEvents();
+      const allOutcomeEvents = await storage.getOutcomeEvents(getOrgId(req));
       const allDisputes = await storage.getBillingDisputes();
 
       const agentIndustryMap = new Map<string, string>();
@@ -591,7 +591,7 @@ const router = Router();
     if (!agent) return res.status(404).json({ error: "Agent not found" });
 
     const versions = await storage.getAgentVersions(agentId);
-    const allAuditEvents = await storage.getAuditEvents();
+    const allAuditEvents = await storage.getAuditEvents(getOrgId(req));
     const agentAudits = allAuditEvents.filter(e => e.objectId === agentId);
     const recommendations = await storage.getImprovementRecommendations();
     const agentRecs = recommendations.filter(r => r.agentId === agentId);
@@ -1608,7 +1608,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
 
       const { outcomeId, industry: reqIndustry, orchestrator, workers, pipeline } = bodySchema.parse(req.body);
 
-      const outcome = await storage.getOutcome(outcomeId);
+      const outcome = await storage.getOutcome(outcomeId, getOrgId(req));
       if (!outcome) return res.status(404).json({ error: "Outcome not found" });
 
       const allMcpServers = await storage.getMcpServers();
@@ -2113,7 +2113,7 @@ Revenue:
       const { messages, discoveryContext, industry } = req.body;
 
       const templates = await storage.getAgentTemplates();
-      const outcomes = await storage.getOutcomes();
+      const outcomes = await storage.getOutcomes(getOrgId(req));
       const allPolicies = await storage.getPolicies(getOrgId(req));
       const activePolicies = allPolicies.filter(p => p.status === "active");
       const seenPolicyKeys = new Set<string>();
@@ -3076,7 +3076,7 @@ Respond in JSON: { "testCases": [{ "name": string, "inputData": object, "expecte
       }
 
       if (agent.outcomeId) {
-        const outcomes = await storage.getOutcomes();
+        const outcomes = await storage.getOutcomes(getOrgId(req));
         const linkedOutcome = outcomes.find(o => o.id === agent.outcomeId);
         if (linkedOutcome) {
           linkedOutcomeStatus = linkedOutcome.status || "unknown";
@@ -3426,7 +3426,7 @@ Enhance this template to be production-ready and comprehensive. For preloadedSki
 
       const traces = await storage.getTracesByAgent(req.params.id);
       const evals = await storage.getEvalsByAgent(req.params.id);
-      const auditEvents = await storage.getAuditEvents();
+      const auditEvents = await storage.getAuditEvents(getOrgId(req));
       const agentAudit = auditEvents.filter(e => e.objectId === req.params.id || (e.details && e.details.includes(req.params.id)));
       const deployments = await storage.getDeployments(getOrgId(req));
       const agentDeployments = deployments.filter(d => d.agentId === req.params.id);
@@ -3484,7 +3484,7 @@ Enhance this template to be production-ready and comprehensive. For preloadedSki
 
       const traces = await storage.getTracesByAgent(req.params.id);
       const evals = await storage.getEvalsByAgent(req.params.id);
-      const auditEvents = await storage.getAuditEvents();
+      const auditEvents = await storage.getAuditEvents(getOrgId(req));
       const retirementEvents = auditEvents.filter(e => 
         e.objectId === req.params.id && 
         (e.action === "agent_retirement_initiated" || e.action === "agent_retired")
@@ -3507,7 +3507,7 @@ Enhance this template to be production-ready and comprehensive. For preloadedSki
 
       let linkedOutcomeName = null;
       if (agent.outcomeId) {
-        const outcomes = await storage.getOutcomes();
+        const outcomes = await storage.getOutcomes(getOrgId(req));
         const outcome = outcomes.find(o => o.id === agent.outcomeId);
         linkedOutcomeName = outcome?.name || null;
       }
@@ -4007,7 +4007,7 @@ Eval Suites: ${evalSuites.length} configured`,
   router.post("/api/recommendations/generate-cost-optimizations", async (req, res) => {
     try {
       const agents = await storage.getAgents(getOrgId(req));
-      const outcomes = await storage.getOutcomes();
+      const outcomes = await storage.getOutcomes(getOrgId(req));
       const allTraces = await storage.getTraces(getOrgId(req));
       const allInvoices = await storage.getInvoices();
       const existingRecs = await storage.getImprovementRecommendations();

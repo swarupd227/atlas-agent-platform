@@ -996,7 +996,7 @@ export async function recomputeOutcomeKpis(outcomeId: string, orgId?: string): P
   const kpis = await storage.getKpisByOutcome(outcomeId);
   const agents = await storage.getAgents(orgId);
   const traces = await storage.getTraces(orgId);
-  const outcomeEvents = await storage.getOutcomeEvents();
+  const outcomeEvents = await storage.getOutcomeEvents(orgId);
   const boundAgents = agents.filter(a => a.outcomeId === outcomeId);
   const boundAgentIds = new Set(boundAgents.map(a => a.id));
   const relevantTraces = traces.filter(t => boundAgentIds.has(t.agentId));
@@ -1058,7 +1058,7 @@ export async function recomputeOutcomeKpis(outcomeId: string, orgId?: string): P
 }
 
 export async function resolvePolicyBundle(agentId: string, orgId?: string) {
-  const agent = await storage.getAgent(agentId);
+  const agent = await storage.getAgent(agentId, orgId);
   const allPolicies = await storage.getPolicies(orgId);
   const activePolicies = allPolicies.filter(p => p.status === "active");
 

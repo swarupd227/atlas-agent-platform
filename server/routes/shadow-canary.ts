@@ -897,7 +897,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
 
       res.json({
         outcomeId: agent.outcomeId,
-        outcomeName: (await storage.getOutcome(agent.outcomeId))?.name || "Unknown",
+        outcomeName: (await storage.getOutcome(agent.outcomeId, getOrgId(req)))?.name || "Unknown",
         kpis: kpiContributions,
         overallContribution,
         totalBoundAgents: boundAgents.length,

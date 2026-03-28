@@ -435,13 +435,13 @@ const router = Router();
 
   router.get("/api/outcomes/:id/downstream-impact", async (req, res) => {
     try {
-      const outcome = await storage.getOutcome(req.params.id);
+      const outcome = await storage.getOutcome(req.params.id, getOrgId(req));
       if (!outcome) return res.status(404).json({ message: "Not found" });
 
       const allAgents = await storage.getAgents(getOrgId(req));
       const boundAgents = allAgents.filter(a => a.outcomeId === req.params.id);
       const kpis = await storage.getKpisByOutcome(req.params.id);
-      const auditEventsAll = await storage.getAuditEvents();
+      const auditEventsAll = await storage.getAuditEvents(getOrgId(req));
 
       const slaRenegotiationEvents = auditEventsAll.filter(
         e => e.action === "outcome.sla_renegotiated" && e.objectId === req.params.id
@@ -531,7 +531,7 @@ const router = Router();
       const kpis = await storage.getKpisByOutcome(outcomeId);
       const agents = await storage.getAgents(getOrgId(req));
       const traces = await storage.getTraces(getOrgId(req));
-      const outcomeEvents = await storage.getOutcomeEvents();
+      const outcomeEvents = await storage.getOutcomeEvents(getOrgId(req));
       const boundAgents = agents.filter(a => a.outcomeId === outcomeId);
       const boundAgentIds = new Set(boundAgents.map(a => a.id));
       const relevantTraces = traces.filter(t => boundAgentIds.has(t.agentId));
@@ -676,7 +676,7 @@ const router = Router();
   router.post("/api/outcomes/:id/sync-eval-feedback", async (req, res) => {
     try {
       const outcomeId = req.params.id;
-      const outcome = await storage.getOutcome(outcomeId);
+      const outcome = await storage.getOutcome(outcomeId, getOrgId(req));
       if (!outcome) return res.status(404).json({ error: "Outcome not found" });
 
       const daysCutoff = req.body.days || 30;
@@ -878,14 +878,14 @@ const router = Router();
   });
 
   router.get("/api/outcomes/:id/events", async (req, res) => {
-    const outcomeEvents = await storage.getOutcomeEvents();
+    const outcomeEvents = await storage.getOutcomeEvents(getOrgId(req));
     const filtered = outcomeEvents.filter(e => e.outcomeId === req.params.id);
     res.json(filtered);
   });
 
   router.get("/api/outcomes/:id/audit", async (req, res) => {
-    const auditEvents = await storage.getAuditEvents();
-    const approvals = await storage.getApprovals();
+    const auditEvents = await storage.getAuditEvents(getOrgId(req));
+    const approvals = await storage.getApprovals(getOrgId(req));
     const boundAgents = (await storage.getAgents(getOrgId(req))).filter(a => a.outcomeId === req.params.id);
     const boundAgentIds = new Set(boundAgents.map(a => a.id));
     const outcomeAudits = auditEvents.filter(e =>
@@ -903,7 +903,7 @@ const router = Router();
       const window = (req.query.window as string) || "30d";
       const days = parseInt(window) || 30;
       const kpis = await storage.getKpisByOutcome(outcomeId);
-      const outcomeEvents = (await storage.getOutcomeEvents()).filter(e => e.outcomeId === outcomeId);
+      const outcomeEvents = (await storage.getOutcomeEvents(getOrgId(req))).filter(e => e.outcomeId === outcomeId);
       const agents = (await storage.getAgents(getOrgId(req))).filter(a => a.outcomeId === outcomeId);
       const now = Date.now();
       const windowMs = days * 24 * 60 * 60 * 1000;
@@ -952,7 +952,7 @@ const router = Router();
   router.post("/api/outcomes/:id/versions", async (req, res) => {
     try {
       const outcomeId = req.params.id;
-      const outcome = await storage.getOutcome(outcomeId);
+      const outcome = await storage.getOutcome(outcomeId, getOrgId(req));
       if (!outcome) return res.status(404).json({ message: "Outcome not found" });
 
       const newVersion = (outcome.version || 1) + 1;
@@ -987,10 +987,10 @@ const router = Router();
   router.get("/api/outcomes/:id/versions", async (req, res) => {
     try {
       const outcomeId = req.params.id;
-      const outcome = await storage.getOutcome(outcomeId);
+      const outcome = await storage.getOutcome(outcomeId, getOrgId(req));
       if (!outcome) return res.status(404).json({ message: "Outcome not found" });
 
-      const auditEvents = await storage.getAuditEvents();
+      const auditEvents = await storage.getAuditEvents(getOrgId(req));
       const versionEvents = auditEvents.filter(
         e => e.objectId === outcomeId && (e.action === "version_created" || e.action === "outcome_updated" || e.action === "create_outcome")
       ).sort((a, b) => new Date(b.createdAt || "").getTime() - new Date(a.createdAt || "").getTime());
@@ -1028,12 +1028,12 @@ const router = Router();
   router.get("/api/outcomes/:id/agent-contributions", async (req, res) => {
     try {
       const outcomeId = req.params.id;
-      const outcome = await storage.getOutcome(outcomeId);
+      const outcome = await storage.getOutcome(outcomeId, getOrgId(req));
       if (!outcome) return res.status(404).json({ message: "Outcome not found" });
 
       const agents = (await storage.getAgents(getOrgId(req))).filter(a => a.outcomeId === outcomeId);
       const traces = await storage.getTraces(getOrgId(req));
-      const outcomeEvents = (await storage.getOutcomeEvents()).filter(e => e.outcomeId === outcomeId);
+      const outcomeEvents = (await storage.getOutcomeEvents(getOrgId(req))).filter(e => e.outcomeId === outcomeId);
       const totalBillable = outcomeEvents.filter(e => e.billable).length;
       const totalRevenue = totalBillable * (outcome.pricePerUnit || 0);
 
@@ -1117,14 +1117,14 @@ const router = Router();
   router.get("/api/outcomes/:id/remediation", async (req, res) => {
     try {
       const outcomeId = req.params.id;
-      const outcome = await storage.getOutcome(outcomeId);
+      const outcome = await storage.getOutcome(outcomeId, getOrgId(req));
       if (!outcome) return res.status(404).json({ message: "Outcome not found" });
 
       const kpis = await storage.getKpisByOutcome(outcomeId);
       const agents = (await storage.getAgents(getOrgId(req))).filter(a => a.outcomeId === outcomeId);
       const traces = await storage.getTraces(getOrgId(req));
       const patches = await storage.getPatches();
-      const incidents = await storage.getIncidents();
+      const incidents = await storage.getIncidents(getOrgId(req));
 
       const outcomeIncidents = incidents.filter(inc => {
         const agentIds = new Set(agents.map(a => a.id));
@@ -1287,10 +1287,10 @@ const router = Router();
   router.get("/api/outcomes/:id/financial-ledger", async (req, res) => {
     try {
       const outcomeId = req.params.id;
-      const outcome = await storage.getOutcome(outcomeId);
+      const outcome = await storage.getOutcome(outcomeId, getOrgId(req));
       if (!outcome) return res.status(404).json({ message: "Outcome not found" });
 
-      const outcomeEvents = (await storage.getOutcomeEvents()).filter(e => e.outcomeId === outcomeId);
+      const outcomeEvents = (await storage.getOutcomeEvents(getOrgId(req))).filter(e => e.outcomeId === outcomeId);
       const invoices = await storage.getInvoices();
       const agents = (await storage.getAgents(getOrgId(req))).filter(a => a.outcomeId === outcomeId);
       const traces = await storage.getTraces(getOrgId(req));
@@ -1362,11 +1362,11 @@ const router = Router();
   router.post("/api/exports/outcome/:id/audit", async (req, res) => {
     try {
       const outcomeId = req.params.id;
-      const outcome = await storage.getOutcome(outcomeId);
+      const outcome = await storage.getOutcome(outcomeId, getOrgId(req));
       if (!outcome) return res.status(404).json({ message: "Outcome not found" });
 
-      const auditEvents = await storage.getAuditEvents();
-      const approvals = await storage.getApprovals();
+      const auditEvents = await storage.getAuditEvents(getOrgId(req));
+      const approvals = await storage.getApprovals(getOrgId(req));
       const kpis = await storage.getKpisByOutcome(outcomeId);
 
       const outcomeAudits = auditEvents.filter(e => e.objectId === outcomeId || e.objectType === "outcome");

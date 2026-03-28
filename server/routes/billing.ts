@@ -297,9 +297,9 @@ const router = Router();
     try {
       const [allSuites, allOutcomes, allAgents, allEvents, allGoldenDatasets, allEvalRuns] = await Promise.all([
         storage.getEvalSuites(),
-        storage.getOutcomes(),
+        storage.getOutcomes(getOrgId(req)),
         storage.getAgents(getOrgId(req)),
-        storage.getOutcomeEvents(),
+        storage.getOutcomeEvents(getOrgId(req)),
         storage.getGoldenDatasets(),
         storage.getAllEvalRuns(),
       ]);
@@ -462,7 +462,7 @@ const router = Router();
   router.get("/api/flywheel/acceptance-patterns", async (req, res) => {
     try {
       const [allEvents, allAgents, allDisputes] = await Promise.all([
-        storage.getOutcomeEvents(),
+        storage.getOutcomeEvents(getOrgId(req)),
         storage.getAgents(getOrgId(req)),
         storage.getBillingDisputes(),
       ]);

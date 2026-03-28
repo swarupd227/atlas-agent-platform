@@ -571,7 +571,7 @@ const router = Router();
         return res.json({ valid: true, violations: [] });
       }
 
-      const outcome = await storage.getOutcome(agent.outcomeId);
+      const outcome = await storage.getOutcome(agent.outcomeId, getOrgId(req));
       if (!outcome) {
         return res.json({ valid: true, violations: [] });
       }
@@ -743,7 +743,7 @@ const router = Router();
       // Layer 1 — Outcome Contract
       try {
         if (agent.outcomeId) {
-          const outcome = await storage.getOutcome(agent.outcomeId);
+          const outcome = await storage.getOutcome(agent.outcomeId, getOrgId(req));
           if (outcome) {
             const kpis = await storage.getKpisByOutcome(agent.outcomeId);
             const lines: string[] = [];
@@ -996,7 +996,7 @@ const router = Router();
       let maxSla = 0;
 
       if (agent.outcomeId) {
-        const outcome = await storage.getOutcome(agent.outcomeId);
+        const outcome = await storage.getOutcome(agent.outcomeId, getOrgId(req));
         outcomeName = outcome?.name || null;
         const kpis = await storage.getKpisByOutcome(agent.outcomeId);
         const percentUnits = ["percent", "%", "percentage", "rate", "ratio", "pct"];
@@ -1165,7 +1165,7 @@ const router = Router();
 
       const violations: Array<{ traceId: string; violation: string; timestamp: string }> = [];
       try {
-        const recentEvents = await storage.getAuditEvents();
+        const recentEvents = await storage.getAuditEvents(getOrgId(req));
         const govViolations = recentEvents.filter(e => 
           e.objectId === agent.id && 
           e.action === "memory_governance.violation"
@@ -1348,7 +1348,7 @@ const router = Router();
         let auditEventFound = false;
         let auditChainValid = false;
         if (trace.auditEventId) {
-          const events = await storage.getAuditEvents();
+          const events = await storage.getAuditEvents(getOrgId(req));
           const auditEvent = events.find(e => e.id === trace.auditEventId);
           auditEventFound = !!auditEvent;
           if (auditEvent && auditEvent.sequenceNum) {
@@ -1633,7 +1633,7 @@ const router = Router();
       }
 
       const results = [];
-      const auditEvents = await storage.getAuditEvents();
+      const auditEvents = await storage.getAuditEvents(getOrgId(req));
       const chainResult = await storage.verifyAuditChainIntegrity();
 
       for (const trace of traces) {
@@ -1704,7 +1704,7 @@ const router = Router();
 
       let chainOfCustody: any[] = [];
       try {
-        const events = await storage.getAuditEvents();
+        const events = await storage.getAuditEvents(getOrgId(req));
         const sorted = events
           .filter(e => e.sequenceNum !== null)
           .sort((a, b) => (a.sequenceNum || 0) - (b.sequenceNum || 0));
@@ -1939,7 +1939,7 @@ const router = Router();
           }
 
           if (lowAlignmentTools.length > 0 && bypassOntologyCheck) {
-            const auditEvents = await storage.getAuditEvents();
+            const auditEvents = await storage.getAuditEvents(getOrgId(req));
             const maxSeq = auditEvents.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
             const lastHash = auditEvents.length > 0 ? auditEvents[auditEvents.length - 1].eventHash || "" : "";
             const eventData = `${maxSeq + 1}:ontology_bypass:${data.agentId}:${Date.now()}`;
@@ -2039,7 +2039,7 @@ const router = Router();
         const slaKpis = kpis.filter(k => k.slaThreshold != null && k.slaThreshold >= 95 && (pctUnits.includes(k.unit.toLowerCase()) || k.slaThreshold <= 100));
         if (slaKpis.length > 0) {
           const maxSla = Math.max(...slaKpis.map(k => k.slaThreshold!));
-          const outcome = await storage.getOutcome(agent.outcomeId);
+          const outcome = await storage.getOutcome(agent.outcomeId, getOrgId(req));
           strategyWarning = `Direct deploy not recommended — outcome "${outcome?.name}" requires ≥${maxSla.toFixed(1)}% SLA. Consider canary deployment with tight rollback thresholds.`;
         }
       }
@@ -2081,9 +2081,9 @@ const router = Router();
     }
   });
 
-  router.get("/api/deployments/freeze-status", async (_req, res) => {
+  router.get("/api/deployments/freeze-status", async (req, res) => {
     try {
-      const auditEvents = await storage.getAuditEvents();
+      const auditEvents = await storage.getAuditEvents(getOrgId(req));
       const freezeEvents = auditEvents.filter(
         (e) => e.action === "deployment_freeze" || e.action === "deployment_unfreeze"
       );
@@ -2118,7 +2118,7 @@ const router = Router();
         return res.status(400).json({ message: "action and scope are required" });
       }
 
-      const auditEvents = await storage.getAuditEvents();
+      const auditEvents = await storage.getAuditEvents(getOrgId(req));
       const maxSeq = auditEvents.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
       const lastHash = auditEvents.length > 0 ? auditEvents[auditEvents.length - 1].eventHash || "" : "";
       const crypto = await import("crypto");
@@ -2292,7 +2292,7 @@ const router = Router();
         }
 
         if (failingSuites.length > 0 && nextEnv === "prod" && !bypassEvalGate) {
-          const auditEventsAll = await storage.getAuditEvents();
+          const auditEventsAll = await storage.getAuditEvents(getOrgId(req));
           const maxSeqNum = auditEventsAll.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
           const lastHashVal = auditEventsAll.length > 0 ? auditEventsAll[auditEventsAll.length - 1].eventHash || "" : "";
           const evtData = `${maxSeqNum + 1}:eval_gate_blocked:${source.id}:${Date.now()}`;
@@ -2330,7 +2330,7 @@ const router = Router();
       }
 
       if (bypassEvalGate && failingSuites.length > 0) {
-        const auditEventsAll = await storage.getAuditEvents();
+        const auditEventsAll = await storage.getAuditEvents(getOrgId(req));
         const maxSeqNum = auditEventsAll.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
         const lastHashVal = auditEventsAll.length > 0 ? auditEventsAll[auditEventsAll.length - 1].eventHash || "" : "";
         const evtData = `${maxSeqNum + 1}:eval_gate_bypassed:${source.id}:${Date.now()}`;
@@ -2409,7 +2409,7 @@ const router = Router();
           }
 
           if (lowAlignmentTools.length > 0 && bypassOntologyCheck) {
-            const auditEventsAll2 = await storage.getAuditEvents();
+            const auditEventsAll2 = await storage.getAuditEvents(getOrgId(req));
             const maxSeqNum2 = auditEventsAll2.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
             const lastHashVal2 = auditEventsAll2.length > 0 ? auditEventsAll2[auditEventsAll2.length - 1].eventHash || "" : "";
             const evtData2 = `${maxSeqNum2 + 1}:ontology_bypass:${source.id}:${Date.now()}`;
@@ -2471,7 +2471,7 @@ const router = Router();
         const successRate = totalT > 0 ? ((totalT - failedT) / totalT * 100) : 100;
         const avgLat = totalT > 0 ? Math.round(recentTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / totalT) : 0;
 
-        const outcomes = await storage.getOutcomes();
+        const outcomes = await storage.getOutcomes(getOrgId(req));
         const boundOutcomes = outcomes.filter(o => {
           const attrs = (o.attributionRules as any)?.agents;
           return Array.isArray(attrs) && attrs.some((a: any) => a.agentId === source.agentId);
@@ -2627,7 +2627,7 @@ const router = Router();
 
       const updated = await storage.updateDeployment(deployment.id, updateData);
 
-      const allEvents = await storage.getAuditEvents();
+      const allEvents = await storage.getAuditEvents(getOrgId(req));
       const maxSeq = allEvents.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
       const crypto = await import("crypto");
       const lastHash = allEvents.length > 0 ? allEvents[allEvents.length - 1].eventHash || "" : "";
@@ -2760,7 +2760,7 @@ const router = Router();
         },
       ];
 
-      const outcomes = await storage.getOutcomes();
+      const outcomes = await storage.getOutcomes(getOrgId(req));
       const boundOutcomes = outcomes.filter(o => {
         const agents = (o.attributionRules as any)?.agents;
         if (Array.isArray(agents)) return agents.some((a: any) => a.agentId === agentId);
@@ -2875,7 +2875,7 @@ const router = Router();
       });
 
       const reason = req.body?.reason || "Manual rollback triggered";
-      const auditEvents = await storage.getAuditEvents();
+      const auditEvents = await storage.getAuditEvents(getOrgId(req));
       const maxSeq = auditEvents.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
       const lastHash = auditEvents.length > 0 ? auditEvents[auditEvents.length - 1].eventHash || "" : "";
       const crypto = await import("crypto");
@@ -2987,7 +2987,7 @@ const router = Router();
         deployedAt: new Date(),
       });
 
-      const auditEvents = await storage.getAuditEvents();
+      const auditEvents = await storage.getAuditEvents(getOrgId(req));
       const maxSeq = auditEvents.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
       const lastHash = auditEvents.length > 0 ? auditEvents[auditEvents.length - 1].eventHash || "" : "";
       const crypto = await import("crypto");

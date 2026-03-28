@@ -510,6 +510,7 @@ function hashCode(str: string): number {
         inputSummary: input.slice(0, 500),
         modelId: agent.modelName || "gpt-4.1",
         policyChecks: policyBundle.appliedPolicies,
+        organizationId: getOrgId(req) ?? undefined,
       });
 
       let stepIndex = 0;
@@ -1385,6 +1386,7 @@ function hashCode(str: string): number {
         inputSummary: input.slice(0, 500),
         modelId: agent.modelName || "gpt-4.1",
         policyChecks: policyBundle.appliedPolicies,
+        organizationId: getOrgId(req) ?? undefined,
       });
 
       let stepIndex = 0;
@@ -3380,7 +3382,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
 
       let outcomeData: AgentYamlExtras["outcomeContract"] = null;
       if (agent.outcomeId) {
-        const outcome = await storage.getOutcome(agent.outcomeId);
+        const outcome = await storage.getOutcome(agent.outcomeId, getOrgId(req));
         if (outcome) {
           const kpis = await storage.getKpisByOutcome(agent.outcomeId);
           outcomeData = {
@@ -5969,7 +5971,7 @@ clean:
       const agent = await storage.getAgent(req.params.id);
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
-      const auditEvts = await storage.getAuditEvents();
+      const auditEvts = await storage.getAuditEvents(getOrgId(req));
       const pipelineRuns = auditEvts
         .filter((e: any) =>
           e.objectId === agent.id &&
@@ -8610,7 +8612,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
       return res.status(403).json({ error: "Insufficient permissions to view approval queue" });
     }
     const [allApprovals, pendingElicitations] = await Promise.all([
-      storage.getApprovals(),
+      storage.getApprovals(getOrgId(req)),
       storage.getMcpElicitationsByStatus("pending"),
     ]);
     const gateApprovals = allApprovals.filter(a =>

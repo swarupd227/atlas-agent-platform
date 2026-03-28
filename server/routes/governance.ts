@@ -999,7 +999,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     const testCase = testCases.find(tc => tc.id === req.params.testId);
     if (!testCase) return res.status(404).json({ error: "Test case not found" });
 
-    const policy = await storage.getPolicy(req.params.id);
+    const policy = await storage.getPolicy(req.params.id, getOrgId(req));
     if (!policy) return res.status(404).json({ error: "Policy not found" });
 
     const rules = (policy.policyJson as any)?.rules || [];
@@ -1050,7 +1050,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
   });
 
   router.post("/api/policies/:id/simulate-traces", async (req, res) => {
-    const policy = await storage.getPolicy(req.params.id);
+    const policy = await storage.getPolicy(req.params.id, getOrgId(req));
     if (!policy) return res.status(404).json({ error: "Policy not found" });
 
     const { traceIds, agentId, limit: traceLimit } = req.body;
@@ -1425,10 +1425,10 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
   });
 
   // Verify hash chain integrity
-  router.get("/api/audit-events/verify-chain", async (_req, res) => {
+  router.get("/api/audit-events/verify-chain", async (req, res) => {
     try {
       const crypto = await import("crypto");
-      const events = await storage.getAuditEvents();
+      const events = await storage.getAuditEvents(getOrgId(req));
       const sorted = events
         .filter(e => e.sequenceNum !== null && e.sequenceNum !== undefined)
         .sort((a, b) => (a.sequenceNum || 0) - (b.sequenceNum || 0));
@@ -1627,7 +1627,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     };
 
     if (includeHashes === "true") {
-      const allEvents = await storage.getAuditEvents();
+      const allEvents = await storage.getAuditEvents(getOrgId(req));
       const lastEvent = allEvents[allEvents.length - 1];
       bundle.integrityInfo = {
         chainLength: allEvents.length,
@@ -1702,7 +1702,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
         const outcomeIds = [invoice.outcomeId];
         for (const oid of outcomeIds) {
           try {
-            const outcome = await storage.getOutcome(oid);
+            const outcome = await storage.getOutcome(oid, getOrgId(req));
             if (!outcome) continue;
 
             const allEvents = await storage.getOutcomeEventsByOutcome(oid);
@@ -2548,9 +2548,9 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
 
   router.get("/api/billing/usage-export", async (req, res) => {
     try {
-      const allEvents = await storage.getOutcomeEvents();
+      const allEvents = await storage.getOutcomeEvents(getOrgId(req));
       const agents = await storage.getAgents(getOrgId(req));
-      const outcomes = await storage.getOutcomes();
+      const outcomes = await storage.getOutcomes(getOrgId(req));
 
       const csvHeader = "Event ID,Outcome,Agent,Type,Billable,Exclude Reason,Unit Count,Unit Value,Trace ID,Created At\n";
       const csvRows = allEvents.map(e => {
@@ -2804,7 +2804,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     try {
       const { id } = req.params;
       if (!id || typeof id !== "string") return res.status(400).json({ error: "Missing outcome ID" });
-      const outcome = await storage.getOutcome(id);
+      const outcome = await storage.getOutcome(id, getOrgId(req));
       if (!outcome) return res.status(404).json({ error: "Outcome not found" });
 
       const kpis = await storage.getKpisByOutcome(outcome.id);
@@ -3128,11 +3128,11 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
 
   router.get("/api/monitor/impact", async (req, res) => {
     try {
-      const outcomes = await storage.getOutcomes();
+      const outcomes = await storage.getOutcomes(getOrgId(req));
       const kpis = await storage.getKpis();
       const agents = await storage.getAgents(getOrgId(req));
       const traces = await storage.getTraces(getOrgId(req));
-      const approvals = await storage.getApprovals();
+      const approvals = await storage.getApprovals(getOrgId(req));
 
       const impactData = outcomes.map(outcome => {
         const outcomeKpis = kpis.filter(k => k.outcomeId === outcome.id);
