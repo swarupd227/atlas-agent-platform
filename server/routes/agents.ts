@@ -22,7 +22,7 @@ import {
   redactPayload,
   redactWithOntologyKeys,
 } from "../permissions";
-import { getOrgId } from "../auth";
+import { getOrgId, getDefaultOrgId } from "../auth";
 import {
   resolveOntologyTags,
   generateKpiAlignedEvalSuite,
@@ -72,8 +72,8 @@ const router = Router();
           body.blueprintJson = bp.blueprintJson;
         }
       }
-      const data = insertAgentSchema.parse(body);
-      const agent = await storage.createAgent({ ...data, organizationId: getOrgId(req) ?? null });
+      const data = insertAgentSchema.omit({ organizationId: true }).parse(body);
+      const agent = await storage.createAgent({ ...data, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? null });
 
       const sourceTemplateId = req.body.sourceTemplateId || (agent.runtimeConfig as any)?.sourceTemplateId;
       if (sourceTemplateId) {

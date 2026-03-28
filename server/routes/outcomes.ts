@@ -9,7 +9,7 @@ import {
   insertKpiDefinitionSchema,
 } from "@shared/schema";
 import { checkPermission, getRequestRole } from "../permissions";
-import { getOrgId } from "../auth";
+import { getOrgId, getDefaultOrgId } from "../auth";
 import {
   resolveOntologyTags,
   computeConstraintGraph,
@@ -280,9 +280,9 @@ const router = Router();
 
   router.post("/api/outcomes", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {
-      const data = insertOutcomeContractSchema.parse(req.body);
+      const data = insertOutcomeContractSchema.omit({ organizationId: true }).parse(req.body);
       const graph = computeConstraintGraph(data, []);
-      const outcome = await storage.createOutcome({ ...data, constraintGraph: graph, organizationId: getOrgId(req) ?? null });
+      const outcome = await storage.createOutcome({ ...data, constraintGraph: graph, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? null });
       res.status(201).json(outcome);
     } catch (e) {
       handleZodError(res, e);
@@ -292,7 +292,7 @@ const router = Router();
   router.post("/api/outcomes/with-kpis", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {
       const { outcome: outcomeData, kpis: kpiData, constraints } = req.body;
-      const parsedOutcome = insertOutcomeContractSchema.parse({
+      const parsedOutcome = insertOutcomeContractSchema.omit({ organizationId: true }).parse({
         ...outcomeData,
         slaConfig: constraints ? { constraints, ...(outcomeData.slaConfig || {}) } : outcomeData.slaConfig,
       });
@@ -305,8 +305,9 @@ const router = Router();
             weight: kpi.weight != null ? (typeof kpi.weight === "number" ? kpi.weight : (parseFloat(kpi.weight) || 1)) : 1,
           }))
         : [];
+      const orgId = getOrgId(req) ?? getDefaultOrgId() ?? null;
       const result = await db.transaction(async (tx) => {
-        const [outcome] = await tx.insert(outcomeContracts).values(parsedOutcome).returning();
+        const [outcome] = await tx.insert(outcomeContracts).values({ ...parsedOutcome, organizationId: orgId }).returning();
         const createdKpis = [];
         for (const kpi of parsedKpis) {
           const [created] = await tx.insert(kpiDefinitions).values({ ...kpi, outcomeId: outcome.id }).returning();

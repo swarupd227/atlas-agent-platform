@@ -50,7 +50,7 @@ export function getDefaultOrgId(): string | undefined {
 }
 
 export function getOrgId(req: Request): string | undefined {
-  if (getSecurityMode() === "demo") return _defaultOrgId;
+  if (getSecurityMode() === "demo") return undefined;
   return req.authUser?.organizationId;
 }
 

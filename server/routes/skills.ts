@@ -3,7 +3,7 @@ import OpenAI from "openai";
 import { z, ZodError } from "zod";
 import { storage } from "../storage";
 import { checkPermission, getOntologySensitivityKeys, invalidateOntologySensitivityCache } from "../permissions";
-import { getOrgId } from "../auth";
+import { getOrgId, getDefaultOrgId } from "../auth";
 import { resolveOntologyTags, runParameterMatching } from "./helpers";
 import { executeKGQueryTemplate } from "../agent-runtime";
 import {
@@ -1093,8 +1093,8 @@ Return ONLY a valid JSON object with a "skills" array.`
 
   router.post("/api/skills", async (req, res) => {
     try {
-      const data = insertSkillSchema.parse(req.body);
-      const skill = await storage.createSkill({ ...data, organizationId: getOrgId(req) ?? null });
+      const data = insertSkillSchema.omit({ organizationId: true }).parse(req.body);
+      const skill = await storage.createSkill({ ...data, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? null });
 
       let ontologyTagValidation = undefined;
       const skillTags = (data.tags as string[] | null) || [];

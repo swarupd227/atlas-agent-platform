@@ -1,6 +1,7 @@
 import { db } from "./db";
 import crypto from "crypto";
 import { sql } from "drizzle-orm";
+import { getDefaultOrgId } from "./auth";
 import { 
   outcomeContracts, kpiDefinitions, agents, deployments, 
   runTraces, evalSuites, policies, approvals, auditEvents, invoices,
@@ -1571,8 +1572,11 @@ export async function seedDatabase() {
   const existingAgents = await db.select().from(agents);
   if (existingAgents.length > 0) return;
 
+  const seedOrgId = getDefaultOrgId() as string;
+
   // Outcome Contracts
   const [outcome1] = await db.insert(outcomeContracts).values({
+    organizationId: seedOrgId,
     name: "Reduce Support Load",
     description: "Automate tier-1 customer support to reduce human agent workload by 40%",
     riskTier: "HIGH",
@@ -1612,6 +1616,7 @@ export async function seedDatabase() {
   }).returning();
 
   const [outcome2] = await db.insert(outcomeContracts).values({
+    organizationId: seedOrgId,
     name: "Invoice Processing Automation",
     description: "Extract, validate and route invoices with 98% accuracy",
     riskTier: "MEDIUM",
@@ -1647,6 +1652,7 @@ export async function seedDatabase() {
   }).returning();
 
   const [outcome3] = await db.insert(outcomeContracts).values({
+    organizationId: seedOrgId,
     name: "Lead Qualification Pipeline",
     description: "Score and qualify inbound leads with enrichment and routing",
     riskTier: "LOW",
@@ -1682,6 +1688,7 @@ export async function seedDatabase() {
   }).returning();
 
   const [outcome4] = await db.insert(outcomeContracts).values({
+    organizationId: seedOrgId,
     name: "Content Moderation",
     description: "Automated content moderation for user-generated content platforms",
     riskTier: "HIGH",
@@ -1734,6 +1741,7 @@ export async function seedDatabase() {
 
   // Agents
   const [agent1] = await db.insert(agents).values({
+    organizationId: seedOrgId,
     name: "Support Triage Agent",
     description: "Routes and resolves tier-1 support tickets autonomously using knowledge base and CRM data",
     owner: "Support Engineering",
@@ -1831,6 +1839,7 @@ export async function seedDatabase() {
   }).returning();
 
   const [agent2] = await db.insert(agents).values({
+    organizationId: seedOrgId,
     name: "Invoice Extractor",
     description: "Extracts structured data from PDF/image invoices and routes for approval",
     owner: "Finance Ops",
@@ -1921,6 +1930,7 @@ export async function seedDatabase() {
   }).returning();
 
   const [agent3] = await db.insert(agents).values({
+    organizationId: seedOrgId,
     name: "Lead Scorer",
     description: "Enriches and scores inbound leads with firmographic and behavioral data",
     owner: "Revenue Ops",
@@ -2010,6 +2020,7 @@ export async function seedDatabase() {
   }).returning();
 
   const [agent4] = await db.insert(agents).values({
+    organizationId: seedOrgId,
     name: "Content Moderator",
     description: "Classifies and flags user-generated content for policy violations",
     owner: "Trust & Safety",
@@ -2108,6 +2119,7 @@ export async function seedDatabase() {
   }).returning();
 
   const [agent5] = await db.insert(agents).values({
+    organizationId: seedOrgId,
     name: "Knowledge Base Updater",
     description: "Monitors resolved tickets and updates KB articles automatically",
     owner: "Support Engineering",
@@ -2221,6 +2233,7 @@ export async function seedDatabase() {
 
   // Agent 1: Support Triage — full promotion chain staging → pilot → prod (v2.3.1)
   const [dep1staging] = await db.insert(deployments).values({
+    organizationId: seedOrgId,
     agentId: agent1.id, agentName: "Support Triage Agent", environment: "staging", version: "2.3.1",
     status: "promoted", rolloutStrategy: "canary", canaryPercent: 100,
     signatureHash: "sha256:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
@@ -2233,6 +2246,7 @@ export async function seedDatabase() {
   }).returning();
 
   const [dep1pilot] = await db.insert(deployments).values({
+    organizationId: seedOrgId,
     agentId: agent1.id, agentName: "Support Triage Agent", environment: "pilot", version: "2.3.1",
     status: "promoted", rolloutStrategy: "canary", canaryPercent: 100,
     signatureHash: "sha256:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
@@ -2246,6 +2260,7 @@ export async function seedDatabase() {
   }).returning();
 
   await db.insert(deployments).values({
+    organizationId: seedOrgId,
     agentId: agent1.id, agentName: "Support Triage Agent", environment: "prod", version: "2.3.1",
     status: "deployed", rolloutStrategy: "canary", canaryPercent: 100,
     signatureHash: "sha256:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
@@ -2264,6 +2279,7 @@ export async function seedDatabase() {
 
   // Agent 1: v2.4.0-beta in staging (not yet promoted)
   await db.insert(deployments).values({
+    organizationId: seedOrgId,
     agentId: agent1.id, agentName: "Support Triage Agent", environment: "staging", version: "2.4.0-beta",
     status: "deployed", rolloutStrategy: "canary", canaryPercent: 60,
     signatureHash: "sha256:f1e2d3c4b5a6f7e8d9c0b1a2f3e4d5c6b7a8f9e0d1c2b3a4f5e6d7c8b9a0f1e2",
@@ -2275,6 +2291,7 @@ export async function seedDatabase() {
 
   // Agent 2: Invoice Extractor — in pilot with canary at 25%
   const [dep2staging] = await db.insert(deployments).values({
+    organizationId: seedOrgId,
     agentId: agent2.id, agentName: "Invoice Extractor", environment: "staging", version: "1.9.0-rc1",
     status: "promoted", rolloutStrategy: "canary", canaryPercent: 100,
     signatureHash: "sha256:b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3",
@@ -2291,6 +2308,7 @@ export async function seedDatabase() {
   }).returning();
 
   await db.insert(deployments).values({
+    organizationId: seedOrgId,
     agentId: agent2.id, agentName: "Invoice Extractor", environment: "pilot", version: "1.9.0-rc1",
     status: "canary", rolloutStrategy: "canary", canaryPercent: 25,
     signatureHash: "sha256:b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3",
@@ -2307,6 +2325,7 @@ export async function seedDatabase() {
 
   // Agent 2: prod still on 1.8.0
   await db.insert(deployments).values({
+    organizationId: seedOrgId,
     agentId: agent2.id, agentName: "Invoice Extractor", environment: "prod", version: "1.8.0",
     status: "deployed", rolloutStrategy: "canary", canaryPercent: 100,
     signatureHash: "sha256:c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4",
@@ -2319,6 +2338,7 @@ export async function seedDatabase() {
 
   // Agent 3: Lead Scorer — direct deploy to prod
   await db.insert(deployments).values({
+    organizationId: seedOrgId,
     agentId: agent3.id, agentName: "Lead Scorer", environment: "prod", version: "3.1.2",
     status: "deployed", rolloutStrategy: "direct", canaryPercent: 100,
     signatureHash: "sha256:d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5",
@@ -2334,6 +2354,7 @@ export async function seedDatabase() {
 
   // Agent 4: Content Moderator — rolled back release
   await db.insert(deployments).values({
+    organizationId: seedOrgId,
     agentId: agent4.id, agentName: "Content Moderator", environment: "prod", version: "4.0.0",
     status: "deployed", rolloutStrategy: "canary", canaryPercent: 100,
     signatureHash: "sha256:e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6",
@@ -2345,6 +2366,7 @@ export async function seedDatabase() {
   });
 
   await db.insert(deployments).values({
+    organizationId: seedOrgId,
     agentId: agent4.id, agentName: "Content Moderator", environment: "staging", version: "4.1.0-alpha",
     status: "rolled_back", rolloutStrategy: "shadow", canaryPercent: 0,
     signatureHash: "sha256:f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7",
@@ -2357,6 +2379,7 @@ export async function seedDatabase() {
 
   // Agent 5: Knowledge Base Updater — pending in staging
   await db.insert(deployments).values({
+    organizationId: seedOrgId,
     agentId: agent5.id, agentName: "Knowledge Base Updater", environment: "staging", version: "1.2.0",
     status: "pending", rolloutStrategy: "shadow", canaryPercent: 0,
     signatureHash: "sha256:a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8",
@@ -2634,6 +2657,7 @@ export async function seedDatabase() {
     const startedAt = new Date(Date.now() - trace.timeOffsetMs);
     const endedAt = new Date(startedAt.getTime() + trace.latencyMs);
     await db.insert(runTraces).values({
+      organizationId: seedOrgId,
       agentId: agent1.id,
       environment: "prod",
       status: trace.status,
@@ -2813,6 +2837,7 @@ export async function seedDatabase() {
     const startedAt = new Date(Date.now() - trace.timeOffsetMs);
     const endedAt = new Date(startedAt.getTime() + trace.latencyMs);
     await db.insert(runTraces).values({
+      organizationId: seedOrgId,
       agentId: agent2.id,
       environment: "prod",
       status: trace.status,
@@ -2918,6 +2943,7 @@ export async function seedDatabase() {
     const startedAt = new Date(Date.now() - trace.timeOffsetMs);
     const endedAt = new Date(startedAt.getTime() + trace.latencyMs);
     await db.insert(runTraces).values({
+      organizationId: seedOrgId,
       agentId: agent3.id,
       environment: "prod",
       status: trace.status,
@@ -3013,6 +3039,7 @@ export async function seedDatabase() {
     const startedAt = new Date(Date.now() - trace.timeOffsetMs);
     const endedAt = new Date(startedAt.getTime() + trace.latencyMs);
     await db.insert(runTraces).values({
+      organizationId: seedOrgId,
       agentId: agent4.id,
       environment: "prod",
       status: trace.status,
@@ -3094,6 +3121,7 @@ export async function seedDatabase() {
     const startedAt = new Date(Date.now() - trace.timeOffsetMs);
     const endedAt = new Date(startedAt.getTime() + trace.latencyMs);
     await db.insert(runTraces).values({
+      organizationId: seedOrgId,
       agentId: agent5.id,
       environment: "prod",
       status: trace.status,
@@ -3126,21 +3154,21 @@ export async function seedDatabase() {
 
   // Policies
   await db.insert(policies).values([
-    { name: "No PII in Response", domain: "data_handling", scopeType: "org", version: 3, status: "active", description: "Blocks any agent response that contains personally identifiable information", policyJson: { rules: [{ id: "no_pii_in_response", when: "output.contains_pii == true", action: "block", escalation: "human_required" }] }, versionHistory: [
+    { organizationId: seedOrgId, name: "No PII in Response", domain: "data_handling", scopeType: "org", version: 3, status: "active", description: "Blocks any agent response that contains personally identifiable information", policyJson: { rules: [{ id: "no_pii_in_response", when: "output.contains_pii == true", action: "block", escalation: "human_required" }] }, versionHistory: [
       { version: 1, changedAt: "2025-09-15T10:00:00Z", changedBy: "Admin", summary: "Initial policy creation" },
       { version: 2, changedAt: "2025-11-20T14:30:00Z", changedBy: "Compliance Team", summary: "Added escalation to human for edge cases" },
     ] },
-    { name: "Restricted Tool Write Access", domain: "tool_permissions", scopeType: "org", version: 2, status: "active", description: "Requires expert approval for write actions to external systems in production", policyJson: { rules: [{ id: "restricted_tool_write", when: "tool.action_type == 'write' and env == 'prod'", action: "require_approval", approvers: ["EXPERT_VALIDATOR"] }] }, versionHistory: [
+    { organizationId: seedOrgId, name: "Restricted Tool Write Access", domain: "tool_permissions", scopeType: "org", version: 2, status: "active", description: "Requires expert approval for write actions to external systems in production", policyJson: { rules: [{ id: "restricted_tool_write", when: "tool.action_type == 'write' and env == 'prod'", action: "require_approval", approvers: ["EXPERT_VALIDATOR"] }] }, versionHistory: [
       { version: 1, changedAt: "2025-10-01T09:00:00Z", changedBy: "Security Team", summary: "Initial write restriction policy" },
     ] },
-    { name: "Mandatory Citation", domain: "content_boundaries", scopeType: "outcome", version: 1, status: "active", description: "All agent responses must include citations from the knowledge base", versionHistory: [] },
-    { name: "Cost Budget Enforcement", domain: "allowed_actions", scopeType: "agent", version: 1, status: "active", description: "Prevents agent runs from exceeding per-run cost budget", versionHistory: [] },
-    { name: "Audit Log Redaction Rules", domain: "logging", scopeType: "org", version: 4, status: "active", description: "Defines which fields are redacted in audit logs for compliance", versionHistory: [
+    { organizationId: seedOrgId, name: "Mandatory Citation", domain: "content_boundaries", scopeType: "outcome", version: 1, status: "active", description: "All agent responses must include citations from the knowledge base", versionHistory: [] },
+    { organizationId: seedOrgId, name: "Cost Budget Enforcement", domain: "allowed_actions", scopeType: "agent", version: 1, status: "active", description: "Prevents agent runs from exceeding per-run cost budget", versionHistory: [] },
+    { organizationId: seedOrgId, name: "Audit Log Redaction Rules", domain: "logging", scopeType: "org", version: 4, status: "active", description: "Defines which fields are redacted in audit logs for compliance", versionHistory: [
       { version: 1, changedAt: "2025-06-01T08:00:00Z", changedBy: "Admin", summary: "Initial redaction rules" },
       { version: 2, changedAt: "2025-08-15T11:00:00Z", changedBy: "Privacy Officer", summary: "Added email redaction" },
       { version: 3, changedAt: "2025-10-10T16:00:00Z", changedBy: "Compliance Team", summary: "Extended to cover financial data" },
     ] },
-    { name: "Model Downgrade Fallback", domain: "allowed_actions", scopeType: "agent", version: 1, status: "active", description: "Allows automatic fallback to cheaper models when primary model is unavailable", versionHistory: [] },
+    { organizationId: seedOrgId, name: "Model Downgrade Fallback", domain: "allowed_actions", scopeType: "agent", version: 1, status: "active", description: "Allows automatic fallback to cheaper models when primary model is unavailable", versionHistory: [] },
   ]);
 
   const seededPolicies = await db.select().from(policies).limit(6);
@@ -3158,6 +3186,7 @@ export async function seedDatabase() {
   // Approvals
   await db.insert(approvals).values([
     {
+      organizationId: seedOrgId,
       type: "deployment", objectType: "agent", objectName: "Support Triage Agent v2.4.0", riskScore: 7.5, status: "pending", requestedBy: "CI Pipeline", requesterType: "system",
       description: "New version with improved RAG retrieval and updated prompt templates",
       agentId: agent1.id, outcomeId: outcome1.id, environment: "production", changeType: "blueprint_change", toolPermissionClass: "STANDARD",
@@ -3265,6 +3294,7 @@ export async function seedDatabase() {
       },
     },
     {
+      organizationId: seedOrgId,
       type: "deployment", objectType: "agent", objectName: "Content Moderator v4.1.0", riskScore: 5.0, status: "approved", requestedBy: "Trust & Safety", requesterType: "human",
       decidedBy: "Expert Validator", description: "Updated classification model with improved multi-language support", decidedAt: new Date(Date.now() - 86400000),
       agentId: agent5.id, environment: "staging", changeType: "model_change", toolPermissionClass: "RESTRICTED",
@@ -3340,6 +3370,7 @@ export async function seedDatabase() {
       },
     },
     {
+      organizationId: seedOrgId,
       type: "deployment", objectType: "agent", objectName: "KB Sync Agent - Production Promotion", riskScore: 9.0, status: "pending", requestedBy: "System (Auto-Promotion)", requesterType: "system",
       description: "Auto-promotion to production after staging readiness checks passed",
       agentId: agent5.id, environment: "production", changeType: "deployment_promotion", toolPermissionClass: "RESTRICTED",
@@ -3386,7 +3417,7 @@ export async function seedDatabase() {
   const hashedEvents = auditEventData.map((event, i) => {
     const payload = JSON.stringify({ ...event, sequenceNum: i + 1, previousHash });
     const eventHash = crypto.createHash("sha256").update(payload).digest("hex");
-    const result = { ...event, sequenceNum: i + 1, previousHash, eventHash };
+    const result = { ...event, organizationId: seedOrgId, sequenceNum: i + 1, previousHash, eventHash };
     previousHash = eventHash;
     return result;
   });
@@ -3470,16 +3501,16 @@ export async function seedDatabase() {
   // Invoices (with enhanced billing fields)
   const now = new Date();
   const invoiceRows = await db.insert(invoices).values([
-    { outcomeId: outcome1.id, outcomeName: "Reduce Support Load", periodStart: new Date(now.getFullYear(), now.getMonth() - 3, 1), periodEnd: new Date(now.getFullYear(), now.getMonth() - 2, 0), totalUnits: 312, billableUnits: 298, excludedUnits: 14, unitPrice: 2.50, amount: 745.00, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth() - 2, 5) },
-    { outcomeId: outcome2.id, outcomeName: "Invoice Processing Automation", periodStart: new Date(now.getFullYear(), now.getMonth() - 3, 1), periodEnd: new Date(now.getFullYear(), now.getMonth() - 2, 0), totalUnits: 891, billableUnits: 856, excludedUnits: 35, unitPrice: 1.75, amount: 1498.00, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth() - 2, 6) },
-    { outcomeId: outcome1.id, outcomeName: "Reduce Support Load", periodStart: new Date(now.getFullYear(), now.getMonth() - 2, 1), periodEnd: new Date(now.getFullYear(), now.getMonth() - 1, 0), totalUnits: 423, billableUnits: 401, excludedUnits: 22, unitPrice: 2.50, amount: 1002.50, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth() - 1, 4) },
-    { outcomeId: outcome2.id, outcomeName: "Invoice Processing Automation", periodStart: new Date(now.getFullYear(), now.getMonth() - 2, 1), periodEnd: new Date(now.getFullYear(), now.getMonth() - 1, 0), totalUnits: 1087, billableUnits: 1043, excludedUnits: 44, unitPrice: 1.75, amount: 1825.25, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth() - 1, 5) },
-    { outcomeId: outcome3.id, outcomeName: "Lead Qualification Pipeline", periodStart: new Date(now.getFullYear(), now.getMonth() - 2, 1), periodEnd: new Date(now.getFullYear(), now.getMonth() - 1, 0), totalUnits: 267, billableUnits: 252, excludedUnits: 15, unitPrice: 3.00, amount: 756.00, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth() - 1, 3) },
-    { outcomeId: outcome4.id, outcomeName: "Content Moderation", periodStart: new Date(now.getFullYear(), now.getMonth() - 1, 1), periodEnd: new Date(now.getFullYear(), now.getMonth(), 0), totalUnits: 47823, billableUnits: 46190, excludedUnits: 1633, unitPrice: 0.50, amount: 23095.00, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth(), 2) },
-    { outcomeId: outcome1.id, outcomeName: "Reduce Support Load", periodStart: new Date(now.getFullYear(), now.getMonth() - 1, 1), periodEnd: new Date(now.getFullYear(), now.getMonth(), 0), totalUnits: 456, billableUnits: 432, excludedUnits: 24, unitPrice: 2.50, amount: 1080.00, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth(), 3) },
-    { outcomeId: outcome1.id, outcomeName: "Reduce Support Load", periodStart: new Date(now.getFullYear(), now.getMonth(), 1), periodEnd: new Date(now.getFullYear(), now.getMonth() + 1, 0), totalUnits: 198, billableUnits: 189, excludedUnits: 9, unitPrice: 2.50, amount: 472.50, status: "pending" },
-    { outcomeId: outcome2.id, outcomeName: "Invoice Processing Automation", periodStart: new Date(now.getFullYear(), now.getMonth(), 1), periodEnd: new Date(now.getFullYear(), now.getMonth() + 1, 0), totalUnits: 534, billableUnits: 512, excludedUnits: 22, unitPrice: 1.75, amount: 896.00, status: "pending" },
-    { outcomeId: outcome3.id, outcomeName: "Lead Qualification Pipeline", periodStart: new Date(now.getFullYear(), now.getMonth(), 1), periodEnd: new Date(now.getFullYear(), now.getMonth() + 1, 0), totalUnits: 145, billableUnits: 138, excludedUnits: 7, unitPrice: 3.00, amount: 414.00, status: "pending" },
+    { organizationId: seedOrgId, outcomeId: outcome1.id, outcomeName: "Reduce Support Load", periodStart: new Date(now.getFullYear(), now.getMonth() - 3, 1), periodEnd: new Date(now.getFullYear(), now.getMonth() - 2, 0), totalUnits: 312, billableUnits: 298, excludedUnits: 14, unitPrice: 2.50, amount: 745.00, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth() - 2, 5) },
+    { organizationId: seedOrgId, outcomeId: outcome2.id, outcomeName: "Invoice Processing Automation", periodStart: new Date(now.getFullYear(), now.getMonth() - 3, 1), periodEnd: new Date(now.getFullYear(), now.getMonth() - 2, 0), totalUnits: 891, billableUnits: 856, excludedUnits: 35, unitPrice: 1.75, amount: 1498.00, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth() - 2, 6) },
+    { organizationId: seedOrgId, outcomeId: outcome1.id, outcomeName: "Reduce Support Load", periodStart: new Date(now.getFullYear(), now.getMonth() - 2, 1), periodEnd: new Date(now.getFullYear(), now.getMonth() - 1, 0), totalUnits: 423, billableUnits: 401, excludedUnits: 22, unitPrice: 2.50, amount: 1002.50, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth() - 1, 4) },
+    { organizationId: seedOrgId, outcomeId: outcome2.id, outcomeName: "Invoice Processing Automation", periodStart: new Date(now.getFullYear(), now.getMonth() - 2, 1), periodEnd: new Date(now.getFullYear(), now.getMonth() - 1, 0), totalUnits: 1087, billableUnits: 1043, excludedUnits: 44, unitPrice: 1.75, amount: 1825.25, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth() - 1, 5) },
+    { organizationId: seedOrgId, outcomeId: outcome3.id, outcomeName: "Lead Qualification Pipeline", periodStart: new Date(now.getFullYear(), now.getMonth() - 2, 1), periodEnd: new Date(now.getFullYear(), now.getMonth() - 1, 0), totalUnits: 267, billableUnits: 252, excludedUnits: 15, unitPrice: 3.00, amount: 756.00, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth() - 1, 3) },
+    { organizationId: seedOrgId, outcomeId: outcome4.id, outcomeName: "Content Moderation", periodStart: new Date(now.getFullYear(), now.getMonth() - 1, 1), periodEnd: new Date(now.getFullYear(), now.getMonth(), 0), totalUnits: 47823, billableUnits: 46190, excludedUnits: 1633, unitPrice: 0.50, amount: 23095.00, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth(), 2) },
+    { organizationId: seedOrgId, outcomeId: outcome1.id, outcomeName: "Reduce Support Load", periodStart: new Date(now.getFullYear(), now.getMonth() - 1, 1), periodEnd: new Date(now.getFullYear(), now.getMonth(), 0), totalUnits: 456, billableUnits: 432, excludedUnits: 24, unitPrice: 2.50, amount: 1080.00, status: "paid", paidAt: new Date(now.getFullYear(), now.getMonth(), 3) },
+    { organizationId: seedOrgId, outcomeId: outcome1.id, outcomeName: "Reduce Support Load", periodStart: new Date(now.getFullYear(), now.getMonth(), 1), periodEnd: new Date(now.getFullYear(), now.getMonth() + 1, 0), totalUnits: 198, billableUnits: 189, excludedUnits: 9, unitPrice: 2.50, amount: 472.50, status: "pending" },
+    { organizationId: seedOrgId, outcomeId: outcome2.id, outcomeName: "Invoice Processing Automation", periodStart: new Date(now.getFullYear(), now.getMonth(), 1), periodEnd: new Date(now.getFullYear(), now.getMonth() + 1, 0), totalUnits: 534, billableUnits: 512, excludedUnits: 22, unitPrice: 1.75, amount: 896.00, status: "pending" },
+    { organizationId: seedOrgId, outcomeId: outcome3.id, outcomeName: "Lead Qualification Pipeline", periodStart: new Date(now.getFullYear(), now.getMonth(), 1), periodEnd: new Date(now.getFullYear(), now.getMonth() + 1, 0), totalUnits: 145, billableUnits: 138, excludedUnits: 7, unitPrice: 3.00, amount: 414.00, status: "pending" },
   ]).returning();
 
   // Outcome Events (metering events linked to invoices, agents, and traces)
@@ -3498,6 +3529,7 @@ export async function seedDatabase() {
       const randomTrace = existingTraces.length > 0 ? existingTraces[Math.floor(Math.random() * existingTraces.length)] : null;
       const eventHash = crypto.createHash("sha256").update(`${inv.id}-${e}-${Date.now()}`).digest("hex");
       outcomeEventData.push({
+        organizationId: seedOrgId,
         outcomeId: inv.outcomeId!,
         agentId: matchingAgent.id,
         invoiceId: inv.id,
@@ -4379,6 +4411,7 @@ export async function seedDatabase() {
       const agentId = allAgents.length > 0 ? allAgents[0].id : "agent-001";
       await db.insert(runTracesTable).values({
         id: a2aTraceId,
+        organizationId: seedOrgId,
         agentId,
         environment: "prod",
         status: "completed",

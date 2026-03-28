@@ -6,7 +6,7 @@ import { insertKnowledgeBaseSchema, insertKnowledgeSourceSchema, insertAgentKnow
 import { sql, eq, desc, and, inArray } from "drizzle-orm";
 import OpenAI from "openai";
 import { generateEmbeddings, storeChunkEmbedding } from "./embeddings";
-import { getOrgId } from "./auth";
+import { getOrgId, getDefaultOrgId } from "./auth";
 
 interface OntologyAlignmentResult {
   score: number;
@@ -686,8 +686,8 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
   app.post("/api/knowledge-bases", async (req, res) => {
     try {
-      const data = insertKnowledgeBaseSchema.parse(req.body);
-      const kb = await storage.createKnowledgeBase({ ...data, organizationId: getOrgId(req) ?? null });
+      const data = insertKnowledgeBaseSchema.omit({ organizationId: true }).parse(req.body);
+      const kb = await storage.createKnowledgeBase({ ...data, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? null });
       res.status(201).json(kb);
     } catch (error: any) {
       res.status(400).json({ message: error.message });

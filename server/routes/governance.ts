@@ -13,7 +13,7 @@ import {
   insertComplianceReportSchema,
   insertIncidentSchema,
 } from "@shared/schema";
-import { getOrgId } from "../auth";
+import { getOrgId, getDefaultOrgId } from "../auth";
 import {
   checkPermission,
   getRequestRole,
@@ -906,8 +906,8 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
 
   router.post("/api/policies", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      const data = insertPolicySchema.parse(req.body);
-      const policy = await storage.createPolicy({ ...data, organizationId: getOrgId(req) ?? null });
+      const data = insertPolicySchema.omit({ organizationId: true }).parse(req.body);
+      const policy = await storage.createPolicy({ ...data, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? null });
       res.status(201).json(policy);
     } catch (e) {
       handleZodError(res, e);
@@ -1159,8 +1159,8 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
 
   router.post("/api/approvals", checkPermission("approve_changes"), async (req, res) => {
     try {
-      const data = insertApprovalSchema.parse(req.body);
-      const approval = await storage.createApproval({ ...data, organizationId: getOrgId(req) ?? null });
+      const data = insertApprovalSchema.omit({ organizationId: true }).parse(req.body);
+      const approval = await storage.createApproval({ ...data, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? null });
       res.status(201).json(approval);
     } catch (e) {
       handleZodError(res, e);

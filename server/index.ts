@@ -134,9 +134,6 @@ app.use((req, res, next) => {
       // Run all database seeding and background initialization AFTER the port
       // is open so health checks pass immediately on deployment
       (async () => {
-        await seedDatabase().catch((err) => {
-          console.error("Seed error:", err);
-        });
         const defaultOrg = await storage.seedDefaultOrganization().catch((err) => {
           console.error("Default org seed error:", err);
           return undefined;
@@ -144,6 +141,9 @@ app.use((req, res, next) => {
         if (defaultOrg?.id) {
           setDefaultOrgId(defaultOrg.id);
         }
+        await seedDatabase().catch((err) => {
+          console.error("Seed error:", err);
+        });
         await seedDefaultAdmin(defaultOrg?.id).catch((err) => {
           console.error("Admin seed error:", err);
         });
