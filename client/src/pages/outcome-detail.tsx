@@ -1210,6 +1210,24 @@ export default function OutcomeDetail() {
             <span><span className="font-medium text-foreground/70">SLA: </span>{sla.slaDescription}</span>
           </p>
         )}
+        {(() => {
+          const roi = outcome.roiEstimate as { annualizedSavingsMin: number; annualizedSavingsMax: number; paybackPeriodMonths: number | null; assumptionsSummary: string } | null | undefined;
+          if (!roi || !roi.annualizedSavingsMin) return null;
+          const fmtK = (n: number) => n >= 1000000 ? `$${(n / 1000000).toFixed(1)}M` : `$${Math.round(n / 1000)}K`;
+          return (
+            <div className="ml-11 mt-1 flex items-center gap-3 flex-wrap" data-testid="roi-estimate-summary">
+              <span className="flex items-center gap-1 text-xs font-medium text-emerald-700 dark:text-emerald-400">
+                <TrendingUp className="w-3.5 h-3.5" />
+                <span data-testid="text-roi-detail-range">{fmtK(roi.annualizedSavingsMin)} – {fmtK(roi.annualizedSavingsMax)} / yr estimated</span>
+              </span>
+              {roi.paybackPeriodMonths != null && (
+                <span className="flex items-center gap-1 text-xs text-muted-foreground" data-testid="text-roi-detail-payback">
+                  <Clock className="w-3 h-3" />{roi.paybackPeriodMonths}mo payback
+                </span>
+              )}
+            </div>
+          );
+        })()}
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">

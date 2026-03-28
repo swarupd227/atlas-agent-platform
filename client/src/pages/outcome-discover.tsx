@@ -41,8 +41,10 @@ import {
   Info,
   ShieldCheck,
   TrendingDown,
+  TrendingUp,
   Star,
   AlertTriangle,
+  DollarSign,
 } from "lucide-react";
 import { findPolicyPackName } from "@/lib/policy-packs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -182,6 +184,12 @@ interface OutcomeProposal {
   validationChecklist: string[];
   regulatoryConstraints?: RegulatoryConstraint[];
   applicablePolicies?: ApplicablePolicy[];
+  roiEstimate?: {
+    annualizedSavingsMin: number;
+    annualizedSavingsMax: number;
+    paybackPeriodMonths: number | null;
+    assumptionsSummary: string;
+  };
 }
 
 interface StarterPrompt {
@@ -886,6 +894,7 @@ export default function OutcomeDiscover() {
           ? { ...withSla, processFlow: processSteps }
           : (Object.keys(withSla).length > 0 ? withSla : undefined);
       })(),
+      ...(proposal.roiEstimate ? { roiEstimate: proposal.roiEstimate } : {}),
     });
   }
 
@@ -2794,6 +2803,37 @@ export default function OutcomeDiscover() {
                         )}
                       </CardContent>
                     )}
+                  </Card>
+                )}
+
+                {proposal.roiEstimate && (
+                  <Card className="border-emerald-500/30 bg-emerald-500/5 dark:bg-emerald-500/5" data-testid="card-roi-estimate">
+                    <CardHeader className="p-3 pb-1">
+                      <CardTitle className="text-xs font-medium text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
+                        <TrendingUp className="w-3.5 h-3.5" />
+                        Estimated ROI
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-3 pt-1 flex flex-col gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <div className="flex items-center gap-1 text-emerald-700 dark:text-emerald-400" data-testid="text-roi-savings-range">
+                          <DollarSign className="w-4 h-4 shrink-0" />
+                          <span className="text-sm font-semibold">
+                            {`$${(proposal.roiEstimate.annualizedSavingsMin / 1000).toFixed(0)}K – $${(proposal.roiEstimate.annualizedSavingsMax / 1000).toFixed(0)}K`}
+                          </span>
+                          <span className="text-xs text-emerald-600/70 dark:text-emerald-400/70">/ year</span>
+                        </div>
+                        {proposal.roiEstimate.paybackPeriodMonths != null && (
+                          <div className="flex items-center gap-1 text-xs text-muted-foreground" data-testid="text-roi-payback">
+                            <Clock className="w-3 h-3" />
+                            <span>{proposal.roiEstimate.paybackPeriodMonths}mo payback</span>
+                          </div>
+                        )}
+                      </div>
+                      {proposal.roiEstimate.assumptionsSummary && (
+                        <p className="text-[11px] text-muted-foreground leading-relaxed" data-testid="text-roi-assumptions">{proposal.roiEstimate.assumptionsSummary}</p>
+                      )}
+                    </CardContent>
                   </Card>
                 )}
 

@@ -34,6 +34,7 @@ export const outcomeContracts = pgTable("outcome_contracts", {
   maxDriftPercent: real("max_drift_percent").default(10),
   autoPauseTrigger: boolean("auto_pause_trigger").default(false),
   constraintGraph: jsonb("constraint_graph"),
+  roiEstimate: jsonb("roi_estimate"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
