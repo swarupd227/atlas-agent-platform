@@ -137,6 +137,10 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
 export async function seedDefaultAdmin(defaultOrgId?: string) {
   if (getSecurityMode() !== "production") return;
 
+  if (!defaultOrgId) {
+    throw new Error("[auth] Cannot seed default admin: defaultOrgId is required but was not provided");
+  }
+
   try {
     const existingUsers = await db.select().from(users);
     if (existingUsers.length > 0) return;
@@ -147,10 +151,11 @@ export async function seedDefaultAdmin(defaultOrgId?: string) {
       password: hashed,
       email: "admin@nous.ai",
       role: "admin",
-      organizationId: defaultOrgId ?? "",
+      organizationId: defaultOrgId,
     });
     console.log("[auth] Default admin user created — username: admin, password: admin123");
   } catch (err: any) {
     console.error("[auth] Failed to seed default admin:", err.message);
+    throw err;
   }
 }
