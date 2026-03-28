@@ -589,10 +589,57 @@ export function getDefaultProvider(): LLMProvider {
   return getProvider(defaultName);
 }
 
+// HTTP status codes that represent permanent request errors — do NOT cascade on these.
+const PERMANENT_ERROR_STATUSES = new Set([400, 401, 403, 404, 422]);
+
+/**
+ * Returns true when the error warrants cascading to a fallback provider.
+ * Cascades on: circuit-breaker open/half-open, exhausted-retry transient failures
+ * (rate limits, bad-gateway, service unavailable, network errors).
+ * Does NOT cascade on: permanent request-shape errors (bad auth, bad request, etc.)
+ * that would fail identically on any provider.
+ */
+function isCascadable(err: unknown): boolean {
+  if (!(err instanceof Error)) return true; // unknown errors: cascade defensively
+  const msg = err.message;
+  // Circuit-breaker errors always cascade
+  if (msg.includes("Circuit breaker OPEN") || msg.includes("Circuit HALF-OPEN")) return true;
+  const e = err as Error & { status?: number; code?: string; constructor: { name: string } };
+  // Permanent HTTP errors: do not cascade
+  if (e.status !== undefined && PERMANENT_ERROR_STATUSES.has(e.status)) return false;
+  // Transient HTTP errors: cascade
+  if (e.status !== undefined && RETRYABLE_STATUS_CODES.has(e.status)) return true;
+  // Network errors: cascade
+  if (e.code !== undefined && RETRYABLE_ERROR_CODES.has(e.code)) return true;
+  // SDK transient error classes: cascade
+  if (e.constructor.name === "RateLimitError") return true;
+  if (e.constructor.name === "APIConnectionError") return true;
+  if (e.constructor.name === "APIConnectionTimeoutError") return true;
+  // Auth/permission errors by message: do not cascade
+  if (/unauthorized|forbidden|invalid.api.key|authentication/i.test(msg)) return false;
+  // Default: cascade (fail-open toward resilience)
+  return true;
+}
+
+function cascadeReason(err: unknown): string {
+  if (!(err instanceof Error)) return "unknown_error";
+  const msg = err.message;
+  if (msg.includes("Circuit breaker OPEN")) return "circuit_open";
+  if (msg.includes("Circuit HALF-OPEN")) return "circuit_half_open";
+  const e = err as Error & { status?: number; code?: string; constructor: { name: string } };
+  if (e.status === 429 || e.constructor.name === "RateLimitError") return "rate_limited";
+  if (e.status && [502, 503, 504].includes(e.status)) return "provider_unavailable";
+  if (e.code && RETRYABLE_ERROR_CODES.has(e.code)) return "network_error";
+  if (e.constructor.name === "APIConnectionError") return "connection_error";
+  if (e.constructor.name === "APIConnectionTimeoutError") return "timeout";
+  return "transient_error";
+}
+
 /**
  * Attempt to complete a request using providers in order.
- * If the first provider fails (circuit open, all retries exhausted), the next
- * provider in the list is tried. Logs each cascade step.
+ * Cascades to the next provider only on transient/circuit errors (rate limits,
+ * bad-gateway, network failures, open circuit). Permanent request-shape errors
+ * (bad auth, invalid request) are rethrown immediately without cascading.
  *
  * @param messages   Chat messages
  * @param options    Completion options (model, temperature, etc.)
@@ -623,13 +670,26 @@ export async function completeWithFallback(
       i === 0 ? options : (options ? { ...options, model: undefined } : undefined);
     try {
       const result = await provider.complete(messages, effectiveOptions);
+      if (i > 0) {
+        console.info(`[llm-provider] completeWithFallback: succeeded on fallback provider "${provider.providerName}"`);
+      }
       return result;
-    } catch (err: any) {
+    } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`${provider.providerName}: ${msg}`);
+      const reason = cascadeReason(err);
+      errors.push(`${provider.providerName}[${reason}]: ${msg}`);
+
+      if (!isCascadable(err)) {
+        // Permanent error — rethrowing without cascade
+        console.error(
+          `[llm-provider] completeWithFallback: permanent error from "${provider.providerName}" (reason=${reason}), not cascading. Error: ${msg}`
+        );
+        throw err;
+      }
+
       console.warn(
-        `[llm-provider] completeWithFallback: provider "${provider.providerName}" failed` +
-          (i < providerList.length - 1 ? ", cascading to next provider" : "") +
+        `[llm-provider] completeWithFallback: provider "${provider.providerName}" failed (reason=${reason})` +
+          (i < providerList.length - 1 ? `, cascading to "${providerList[i + 1].providerName}"` : "") +
           `. Error: ${msg}`
       );
     }
