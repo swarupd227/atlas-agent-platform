@@ -682,7 +682,7 @@ const router = Router();
       const daysCutoff = req.body.days || 30;
       const cutoffDate = new Date(Date.now() - daysCutoff * 24 * 60 * 60 * 1000);
 
-      const allEvents = await storage.getOutcomeEventsByOutcome(outcomeId);
+      const allEvents = await storage.getOutcomeEventsByOutcome(outcomeId, getOrgId(req));
       const recentEvents = allEvents.filter(e => e.createdAt && new Date(e.createdAt) >= cutoffDate);
 
       const rejectedEvents = recentEvents.filter(e => !e.billable && e.excludeReason);

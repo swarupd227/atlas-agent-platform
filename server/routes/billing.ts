@@ -43,7 +43,7 @@ const router = Router();
       }
 
       if (billable && outcome.volumeCap) {
-        const existingEvents = await storage.getOutcomeEventsByOutcome(outcomeId);
+        const existingEvents = await storage.getOutcomeEventsByOutcome(outcomeId, orgId ?? undefined);
         const billableCount = existingEvents.filter(e => e.billable).length;
         if (billableCount >= outcome.volumeCap) {
           billable = false;
@@ -54,7 +54,7 @@ const router = Router();
 
       // --- Deduplication: same traceId + outcomeId within 5-minute window ---
       if (billable && traceId) {
-        const existingEvents = await storage.getOutcomeEventsByOutcome(outcomeId);
+        const existingEvents = await storage.getOutcomeEventsByOutcome(outcomeId, orgId ?? undefined);
         const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000);
         const duplicate = existingEvents.find(e =>
           e.traceId === traceId &&
@@ -69,7 +69,7 @@ const router = Router();
 
       // --- Fraud checks: volume spike detection ---
       if (billable) {
-        const existingEvents = await storage.getOutcomeEventsByOutcome(outcomeId);
+        const existingEvents = await storage.getOutcomeEventsByOutcome(outcomeId, orgId ?? undefined);
         const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
         const recentCount = existingEvents.filter(e =>
           e.createdAt && new Date(e.createdAt) > oneHourAgo
@@ -86,7 +86,7 @@ const router = Router();
 
       // --- Value anomaly check ---
       if (billable && unitValue !== undefined && unitValue !== null) {
-        const existingEvents = await storage.getOutcomeEventsByOutcome(outcomeId);
+        const existingEvents = await storage.getOutcomeEventsByOutcome(outcomeId, orgId ?? undefined);
         const billableValues = existingEvents
           .filter(e => e.billable && e.unitValue !== null && e.unitValue !== undefined)
           .map(e => e.unitValue as number);
@@ -655,7 +655,7 @@ const router = Router();
       const pEnd = periodEnd ? new Date(periodEnd) : new Date();
 
       // Get all billable events for this outcome in the period that are not yet invoiced
-      const allEvents = await storage.getOutcomeEventsByOutcome(outcomeId);
+      const allEvents = await storage.getOutcomeEventsByOutcome(outcomeId, orgId ?? undefined);
       const eligibleEvents = allEvents.filter(e => {
         if (!e.billable) return false;
         if (e.invoiceId) return false;

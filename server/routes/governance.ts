@@ -1705,7 +1705,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
             const outcome = await storage.getOutcome(oid, getOrgId(req));
             if (!outcome) continue;
 
-            const allEvents = await storage.getOutcomeEventsByOutcome(oid);
+            const allEvents = await storage.getOutcomeEventsByOutcome(oid, getOrgId(req));
             const cutoffDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
             const recentEvents = allEvents.filter(e => e.createdAt && new Date(e.createdAt) >= cutoffDate);
 

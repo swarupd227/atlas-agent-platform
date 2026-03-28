@@ -116,6 +116,7 @@ async function performSensitivityScan(
   text: string,
   kbId: string,
   industryId: string,
+  orgId?: string,
 ): Promise<SensitivityWarning[]> {
   const textLower = text.toLowerCase();
   const detectedClasses: Array<{ sensitivityClass: string; termsFound: string[]; regulation: string; requiredPolicyDomain: string }> = [];
@@ -138,11 +139,11 @@ async function performSensitivityScan(
   if (agentLinks.length === 0) return [];
 
   const warnings: SensitivityWarning[] = [];
-  const allPolicies = await storage.getPolicies();
+  const allPolicies = await storage.getPolicies(orgId);
   const activePolicies = allPolicies.filter(p => p.status === "active");
 
   for (const link of agentLinks) {
-    const agent = await storage.getAgent(link.agentId);
+    const agent = await storage.getAgent(link.agentId, orgId);
     if (!agent) continue;
 
     const agentPolicyBindings = (agent.policyBindings as Array<{ policyName?: string; policyId?: string; enforcement?: string }>) || [];
@@ -754,7 +755,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
         let sensitivityWarnings: SensitivityWarning[] = [];
         try {
-          sensitivityWarnings = await performSensitivityScan(combinedText, req.params.id as string, kb.industry);
+          sensitivityWarnings = await performSensitivityScan(combinedText, req.params.id as string, kb.industry, getOrgId(req));
         } catch (err: any) {
           console.log("[kb] Sensitivity scan failed (non-blocking):", err.message);
         }
@@ -781,7 +782,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
       let sensitivityWarnings: SensitivityWarning[] = [];
       try {
-        sensitivityWarnings = await performSensitivityScan(text, req.params.id as string, kb.industry);
+        sensitivityWarnings = await performSensitivityScan(text, req.params.id as string, kb.industry, getOrgId(req));
       } catch (err: any) {
         console.log("[kb] Sensitivity scan failed (non-blocking):", err.message);
       }
@@ -863,7 +864,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
       let sensitivityWarnings: SensitivityWarning[] = [];
       try {
-        sensitivityWarnings = await performSensitivityScan(content, req.params.id as string, kb.industry);
+        sensitivityWarnings = await performSensitivityScan(content, req.params.id as string, kb.industry, getOrgId(req));
       } catch (err: any) {
         console.log("[kb] Sensitivity scan failed (non-blocking):", err.message);
       }
@@ -908,7 +909,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
       let sensitivityWarnings: SensitivityWarning[] = [];
       try {
-        sensitivityWarnings = await performSensitivityScan(combinedText, req.params.id as string, kb.industry);
+        sensitivityWarnings = await performSensitivityScan(combinedText, req.params.id as string, kb.industry, getOrgId(req));
       } catch (err: any) {
         console.log("[kb] Sensitivity scan failed (non-blocking):", err.message);
       }
@@ -1715,7 +1716,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
       const affectedAgents: Array<{ agentId: string; agentName: string; priority: number; requiresRevalidation: boolean }> = [];
       for (const link of agentLinks) {
-        const agent = await storage.getAgent(link.agentId);
+        const agent = await storage.getAgent(link.agentId, getOrgId(req));
         if (agent) {
           affectedAgents.push({
             agentId: agent.id,

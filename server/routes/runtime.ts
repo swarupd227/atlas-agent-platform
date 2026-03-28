@@ -1364,7 +1364,7 @@ function hashCode(str: string): number {
         return res.status(422).json({ error: "agent_not_deployed", message: `Agent is in '${agent.status}' status. The API Gateway is only available after the agent has been deployed.` });
       }
 
-      const agentDeployments = await storage.getDeploymentsByAgentId(agent.id, "deployed");
+      const agentDeployments = await storage.getDeploymentsByAgentId(agent.id, "deployed", getOrgId(req));
       if (agentDeployments.length === 0) {
         return res.status(422).json({ error: "no_active_deployment", message: "No active deployment found for this agent. Deploy the agent first to enable API Gateway access." });
       }
@@ -10379,7 +10379,7 @@ Return ONLY a valid JSON object.`
             const episodicMemoryCount = allAgentMemories.filter(m => m.memoryType === "episodic").length;
             const expiredMemoryCount = allAgentMemories.filter(m => m.expiresAt && m.expiresAt <= new Date()).length;
             const autoDetectMemoryGov = (agent.memoryGovernanceRules || null) as Record<string, any> | null;
-            const autoDetectTraces = await storage.getTracesByAgent(agent.id);
+            const autoDetectTraces = await storage.getTracesByAgent(agent.id, getOrgId(req));
 
             evidenceBundle.memoryEvidence = {
               totalMemories: allAgentMemories.length,
@@ -10732,7 +10732,7 @@ Return ONLY a valid JSON object.`
           const isAlreadyRunning = existingValidation?.status === "running";
 
           if (!isAlreadyRunning) {
-            const traces = await storage.getTracesByAgent(pipeline.agentId);
+            const traces = await storage.getTracesByAgent(pipeline.agentId, getOrgId(req));
             if (traces.length > 0) {
               const job = await storage.createJob({
                 type: "shadow_replay",
@@ -10974,7 +10974,7 @@ Return ONLY a valid JSON object.`
         const classifyEpisodicMemories = classifyMemories.filter(m => m.memoryType === "episodic");
         const classifyExpiredMemories = classifyMemories.filter(m => m.expiresAt && m.expiresAt <= new Date());
         const classifyMemoryGov = (agent.memoryGovernanceRules || null) as Record<string, any> | null;
-        const classifyAgentTraces = await storage.getTracesByAgent(agent.id);
+        const classifyAgentTraces = await storage.getTracesByAgent(agent.id, getOrgId(req));
 
         evidenceBundle.memoryEvidence = {
           totalMemories: classifyMemories.length,

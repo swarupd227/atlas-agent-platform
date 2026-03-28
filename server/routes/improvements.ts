@@ -2787,7 +2787,7 @@ Respond in JSON: { "testCases": [{ "name": string, "inputData": object, "expecte
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const { timeWindow, environment, sampleSize } = req.body;
-      const traces = await storage.getTracesByAgent(req.params.id);
+      const traces = await storage.getTracesByAgent(req.params.id, getOrgId(req));
 
       const windowMs: Record<string, number> = { "1h": 3600000, "6h": 21600000, "24h": 86400000, "7d": 604800000, "30d": 2592000000 };
       const cutoff = Date.now() - (windowMs[timeWindow] || 86400000);
@@ -2985,7 +2985,7 @@ Respond in JSON: { "testCases": [{ "name": string, "inputData": object, "expecte
       const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
-      const traces = await storage.getTracesByAgent(req.params.id);
+      const traces = await storage.getTracesByAgent(req.params.id, getOrgId(req));
       const evals = await storage.getEvalsByAgent(req.params.id);
 
       const now = Date.now();
@@ -3424,7 +3424,7 @@ Enhance this template to be production-ready and comprehensive. For preloadedSki
       const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
-      const traces = await storage.getTracesByAgent(req.params.id);
+      const traces = await storage.getTracesByAgent(req.params.id, getOrgId(req));
       const evals = await storage.getEvalsByAgent(req.params.id);
       const auditEvents = await storage.getAuditEvents(getOrgId(req));
       const agentAudit = auditEvents.filter(e => e.objectId === req.params.id || (e.details && e.details.includes(req.params.id)));
@@ -3482,7 +3482,7 @@ Enhance this template to be production-ready and comprehensive. For preloadedSki
       const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
-      const traces = await storage.getTracesByAgent(req.params.id);
+      const traces = await storage.getTracesByAgent(req.params.id, getOrgId(req));
       const evals = await storage.getEvalsByAgent(req.params.id);
       const auditEvents = await storage.getAuditEvents(getOrgId(req));
       const retirementEvents = auditEvents.filter(e => 
@@ -3706,7 +3706,7 @@ Enhance this template to be production-ready and comprehensive. For preloadedSki
       if (!patch) return res.status(404).json({ message: "Patch not found" });
 
       const agent = patch.agentId ? await storage.getAgent(patch.agentId, getOrgId(req)) : null;
-      const agentTraces = patch.agentId ? await storage.getTracesByAgent(patch.agentId) : [];
+      const agentTraces = patch.agentId ? await storage.getTracesByAgent(patch.agentId, getOrgId(req)) : [];
       const recentTraces = agentTraces.slice(-30);
       const totalRuns = recentTraces.length;
       const failedRuns = recentTraces.filter(t => t.status === "failed" || t.status === "error").length;

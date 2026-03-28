@@ -807,7 +807,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       }
 
       const kpis = await storage.getKpisByOutcome(agent.outcomeId);
-      const traces = await storage.getTracesByAgent(req.params.id);
+      const traces = await storage.getTracesByAgent(req.params.id, getOrgId(req));
       const allAgents = await storage.getAgents(getOrgId(req));
       const boundAgents = allAgents.filter(a => a.outcomeId === agent.outcomeId);
       const successfulTraces = traces.filter(t => t.status === "completed" || t.status === "success");
@@ -914,7 +914,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
-      const rawTraces = await storage.getTracesByAgent(req.params.id);
+      const rawTraces = await storage.getTracesByAgent(req.params.id, getOrgId(req));
       const traces = rawTraces.sort((a, b) => {
         const ta = a.startedAt ? new Date(a.startedAt).getTime() : 0;
         const tb = b.startedAt ? new Date(b.startedAt).getTime() : 0;

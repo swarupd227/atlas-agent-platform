@@ -705,7 +705,7 @@ const router = Router();
   });
 
   router.get("/api/agents/:id/traces", async (req, res) => {
-    const traces = await storage.getTracesByAgent(req.params.id);
+    const traces = await storage.getTracesByAgent(req.params.id, getOrgId(req));
     res.json(traces);
   });
 
@@ -923,7 +923,7 @@ const router = Router();
 
       // Layer 5 — Execution History
       try {
-        const allTraces = await storage.getTracesByAgent(agentId);
+        const allTraces = await storage.getTracesByAgent(agentId, getOrgId(req));
         const recentCompleted = allTraces.filter((t: any) => t.status === "completed").slice(0, 5);
         const lines: string[] = [];
         lines.push(`## EXECUTION HISTORY (last ${recentCompleted.length} completed runs)`);
@@ -1222,7 +1222,7 @@ const router = Router();
         } catch {}
       }
 
-      const traces = await storage.getTracesByAgent(req.params.id);
+      const traces = await storage.getTracesByAgent(req.params.id, getOrgId(req));
       const recentTraces = traces.slice(0, 20);
 
       const recentCompliance: Array<{
@@ -1987,7 +1987,7 @@ const router = Router();
 
         const evalSuites = await storage.getEvalSuites();
         const agentSuites = evalSuites.filter(s => s.agentId === deployment.agentId);
-        const traces = await storage.getTracesByAgent(deployment.agentId);
+        const traces = await storage.getTracesByAgent(deployment.agentId, getOrgId(req));
         const recentTraces = traces.slice(0, 30);
         const totalT = recentTraces.length;
         const failedT = recentTraces.filter(t => t.status === "failed" || t.status === "error").length;
@@ -2464,7 +2464,7 @@ const router = Router();
         const agent = await storage.getAgent(source.agentId, getOrgId(req));
         const evalSuites = await storage.getEvalSuites();
         const agentSuites = evalSuites.filter(s => s.agentId === source.agentId);
-        const traces = await storage.getTracesByAgent(source.agentId);
+        const traces = await storage.getTracesByAgent(source.agentId, getOrgId(req));
         const recentTraces = traces.slice(0, 30);
         const totalT = recentTraces.length;
         const failedT = recentTraces.filter(t => t.status === "failed" || t.status === "error").length;
@@ -2667,7 +2667,7 @@ const router = Router();
       if (!deployment) return res.status(404).json({ message: "Deployment not found" });
 
       const agentId = deployment.agentId;
-      const traces = await storage.getTracesByAgent(agentId);
+      const traces = await storage.getTracesByAgent(agentId, getOrgId(req));
       const evalSuites = await storage.getEvalSuites();
       const agentSuites = evalSuites.filter(s => s.agentId === agentId);
       const agentDrift: Array<{ agentId: string; metric: string; driftPercent: number; severity: string }> = [];
@@ -2930,7 +2930,7 @@ const router = Router();
         });
       }
 
-      const traces = await storage.getTracesByAgent(deployment.agentId);
+      const traces = await storage.getTracesByAgent(deployment.agentId, getOrgId(req));
       const sortedTraces = [...traces].sort((a, b) =>
         new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime()
       );

@@ -190,12 +190,12 @@ export interface IStorage {
   getDeployment(id: string, orgId?: string): Promise<Deployment | undefined>;
   createDeployment(deployment: InsertDeployment): Promise<Deployment>;
   updateDeployment(id: string, data: Partial<Deployment>, orgId?: string): Promise<Deployment | undefined>;
-  getDeploymentsByAgentId(agentId: string, status?: string): Promise<Deployment[]>;
+  getDeploymentsByAgentId(agentId: string, status?: string, orgId?: string): Promise<Deployment[]>;
   getDeploymentsByPromotedFrom(promotedFrom: string): Promise<Deployment[]>;
 
   getTraces(orgId?: string): Promise<RunTrace[]>;
   getTrace(id: string, orgId?: string): Promise<RunTrace | undefined>;
-  getTracesByAgent(agentId: string): Promise<RunTrace[]>;
+  getTracesByAgent(agentId: string, orgId?: string): Promise<RunTrace[]>;
   getRecentCompletedTracesByAgent(agentId: string, limit?: number): Promise<RunTrace[]>;
   createTrace(trace: InsertRunTrace): Promise<RunTrace>;
 
@@ -225,7 +225,7 @@ export interface IStorage {
   getOutcomeEvents(orgId?: string): Promise<OutcomeEvent[]>;
   getOutcomeEvent(id: string, orgId?: string): Promise<OutcomeEvent | undefined>;
   getOutcomeEventsByInvoice(invoiceId: string): Promise<OutcomeEvent[]>;
-  getOutcomeEventsByOutcome(outcomeId: string): Promise<OutcomeEvent[]>;
+  getOutcomeEventsByOutcome(outcomeId: string, orgId?: string): Promise<OutcomeEvent[]>;
   createOutcomeEvent(event: InsertOutcomeEvent): Promise<OutcomeEvent>;
   updateOutcomeEvent(id: string, data: Partial<OutcomeEvent>, orgId?: string): Promise<OutcomeEvent | undefined>;
 
@@ -300,7 +300,7 @@ export interface IStorage {
 
   getIncidents(orgId?: string): Promise<Incident[]>;
   getIncident(id: string, orgId?: string): Promise<Incident | undefined>;
-  getIncidentsByAgent(agentId: string): Promise<Incident[]>;
+  getIncidentsByAgent(agentId: string, orgId?: string): Promise<Incident[]>;
   createIncident(incident: InsertIncident): Promise<Incident>;
   updateIncident(id: string, data: Partial<Incident>, orgId?: string): Promise<Incident | undefined>;
 
@@ -882,10 +882,13 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
 
-  async getDeploymentsByAgentId(agentId: string, status?: string) {
+  async getDeploymentsByAgentId(agentId: string, status?: string, orgId?: string) {
     const conditions = [eq(deployments.agentId, agentId)];
     if (status) {
       conditions.push(eq(deployments.status, status));
+    }
+    if (orgId) {
+      conditions.push(eq(deployments.organizationId, orgId));
     }
     return db.select().from(deployments).where(and(...conditions));
   }
@@ -909,8 +912,10 @@ export class DatabaseStorage implements IStorage {
     return trace;
   }
 
-  async getTracesByAgent(agentId: string) {
-    return db.select().from(runTraces).where(eq(runTraces.agentId, agentId)).orderBy(desc(runTraces.startedAt));
+  async getTracesByAgent(agentId: string, orgId?: string) {
+    const conditions: ReturnType<typeof eq>[] = [eq(runTraces.agentId, agentId)];
+    if (orgId) conditions.push(eq(runTraces.organizationId, orgId));
+    return db.select().from(runTraces).where(and(...conditions)).orderBy(desc(runTraces.startedAt));
   }
 
   async getRecentCompletedTracesByAgent(agentId: string, limitCount = 5) {
@@ -1085,8 +1090,10 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(outcomeEvents).where(eq(outcomeEvents.invoiceId, invoiceId));
   }
 
-  async getOutcomeEventsByOutcome(outcomeId: string) {
-    return db.select().from(outcomeEvents).where(eq(outcomeEvents.outcomeId, outcomeId));
+  async getOutcomeEventsByOutcome(outcomeId: string, orgId?: string) {
+    const conditions: ReturnType<typeof eq>[] = [eq(outcomeEvents.outcomeId, outcomeId)];
+    if (orgId) conditions.push(eq(outcomeEvents.organizationId, orgId));
+    return db.select().from(outcomeEvents).where(and(...conditions));
   }
 
   async createOutcomeEvent(event: InsertOutcomeEvent) {
@@ -1405,8 +1412,10 @@ export class DatabaseStorage implements IStorage {
     return incident;
   }
 
-  async getIncidentsByAgent(agentId: string) {
-    return db.select().from(incidents).where(eq(incidents.agentId, agentId));
+  async getIncidentsByAgent(agentId: string, orgId?: string) {
+    const conditions: ReturnType<typeof eq>[] = [eq(incidents.agentId, agentId)];
+    if (orgId) conditions.push(eq(incidents.organizationId, orgId));
+    return db.select().from(incidents).where(and(...conditions));
   }
 
   async createIncident(incident: InsertIncident) {
