@@ -400,7 +400,7 @@ const router = Router();
       });
       const { action, agentIds } = bulkActionSchema.parse(req.body);
 
-      const allAgents = await storage.getAgents();
+      const allAgents = await storage.getAgents(getOrgId(req));
       const targetAgents = allAgents.filter(a => agentIds.includes(a.id));
 
       for (const agent of targetAgents) {
@@ -521,7 +521,7 @@ const router = Router();
       let reEvaluation = null;
       if (updated.outcomeId && changedFields.length > 0) {
         try {
-          reEvaluation = await recomputeOutcomeKpis(updated.outcomeId);
+          reEvaluation = await recomputeOutcomeKpis(updated.outcomeId, getOrgId(req));
           const breaches = reEvaluation.changes.filter(c => c.breached);
           await storage.createAuditEvent({
             actorType: "system",
@@ -776,7 +776,7 @@ const router = Router();
 
       // Layer 2 — Industry Governance
       try {
-        const policies = await storage.getPolicies();
+        const policies = await storage.getPolicies(getOrgId(req));
         const activePolicies = policies.filter(p => p.status === "active");
         const ontologyTags = Array.isArray((agent as any).ontologyTags) ? (agent as any).ontologyTags as Array<{ conceptId: string; conceptLabel: string }> : [];
         const lines: string[] = [];
@@ -822,7 +822,7 @@ const router = Router();
           relevantSkills = explicitSkillIds.map(id => byId.get(id)).filter((s: any): s is any => !!s && s.status === "active").slice(0, 20);
           skillSource = "assigned";
         } else {
-          const allSkills = await storage.getSkills();
+          const allSkills = await storage.getSkills(getOrgId(req));
           const agentIndustry = (agent as any).industry?.toLowerCase();
           const ontologyLabels = Array.isArray((agent as any).ontologyTags) ? ((agent as any).ontologyTags as Array<{ conceptLabel: string }>).map(t => t.conceptLabel.toLowerCase()) : [];
           relevantSkills = allSkills.filter((s: any) => {
@@ -965,7 +965,7 @@ const router = Router();
 
   router.get("/api/agents/:id/versions", async (req, res) => {
     const versions = await storage.getAgentVersions(req.params.id);
-    const deployments = await storage.getDeployments();
+    const deployments = await storage.getDeployments(getOrgId(req));
     const agentDeps = deployments.filter(d => d.agentId === req.params.id && d.version);
     const existingSemvers = new Set(versions.map(v => v.semver));
     const missingVersions: string[] = [];
@@ -1532,7 +1532,7 @@ const router = Router();
       const diffs: Array<{ component: string; atExecutionTime: any; currentState: any; changed: boolean; changeDetails?: string }> = [];
 
       if (snapshot.policySnapshot && Array.isArray(snapshot.policySnapshot)) {
-        const currentPolicies = await storage.getPolicies();
+        const currentPolicies = await storage.getPolicies(getOrgId(req));
         for (const ps of snapshot.policySnapshot) {
           const current = currentPolicies.find(p => p.id === ps.policyId);
           const changed = !current || current.status !== ps.status;
@@ -1629,7 +1629,7 @@ const router = Router();
           if (t) traces.push(t);
         }
       } else {
-        traces = await storage.getTraces();
+        traces = await storage.getTraces(getOrgId(req));
       }
 
       const results = [];
@@ -1825,7 +1825,7 @@ const router = Router();
           if (t) traces.push(t);
         }
       } else {
-        traces = await storage.getTraces();
+        traces = await storage.getTraces(getOrgId(req));
         if (dateRange) {
           const { start, end } = dateRange;
           if (start) traces = traces.filter(t => new Date(t.createdAt || 0) >= new Date(start));
@@ -1866,8 +1866,8 @@ const router = Router();
     }
   });
 
-  router.get("/api/deployments", async (_req, res) => {
-    const deployments = await storage.getDeployments();
+  router.get("/api/deployments", async (req, res) => {
+    const deployments = await storage.getDeployments(getOrgId(req));
     res.json(deployments);
   });
 
@@ -1966,7 +1966,7 @@ const router = Router();
         }
       }
 
-      const deployment = await storage.createDeployment(data);
+      const deployment = await storage.createDeployment({ ...data, organizationId: getOrgId(req) ?? undefined });
 
       if (deployment.version && deployment.agentId) {
         await storage.ensureAgentVersion(deployment.agentId, deployment.version, "active");
@@ -2050,10 +2050,11 @@ const router = Router();
     }
   });
 
-  router.get("/api/deployments/health", async (_req, res) => {
+  router.get("/api/deployments/health", async (req, res) => {
     try {
-      const deployments = await storage.getDeployments();
-      const traces = await storage.getTraces();
+      const orgId = getOrgId(req);
+      const deployments = await storage.getDeployments(orgId);
+      const traces = await storage.getTraces(orgId);
       const activeDeployments = deployments.filter(d => d.status === "deployed" || d.status === "active" || d.status === "canary");
 
       const health: Record<string, { successRate: number; avgLatency: number; errorCount: number; traceCount: number }> = {};
@@ -2149,14 +2150,14 @@ const router = Router();
   });
 
   router.get("/api/deployments/:id", async (req, res) => {
-    const deployment = await storage.getDeployment(req.params.id);
+    const deployment = await storage.getDeployment(req.params.id, getOrgId(req));
     if (!deployment) return res.status(404).json({ message: "Deployment not found" });
     res.json(deployment);
   });
 
   router.patch("/api/deployments/:id", async (req, res) => {
     try {
-      const existing = await storage.getDeployment(req.params.id);
+      const existing = await storage.getDeployment(req.params.id, getOrgId(req));
       if (!existing) return res.status(404).json({ message: "Deployment not found" });
       const data = insertDeploymentSchema.partial().parse(req.body);
       const updated = await storage.updateDeployment(req.params.id, data);
@@ -2178,7 +2179,7 @@ const router = Router();
 
   router.post("/api/deployments/:id/initialize-pipeline", async (req, res) => {
     try {
-      const deployment = await storage.getDeployment(req.params.id);
+      const deployment = await storage.getDeployment(req.params.id, getOrgId(req));
       if (!deployment) return res.status(404).json({ message: "Deployment not found" });
       const { industry, stages, rollbackTriggers, evidenceItems } = req.body;
       const stageRecords = (stages || []).map((s: any) => ({
@@ -2205,7 +2206,7 @@ const router = Router();
 
   router.post("/api/deployments/:id/advance-stage", async (req, res) => {
     try {
-      const deployment = await storage.getDeployment(req.params.id);
+      const deployment = await storage.getDeployment(req.params.id, getOrgId(req));
       if (!deployment) return res.status(404).json({ message: "Deployment not found" });
       const { stageId, status, attestation, completedBy } = req.body;
       if (!stageId || !status) return res.status(400).json({ message: "stageId and status are required" });
@@ -2230,7 +2231,7 @@ const router = Router();
 
   router.post("/api/deployments/:id/collect-evidence", async (req, res) => {
     try {
-      const deployment = await storage.getDeployment(req.params.id);
+      const deployment = await storage.getDeployment(req.params.id, getOrgId(req));
       if (!deployment) return res.status(404).json({ message: "Deployment not found" });
       const { itemId, sourceLink, summary } = req.body;
       if (!itemId) return res.status(400).json({ message: "itemId is required" });
@@ -2255,7 +2256,7 @@ const router = Router();
 
   router.post("/api/deployments/:id/promote", async (req, res) => {
     try {
-      const source = await storage.getDeployment(req.params.id);
+      const source = await storage.getDeployment(req.params.id, getOrgId(req));
       if (!source) return res.status(404).json({ message: "Deployment not found" });
 
       const envOrder = ["staging", "pilot", "prod"];
@@ -2448,6 +2449,7 @@ const router = Router();
         canaryPercent: source.canaryConfig ? (source.canaryConfig as any).startPercent || 0 : 0,
         rolloutStrategy: source.rolloutStrategy,
         approvedBy: req.body.approvedBy || source.approvedBy,
+        organizationId: source.organizationId,
         signatureHash: source.signatureHash,
         promotedFrom: source.id,
         canaryConfig: source.canaryConfig as any,
@@ -2534,7 +2536,7 @@ const router = Router();
 
   router.post("/api/deployments/:id/routing", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
-      const deployment = await storage.getDeployment(req.params.id as string);
+      const deployment = await storage.getDeployment(req.params.id as string, getOrgId(req));
       if (!deployment) return res.status(404).json({ message: "Deployment not found" });
 
       const { shadowEnabled, canaryPercent, action } = req.body;
@@ -2661,7 +2663,7 @@ const router = Router();
 
   router.get("/api/deployments/:id/readiness", async (req, res) => {
     try {
-      const deployment = await storage.getDeployment(req.params.id);
+      const deployment = await storage.getDeployment(req.params.id, getOrgId(req));
       if (!deployment) return res.status(404).json({ message: "Deployment not found" });
 
       const agentId = deployment.agentId;
@@ -2764,7 +2766,7 @@ const router = Router();
         if (Array.isArray(agents)) return agents.some((a: any) => a.agentId === agentId);
         return false;
       });
-      const allAgents = await storage.getAgents();
+      const allAgents = await storage.getAgents(getOrgId(req));
       const invoices = await storage.getInvoices();
       const agentInvoices = invoices.filter(inv => boundOutcomes.some(o => o.id === inv.outcomeId));
       const revenueExposure = agentInvoices.reduce((sum, inv) => sum + (inv.amount || 0), 0);
@@ -2864,7 +2866,7 @@ const router = Router();
 
   router.post("/api/deployments/:id/rollback", async (req, res) => {
     try {
-      const deployment = await storage.getDeployment(req.params.id);
+      const deployment = await storage.getDeployment(req.params.id, getOrgId(req));
       if (!deployment) return res.status(404).json({ message: "Deployment not found" });
 
       const updated = await storage.updateDeployment(deployment.id, {
@@ -2911,7 +2913,7 @@ const router = Router();
 
   router.post("/api/deployments/:id/auto-promote", async (req, res) => {
     try {
-      const deployment = await storage.getDeployment(req.params.id);
+      const deployment = await storage.getDeployment(req.params.id, getOrgId(req));
       if (!deployment) return res.status(404).json({ message: "Deployment not found" });
 
       if (deployment.environment !== "staging") {
@@ -2977,6 +2979,7 @@ const router = Router();
         canaryPercent: deployment.canaryConfig ? (deployment.canaryConfig as any).startPercent || 0 : 0,
         rolloutStrategy: deployment.rolloutStrategy,
         approvedBy: "System (Auto-Promote)",
+        organizationId: deployment.organizationId,
         signatureHash: deployment.signatureHash,
         promotedFrom: deployment.id,
         canaryConfig: deployment.canaryConfig as any,

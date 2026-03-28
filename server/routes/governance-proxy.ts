@@ -2,6 +2,7 @@ import { Router } from "express";
 import { storage } from "../storage";
 import { z, ZodError } from "zod";
 import { resolvePolicyBundle } from "./helpers";
+import { getOrgId } from "../auth";
 
 const router = Router();
 
@@ -398,7 +399,7 @@ const router = Router();
         traceId: z.string().optional(),
       });
       const body = schema.parse(req.body);
-      const policyBundle = await resolvePolicyBundle(body.agentId);
+      const policyBundle = await resolvePolicyBundle(body.agentId, getOrgId(req));
       const result = await proxyA2aDelegation(
         body.remoteAgentId,
         body.skillName,

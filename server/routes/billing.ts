@@ -136,7 +136,7 @@ const router = Router();
       let flywheelAutoSync: any = null;
       if (!billable && excludeReason) {
         try {
-          const agents = (await storage.getAgents()).filter(a => a.outcomeId === outcomeId);
+          const agents = (await storage.getAgents(getOrgId(req))).filter(a => a.outcomeId === outcomeId);
           if (agents.length > 0) {
             const primaryAgent = agents[0];
             const existingSuites = await storage.getEvalsByAgent(primaryAgent.id);
@@ -281,7 +281,7 @@ const router = Router();
     const event = await storage.getOutcomeEvent(req.params.id, getOrgId(req));
     if (!event) return res.status(404).json({ error: "Outcome event not found" });
     if (!event.traceId) return res.status(404).json({ error: "No trace linked to this event" });
-    const trace = await storage.getTrace(event.traceId);
+    const trace = await storage.getTrace(event.traceId, getOrgId(req));
     if (!trace) return res.status(404).json({ error: "Linked trace not found" });
     const outcome = await storage.getOutcome(event.outcomeId, getOrgId(req));
     const agent = event.agentId ? await storage.getAgent(event.agentId, getOrgId(req)) : null;
@@ -293,12 +293,12 @@ const router = Router();
     });
   });
 
-  router.get("/api/flywheel/metrics", async (_req, res) => {
+  router.get("/api/flywheel/metrics", async (req, res) => {
     try {
       const [allSuites, allOutcomes, allAgents, allEvents, allGoldenDatasets, allEvalRuns] = await Promise.all([
         storage.getEvalSuites(),
         storage.getOutcomes(),
-        storage.getAgents(),
+        storage.getAgents(getOrgId(req)),
         storage.getOutcomeEvents(),
         storage.getGoldenDatasets(),
         storage.getAllEvalRuns(),
@@ -459,11 +459,11 @@ const router = Router();
     }
   });
 
-  router.get("/api/flywheel/acceptance-patterns", async (_req, res) => {
+  router.get("/api/flywheel/acceptance-patterns", async (req, res) => {
     try {
       const [allEvents, allAgents, allDisputes] = await Promise.all([
         storage.getOutcomeEvents(),
-        storage.getAgents(),
+        storage.getAgents(getOrgId(req)),
         storage.getBillingDisputes(),
       ]);
 

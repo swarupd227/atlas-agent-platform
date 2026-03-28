@@ -21,6 +21,7 @@ import {
   checkPermission,
   getRequestRole,
 } from "../permissions";
+import { getOrgId } from "../auth";
 import {
   resolveOntologyTags,
   handleZodError,
@@ -52,10 +53,10 @@ const anthropicClient = new Anthropic({
 const router = Router();
 
   // Policy Violation Stream (recent violations from traces + audit events)
-  router.get("/api/monitor/policy-violations", async (_req, res) => {
+  router.get("/api/monitor/policy-violations", async (req, res) => {
     try {
-      const traces = await storage.getTraces();
-      const agents = await storage.getAgents();
+      const traces = await storage.getTraces(getOrgId(req));
+      const agents = await storage.getAgents(getOrgId(req));
       const agentMap = new Map(agents.map(a => [a.id, a.name]));
 
       const violations: Array<{
@@ -130,7 +131,7 @@ const router = Router();
     const agent = await storage.getAgent(agentId);
     if (!agent) return res.status(404).json({ error: "Agent not found" });
 
-    const policies = await storage.getPolicies();
+    const policies = await storage.getPolicies(getOrgId(req));
     const agentPolicies = agent.policyBindings as Array<{ policyId: string; mode: string }> | null;
 
     const violations: Array<{
@@ -263,9 +264,9 @@ const router = Router();
   });
 
   // Generate recommendations from drift signals and agent data
-  router.post("/api/recommendations/generate", async (_req, res) => {
+  router.post("/api/recommendations/generate", async (req, res) => {
     try {
-      const allAgents = await storage.getAgents();
+      const allAgents = await storage.getAgents(getOrgId(req));
       const existingRecs = await storage.getImprovementRecommendations();
       const newRecs: Array<any> = [];
 
@@ -327,7 +328,7 @@ const router = Router();
         }
       }
 
-      const allTraces = await storage.getTraces();
+      const allTraces = await storage.getTraces(getOrgId(req));
       const allInvoices = await storage.getInvoices();
       const outcomes = await storage.getOutcomes();
       const INFRA_OVERHEAD_RATE = 0.15;
@@ -724,14 +725,15 @@ const router = Router();
       }
       const { outcomeContract, kpis, feedback, previousPlan, industryContext, templateId } = req.body;
 
+      const orgId = getOrgId(req);
       const [templates, allSkills, allMcpServers, allPolicies, allAgents, ragPipelines, allKnowledgeBases] = await Promise.all([
         storage.getAgentTemplates(),
-        storage.getSkills(),
+        storage.getSkills(orgId),
         storage.getMcpServers(),
-        storage.getPolicies(),
-        storage.getAgents(),
+        storage.getPolicies(orgId),
+        storage.getAgents(orgId),
         storage.getRagPipelines(),
-        storage.getKnowledgeBases(),
+        storage.getKnowledgeBases(orgId),
       ]);
 
       const preSelectedTemplate = templateId
@@ -2112,7 +2114,7 @@ Revenue:
 
       const templates = await storage.getAgentTemplates();
       const outcomes = await storage.getOutcomes();
-      const allPolicies = await storage.getPolicies();
+      const allPolicies = await storage.getPolicies(getOrgId(req));
       const activePolicies = allPolicies.filter(p => p.status === "active");
       const seenPolicyKeys = new Set<string>();
       const uniquePolicies = activePolicies.filter(p => {
@@ -2354,7 +2356,7 @@ Guidelines:
 
       if (!industry) return res.status(400).json({ error: "Industry context required" });
 
-      const allActivePolicies = (await storage.getPolicies()).filter(p => p.status === "active");
+      const allActivePolicies = (await storage.getPolicies(getOrgId(req))).filter(p => p.status === "active");
       const seenKeys = new Set<string>();
       const uniqueActive = allActivePolicies.filter(p => {
         const k = `${p.domain}::${p.name}`;
@@ -2675,7 +2677,7 @@ Return a JSON array of 3-5 improvement cycle proposals. Return ONLY valid JSON.`
         return res.status(404).json({ message: "Agent not found" });
       }
 
-      const allPolicies = await storage.getPolicies();
+      const allPolicies = await storage.getPolicies(getOrgId(req));
 
       const orgPolicies = allPolicies.filter(p => p.scopeType === "org");
       const outcomePolicies = agent.outcomeId
@@ -3051,7 +3053,7 @@ Respond in JSON: { "testCases": [{ "name": string, "inputData": object, "expecte
       let linkedOutcomeStatus = "none";
 
       if (agent.outcomeId) {
-        const allAgents = await storage.getAgents();
+        const allAgents = await storage.getAgents(getOrgId(req));
         const sameOutcomeAgents = allAgents.filter(a => 
           a.id !== agent.id && 
           a.outcomeId === agent.outcomeId && 
@@ -3225,7 +3227,7 @@ Generate diverse test cases that:
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const templates = await storage.getAgentTemplates();
-      const agents = await storage.getAgents();
+      const agents = await storage.getAgents(getOrgId(req));
       const activeAgents = agents.filter(a => a.id !== agentId && a.status === "active");
 
       const completion = await openai.chat.completions.create({
@@ -3282,7 +3284,7 @@ Active agents: ${JSON.stringify(activeAgents.map(a => ({ id: a.id, name: a.name,
       }
 
       const industryFilter = currentIndustry || template.industry || "cross_industry";
-      const allSkills = await storage.getSkills();
+      const allSkills = await storage.getSkills(getOrgId(req));
       const industrySkills = allSkills.filter(s =>
         s.industry === industryFilter ||
         s.industry === "general" ||
@@ -3426,7 +3428,7 @@ Enhance this template to be production-ready and comprehensive. For preloadedSki
       const evals = await storage.getEvalsByAgent(req.params.id);
       const auditEvents = await storage.getAuditEvents();
       const agentAudit = auditEvents.filter(e => e.objectId === req.params.id || (e.details && e.details.includes(req.params.id)));
-      const deployments = await storage.getDeployments();
+      const deployments = await storage.getDeployments(getOrgId(req));
       const agentDeployments = deployments.filter(d => d.agentId === req.params.id);
 
       const archive = {
@@ -3882,8 +3884,8 @@ Analyze and respond in JSON:
 
       let marginContext = "";
       if (agent.outcomeId) {
-        const allAgents = await storage.getAgents();
-        const allTraces = await storage.getTraces();
+        const allAgents = await storage.getAgents(getOrgId(req));
+        const allTraces = await storage.getTraces(getOrgId(req));
         const allInvoices = await storage.getInvoices();
         const INFRA_RATE = 0.15;
         const TOOL_RATE = 0.001;
@@ -4002,11 +4004,11 @@ Eval Suites: ${evalSuites.length} configured`,
     }
   });
 
-  router.post("/api/recommendations/generate-cost-optimizations", async (_req, res) => {
+  router.post("/api/recommendations/generate-cost-optimizations", async (req, res) => {
     try {
-      const agents = await storage.getAgents();
+      const agents = await storage.getAgents(getOrgId(req));
       const outcomes = await storage.getOutcomes();
-      const allTraces = await storage.getTraces();
+      const allTraces = await storage.getTraces(getOrgId(req));
       const allInvoices = await storage.getInvoices();
       const existingRecs = await storage.getImprovementRecommendations();
 
@@ -4190,11 +4192,11 @@ Eval Suites: ${evalSuites.length} configured`,
   });
 
   // ==================== Remediation Timeline ====================
-  router.get("/api/remediation-timeline", async (_req, res) => {
+  router.get("/api/remediation-timeline", async (req, res) => {
     try {
       const cycles = await storage.getImprovementCycles();
       const actionLogs = await storage.getAutonomousActionLogs();
-      const agents = await storage.getAgents();
+      const agents = await storage.getAgents(getOrgId(req));
       const agentMap = new Map(agents.map(a => [a.id, a.name]));
 
       const timeline = [
@@ -4241,9 +4243,9 @@ Eval Suites: ${evalSuites.length} configured`,
   });
 
   // ==================== Seed Patches & Experiments ====================
-  router.post("/api/seed/optimization", async (_req, res) => {
+  router.post("/api/seed/optimization", async (req, res) => {
     try {
-      const agents = await storage.getAgents();
+      const agents = await storage.getAgents(getOrgId(req));
       if (agents.length === 0) return res.json({ message: "No agents to seed patches for" });
 
       const existingPatches = await storage.getPatches();

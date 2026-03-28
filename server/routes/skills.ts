@@ -212,7 +212,7 @@ const router = Router();
 
       if (regsChanged) {
         try {
-          const allAgents = await storage.getAgents();
+          const allAgents = await storage.getAgents(getOrgId(req));
           const linkedAgents = allAgents.filter(a => {
             const tags = Array.isArray(a.ontologyTags) ? (a.ontologyTags as Array<{ conceptId: string }>) : [];
             return tags.some(t => t.conceptId === req.params.id as string);
@@ -293,7 +293,7 @@ const router = Router();
       invalidateOntologySensitivityCache();
 
       try {
-        const allAgents = await storage.getAgents();
+        const allAgents = await storage.getAgents(getOrgId(req));
         const affectedAgents = allAgents.filter(a => {
           const tags = Array.isArray(a.ontologyTags) ? (a.ontologyTags as Array<{ conceptId: string }>) : [];
           return tags.some(t => t.conceptId === req.params.id as string);
@@ -356,7 +356,7 @@ const router = Router();
         console.error("[ontology-propagation] Failed to propagate concept update to agents:", propErr);
       }
 
-      const allAgentsForCount = await storage.getAgents();
+      const allAgentsForCount = await storage.getAgents(getOrgId(req));
       const affectedCount = allAgentsForCount.filter(a => {
         const tags = Array.isArray(a.ontologyTags) ? (a.ontologyTags as Array<{ conceptId: string }>) : [];
         return tags.some(t => t.conceptId === req.params.id as string);
@@ -394,7 +394,7 @@ const router = Router();
     try {
       const concept = await storage.getOntologyConcept(req.params.id as string);
       if (!concept) return res.status(404).json({ message: "Concept not found" });
-      const allAgents = await storage.getAgents();
+      const allAgents = await storage.getAgents(getOrgId(req));
       const linked = allAgents.filter(a => {
         const tags = Array.isArray(a.ontologyTags) ? (a.ontologyTags as Array<{ conceptId: string }>) : [];
         return tags.some(t => t.conceptId === req.params.id as string);

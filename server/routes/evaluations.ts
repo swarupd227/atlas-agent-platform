@@ -2,6 +2,7 @@ import { Router } from "express";
 import OpenAI from "openai";
 import { z } from "zod";
 import { storage } from "../storage";
+import { getOrgId } from "../auth";
 import { checkPermission, getRequestRole } from "../permissions";
 import { resolveOntologyTags, generateKpiAlignedEvalSuite, handleZodError } from "./helpers";
 import {
@@ -668,9 +669,9 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
   });
 
   // Blueprint Studio Routes
-  router.get("/api/blueprints", async (_req, res) => {
+  router.get("/api/blueprints", async (req, res) => {
     const allBlueprints = await storage.getBlueprints();
-    const allAgents = await storage.getAgents();
+    const allAgents = await storage.getAgents(getOrgId(req));
     const agentCountMap = new Map<string, number>();
     for (const a of allAgents) {
       if (a.blueprintId) {
@@ -791,7 +792,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
 
     const toolNodes = (bpJson?.nodes || []).filter((n: any) => n.type === "tool_call");
     if (toolNodes.length > 0 && blueprint.agentId) {
-      const policies = await storage.getPolicies();
+      const policies = await storage.getPolicies(getOrgId(req));
       const toolPolicies = policies.filter((p: any) => p.domain === "tool_permissions" && p.status === "active");
       for (const toolNode of toolNodes) {
         if (toolNode.toolName) {
@@ -855,7 +856,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
     if (blueprint.agentId) {
       const agentForPolicy = await storage.getAgent(blueprint.agentId);
       if (agentForPolicy) {
-        const allPolicies = await storage.getPolicies();
+        const allPolicies = await storage.getPolicies(getOrgId(req));
         const activeDataHandling = allPolicies.filter((p: any) => p.domain === "data_handling" && p.status === "active");
         const activeOutputControl = allPolicies.filter((p: any) => p.domain === "output_control" && p.status === "active");
 

@@ -1719,7 +1719,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
               })
               .slice(0, 20);
 
-            const agents = (await storage.getAgents()).filter(a => a.outcomeId === oid);
+            const agents = (await storage.getAgents(getOrgId(req))).filter(a => a.outcomeId === oid);
             if (agents.length === 0) continue;
 
             const primaryAgent = agents[0];
@@ -2491,7 +2491,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     if ((updated.status === "resolved" || updated.status === "upheld") && updated.outcomeId) {
       try {
         const outcomeId = updated.outcomeId;
-        const agents = (await storage.getAgents()).filter(a => a.outcomeId === outcomeId);
+        const agents = (await storage.getAgents(getOrgId(req))).filter(a => a.outcomeId === outcomeId);
         if (agents.length > 0) {
           const primaryAgent = agents[0];
           const existingSuites = await storage.getEvalsByAgent(primaryAgent.id);
@@ -2546,10 +2546,10 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     res.json(updated);
   });
 
-  router.get("/api/billing/usage-export", async (_req, res) => {
+  router.get("/api/billing/usage-export", async (req, res) => {
     try {
       const allEvents = await storage.getOutcomeEvents();
-      const agents = await storage.getAgents();
+      const agents = await storage.getAgents(getOrgId(req));
       const outcomes = await storage.getOutcomes();
 
       const csvHeader = "Event ID,Outcome,Agent,Type,Billable,Exclude Reason,Unit Count,Unit Value,Trace ID,Created At\n";
@@ -2667,10 +2667,10 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
   });
 
   // Agent Templates
-  router.get("/api/drift-signals", async (_req, res) => {
+  router.get("/api/drift-signals", async (req, res) => {
     try {
       const evalSuites = await storage.getEvalSuites();
-      const agents = await storage.getAgents();
+      const agents = await storage.getAgents(getOrgId(req));
       const signals: Array<{
         id: string;
         agentId: string;
@@ -2808,7 +2808,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
       if (!outcome) return res.status(404).json({ error: "Outcome not found" });
 
       const kpis = await storage.getKpisByOutcome(outcome.id);
-      const allAgents = await storage.getAgents();
+      const allAgents = await storage.getAgents(getOrgId(req));
       const boundAgents = allAgents.filter(a => a.outcomeId === outcome.id);
       const evalSuites = await storage.getEvalSuites();
 
@@ -3126,12 +3126,12 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     }
   });
 
-  router.get("/api/monitor/impact", async (_req, res) => {
+  router.get("/api/monitor/impact", async (req, res) => {
     try {
       const outcomes = await storage.getOutcomes();
       const kpis = await storage.getKpis();
-      const agents = await storage.getAgents();
-      const traces = await storage.getTraces();
+      const agents = await storage.getAgents(getOrgId(req));
+      const traces = await storage.getTraces(getOrgId(req));
       const approvals = await storage.getApprovals();
 
       const impactData = outcomes.map(outcome => {
@@ -3507,7 +3507,7 @@ Eval Suites: ${evalSuites.length} configured`,
       const agent = await storage.getAgent(agentId);
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
-      const deployments = await storage.getDeployments();
+      const deployments = await storage.getDeployments(getOrgId(req));
       const agentDeployments = deployments
         .filter(d => d.agentId === agentId && d.status === "deployed")
         .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
@@ -3542,9 +3542,9 @@ Eval Suites: ${evalSuites.length} configured`,
   });
 
   // Tool Connector Health (derived from trace tool calls)
-  router.get("/api/monitor/tool-health", async (_req, res) => {
+  router.get("/api/monitor/tool-health", async (req, res) => {
     try {
-      const traces = await storage.getTraces();
+      const traces = await storage.getTraces(getOrgId(req));
       const recentTraces = traces.filter(t => {
         const ts = new Date(t.startedAt || t.endedAt || 0).getTime();
         return ts > Date.now() - 7 * 86400000;

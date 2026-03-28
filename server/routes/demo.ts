@@ -3,6 +3,7 @@ import { hearstLiveRunHandler, ensureHearstAgents } from "../hearst-live-run";
 import { fitchLiveRunHandler, ensureFitchAgents, getFitchPipelineAgentNames, getFitchAgentIdByName } from "../fitch-live-run";
 import { seedPartnerPortalRegistry } from "../seed-blackrock2-partner-portal";
 import { storage } from "../storage";
+import { getOrgId } from "../auth";
 import { runAgentOnce, isRuntimeActive, stopAgentRuntime, startAgentRuntime } from "../agent-runtime";
 import { seedHearstAgentRuns } from "../seed-hearst-runs";
 
@@ -1270,7 +1271,7 @@ Log every action.`;
       setKinectiveRunning(true);
       const thisGeneration = getRunGeneration();
 
-      const allDeployments = await storage.getDeployments();
+      const allDeployments = await storage.getDeployments(getOrgId(req));
       let deployment = allDeployments.find(
         (d) => d.agentId === KINECTIVE_AGENT_ID && d.environment === "staging" && d.status !== "rolled_back"
       );

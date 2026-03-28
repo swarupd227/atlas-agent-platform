@@ -500,7 +500,7 @@ function hashCode(str: string): number {
       const agent = await storage.getAgent(agentId);
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
-      const policyBundle = await resolvePolicyBundle(agentId);
+      const policyBundle = await resolvePolicyBundle(agentId, getOrgId(req));
 
       const trace = await storage.createTrace({
         agentId,
@@ -1375,7 +1375,7 @@ function hashCode(str: string): number {
       });
       const { input, environment, metadata } = schema.parse(req.body);
 
-      const policyBundle = await resolvePolicyBundle(agent.id);
+      const policyBundle = await resolvePolicyBundle(agent.id, getOrgId(req));
 
       const trace = await storage.createTrace({
         agentId: agent.id,
@@ -3352,7 +3352,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
         ? ((rtConfig as Record<string, unknown>).matchedSkills as Array<Record<string, unknown>>).map((s) => ({ name: String(s.name || s), executionOrder: s.executionOrder as number | undefined }))
         : [];
 
-      const allSkillsDb = await storage.getSkills();
+      const allSkillsDb = await storage.getSkills(getOrgId(req));
       const skillLookup = new Map(allSkillsDb.map(s => [s.name.toLowerCase(), s]));
       const rtRequiredSkills: Array<Record<string, unknown>> = Array.isArray((rtConfig as Record<string, unknown>).requiredSkills) ? (rtConfig as Record<string, unknown>).requiredSkills as Array<Record<string, unknown>> : [];
       const rtOptionalSkills: Array<Record<string, unknown>> = Array.isArray((rtConfig as Record<string, unknown>).optionalSkills) ? (rtConfig as Record<string, unknown>).optionalSkills as Array<Record<string, unknown>> : [];
@@ -3396,7 +3396,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
       let linkedPolicies: Array<{ id: string; name: string; domain: string | null; policyJson: unknown }> = [];
       const agentPolicyBindings = ((agent.policyBindings || []) as Array<Record<string, unknown>>);
       if (agentPolicyBindings.length > 0) {
-        const allPolicies = await storage.getPolicies();
+        const allPolicies = await storage.getPolicies(getOrgId(req));
         const policyIds = new Set(agentPolicyBindings.map((b) => String(b.policyId || b.id || "")).filter(Boolean));
         linkedPolicies = allPolicies
           .filter(p => policyIds.has(p.id))
@@ -4658,7 +4658,7 @@ clean:
       const regenRawSkills: Array<{ name: string }> = Array.isArray(regenRtConfig.matchedSkills)
         ? (regenRtConfig.matchedSkills as Array<Record<string, unknown>>).map(s => ({ name: String(s.name || s) }))
         : [];
-      const regenAllSkills = await storage.getSkills();
+      const regenAllSkills = await storage.getSkills(getOrgId(req));
       const regenSkillLookup = new Map(regenAllSkills.map(s => [s.name.toLowerCase(), s]));
       const regenSkills = regenRawSkills.map(ms => {
         const db = regenSkillLookup.get(ms.name.toLowerCase());
@@ -4881,7 +4881,7 @@ clean:
         industry: s.industry,
       }));
 
-      const allPolicies = await storage.getPolicies();
+      const allPolicies = await storage.getPolicies(getOrgId(req));
       const agentPolicyBindings = (agent.policyBindings || []) as any[];
       const policyIds = new Set(agentPolicyBindings.map((b: any) => b.policyId || b.id).filter(Boolean));
       const linkedPolicies = allPolicies
@@ -5546,7 +5546,7 @@ clean:
         }
       }
 
-      const allPolicies = await storage.getPolicies();
+      const allPolicies = await storage.getPolicies(getOrgId(req));
       const agentPolicyBindings = (agent.policyBindings || []) as any[];
       const policyIds = new Set(agentPolicyBindings.map((b: any) => b.policyId || b.id).filter(Boolean));
       for (const policy of allPolicies.filter(p => policyIds.has(p.id))) {
@@ -5631,7 +5631,7 @@ clean:
         const allMemoryProfiles = await storage.getMemoryProfiles();
         const memoryProfile = allMemoryProfiles.find(mp => mp.agentId === agent.id) || null;
         const evalSuitesList = await storage.getEvalsByAgent(agent.id);
-        const allPolicies = await storage.getPolicies();
+        const allPolicies = await storage.getPolicies(getOrgId(req));
         const agentPolicyBindings = (agent.policyBindings || []) as any[];
         const policyIds = new Set(agentPolicyBindings.map((b: any) => b.policyId || b.id).filter(Boolean));
         const linkedPolicies = allPolicies.filter(p => policyIds.has(p.id));
@@ -6014,7 +6014,7 @@ clean:
       const signature = req.headers["x-hub-signature-256"] as string | undefined;
       const payload = req.body;
 
-      const allAgents = await storage.getAgents();
+      const allAgents = await storage.getAgents(getOrgId(req));
       const agentsWithCiCd = allAgents.filter((a: any) => {
         const ciCd = a.ciCdConfig as Record<string, any> | null;
         return ciCd && ciCd.webhookSecret;
@@ -7016,7 +7016,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
       if (toolsToCheck.size > 0) {
         const bindings = (agent.policyBindings || []) as Array<{ policyId?: string; domain?: string; [key: string]: any }>;
-        const policies = await storage.getPolicies();
+        const policies = await storage.getPolicies(getOrgId(req));
         const activePolicies = policies.filter(p => p.status === "active");
 
         const boundPolicyIds = new Set(bindings.map(b => b.policyId).filter(Boolean));
@@ -7364,7 +7364,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
         }
 
         let effectiveIndustryId: string | null = null;
-        const allAgents = await storage.getAgents();
+        const allAgents = await storage.getAgents(getOrgId(req));
         for (const agent of allAgents) {
           const mcpLinks = await storage.getAgentMcpServers(agent.id);
           if (mcpLinks.some(l => l.serverId === req.params.id)) {
@@ -7499,7 +7499,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
       }
 
       let effectiveIndustryId: string | null = null;
-      const allAgents = await storage.getAgents();
+      const allAgents = await storage.getAgents(getOrgId(req));
       for (const agent of allAgents) {
         const mcpLinks = await storage.getAgentMcpServers(agent.id);
         if (mcpLinks.some(l => l.serverId === req.params.id)) {
@@ -8550,7 +8550,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
         riskFlags.push("scope_escalation");
         gateType = "scope_escalation";
       }
-      const policies = await storage.getPolicies();
+      const policies = await storage.getPolicies(getOrgId(req));
       const matchingPolicies = policies.filter(p =>
         p.status === "active" && (p as any).rules &&
         JSON.stringify((p as any).rules).toLowerCase().includes(toolName.toLowerCase())
@@ -9328,9 +9328,9 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
         ? allRegulations.filter(r => r.industry === industryId)
         : allRegulations;
 
-      const allPolicies = await storage.getPolicies();
+      const allPolicies = await storage.getPolicies(getOrgId(req));
       const activePolicies = allPolicies.filter(p => p.status === "active");
-      const allAgents = await storage.getAgents();
+      const allAgents = await storage.getAgents(getOrgId(req));
 
       const frameworks: Array<{
         name: string;

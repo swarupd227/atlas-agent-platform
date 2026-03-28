@@ -986,7 +986,7 @@ export function computeConstraintGraph(
   };
 }
 
-export async function recomputeOutcomeKpis(outcomeId: string): Promise<{
+export async function recomputeOutcomeKpis(outcomeId: string, orgId?: string): Promise<{
   updated: number;
   totalRuns: number;
   totalEvents: number;
@@ -994,8 +994,8 @@ export async function recomputeOutcomeKpis(outcomeId: string): Promise<{
   kpis: any[];
 }> {
   const kpis = await storage.getKpisByOutcome(outcomeId);
-  const agents = await storage.getAgents();
-  const traces = await storage.getTraces();
+  const agents = await storage.getAgents(orgId);
+  const traces = await storage.getTraces(orgId);
   const outcomeEvents = await storage.getOutcomeEvents();
   const boundAgents = agents.filter(a => a.outcomeId === outcomeId);
   const boundAgentIds = new Set(boundAgents.map(a => a.id));
@@ -1057,9 +1057,9 @@ export async function recomputeOutcomeKpis(outcomeId: string): Promise<{
   return { updated: changes.length, totalRuns: totalTraces, totalEvents: relevantEvents.length, changes, kpis: updatedKpis };
 }
 
-export async function resolvePolicyBundle(agentId: string) {
+export async function resolvePolicyBundle(agentId: string, orgId?: string) {
   const agent = await storage.getAgent(agentId);
-  const allPolicies = await storage.getPolicies();
+  const allPolicies = await storage.getPolicies(orgId);
   const activePolicies = allPolicies.filter(p => p.status === "active");
 
   const orgPolicies = activePolicies.filter(p => p.scopeType === "org");

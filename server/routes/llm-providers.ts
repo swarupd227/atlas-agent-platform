@@ -2,6 +2,7 @@ import { Router } from "express";
 import { storage } from "../storage";
 import { z, ZodError } from "zod";
 import { getProvider, getAvailableProviders } from "../llm-provider";
+import { getOrgId } from "../auth";
 import { insertAgentTriggerSchema } from "@shared/schema";
 import { runtimeEvents } from "../agent-runtime";
 
@@ -9,7 +10,7 @@ const router = Router();
 
   // === LLM Provider Management Routes ===
 
-  router.get("/api/llm-providers", async (_req, res) => {
+  router.get("/api/llm-providers", async (req, res) => {
     try {
       const providers = getAvailableProviders();
       res.json(providers);
@@ -18,7 +19,7 @@ const router = Router();
     }
   });
 
-  router.get("/api/llm-providers/health", async (_req, res) => {
+  router.get("/api/llm-providers/health", async (req, res) => {
     try {
       const providers = getAvailableProviders();
       const healthResults = await Promise.all(
@@ -40,9 +41,9 @@ const router = Router();
     }
   });
 
-  router.get("/api/llm-providers/usage", async (_req, res) => {
+  router.get("/api/llm-providers/usage", async (req, res) => {
     try {
-      const allTraces = await storage.getTraces();
+      const allTraces = await storage.getTraces(getOrgId(req));
       const usageByProvider: Record<string, { totalTokens: number; totalCost: number; totalRuns: number }> = {};
 
       for (const trace of allTraces) {

@@ -2,6 +2,7 @@ import { Router } from "express";
 import OpenAI from "openai";
 import { z, ZodError } from "zod";
 import { storage } from "../storage";
+import { getOrgId } from "../auth";
 import {
   insertAutonomyProfileSchema,
   insertOversightDecisionSchema,
@@ -857,7 +858,7 @@ Return ONLY valid JSON.`
   router.post("/api/autonomy/compute-maturity", async (req, res) => {
     try {
       const { agentId } = req.body;
-      const targetAgents = agentId ? [await storage.getAgent(agentId)].filter(Boolean) : await storage.getAgents();
+      const targetAgents = agentId ? [await storage.getAgent(agentId, getOrgId(req))].filter(Boolean) : await storage.getAgents(getOrgId(req));
       const results: any[] = [];
 
       for (const agent of targetAgents) {
@@ -1048,7 +1049,7 @@ Return ONLY valid JSON.`
       const allProfiles = await storage.getDecisionQualityProfiles();
       const pendingProposals = await storage.getAutonomyBoundaryProposals({ status: "pending" });
       const allProposals = await storage.getAutonomyBoundaryProposals();
-      const allAgents = await storage.getAgents();
+      const allAgents = await storage.getAgents(getOrgId(req));
 
       const totalDecisions = allDecisions.length;
       const validatedDecisions = allDecisions.filter((d: any) => d.outcome !== "pending");

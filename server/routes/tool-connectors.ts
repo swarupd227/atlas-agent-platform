@@ -2,6 +2,7 @@ import { Router } from "express";
 import { storage } from "../storage";
 import { z, ZodError } from "zod";
 import { insertToolConnectorSchema } from "@shared/schema";
+import { getOrgId } from "../auth";
 import { jobEvents } from "../worker";
 import { handleZodError } from "./helpers";
 
@@ -103,10 +104,10 @@ router.delete("/api/tool-connectors/:id", async (req, res) => {
     res.json({ success: true });
   });
 
-  router.get("/api/alerts/critical-violations", async (_req, res) => {
+  router.get("/api/alerts/critical-violations", async (req, res) => {
     try {
-      const traces = await storage.getTraces();
-      const agents = await storage.getAgents();
+      const traces = await storage.getTraces(getOrgId(req));
+      const agents = await storage.getAgents(getOrgId(req));
       const agentMap = new Map(agents.map(a => [a.id, a]));
       const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
 
@@ -200,7 +201,7 @@ router.delete("/api/tool-connectors/:id", async (req, res) => {
         return res.json({ passed: true, requirements: [] });
       }
 
-      const activePolicies = await storage.getPolicies();
+      const activePolicies = await storage.getPolicies(getOrgId(req));
       const active = activePolicies.filter(p => p.status === "active");
 
       const results = requirements.map(req => {
@@ -246,8 +247,8 @@ router.delete("/api/tool-connectors/:id", async (req, res) => {
       });
       const { policyDomain, thresholdField, currentValue, proposedValue } = whatIfSchema.parse(req.body);
 
-      const traces = await storage.getTraces();
-      const agents = await storage.getAgents();
+      const traces = await storage.getTraces(getOrgId(req));
+      const agents = await storage.getAgents(getOrgId(req));
       const agentMap = new Map(agents.map(a => [a.id, a]));
 
       const affectedAgentIds = new Set<string>();

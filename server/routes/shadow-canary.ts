@@ -2,6 +2,7 @@ import { Router } from "express";
 import OpenAI from "openai";
 import { z } from "zod";
 import { storage } from "../storage";
+import { getOrgId } from "../auth";
 import { buildAgentSystemPrompt } from "./helpers";
 import {
   executePromptWithMcp,
@@ -404,7 +405,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
               if (!hasRetention) { complianceScore -= 10; compFindings.push("Missing retention policy (-10 points)"); }
               if (!hasEncryption && agentCompTags.includes("HIPAA")) { complianceScore -= 15; compFindings.push("HIPAA agent missing encryption rule (-15 points)"); }
             }
-            const policies = await storage.getPolicies();
+            const policies = await storage.getPolicies(getOrgId(req));
             const activePolicies = policies.filter(p => p.status === "active");
             if (activePolicies.length === 0) {
               complianceScore -= 10;
@@ -473,7 +474,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         });
       }
 
-      const allDeployments = await storage.getDeployments();
+      const allDeployments = await storage.getDeployments(getOrgId(req));
       const previouslyDeployed = allDeployments.filter(
         d => d.agentId === deployment.agentId && d.id !== req.params.id && d.status === "deployed"
       );
@@ -656,7 +657,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         });
       }
 
-      const deployments = await storage.getDeployments();
+      const deployments = await storage.getDeployments(getOrgId(req));
       let deployment = deployments.find(d => d.agentId === req.params.id && (d.status === "deployed" || d.status === "pending"));
 
       if (!deployment) {
@@ -807,7 +808,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
 
       const kpis = await storage.getKpisByOutcome(agent.outcomeId);
       const traces = await storage.getTracesByAgent(req.params.id);
-      const allAgents = await storage.getAgents();
+      const allAgents = await storage.getAgents(getOrgId(req));
       const boundAgents = allAgents.filter(a => a.outcomeId === agent.outcomeId);
       const successfulTraces = traces.filter(t => t.status === "completed" || t.status === "success");
 
@@ -1004,7 +1005,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       const agent = await storage.getAgent(req.params.id);
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
-      const deployments = await storage.getDeployments();
+      const deployments = await storage.getDeployments(getOrgId(req));
       const agentDeployments = deployments
         .filter(d => d.agentId === req.params.id)
         .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
