@@ -241,6 +241,14 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
         agentOutput: agentRun.output || null,
       };
 
+      scorerOutputs = {
+        ...(scorerOutputs || {}),
+        judgeMetadata: {
+          confidence: judgeResult.confidence,
+          reason: judgeResult.reason,
+        },
+      };
+
       if (industryFramework && judgeResult.dimensionResults) {
         const dimensionScores: Record<string, { score: number; maxScore: number; passed: boolean; weight: number; criteriaResults: Array<{ criterion: string; met: boolean }> }> = {};
         for (const dimResult of judgeResult.dimensionResults) {
