@@ -242,9 +242,8 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
           if (!dimDef) continue;
           const metCount = dimResult.criteriaResults.filter(cr => cr.met).length;
           const totalCriteria = dimResult.criteriaResults.length;
-          const score = totalCriteria > 0
-            ? Math.round((metCount / totalCriteria) * 100 * 10) / 10
-            : (isPassed ? 80 : 40);
+          if (totalCriteria === 0) continue;
+          const score = Math.round((metCount / totalCriteria) * 100 * 10) / 10;
           const dimPassed = score >= 70;
           dimensionScores[dimResult.dimId] = {
             score,
@@ -291,35 +290,6 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
         totalOntologyCompliance += compliance.score;
         ontologyCaseCount++;
       } catch {}
-    }
-
-    if (industryFramework && !scorerOutputs?.industryScores) {
-      const dimensionScores: Record<string, { score: number; maxScore: number; passed: boolean; weight: number; criteriaResults: Array<{ criterion: string; met: boolean }> }> = {};
-      for (const dim of industryFramework.dimensions) {
-        const score = isPassed ? 80 : 40;
-        const criteriaResults = dim.scoringCriteria.map(criterion => ({
-          criterion,
-          met: isPassed,
-        }));
-        const dimPassed = score >= 70;
-        dimensionScores[dim.id] = {
-          score,
-          maxScore: 100,
-          passed: dimPassed,
-          weight: dim.weight,
-          criteriaResults,
-        };
-        industryDimensionTotals[dim.id].total += score;
-        industryDimensionTotals[dim.id].count += 1;
-      }
-      scorerOutputs = {
-        ...(scorerOutputs || {}),
-        industryScores: {
-          industry: detectedIndustry,
-          framework: industryFramework.label,
-          dimensions: dimensionScores,
-        },
-      };
     }
 
     const result = await storage.createEvalCaseResult({

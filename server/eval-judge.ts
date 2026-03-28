@@ -18,17 +18,13 @@ export interface LlmJudgeResult {
   dimensionResults?: DimensionJudgeResult[];
 }
 
-const JUDGE_MODEL = "gpt-4.1-mini";
-
-function buildAgentContext(agent: { name?: string | null; description?: string | null; systemPrompt?: string | null }): string {
+export function buildAgentContext(agent: { name?: string | null; description?: string | null; systemPrompt?: string | null }): string {
   const parts: string[] = [];
   if (agent.name) parts.push(`Agent name: ${agent.name}`);
   if (agent.description) parts.push(`Description: ${agent.description}`);
   if (agent.systemPrompt) parts.push(`System prompt:\n${agent.systemPrompt}`);
   return parts.join("\n\n");
 }
-
-export { buildAgentContext };
 
 export async function runLlmJudge(
   testName: string,
@@ -69,7 +65,7 @@ Return ONLY valid JSON with this schema:
   const criteriaBlock = hasDimensions
     ? `\n\nIndustry Evaluation Dimensions:\n${industryDimensions!.map(d =>
         `Dimension "${d.id}" — ${d.name}:\n${d.scoringCriteria.map(c => `  - ${c}`).join("\n")}`
-      ).join("\n\n")}\n\nFor each dimension, evaluate whether each criterion is met by the agent's likely output and include the results in the "dimensions" field using the exact criterion text.`
+      ).join("\n\n")}\n\nFor each dimension, evaluate whether each criterion is met by the agent's likely output. Include ALL dimensions and ALL criteria in the "dimensions" field, using the exact criterion text as the "criterion" value.`
     : "";
 
   const userPrompt = `Test Case: "${testName}"
@@ -90,7 +86,6 @@ ${agentContext || "(no additional context)"}${criteriaBlock}`;
         { role: "user", content: userPrompt },
       ],
       {
-        model: JUDGE_MODEL,
         responseFormat: "json",
         temperature: 0,
         maxTokens: hasDimensions ? 1200 : 500,
@@ -130,7 +125,7 @@ ${agentContext || "(no additional context)"}${criteriaBlock}`;
           );
           return {
             criterion,
-            met: match ? Boolean(match.met) : isPassed,
+            met: match ? Boolean(match.met) : false,
           };
         });
 
