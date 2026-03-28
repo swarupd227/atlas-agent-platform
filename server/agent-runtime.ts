@@ -1191,13 +1191,6 @@ After receiving tool results, provide a structured analysis with key findings, s
         }),
       );
 
-      if (totalCostUsd >= maxCostPerRunUsd) {
-        costCapReached = true;
-        console.warn(`[agent-runtime] Per-run cost cap reached: $${totalCostUsd.toFixed(4)} >= $${maxCostPerRunUsd} (maxCostPerRunUsd). Stopping tool loop.`);
-        currentToolCalls = [];
-        break;
-      }
-
       if (iterationsUsed < MAX_TOOL_ITERATIONS) {
         try {
           const continueResult = await completeWithFallback(
@@ -1214,6 +1207,13 @@ After receiving tool results, provide a structured analysis with key findings, s
           totalCompletionTokens += continueResult.tokensUsed.completion;
           totalTokens += continueResult.tokensUsed.total;
           totalCostUsd += continueResult.costUsd;
+
+          if (totalCostUsd >= maxCostPerRunUsd) {
+            costCapReached = true;
+            console.warn(`[agent-runtime] Per-run cost cap reached: $${totalCostUsd.toFixed(4)} >= $${maxCostPerRunUsd}. Stopping tool loop.`);
+            currentToolCalls = [];
+            break;
+          }
 
           currentContent = continueResult.content;
           currentToolCalls = continueResult.toolCalls;
@@ -1537,7 +1537,10 @@ After receiving tool results, provide a structured analysis with key findings, s
         completionTokens: totalCompletionTokens,
         totalTokens,
       },
-      ...(costCapReached ? { costCapReached: true, costCapUsd: maxCostPerRunUsd, totalCostUsd } : {}),
+      totalCostUsd,
+      costCapUsd: maxCostPerRunUsd,
+      costCapReached,
+      ...(costCapReached ? { terminationReason: "cost_cap_reached" } : {}),
       ...(ontologyComplianceResult ? { ontologyCompliance: ontologyComplianceResult } : {}),
     },
     promptInputs: {

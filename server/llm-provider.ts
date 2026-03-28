@@ -594,15 +594,22 @@ export async function completeWithFallback(
   }
 
   const errors: string[] = [];
-  for (const provider of providerList) {
+  for (let i = 0; i < providerList.length; i++) {
+    const provider = providerList[i];
+    // For fallback providers (not the primary), strip the model so each provider
+    // uses its own default rather than a model ID that belongs to a different provider.
+    const effectiveOptions: LLMCompletionOptions | undefined =
+      i === 0 ? options : (options ? { ...options, model: undefined } : undefined);
     try {
-      const result = await provider.complete(messages, options);
+      const result = await provider.complete(messages, effectiveOptions);
       return result;
     } catch (err: any) {
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(`${provider.providerName}: ${msg}`);
       console.warn(
-        `[llm-provider] completeWithFallback: provider "${provider.providerName}" failed, cascading to next. Error: ${msg}`
+        `[llm-provider] completeWithFallback: provider "${provider.providerName}" failed` +
+          (i < providerList.length - 1 ? ", cascading to next provider" : "") +
+          `. Error: ${msg}`
       );
     }
   }
