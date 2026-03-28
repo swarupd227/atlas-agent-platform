@@ -1589,6 +1589,30 @@ export default function OutcomeDiscover() {
                         <span className="text-[9px] text-muted-foreground italic truncate">{formIntel.compositeRisk.rationale.join(" · ")}</span>
                       </div>
                     )}
+                    {(() => {
+                      const RLVL = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
+                      const piLevel = formIntel?.compositeRisk?.level;
+                      const piIdx = piLevel ? RLVL.indexOf(piLevel) : -1;
+                      const tierIdx = formRiskTier ? RLVL.indexOf(formRiskTier) : -1;
+                      if (piIdx < 0 || tierIdx < 0 || piIdx <= tierIdx) return null;
+                      const suggestedTier = piLevel === "CRITICAL" ? "HIGH" : piLevel!;
+                      if (suggestedTier === formRiskTier) return null;
+                      return (
+                        <div className="flex items-center gap-2 mx-3 mb-1 px-2 py-1.5 rounded bg-yellow-500/10 border border-yellow-500/30" data-testid="form-banner-risk-upgrade">
+                          <AlertTriangle className="w-3 h-3 text-yellow-600 dark:text-yellow-400 shrink-0" />
+                          <span className="text-[10px] text-yellow-700 dark:text-yellow-300 flex-1">Platform analysis suggests upgrading risk tier to <strong>{suggestedTier}</strong></span>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-5 px-2 text-[9px] border-yellow-500/40 text-yellow-700 dark:text-yellow-300 hover:bg-yellow-500/10"
+                            onClick={() => setFormRiskTier(suggestedTier)}
+                            data-testid="button-form-apply-risk-upgrade"
+                          >
+                            Apply
+                          </Button>
+                        </div>
+                      );
+                    })()}
                     {formIntel && !formIntel.matchedAgents.some((r) => r.matches.length > 0) && formIntel.matchedTemplates.length === 0 && formIntel.matchedPolicies.length === 0 && formIntel.toolCoverage.length === 0 && (
                       <div className="flex items-center gap-2 p-2 rounded bg-background/30 text-muted-foreground/70" data-testid="text-form-intel-no-matches">
                         <Cpu className="w-3 h-3 shrink-0" />
@@ -1605,6 +1629,18 @@ export default function OutcomeDiscover() {
                   </div>
                 )}
 
+                {(() => {
+                  const coverPct = formIntel?.summary?.toolCoveragePercent;
+                  if (coverPct === undefined || coverPct >= 60) return null;
+                  const missingCount = (formIntel?.toolCoverage || []).filter((t) => t.status === "missing").length;
+                  if (missingCount === 0) return null;
+                  return (
+                    <div className="flex items-start gap-2 px-1 py-1.5 rounded bg-amber-500/10 border border-amber-500/30" data-testid="form-banner-tool-gap">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-px" />
+                      <span className="text-[10px] text-amber-700 dark:text-amber-300">{missingCount} tool{missingCount !== 1 ? "s" : ""} not yet in catalog — review before deploying</span>
+                    </div>
+                  );
+                })()}
                 <div className="flex items-center justify-between gap-2 pt-2">
                   <Button variant="outline" onClick={() => { setSelectedFormTemplate(null); setSelectedLibTemplate(null); setFormStep(1); }} data-testid="button-form-back-template">
                     <ChevronLeft className="w-4 h-4 mr-1" /> Back
@@ -2154,6 +2190,31 @@ export default function OutcomeDiscover() {
                           ))}
                         </div>
                       )}
+                      {(() => {
+                        const RLVL = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
+                        const piLevel = platformIntel?.compositeRisk?.level;
+                        const contractTier = proposal?.outcomeContract?.riskTier;
+                        const piIdx = piLevel ? RLVL.indexOf(piLevel) : -1;
+                        const tierIdx = contractTier ? RLVL.indexOf(contractTier) : -1;
+                        if (piIdx < 0 || tierIdx < 0 || piIdx <= tierIdx) return null;
+                        const suggestedTier = piLevel === "CRITICAL" ? "HIGH" : piLevel!;
+                        if (suggestedTier === contractTier) return null;
+                        return (
+                          <div className="flex items-center gap-2 mt-1 px-2 py-1.5 rounded bg-yellow-500/10 border border-yellow-500/30" data-testid="banner-risk-upgrade">
+                            <AlertTriangle className="w-3.5 h-3.5 text-yellow-600 dark:text-yellow-400 shrink-0" />
+                            <span className="text-[10px] text-yellow-700 dark:text-yellow-300 flex-1">Platform analysis suggests upgrading risk tier to <strong>{suggestedTier}</strong></span>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-6 px-2 text-[10px] border-yellow-500/40 text-yellow-700 dark:text-yellow-300 hover:bg-yellow-500/10"
+                              onClick={() => setProposal((prev) => prev ? { ...prev, outcomeContract: { ...prev.outcomeContract, riskTier: suggestedTier } } : prev)}
+                              data-testid="button-apply-risk-upgrade"
+                            >
+                              Apply
+                            </Button>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </CardContent>
                 </Card>
@@ -2860,6 +2921,18 @@ export default function OutcomeDiscover() {
                                   ? "All validation items confirmed — ready to create"
                                   : `${(proposal.validationChecklist?.length || 0) - checkedItems.size} validation items remaining (optional)`}
                             </p>
+                            {(() => {
+                              const coverPct = platformIntel?.summary?.toolCoveragePercent;
+                              if (coverPct === undefined || coverPct >= 60) return null;
+                              const missingCount = (platformIntel?.toolCoverage || []).filter((t) => t.status === "missing").length;
+                              if (missingCount === 0) return null;
+                              return (
+                                <div className="flex items-start gap-2 mt-1 px-2 py-1.5 rounded bg-amber-500/10 border border-amber-500/30" data-testid="banner-tool-gap">
+                                  <AlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-px" />
+                                  <span className="text-[10px] text-amber-700 dark:text-amber-300">{missingCount} tool{missingCount !== 1 ? "s" : ""} not yet in catalog — review before deploying</span>
+                                </div>
+                              );
+                            })()}
                           </div>
                         </>
                       );
