@@ -55,7 +55,7 @@ const router = Router();
   });
 
   router.get("/api/agents/:id", async (req, res) => {
-    const agent = await storage.getAgent(req.params.id);
+    const agent = await storage.getAgent(req.params.id, getOrgId(req));
     if (!agent) return res.status(404).json({ message: "Not found" });
     res.json(agent);
   });
@@ -73,7 +73,7 @@ const router = Router();
         }
       }
       const data = insertAgentSchema.parse(body);
-      const agent = await storage.createAgent(data);
+      const agent = await storage.createAgent({ ...data, organizationId: getOrgId(req) ?? null });
 
       const sourceTemplateId = req.body.sourceTemplateId || (agent.runtimeConfig as any)?.sourceTemplateId;
       if (sourceTemplateId) {
@@ -492,10 +492,10 @@ const router = Router();
 
   router.patch("/api/agents/:id", async (req, res) => {
     try {
-      const existing = await storage.getAgent(req.params.id);
+      const existing = await storage.getAgent(req.params.id, getOrgId(req));
       if (!existing) return res.status(404).json({ message: "Agent not found" });
 
-      const updated = await storage.updateAgent(req.params.id, req.body);
+      const updated = await storage.updateAgent(req.params.id, req.body, getOrgId(req));
       if (!updated) return res.status(404).json({ message: "Agent not found" });
 
       const changedFields = Object.keys(req.body).filter(k => {
@@ -685,9 +685,9 @@ const router = Router();
 
   router.delete("/api/agents/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id as string);
+      const agent = await storage.getAgent(req.params.id as string, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
-      await storage.deleteAgent(req.params.id as string);
+      await storage.deleteAgent(req.params.id as string, getOrgId(req));
       const delTags = Array.isArray(agent.ontologyTags) ? (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) : [];
       await storage.createAuditEvent({
         actorType: "user",

@@ -273,7 +273,7 @@ const router = Router();
   });
 
   router.get("/api/outcomes/:id", async (req, res) => {
-    const outcome = await storage.getOutcome(req.params.id);
+    const outcome = await storage.getOutcome(req.params.id, getOrgId(req));
     if (!outcome) return res.status(404).json({ message: "Not found" });
     res.json(outcome);
   });
@@ -282,7 +282,7 @@ const router = Router();
     try {
       const data = insertOutcomeContractSchema.parse(req.body);
       const graph = computeConstraintGraph(data, []);
-      const outcome = await storage.createOutcome({ ...data, constraintGraph: graph });
+      const outcome = await storage.createOutcome({ ...data, constraintGraph: graph, organizationId: getOrgId(req) ?? null });
       res.status(201).json(outcome);
     } catch (e) {
       handleZodError(res, e);
@@ -325,7 +325,7 @@ const router = Router();
   router.patch("/api/outcomes/:id", async (req, res) => {
     try {
       const data = insertOutcomeContractSchema.partial().parse(req.body);
-      const existing = await storage.getOutcome(req.params.id);
+      const existing = await storage.getOutcome(req.params.id, getOrgId(req));
       if (!existing) return res.status(404).json({ message: "Not found" });
 
       const slaFieldsChanged = !!(
@@ -337,11 +337,11 @@ const router = Router();
         (data.approvalGates !== undefined && JSON.stringify(data.approvalGates) !== JSON.stringify(existing.approvalGates))
       );
 
-      const updated = await storage.updateOutcome(req.params.id, data);
+      const updated = await storage.updateOutcome(req.params.id, data, getOrgId(req));
       if (!updated) return res.status(404).json({ message: "Not found" });
       const kpis = await storage.getKpisByOutcome(req.params.id);
       const graph = computeConstraintGraph(updated, kpis);
-      const withGraph = await storage.updateOutcome(req.params.id, { constraintGraph: graph });
+      const withGraph = await storage.updateOutcome(req.params.id, { constraintGraph: graph }, getOrgId(req));
       const finalOutcome = withGraph || updated;
 
       if (slaFieldsChanged) {
@@ -505,7 +505,7 @@ const router = Router();
 
   router.delete("/api/outcomes/:id", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {
-      const deleted = await storage.deleteOutcome(req.params.id as string);
+      const deleted = await storage.deleteOutcome(req.params.id as string, getOrgId(req));
       if (!deleted) return res.status(404).json({ message: "Not found" });
       res.json({ success: true });
     } catch (e: any) {

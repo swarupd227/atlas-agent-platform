@@ -170,12 +170,14 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
 
   getAgents(orgId?: string): Promise<Agent[]>;
-  getAgent(id: string): Promise<Agent | undefined>;
+  getAgent(id: string, orgId?: string): Promise<Agent | undefined>;
   createAgent(agent: InsertAgent): Promise<Agent>;
 
   getOutcomes(orgId?: string): Promise<OutcomeContract[]>;
-  getOutcome(id: string): Promise<OutcomeContract | undefined>;
+  getOutcome(id: string, orgId?: string): Promise<OutcomeContract | undefined>;
   createOutcome(outcome: InsertOutcomeContract): Promise<OutcomeContract>;
+  updateOutcome(id: string, data: Partial<OutcomeContract>, orgId?: string): Promise<OutcomeContract | undefined>;
+  deleteOutcome(id: string, orgId?: string): Promise<boolean>;
 
   getKpis(): Promise<KpiDefinition[]>;
   getKpisByOutcome(outcomeId: string): Promise<KpiDefinition[]>;
@@ -183,13 +185,10 @@ export interface IStorage {
   updateKpi(id: string, data: Partial<KpiDefinition>): Promise<KpiDefinition | undefined>;
   deleteKpi(id: string): Promise<boolean>;
 
-  updateOutcome(id: string, data: Partial<OutcomeContract>): Promise<OutcomeContract | undefined>;
-  deleteOutcome(id: string): Promise<boolean>;
-
   getDeployments(orgId?: string): Promise<Deployment[]>;
-  getDeployment(id: string): Promise<Deployment | undefined>;
+  getDeployment(id: string, orgId?: string): Promise<Deployment | undefined>;
   createDeployment(deployment: InsertDeployment): Promise<Deployment>;
-  updateDeployment(id: string, data: Partial<Deployment>): Promise<Deployment | undefined>;
+  updateDeployment(id: string, data: Partial<Deployment>, orgId?: string): Promise<Deployment | undefined>;
   getDeploymentsByAgentId(agentId: string, status?: string): Promise<Deployment[]>;
   getDeploymentsByPromotedFrom(promotedFrom: string): Promise<Deployment[]>;
 
@@ -204,15 +203,15 @@ export interface IStorage {
   createEvalSuite(suite: InsertEvalSuite): Promise<EvalSuite>;
 
   getPolicies(orgId?: string): Promise<Policy[]>;
-  getPolicy(id: string): Promise<Policy | undefined>;
+  getPolicy(id: string, orgId?: string): Promise<Policy | undefined>;
   createPolicy(policy: InsertPolicy): Promise<Policy>;
-  updatePolicy(id: string, data: Partial<Policy>): Promise<Policy | undefined>;
-  deletePolicy(id: string): Promise<boolean>;
+  updatePolicy(id: string, data: Partial<Policy>, orgId?: string): Promise<Policy | undefined>;
+  deletePolicy(id: string, orgId?: string): Promise<boolean>;
 
   getApprovals(orgId?: string): Promise<Approval[]>;
-  getApproval(id: string): Promise<Approval | undefined>;
+  getApproval(id: string, orgId?: string): Promise<Approval | undefined>;
   createApproval(approval: InsertApproval): Promise<Approval>;
-  updateApproval(id: string, data: Partial<Approval>): Promise<Approval | undefined>;
+  updateApproval(id: string, data: Partial<Approval>, orgId?: string): Promise<Approval | undefined>;
 
   getAuditEvents(orgId?: string): Promise<AuditEvent[]>;
   createAuditEvent(event: InsertAuditEvent): Promise<AuditEvent>;
@@ -265,8 +264,8 @@ export interface IStorage {
   updateEvalTestCase(id: string, data: Partial<EvalTestCase>): Promise<EvalTestCase | undefined>;
   deleteEvalTestCase(id: string): Promise<boolean>;
 
-  updateAgent(id: string, data: Partial<Agent>): Promise<Agent | undefined>;
-  deleteAgent(id: string): Promise<boolean>;
+  updateAgent(id: string, data: Partial<Agent>, orgId?: string): Promise<Agent | undefined>;
+  deleteAgent(id: string, orgId?: string): Promise<boolean>;
 
   getImprovementRecommendations(): Promise<ImprovementRecommendation[]>;
   getImprovementRecommendationsByAgent(agentId: string): Promise<ImprovementRecommendation[]>;
@@ -299,10 +298,10 @@ export interface IStorage {
   verifyAuditChainIntegrity(): Promise<{ valid: boolean; totalEvents: number; verifiedEvents: number; brokenAt?: number }>;
 
   getIncidents(orgId?: string): Promise<Incident[]>;
-  getIncident(id: string): Promise<Incident | undefined>;
+  getIncident(id: string, orgId?: string): Promise<Incident | undefined>;
   getIncidentsByAgent(agentId: string): Promise<Incident[]>;
   createIncident(incident: InsertIncident): Promise<Incident>;
-  updateIncident(id: string, data: Partial<Incident>): Promise<Incident | undefined>;
+  updateIncident(id: string, data: Partial<Incident>, orgId?: string): Promise<Incident | undefined>;
 
   getPatches(): Promise<Patch[]>;
   getPatchesByAgent(agentId: string): Promise<Patch[]>;
@@ -526,11 +525,11 @@ export interface IStorage {
   updateOntologyEnhancement(id: string, data: Partial<OntologyEnhancement>): Promise<OntologyEnhancement | undefined>;
 
   getSkills(orgId?: string): Promise<Skill[]>;
-  getSkill(id: string): Promise<Skill | undefined>;
+  getSkill(id: string, orgId?: string): Promise<Skill | undefined>;
   getSkillsByIds(ids: string[]): Promise<Skill[]>;
   createSkill(skill: InsertSkill): Promise<Skill>;
-  updateSkill(id: string, data: Partial<Skill>): Promise<Skill | undefined>;
-  deleteSkill(id: string): Promise<boolean>;
+  updateSkill(id: string, data: Partial<Skill>, orgId?: string): Promise<Skill | undefined>;
+  deleteSkill(id: string, orgId?: string): Promise<boolean>;
 
   getSkillVersions(skillId: string): Promise<SkillVersion[]>;
   getSkillVersion(id: string): Promise<SkillVersion | undefined>;
@@ -692,10 +691,10 @@ export interface IStorage {
   deleteAgentChannel(id: string): Promise<boolean>;
 
   getKnowledgeBases(orgId?: string): Promise<KnowledgeBase[]>;
-  getKnowledgeBase(id: string): Promise<KnowledgeBase | undefined>;
+  getKnowledgeBase(id: string, orgId?: string): Promise<KnowledgeBase | undefined>;
   createKnowledgeBase(kb: InsertKnowledgeBase): Promise<KnowledgeBase>;
-  updateKnowledgeBase(id: string, data: Partial<KnowledgeBase>): Promise<KnowledgeBase | undefined>;
-  deleteKnowledgeBase(id: string): Promise<boolean>;
+  updateKnowledgeBase(id: string, data: Partial<KnowledgeBase>, orgId?: string): Promise<KnowledgeBase | undefined>;
+  deleteKnowledgeBase(id: string, orgId?: string): Promise<boolean>;
 
   getKnowledgeSources(kbId: string): Promise<KnowledgeSource[]>;
   getKnowledgeSource(id: string): Promise<KnowledgeSource | undefined>;
@@ -776,8 +775,9 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(agents).orderBy(desc(agents.updatedAt), desc(agents.createdAt));
   }
 
-  async getAgent(id: string) {
-    const [agent] = await db.select().from(agents).where(eq(agents.id, id));
+  async getAgent(id: string, orgId?: string) {
+    const clause = orgId ? and(eq(agents.id, id), eq(agents.organizationId, orgId)) : eq(agents.id, id);
+    const [agent] = await db.select().from(agents).where(clause);
     return agent;
   }
 
@@ -793,8 +793,9 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(outcomeContracts);
   }
 
-  async getOutcome(id: string) {
-    const [outcome] = await db.select().from(outcomeContracts).where(eq(outcomeContracts.id, id));
+  async getOutcome(id: string, orgId?: string) {
+    const clause = orgId ? and(eq(outcomeContracts.id, id), eq(outcomeContracts.organizationId, orgId)) : eq(outcomeContracts.id, id);
+    const [outcome] = await db.select().from(outcomeContracts).where(clause);
     return outcome;
   }
 
@@ -826,19 +827,21 @@ export class DatabaseStorage implements IStorage {
     return true;
   }
 
-  async updateOutcome(id: string, data: Partial<OutcomeContract>) {
-    const [updated] = await db.update(outcomeContracts).set(data).where(eq(outcomeContracts.id, id)).returning();
+  async updateOutcome(id: string, data: Partial<OutcomeContract>, orgId?: string) {
+    const clause = orgId ? and(eq(outcomeContracts.id, id), eq(outcomeContracts.organizationId, orgId)) : eq(outcomeContracts.id, id);
+    const [updated] = await db.update(outcomeContracts).set(data).where(clause).returning();
     return updated;
   }
 
-  async deleteOutcome(id: string) {
+  async deleteOutcome(id: string, orgId?: string) {
     await db.delete(kpiDefinitions).where(eq(kpiDefinitions.outcomeId, id));
     await db.delete(outcomeEvents).where(eq(outcomeEvents.outcomeId, id));
     await db.delete(billingDisputes).where(eq(billingDisputes.outcomeId, id));
     await db.delete(invoices).where(eq(invoices.outcomeId, id));
     await db.update(agents).set({ outcomeId: null }).where(eq(agents.outcomeId, id));
     await db.update(approvals).set({ outcomeId: null }).where(eq(approvals.outcomeId, id));
-    const [deleted] = await db.delete(outcomeContracts).where(eq(outcomeContracts.id, id)).returning();
+    const orgClause = orgId ? and(eq(outcomeContracts.id, id), eq(outcomeContracts.organizationId, orgId)) : eq(outcomeContracts.id, id);
+    const [deleted] = await db.delete(outcomeContracts).where(orgClause).returning();
     return !!deleted;
   }
 
@@ -849,8 +852,9 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(deployments);
   }
 
-  async getDeployment(id: string) {
-    const [deployment] = await db.select().from(deployments).where(eq(deployments.id, id));
+  async getDeployment(id: string, orgId?: string) {
+    const clause = orgId ? and(eq(deployments.id, id), eq(deployments.organizationId, orgId)) : eq(deployments.id, id);
+    const [deployment] = await db.select().from(deployments).where(clause);
     return deployment;
   }
 
@@ -859,8 +863,9 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async updateDeployment(id: string, data: Partial<Deployment>) {
-    const [updated] = await db.update(deployments).set(data).where(eq(deployments.id, id)).returning();
+  async updateDeployment(id: string, data: Partial<Deployment>, orgId?: string) {
+    const clause = orgId ? and(eq(deployments.id, id), eq(deployments.organizationId, orgId)) : eq(deployments.id, id);
+    const [updated] = await db.update(deployments).set(data).where(clause).returning();
     return updated;
   }
 
@@ -924,8 +929,9 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(policies);
   }
 
-  async getPolicy(id: string) {
-    const [policy] = await db.select().from(policies).where(eq(policies.id, id));
+  async getPolicy(id: string, orgId?: string) {
+    const clause = orgId ? and(eq(policies.id, id), eq(policies.organizationId, orgId)) : eq(policies.id, id);
+    const [policy] = await db.select().from(policies).where(clause);
     return policy;
   }
 
@@ -934,13 +940,15 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async updatePolicy(id: string, data: Partial<Policy>) {
-    const [updated] = await db.update(policies).set(data).where(eq(policies.id, id)).returning();
+  async updatePolicy(id: string, data: Partial<Policy>, orgId?: string) {
+    const clause = orgId ? and(eq(policies.id, id), eq(policies.organizationId, orgId)) : eq(policies.id, id);
+    const [updated] = await db.update(policies).set(data).where(clause).returning();
     return updated;
   }
 
-  async deletePolicy(id: string) {
-    const [deleted] = await db.delete(policies).where(eq(policies.id, id)).returning();
+  async deletePolicy(id: string, orgId?: string) {
+    const clause = orgId ? and(eq(policies.id, id), eq(policies.organizationId, orgId)) : eq(policies.id, id);
+    const [deleted] = await db.delete(policies).where(clause).returning();
     return !!deleted;
   }
 
@@ -951,8 +959,9 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(approvals);
   }
 
-  async getApproval(id: string) {
-    const [approval] = await db.select().from(approvals).where(eq(approvals.id, id));
+  async getApproval(id: string, orgId?: string) {
+    const clause = orgId ? and(eq(approvals.id, id), eq(approvals.organizationId, orgId)) : eq(approvals.id, id);
+    const [approval] = await db.select().from(approvals).where(clause);
     return approval;
   }
 
@@ -961,8 +970,9 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async updateApproval(id: string, data: Partial<Approval>) {
-    const [updated] = await db.update(approvals).set(data).where(eq(approvals.id, id)).returning();
+  async updateApproval(id: string, data: Partial<Approval>, orgId?: string) {
+    const clause = orgId ? and(eq(approvals.id, id), eq(approvals.organizationId, orgId)) : eq(approvals.id, id);
+    const [updated] = await db.update(approvals).set(data).where(clause).returning();
     return updated;
   }
 
@@ -1191,12 +1201,13 @@ export class DatabaseStorage implements IStorage {
     return true;
   }
 
-  async updateAgent(id: string, data: Partial<Agent>) {
-    const [updated] = await db.update(agents).set({ ...data, updatedAt: new Date() }).where(eq(agents.id, id)).returning();
+  async updateAgent(id: string, data: Partial<Agent>, orgId?: string) {
+    const clause = orgId ? and(eq(agents.id, id), eq(agents.organizationId, orgId)) : eq(agents.id, id);
+    const [updated] = await db.update(agents).set({ ...data, updatedAt: new Date() }).where(clause).returning();
     return updated;
   }
 
-  async deleteAgent(id: string): Promise<boolean> {
+  async deleteAgent(id: string, orgId?: string): Promise<boolean> {
     await db.delete(agentApiKeys).where(eq(agentApiKeys.agentId, id));
     await db.delete(agentChannels).where(eq(agentChannels.agentId, id));
     await db.delete(agentMcpServers).where(eq(agentMcpServers.agentId, id));
@@ -1204,7 +1215,8 @@ export class DatabaseStorage implements IStorage {
     await db.delete(agentTeams).where(
       or(eq(agentTeams.teamAgentId, id), eq(agentTeams.memberAgentId, id))
     );
-    const [deleted] = await db.delete(agents).where(eq(agents.id, id)).returning();
+    const orgClause = orgId ? and(eq(agents.id, id), eq(agents.organizationId, orgId)) : eq(agents.id, id);
+    const [deleted] = await db.delete(agents).where(orgClause).returning();
     return !!deleted;
   }
 
@@ -1348,8 +1360,9 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(incidents);
   }
 
-  async getIncident(id: string) {
-    const [incident] = await db.select().from(incidents).where(eq(incidents.id, id));
+  async getIncident(id: string, orgId?: string) {
+    const clause = orgId ? and(eq(incidents.id, id), eq(incidents.organizationId, orgId)) : eq(incidents.id, id);
+    const [incident] = await db.select().from(incidents).where(clause);
     return incident;
   }
 
@@ -1362,8 +1375,9 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async updateIncident(id: string, data: Partial<Incident>) {
-    const [updated] = await db.update(incidents).set(data).where(eq(incidents.id, id)).returning();
+  async updateIncident(id: string, data: Partial<Incident>, orgId?: string) {
+    const clause = orgId ? and(eq(incidents.id, id), eq(incidents.organizationId, orgId)) : eq(incidents.id, id);
+    const [updated] = await db.update(incidents).set(data).where(clause).returning();
     return updated;
   }
 
@@ -2231,8 +2245,9 @@ export class DatabaseStorage implements IStorage {
     }
     return db.select().from(skills);
   }
-  async getSkill(id: string) {
-    const [skill] = await db.select().from(skills).where(eq(skills.id, id));
+  async getSkill(id: string, orgId?: string) {
+    const clause = orgId ? and(eq(skills.id, id), eq(skills.organizationId, orgId)) : eq(skills.id, id);
+    const [skill] = await db.select().from(skills).where(clause);
     return skill;
   }
   async getSkillsByIds(ids: string[]) {
@@ -2243,12 +2258,14 @@ export class DatabaseStorage implements IStorage {
     const [created] = await db.insert(skills).values(skill).returning();
     return created;
   }
-  async updateSkill(id: string, data: Partial<Skill>) {
-    const [updated] = await db.update(skills).set(data).where(eq(skills.id, id)).returning();
+  async updateSkill(id: string, data: Partial<Skill>, orgId?: string) {
+    const clause = orgId ? and(eq(skills.id, id), eq(skills.organizationId, orgId)) : eq(skills.id, id);
+    const [updated] = await db.update(skills).set(data).where(clause).returning();
     return updated;
   }
-  async deleteSkill(id: string) {
-    const result = await db.delete(skills).where(eq(skills.id, id));
+  async deleteSkill(id: string, orgId?: string) {
+    const clause = orgId ? and(eq(skills.id, id), eq(skills.organizationId, orgId)) : eq(skills.id, id);
+    const result = await db.delete(skills).where(clause);
     return true;
   }
 
@@ -2932,8 +2949,9 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(knowledgeBases).orderBy(desc(knowledgeBases.createdAt));
   }
 
-  async getKnowledgeBase(id: string): Promise<KnowledgeBase | undefined> {
-    const [kb] = await db.select().from(knowledgeBases).where(eq(knowledgeBases.id, id));
+  async getKnowledgeBase(id: string, orgId?: string): Promise<KnowledgeBase | undefined> {
+    const clause = orgId ? and(eq(knowledgeBases.id, id), eq(knowledgeBases.organizationId, orgId)) : eq(knowledgeBases.id, id);
+    const [kb] = await db.select().from(knowledgeBases).where(clause);
     return kb;
   }
 
@@ -2942,16 +2960,18 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async updateKnowledgeBase(id: string, data: Partial<KnowledgeBase>): Promise<KnowledgeBase | undefined> {
-    const [updated] = await db.update(knowledgeBases).set({ ...data, updatedAt: new Date() }).where(eq(knowledgeBases.id, id)).returning();
+  async updateKnowledgeBase(id: string, data: Partial<KnowledgeBase>, orgId?: string): Promise<KnowledgeBase | undefined> {
+    const clause = orgId ? and(eq(knowledgeBases.id, id), eq(knowledgeBases.organizationId, orgId)) : eq(knowledgeBases.id, id);
+    const [updated] = await db.update(knowledgeBases).set({ ...data, updatedAt: new Date() }).where(clause).returning();
     return updated;
   }
 
-  async deleteKnowledgeBase(id: string): Promise<boolean> {
+  async deleteKnowledgeBase(id: string, orgId?: string): Promise<boolean> {
     await db.delete(knowledgeChunks).where(eq(knowledgeChunks.knowledgeBaseId, id));
     await db.delete(knowledgeSources).where(eq(knowledgeSources.knowledgeBaseId, id));
     await db.delete(agentKnowledgeBases).where(eq(agentKnowledgeBases.knowledgeBaseId, id));
-    const result = await db.delete(knowledgeBases).where(eq(knowledgeBases.id, id)).returning();
+    const clause = orgId ? and(eq(knowledgeBases.id, id), eq(knowledgeBases.organizationId, orgId)) : eq(knowledgeBases.id, id);
+    const result = await db.delete(knowledgeBases).where(clause).returning();
     return result.length > 0;
   }
 

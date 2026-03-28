@@ -679,7 +679,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
   });
 
   app.get("/api/knowledge-bases/:id", async (req, res) => {
-    const kb = await storage.getKnowledgeBase(req.params.id as string);
+    const kb = await storage.getKnowledgeBase(req.params.id as string, getOrgId(req));
     if (!kb) return res.status(404).json({ message: "Knowledge base not found" });
     res.json(kb);
   });
@@ -687,7 +687,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
   app.post("/api/knowledge-bases", async (req, res) => {
     try {
       const data = insertKnowledgeBaseSchema.parse(req.body);
-      const kb = await storage.createKnowledgeBase(data);
+      const kb = await storage.createKnowledgeBase({ ...data, organizationId: getOrgId(req) ?? null });
       res.status(201).json(kb);
     } catch (error: any) {
       res.status(400).json({ message: error.message });
@@ -695,13 +695,13 @@ export function registerKnowledgeBaseRoutes(app: Express) {
   });
 
   app.patch("/api/knowledge-bases/:id", async (req, res) => {
-    const kb = await storage.updateKnowledgeBase(req.params.id as string, req.body);
+    const kb = await storage.updateKnowledgeBase(req.params.id as string, req.body, getOrgId(req));
     if (!kb) return res.status(404).json({ message: "Not found" });
     res.json(kb);
   });
 
   app.delete("/api/knowledge-bases/:id", async (req, res) => {
-    const success = await storage.deleteKnowledgeBase(req.params.id as string);
+    const success = await storage.deleteKnowledgeBase(req.params.id as string, getOrgId(req));
     if (!success) return res.status(404).json({ message: "Not found" });
     res.json({ success: true });
   });

@@ -79,6 +79,8 @@ Organization-level data isolation has been implemented across the schema and sto
 
 **Route wiring**: Primary user-facing list endpoints in `agents.ts`, `governance.ts`, `billing.ts`, `outcomes.ts`, `skills.ts`, and `kb-routes.ts` now call `storage.getX(getOrgId(req))`. Internal analytics/computation calls remain unfiltered for cross-cutting aggregations.
 
+**IDOR fix (complete)**: All `getById`, `update`, and `delete` storage methods for 12 core entities now accept optional `orgId?: string`. When provided, a compound WHERE clause `AND(eq(table.id, id), eq(table.organizationId, orgId))` prevents cross-tenant access. All corresponding route handlers pass `getOrgId(req)` to these methods, and POST (create) handlers inject `organizationId: getOrgId(req) ?? null`. Affected: `agents`, `outcomeContracts`, `deployments`, `policies`, `approvals`, `incidents`, `skills`, `knowledgeBases`. The `IStorage` interface signatures updated to match.
+
 **Seeding**: `storage.seedDefaultOrganization()` called at server startup (idempotent) to ensure a default org row exists for development.
 
 **Isolation design**: In demo mode (`SECURITY_MODE=demo`) — no filtering (all records returned, backward compatible). In production mode — filtered to user's org. Platform-level tables (templates, regulations, ontology, MCP marketplace) remain global/unfiltered.

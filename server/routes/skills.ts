@@ -1086,7 +1086,7 @@ Return ONLY a valid JSON object with a "skills" array.`
   });
 
   router.get("/api/skills/:id", async (req, res) => {
-    const skill = await storage.getSkill(req.params.id as string);
+    const skill = await storage.getSkill(req.params.id as string, getOrgId(req));
     if (!skill) return res.status(404).json({ error: "Skill not found" });
     res.json(skill);
   });
@@ -1094,7 +1094,7 @@ Return ONLY a valid JSON object with a "skills" array.`
   router.post("/api/skills", async (req, res) => {
     try {
       const data = insertSkillSchema.parse(req.body);
-      const skill = await storage.createSkill(data);
+      const skill = await storage.createSkill({ ...data, organizationId: getOrgId(req) ?? null });
 
       let ontologyTagValidation = undefined;
       const skillTags = (data.tags as string[] | null) || [];
@@ -1135,7 +1135,7 @@ Return ONLY a valid JSON object with a "skills" array.`
     try {
       const patchSchema = insertSkillSchema.partial();
       const data = patchSchema.parse(req.body);
-      const updated = await storage.updateSkill(req.params.id as string, data);
+      const updated = await storage.updateSkill(req.params.id as string, data, getOrgId(req));
       if (!updated) return res.status(404).json({ error: "Skill not found" });
 
       let ontologyTagValidation = undefined;
@@ -1215,7 +1215,7 @@ Return ONLY a valid JSON object with a "skills" array.`
   });
 
   router.delete("/api/skills/:id", async (req, res) => {
-    await storage.deleteSkill(req.params.id as string);
+    await storage.deleteSkill(req.params.id as string, getOrgId(req));
     res.json({ success: true });
   });
 

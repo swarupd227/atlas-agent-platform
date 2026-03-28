@@ -907,7 +907,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
   router.post("/api/policies", checkPermission("create_modify_policies"), async (req, res) => {
     try {
       const data = insertPolicySchema.parse(req.body);
-      const policy = await storage.createPolicy(data);
+      const policy = await storage.createPolicy({ ...data, organizationId: getOrgId(req) ?? null });
       res.status(201).json(policy);
     } catch (e) {
       handleZodError(res, e);
@@ -915,13 +915,13 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
   });
 
   router.get("/api/policies/:id", async (req, res) => {
-    const policy = await storage.getPolicy(req.params.id as string);
+    const policy = await storage.getPolicy(req.params.id as string, getOrgId(req));
     if (!policy) return res.status(404).json({ error: "Policy not found" });
     res.json(policy);
   });
 
   router.patch("/api/policies/:id", checkPermission("create_modify_policies"), async (req, res) => {
-    const policy = await storage.getPolicy(req.params.id as string);
+    const policy = await storage.getPolicy(req.params.id as string, getOrgId(req));
     if (!policy) return res.status(404).json({ error: "Policy not found" });
 
     const { policyJson, description, name, status } = req.body;
@@ -945,7 +945,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
       updateData.versionHistory = [...(existingHistory as any[]), historyEntry];
     }
 
-    const updated = await storage.updatePolicy(req.params.id as string, updateData);
+    const updated = await storage.updatePolicy(req.params.id as string, updateData, getOrgId(req));
     if (!updated) return res.status(500).json({ error: "Failed to update policy" });
 
     await storage.createAuditEvent({
@@ -962,9 +962,9 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
 
   router.delete("/api/policies/:id", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      const policy = await storage.getPolicy(req.params.id as string);
+      const policy = await storage.getPolicy(req.params.id as string, getOrgId(req));
       if (!policy) return res.status(404).json({ error: "Policy not found" });
-      const deleted = await storage.deletePolicy(req.params.id as string);
+      const deleted = await storage.deletePolicy(req.params.id as string, getOrgId(req));
       if (!deleted) return res.status(500).json({ error: "Failed to delete policy" });
       await storage.createAuditEvent({
         action: "policy_deleted",
@@ -1127,7 +1127,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
   });
 
   router.get("/api/approvals/:id", async (req, res) => {
-    const approval = await storage.getApproval(req.params.id as string);
+    const approval = await storage.getApproval(req.params.id as string, getOrgId(req));
     if (!approval) return res.status(404).json({ message: "Approval not found" });
 
     const agents = await storage.getAgents();
@@ -1159,7 +1159,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
   router.post("/api/approvals", checkPermission("approve_changes"), async (req, res) => {
     try {
       const data = insertApprovalSchema.parse(req.body);
-      const approval = await storage.createApproval(data);
+      const approval = await storage.createApproval({ ...data, organizationId: getOrgId(req) ?? null });
       res.status(201).json(approval);
     } catch (e) {
       handleZodError(res, e);
@@ -1167,7 +1167,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
   });
 
   router.patch("/api/approvals/:id", checkPermission("approve_changes"), async (req, res) => {
-    const approval = await storage.getApproval(req.params.id as string);
+    const approval = await storage.getApproval(req.params.id as string, getOrgId(req));
     if (!approval) return res.status(404).json({ message: "Approval not found" });
 
     const { status, decidedBy, constraintsJson, followUpTask } = req.body;
@@ -1194,7 +1194,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
       updateData.followUpTaskId = followUp.id;
     }
 
-    const updated = await storage.updateApproval(req.params.id as string, updateData);
+    const updated = await storage.updateApproval(req.params.id as string, updateData, getOrgId(req));
 
     const allEvents = await storage.getAuditEvents();
     const prevHash = allEvents.length > 0 ? allEvents[allEvents.length - 1] : null;
@@ -3215,14 +3215,14 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
   });
 
   router.get("/api/incidents/:id", async (req, res) => {
-    const incident = await storage.getIncident(req.params.id as string);
+    const incident = await storage.getIncident(req.params.id as string, getOrgId(req));
     if (!incident) return res.status(404).json({ message: "Incident not found" });
     res.json(incident);
   });
 
   router.patch("/api/incidents/:id", async (req, res) => {
     try {
-      const updated = await storage.updateIncident(req.params.id as string, req.body);
+      const updated = await storage.updateIncident(req.params.id as string, req.body, getOrgId(req));
       if (!updated) return res.status(404).json({ message: "Incident not found" });
       res.json(updated);
     } catch (e: any) {
@@ -3243,6 +3243,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
         severity: severity || "medium",
         status: "open",
         sourceMetric: metric || "unknown",
+        organizationId: getOrgId(req) ?? null,
         sourceDetails: {
           metric,
           driftPercent,
