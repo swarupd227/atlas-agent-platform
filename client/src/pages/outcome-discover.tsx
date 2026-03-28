@@ -434,6 +434,7 @@ export default function OutcomeDiscover() {
   const [formCreatedOutcome, setFormCreatedOutcome] = useState<OutcomeContract | null>(null);
   const [formPlanRequested, setFormPlanRequested] = useState(false);
   const [selectedFormTemplate, setSelectedFormTemplate] = useState<OutcomeTemplate | null>(null);
+  const [selectedLibTemplate, setSelectedLibTemplate] = useState<PlatformIntelTemplate | null>(null);
   const [platformIntel, setPlatformIntel] = useState<PlatformIntelResponse | null>(null);
   const [loadingIntel, setLoadingIntel] = useState(false);
   const [showPlatformMatch, setShowPlatformMatch] = useState(true);
@@ -492,6 +493,7 @@ export default function OutcomeDiscover() {
       }))
     );
     setSelectedFormTemplate(template);
+    setSelectedLibTemplate(null);
     setFormStep(2);
   }
 
@@ -603,26 +605,44 @@ export default function OutcomeDiscover() {
         selectedFormTemplate.name,
       ].flatMap((s) => s.split(/[&/,]+/).map((p) => p.trim()).filter(Boolean)).slice(0, 4)
     : [];
-  // Derive tool names from the selected template's industry profile (fallback to workspace industry)
+  // Tool names: prefer DB template toolNames → fallback to industry integration systems
   const formIntelIndustryProfile = INDUSTRIES.find((i) => i.id === formIntelIndustry);
-  const formIntelTools = (formIntelIndustryProfile?.integrationSystems || industry?.integrationSystems || []).slice(0, 6).map((s) => s.name);
-  // Derive autonomy mode from the active risk tier
+  const formIntelTools: string[] = selectedLibTemplate?.toolNames?.length
+    ? selectedLibTemplate.toolNames.filter(Boolean) as string[]
+    : (formIntelIndustryProfile?.integrationSystems || industry?.integrationSystems || []).slice(0, 6).map((s) => s.name);
+  // Autonomy mode: DB template complexity mapping > static template risk-tier mapping
   const formIntelAutonomy: string[] = (() => {
+    if (selectedLibTemplate?.complexity) {
+      const c = selectedLibTemplate.complexity.toLowerCase();
+      if (c === "complex") return ["fully_autonomous"];
+      if (c === "moderate") return ["assisted"];
+      return ["supervised"];
+    }
     const t = formRiskTier || selectedFormTemplate?.riskTier || "MEDIUM";
     if (t === "CRITICAL" || t === "HIGH") return ["fully_autonomous"];
     if (t === "MEDIUM") return ["assisted"];
     return ["supervised"];
   })();
   const formIntelRiskTiers = [formRiskTier || selectedFormTemplate?.riskTier || "MEDIUM"];
+  // Approval gate count: from DB template complianceCertifications; for static templates use risk-tier heuristic
+  const formIntelGateCount: string = (() => {
+    if (selectedLibTemplate) {
+      return String((selectedLibTemplate.complianceCertifications || []).length);
+    }
+    const t = formRiskTier || selectedFormTemplate?.riskTier || "MEDIUM";
+    if (t === "CRITICAL") return "2";
+    if (t === "HIGH") return "1";
+    return "0";
+  })();
   const { data: formIntel, isPending: formIntelPending, isError: formIntelError } = useQuery<PlatformIntelResponse>({
-    queryKey: ["/api/outcomes/intelligence/form", formIntelIndustry, formIntelRoles.join(","), formIntelRiskTiers[0], formIntelTools.join(",")],
+    queryKey: ["/api/outcomes/intelligence/form", formIntelIndustry, formIntelRoles.join(","), formIntelRiskTiers[0], formIntelTools.join(","), formIntelAutonomy[0], formIntelGateCount],
     queryFn: async () => {
       const params = new URLSearchParams({ industry: formIntelIndustry });
       if (formIntelRoles.length > 0) params.set("proposedAgentRoles", JSON.stringify(formIntelRoles));
       if (formIntelTools.length > 0) params.set("proposedTools", formIntelTools.join(","));
       params.set("autonomyModes", JSON.stringify(formIntelAutonomy));
       params.set("riskTiers", JSON.stringify(formIntelRiskTiers));
-      params.set("proposedApprovalGatesCount", "0");
+      params.set("proposedApprovalGatesCount", formIntelGateCount);
       const r = await fetch(`/api/outcomes/intelligence?${params}`);
       if (!r.ok) throw new Error("Failed to fetch form intel");
       return r.json();
@@ -1256,6 +1276,7 @@ export default function OutcomeDiscover() {
                             setFormDescription(t.description || "");
                             setFormRiskTier(t.defaultRiskTier || "MEDIUM");
                             setSelectedFormTemplate(null);
+                            setSelectedLibTemplate(t);
                             setFormStep(2);
                           }}
                           data-testid={`card-form-lib-template-${t.id}`}
