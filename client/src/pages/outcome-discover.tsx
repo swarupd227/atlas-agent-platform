@@ -805,8 +805,8 @@ export default function OutcomeDiscover() {
       maxDriftPercent: proposal.outcomeContract.maxDriftPercent,
       approvalGates: proposal.outcomeContract.approvalGates ?? [],
       slaConfig: proposal.outcomeContract.slaDescription
-        ? { slaDescription: proposal.outcomeContract.slaDescription }
-        : undefined,
+        ? { ...(proposal.outcomeContract as any).slaConfig, slaDescription: proposal.outcomeContract.slaDescription }
+        : ((proposal.outcomeContract as any).slaConfig ?? undefined),
     });
   }
 
