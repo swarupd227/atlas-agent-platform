@@ -3590,7 +3590,7 @@ Eval Suites: ${evalSuites.length} configured`,
   router.get("/api/monitor/series", async (req, res) => {
     try {
       const metric = String(req.query.metric || "successRate");
-      const days = Math.min(Math.max(parseInt(String(req.query.days || "7"), 10) || 7, 1), 365);
+      const days = Math.min(Math.max(parseInt(String(req.query.days || "30"), 10) || 30, 1), 365);
       const agentId = req.query.agentId ? String(req.query.agentId) : null;
 
       const validMetrics = ["successRate", "latencyMs", "costUsd"];
@@ -3598,10 +3598,14 @@ Eval Suites: ${evalSuites.length} configured`,
         return res.status(400).json({ error: `metric must be one of: ${validMetrics.join(", ")}` });
       }
 
-      let rows: Array<{ date: string; value: number }>;
+      type SeriesRow = { date: string; value: string | number | null };
+
+      const agentFilter = agentId ? sql`AND agent_id = ${agentId}` : sql``;
+
+      let result: { rows: SeriesRow[] };
 
       if (metric === "successRate") {
-        const result = await db.execute(sql`
+        result = (await db.execute(sql`
           SELECT
             TO_CHAR(DATE(started_at), 'Mon DD') AS date,
             ROUND(
@@ -3610,36 +3614,38 @@ Eval Suites: ${evalSuites.length} configured`,
             ) AS value
           FROM run_traces
           WHERE started_at >= NOW() - (${days} || ' days')::interval
-            ${agentId ? sql`AND agent_id = ${agentId}` : sql``}
+            ${agentFilter}
           GROUP BY DATE(started_at)
           ORDER BY DATE(started_at) ASC
-        `);
-        rows = (result.rows as any[]).map(r => ({ date: r.date, value: Number(r.value) }));
+        `)) as { rows: SeriesRow[] };
       } else if (metric === "latencyMs") {
-        const result = await db.execute(sql`
+        result = (await db.execute(sql`
           SELECT
             TO_CHAR(DATE(started_at), 'Mon DD') AS date,
             ROUND(AVG(latency_ms)::numeric, 2) AS value
           FROM run_traces
           WHERE started_at >= NOW() - (${days} || ' days')::interval
-            ${agentId ? sql`AND agent_id = ${agentId}` : sql``}
+            ${agentFilter}
           GROUP BY DATE(started_at)
           ORDER BY DATE(started_at) ASC
-        `);
-        rows = (result.rows as any[]).map(r => ({ date: r.date, value: Number(r.value) }));
+        `)) as { rows: SeriesRow[] };
       } else {
-        const result = await db.execute(sql`
+        result = (await db.execute(sql`
           SELECT
             TO_CHAR(DATE(started_at), 'Mon DD') AS date,
             ROUND(AVG(cost_usd)::numeric, 4) AS value
           FROM run_traces
           WHERE started_at >= NOW() - (${days} || ' days')::interval
-            ${agentId ? sql`AND agent_id = ${agentId}` : sql``}
+            ${agentFilter}
           GROUP BY DATE(started_at)
           ORDER BY DATE(started_at) ASC
-        `);
-        rows = (result.rows as any[]).map(r => ({ date: r.date, value: Number(r.value) }));
+        `)) as { rows: SeriesRow[] };
       }
+
+      const rows: Array<{ date: string; value: number }> = result.rows.map(r => ({
+        date: r.date,
+        value: Number(r.value ?? 0),
+      }));
 
       res.json(rows);
     } catch (e: any) {

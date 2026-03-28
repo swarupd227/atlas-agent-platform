@@ -556,9 +556,9 @@ export default function Monitor() {
     queryKey: ["/api/healing-pipelines"],
   });
 
-  const successRateSeriesUrl = `/api/monitor/series?metric=successRate&days=7${selectedAgentId ? `&agentId=${selectedAgentId}` : ""}`;
-  const latencySeriesUrl = `/api/monitor/series?metric=latencyMs&days=7${selectedAgentId ? `&agentId=${selectedAgentId}` : ""}`;
-  const costSeriesUrl = `/api/monitor/series?metric=costUsd&days=7${selectedAgentId ? `&agentId=${selectedAgentId}` : ""}`;
+  const successRateSeriesUrl = `/api/monitor/series?metric=successRate&days=30${selectedAgentId ? `&agentId=${selectedAgentId}` : ""}`;
+  const latencySeriesUrl = `/api/monitor/series?metric=latencyMs&days=30${selectedAgentId ? `&agentId=${selectedAgentId}` : ""}`;
+  const costSeriesUrl = `/api/monitor/series?metric=costUsd&days=30${selectedAgentId ? `&agentId=${selectedAgentId}` : ""}`;
 
   const { data: successRateSeries } = useQuery<Array<{ date: string; value: number }>>({
     queryKey: [successRateSeriesUrl],
