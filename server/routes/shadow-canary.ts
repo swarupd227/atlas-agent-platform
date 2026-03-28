@@ -464,7 +464,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
           pipelineStages: updatedStages,
           pipelineComplete: false,
           status: "pipeline_failed",
-        });
+        }, getOrgId(req));
         return res.json({
           ...updated,
           pipelineHalted: true,
@@ -480,7 +480,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       );
       for (const old of previouslyDeployed) {
         await stopAgentRuntime(old.id);
-        await storage.updateDeployment(old.id, { status: "superseded" });
+        await storage.updateDeployment(old.id, { status: "superseded" }, getOrgId(req));
       }
 
       const updated = await storage.updateDeployment(req.params.id, {
@@ -488,7 +488,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         pipelineComplete: true,
         status: "deployed",
         deployedAt: new Date(),
-      });
+      }, getOrgId(req));
 
       if (deployAgent) {
         await storage.updateAgent(deployment.agentId, { status: "deployed" });
@@ -518,7 +518,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
           await storage.updateDeployment(req.params.id, {
             status: "deployed",
             ...(dep.deployedAt ? {} : { deployedAt: new Date() }),
-          });
+          }, getOrgId(req));
         }
         if (agent && agent.status !== "deployed") {
           await storage.updateAgent(dep.agentId, { status: "deployed" });
@@ -534,7 +534,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
     try {
       const result = await stopAgentRuntime(req.params.id);
       if (result.stopped) {
-        await storage.updateDeployment(req.params.id, { status: "inactive" });
+        await storage.updateDeployment(req.params.id, { status: "inactive" }, getOrgId(req));
       }
       res.json(result);
     } catch (e: any) {
@@ -685,7 +685,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
           pipelineComplete: true,
           status: "deployed",
           deployedAt: new Date(),
-        }) as any;
+        }, getOrgId(req)) as any;
         await storage.updateAgent(req.params.id, { status: "deployed" });
       }
 

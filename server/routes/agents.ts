@@ -465,7 +465,7 @@ const router = Router();
           }
           if (bp.blueprintJson) blueprintJson = bp.blueprintJson;
         }
-        const agentData = insertAgentSchema.parse({
+        const agentData = insertAgentSchema.omit({ organizationId: true }).parse({
           name: plan.name,
           description: plan.description || "",
           agentType: plan.agentType || "single",
@@ -480,7 +480,7 @@ const router = Router();
           blueprintJson: blueprintJson || undefined,
           status: "active",
         });
-        const agent = await storage.createAgent(agentData);
+        const agent = await storage.createAgent({ ...agentData, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? undefined });
         created.push(agent);
       }
 
@@ -2160,7 +2160,7 @@ const router = Router();
       const existing = await storage.getDeployment(req.params.id, getOrgId(req));
       if (!existing) return res.status(404).json({ message: "Deployment not found" });
       const data = insertDeploymentSchema.partial().parse(req.body);
-      const updated = await storage.updateDeployment(req.params.id, data);
+      const updated = await storage.updateDeployment(req.params.id, data, getOrgId(req));
       if (!updated) return res.status(404).json({ message: "Deployment not found" });
 
       if (req.body.status === "active" && existing.status !== "active") {
@@ -2197,7 +2197,7 @@ const router = Router();
         industryRollbackTriggers: rollbackTriggers || [],
         evidencePackage: evidenceRecords,
         pipelineComplete: false,
-      });
+      }, getOrgId(req));
       res.json(updated);
     } catch (e: any) {
       res.status(500).json({ message: e.message });
@@ -2222,7 +2222,7 @@ const router = Router();
       const updated = await storage.updateDeployment(req.params.id, {
         pipelineStages: stages,
         pipelineComplete: allComplete,
-      });
+      }, getOrgId(req));
       res.json(updated);
     } catch (e: any) {
       res.status(500).json({ message: e.message });
@@ -2247,7 +2247,7 @@ const router = Router();
       };
       const updated = await storage.updateDeployment(req.params.id, {
         evidencePackage: evidence,
-      });
+      }, getOrgId(req));
       res.json(updated);
     } catch (e: any) {
       res.status(500).json({ message: e.message });
@@ -2437,7 +2437,7 @@ const router = Router();
         }
       }
 
-      await storage.updateDeployment(source.id, { status: "promoted", promotedAt: new Date() });
+      await storage.updateDeployment(source.id, { status: "promoted", promotedAt: new Date() }, getOrgId(req));
 
       const promoted = await storage.createDeployment({
         agentId: source.agentId,
@@ -2580,7 +2580,7 @@ const router = Router();
                 resolvedAt: new Date().toISOString(),
                 duration: incident.createdAt ? `${Math.round((Date.now() - new Date(incident.createdAt).getTime()) / 60000)}m` : "unknown",
               },
-            });
+            }, getOrgId(req));
             await storage.createAuditEvent({
               actorType: "system",
               actorId: "self_healing_service",
@@ -2608,7 +2608,7 @@ const router = Router();
                 rollbackDeploymentId: deployment.id,
                 rollbackReason: "Canary gates failed or manual rollback triggered",
               },
-            });
+            }, getOrgId(req));
             await storage.createAuditEvent({
               actorType: "system",
               actorId: "self_healing_service",
@@ -2625,7 +2625,7 @@ const router = Router();
         if (canaryPercent !== undefined) updateData.canaryPercent = canaryPercent;
       }
 
-      const updated = await storage.updateDeployment(deployment.id, updateData);
+      const updated = await storage.updateDeployment(deployment.id, updateData, getOrgId(req));
 
       const allEvents = await storage.getAuditEvents(getOrgId(req));
       const maxSeq = allEvents.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
@@ -2872,7 +2872,7 @@ const router = Router();
       const updated = await storage.updateDeployment(deployment.id, {
         status: "rolled_back",
         completedAt: new Date(),
-      });
+      }, getOrgId(req));
 
       const reason = req.body?.reason || "Manual rollback triggered";
       const auditEvents = await storage.getAuditEvents(getOrgId(req));
@@ -2967,7 +2967,7 @@ const router = Router();
         });
       }
 
-      await storage.updateDeployment(deployment.id, { status: "promoted", promotedAt: new Date() });
+      await storage.updateDeployment(deployment.id, { status: "promoted", promotedAt: new Date() }, getOrgId(req));
 
       const promoted = await storage.createDeployment({
         agentId: deployment.agentId,

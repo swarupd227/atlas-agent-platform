@@ -220,14 +220,14 @@ export interface IStorage {
   getInvoices(orgId?: string): Promise<Invoice[]>;
   getInvoice(id: string, orgId?: string): Promise<Invoice | undefined>;
   createInvoice(invoice: InsertInvoice): Promise<Invoice>;
-  updateInvoice(id: string, data: Partial<Invoice>): Promise<Invoice | undefined>;
+  updateInvoice(id: string, data: Partial<Invoice>, orgId?: string): Promise<Invoice | undefined>;
 
   getOutcomeEvents(orgId?: string): Promise<OutcomeEvent[]>;
   getOutcomeEvent(id: string, orgId?: string): Promise<OutcomeEvent | undefined>;
   getOutcomeEventsByInvoice(invoiceId: string): Promise<OutcomeEvent[]>;
   getOutcomeEventsByOutcome(outcomeId: string): Promise<OutcomeEvent[]>;
   createOutcomeEvent(event: InsertOutcomeEvent): Promise<OutcomeEvent>;
-  updateOutcomeEvent(id: string, data: Partial<OutcomeEvent>): Promise<OutcomeEvent | undefined>;
+  updateOutcomeEvent(id: string, data: Partial<OutcomeEvent>, orgId?: string): Promise<OutcomeEvent | undefined>;
 
   getBillingDisputes(): Promise<BillingDispute[]>;
   getBillingDisputesByInvoice(invoiceId: string): Promise<BillingDispute[]>;
@@ -1056,8 +1056,11 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async updateInvoice(id: string, data: Partial<Invoice>) {
-    const [updated] = await db.update(invoices).set(data).where(eq(invoices.id, id)).returning();
+  async updateInvoice(id: string, data: Partial<Invoice>, orgId?: string) {
+    const clause = orgId
+      ? and(eq(invoices.id, id), eq(invoices.organizationId, orgId))
+      : eq(invoices.id, id);
+    const [updated] = await db.update(invoices).set(data).where(clause).returning();
     return updated;
   }
 
@@ -1090,8 +1093,11 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async updateOutcomeEvent(id: string, data: Partial<OutcomeEvent>) {
-    const [updated] = await db.update(outcomeEvents).set(data).where(eq(outcomeEvents.id, id)).returning();
+  async updateOutcomeEvent(id: string, data: Partial<OutcomeEvent>, orgId?: string) {
+    const clause = orgId
+      ? and(eq(outcomeEvents.id, id), eq(outcomeEvents.organizationId, orgId))
+      : eq(outcomeEvents.id, id);
+    const [updated] = await db.update(outcomeEvents).set(data).where(clause).returning();
     return updated;
   }
 

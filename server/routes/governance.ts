@@ -1253,7 +1253,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
           await storage.updateIncident(patch.incidentId, {
             deploymentId: deployment.id,
             status: "deploying",
-          });
+          }, getOrgId(req));
         }
 
         const depStrategy = deployment.rolloutStrategy || "canary";
@@ -1289,7 +1289,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
           } catch {}
         }
 
-        await storage.updateDeployment(deployment.id, depUpdate);
+        await storage.updateDeployment(deployment.id, depUpdate, getOrgId(req));
 
         await storage.createAuditEvent({
           actorType: "system",
@@ -1340,7 +1340,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
           }
         }
 
-        await storage.updateDeployment(deployment.id, deployUpdate);
+        await storage.updateDeployment(deployment.id, deployUpdate, getOrgId(req));
 
         await storage.createAuditEvent({
           actorType: "system",
@@ -3278,7 +3278,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
       let patchResult: { patches: any[]; generated: number } | null = null;
 
       if (autoTriggerPatch !== false) {
-        await storage.updateIncident(incident.id, { status: "investigating" });
+        await storage.updateIncident(incident.id, { status: "investigating" }, getOrgId(req));
 
         try {
           const agent = await storage.getAgent(agentId);
@@ -3408,9 +3408,9 @@ Eval Suites: ${evalSuites.length} configured`,
               await storage.updateIncident(incident.id, {
                 status: "patching",
                 patchId: createdPatches[0].id,
-              });
+              }, getOrgId(req));
             } else {
-              await storage.updateIncident(incident.id, { status: "needs_review" });
+              await storage.updateIncident(incident.id, { status: "needs_review" }, getOrgId(req));
               await storage.createAuditEvent({
                 action: "autopatch_no_candidates",
                 objectType: "incident",
@@ -3434,7 +3434,7 @@ Eval Suites: ${evalSuites.length} configured`,
           }
         } catch (patchErr: any) {
           console.error("AutoPatch generation failed for incident:", patchErr.message);
-          await storage.updateIncident(incident.id, { status: "needs_review" });
+          await storage.updateIncident(incident.id, { status: "needs_review" }, getOrgId(req));
           await storage.createAuditEvent({
             action: "autopatch_failed",
             objectType: "incident",

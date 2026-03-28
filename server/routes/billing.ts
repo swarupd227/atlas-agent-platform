@@ -713,7 +713,7 @@ const router = Router();
       let linkedCount = 0;
       for (const event of eligibleEvents) {
         try {
-          await storage.updateOutcomeEvent(event.id, { invoiceId: invoice.id });
+          await storage.updateOutcomeEvent(event.id, { invoiceId: invoice.id }, orgId ?? undefined);
           linkedCount++;
         } catch (linkErr: any) {
           await storage.createAuditEvent({
@@ -732,7 +732,7 @@ const router = Router();
         await storage.updateInvoice(invoice.id, {
           billableUnits: linkedCount,
           totalUnits: linkedCount,
-        });
+        }, orgId ?? undefined);
       }
 
       // Audit event
