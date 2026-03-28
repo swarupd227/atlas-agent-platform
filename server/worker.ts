@@ -3,6 +3,7 @@ import type { Job } from "@shared/schema";
 import { EventEmitter } from "events";
 import { checkOntologyCompliance, executeScheduledAgentCycle } from "./agent-runtime";
 import { industryEvalFrameworks } from "./routes";
+import { runLlmJudge, buildAgentContext } from "./eval-judge";
 
 export const jobEvents = new EventEmitter();
 jobEvents.setMaxListeners(50);
@@ -103,6 +104,11 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
     }
   }
 
+  const agentCtx = buildAgentContext(agent);
+  const industryDimsForJudge = industryFramework
+    ? industryFramework.dimensions.map(d => ({ id: d.id, name: d.name, scoringCriteria: d.scoringCriteria }))
+    : undefined;
+
   const kpiCaseScores: Array<{
     kpiId: string;
     kpiName: string;
@@ -119,12 +125,10 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
 
   for (let i = 0; i < testCases.length; i++) {
     const tc = testCases[i];
-    const latencyMs = Math.floor(300 + Math.random() * 2000);
-    totalLatency += latencyMs;
-
     const inputData = (tc.inputData as Record<string, unknown>) || {};
     const isKpiBoundaryTest = inputData.type === "kpi_boundary_test";
 
+    let latencyMs = 0;
     let isPassed: boolean;
     let actualOutput: Record<string, unknown>;
     let scorerOutputs: Record<string, unknown> | undefined;
@@ -215,12 +219,55 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
 
       kpiCaseScores.push(kpiScoreEntry);
     } else {
-      isPassed = Math.random() > 0.15;
-      actualOutput = isPassed
-        ? { status: "pass", matched: true, confidence: 0.85 + Math.random() * 0.15 }
-        : { status: "fail", matched: false, reason: "Output did not meet expected criteria", confidence: 0.3 + Math.random() * 0.3 };
+      const judgeResult = await runLlmJudge(
+        tc.name,
+        inputData,
+        (tc.expectedOutput as Record<string, unknown>) || null,
+        agentCtx,
+        industryDimsForJudge,
+      );
+      isPassed = judgeResult.isPassed;
+      latencyMs = judgeResult.latencyMs;
+      actualOutput = {
+        status: isPassed ? "pass" : "fail",
+        matched: isPassed,
+        confidence: judgeResult.confidence,
+        reason: judgeResult.reason,
+      };
+
+      if (industryFramework && judgeResult.dimensionResults) {
+        const dimensionScores: Record<string, { score: number; maxScore: number; passed: boolean; weight: number; criteriaResults: Array<{ criterion: string; met: boolean }> }> = {};
+        for (const dimResult of judgeResult.dimensionResults) {
+          const dimDef = industryFramework.dimensions.find(d => d.id === dimResult.dimId);
+          if (!dimDef) continue;
+          const metCount = dimResult.criteriaResults.filter(cr => cr.met).length;
+          const totalCriteria = dimResult.criteriaResults.length;
+          const score = totalCriteria > 0
+            ? Math.round((metCount / totalCriteria) * 100 * 10) / 10
+            : (isPassed ? 80 : 40);
+          const dimPassed = score >= 70;
+          dimensionScores[dimResult.dimId] = {
+            score,
+            maxScore: 100,
+            passed: dimPassed,
+            weight: dimDef.weight,
+            criteriaResults: dimResult.criteriaResults,
+          };
+          industryDimensionTotals[dimResult.dimId].total += score;
+          industryDimensionTotals[dimResult.dimId].count += 1;
+        }
+        scorerOutputs = {
+          ...(scorerOutputs || {}),
+          industryScores: {
+            industry: detectedIndustry,
+            framework: industryFramework.label,
+            dimensions: dimensionScores,
+          },
+        };
+      }
     }
 
+    totalLatency += latencyMs;
     if (isPassed) passed++;
     else failed++;
 
@@ -246,14 +293,13 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
       } catch {}
     }
 
-    if (industryFramework) {
+    if (industryFramework && !scorerOutputs?.industryScores) {
       const dimensionScores: Record<string, { score: number; maxScore: number; passed: boolean; weight: number; criteriaResults: Array<{ criterion: string; met: boolean }> }> = {};
       for (const dim of industryFramework.dimensions) {
-        const baseScore = isPassed ? (70 + Math.random() * 30) : (20 + Math.random() * 50);
-        const score = Math.round(baseScore * 10) / 10;
+        const score = isPassed ? 80 : 40;
         const criteriaResults = dim.scoringCriteria.map(criterion => ({
           criterion,
-          met: isPassed ? Math.random() > 0.15 : Math.random() > 0.6,
+          met: isPassed,
         }));
         const dimPassed = score >= 70;
         dimensionScores[dim.id] = {
@@ -266,7 +312,6 @@ async function processEvalBaseline(job: Job): Promise<Record<string, unknown>> {
         industryDimensionTotals[dim.id].total += score;
         industryDimensionTotals[dim.id].count += 1;
       }
-
       scorerOutputs = {
         ...(scorerOutputs || {}),
         industryScores: {

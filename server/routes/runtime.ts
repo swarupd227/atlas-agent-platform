@@ -59,6 +59,7 @@ import {
   runParameterMatching,
 } from "./helpers";
 import { proxyToolCall } from "./governance-proxy";
+import { runLlmJudge, buildAgentContext } from "../eval-judge";
 import {
   executePromptWithMcp,
   executeTeamPipeline,
@@ -6235,16 +6236,37 @@ clean:
                   });
 
                   const testCases = await storage.getEvalTestCases(suite.id);
-                  const totalCases = testCases.length || 10;
-                  const passRate = 0.85 + Math.random() * 0.15;
-                  const passedCases = Math.round(totalCases * passRate);
+                  const totalCases = testCases.length;
+                  let passedCases = 0;
+                  let totalLatencyMs = 0;
+
+                  if (totalCases > 0) {
+                    const agentCtxForEval = buildAgentContext(agent);
+                    for (const tc of testCases) {
+                      const inputData = (tc.inputData as Record<string, unknown>) || {};
+                      const expectedOutput = (tc.expectedOutput as Record<string, unknown>) || null;
+                      const judgeResult = await runLlmJudge(
+                        tc.name,
+                        inputData,
+                        expectedOutput,
+                        agentCtxForEval,
+                      );
+                      if (judgeResult.isPassed) passedCases++;
+                      totalLatencyMs += judgeResult.latencyMs;
+                    }
+                  }
+
+                  const failedCases = totalCases - passedCases;
+                  const passRate = totalCases > 0 ? passedCases / totalCases : 0;
+                  const avgLatencyMs = totalCases > 0 ? Math.round(totalLatencyMs / totalCases) : 0;
 
                   await storage.updateEvalRun(evalRun.id, {
                     status: "completed",
                     totalCases,
                     passedCases,
-                    failedCases: totalCases - passedCases,
+                    failedCases,
                     passRate,
+                    avgLatencyMs,
                     completedAt: new Date(),
                   });
 
