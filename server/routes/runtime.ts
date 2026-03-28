@@ -108,19 +108,20 @@ function hashCode(str: string): number {
   return hash;
 }
 
-  router.get("/api/overview", async (_req, res) => {
+  router.get("/api/overview", async (req, res) => {
     try {
+      const orgId = getOrgId(req);
       const [agents, outcomes, kpis, allApprovals, allInvoices, allEvents, allDisputes, evalSuites, traces, deployments, toolConnectors] = await Promise.all([
-        storage.getAgents(),
-        storage.getOutcomes(),
+        storage.getAgents(orgId),
+        storage.getOutcomes(orgId),
         storage.getKpis(),
-        storage.getApprovals(),
-        storage.getInvoices(),
-        storage.getOutcomeEvents(),
+        storage.getApprovals(orgId),
+        storage.getInvoices(orgId),
+        storage.getOutcomeEvents(orgId),
         storage.getBillingDisputes(),
         storage.getEvalSuites(),
-        storage.getTraces(),
-        storage.getDeployments(),
+        storage.getTraces(orgId),
+        storage.getDeployments(orgId),
         storage.getToolConnectors(),
       ]);
 

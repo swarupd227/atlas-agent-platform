@@ -45,7 +45,8 @@ router.use(billingRouter);
       if (!Array.isArray(policyList) || policyList.length === 0) {
         return res.status(400).json({ error: "policies array is required" });
       }
-      const existingPolicies = await storage.getPolicies();
+      const orgId = getOrgId(req);
+      const existingPolicies = await storage.getPolicies(orgId);
       const existingNames = new Set(existingPolicies.map((p) => p.name));
       const created = [];
       let skipped = 0;
@@ -54,8 +55,9 @@ router.use(billingRouter);
           skipped++;
           continue;
         }
-        const data = insertPolicySchema.parse(p);
-        const policy = await storage.createPolicy(data);
+        const { organizationId: _orgIdFromBody, ...rest } = p;
+        const data = insertPolicySchema.parse(rest);
+        const policy = await storage.createPolicy({ ...data, organizationId: orgId ?? undefined });
         existingNames.add(policy.name);
         created.push(policy);
       }
@@ -690,7 +692,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
       const { name, description, allowedTools, requiredMcpServers, requiredDataClassifications, markdownBody, industry, domain } = req.body;
       if (!name) return res.status(400).json({ error: "Skill name is required" });
 
-      const allPolicies = await storage.getPolicies();
+      const allPolicies = await storage.getPolicies(getOrgId(req));
       const activePolicies = allPolicies.filter(p => p.status === "active");
 
       const toolsList: string[] = Array.isArray(allowedTools) ? allowedTools : [];
@@ -1691,8 +1693,9 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
 
   router.post("/api/invoices", checkPermission("billing_invoices"), async (req, res) => {
     try {
-      const data = insertInvoiceSchema.parse(req.body);
-      const invoice = await storage.createInvoice(data);
+      const { organizationId: _orgIdFromBody, ...invoiceBody } = req.body;
+      const data = insertInvoiceSchema.parse(invoiceBody);
+      const invoice = await storage.createInvoice({ ...data, organizationId: getOrgId(req) ?? undefined });
 
       const flywheelSyncResults: any[] = [];
       if (invoice.outcomeId) {
@@ -2577,11 +2580,12 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
 
   // Billing routes — see server/routes/billing.ts
 
-  router.get("/api/outcome-risk-drivers", async (_req, res) => {
+  router.get("/api/outcome-risk-drivers", async (req, res) => {
     try {
-      const traces = await storage.getTraces();
-      const agents = await storage.getAgents();
-      const policies = await storage.getPolicies();
+      const orgId = getOrgId(req);
+      const traces = await storage.getTraces(orgId);
+      const agents = await storage.getAgents(orgId);
+      const policies = await storage.getPolicies(orgId);
 
       const drivers: Array<{
         type: string;

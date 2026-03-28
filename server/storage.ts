@@ -753,6 +753,13 @@ export interface IStorage {
   seedDefaultOrganization(): Promise<Organization>;
 }
 
+function resolveOrgId(providedOrgId: string | null | undefined): string {
+  if (providedOrgId) return providedOrgId;
+  const defaultId = getDefaultOrgId();
+  if (defaultId) return defaultId;
+  throw new Error("organizationId is required");
+}
+
 export class DatabaseStorage implements IStorage {
   async getUser(id: string) {
     const [user] = await db.select().from(users).where(eq(users.id, id));
@@ -765,7 +772,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createUser(user: InsertUser) {
-    const orgId = (user.organizationId ?? getDefaultOrgId())!;
+    const orgId = resolveOrgId(user.organizationId);
     const [created] = await db.insert(users).values({ ...user, organizationId: orgId }).returning();
     return created;
   }
@@ -784,7 +791,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createAgent(agent: InsertAgent) {
-    const orgId = (agent.organizationId ?? getDefaultOrgId())!;
+    const orgId = resolveOrgId(agent.organizationId);
     const [created] = await db.insert(agents).values({ ...agent, organizationId: orgId }).returning();
     return created;
   }
@@ -803,7 +810,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createOutcome(outcome: InsertOutcomeContract) {
-    const orgId = (outcome.organizationId ?? getDefaultOrgId())!;
+    const orgId = resolveOrgId(outcome.organizationId);
     const [created] = await db.insert(outcomeContracts).values({ ...outcome, organizationId: orgId }).returning();
     return created;
   }
@@ -864,7 +871,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createDeployment(deployment: InsertDeployment) {
-    const orgId = (deployment.organizationId ?? getDefaultOrgId())!;
+    const orgId = resolveOrgId(deployment.organizationId);
     const [created] = await db.insert(deployments).values({ ...deployment, organizationId: orgId }).returning();
     return created;
   }
@@ -914,7 +921,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createTrace(trace: InsertRunTrace) {
-    const orgId = (trace.organizationId ?? getDefaultOrgId())!;
+    const orgId = resolveOrgId(trace.organizationId);
     const [created] = await db.insert(runTraces).values({ ...trace, organizationId: orgId }).returning();
     return created;
   }
@@ -946,7 +953,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createPolicy(policy: InsertPolicy) {
-    const orgId = (policy.organizationId ?? getDefaultOrgId())!;
+    const orgId = resolveOrgId(policy.organizationId);
     const [created] = await db.insert(policies).values({ ...policy, organizationId: orgId }).returning();
     return created;
   }
@@ -978,7 +985,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createApproval(approval: InsertApproval) {
-    const orgId = (approval.organizationId ?? getDefaultOrgId())!;
+    const orgId = resolveOrgId(approval.organizationId);
     const [created] = await db.insert(approvals).values({ ...approval, organizationId: orgId }).returning();
     return created;
   }
@@ -997,7 +1004,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createAuditEvent(event: InsertAuditEvent) {
-    const orgId = (event.organizationId ?? getDefaultOrgId())!;
+    const orgId = resolveOrgId(event.organizationId);
     const [lastEvent] = await db.select({
       sequenceNum: auditEvents.sequenceNum,
       eventHash: auditEvents.eventHash,
@@ -1044,7 +1051,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createInvoice(invoice: InsertInvoice) {
-    const orgId = (invoice.organizationId ?? getDefaultOrgId())!;
+    const orgId = resolveOrgId(invoice.organizationId);
     const [created] = await db.insert(invoices).values({ ...invoice, organizationId: orgId }).returning();
     return created;
   }
@@ -1078,7 +1085,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createOutcomeEvent(event: InsertOutcomeEvent) {
-    const orgId = (event.organizationId ?? getDefaultOrgId())!;
+    const orgId = resolveOrgId(event.organizationId);
     const [created] = await db.insert(outcomeEvents).values({ ...event, organizationId: orgId }).returning();
     return created;
   }
@@ -1395,7 +1402,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createIncident(incident: InsertIncident) {
-    const orgId = (incident.organizationId ?? getDefaultOrgId())!;
+    const orgId = resolveOrgId(incident.organizationId);
     const [created] = await db.insert(incidents).values({ ...incident, organizationId: orgId }).returning();
     return created;
   }
@@ -2280,7 +2287,7 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(skills).where(inArray(skills.id, ids));
   }
   async createSkill(skill: InsertSkill) {
-    const orgId = (skill.organizationId ?? getDefaultOrgId())!;
+    const orgId = resolveOrgId(skill.organizationId);
     const [created] = await db.insert(skills).values({ ...skill, organizationId: orgId }).returning();
     return created;
   }
@@ -2983,7 +2990,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createKnowledgeBase(kb: InsertKnowledgeBase): Promise<KnowledgeBase> {
-    const orgId = (kb.organizationId ?? getDefaultOrgId())!;
+    const orgId = resolveOrgId(kb.organizationId);
     const [created] = await db.insert(knowledgeBases).values({ ...kb, organizationId: orgId }).returning();
     return created;
   }

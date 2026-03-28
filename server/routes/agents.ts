@@ -1874,7 +1874,7 @@ const router = Router();
   router.post("/api/deployments", checkPermission("deploy_staging_pilot"), async (req, res) => {
     try {
       const bypassOntologyCheck = req.body.bypassOntologyCheck === true;
-      const { bypassOntologyCheck: _boc, ...deploymentBody } = req.body;
+      const { bypassOntologyCheck: _boc, organizationId: _orgIdFromBody, ...deploymentBody } = req.body;
       const data = insertDeploymentSchema.parse(deploymentBody);
       const env = data.environment || "staging";
 
