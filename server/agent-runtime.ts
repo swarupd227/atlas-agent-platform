@@ -2620,7 +2620,7 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
     if (!skipInitialCycle) {
       await executeAgentCycle(runtimeAgent);
     }
-    const existing = await storage.getPendingScheduledRunForDeployment(deploymentId);
+    const existing = await storage.getActiveScheduledRunForDeployment(deploymentId);
     if (!existing) {
       await storage.createJob({
         type: "agent_scheduled_run",
@@ -2750,8 +2750,10 @@ export async function getActiveRuntimes(): Promise<Array<{ deploymentId: string;
   return result;
 }
 
-export function isRuntimeActive(deploymentId: string): boolean {
-  return activeAgents.has(deploymentId);
+export async function isRuntimeActive(deploymentId: string): Promise<boolean> {
+  if (activeAgents.has(deploymentId)) return true;
+  const job = await storage.getActiveScheduledRunForDeployment(deploymentId);
+  return job != null;
 }
 
 export async function autoResumeRuntimes(): Promise<void> {

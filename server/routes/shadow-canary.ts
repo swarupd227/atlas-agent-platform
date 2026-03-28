@@ -543,7 +543,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
 
   router.get("/api/deployments/:id/runtime-status", async (req, res) => {
     try {
-      const active = isRuntimeActive(req.params.id);
+      const active = await isRuntimeActive(req.params.id);
       const runs = await storage.getAgentRuntimeRuns();
       const deploymentRuns = runs.filter(r => r.deploymentId === req.params.id)
         .sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime())
@@ -1016,7 +1016,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         .slice(0, 10);
 
       const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
-      const isActive = activeDeployment ? isRuntimeActive(activeDeployment.id) : false;
+      const isActive = activeDeployment ? await isRuntimeActive(activeDeployment.id) : false;
 
       const mcpLinks = await storage.getAgentMcpServers(req.params.id);
       const hasPrompt = !!(rtConfig.prompt || agent.systemPrompt || agent.description);

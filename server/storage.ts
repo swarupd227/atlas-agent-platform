@@ -365,6 +365,7 @@ export interface IStorage {
   failJob(id: string, error: string): Promise<Job | undefined>;
   getScheduledRuns(): Promise<Job[]>;
   getPendingScheduledRunForDeployment(deploymentId: string): Promise<Job | undefined>;
+  getActiveScheduledRunForDeployment(deploymentId: string): Promise<Job | undefined>;
   cancelScheduledRunsForDeployment(deploymentId: string): Promise<void>;
   recoverStaleScheduledRuns(staleThresholdMs?: number): Promise<number>;
 
@@ -1551,7 +1552,7 @@ export class DatabaseStorage implements IStorage {
           or(isNull(jobs.scheduledFor), lte(jobs.scheduledFor, now))
         )
       )
-      .orderBy(asc(jobs.scheduledFor), asc(jobs.createdAt))
+      .orderBy(sql`${jobs.scheduledFor} ASC NULLS FIRST`, asc(jobs.createdAt))
       .limit(1);
     if (!job) return undefined;
     const [claimed] = await db
@@ -1601,6 +1602,21 @@ export class DatabaseStorage implements IStorage {
         and(
           eq(jobs.type, "agent_scheduled_run"),
           eq(jobs.status, "queued"),
+          sql`payload->>'deploymentId' = ${deploymentId}`
+        )
+      )
+      .limit(1);
+    return job ?? undefined;
+  }
+
+  async getActiveScheduledRunForDeployment(deploymentId: string) {
+    const [job] = await db
+      .select()
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.type, "agent_scheduled_run"),
+          or(eq(jobs.status, "queued"), eq(jobs.status, "processing")),
           sql`payload->>'deploymentId' = ${deploymentId}`
         )
       )

@@ -1284,7 +1284,7 @@ Log every action.`;
           // trafficPercentage (not in schema): 100,
         });
       }
-      if (isRuntimeActive(deployment.id)) {
+      if (await isRuntimeActive(deployment.id)) {
         stopAgentRuntime(deployment.id);
       }
 
