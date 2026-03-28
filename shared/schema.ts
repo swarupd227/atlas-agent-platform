@@ -775,6 +775,7 @@ export const jobs = pgTable("jobs", {
   createdAt: timestamp("created_at").defaultNow(),
   startedAt: timestamp("started_at"),
   completedAt: timestamp("completed_at"),
+  scheduledFor: timestamp("scheduled_for"),
 });
 
 export const insertJobSchema = createInsertSchema(jobs).omit({ id: true, createdAt: true, startedAt: true, completedAt: true });

@@ -705,6 +705,31 @@ function hashCode(str: string): number {
     }
   });
 
+  // GET /api/scheduled-runs — durable scheduled agent job queue
+  router.get("/api/scheduled-runs", async (_req, res) => {
+    try {
+      const runs = await storage.getScheduledRuns();
+      res.json(
+        runs.map(r => {
+          const p = (r.payload as Record<string, unknown>) || {};
+          return {
+            jobId: r.id,
+            deploymentId: p.deploymentId,
+            agentId: r.agentId,
+            agentName: p.agentName,
+            intervalMs: p.intervalMs,
+            status: r.status,
+            scheduledFor: r.scheduledFor,
+            startedAt: r.startedAt,
+            createdAt: r.createdAt,
+          };
+        })
+      );
+    } catch (e: any) {
+      res.status(500).json({ message: e.message });
+    }
+  });
+
   // GET /api/runtime/runs/:id — full trace with steps
   router.get("/api/runtime/runs/:id", async (req, res) => {
     const trace = await storage.getTrace(req.params.id);

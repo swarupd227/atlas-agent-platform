@@ -1,4 +1,4 @@
-import { eq, desc, inArray, and, like, or, sql } from "drizzle-orm";
+import { eq, desc, inArray, and, like, or, sql, isNull, lte, asc } from "drizzle-orm";
 import { createHash } from "crypto";
 import { db } from "./db";
 import {
@@ -363,6 +363,9 @@ export interface IStorage {
   dequeueNextJob(): Promise<Job | undefined>;
   completeJob(id: string, result: Record<string, unknown>): Promise<Job | undefined>;
   failJob(id: string, error: string): Promise<Job | undefined>;
+  getScheduledRuns(): Promise<Job[]>;
+  getPendingScheduledRunForDeployment(deploymentId: string): Promise<Job | undefined>;
+  cancelScheduledRunsForDeployment(deploymentId: string): Promise<void>;
 
   getRunSteps(runId: string): Promise<RunStep[]>;
   createRunStep(step: InsertRunStep): Promise<RunStep>;
@@ -1537,7 +1540,18 @@ export class DatabaseStorage implements IStorage {
   }
 
   async dequeueNextJob() {
-    const [job] = await db.select().from(jobs).where(eq(jobs.status, "queued")).limit(1);
+    const now = new Date();
+    const [job] = await db
+      .select()
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.status, "queued"),
+          or(isNull(jobs.scheduledFor), lte(jobs.scheduledFor, now))
+        )
+      )
+      .orderBy(asc(jobs.scheduledFor), asc(jobs.createdAt))
+      .limit(1);
     if (!job) return undefined;
     const [claimed] = await db
       .update(jobs)
@@ -1563,6 +1577,46 @@ export class DatabaseStorage implements IStorage {
       .where(eq(jobs.id, id))
       .returning();
     return updated;
+  }
+
+  async getScheduledRuns() {
+    return db
+      .select()
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.type, "agent_scheduled_run"),
+          or(eq(jobs.status, "queued"), eq(jobs.status, "processing"))
+        )
+      )
+      .orderBy(asc(jobs.scheduledFor), asc(jobs.createdAt));
+  }
+
+  async getPendingScheduledRunForDeployment(deploymentId: string) {
+    const [job] = await db
+      .select()
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.type, "agent_scheduled_run"),
+          or(eq(jobs.status, "queued"), eq(jobs.status, "processing")),
+          sql`payload->>'deploymentId' = ${deploymentId}`
+        )
+      )
+      .limit(1);
+    return job ?? undefined;
+  }
+
+  async cancelScheduledRunsForDeployment(deploymentId: string) {
+    await db
+      .delete(jobs)
+      .where(
+        and(
+          eq(jobs.type, "agent_scheduled_run"),
+          eq(jobs.status, "queued"),
+          sql`payload->>'deploymentId' = ${deploymentId}`
+        )
+      );
   }
 
   async getRunSteps(runId: string) {

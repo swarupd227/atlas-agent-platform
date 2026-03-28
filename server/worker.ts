@@ -1,7 +1,7 @@
 import { storage } from "./storage";
 import type { Job } from "@shared/schema";
 import { EventEmitter } from "events";
-import { checkOntologyCompliance } from "./agent-runtime";
+import { checkOntologyCompliance, executeScheduledAgentCycle } from "./agent-runtime";
 import { industryEvalFrameworks } from "./routes";
 
 export const jobEvents = new EventEmitter();
@@ -436,6 +436,39 @@ const isDbConnectionError = (err: unknown): boolean => {
   return msg.includes("Connection terminated") || msg.includes("timeout") || msg.includes("ECONNREFUSED") || msg.includes("ETIMEDOUT");
 };
 
+async function processAgentScheduledRun(job: Job): Promise<Record<string, unknown>> {
+  const payload = job.payload as Record<string, unknown>;
+  const deploymentId = payload.deploymentId as string;
+  const intervalMs = (payload.intervalMs as number) ?? 0;
+  const agentName = (payload.agentName as string) ?? deploymentId;
+
+  if (!deploymentId) throw new Error("agent_scheduled_run job missing deploymentId in payload");
+
+  console.log(`[worker] Executing scheduled cycle for agent: ${agentName} (deployment: ${deploymentId})`);
+  let cycleError: Error | undefined;
+  try {
+    await executeScheduledAgentCycle(deploymentId);
+  } catch (err: any) {
+    cycleError = err;
+    console.error(`[worker] Scheduled cycle failed for ${agentName}:`, err.message);
+  } finally {
+    if (intervalMs > 0) {
+      const nextRunAt = new Date(Date.now() + intervalMs);
+      await storage.createJob({
+        type: "agent_scheduled_run",
+        status: "queued",
+        agentId: job.agentId,
+        payload,
+        scheduledFor: nextRunAt,
+      });
+      console.log(`[worker] Re-enqueued scheduled run for ${agentName}, next at ${nextRunAt.toISOString()}`);
+    }
+  }
+
+  if (cycleError) throw cycleError;
+  return { deploymentId, agentName, completedAt: new Date().toISOString(), nextIntervalMs: intervalMs };
+}
+
 export function startWorker(intervalMs = 2000) {
   if (workerRunning) return;
   workerRunning = true;
@@ -466,6 +499,8 @@ export function startWorker(intervalMs = 2000) {
             result = await processEvalBaseline(job);
           } else if (job.type === "shadow_replay") {
             result = await processShadowReplay(job);
+          } else if (job.type === "agent_scheduled_run") {
+            result = await processAgentScheduledRun(job);
           } else {
             result = { message: `Unknown job type: ${job.type}` };
           }

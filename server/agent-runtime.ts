@@ -607,7 +607,7 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
   return { context: sections.join("\n"), sectionMetrics };
 }
 
-const activeAgents = new Map<string, { timer: NodeJS.Timeout; agent: RuntimeAgent }>();
+const activeAgents = new Map<string, { agent: RuntimeAgent }>();
 
 interface AvailableTool {
   serverId: string;
@@ -2614,19 +2614,43 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
     maxToolIterations: agent.maxToolIterations ?? 5,
   };
 
+  activeAgents.set(deploymentId, { agent: runtimeAgent });
+
   if (intervalMinutes > 0) {
     if (!skipInitialCycle) {
       await executeAgentCycle(runtimeAgent);
     }
-    const timer = setInterval(() => executeAgentCycle(runtimeAgent), intervalMs);
-    activeAgents.set(deploymentId, { timer, agent: runtimeAgent });
-    console.log(`[agent-runtime] Started runtime for ${agent.name} (every ${intervalMs / 1000}s)`);
+    const existing = await storage.getPendingScheduledRunForDeployment(deploymentId);
+    if (!existing) {
+      await storage.createJob({
+        type: "agent_scheduled_run",
+        status: "queued",
+        agentId: deployment.agentId,
+        payload: { deploymentId, agentId: deployment.agentId, intervalMs, agentName: agent.name },
+        scheduledFor: new Date(),
+      });
+      console.log(`[agent-runtime] Scheduled durable runtime for ${agent.name} (every ${intervalMs / 1000}s)`);
+    } else {
+      console.log(`[agent-runtime] Durable runtime already scheduled for ${agent.name} (next run: ${existing.scheduledFor?.toISOString() ?? "queued"})`);
+    }
     return { started: true, message: `Agent runtime started for ${agent.name}. Executing every ${intervalMinutes} minutes.` };
   } else {
-    activeAgents.set(deploymentId, { timer: null as any, agent: runtimeAgent });
     console.log(`[agent-runtime] Registered on-demand runtime for ${agent.name}`);
     return { started: true, message: `Agent runtime registered for ${agent.name} (on-demand). Use "Run Now" to trigger execution.` };
   }
+}
+
+export async function executeScheduledAgentCycle(deploymentId: string): Promise<void> {
+  let entry = activeAgents.get(deploymentId);
+  if (!entry) {
+    const result = await startAgentRuntime(deploymentId, undefined, true);
+    if (!result.started) {
+      throw new Error(`Failed to register agent for scheduled run: ${result.message}`);
+    }
+    entry = activeAgents.get(deploymentId);
+  }
+  if (!entry) throw new Error(`No active runtime entry for deployment ${deploymentId}`);
+  await executeAgentCycle(entry.agent);
 }
 
 export async function runAgentOnce(deploymentId: string, promptOverride?: string, maxIterationsOverride?: number, onProgress?: (event: RuntimeProgressEvent) => void): Promise<{ success: boolean; message: string }> {
@@ -2681,8 +2705,10 @@ export function stopAgentRuntime(deploymentId: string): { stopped: boolean; mess
   const entry = activeAgents.get(deploymentId);
   if (!entry) return { stopped: false, message: "No active runtime for this deployment" };
 
-  if (entry.timer) clearInterval(entry.timer);
   activeAgents.delete(deploymentId);
+  storage.cancelScheduledRunsForDeployment(deploymentId).catch(err =>
+    console.error(`[agent-runtime] Failed to cancel scheduled runs for ${deploymentId}:`, err.message)
+  );
   console.log(`[agent-runtime] Stopped runtime for ${entry.agent.agentName}`);
   return { stopped: true, message: `Agent runtime stopped for ${entry.agent.agentName}` };
 }
