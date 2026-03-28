@@ -116,6 +116,10 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
     return res.status(401).json({ message: "Invalid or expired token" });
   }
 
+  if (!payload.organizationId) {
+    return res.status(403).json({ message: "User is not assigned to an organization" });
+  }
+
   req.authUser = payload;
   next();
 }

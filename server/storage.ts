@@ -834,14 +834,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteOutcome(id: string, orgId?: string) {
+    const owned = await this.getOutcome(id, orgId);
+    if (!owned) return false;
     await db.delete(kpiDefinitions).where(eq(kpiDefinitions.outcomeId, id));
     await db.delete(outcomeEvents).where(eq(outcomeEvents.outcomeId, id));
     await db.delete(billingDisputes).where(eq(billingDisputes.outcomeId, id));
     await db.delete(invoices).where(eq(invoices.outcomeId, id));
     await db.update(agents).set({ outcomeId: null }).where(eq(agents.outcomeId, id));
     await db.update(approvals).set({ outcomeId: null }).where(eq(approvals.outcomeId, id));
-    const orgClause = orgId ? and(eq(outcomeContracts.id, id), eq(outcomeContracts.organizationId, orgId)) : eq(outcomeContracts.id, id);
-    const [deleted] = await db.delete(outcomeContracts).where(orgClause).returning();
+    const [deleted] = await db.delete(outcomeContracts).where(eq(outcomeContracts.id, id)).returning();
     return !!deleted;
   }
 
@@ -947,8 +948,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deletePolicy(id: string, orgId?: string) {
-    const clause = orgId ? and(eq(policies.id, id), eq(policies.organizationId, orgId)) : eq(policies.id, id);
-    const [deleted] = await db.delete(policies).where(clause).returning();
+    const owned = await this.getPolicy(id, orgId);
+    if (!owned) return false;
+    const [deleted] = await db.delete(policies).where(eq(policies.id, id)).returning();
     return !!deleted;
   }
 
@@ -1208,6 +1210,8 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteAgent(id: string, orgId?: string): Promise<boolean> {
+    const owned = await this.getAgent(id, orgId);
+    if (!owned) return false;
     await db.delete(agentApiKeys).where(eq(agentApiKeys.agentId, id));
     await db.delete(agentChannels).where(eq(agentChannels.agentId, id));
     await db.delete(agentMcpServers).where(eq(agentMcpServers.agentId, id));
@@ -1215,8 +1219,7 @@ export class DatabaseStorage implements IStorage {
     await db.delete(agentTeams).where(
       or(eq(agentTeams.teamAgentId, id), eq(agentTeams.memberAgentId, id))
     );
-    const orgClause = orgId ? and(eq(agents.id, id), eq(agents.organizationId, orgId)) : eq(agents.id, id);
-    const [deleted] = await db.delete(agents).where(orgClause).returning();
+    const [deleted] = await db.delete(agents).where(eq(agents.id, id)).returning();
     return !!deleted;
   }
 
@@ -2264,8 +2267,9 @@ export class DatabaseStorage implements IStorage {
     return updated;
   }
   async deleteSkill(id: string, orgId?: string) {
-    const clause = orgId ? and(eq(skills.id, id), eq(skills.organizationId, orgId)) : eq(skills.id, id);
-    const result = await db.delete(skills).where(clause);
+    const owned = await this.getSkill(id, orgId);
+    if (!owned) return false;
+    await db.delete(skills).where(eq(skills.id, id));
     return true;
   }
 
@@ -2967,11 +2971,12 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteKnowledgeBase(id: string, orgId?: string): Promise<boolean> {
+    const owned = await this.getKnowledgeBase(id, orgId);
+    if (!owned) return false;
     await db.delete(knowledgeChunks).where(eq(knowledgeChunks.knowledgeBaseId, id));
     await db.delete(knowledgeSources).where(eq(knowledgeSources.knowledgeBaseId, id));
     await db.delete(agentKnowledgeBases).where(eq(agentKnowledgeBases.knowledgeBaseId, id));
-    const clause = orgId ? and(eq(knowledgeBases.id, id), eq(knowledgeBases.organizationId, orgId)) : eq(knowledgeBases.id, id);
-    const result = await db.delete(knowledgeBases).where(clause).returning();
+    const result = await db.delete(knowledgeBases).where(eq(knowledgeBases.id, id)).returning();
     return result.length > 0;
   }
 

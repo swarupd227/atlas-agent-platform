@@ -22,7 +22,7 @@ export const users = pgTable("users", {
   password: text("password").notNull(),
   email: text("email"),
   role: text("role").default("agent_engineer"),
-  organizationId: varchar("organization_id"),
+  organizationId: varchar("organization_id").references(() => organizations.id),
 });
 
 export const insertUserSchema = createInsertSchema(users).omit({ id: true });
@@ -31,7 +31,7 @@ export type User = typeof users.$inferSelect;
 
 export const outcomeContracts = pgTable("outcome_contracts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  organizationId: varchar("organization_id"),
+  organizationId: varchar("organization_id").references(() => organizations.id),
   name: text("name").notNull(),
   description: text("description"),
   riskTier: text("risk_tier").notNull().default("MEDIUM"),
@@ -81,7 +81,7 @@ export type KpiDefinition = typeof kpiDefinitions.$inferSelect;
 
 export const agents = pgTable("agents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  organizationId: varchar("organization_id"),
+  organizationId: varchar("organization_id").references(() => organizations.id),
   name: text("name").notNull(),
   agentType: text("agent_type").default("single"),
   description: text("description"),
@@ -150,7 +150,7 @@ export type AgentVersion = typeof agentVersions.$inferSelect;
 
 export const deployments = pgTable("deployments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  organizationId: varchar("organization_id"),
+  organizationId: varchar("organization_id").references(() => organizations.id),
   agentId: varchar("agent_id").notNull(),
   agentName: text("agent_name"),
   environment: text("environment").notNull().default("staging"),
@@ -185,7 +185,7 @@ export type Deployment = typeof deployments.$inferSelect;
 
 export const runTraces = pgTable("run_traces", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  organizationId: varchar("organization_id"),
+  organizationId: varchar("organization_id").references(() => organizations.id),
   agentId: varchar("agent_id").notNull(),
   versionId: varchar("version_id"),
   environment: text("environment").default("prod"),
@@ -239,7 +239,7 @@ export type EvalSuite = typeof evalSuites.$inferSelect;
 
 export const policies = pgTable("policies", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  organizationId: varchar("organization_id"),
+  organizationId: varchar("organization_id").references(() => organizations.id),
   name: text("name").notNull(),
   domain: text("domain").notNull().default("data_handling"),
   scopeType: text("scope_type").default("org"),
@@ -259,7 +259,7 @@ export type Policy = typeof policies.$inferSelect;
 
 export const approvals = pgTable("approvals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  organizationId: varchar("organization_id"),
+  organizationId: varchar("organization_id").references(() => organizations.id),
   type: text("type").notNull(),
   objectType: text("object_type").notNull(),
   objectId: varchar("object_id"),
@@ -292,7 +292,7 @@ export type Approval = typeof approvals.$inferSelect;
 
 export const auditEvents = pgTable("audit_events", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  organizationId: varchar("organization_id"),
+  organizationId: varchar("organization_id").references(() => organizations.id),
   actorType: text("actor_type").notNull().default("user"),
   actorId: varchar("actor_id"),
   action: text("action").notNull(),
@@ -369,7 +369,7 @@ export type ComplianceReport = typeof complianceReports.$inferSelect;
 
 export const invoices = pgTable("invoices", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  organizationId: varchar("organization_id"),
+  organizationId: varchar("organization_id").references(() => organizations.id),
   outcomeId: varchar("outcome_id"),
   outcomeName: text("outcome_name"),
   periodStart: timestamp("period_start"),
@@ -392,7 +392,7 @@ export type Invoice = typeof invoices.$inferSelect;
 
 export const outcomeEvents = pgTable("outcome_events", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  organizationId: varchar("organization_id"),
+  organizationId: varchar("organization_id").references(() => organizations.id),
   outcomeId: varchar("outcome_id").notNull(),
   agentId: varchar("agent_id"),
   invoiceId: varchar("invoice_id"),
@@ -829,7 +829,7 @@ export type RunStep = typeof runSteps.$inferSelect;
 
 export const incidents = pgTable("incidents", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  organizationId: varchar("organization_id"),
+  organizationId: varchar("organization_id").references(() => organizations.id),
   agentId: varchar("agent_id").notNull(),
   agentName: text("agent_name"),
   severity: text("severity").notNull().default("medium"),
@@ -1418,7 +1418,7 @@ export type OntologyEnhancement = typeof ontologyEnhancements.$inferSelect;
 
 export const skills = pgTable("skills", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  organizationId: varchar("organization_id"),
+  organizationId: varchar("organization_id").references(() => organizations.id),
   name: text("name").notNull(),
   description: text("description").notNull(),
   industry: text("industry").notNull(),
@@ -2029,7 +2029,7 @@ export type AgentChannel = typeof agentChannels.$inferSelect;
 
 export const knowledgeBases = pgTable("knowledge_bases", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  organizationId: varchar("organization_id"),
+  organizationId: varchar("organization_id").references(() => organizations.id),
   name: text("name").notNull(),
   description: text("description"),
   industry: text("industry").notNull().default("general"),
