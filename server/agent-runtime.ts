@@ -2703,23 +2703,51 @@ export async function runAgentOnce(deploymentId: string, promptOverride?: string
 
 export function stopAgentRuntime(deploymentId: string): { stopped: boolean; message: string } {
   const entry = activeAgents.get(deploymentId);
-  if (!entry) return { stopped: false, message: "No active runtime for this deployment" };
-
   activeAgents.delete(deploymentId);
+
   storage.cancelScheduledRunsForDeployment(deploymentId).catch(err =>
     console.error(`[agent-runtime] Failed to cancel scheduled runs for ${deploymentId}:`, err.message)
   );
-  console.log(`[agent-runtime] Stopped runtime for ${entry.agent.agentName}`);
-  return { stopped: true, message: `Agent runtime stopped for ${entry.agent.agentName}` };
+
+  if (entry) {
+    console.log(`[agent-runtime] Stopped runtime for ${entry.agent.agentName}`);
+    return { stopped: true, message: `Agent runtime stopped for ${entry.agent.agentName}` };
+  }
+  console.log(`[agent-runtime] Stopped scheduled runs for deployment ${deploymentId} (not in local registry)`);
+  return { stopped: true, message: `Agent runtime stopped for deployment ${deploymentId}` };
 }
 
-export function getActiveRuntimes(): Array<{ deploymentId: string; agentId: string; agentName: string; intervalMs: number }> {
-  return Array.from(activeAgents.entries()).map(([deploymentId, { agent }]) => ({
-    deploymentId,
-    agentId: agent.agentId,
-    agentName: agent.agentName,
-    intervalMs: agent.intervalMs,
-  }));
+export async function getActiveRuntimes(): Promise<Array<{ deploymentId: string; agentId: string; agentName: string; intervalMs: number }>> {
+  const scheduledJobs = await storage.getScheduledRuns();
+  const result: Array<{ deploymentId: string; agentId: string; agentName: string; intervalMs: number }> = [];
+  const scheduledDeploymentIds = new Set<string>();
+
+  for (const job of scheduledJobs) {
+    const p = (job.payload as Record<string, unknown>) || {};
+    const depId = p.deploymentId as string;
+    if (depId) {
+      scheduledDeploymentIds.add(depId);
+      result.push({
+        deploymentId: depId,
+        agentId: (job.agentId || p.agentId) as string,
+        agentName: p.agentName as string,
+        intervalMs: p.intervalMs as number,
+      });
+    }
+  }
+
+  for (const [deploymentId, { agent }] of Array.from(activeAgents.entries())) {
+    if (!scheduledDeploymentIds.has(deploymentId)) {
+      result.push({
+        deploymentId,
+        agentId: agent.agentId,
+        agentName: agent.agentName,
+        intervalMs: agent.intervalMs,
+      });
+    }
+  }
+
+  return result;
 }
 
 export function isRuntimeActive(deploymentId: string): boolean {
@@ -2728,6 +2756,11 @@ export function isRuntimeActive(deploymentId: string): boolean {
 
 export async function autoResumeRuntimes(): Promise<void> {
   try {
+    const recovered = await storage.recoverStaleScheduledRuns();
+    if (recovered > 0) {
+      console.log(`[agent-runtime] Recovered ${recovered} stale scheduled job(s) from prior crash`);
+    }
+
     const deployments = await storage.getDeployments();
     const deployed = deployments.filter(d => d.status === "deployed");
 

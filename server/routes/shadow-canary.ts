@@ -556,7 +556,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
 
   router.get("/api/agent-runtime/active", async (_req, res) => {
     try {
-      const runtimes = getActiveRuntimes();
+      const runtimes = await getActiveRuntimes();
       res.json(runtimes);
     } catch (e: any) {
       res.status(500).json({ error: e.message });

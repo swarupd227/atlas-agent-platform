@@ -366,6 +366,7 @@ export interface IStorage {
   getScheduledRuns(): Promise<Job[]>;
   getPendingScheduledRunForDeployment(deploymentId: string): Promise<Job | undefined>;
   cancelScheduledRunsForDeployment(deploymentId: string): Promise<void>;
+  recoverStaleScheduledRuns(staleThresholdMs?: number): Promise<number>;
 
   getRunSteps(runId: string): Promise<RunStep[]>;
   createRunStep(step: InsertRunStep): Promise<RunStep>;
@@ -1599,7 +1600,7 @@ export class DatabaseStorage implements IStorage {
       .where(
         and(
           eq(jobs.type, "agent_scheduled_run"),
-          or(eq(jobs.status, "queued"), eq(jobs.status, "processing")),
+          eq(jobs.status, "queued"),
           sql`payload->>'deploymentId' = ${deploymentId}`
         )
       )
@@ -1617,6 +1618,27 @@ export class DatabaseStorage implements IStorage {
           sql`payload->>'deploymentId' = ${deploymentId}`
         )
       );
+  }
+
+  async recoverStaleScheduledRuns(staleThresholdMs = 5 * 60 * 1000) {
+    const staleThreshold = new Date(Date.now() - staleThresholdMs);
+    const staleJobs = await db
+      .select()
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.type, "agent_scheduled_run"),
+          eq(jobs.status, "processing"),
+          lte(jobs.startedAt, staleThreshold)
+        )
+      );
+    for (const job of staleJobs) {
+      await db
+        .update(jobs)
+        .set({ status: "failed", error: "Recovered: stale processing state from prior server crash", completedAt: new Date() })
+        .where(eq(jobs.id, job.id));
+    }
+    return staleJobs.length;
   }
 
   async getRunSteps(runId: string) {

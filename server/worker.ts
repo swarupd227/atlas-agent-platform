@@ -453,15 +453,20 @@ async function processAgentScheduledRun(job: Job): Promise<Record<string, unknow
     console.error(`[worker] Scheduled cycle failed for ${agentName}:`, err.message);
   } finally {
     if (intervalMs > 0) {
-      const nextRunAt = new Date(Date.now() + intervalMs);
-      await storage.createJob({
-        type: "agent_scheduled_run",
-        status: "queued",
-        agentId: job.agentId,
-        payload,
-        scheduledFor: nextRunAt,
-      });
-      console.log(`[worker] Re-enqueued scheduled run for ${agentName}, next at ${nextRunAt.toISOString()}`);
+      const deployment = await storage.getDeployment(deploymentId);
+      if (deployment && deployment.status === "deployed") {
+        const nextRunAt = new Date(Date.now() + intervalMs);
+        await storage.createJob({
+          type: "agent_scheduled_run",
+          status: "queued",
+          agentId: job.agentId,
+          payload,
+          scheduledFor: nextRunAt,
+        });
+        console.log(`[worker] Re-enqueued scheduled run for ${agentName}, next at ${nextRunAt.toISOString()}`);
+      } else {
+        console.log(`[worker] Skipping re-enqueue for ${agentName}: deployment status is ${deployment?.status ?? "not found"}`);
+      }
     }
   }
 

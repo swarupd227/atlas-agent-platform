@@ -719,7 +719,7 @@ function hashCode(str: string): number {
             agentName: p.agentName,
             intervalMs: p.intervalMs,
             status: r.status,
-            scheduledFor: r.scheduledFor,
+            nextRunAt: r.scheduledFor,
             startedAt: r.startedAt,
             createdAt: r.createdAt,
           };
