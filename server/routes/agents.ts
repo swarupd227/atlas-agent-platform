@@ -73,7 +73,7 @@ const router = Router();
         }
       }
       const data = insertAgentSchema.omit({ organizationId: true }).parse(body);
-      const agent = await storage.createAgent({ ...data, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? null });
+      const agent = await storage.createAgent({ ...data, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? undefined });
 
       const sourceTemplateId = req.body.sourceTemplateId || (agent.runtimeConfig as any)?.sourceTemplateId;
       if (sourceTemplateId) {

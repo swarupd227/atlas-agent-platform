@@ -46,6 +46,7 @@ import {
 } from "./kinective-demo-store";
 import type { IStorage } from "./storage";
 import { storage } from "./storage";
+import { getDefaultOrgId } from "./auth";
 import { db } from "./db";
 import { eq } from "drizzle-orm";
 import { runTraces, agentRuntimeRuns, agents, mcpServers, deployments } from "@shared/schema";
@@ -1818,7 +1819,8 @@ demoRouter.post("/blackrock2/run-scenario", async (req: Request, res: Response) 
   ];
 
   try {
-    const inserted = await db.insert(runTraces).values(traces).returning({ id: runTraces.id, agentId: runTraces.agentId });
+    const insertOrgId = getDefaultOrgId()!;
+    const inserted = await db.insert(runTraces).values(traces.map(t => ({ ...t, organizationId: insertOrgId }))).returning({ id: runTraces.id, agentId: runTraces.agentId });
 
     await db.insert(agentRuntimeRuns).values(
       Object.values(AGENTS).map((agentId) => ({

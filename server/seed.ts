@@ -12,6 +12,7 @@ import {
   registrySources, marketplaceServers, trustedPublishers, marketplaceInstallRequests,
   traceSpans, platformSettings, runTraces as runTracesTable,
   ontologyConcepts,
+  type InsertApproval,
 } from "@shared/schema";
 import { storage } from "./storage";
 import { batch1Templates } from "./templates-batch1";
@@ -3184,7 +3185,7 @@ export async function seedDatabase() {
   }
 
   // Approvals
-  await db.insert(approvals).values([
+  const approvalsData: (typeof approvals.$inferInsert)[] = [
     {
       organizationId: seedOrgId,
       type: "deployment", objectType: "agent", objectName: "Support Triage Agent v2.4.0", riskScore: 7.5, status: "pending", requestedBy: "CI Pipeline", requesterType: "system",
@@ -3236,6 +3237,7 @@ export async function seedDatabase() {
       },
     },
     {
+      organizationId: seedOrgId,
       type: "tool_permission", objectType: "agent", objectName: "Invoice Extractor - Salesforce Write", riskScore: 8.2, status: "pending", requestedBy: "Finance Ops", requesterType: "human",
       description: "Grant write access to Salesforce for automated invoice record creation",
       agentId: agent3.id, outcomeId: outcome2.id, environment: "production", changeType: "tool_change", toolPermissionClass: "CRITICAL",
@@ -3266,6 +3268,7 @@ export async function seedDatabase() {
       },
     },
     {
+      organizationId: seedOrgId,
       type: "policy_exception", objectType: "policy", objectName: "PII Policy Exception - Support Agent", riskScore: 6.0, status: "pending", requestedBy: "Support Engineering", requesterType: "human",
       description: "Temporary exception to include customer name in personalized responses",
       agentId: agent1.id, outcomeId: outcome1.id, environment: "production", changeType: "policy_change", toolPermissionClass: "STANDARD",
@@ -3321,6 +3324,7 @@ export async function seedDatabase() {
       },
     },
     {
+      organizationId: seedOrgId,
       type: "model_upgrade", objectType: "agent", objectName: "Lead Scorer - Claude 3.5 Upgrade", riskScore: 4.5, status: "approved", requestedBy: "Revenue Ops", requesterType: "human",
       decidedBy: "Expert Validator", description: "Upgrade from Claude 3 to Claude 3.5 Sonnet for better scoring accuracy", decidedAt: new Date(Date.now() - 172800000),
       agentId: agent4.id, outcomeId: outcome2.id, environment: "pilot", changeType: "model_change", toolPermissionClass: "STANDARD",
@@ -3348,6 +3352,7 @@ export async function seedDatabase() {
       },
     },
     {
+      organizationId: seedOrgId,
       type: "patch_approval", objectType: "agent", objectName: "Support Triage Agent - Prompt Optimization", riskScore: 3.5, status: "pending", requestedBy: "Auto-Optimization Engine", requesterType: "system",
       description: "AI-proposed prompt tweak to improve response quality based on drift analysis",
       agentId: agent1.id, outcomeId: outcome1.id, environment: "staging", changeType: "prompt_change", toolPermissionClass: "OPEN",
@@ -3391,7 +3396,8 @@ export async function seedDatabase() {
         },
       },
     },
-  ]);
+  ];
+  await db.insert(approvals).values(approvalsData);
 
   // Audit Events with tamper-evident hash chain
   const auditEventData = [

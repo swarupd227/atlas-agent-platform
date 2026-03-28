@@ -907,7 +907,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
   router.post("/api/policies", checkPermission("create_modify_policies"), async (req, res) => {
     try {
       const data = insertPolicySchema.omit({ organizationId: true }).parse(req.body);
-      const policy = await storage.createPolicy({ ...data, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? null });
+      const policy = await storage.createPolicy({ ...data, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? undefined });
       res.status(201).json(policy);
     } catch (e) {
       handleZodError(res, e);
@@ -1160,7 +1160,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
   router.post("/api/approvals", checkPermission("approve_changes"), async (req, res) => {
     try {
       const data = insertApprovalSchema.omit({ organizationId: true }).parse(req.body);
-      const approval = await storage.createApproval({ ...data, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? null });
+      const approval = await storage.createApproval({ ...data, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? undefined });
       res.status(201).json(approval);
     } catch (e) {
       handleZodError(res, e);
@@ -1198,7 +1198,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     const updated = await storage.updateApproval(req.params.id as string, updateData, getOrgId(req));
 
     await storage.createAuditEvent({
-      organizationId: getOrgId(req) ?? null,
+      organizationId: getOrgId(req) ?? undefined,
       actorType: "expert_validator",
       actorId: decidedBy || "system",
       action: `approval_${status || "updated"}`,
@@ -3246,7 +3246,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
         severity: severity || "medium",
         status: "open",
         sourceMetric: metric || "unknown",
-        organizationId: getOrgId(req) ?? null,
+        organizationId: getOrgId(req) ?? undefined,
         sourceDetails: {
           metric,
           driftPercent,
@@ -3457,6 +3457,7 @@ Eval Suites: ${evalSuites.length} configured`,
       const { agentId, agentName, metric, severity, driftPercent, baseline, current } = req.body;
 
       const incident = await storage.createIncident({
+        organizationId: getOrgId(req) ?? undefined,
         agentId,
         agentName: agentName || "Unknown Agent",
         severity: severity || "medium",

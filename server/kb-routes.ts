@@ -687,7 +687,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
   app.post("/api/knowledge-bases", async (req, res) => {
     try {
       const data = insertKnowledgeBaseSchema.omit({ organizationId: true }).parse(req.body);
-      const kb = await storage.createKnowledgeBase({ ...data, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? null });
+      const kb = await storage.createKnowledgeBase({ ...data, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? undefined });
       res.status(201).json(kb);
     } catch (error: any) {
       res.status(400).json({ message: error.message });

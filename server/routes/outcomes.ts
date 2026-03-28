@@ -282,7 +282,7 @@ const router = Router();
     try {
       const data = insertOutcomeContractSchema.omit({ organizationId: true }).parse(req.body);
       const graph = computeConstraintGraph(data, []);
-      const outcome = await storage.createOutcome({ ...data, constraintGraph: graph, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? null });
+      const outcome = await storage.createOutcome({ ...data, constraintGraph: graph, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? undefined });
       res.status(201).json(outcome);
     } catch (e) {
       handleZodError(res, e);
@@ -305,7 +305,7 @@ const router = Router();
             weight: kpi.weight != null ? (typeof kpi.weight === "number" ? kpi.weight : (parseFloat(kpi.weight) || 1)) : 1,
           }))
         : [];
-      const orgId = getOrgId(req) ?? getDefaultOrgId() ?? null;
+      const orgId = (getOrgId(req) ?? getDefaultOrgId())!;
       const result = await db.transaction(async (tx) => {
         const [outcome] = await tx.insert(outcomeContracts).values({ ...parsedOutcome, organizationId: orgId }).returning();
         const createdKpis = [];

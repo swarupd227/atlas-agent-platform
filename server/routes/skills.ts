@@ -1094,7 +1094,7 @@ Return ONLY a valid JSON object with a "skills" array.`
   router.post("/api/skills", async (req, res) => {
     try {
       const data = insertSkillSchema.omit({ organizationId: true }).parse(req.body);
-      const skill = await storage.createSkill({ ...data, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? null });
+      const skill = await storage.createSkill({ ...data, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? undefined });
 
       let ontologyTagValidation = undefined;
       const skillTags = (data.tags as string[] | null) || [];
