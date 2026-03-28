@@ -4,6 +4,7 @@ import { EventEmitter } from "events";
 import { checkOntologyCompliance, executeScheduledAgentCycle } from "./agent-runtime";
 import { industryEvalFrameworks } from "./routes";
 import { runLlmJudge, runAgentOnInput, buildAgentContext } from "./eval-judge";
+import { getDefaultProvider } from "./llm-provider";
 
 export const jobEvents = new EventEmitter();
 jobEvents.setMaxListeners(50);
@@ -759,27 +760,144 @@ async function processShadowReplay(job: Job): Promise<Record<string, unknown>> {
   await storage.updateJob(job.id, { progress: 30 });
   jobEvents.emit("progress", { jobId: job.id, agentId, progress: 30, step: "replaying_traces" });
 
-  await delay(1000);
+  const provider = getDefaultProvider();
+  const agentCtx = buildAgentContext(agent);
 
-  const tracesReplayed = filteredTraces.length || Math.min(sampleSize, 15);
-  const passCount = Math.round(tracesReplayed * (0.7 + Math.random() * 0.25));
+  interface TraceReplayResult {
+    traceId: string;
+    isPassed: boolean;
+    confidence: number;
+    reason: string;
+    originalOutput: string;
+    replayOutput: string;
+    originalToolCallNames: string[];
+    replayToolCallNames: string[];
+    costDelta: number;
+    latencyDelta: number;
+  }
+
+  const perTraceResults: TraceReplayResult[] = [];
+  const tracesReplayed = filteredTraces.length;
+
+  for (let i = 0; i < filteredTraces.length; i++) {
+    const trace = filteredTraces[i];
+    try {
+      const promptInputs = (trace.promptInputs as Record<string, unknown>) || {};
+      let userMessage: string;
+      if (typeof promptInputs.prompt === "string") {
+        userMessage = promptInputs.prompt;
+      } else if (typeof promptInputs.input === "string") {
+        userMessage = promptInputs.input;
+      } else if (typeof promptInputs.message === "string") {
+        userMessage = promptInputs.message;
+      } else if (typeof promptInputs.query === "string") {
+        userMessage = promptInputs.query;
+      } else if (trace.inputSummary) {
+        userMessage = trace.inputSummary;
+      } else if (Object.keys(promptInputs).length > 0) {
+        userMessage = JSON.stringify(promptInputs, null, 2);
+      } else {
+        userMessage = "No input available for replay";
+      }
+
+      const replayStart = Date.now();
+      const replayResult = await provider.complete(
+        [
+          { role: "system", content: agent.systemPrompt || "You are a helpful AI assistant." },
+          { role: "user", content: userMessage },
+        ],
+        { temperature: 0, maxTokens: 1000 },
+      );
+      const replayLatencyMs = Date.now() - replayStart;
+      const replayCostUsd = replayResult.costUsd;
+      const replayOutput = replayResult.content;
+
+      const originalOutput = trace.outputSummary || "";
+      const originalLatencyMs = trace.latencyMs || 0;
+      const originalCostUsd = trace.costUsd || 0;
+
+      const originalToolCallNames = Array.isArray(trace.toolCalls)
+        ? (trace.toolCalls as Array<Record<string, unknown>>).map(tc =>
+            typeof tc.name === "string" ? tc.name : "unknown"
+          )
+        : [];
+      const replayToolCallNames = replayResult.toolCalls.map(tc => tc.name);
+
+      const judgeResult = await runLlmJudge(
+        `shadow_replay:${trace.id}`,
+        { inputContext: userMessage },
+        {
+          referenceOutput: originalOutput,
+          criterion: "The replay output must convey the same intent, key information, and correctness as the reference output",
+        },
+        agentCtx,
+        replayOutput,
+      );
+
+      perTraceResults.push({
+        traceId: trace.id,
+        isPassed: judgeResult.isPassed,
+        confidence: judgeResult.confidence,
+        reason: judgeResult.reason,
+        originalOutput,
+        replayOutput,
+        originalToolCallNames,
+        replayToolCallNames,
+        costDelta: replayCostUsd - originalCostUsd,
+        latencyDelta: replayLatencyMs - originalLatencyMs,
+      });
+    } catch (err: any) {
+      console.error(`[shadow-replay] Error replaying trace ${trace.id}:`, err.message);
+      perTraceResults.push({
+        traceId: trace.id,
+        isPassed: false,
+        confidence: 0,
+        reason: `Replay error: ${err.message}`,
+        originalOutput: trace.outputSummary || "",
+        replayOutput: "",
+        originalToolCallNames: [],
+        replayToolCallNames: [],
+        costDelta: 0,
+        latencyDelta: 0,
+      });
+    }
+
+    const progressPct = 30 + Math.round(((i + 1) / Math.max(filteredTraces.length, 1)) * 40);
+    await storage.updateJob(job.id, { progress: progressPct });
+    jobEvents.emit("progress", { jobId: job.id, agentId, progress: progressPct, step: "replaying_traces" });
+  }
+
+  const passCount = perTraceResults.filter(r => r.isPassed).length;
   const failCount = tracesReplayed - passCount;
   const passRate = tracesReplayed > 0 ? (passCount / tracesReplayed) * 100 : 0;
-  const avgCostDelta = (Math.random() * 0.02 - 0.01);
-  const avgLatencyDelta = Math.round(Math.random() * 500 - 200);
+  const avgCostDelta = tracesReplayed > 0
+    ? perTraceResults.reduce((sum, r) => sum + r.costDelta, 0) / tracesReplayed
+    : 0;
+  const avgLatencyDelta = tracesReplayed > 0
+    ? Math.round(perTraceResults.reduce((sum, r) => sum + r.latencyDelta, 0) / tracesReplayed)
+    : 0;
 
   await storage.updateJob(job.id, { progress: 70 });
   jobEvents.emit("progress", { jobId: job.id, agentId, progress: 70, step: "evaluating_results" });
 
-  await delay(500);
-
-  const divergences = Array.from({ length: failCount }, (_, i) => ({
-    traceId: filteredTraces[i]?.id || `trace-${i}`,
-    type: Math.random() > 0.5 ? "output_mismatch" : "tool_divergence",
-    severity: Math.random() > 0.7 ? "critical" : "minor",
-    originalOutput: "Original response content...",
-    replayOutput: "Replayed response with differences...",
-  }));
+  const divergences = perTraceResults
+    .filter(r => !r.isPassed)
+    .map(r => {
+      const origTools = new Set(r.originalToolCallNames);
+      const replayTools = new Set(r.replayToolCallNames);
+      const toolsDiverged =
+        r.originalToolCallNames.length !== r.replayToolCallNames.length ||
+        r.originalToolCallNames.some(t => !replayTools.has(t)) ||
+        r.replayToolCallNames.some(t => !origTools.has(t));
+      return {
+        traceId: r.traceId,
+        type: toolsDiverged ? "tool_divergence" : "output_mismatch",
+        severity: r.confidence < 0.5 ? "critical" : "minor",
+        originalOutput: r.originalOutput,
+        replayOutput: r.replayOutput,
+        reason: r.reason,
+      };
+    });
 
   const evidenceBundle = {
     type: "shadow_replay",
