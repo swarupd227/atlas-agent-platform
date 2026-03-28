@@ -1,12 +1,47 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type {
+  LLMProvider,
+  LLMMessage,
+  LLMCompletionOptions,
+  LLMCompletionResult,
+  LLMProviderInfo,
+  LLMEmbeddingResult,
+} from "../server/llm-provider";
+import { completeWithFallback } from "../server/llm-provider";
 
 /**
  * Deterministic unit tests for LLM resilience primitives.
  *
  * These tests exercise circuit-breaker state transitions, single-probe
- * half-open gating, fallback cascade classification, and cost-cap
- * termination fields — without making real LLM API calls.
+ * half-open gating, fallback cascade classification, cost-cap termination
+ * fields, and integration-style cascade behavior via real completeWithFallback
+ * calls with mock provider objects.
  */
+
+// ---------------------------------------------------------------------------
+// Mock provider factory
+// ---------------------------------------------------------------------------
+
+function makeResult(content = "ok"): LLMCompletionResult {
+  return {
+    content,
+    toolCalls: [],
+    tokensUsed: { prompt: 10, completion: 5, total: 15 },
+    costUsd: 0.001,
+  };
+}
+
+function mockProvider(
+  name: string,
+  completeFn: (msgs: LLMMessage[], opts?: LLMCompletionOptions) => Promise<LLMCompletionResult>
+): LLMProvider {
+  return {
+    providerName: name,
+    complete: completeFn,
+    embed: async () => ({ embeddings: [], tokensUsed: 0, costUsd: 0 } as LLMEmbeddingResult),
+    getInfo: () => ({ name, displayName: name, configured: true, models: [] } as LLMProviderInfo),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Inline circuit-breaker (mirrors server/llm-provider.ts logic exactly)
@@ -268,5 +303,73 @@ describe("Cost cap termination summary fields", () => {
     // success should only reflect step failures, not cost cap
     const success = failedSteps === 0;
     expect(success).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Integration-style tests: real completeWithFallback() with mock providers
+// ---------------------------------------------------------------------------
+
+const MESSAGES: LLMMessage[] = [{ role: "user", content: "hello" }];
+
+describe("completeWithFallback() integration (mock providers)", () => {
+  it("returns primary provider result when primary succeeds", async () => {
+    const primary = mockProvider("openai", async () => makeResult("from-primary"));
+    const fallback = mockProvider("anthropic", async () => makeResult("from-fallback"));
+    const result = await completeWithFallback(MESSAGES, undefined, [primary, fallback]);
+    expect(result.content).toBe("from-primary");
+  });
+
+  it("cascades to fallback when primary throws a transient 503 error", async () => {
+    const transientErr = Object.assign(new Error("Service unavailable"), { status: 503 });
+    const primary = mockProvider("openai", async () => { throw transientErr; });
+    const fallback = mockProvider("anthropic", async () => makeResult("from-fallback"));
+    const result = await completeWithFallback(MESSAGES, undefined, [primary, fallback]);
+    expect(result.content).toBe("from-fallback");
+  });
+
+  it("cascades to fallback when primary throws a 429 rate-limit error", async () => {
+    const rateLimitErr = Object.assign(new Error("Too Many Requests"), { status: 429 });
+    const primary = mockProvider("openai", async () => { throw rateLimitErr; });
+    const fallback = mockProvider("anthropic", async () => makeResult("fallback-ok"));
+    const result = await completeWithFallback(MESSAGES, undefined, [primary, fallback]);
+    expect(result.content).toBe("fallback-ok");
+  });
+
+  it("does NOT cascade and rethrows on permanent 401 error", async () => {
+    const authErr = Object.assign(new Error("Unauthorized"), { status: 401 });
+    const primary = mockProvider("openai", async () => { throw authErr; });
+    const fallbackCalled = vi.fn().mockResolvedValue(makeResult("fallback"));
+    const fallback = mockProvider("anthropic", fallbackCalled);
+    await expect(completeWithFallback(MESSAGES, undefined, [primary, fallback])).rejects.toThrow("Unauthorized");
+    expect(fallbackCalled).not.toHaveBeenCalled();
+  });
+
+  it("does NOT cascade and rethrows on permanent 400 error", async () => {
+    const badReqErr = Object.assign(new Error("Bad Request"), { status: 400 });
+    const primary = mockProvider("openai", async () => { throw badReqErr; });
+    const fallbackCalled = vi.fn().mockResolvedValue(makeResult("fallback"));
+    const fallback = mockProvider("anthropic", fallbackCalled);
+    await expect(completeWithFallback(MESSAGES, undefined, [primary, fallback])).rejects.toThrow("Bad Request");
+    expect(fallbackCalled).not.toHaveBeenCalled();
+  });
+
+  it("throws when all providers fail", async () => {
+    const err503 = Object.assign(new Error("Unavailable"), { status: 503 });
+    const primary = mockProvider("openai", async () => { throw err503; });
+    const fallback = mockProvider("anthropic", async () => { throw err503; });
+    await expect(completeWithFallback(MESSAGES, undefined, [primary, fallback])).rejects.toThrow(/All providers failed/);
+  });
+
+  it("strips model from options for fallback provider calls", async () => {
+    const primary = mockProvider("openai", async () => { throw Object.assign(new Error("Unavailable"), { status: 503 }); });
+    const receivedOptions: LLMCompletionOptions[] = [];
+    const fallback = mockProvider("anthropic", async (_msgs, opts) => {
+      receivedOptions.push(opts ?? {});
+      return makeResult("ok");
+    });
+    await completeWithFallback(MESSAGES, { model: "gpt-4.1", temperature: 0.5 }, [primary, fallback]);
+    expect(receivedOptions[0].model).toBeUndefined();
+    expect(receivedOptions[0].temperature).toBe(0.5);
   });
 });
