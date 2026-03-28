@@ -871,7 +871,7 @@ export async function fitchLiveRunHandler(req: Request, res: Response): Promise<
       sendEvent("agent_start", { agentId, agentName: def.name, role, deploymentId });
 
       if (await isRuntimeActive(deploymentId)) {
-        stopAgentRuntime(deploymentId);
+        await stopAgentRuntime(deploymentId);
         await new Promise(r => setTimeout(r, 300));
       }
 

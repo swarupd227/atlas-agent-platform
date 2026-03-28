@@ -478,7 +478,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         d => d.agentId === deployment.agentId && d.id !== req.params.id && d.status === "deployed"
       );
       for (const old of previouslyDeployed) {
-        stopAgentRuntime(old.id);
+        await stopAgentRuntime(old.id);
         await storage.updateDeployment(old.id, { status: "superseded" });
       }
 
@@ -531,7 +531,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
 
   router.post("/api/deployments/:id/stop-runtime", async (req, res) => {
     try {
-      const result = stopAgentRuntime(req.params.id);
+      const result = await stopAgentRuntime(req.params.id);
       if (result.stopped) {
         await storage.updateDeployment(req.params.id, { status: "inactive" });
       }
@@ -689,7 +689,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       }
 
       const richSystemPrompt = buildAgentSystemPrompt(agent);
-      stopAgentRuntime(deployment!.id);
+      await stopAgentRuntime(deployment!.id);
       const runtimeResult = await startAgentRuntime(deployment!.id, richSystemPrompt);
 
       res.json({

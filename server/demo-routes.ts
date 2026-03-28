@@ -1050,7 +1050,7 @@ demoRouter.get("/kinective/stream", async (req: Request, res: Response) => {
     kinectiveDeploymentId = deployment.id;
 
     if (await isRuntimeActive(kinectiveDeploymentId!)) {
-      stopAgentRuntime(kinectiveDeploymentId!);
+      await stopAgentRuntime(kinectiveDeploymentId!);
     }
 
     const enabledSystems = getEnabledSystems();
@@ -2303,7 +2303,7 @@ export async function bk1LiveRunStreamHandler(req: Request, res: Response): Prom
 
       sendEvent("agent_start", { agentId: def.id, agentName: def.name, role, deploymentId });
 
-      if (await isRuntimeActive(deploymentId)) stopAgentRuntime(deploymentId);
+      if (await isRuntimeActive(deploymentId)) await stopAgentRuntime(deploymentId);
 
       const maxIter = scenario === "sod" || scenario === "privesc" ? 6 : def.maxIterations;
       const result = await runAgentOnce(deploymentId, prompt, maxIter);
@@ -2909,7 +2909,7 @@ async function bk2LiveRunHandlerInner(req: Request, res: Response): Promise<void
       sendEvent("agent_start", { agentId, agentName: currentAgentName, role, deploymentId });
 
       if (await isRuntimeActive(deploymentId)) {
-        stopAgentRuntime(deploymentId);
+        await stopAgentRuntime(deploymentId);
       }
 
       const result = await runAgentOnce(deploymentId, prompt, 6);

@@ -1285,7 +1285,7 @@ Log every action.`;
         });
       }
       if (await isRuntimeActive(deployment.id)) {
-        stopAgentRuntime(deployment.id);
+        await stopAgentRuntime(deployment.id);
       }
 
       const selectedPrompt = prompts[selectedScenario];

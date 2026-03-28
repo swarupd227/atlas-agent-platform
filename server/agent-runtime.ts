@@ -2707,13 +2707,15 @@ export async function runAgentOnce(deploymentId: string, promptOverride?: string
   }
 }
 
-export function stopAgentRuntime(deploymentId: string): { stopped: boolean; message: string } {
+export async function stopAgentRuntime(deploymentId: string): Promise<{ stopped: boolean; message: string }> {
   const entry = activeAgents.get(deploymentId);
   activeAgents.delete(deploymentId);
 
-  storage.cancelScheduledRunsForDeployment(deploymentId).catch(err =>
-    console.error(`[agent-runtime] Failed to cancel scheduled runs for ${deploymentId}:`, err.message)
-  );
+  try {
+    await storage.cancelScheduledRunsForDeployment(deploymentId);
+  } catch (err: any) {
+    console.error(`[agent-runtime] Failed to cancel scheduled runs for ${deploymentId}:`, err.message);
+  }
 
   if (entry) {
     console.log(`[agent-runtime] Stopped runtime for ${entry.agent.agentName}`);
@@ -2725,14 +2727,14 @@ export function stopAgentRuntime(deploymentId: string): { stopped: boolean; mess
 
 export async function getActiveRuntimes(): Promise<Array<{ deploymentId: string; agentId: string; agentName: string; intervalMs: number }>> {
   const scheduledJobs = await storage.getScheduledRuns();
+  const seen = new Set<string>();
   const result: Array<{ deploymentId: string; agentId: string; agentName: string; intervalMs: number }> = [];
-  const scheduledDeploymentIds = new Set<string>();
 
   for (const job of scheduledJobs) {
     const p = (job.payload as Record<string, unknown>) || {};
     const depId = p.deploymentId as string;
-    if (depId) {
-      scheduledDeploymentIds.add(depId);
+    if (depId && !seen.has(depId)) {
+      seen.add(depId);
       result.push({
         deploymentId: depId,
         agentId: (job.agentId || p.agentId) as string,
@@ -2743,7 +2745,8 @@ export async function getActiveRuntimes(): Promise<Array<{ deploymentId: string;
   }
 
   for (const [deploymentId, { agent }] of Array.from(activeAgents.entries())) {
-    if (!scheduledDeploymentIds.has(deploymentId)) {
+    if (!seen.has(deploymentId)) {
+      seen.add(deploymentId);
       result.push({
         deploymentId,
         agentId: agent.agentId,
