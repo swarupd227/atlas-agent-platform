@@ -93,7 +93,7 @@ interface PlatformIntelTemplate {
   complexity: string;
   estimatedTimeToProd: string;
   deploymentCount: number;
-  industryId?: string;
+  industry?: string | null;
   category?: string | null;
   avgKpiDelivery?: number | null;
   defaultRiskTier?: string | null;
@@ -598,7 +598,7 @@ export default function OutcomeDiscover() {
   }, [proposal, industry?.id]);
 
   // Quick Create form intel query — use template industry with fallback to platform industry
-  const formIntelIndustry = selectedFormTemplate?.industry || industry?.id || "cross_industry";
+  const formIntelIndustry = selectedLibTemplate?.industry || selectedFormTemplate?.industry || industry?.id || "cross_industry";
   const formIntelRoles: string[] = selectedFormTemplate
     ? [
         ...(selectedFormTemplate.subVertical ? [selectedFormTemplate.subVertical] : []),
