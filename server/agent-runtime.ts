@@ -2616,27 +2616,32 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
 
   activeAgents.set(deploymentId, { agent: runtimeAgent });
 
-  if (intervalMinutes > 0) {
-    if (!skipInitialCycle) {
-      await executeAgentCycle(runtimeAgent);
-    }
-    const existing = await storage.getActiveScheduledRunForDeployment(deploymentId);
-    if (!existing) {
-      await storage.createJob({
-        type: "agent_scheduled_run",
-        status: "queued",
-        agentId: deployment.agentId,
-        payload: { deploymentId, agentId: deployment.agentId, intervalMs, agentName: agent.name },
-        scheduledFor: new Date(),
-      });
-      console.log(`[agent-runtime] Scheduled durable runtime for ${agent.name} (every ${intervalMs / 1000}s)`);
+  try {
+    if (intervalMinutes > 0) {
+      if (!skipInitialCycle) {
+        await executeAgentCycle(runtimeAgent);
+      }
+      const existing = await storage.getActiveScheduledRunForDeployment(deploymentId);
+      if (!existing) {
+        await storage.createJob({
+          type: "agent_scheduled_run",
+          status: "queued",
+          agentId: deployment.agentId,
+          payload: { deploymentId, agentId: deployment.agentId, intervalMs, agentName: agent.name },
+          scheduledFor: new Date(),
+        });
+        console.log(`[agent-runtime] Scheduled durable runtime for ${agent.name} (every ${intervalMs / 1000}s)`);
+      } else {
+        console.log(`[agent-runtime] Durable runtime already scheduled for ${agent.name} (next run: ${existing.scheduledFor?.toISOString() ?? "queued"})`);
+      }
+      return { started: true, message: `Agent runtime started for ${agent.name}. Executing every ${intervalMinutes} minutes.` };
     } else {
-      console.log(`[agent-runtime] Durable runtime already scheduled for ${agent.name} (next run: ${existing.scheduledFor?.toISOString() ?? "queued"})`);
+      console.log(`[agent-runtime] Registered on-demand runtime for ${agent.name}`);
+      return { started: true, message: `Agent runtime registered for ${agent.name} (on-demand). Use "Run Now" to trigger execution.` };
     }
-    return { started: true, message: `Agent runtime started for ${agent.name}. Executing every ${intervalMinutes} minutes.` };
-  } else {
-    console.log(`[agent-runtime] Registered on-demand runtime for ${agent.name}`);
-    return { started: true, message: `Agent runtime registered for ${agent.name} (on-demand). Use "Run Now" to trigger execution.` };
+  } catch (err) {
+    activeAgents.delete(deploymentId);
+    throw err;
   }
 }
 

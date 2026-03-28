@@ -1634,6 +1634,16 @@ export class DatabaseStorage implements IStorage {
           sql`payload->>'deploymentId' = ${deploymentId}`
         )
       );
+    await db
+      .update(jobs)
+      .set({ payload: sql`payload || '{"schedulerStopped":true}'::jsonb` })
+      .where(
+        and(
+          eq(jobs.type, "agent_scheduled_run"),
+          eq(jobs.status, "processing"),
+          sql`payload->>'deploymentId' = ${deploymentId}`
+        )
+      );
   }
 
   async recoverStaleScheduledRuns(staleThresholdMs = 5 * 60 * 1000) {

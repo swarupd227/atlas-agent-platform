@@ -453,8 +453,15 @@ async function processAgentScheduledRun(job: Job): Promise<Record<string, unknow
     console.error(`[worker] Scheduled cycle failed for ${agentName}:`, err.message);
   } finally {
     if (intervalMs > 0) {
-      const deployment = await storage.getDeployment(deploymentId);
-      if (deployment && deployment.status === "deployed") {
+      const [currentJob, deployment] = await Promise.all([
+        storage.getJob(job.id),
+        storage.getDeployment(deploymentId),
+      ]);
+      const currentPayload = (currentJob?.payload as Record<string, unknown>) || {};
+      const schedulerStopped = currentPayload.schedulerStopped === true;
+      if (schedulerStopped) {
+        console.log(`[worker] Skipping re-enqueue for ${agentName}: runtime was stopped during execution`);
+      } else if (deployment && deployment.status === "deployed") {
         const nextRunAt = new Date(Date.now() + intervalMs);
         await storage.createJob({
           type: "agent_scheduled_run",
