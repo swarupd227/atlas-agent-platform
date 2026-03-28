@@ -128,7 +128,7 @@ const router = Router();
   router.post("/api/policy-check", async (req, res) => {
     const { agentId, actionType, changes } = req.body;
 
-    const agent = await storage.getAgent(agentId);
+    const agent = await storage.getAgent(agentId, getOrgId(req));
     if (!agent) return res.status(404).json({ error: "Agent not found" });
 
     const policies = await storage.getPolicies(getOrgId(req));
@@ -587,7 +587,7 @@ const router = Router();
 
   router.get("/api/agents/:id/timeline", async (req, res) => {
     const agentId = req.params.id;
-    const agent = await storage.getAgent(agentId);
+    const agent = await storage.getAgent(agentId, getOrgId(req));
     if (!agent) return res.status(404).json({ error: "Agent not found" });
 
     const versions = await storage.getAgentVersions(agentId);
@@ -2470,7 +2470,7 @@ Return ONLY a valid JSON array of opportunity objects. Do not include any text b
       const { agentId } = req.body;
       if (!agentId) return res.status(400).json({ error: "agentId is required" });
 
-      const agent = await storage.getAgent(agentId);
+      const agent = await storage.getAgent(agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
       const allEvals = await storage.getEvalSuites();
@@ -2672,7 +2672,7 @@ Return a JSON array of 3-5 improvement cycle proposals. Return ONLY valid JSON.`
   router.get("/api/policies/resolve/:agentId", async (req, res) => {
     try {
       const { agentId } = req.params;
-      const agent = await storage.getAgent(agentId);
+      const agent = await storage.getAgent(agentId, getOrgId(req));
       if (!agent) {
         return res.status(404).json({ message: "Agent not found" });
       }
@@ -2716,7 +2716,7 @@ Return a JSON array of 3-5 improvement cycle proposals. Return ONLY valid JSON.`
   // ── Deprecation Detection ──────────────────────────────────────────
   router.post("/api/agents/:id/autonomy-hooks", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const { hookType, action } = req.body;
@@ -2783,7 +2783,7 @@ Respond in JSON: { "testCases": [{ "name": string, "inputData": object, "expecte
 
   router.post("/api/agents/:id/shadow-replay", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const { timeWindow, environment, sampleSize } = req.body;
@@ -2982,7 +2982,7 @@ Respond in JSON: { "testCases": [{ "name": string, "inputData": object, "expecte
 
   router.get("/api/agents/:id/deprecation-signals", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const traces = await storage.getTracesByAgent(req.params.id);
@@ -3139,7 +3139,7 @@ Respond in JSON: { "testCases": [{ "name": string, "inputData": object, "expecte
       const suite = await storage.getEvalSuite(suiteId);
       if (!suite) return res.status(404).json({ error: "Eval suite not found" });
 
-      const agent = agentId ? await storage.getAgent(agentId) : null;
+      const agent = agentId ? await storage.getAgent(agentId, getOrgId(req)) : null;
 
       const agentOntologyTags = agent && Array.isArray(agent.ontologyTags) ? agent.ontologyTags as string[] : [];
       const agentIndustry = (agent as any)?.industry || "";
@@ -3223,7 +3223,7 @@ Generate diverse test cases that:
       const { agentId } = req.body;
       if (!agentId) return res.status(400).json({ message: "agentId is required" });
 
-      const agent = await storage.getAgent(agentId);
+      const agent = await storage.getAgent(agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const templates = await storage.getAgentTemplates();
@@ -3421,7 +3421,7 @@ Enhance this template to be production-ready and comprehensive. For preloadedSki
 
   router.get("/api/agents/:id/export-archive", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const traces = await storage.getTracesByAgent(req.params.id);
@@ -3479,7 +3479,7 @@ Enhance this template to be production-ready and comprehensive. For preloadedSki
 
   router.get("/api/agents/:id/retirement-report", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const traces = await storage.getTracesByAgent(req.params.id);
@@ -3501,7 +3501,7 @@ Enhance this template to be production-ready and comprehensive. For preloadedSki
         } catch {}
       }
       if (replacementAgentId) {
-        const replacement = await storage.getAgent(replacementAgentId);
+        const replacement = await storage.getAgent(replacementAgentId, getOrgId(req));
         replacementAgentName = replacement?.name || null;
       }
 
@@ -3569,7 +3569,7 @@ Enhance this template to be production-ready and comprehensive. For preloadedSki
   // ── Retirement Workflow ──────────────────────────────────────────
   router.post("/api/agents/:id/initiate-retirement", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
       if (agent.status === "retired") return res.status(400).json({ message: "Agent is already retired" });
 
@@ -3614,7 +3614,7 @@ Enhance this template to be production-ready and comprehensive. For preloadedSki
 
   router.post("/api/agents/:id/complete-retirement", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const { handoverComplete, requireApproval } = req.body;
@@ -3705,7 +3705,7 @@ Enhance this template to be production-ready and comprehensive. For preloadedSki
       const patch = allPatches.find(p => p.id === (req.params.id as string));
       if (!patch) return res.status(404).json({ message: "Patch not found" });
 
-      const agent = patch.agentId ? await storage.getAgent(patch.agentId) : null;
+      const agent = patch.agentId ? await storage.getAgent(patch.agentId, getOrgId(req)) : null;
       const agentTraces = patch.agentId ? await storage.getTracesByAgent(patch.agentId) : [];
       const recentTraces = agentTraces.slice(-30);
       const totalRuns = recentTraces.length;
@@ -3874,7 +3874,7 @@ Analyze and respond in JSON:
       const { agentId } = req.body;
       if (!agentId) return res.status(400).json({ message: "agentId required" });
 
-      const agent = await storage.getAgent(agentId);
+      const agent = await storage.getAgent(agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const recommendations = await storage.getImprovementRecommendationsByAgent(agentId);

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { storage } from "../storage";
 import { db } from "../db";
 import { eq, desc } from "drizzle-orm";
+import { getOrgId } from "../auth";
 import { conversations, messages as chatMessages } from "@shared/schema";
 import { buildAgentSystemPrompt } from "./helpers";
 import { executePromptWithMcp, type RuntimeProgressEvent } from "../agent-runtime";
@@ -25,7 +26,7 @@ const router = Router();
   router.post("/api/agents/:agentId/playground/sessions", async (req, res) => {
     try {
       const { agentId } = req.params;
-      const agent = await storage.getAgent(agentId);
+      const agent = await storage.getAgent(agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
       const [conversation] = await db.insert(conversations).values({
         title: `${agent.name} - Playground`,
@@ -68,7 +69,7 @@ const router = Router();
         return res.status(400).json({ error: "content (string) and sessionId are required" });
       }
 
-      const agent = await storage.getAgent(agentId);
+      const agent = await storage.getAgent(agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
       const [session] = await db.select().from(conversations).where(eq(conversations.id, sessionId));
@@ -290,7 +291,7 @@ const router = Router();
         return res.status(400).json({ error: "content (string) is required" });
       }
 
-      const agent = await storage.getAgent(agentId);
+      const agent = await storage.getAgent(agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
       const existingMsgs = sessionId
@@ -353,7 +354,7 @@ const router = Router();
         return res.json({ annotations: [] });
       }
 
-      const agent = await storage.getAgent(agentId);
+      const agent = await storage.getAgent(agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
       const compliance = Array.isArray(agent.complianceTags) ? agent.complianceTags : [];

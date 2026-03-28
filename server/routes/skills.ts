@@ -414,7 +414,7 @@ const router = Router();
 
   router.post("/api/agents/:id/clear-revalidation", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id as string);
+      const agent = await storage.getAgent(req.params.id as string, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
       const updated = await storage.updateAgent(req.params.id as string, {
         requiresRevalidation: false,

@@ -156,7 +156,7 @@ router.delete("/api/agents/:agentId/triggers/:triggerId", async (req, res) => {
         lastFiredAt: new Date(),
         fireCount: (trigger.fireCount || 0) + 1,
       });
-      const agent = await storage.getAgent(trigger.agentId);
+      const agent = await storage.getAgent(trigger.agentId, getOrgId(req));
       if (!agent) {
         return res.status(404).json({ error: "Agent not found" });
       }

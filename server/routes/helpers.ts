@@ -141,14 +141,14 @@ function resolveOntologyTags(
   return tags;
 }
 
-async function generateKpiAlignedEvalSuite(agentId: string, outcomeId: string): Promise<{ suite: any; testCases: any[] } | null> {
+async function generateKpiAlignedEvalSuite(agentId: string, outcomeId: string, orgId?: string): Promise<{ suite: any; testCases: any[] } | null> {
   const outcome = await storage.getOutcome(outcomeId);
   if (!outcome) return null;
 
   const kpis = await storage.getKpisByOutcome(outcomeId);
   if (kpis.length === 0) return null;
 
-  const agent = await storage.getAgent(agentId);
+  const agent = await storage.getAgent(agentId, orgId);
   if (!agent) return null;
 
   const testCases: Array<{ name: string; inputData: unknown; expectedOutput: unknown; tags: string[]; weight: number; origin: string; severity: string; locked?: boolean; regulationRef?: string }> = [];

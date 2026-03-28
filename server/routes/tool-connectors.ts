@@ -569,7 +569,7 @@ router.delete("/api/admin/webhooks/:id", async (req, res) => {
       });
       const { agentId, suiteId, blueprintId } = schema.parse(req.body);
 
-      const agent = await storage.getAgent(agentId);
+      const agent = await storage.getAgent(agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
       const suite = await storage.getEvalSuite(suiteId);

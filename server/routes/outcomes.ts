@@ -707,7 +707,7 @@ const router = Router();
       const existingSuites = await storage.getEvalsByAgent(primaryAgent.id);
       let kpiSuite: Awaited<ReturnType<typeof storage.createEvalSuite>> | undefined = existingSuites.find(s => s.type === "kpi_aligned");
       if (!kpiSuite) {
-        const generated = await generateKpiAlignedEvalSuite(primaryAgent.id, outcomeId);
+        const generated = await generateKpiAlignedEvalSuite(primaryAgent.id, outcomeId, getOrgId(req));
         if (generated) {
           kpiSuite = generated.suite;
         } else {

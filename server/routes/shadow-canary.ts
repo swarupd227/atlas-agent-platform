@@ -281,11 +281,11 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       if (agentId) {
         const mcpLinks = await storage.getAgentMcpServers(agentId);
         mcpServerIds = mcpLinks.map(l => l.serverId);
-        const testAgent = await storage.getAgent(agentId);
+        const testAgent = await storage.getAgent(agentId, getOrgId(req));
         if (testAgent) richPrompt = buildAgentSystemPrompt(testAgent);
       }
 
-      const testAgentForIter = agentId ? await storage.getAgent(agentId) : null;
+      const testAgentForIter = agentId ? await storage.getAgent(agentId, getOrgId(req)) : null;
       const result = await executePromptWithMcp(
         agentId || "test",
         "test-run",
@@ -317,7 +317,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       const stages = (deployment.pipelineStages as any[]) || [];
       if (stages.length === 0) return res.status(400).json({ message: "No pipeline stages configured" });
 
-      const deployAgent = await storage.getAgent(deployment.agentId);
+      const deployAgent = await storage.getAgent(deployment.agentId, getOrgId(req));
       const pipelineResults: Array<{ stage: string; type: string; status: string; findings: any }> = [];
       const updatedStages: any[] = [];
       let pipelineHalted = false;
@@ -509,7 +509,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       let richPrompt: string | undefined;
       let agent: any = null;
       if (dep) {
-        agent = await storage.getAgent(dep.agentId);
+        agent = await storage.getAgent(dep.agentId, getOrgId(req));
         if (agent) richPrompt = buildAgentSystemPrompt(agent);
       }
       const result = await startAgentRuntime(req.params.id, richPrompt);
@@ -590,7 +590,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       const deployment = await storage.getDeployment(req.params.id);
       if (!deployment) return res.status(404).json({ error: "Deployment not found" });
 
-      const agent = await storage.getAgent(deployment.agentId);
+      const agent = await storage.getAgent(deployment.agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
       const mcpLinks = await storage.getAgentMcpServers(deployment.agentId);
@@ -639,7 +639,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
 
   router.post("/api/agents/:id/deploy-and-run", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
       const mcpLinks = await storage.getAgentMcpServers(req.params.id);
@@ -706,7 +706,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
 
   router.post("/api/agents/:id/run-test", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
       const rtConfig = (agent.runtimeConfig as Record<string, any>) || {};
@@ -799,7 +799,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
 
   router.get("/api/agents/:id/kpi-contributions", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
       if (!agent.outcomeId) {
@@ -911,7 +911,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
 
   router.get("/api/agents/:id/computed-stats", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
       const rawTraces = await storage.getTracesByAgent(req.params.id);
@@ -1002,7 +1002,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
 
   router.get("/api/agents/:id/runtime-status", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
       const deployments = await storage.getDeployments(getOrgId(req));

@@ -999,7 +999,7 @@ Return ONLY valid JSON.`
         return res.status(400).json({ message: "agentId and industry are required" });
       }
 
-      const agent = await storage.getAgent(agentId);
+      const agent = await storage.getAgent(agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const allIndustryProfiles = await storage.getDecisionQualityProfiles({ industry });

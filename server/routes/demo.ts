@@ -782,7 +782,7 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
   });
 
   // GET /demo-api/hearst/agent-runs — All 5 Hearst agent last runs from real platform tables
-  router.get("/demo-api/hearst/agent-runs", async (_req, res) => {
+  router.get("/demo-api/hearst/agent-runs", async (req, res) => {
     try {
       await seedHearstAgentRuns();
 
@@ -806,7 +806,7 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
         PIPELINE_ORDER.map(async (key) => {
           const agentId = HEARST_AGENT_IDS[key];
           const [agent, runs] = await Promise.all([
-            storage.getAgent(agentId),
+            storage.getAgent(agentId, getOrgId(req)),
             storage.getAgentRuntimeRuns(agentId),
           ]);
 
@@ -1099,7 +1099,7 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
   });
 
   // GET /demo-api/fitch/agent-runs — All 6 Fitch agent last runs from real platform tables
-  router.get("/demo-api/fitch/agent-runs", async (_req, res) => {
+  router.get("/demo-api/fitch/agent-runs", async (req, res) => {
     try {
       await ensureFitchAgents();
 
@@ -1112,7 +1112,7 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
             return { key, agentId: null, agentName: name, agentStatus: "idle", runId: null, runStatus: null, triggerType: null, startedAt: null, completedAt: null, latencyMs: null, resultSummary: null };
           }
           const [agent, runs] = await Promise.all([
-            storage.getAgent(agentId),
+            storage.getAgent(agentId, getOrgId(req)),
             storage.getAgentRuntimeRuns(agentId),
           ]);
 

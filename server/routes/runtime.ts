@@ -497,7 +497,7 @@ function hashCode(str: string): number {
       });
       const { agentId, input, environment } = schema.parse(req.body);
 
-      const agent = await storage.getAgent(agentId);
+      const agent = await storage.getAgent(agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const policyBundle = await resolvePolicyBundle(agentId, getOrgId(req));
@@ -765,7 +765,7 @@ function hashCode(str: string): number {
 
   router.post("/api/agents/:agentId/api-keys", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.agentId);
+      const agent = await storage.getAgent(req.params.agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const schema = z.object({
@@ -854,7 +854,7 @@ function hashCode(str: string): number {
 
   router.post("/api/agents/:agentId/channels", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.agentId);
+      const agent = await storage.getAgent(req.params.agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       if (agent.status !== "deployed") {
@@ -941,7 +941,7 @@ function hashCode(str: string): number {
         return res.status(404).json({ message: "Channel not found" });
       }
 
-      const agent = await storage.getAgent(req.params.agentId);
+      const agent = await storage.getAgent(req.params.agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const testMessage = `Test message from ${channel.channelType} channel integration`;
@@ -992,7 +992,7 @@ function hashCode(str: string): number {
         return res.status(422).json({ error: "channel_paused", message: `Channel is ${channel.status}` });
       }
 
-      const agent = await storage.getAgent(channel.agentId);
+      const agent = await storage.getAgent(channel.agentId, getOrgId(req));
       if (!agent) {
         return res.status(404).json({ error: "agent_not_found", message: "Agent not found" });
       }
@@ -1128,7 +1128,7 @@ function hashCode(str: string): number {
         return res.status(422).json({ error: "channel_paused", message: `Channel is ${channel.status}` });
       }
 
-      const agent = await storage.getAgent(channel.agentId);
+      const agent = await storage.getAgent(channel.agentId, getOrgId(req));
       if (!agent) {
         return res.status(404).json({ error: "agent_not_found", message: "Agent not found" });
       }
@@ -1208,7 +1208,7 @@ function hashCode(str: string): number {
         return res.status(422).json({ error: "channel_paused", message: `Channel is ${channel.status}` });
       }
 
-      const agent = await storage.getAgent(channel.agentId);
+      const agent = await storage.getAgent(channel.agentId, getOrgId(req));
       if (!agent) {
         return res.status(404).json({ error: "agent_not_found", message: "Agent not found" });
       }
@@ -1357,7 +1357,7 @@ function hashCode(str: string): number {
 
       storage.updateAgentApiKey(apiKey.id, { lastUsedAt: new Date() });
 
-      const agent = await storage.getAgent(req.params.agentId);
+      const agent = await storage.getAgent(req.params.agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "not_found", message: "Agent not found" });
 
       if (agent.status !== "deployed") {
@@ -1616,7 +1616,7 @@ function hashCode(str: string): number {
 
       storage.updateAgentApiKey(apiKey.id, { lastUsedAt: new Date() });
 
-      const agent = await storage.getAgent(req.params.agentId);
+      const agent = await storage.getAgent(req.params.agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "not_found", message: "Agent not found" });
 
       res.json({
@@ -3315,7 +3315,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
   // POST /api/agents/:id/export-code
   router.post("/api/agents/:id/export-code", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const agentMaxIter = agent.maxToolIterations || 5;
@@ -4629,7 +4629,7 @@ clean:
 
   router.post("/api/agents/:id/export-code/regen-file", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const regenSchema = z.object({
@@ -4742,7 +4742,7 @@ clean:
     interface GhRepo { default_branch: string }
 
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const { files, repoUrl, metadata } = req.body as { files: Record<string, string>; repoUrl: string; metadata?: { format?: string } };
@@ -4859,7 +4859,7 @@ clean:
 
   router.get("/api/agents/:id/export-manifest", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const formatParam = (req.query.format as string) || "json";
@@ -5026,7 +5026,7 @@ clean:
 
   router.get("/api/agents/:id/manifest-diff", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const againstVersion = parseInt(req.query.against as string, 10);
@@ -5093,7 +5093,7 @@ clean:
   // POST /api/agents/:id/export-validate
   router.post("/api/agents/:id/export-validate", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const schema = z.object({
@@ -5161,7 +5161,7 @@ clean:
       };
 
       if (mode === "update") {
-        const existingAgent = await storage.getAgent(agentId);
+        const existingAgent = await storage.getAgent(agentId, getOrgId(req));
         if (!existingAgent) return res.status(404).json({ message: "Agent not found" });
 
         if (manifest.checksums) {
@@ -5355,7 +5355,7 @@ clean:
           details: `Manifest imported in update mode. Created: ${changeReport.created.join(", ") || "none"}. Updated: ${changeReport.updated.join(", ") || "none"}.`,
         });
 
-        const updatedAgent = await storage.getAgent(agentId);
+        const updatedAgent = await storage.getAgent(agentId, getOrgId(req));
         res.json({ mode: "update", agentId, agent: updatedAgent, changeReport });
       } else {
         const newAgent = await storage.createAgent({
@@ -5452,7 +5452,7 @@ clean:
 
   router.post("/api/agents/:id/rollback-config", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const schema = z.object({ targetVersion: z.number().int().positive() });
@@ -5602,7 +5602,7 @@ clean:
 
   router.post("/api/agents/:id/git-push", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const gitConfig = (agent.gitConfig || {}) as Record<string, any>;
@@ -5711,7 +5711,7 @@ clean:
 
   router.post("/api/agents/:id/git-pull", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const gitConfig = (agent.gitConfig || {}) as Record<string, any>;
@@ -5838,7 +5838,7 @@ clean:
 
   router.get("/api/agents/:id/git-status", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const gitConfig = (agent.gitConfig || {}) as Record<string, any>;
@@ -5906,7 +5906,7 @@ clean:
 
   router.patch("/api/agents/:id/git-config", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const schema = z.object({
@@ -5928,7 +5928,7 @@ clean:
 
   router.get("/api/agents/:id/ci-cd-config", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
       const ciCdConfig = (agent.ciCdConfig || {
         autoEvalOnPush: false,
@@ -5944,7 +5944,7 @@ clean:
 
   router.patch("/api/agents/:id/ci-cd-config", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const schema = z.object({
@@ -5968,7 +5968,7 @@ clean:
 
   router.get("/api/agents/:id/pipeline-runs", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const auditEvts = await storage.getAuditEvents(getOrgId(req));
@@ -6970,7 +6970,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
   router.post("/api/agents/:id/mcp-servers", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const { serverId, acknowledgeWarnings } = req.body;
@@ -8386,10 +8386,10 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
   router.post("/api/agent-teams/members", async (req, res) => {
     try {
       const data = insertAgentTeamSchema.parse(req.body);
-      const teamAgent = await storage.getAgent(data.teamAgentId);
+      const teamAgent = await storage.getAgent(data.teamAgentId, getOrgId(req));
       if (!teamAgent) return res.status(404).json({ error: "Team agent not found" });
       if (teamAgent.agentType !== "team") return res.status(400).json({ error: "Agent is not a team type" });
-      const memberAgent = await storage.getAgent(data.memberAgentId);
+      const memberAgent = await storage.getAgent(data.memberAgentId, getOrgId(req));
       if (!memberAgent) return res.status(404).json({ error: "Member agent not found" });
       const member = await storage.createAgentTeamMember(data);
       res.status(201).json(member);
@@ -10344,7 +10344,7 @@ Return ONLY a valid JSON object.`
 
       if (agentId) {
         try {
-          const agent = await storage.getAgent(agentId);
+          const agent = await storage.getAgent(agentId, getOrgId(req));
           if (agent) {
             const evidenceBundle: Record<string, any> = {};
             const agentSuites = await storage.getEvalsByAgent(agent.id);
@@ -10780,7 +10780,7 @@ Return ONLY a valid JSON object.`
       if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
 
       const agentId = pipeline.agentId;
-      const agent = agentId ? await storage.getAgent(agentId) : null;
+      const agent = agentId ? await storage.getAgent(agentId, getOrgId(req)) : null;
 
       const evidenceBundle: Record<string, any> = {};
 
@@ -11083,7 +11083,7 @@ Respond with JSON:
         if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
 
         if (pipeline.agentId) {
-          const agent = await storage.getAgent(pipeline.agentId);
+          const agent = await storage.getAgent(pipeline.agentId, getOrgId(req));
           if (agent) {
             const evidenceParts: string[] = [];
 
@@ -11944,7 +11944,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         return res.json({ output: "Awaiting human approval...", requiresApproval: true });
       }
 
-      const agent = currentStage.agentId ? await storage.getAgent(currentStage.agentId) : null;
+      const agent = currentStage.agentId ? await storage.getAgent(currentStage.agentId, getOrgId(req)) : null;
       const agentName = agent?.name || currentStage.label;
       const previousResults = ((run.stageResults as any[]) || [])
         .filter((r: any) => r.status === "completed" || r.status === "approved")
@@ -12258,7 +12258,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
 
   router.post("/api/agents/:id/validate-prompt-vocabulary", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
       const text = req.body.text || agent.systemPrompt || "";
@@ -12671,7 +12671,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
   router.post("/api/context-economics/agent/:agentId/generate-recommendations", async (req, res) => {
     try {
       const { agentId } = req.params;
-      const agent = await storage.getAgent(agentId);
+      const agent = await storage.getAgent(agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
       const allRecords = await storage.getContextEconomicsByAgent(agentId);
@@ -13054,7 +13054,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
   router.get("/api/agents/:agentId/eval-kb-gaps", async (req, res) => {
     try {
       const { agentId } = req.params;
-      const agent = await storage.getAgent(agentId);
+      const agent = await storage.getAgent(agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const evalSuitesList = await storage.getEvalsByAgent(agentId);

@@ -374,7 +374,7 @@ const router = Router();
       let kpiSuiteResult = null;
       if (agent.outcomeId) {
         try {
-          kpiSuiteResult = await generateKpiAlignedEvalSuite(agent.id, agent.outcomeId);
+          kpiSuiteResult = await generateKpiAlignedEvalSuite(agent.id, agent.outcomeId, getOrgId(req));
         } catch (kpiErr) {
           console.error("[kpi-eval] KPI-aligned eval suite generation failed:", kpiErr);
         }
@@ -541,7 +541,7 @@ const router = Router();
       const outcomeNewlyBound = updated.outcomeId && (!existing.outcomeId || existing.outcomeId !== updated.outcomeId);
       if (outcomeNewlyBound) {
         try {
-          kpiSuiteResult = await generateKpiAlignedEvalSuite(updated.id, updated.outcomeId!);
+          kpiSuiteResult = await generateKpiAlignedEvalSuite(updated.id, updated.outcomeId!, getOrgId(req));
         } catch (kpiErr) {
           console.error("[kpi-eval] KPI-aligned eval suite generation on binding failed:", kpiErr);
         }
@@ -561,7 +561,7 @@ const router = Router();
 
   router.post("/api/agents/:id/validate-config", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const proposedChanges = req.body;
@@ -727,7 +727,7 @@ const router = Router();
   router.get("/api/agents/:id/context-layers", async (req, res) => {
     try {
       const agentId = req.params.id;
-      const agent = await storage.getAgent(agentId);
+      const agent = await storage.getAgent(agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
       const estimateTokens = (text: string) => Math.ceil(text.length / 4);
@@ -987,7 +987,7 @@ const router = Router();
 
   router.get("/api/agents/:id/deployment-recommendation", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
       const riskTier = agent.riskTier || "LOW";
@@ -1111,7 +1111,7 @@ const router = Router();
 
   router.get("/api/agents/:id/memory-compliance", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
       const rules = (agent.memoryGovernanceRules as Array<{ rule: string; regulation: string; type: string }>) || [];
@@ -1189,7 +1189,7 @@ const router = Router();
 
   router.get("/api/agents/:id/ontology-compliance", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
 
       const ontologyTags = (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) || [];
@@ -1878,7 +1878,7 @@ const router = Router();
       const data = insertDeploymentSchema.parse(deploymentBody);
       const env = data.environment || "staging";
 
-      const agent = await storage.getAgent(data.agentId);
+      const agent = await storage.getAgent(data.agentId, getOrgId(req));
 
       if (env === "prod" && agent) {
         const blueprints = await storage.getBlueprints();
@@ -2164,7 +2164,7 @@ const router = Router();
       if (!updated) return res.status(404).json({ message: "Deployment not found" });
 
       if (req.body.status === "active" && existing.status !== "active") {
-        const agent = await storage.getAgent(existing.agentId);
+        const agent = await storage.getAgent(existing.agentId, getOrgId(req));
         const srcTplId = (agent?.runtimeConfig as any)?.sourceTemplateId;
         if (srcTplId) {
           await storage.incrementTemplateDeployments(srcTplId);
@@ -2268,7 +2268,7 @@ const router = Router();
 
       const bypassEvalGate = req.body.bypassEvalGate === true;
 
-      const promoteAgent = await storage.getAgent(source.agentId);
+      const promoteAgent = await storage.getAgent(source.agentId, getOrgId(req));
       const promoteRtConfig = (promoteAgent?.runtimeConfig as Record<string, any>) || {};
       const promoteGateOverrides = promoteRtConfig.promotionGateOverrides || {};
       const configuredEvalThreshold = typeof promoteGateOverrides.minEvalPassRate === "number" ? promoteGateOverrides.minEvalPassRate : (nextEnv === "prod" ? 80 : 60);
@@ -2461,7 +2461,7 @@ const router = Router();
       }
 
       if (nextEnv === "prod") {
-        const agent = await storage.getAgent(source.agentId);
+        const agent = await storage.getAgent(source.agentId, getOrgId(req));
         const evalSuites = await storage.getEvalSuites();
         const agentSuites = evalSuites.filter(s => s.agentId === source.agentId);
         const traces = await storage.getTracesByAgent(source.agentId);
@@ -2648,7 +2648,7 @@ const router = Router();
       });
 
       if (updateData.status === "active" && deployment.status !== "active") {
-        const agent = await storage.getAgent(deployment.agentId);
+        const agent = await storage.getAgent(deployment.agentId, getOrgId(req));
         const srcTplId = (agent?.runtimeConfig as any)?.sourceTemplateId;
         if (srcTplId) {
           await storage.incrementTemplateDeployments(srcTplId);
@@ -2702,7 +2702,7 @@ const router = Router();
         ? Math.round(recentTraces.reduce((sum, t) => sum + (t.latencyMs || 0), 0) / totalTraces)
         : 0;
 
-      const agent = await storage.getAgent(agentId);
+      const agent = await storage.getAgent(agentId, getOrgId(req));
       const rtConfig = (agent?.runtimeConfig as Record<string, any>) || {};
       const gateOverrides = rtConfig.promotionGateOverrides || {};
 
@@ -2920,7 +2920,7 @@ const router = Router();
         return res.status(400).json({ message: "Auto-promote is only available for staging deployments" });
       }
 
-      const agent = await storage.getAgent(deployment.agentId);
+      const agent = await storage.getAgent(deployment.agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       if (agent.riskTier === "HIGH" || agent.riskTier === "CRITICAL") {

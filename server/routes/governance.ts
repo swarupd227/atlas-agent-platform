@@ -1224,7 +1224,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
 
         const deployment = await storage.createDeployment({
           agentId: patch.agentId,
-          agentName: (await storage.getAgent(patch.agentId))?.name || "agent",
+          agentName: (await storage.getAgent(patch.agentId, getOrgId(req)))?.name || "agent",
           environment: "pilot",
           version: `patch-${patch.id.slice(0, 8)}`,
           status: "pending",
@@ -1303,7 +1303,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     }
 
     if (status === "approved" && approval.objectType === "deployment" && approval.objectId) {
-      const deployment = await storage.getDeployment(approval.objectId);
+      const deployment = await storage.getDeployment(approval.objectId, getOrgId(req));
       if (deployment && (deployment.status === "pending" || deployment.status === "awaiting_approval")) {
         const strategy = deployment.rolloutStrategy || "canary";
         const deployUpdate: Record<string, unknown> = {
@@ -1726,7 +1726,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
             const existingSuites = await storage.getEvalsByAgent(primaryAgent.id);
             let kpiSuite = existingSuites.find(s => s.type === "kpi_aligned");
             if (!kpiSuite) {
-              const generated = await generateKpiAlignedEvalSuite(primaryAgent.id, oid);
+              const generated = await generateKpiAlignedEvalSuite(primaryAgent.id, oid, getOrgId(req));
               if (generated) {
                 kpiSuite = generated.suite;
               } else {
@@ -3281,7 +3281,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
         await storage.updateIncident(incident.id, { status: "investigating" }, getOrgId(req));
 
         try {
-          const agent = await storage.getAgent(agentId);
+          const agent = await storage.getAgent(agentId, getOrgId(req));
           if (agent) {
             const recommendations = await storage.getImprovementRecommendationsByAgent(agentId);
             const driftSignals = recommendations.filter(r => r.source === "drift" || r.severity === "high" || r.severity === "critical");
@@ -3504,7 +3504,7 @@ Eval Suites: ${evalSuites.length} configured`,
   router.post("/api/monitor/auto-rollback-suggestion", async (req, res) => {
     try {
       const { agentId, agentName, driftSignals } = req.body;
-      const agent = await storage.getAgent(agentId);
+      const agent = await storage.getAgent(agentId, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const deployments = await storage.getDeployments(getOrgId(req));

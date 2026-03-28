@@ -56,7 +56,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
 
   router.post("/api/agents/:id/save-as-template", async (req, res) => {
     try {
-      const agent = await storage.getAgent(req.params.id);
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
       const { name, description, category, industry, tags, complexity, icon } = req.body;
@@ -319,7 +319,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
       }
 
       if (concepts.length === 0) {
-        const agent = suite.agentId ? await storage.getAgent(suite.agentId) : null;
+        const agent = suite.agentId ? await storage.getAgent(suite.agentId, getOrgId(req)) : null;
         if (agent?.ontologyTags && Array.isArray(agent.ontologyTags)) {
           for (const tag of agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) {
             if (tag.conceptId) {
@@ -812,7 +812,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
 
     const humanReviewNodes = (bpJson?.nodes || []).filter((n: any) => n.type === "human_review");
     if (blueprint.agentId) {
-      const agent = await storage.getAgent(blueprint.agentId);
+      const agent = await storage.getAgent(blueprint.agentId, getOrgId(req));
       if (agent && (agent.riskTier === "HIGH" || agent.riskTier === "CRITICAL") && humanReviewNodes.length === 0) {
         warnings.push({ type: "policy", severity: "warning", message: "High/Critical risk agents should include at least one human_review node" });
       }
@@ -854,7 +854,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
     }
 
     if (blueprint.agentId) {
-      const agentForPolicy = await storage.getAgent(blueprint.agentId);
+      const agentForPolicy = await storage.getAgent(blueprint.agentId, getOrgId(req));
       if (agentForPolicy) {
         const allPolicies = await storage.getPolicies(getOrgId(req));
         const activeDataHandling = allPolicies.filter((p: any) => p.domain === "data_handling" && p.status === "active");
@@ -1110,7 +1110,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
     });
 
     if (blueprint.agentId) {
-      const agent = await storage.getAgent(blueprint.agentId);
+      const agent = await storage.getAgent(blueprint.agentId, getOrgId(req));
       if (agent && (agent.riskTier === "HIGH" || agent.riskTier === "CRITICAL")) {
         await storage.createApproval({
           type: "blueprint_review",

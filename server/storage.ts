@@ -1008,7 +1008,9 @@ export class DatabaseStorage implements IStorage {
     const [lastEvent] = await db.select({
       sequenceNum: auditEvents.sequenceNum,
       eventHash: auditEvents.eventHash,
-    }).from(auditEvents).orderBy(desc(auditEvents.sequenceNum)).limit(1);
+    }).from(auditEvents)
+      .where(eq(auditEvents.organizationId, orgId))
+      .orderBy(desc(auditEvents.sequenceNum)).limit(1);
 
     const prevHash = lastEvent?.eventHash || "GENESIS";
     const seqNum = (lastEvent?.sequenceNum || 0) + 1;
