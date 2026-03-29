@@ -77,6 +77,8 @@ import {
   Minus,
   Pencil,
   Check,
+  X,
+  ChevronLeft,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -686,6 +688,15 @@ function AgentDetailInner() {
     },
     enabled: !!agentId,
   });
+  const { data: agentKbData } = useQuery<{ links: AgentKnowledgeBase[]; knowledgeBases: KnowledgeBase[] }>({
+    queryKey: ["/api/agents", agentId, "knowledge-bases"],
+    queryFn: async () => {
+      if (!agentId) return { links: [], knowledgeBases: [] };
+      const res = await fetch(`/api/agents/${agentId}/knowledge-bases`);
+      return res.json();
+    },
+    enabled: !!agentId,
+  });
   const { data: allMcpServers } = useQuery<McpServer[]>({
     queryKey: ["/api/mcp-servers"],
   });
@@ -827,11 +838,13 @@ function AgentDetailInner() {
   });
 
   const [saveAsTemplateOpen, setSaveAsTemplateOpen] = useState(false);
+  const [templateTab, setTemplateTab] = useState("identity");
   const [templateName, setTemplateName] = useState("");
   const [templateDescription, setTemplateDescription] = useState("");
   const [templateCategory, setTemplateCategory] = useState("general");
   const [templateIndustry, setTemplateIndustry] = useState("cross_industry");
-  const [templateTags, setTemplateTags] = useState("");
+  const [templateTagsList, setTemplateTagsList] = useState<string[]>([]);
+  const [templateTagInput, setTemplateTagInput] = useState("");
   const [templateComplexity, setTemplateComplexity] = useState("medium");
   const [templateIcon, setTemplateIcon] = useState("bot");
 
@@ -1690,9 +1703,11 @@ function AgentDetailInner() {
           setTemplateDescription(agent.description || "");
           setTemplateCategory("general");
           setTemplateIndustry("cross_industry");
-          setTemplateTags(allTags.join(", "));
+          setTemplateTagsList(allTags);
+          setTemplateTagInput("");
           setTemplateComplexity("medium");
           setTemplateIcon("bot");
+          setTemplateTab("identity");
           setSaveAsTemplateOpen(true);
         }}>
           <Copy className="w-3.5 h-3.5 mr-1.5" /> Save as Template
@@ -5307,61 +5322,72 @@ function AgentDetailInner() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={saveAsTemplateOpen} onOpenChange={setSaveAsTemplateOpen}>
-        <DialogContent className="max-w-lg">
+      <Dialog open={saveAsTemplateOpen} onOpenChange={(open) => { setSaveAsTemplateOpen(open); if (!open) setTemplateTab("identity"); }}>
+        <DialogContent className="max-w-xl">
           <DialogHeader>
             <DialogTitle>Save Agent as Template</DialogTitle>
             <DialogDescription>
-              Create a reusable template from this agent's configuration. All model settings, tools, policies, and runtime config will be captured.
+              Review each section then save. All model settings, tools, policies, and runtime config will be captured.
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="template-name">Template Name</Label>
-              <Input id="template-name" data-testid="input-template-name" value={templateName} onChange={(e) => setTemplateName(e.target.value)} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="template-description">Description</Label>
-              <Textarea id="template-description" data-testid="input-template-description" value={templateDescription} onChange={(e) => setTemplateDescription(e.target.value)} rows={2} />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
+          <Tabs value={templateTab} onValueChange={setTemplateTab} className="mt-1">
+            <TabsList className="grid w-full grid-cols-3">
+              <TabsTrigger value="identity" data-testid="tab-template-identity">1. Identity</TabsTrigger>
+              <TabsTrigger value="classification" data-testid="tab-template-classification">2. Classification</TabsTrigger>
+              <TabsTrigger value="review" data-testid="tab-template-review">3. Review</TabsTrigger>
+            </TabsList>
+
+            {/* Tab 1: Identity */}
+            <TabsContent value="identity" className="space-y-4 pt-4 pb-1 min-h-[260px]">
               <div className="space-y-1.5">
-                <Label>Category</Label>
-                <Select value={templateCategory} onValueChange={setTemplateCategory}>
-                  <SelectTrigger data-testid="select-template-category"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="general">General</SelectItem>
-                    <SelectItem value="support">Support</SelectItem>
-                    <SelectItem value="sales">Sales</SelectItem>
-                    <SelectItem value="analytics">Analytics</SelectItem>
-                    <SelectItem value="compliance">Compliance</SelectItem>
-                    <SelectItem value="operations">Operations</SelectItem>
-                    <SelectItem value="data_processing">Data Processing</SelectItem>
-                    <SelectItem value="marketing">Marketing</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label htmlFor="template-name">Template Name <span className="text-destructive">*</span></Label>
+                <Input id="template-name" data-testid="input-template-name" value={templateName} onChange={(e) => setTemplateName(e.target.value)} placeholder="e.g. Customer Support Agent Template" />
               </div>
               <div className="space-y-1.5">
-                <Label>Industry</Label>
-                <Select value={templateIndustry} onValueChange={setTemplateIndustry}>
-                  <SelectTrigger data-testid="select-template-industry"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="cross_industry">Cross-Industry</SelectItem>
-                    <SelectItem value="healthcare">Healthcare</SelectItem>
-                    <SelectItem value="financial_services">Financial Services</SelectItem>
-                    <SelectItem value="manufacturing">Manufacturing</SelectItem>
-                    <SelectItem value="insurance">Insurance</SelectItem>
-                    <SelectItem value="retail">Retail</SelectItem>
-                    <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Label htmlFor="template-description">Description</Label>
+                <Textarea id="template-description" data-testid="input-template-description" value={templateDescription} onChange={(e) => setTemplateDescription(e.target.value)} rows={4} placeholder="Describe what this template does and when to use it…" />
               </div>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
+            </TabsContent>
+
+            {/* Tab 2: Classification */}
+            <TabsContent value="classification" className="space-y-4 pt-4 pb-1 min-h-[260px]">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Category</Label>
+                  <Select value={templateCategory} onValueChange={setTemplateCategory}>
+                    <SelectTrigger data-testid="select-template-category"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="general">General</SelectItem>
+                      <SelectItem value="support">Support</SelectItem>
+                      <SelectItem value="sales">Sales</SelectItem>
+                      <SelectItem value="analytics">Analytics</SelectItem>
+                      <SelectItem value="compliance">Compliance</SelectItem>
+                      <SelectItem value="operations">Operations</SelectItem>
+                      <SelectItem value="data_processing">Data Processing</SelectItem>
+                      <SelectItem value="marketing">Marketing</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Industry</Label>
+                  <Select value={templateIndustry} onValueChange={setTemplateIndustry}>
+                    <SelectTrigger data-testid="select-template-industry"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="cross_industry">Cross-Industry</SelectItem>
+                      <SelectItem value="healthcare">Healthcare</SelectItem>
+                      <SelectItem value="financial_services">Financial Services</SelectItem>
+                      <SelectItem value="manufacturing">Manufacturing</SelectItem>
+                      <SelectItem value="insurance">Insurance</SelectItem>
+                      <SelectItem value="retail">Retail</SelectItem>
+                      <SelectItem value="technology_saas">Technology / SaaS</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
               <div className="space-y-1.5">
                 <Label>Complexity</Label>
                 <Select value={templateComplexity} onValueChange={setTemplateComplexity}>
-                  <SelectTrigger data-testid="select-template-complexity"><SelectValue /></SelectTrigger>
+                  <SelectTrigger data-testid="select-template-complexity" className="w-1/2"><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="low">Low</SelectItem>
                     <SelectItem value="medium">Medium</SelectItem>
@@ -5371,78 +5397,222 @@ function AgentDetailInner() {
               </div>
               <div className="space-y-1.5">
                 <Label>Icon</Label>
-                <Select value={templateIcon} onValueChange={setTemplateIcon}>
-                  <SelectTrigger data-testid="select-template-icon"><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="bot">Bot</SelectItem>
-                    <SelectItem value="brain">Brain</SelectItem>
-                    <SelectItem value="zap">Zap</SelectItem>
-                    <SelectItem value="shield">Shield</SelectItem>
-                    <SelectItem value="bar-chart">Bar Chart</SelectItem>
-                    <SelectItem value="database">Database</SelectItem>
-                    <SelectItem value="users">Users</SelectItem>
-                    <SelectItem value="workflow">Workflow</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="template-tags">Tags (comma-separated)</Label>
-              <Input id="template-tags" data-testid="input-template-tags" value={templateTags} onChange={(e) => setTemplateTags(e.target.value)} placeholder="e.g. marketing, lead-scoring, financial-services" />
-            </div>
-            {agent && (
-              <div className="rounded-md border p-3 bg-muted/50 space-y-1">
-                <p className="text-xs font-medium text-muted-foreground mb-1.5">Configuration that will be captured:</p>
-                <div className="flex flex-wrap gap-2">
-                  <Badge variant="secondary" className="text-xs" data-testid="badge-template-model">
-                    <Cpu className="w-3 h-3 mr-1" />{agent.modelProvider || "openai"} / {agent.modelName || "gpt-4.1"}
-                  </Badge>
-                  {Array.isArray(agent.toolsConfig) && (agent.toolsConfig as any[]).length > 0 && (
-                    <Badge variant="secondary" className="text-xs" data-testid="badge-template-tools">
-                      <Wrench className="w-3 h-3 mr-1" />{(agent.toolsConfig as any[]).length} tools
-                    </Badge>
-                  )}
-                  {agent.systemPrompt && (
-                    <Badge variant="secondary" className="text-xs" data-testid="badge-template-prompt">
-                      <FileText className="w-3 h-3 mr-1" />System prompt
-                    </Badge>
-                  )}
-                  {Boolean(agent.runtimeConfig) && (
-                    <Badge variant="secondary" className="text-xs" data-testid="badge-template-runtime">
-                      <Settings className="w-3 h-3 mr-1" />Runtime config
-                    </Badge>
-                  )}
-                  <Badge variant="secondary" className="text-xs" data-testid="badge-template-risk">
-                    <Shield className="w-3 h-3 mr-1" />{agent.riskTier || "MEDIUM"} risk
-                  </Badge>
-                  <Badge variant="secondary" className="text-xs" data-testid="badge-template-autonomy">
-                    <Zap className="w-3 h-3 mr-1" />{agent.autonomyMode || "assisted"}
-                  </Badge>
+                <div className="grid grid-cols-8 gap-1.5">
+                  {([
+                    { value: "bot", Icon: Bot, label: "Bot" },
+                    { value: "brain", Icon: Brain, label: "Brain" },
+                    { value: "zap", Icon: Zap, label: "Zap" },
+                    { value: "shield", Icon: Shield, label: "Shield" },
+                    { value: "bar-chart", Icon: BarChart3, label: "Chart" },
+                    { value: "database", Icon: Database, label: "Data" },
+                    { value: "users", Icon: Users, label: "Users" },
+                    { value: "workflow", Icon: Workflow, label: "Flow" },
+                  ] as const).map(({ value, Icon: IconComp, label }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      data-testid={`button-icon-${value}`}
+                      onClick={() => setTemplateIcon(value)}
+                      title={label}
+                      className={[
+                        "flex flex-col items-center gap-0.5 rounded-md border p-1.5 text-[10px] cursor-pointer transition-colors",
+                        templateIcon === value
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border hover:border-primary/40 hover:bg-muted/50 text-muted-foreground",
+                      ].join(" ")}
+                    >
+                      <IconComp className="w-4 h-4" />
+                      <span>{label}</span>
+                    </button>
+                  ))}
                 </div>
               </div>
+              <div className="space-y-1.5">
+                <Label>Tags</Label>
+                <div className="rounded-md border px-2 py-1.5 min-h-[38px] flex flex-wrap gap-1.5 items-center focus-within:ring-1 focus-within:ring-ring">
+                  {templateTagsList.map((tag, i) => (
+                    <Badge key={i} variant="secondary" className="text-xs gap-1 pr-1">
+                      {tag}
+                      <button
+                        type="button"
+                        onClick={() => setTemplateTagsList(prev => prev.filter((_, j) => j !== i))}
+                        data-testid={`button-remove-tag-${i}`}
+                        className="rounded-full hover:bg-muted ml-0.5"
+                      >
+                        <X className="w-2.5 h-2.5" />
+                      </button>
+                    </Badge>
+                  ))}
+                  <input
+                    data-testid="input-template-tag"
+                    className="text-xs flex-1 min-w-[100px] outline-none bg-transparent placeholder:text-muted-foreground"
+                    placeholder={templateTagsList.length === 0 ? "Add tag, press Enter or comma…" : "Add another…"}
+                    value={templateTagInput}
+                    onChange={(e) => setTemplateTagInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === ",") {
+                        e.preventDefault();
+                        const t = templateTagInput.trim().replace(/,$/, "");
+                        if (t && !templateTagsList.includes(t)) setTemplateTagsList(prev => [...prev, t]);
+                        setTemplateTagInput("");
+                      } else if (e.key === "Backspace" && !templateTagInput && templateTagsList.length > 0) {
+                        setTemplateTagsList(prev => prev.slice(0, -1));
+                      }
+                    }}
+                    onBlur={() => {
+                      const t = templateTagInput.trim();
+                      if (t && !templateTagsList.includes(t)) setTemplateTagsList(prev => [...prev, t]);
+                      setTemplateTagInput("");
+                    }}
+                  />
+                </div>
+                <p className="text-xs text-muted-foreground">Press Enter or comma to add · Backspace to remove last</p>
+              </div>
+            </TabsContent>
+
+            {/* Tab 3: Review */}
+            <TabsContent value="review" className="pt-4 pb-1 min-h-[260px]">
+              <div className="overflow-y-auto max-h-[50vh] space-y-3 pr-0.5">
+                {/* Template identity summary */}
+                <div className="rounded-md border p-3 space-y-2">
+                  <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Template Identity</p>
+                  <p className="text-sm font-medium">{templateName || <span className="text-muted-foreground italic">(untitled)</span>}</p>
+                  {templateDescription && <p className="text-xs text-muted-foreground">{templateDescription}</p>}
+                  <div className="flex gap-1.5 flex-wrap mt-1">
+                    <Badge variant="outline" className="text-xs capitalize">{templateCategory.replace(/_/g, " ")}</Badge>
+                    <Badge variant="outline" className="text-xs capitalize">{templateIndustry.replace(/_/g, " ")}</Badge>
+                    <Badge variant="outline" className="text-xs capitalize">{templateComplexity} complexity</Badge>
+                  </div>
+                </div>
+                {/* Agent configuration being captured */}
+                {agent && (
+                  <div className="rounded-md border p-3 space-y-2.5">
+                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Configuration Captured</p>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-2 text-xs" data-testid="badge-template-model">
+                        <Cpu className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                        <span className="font-medium">{agent.modelProvider || "openai"}</span>
+                        <span className="text-muted-foreground">/ {agent.modelName || "gpt-4.1"}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-xs" data-testid="badge-template-risk">
+                        <Shield className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                        <span className="font-medium">{agent.riskTier || "MEDIUM"} risk</span>
+                        <span className="text-muted-foreground">· {agent.autonomyMode || "assisted"} mode</span>
+                      </div>
+                      {Array.isArray(agent.toolsConfig) && (agent.toolsConfig as any[]).length > 0 && (
+                        <div className="flex items-center gap-2 text-xs" data-testid="badge-template-tools">
+                          <Wrench className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                          <span>{(agent.toolsConfig as any[]).length} tools configured</span>
+                        </div>
+                      )}
+                      {Boolean(agent.runtimeConfig) && (() => {
+                        const rc = agent.runtimeConfig as Record<string, any>;
+                        const steps = Array.isArray(rc?.workflowSteps) ? rc.workflowSteps.length : 0;
+                        return steps > 0 ? (
+                          <div className="flex items-center gap-2 text-xs" data-testid="badge-template-runtime">
+                            <Workflow className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                            <span>{steps} workflow step{steps !== 1 ? "s" : ""}</span>
+                          </div>
+                        ) : null;
+                      })()}
+                      {agent.systemPrompt && (
+                        <div className="space-y-0.5" data-testid="badge-template-prompt">
+                          <div className="flex items-center gap-2 text-xs">
+                            <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                            <span className="font-medium">System Prompt</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground pl-5 italic leading-relaxed line-clamp-2">
+                            "{agent.systemPrompt.slice(0, 200)}{agent.systemPrompt.length > 200 ? "…" : ""}"
+                          </p>
+                        </div>
+                      )}
+                      {agentMcpLinks && agentMcpLinks.length > 0 && (
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 text-xs">
+                            <Network className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                            <span className="font-medium">MCP Servers ({agentMcpLinks.length})</span>
+                          </div>
+                          <div className="pl-5 flex flex-wrap gap-1">
+                            {agentMcpLinks.map((link) => {
+                              const server = allMcpServers?.find(s => s.id === link.serverId);
+                              return server ? (
+                                <Badge key={link.serverId} variant="secondary" className="text-xs">{server.name}</Badge>
+                              ) : null;
+                            })}
+                          </div>
+                        </div>
+                      )}
+                      {agentKbData?.knowledgeBases && agentKbData.knowledgeBases.length > 0 && (
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 text-xs">
+                            <BookOpen className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                            <span className="font-medium">Knowledge Bases ({agentKbData.knowledgeBases.length})</span>
+                          </div>
+                          <div className="pl-5 flex flex-wrap gap-1">
+                            {agentKbData.knowledgeBases.map((kb) => (
+                              <Badge key={kb.id} variant="secondary" className="text-xs">{kb.name}</Badge>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {/* Tags */}
+                {templateTagsList.length > 0 && (
+                  <div className="rounded-md border p-3 space-y-2">
+                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Tags ({templateTagsList.length})</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {templateTagsList.map((tag, i) => (
+                        <Badge key={i} variant="secondary" className="text-xs">{tag}</Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </TabsContent>
+          </Tabs>
+
+          <DialogFooter className="gap-2 pt-2">
+            {templateTab !== "identity" && (
+              <Button
+                variant="outline"
+                onClick={() => setTemplateTab(templateTab === "review" ? "classification" : "identity")}
+                data-testid="button-template-back"
+              >
+                <ChevronLeft className="w-3.5 h-3.5 mr-1" /> Back
+              </Button>
             )}
-          </div>
-          <DialogFooter>
             <Button variant="outline" onClick={() => setSaveAsTemplateOpen(false)} data-testid="button-cancel-save-template">Cancel</Button>
-            <Button
-              onClick={() => saveAsTemplateMutation.mutate({
-                name: templateName,
-                description: templateDescription,
-                category: templateCategory,
-                industry: templateIndustry,
-                tags: templateTags.split(",").map(t => t.trim()).filter(Boolean),
-                complexity: templateComplexity,
-                icon: templateIcon,
-              })}
-              disabled={saveAsTemplateMutation.isPending || !templateName.trim()}
-              data-testid="button-confirm-save-template"
-            >
-              {saveAsTemplateMutation.isPending ? (
-                <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Saving...</>
-              ) : (
-                <><Copy className="w-3.5 h-3.5 mr-1.5" /> Save Template</>
-              )}
-            </Button>
+            {templateTab !== "review" ? (
+              <Button
+                onClick={() => setTemplateTab(templateTab === "identity" ? "classification" : "review")}
+                disabled={!templateName.trim()}
+                data-testid="button-template-next"
+              >
+                Next <ChevronRight className="w-3.5 h-3.5 ml-1" />
+              </Button>
+            ) : (
+              <Button
+                onClick={() => saveAsTemplateMutation.mutate({
+                  name: templateName,
+                  description: templateDescription,
+                  category: templateCategory,
+                  industry: templateIndustry,
+                  tags: templateTagsList,
+                  complexity: templateComplexity,
+                  icon: templateIcon,
+                })}
+                disabled={saveAsTemplateMutation.isPending || !templateName.trim()}
+                data-testid="button-confirm-save-template"
+              >
+                {saveAsTemplateMutation.isPending ? (
+                  <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Saving…</>
+                ) : (
+                  <><Copy className="w-3.5 h-3.5 mr-1.5" /> Save Template</>
+                )}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
