@@ -5485,71 +5485,236 @@ function AgentDetailInner() {
                   </div>
                 </div>
                 {/* Agent configuration being captured */}
-                {agent && (
-                  <div className="rounded-md border p-3 space-y-2.5">
-                    <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Configuration Captured</p>
-                    <div className="space-y-1.5">
-                      <div className="flex items-center gap-2 text-xs" data-testid="badge-template-model">
-                        <Cpu className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                        <span className="font-medium">{agent.modelProvider || "openai"}</span>
-                        <span className="text-muted-foreground">/ {agent.modelName || "gpt-4.1"}</span>
-                      </div>
-                      <div className="flex items-center gap-2 text-xs" data-testid="badge-template-risk">
-                        <Shield className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                        <span className="font-medium">{agent.riskTier || "MEDIUM"} risk</span>
-                        <span className="text-muted-foreground">· {agent.autonomyMode || "assisted"} mode</span>
-                      </div>
-                      <div className="flex items-center gap-2 text-xs" data-testid="badge-template-tools">
-                        <Wrench className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                        <span>{Array.isArray(agent.toolsConfig) ? (agent.toolsConfig as any[]).length : 0} tool{!Array.isArray(agent.toolsConfig) || (agent.toolsConfig as any[]).length !== 1 ? "s" : ""} configured</span>
-                      </div>
-                      <div className="flex items-center gap-2 text-xs" data-testid="badge-template-runtime">
-                        <Workflow className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                        <span>{(() => { const rc = agent.runtimeConfig as Record<string, any>; const n = Array.isArray(rc?.workflowSteps) ? rc.workflowSteps.length : 0; return `${n} workflow step${n !== 1 ? "s" : ""}`; })()}</span>
-                      </div>
-                      {agent.systemPrompt && (
-                        <div className="space-y-0.5" data-testid="badge-template-prompt">
-                          <div className="flex items-center gap-2 text-xs">
-                            <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                            <span className="font-medium">System Prompt</span>
+                {agent && (() => {
+                  const rc = (agent.runtimeConfig as Record<string, any>) || {};
+                  const kpiBindings = Array.isArray(rc.kpiBindings) ? rc.kpiBindings as any[] : [];
+                  const workflowSteps = Array.isArray(rc.workflowSteps) ? rc.workflowSteps as any[] : [];
+                  const matchedSkills = Array.isArray(rc.matchedSkills) ? rc.matchedSkills as any[] : [];
+                  const mcpToolBindings = Array.isArray(rc.mcpToolBindings) ? rc.mcpToolBindings as any[] : [];
+                  const taskPrompt = typeof rc.prompt === "string" ? rc.prompt : "";
+                  const outputSchema = rc.outputSchema;
+                  const complianceTags = Array.isArray(agent.complianceTags) ? agent.complianceTags as string[] : [];
+                  const ontConcepts = Array.isArray((agent.ontologyTags as any)?.concepts) ? (agent.ontologyTags as any).concepts as any[] : [];
+                  const policyBindings = agent.policyBindings as Record<string, any> | null;
+                  const policyCount = policyBindings ? Object.keys(policyBindings).length : 0;
+                  const evalBindings = agent.evalBindings as Record<string, any> | null;
+                  const evalCount = evalBindings ? Object.keys(evalBindings).length : 0;
+                  const memoryRagConfig = agent.memoryRagConfig as Record<string, any> | null;
+                  const hasMemoryRag = memoryRagConfig && Object.keys(memoryRagConfig).length > 0;
+                  const permissionsConfig = agent.permissionsConfig as Record<string, any> | null;
+                  const hasPermissions = permissionsConfig && Object.keys(permissionsConfig).length > 0;
+                  const toolsCount = Array.isArray(agent.toolsConfig) ? (agent.toolsConfig as any[]).length : 0;
+                  return (
+                    <div className="space-y-2">
+                      {/* Model & Runtime */}
+                      <div className="rounded-md border p-3 space-y-2">
+                        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Model & Runtime</p>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center gap-2 text-xs" data-testid="badge-template-model">
+                            <Cpu className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                            <span className="font-medium">{agent.modelProvider || "openai"}</span>
+                            <span className="text-muted-foreground">/ {agent.modelName || "gpt-4.1"}</span>
                           </div>
-                          <p className="text-xs text-muted-foreground pl-5 italic leading-relaxed line-clamp-2">
-                            "{agent.systemPrompt.slice(0, 200)}{agent.systemPrompt.length > 200 ? "…" : ""}"
-                          </p>
+                          <div className="flex items-center gap-2 text-xs" data-testid="badge-template-risk">
+                            <Shield className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                            <span className="font-medium">{agent.riskTier || "MEDIUM"} risk</span>
+                            <span className="text-muted-foreground">· {agent.autonomyMode || "assisted"} mode</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs">
+                            <Layers className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                            <span>Max {agent.maxToolIterations || 5} tool iterations</span>
+                          </div>
+                          {agent.department && (
+                            <div className="flex items-center gap-2 text-xs">
+                              <Users className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                              <span>Department: <span className="font-medium">{agent.department}</span></span>
+                            </div>
+                          )}
                         </div>
-                      )}
-                      {agentMcpLinks && agentMcpLinks.length > 0 && (
-                        <div className="space-y-1">
+                      </div>
+                      {/* Prompts */}
+                      <div className="rounded-md border p-3 space-y-2">
+                        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Prompts</p>
+                        <div className="space-y-2">
+                          {agent.systemPrompt ? (
+                            <div className="space-y-0.5" data-testid="badge-template-prompt">
+                              <div className="flex items-center gap-2 text-xs">
+                                <FileText className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                <span className="font-medium">System Prompt</span>
+                                <span className="text-muted-foreground ml-auto">{agent.systemPrompt.length} chars</span>
+                              </div>
+                              <p className="text-xs text-muted-foreground pl-5 italic leading-relaxed line-clamp-2">"{agent.systemPrompt.slice(0, 200)}{agent.systemPrompt.length > 200 ? "…" : ""}"</p>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                              <FileText className="w-3.5 h-3.5 shrink-0" />
+                              <span className="italic">No system prompt configured</span>
+                            </div>
+                          )}
+                          {taskPrompt && (
+                            <div className="space-y-0.5">
+                              <div className="flex items-center gap-2 text-xs">
+                                <MessageSquare className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                <span className="font-medium">Task Prompt</span>
+                                <span className="text-muted-foreground ml-auto">{taskPrompt.length} chars</span>
+                              </div>
+                              <p className="text-xs text-muted-foreground pl-5 italic leading-relaxed line-clamp-2">"{taskPrompt.slice(0, 200)}{taskPrompt.length > 200 ? "…" : ""}"</p>
+                            </div>
+                          )}
+                          {outputSchema && (
+                            <div className="flex items-center gap-2 text-xs">
+                              <Code className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                              <span className="font-medium">Output Schema</span>
+                              <Badge variant="outline" className="text-xs ml-auto">defined</Badge>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      {/* Tools & Workflow */}
+                      <div className="rounded-md border p-3 space-y-2">
+                        <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Tools & Workflow</p>
+                        <div className="space-y-1.5">
+                          <div className="flex items-center gap-2 text-xs" data-testid="badge-template-tools">
+                            <Wrench className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                            <span>{toolsCount} tool{toolsCount !== 1 ? "s" : ""} configured</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs" data-testid="badge-template-runtime">
+                            <Workflow className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                            <span>{workflowSteps.length} workflow step{workflowSteps.length !== 1 ? "s" : ""}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-xs">
+                            <BarChart3 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                            <span>{kpiBindings.length} KPI binding{kpiBindings.length !== 1 ? "s" : ""}</span>
+                          </div>
+                          {kpiBindings.length > 0 && (
+                            <div className="pl-5 flex flex-wrap gap-1">
+                              {kpiBindings.slice(0, 5).map((k: any, i: number) => (
+                                <Badge key={i} variant="secondary" className="text-xs">{typeof k === "string" ? k : k.kpiName || k.name || `KPI ${i+1}`}</Badge>
+                              ))}
+                              {kpiBindings.length > 5 && <Badge variant="outline" className="text-xs">+{kpiBindings.length - 5} more</Badge>}
+                            </div>
+                          )}
                           <div className="flex items-center gap-2 text-xs">
                             <Network className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                            <span className="font-medium">MCP Servers ({agentMcpLinks.length})</span>
+                            <span>{mcpToolBindings.length} MCP tool binding{mcpToolBindings.length !== 1 ? "s" : ""}</span>
                           </div>
-                          <div className="pl-5 flex flex-wrap gap-1">
-                            {agentMcpLinks.map((link) => {
-                              const server = allMcpServers?.find(s => s.id === link.serverId);
-                              return server ? (
-                                <Badge key={link.serverId} variant="secondary" className="text-xs">{server.name}</Badge>
-                              ) : null;
-                            })}
+                        </div>
+                      </div>
+                      {/* Integrations */}
+                      {((agentMcpLinks && agentMcpLinks.length > 0) || (agentKbData?.knowledgeBases && agentKbData.knowledgeBases.length > 0)) && (
+                        <div className="rounded-md border p-3 space-y-2">
+                          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Integrations</p>
+                          <div className="space-y-2">
+                            {agentMcpLinks && agentMcpLinks.length > 0 && (
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2 text-xs">
+                                  <Network className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                  <span className="font-medium">MCP Servers ({agentMcpLinks.length})</span>
+                                </div>
+                                <div className="pl-5 flex flex-wrap gap-1">
+                                  {agentMcpLinks.map((link) => {
+                                    const server = allMcpServers?.find(s => s.id === link.serverId);
+                                    return server ? <Badge key={link.serverId} variant="secondary" className="text-xs">{server.name}</Badge> : null;
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                            {agentKbData?.knowledgeBases && agentKbData.knowledgeBases.length > 0 && (
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2 text-xs">
+                                  <BookOpen className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                  <span className="font-medium">Knowledge Bases ({agentKbData.knowledgeBases.length})</span>
+                                </div>
+                                <div className="pl-5 flex flex-wrap gap-1">
+                                  {agentKbData.knowledgeBases.map((kb) => (
+                                    <Badge key={kb.id} variant="secondary" className="text-xs">{kb.name}</Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
                       )}
-                      {agentKbData?.knowledgeBases && agentKbData.knowledgeBases.length > 0 && (
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2 text-xs">
-                            <BookOpen className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                            <span className="font-medium">Knowledge Bases ({agentKbData.knowledgeBases.length})</span>
-                          </div>
-                          <div className="pl-5 flex flex-wrap gap-1">
-                            {agentKbData.knowledgeBases.map((kb) => (
-                              <Badge key={kb.id} variant="secondary" className="text-xs">{kb.name}</Badge>
+                      {/* Skills */}
+                      {matchedSkills.length > 0 && (
+                        <div className="rounded-md border p-3 space-y-2">
+                          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Skills ({matchedSkills.length})</p>
+                          <div className="flex flex-wrap gap-1">
+                            {matchedSkills.slice(0, 8).map((s: any, i: number) => (
+                              <Badge key={i} variant="secondary" className="text-xs">{typeof s === "string" ? s : s.name || s.skillName || `Skill ${i+1}`}</Badge>
                             ))}
+                            {matchedSkills.length > 8 && <Badge variant="outline" className="text-xs">+{matchedSkills.length - 8} more</Badge>}
+                          </div>
+                        </div>
+                      )}
+                      {/* Governance */}
+                      {(policyCount > 0 || complianceTags.length > 0 || ontConcepts.length > 0) && (
+                        <div className="rounded-md border p-3 space-y-2">
+                          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Governance & Compliance</p>
+                          <div className="space-y-1.5">
+                            {policyCount > 0 && (
+                              <div className="flex items-center gap-2 text-xs">
+                                <Shield className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                <span>{policyCount} policy binding{policyCount !== 1 ? "s" : ""} captured</span>
+                              </div>
+                            )}
+                            {complianceTags.length > 0 && (
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2 text-xs">
+                                  <CheckCircle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                  <span className="font-medium">Compliance Tags ({complianceTags.length})</span>
+                                </div>
+                                <div className="pl-5 flex flex-wrap gap-1">
+                                  {complianceTags.map((t, i) => <Badge key={i} variant="secondary" className="text-xs">{t}</Badge>)}
+                                </div>
+                              </div>
+                            )}
+                            {ontConcepts.length > 0 && (
+                              <div className="space-y-1">
+                                <div className="flex items-center gap-2 text-xs">
+                                  <Brain className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                  <span className="font-medium">Ontology Concepts ({ontConcepts.length})</span>
+                                </div>
+                                <div className="pl-5 flex flex-wrap gap-1">
+                                  {ontConcepts.slice(0, 6).map((c: any, i: number) => (
+                                    <Badge key={i} variant="outline" className="text-xs">{typeof c === "string" ? c : c.conceptLabel || `Concept ${i+1}`}</Badge>
+                                  ))}
+                                  {ontConcepts.length > 6 && <Badge variant="outline" className="text-xs">+{ontConcepts.length - 6} more</Badge>}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {/* Evaluations & Memory */}
+                      {(evalCount > 0 || hasMemoryRag || hasPermissions) && (
+                        <div className="rounded-md border p-3 space-y-2">
+                          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Evaluations & Advanced</p>
+                          <div className="space-y-1.5">
+                            {evalCount > 0 && (
+                              <div className="flex items-center gap-2 text-xs">
+                                <CheckCircle className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                <span>{evalCount} eval binding{evalCount !== 1 ? "s" : ""} captured</span>
+                              </div>
+                            )}
+                            {hasMemoryRag && (
+                              <div className="flex items-center gap-2 text-xs">
+                                <Database className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                <span>Memory / RAG configuration captured</span>
+                              </div>
+                            )}
+                            {hasPermissions && (
+                              <div className="flex items-center gap-2 text-xs">
+                                <Lock className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                                <span>Permissions configuration captured</span>
+                              </div>
+                            )}
                           </div>
                         </div>
                       )}
                     </div>
-                  </div>
-                )}
+                  );
+                })()}
                 {/* Tags */}
                 {templateTagsList.length > 0 && (
                   <div className="rounded-md border p-3 space-y-2">

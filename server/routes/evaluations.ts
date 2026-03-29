@@ -103,6 +103,10 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
         sourceAgentName: agent.name,
         linkedMcpServers: mcpServerNames,
         linkedKnowledgeBases: kbNames,
+        complianceTags: compTags,
+        ontologyConcepts: Array.isArray(ontTags) ? ontTags.map((t: any) => typeof t === "string" ? t : t.conceptLabel || t) : [],
+        maxToolIterations: agent.maxToolIterations || 5,
+        department: agent.department || "",
       };
 
       const preloadedSkills: any[] = [];
@@ -129,12 +133,12 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
         modelProvider: agent.modelProvider || "openai",
         modelName: agent.modelName || "gpt-4.1",
         toolsConfig: toolsCfg,
-        permissionsConfig: {},
-        memoryRagConfig: {},
+        permissionsConfig: (agent.permissionsConfig as Record<string, any>) || {},
+        memoryRagConfig: (agent.memoryRagConfig as Record<string, any>) || {},
         blueprintJson,
         policyBindings: agent.policyBindings || {},
-        evalBindings: {},
-        rollbackPlan: {},
+        evalBindings: (agent.evalBindings as Record<string, any>) || {},
+        rollbackPlan: (agent.rollbackPlan as Record<string, any>) || {},
         defaultRiskTier: agent.riskTier || "MEDIUM",
         defaultAutonomyMode: agent.autonomyMode || "assisted",
         preloadedSkills,
