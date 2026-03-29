@@ -89,6 +89,10 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
         }
       } catch {}
 
+      const agentBp = (agent.blueprintJson as Record<string, any>) || {};
+      const blueprintNodes = Array.isArray(agentBp.nodes) ? agentBp.nodes : [];
+      const blueprintEdges = Array.isArray(agentBp.edges) ? agentBp.edges : [];
+
       const blueprintJson: any = {
         systemPrompt: agent.systemPrompt || "",
         runtimeConfig: {
@@ -99,6 +103,9 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
           matchedSkills: rtConfig.matchedSkills || [],
           mcpToolBindings: rtConfig.mcpToolBindings || [],
         },
+        blueprintNodes,
+        blueprintEdges,
+        mcpDependencies: Array.isArray(agentBp.mcpDependencies) ? agentBp.mcpDependencies : [],
         sourceAgentId: agent.id,
         sourceAgentName: agent.name,
         linkedMcpServers: mcpServerNames,

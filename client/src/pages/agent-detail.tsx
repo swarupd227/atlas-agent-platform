@@ -5488,7 +5488,8 @@ function AgentDetailInner() {
                 {agent && (() => {
                   const rc = (agent.runtimeConfig as Record<string, any>) || {};
                   const kpiBindings = Array.isArray(rc.kpiBindings) ? rc.kpiBindings as any[] : [];
-                  const workflowSteps = Array.isArray(rc.workflowSteps) ? rc.workflowSteps as any[] : [];
+                  const agentBp = (agent.blueprintJson as Record<string, any>) || {};
+                  const blueprintNodes = Array.isArray(agentBp.nodes) ? agentBp.nodes as any[] : [];
                   const matchedSkills = Array.isArray(rc.matchedSkills) ? rc.matchedSkills as any[] : [];
                   const mcpToolBindings = Array.isArray(rc.mcpToolBindings) ? rc.mcpToolBindings as any[] : [];
                   const taskPrompt = typeof rc.prompt === "string" ? rc.prompt : "";
@@ -5580,8 +5581,33 @@ function AgentDetailInner() {
                           </div>
                           <div className="flex items-center gap-2 text-xs" data-testid="badge-template-runtime">
                             <Workflow className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                            <span>{workflowSteps.length} workflow step{workflowSteps.length !== 1 ? "s" : ""}</span>
+                            <span className="font-medium">{blueprintNodes.length} workflow node{blueprintNodes.length !== 1 ? "s" : ""}</span>
                           </div>
+                          {blueprintNodes.length > 0 && (
+                            <div className="pl-5 space-y-1 mt-1">
+                              {blueprintNodes.map((node: any, i: number) => {
+                                const nodeType = node.type || "step";
+                                const nodeIcon: Record<string, JSX.Element> = {
+                                  trigger: <Zap className="w-3 h-3 text-yellow-500 shrink-0" />,
+                                  tool_call: <Wrench className="w-3 h-3 text-blue-500 shrink-0" />,
+                                  llm_call: <Brain className="w-3 h-3 text-violet-500 shrink-0" />,
+                                  conditional: <GitBranch className="w-3 h-3 text-orange-500 shrink-0" />,
+                                  output: <CheckCircle className="w-3 h-3 text-green-500 shrink-0" />,
+                                  audit_log: <FileText className="w-3 h-3 text-muted-foreground shrink-0" />,
+                                  human_review: <Users className="w-3 h-3 text-cyan-500 shrink-0" />,
+                                  compliance: <Shield className="w-3 h-3 text-red-500 shrink-0" />,
+                                };
+                                return (
+                                  <div key={node.id || i} className="flex items-center gap-1.5 text-xs">
+                                    <span className="text-muted-foreground w-4 shrink-0 text-right">{i + 1}.</span>
+                                    {nodeIcon[nodeType] || <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />}
+                                    <span className="text-muted-foreground">{node.label || node.id || `Step ${i+1}`}</span>
+                                    <Badge variant="outline" className="text-[9px] px-1 py-0 ml-auto capitalize">{nodeType.replace(/_/g, " ")}</Badge>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
                           <div className="flex items-center gap-2 text-xs">
                             <BarChart3 className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                             <span>{kpiBindings.length} KPI binding{kpiBindings.length !== 1 ? "s" : ""}</span>
@@ -5594,10 +5620,12 @@ function AgentDetailInner() {
                               {kpiBindings.length > 5 && <Badge variant="outline" className="text-xs">+{kpiBindings.length - 5} more</Badge>}
                             </div>
                           )}
-                          <div className="flex items-center gap-2 text-xs">
-                            <Network className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                            <span>{mcpToolBindings.length} MCP tool binding{mcpToolBindings.length !== 1 ? "s" : ""}</span>
-                          </div>
+                          {mcpToolBindings.length > 0 && (
+                            <div className="flex items-center gap-2 text-xs">
+                              <Network className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                              <span>{mcpToolBindings.length} MCP tool binding{mcpToolBindings.length !== 1 ? "s" : ""}</span>
+                            </div>
+                          )}
                         </div>
                       </div>
                       {/* Integrations */}
