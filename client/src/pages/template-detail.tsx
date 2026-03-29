@@ -1,7 +1,7 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useState, useEffect } from "react";
 import { useRoute, useLocation, Link } from "wouter";
-import type { AgentTemplate } from "@shared/schema";
+import type { AgentTemplate, Agent } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,6 +34,7 @@ import {
   X,
   Save,
   Sparkles,
+  Copy,
   Wand2,
   Loader2,
   Shield,
@@ -442,6 +443,7 @@ export default function TemplateDetail() {
 
   const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : new URLSearchParams();
   const startInEditMode = searchParams.get("edit") === "true";
+  const sourceAgentId = searchParams.get("sourceAgent") || null;
 
   const [editing, setEditing] = useState(isNew || startInEditMode);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -508,6 +510,89 @@ export default function TemplateDetail() {
   const { data: policyLibrary } = useQuery<Array<{ id: string; name: string; domain: string; description: string }>>({
     queryKey: ["/api/policies"],
   });
+
+  const { data: sourceAgent } = useQuery<Agent>({
+    queryKey: ["/api/agents", sourceAgentId],
+    enabled: !!sourceAgentId && isNew,
+  });
+
+  useEffect(() => {
+    if (sourceAgent && isNew && Object.keys(editData).length === 0) {
+      const agentBp = (sourceAgent.blueprintJson as Record<string, any>) || {};
+      const blueprintNodes: WorkflowNode[] = Array.isArray(agentBp.nodes) ? agentBp.nodes : [];
+      const tools = Array.isArray(sourceAgent.toolsConfig) ? (sourceAgent.toolsConfig as ToolConfig[]) : [];
+      const rtConfig = (sourceAgent.runtimeConfig as Record<string, any>) || {};
+      const permissions = (sourceAgent.permissionsConfig as { dataAccess?: string[]; apiAccess?: string[]; writeAccess?: string[] } | null);
+      const memoryConfig = (sourceAgent.memoryRagConfig as MemoryRagConfig);
+      const policyData = sourceAgent.policyBindings;
+      const policies: PolicyBinding[] = Array.isArray(policyData)
+        ? (policyData as PolicyBinding[])
+        : policyData && typeof policyData === "object"
+        ? Object.entries(policyData as Record<string, any>).map(([name, val]: [string, any]) => ({
+            policyName: name,
+            enforcement: val?.enforcement || "soft",
+          }))
+        : [];
+      const evalData = sourceAgent.evalBindings;
+      const evals: EvalBinding[] = Array.isArray(evalData)
+        ? (evalData as EvalBinding[])
+        : evalData && typeof evalData === "object"
+        ? Object.entries(evalData as Record<string, any>).map(([name, val]: [string, any]) => ({
+            suiteName: name,
+            schedule: val?.schedule || "on_deploy",
+          }))
+        : [];
+      const rollback = sourceAgent.rollbackPlan as { triggerConditions?: string[]; rollbackTargetVersion?: string } | null;
+      const compTags = Array.isArray(sourceAgent.complianceTags) ? (sourceAgent.complianceTags as string[]) : [];
+      const ontConcepts = Array.isArray((sourceAgent.ontologyTags as any)?.concepts)
+        ? ((sourceAgent.ontologyTags as any).concepts as any[]).map((c: any) => typeof c === "string" ? c : c.conceptLabel || "").filter(Boolean)
+        : [];
+      const matchedSkills: SkillEntry[] = Array.isArray(rtConfig.matchedSkills)
+        ? (rtConfig.matchedSkills as any[]).map((s: any, i: number) => ({
+            skillId: typeof s === "string" ? "" : (s.skillId || s.id || ""),
+            skillName: typeof s === "string" ? s : (s.name || s.skillName || `Skill ${i + 1}`),
+            domain: typeof s === "string" ? "" : (s.domain || ""),
+            executionOrder: i + 1,
+          }))
+        : [];
+      setEditData({
+        name: `${sourceAgent.name} Template`,
+        description: sourceAgent.description || "",
+        category: "general",
+        industry: "cross_industry",
+        icon: "bot",
+        complexity: "medium",
+        modelProvider: sourceAgent.modelProvider || "openai",
+        modelName: sourceAgent.modelName || "gpt-4.1",
+        defaultRiskTier: sourceAgent.riskTier || "MEDIUM",
+        defaultAutonomyMode: sourceAgent.autonomyMode || "assisted",
+        systemPrompt: sourceAgent.systemPrompt || "",
+        tools: tools.length > 0 ? tools.map(t => ({ ...t, permissions: t.permissions ? [...t.permissions] : [] })) : [{ name: "", description: "", permissions: [] }],
+        workflowNodes: blueprintNodes.length > 0 ? blueprintNodes.map(n => ({ ...n })) : [{ id: "step_1", type: "llm_call", label: "" }],
+        dataAccess: permissions?.dataAccess ? permissions.dataAccess.join(", ") : "",
+        apiAccess: permissions?.apiAccess ? permissions.apiAccess.join(", ") : "",
+        writeAccess: permissions?.writeAccess ? permissions.writeAccess.join(", ") : "",
+        memoryRagConfig: memoryConfig ? { ...memoryConfig } : null,
+        vectorStore: (memoryConfig as any)?.vectorStore || "",
+        retrievalStrategy: (memoryConfig as any)?.retrievalStrategy || "",
+        chunkSize: (memoryConfig as any)?.chunkSize ? String((memoryConfig as any).chunkSize) : "",
+        embeddingModel: (memoryConfig as any)?.embeddingModel || "",
+        topK: (memoryConfig as any)?.topK ? String((memoryConfig as any).topK) : "",
+        tags: [...compTags, ...ontConcepts],
+        complianceCertifications: [...compTags],
+        newCert: "",
+        newTag: "",
+        policyBindings: policies,
+        evalBindings: evals,
+        triggerConditions: rollback?.triggerConditions?.length ? rollback.triggerConditions : [""],
+        rollbackTargetVersion: rollback?.rollbackTargetVersion || "previous_stable",
+        requiredSkills: matchedSkills,
+        optionalSkills: [],
+        preloadedSkills: [],
+        newTriggerCondition: "",
+      });
+    }
+  }, [sourceAgent, isNew]);
 
   useEffect(() => {
     if (template && editing && Object.keys(editData).length === 0) {
@@ -830,7 +915,7 @@ export default function TemplateDetail() {
       modelName: editData.modelName,
       tags: editData.tags,
       toolsConfig: editData.tools,
-      blueprintJson: { nodes: editData.workflowNodes },
+      blueprintJson: { nodes: editData.workflowNodes, systemPrompt: editData.systemPrompt || "" },
       permissionsConfig: { dataAccess: dataAccessArr, apiAccess: apiAccessArr, writeAccess: writeAccessArr },
       memoryRagConfig: editData.memoryRagConfig,
       complianceCertifications: editData.complianceCertifications || [],
@@ -1001,6 +1086,23 @@ export default function TemplateDetail() {
           </div>
         </div>
       </div>
+
+      {/* Source agent banner */}
+      {isNew && sourceAgentId && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-md border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/30 text-sm">
+          <Copy className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+          <span className="text-blue-800 dark:text-blue-300">
+            Creating template from agent:{" "}
+            <span className="font-semibold">{sourceAgent ? sourceAgent.name : "Loading…"}</span>
+            {" "}— all configurations have been pre-filled. Review and edit as needed, then save.
+          </span>
+          <Link href={`/agents/${sourceAgentId}`} className="ml-auto shrink-0">
+            <Button variant="ghost" size="sm" className="h-6 text-xs text-blue-700 dark:text-blue-400 hover:text-blue-900">
+              Back to Agent
+            </Button>
+          </Link>
+        </div>
+      )}
 
       <div className="flex items-center gap-2 flex-wrap">
         {editing ? (
@@ -1191,6 +1293,24 @@ export default function TemplateDetail() {
               </CardContent>
             </Card>
           </div>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <FileText className="w-4 h-4 text-muted-foreground" /> System Prompt
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Textarea
+                value={editData.systemPrompt || ""}
+                onChange={(e) => setEditData({ ...editData, systemPrompt: e.target.value })}
+                placeholder="Enter the system prompt that defines the agent's core behavior and instructions…"
+                rows={6}
+                className="font-mono text-xs"
+                data-testid="input-edit-system-prompt"
+              />
+            </CardContent>
+          </Card>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             <Card>
