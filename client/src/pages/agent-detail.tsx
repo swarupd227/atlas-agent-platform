@@ -695,7 +695,7 @@ function AgentDetailInner() {
       const res = await fetch(`/api/agents/${agentId}/knowledge-bases`);
       return res.json();
     },
-    enabled: !!agentId,
+    enabled: !!agentId && saveAsTemplateOpen,
   });
   const { data: allMcpServers } = useQuery<McpServer[]>({
     queryKey: ["/api/mcp-servers"],
@@ -5338,7 +5338,7 @@ function AgentDetailInner() {
             </TabsList>
 
             {/* Tab 1: Identity */}
-            <TabsContent value="identity" className="overflow-y-auto max-h-[55vh] space-y-4 pt-4 pb-1">
+            <TabsContent value="identity" className="overflow-y-auto max-h-[60vh] space-y-4 pt-4 pb-1">
               <div className="space-y-1.5">
                 <Label htmlFor="template-name">Template Name <span className="text-destructive">*</span></Label>
                 <Input id="template-name" data-testid="input-template-name" value={templateName} onChange={(e) => setTemplateName(e.target.value)} placeholder="e.g. Customer Support Agent Template" />
@@ -5350,7 +5350,7 @@ function AgentDetailInner() {
             </TabsContent>
 
             {/* Tab 2: Classification */}
-            <TabsContent value="classification" className="overflow-y-auto max-h-[55vh] space-y-4 pt-4 pb-1">
+            <TabsContent value="classification" className="overflow-y-auto max-h-[60vh] space-y-4 pt-4 pb-1">
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
                   <Label>Category</Label>
@@ -5471,7 +5471,7 @@ function AgentDetailInner() {
             </TabsContent>
 
             {/* Tab 3: Review */}
-            <TabsContent value="review" className="overflow-y-auto max-h-[55vh] pt-4 pb-1">
+            <TabsContent value="review" className="overflow-y-auto max-h-[60vh] pt-4 pb-1">
               <div className="space-y-3 pr-0.5">
                 {/* Template identity summary */}
                 <div className="rounded-md border p-3 space-y-2">
