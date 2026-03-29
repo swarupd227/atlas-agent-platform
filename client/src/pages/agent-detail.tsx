@@ -695,7 +695,7 @@ function AgentDetailInner() {
       const res = await fetch(`/api/agents/${agentId}/knowledge-bases`);
       return res.json();
     },
-    enabled: !!agentId && saveAsTemplateOpen,
+    enabled: !!agentId,
   });
   const { data: allMcpServers } = useQuery<McpServer[]>({
     queryKey: ["/api/mcp-servers"],
