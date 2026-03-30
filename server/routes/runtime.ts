@@ -1567,7 +1567,10 @@ function hashCode(str: string): number {
         tokenUsage: totalTokens,
         stepsJson: { stepCount: stepIndex, source: "api_gateway", mcpEnabled: mcpServerIds.length > 0, metadata },
         endedAt: new Date(),
-      });
+        ...((mcpResult as any)?.softPolicyViolations?.length
+          ? { softPolicyViolations: (mcpResult as any).softPolicyViolations }
+          : {}),
+      } as any);
 
       await storage.updateAgent(agent.id, {
         totalRuns: (agent.totalRuns || 0) + 1,

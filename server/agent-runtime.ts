@@ -850,7 +850,7 @@ export interface SoftPolicyComplianceResult {
 export async function checkSoftPolicyCompliance(
   outputText: string,
   softPolicies: Array<{ id: string; name: string; enforcement: string; domain: string; policyJson: any }>
-): Promise<SoftPolicyComplianceResult[]> {
+): Promise<SoftPolicyComplianceResult[] | null> {
   if (outputText.trim().length < 80 || softPolicies.length === 0) {
     return [];
   }
@@ -902,7 +902,7 @@ ${outputText.substring(0, 3000)}`;
     if (jsonStart === -1 || jsonEnd === -1) return [];
 
     const parsed = JSON.parse(raw.substring(jsonStart, jsonEnd + 1));
-    if (!parsed.policyResults || !Array.isArray(parsed.policyResults)) return [];
+    if (!parsed.policyResults || !Array.isArray(parsed.policyResults)) return null;
 
     return parsed.policyResults.map((r: any) => ({
       policyId: String(r.policyId || ""),
@@ -915,7 +915,7 @@ ${outputText.substring(0, 3000)}`;
       severity: (["low", "medium", "high"] as const).includes(r.severity) ? r.severity : "low",
     })) as SoftPolicyComplianceResult[];
   } catch {
-    return [];
+    return null;
   }
 }
 
@@ -1577,47 +1577,52 @@ After receiving tool results, provide a structured analysis with key findings, s
         };
         steps.push(policyValStep);
 
-        softPolicyViolations = await checkSoftPolicyCompliance(allOutputText, resolvedPolicies);
+        const judgeResult = await checkSoftPolicyCompliance(allOutputText, resolvedPolicies);
 
-        const violatedPolicies = softPolicyViolations.filter(r => !r.compliant);
-        const lastPolicyStep = steps[steps.length - 1];
-        lastPolicyStep.status = "completed";
-        lastPolicyStep.completedAt = new Date().toISOString();
-        lastPolicyStep.output = {
-          policiesChecked: softPolicyViolations.length,
-          allCompliant: violatedPolicies.length === 0,
-          violations: violatedPolicies.length,
-          results: softPolicyViolations,
-          auditId: `SPV-${Date.now()}`,
-        };
+        if (judgeResult === null) {
+          steps.pop();
+        } else {
+          softPolicyViolations = judgeResult;
+          const violatedPolicies = softPolicyViolations.filter(r => !r.compliant);
+          const lastPolicyStep = steps[steps.length - 1];
+          lastPolicyStep.status = "completed";
+          lastPolicyStep.completedAt = new Date().toISOString();
+          lastPolicyStep.output = {
+            policiesChecked: softPolicyViolations.length,
+            allCompliant: violatedPolicies.length === 0,
+            violations: violatedPolicies.length,
+            results: softPolicyViolations,
+            auditId: `SPV-${Date.now()}`,
+          };
 
-        emitProgress("policy_compliance_validation", {
-          policiesChecked: softPolicyViolations.length,
-          allCompliant: violatedPolicies.length === 0,
-          violations: violatedPolicies.length,
-          violatedPolicies: violatedPolicies.map(v => v.policyName),
-        });
+          emitProgress("policy_compliance_validation", {
+            policiesChecked: softPolicyViolations.length,
+            allCompliant: violatedPolicies.length === 0,
+            violations: violatedPolicies.length,
+            violatedPolicies: violatedPolicies.map(v => v.policyName),
+          });
 
-        for (const violation of violatedPolicies) {
-          try {
-            await storage.createAuditEvent({
-              actorType: "system",
-              actorId: "soft_policy_validator",
-              action: "policy_violation",
-              objectType: "agent",
-              objectId: agentId,
-              details: JSON.stringify({
-                summary: `Soft policy violation: agent did not honor "${violation.policyName}" (${violation.enforcement})`,
-                policyId: violation.policyId,
-                policyName: violation.policyName,
-                enforcement: violation.enforcement,
-                domain: violation.domain,
-                violatedRequirements: violation.violatedRequirements,
-                evidence: violation.evidence,
-                severity: violation.severity,
-              }),
-            });
-          } catch {}
+          for (const violation of violatedPolicies) {
+            try {
+              await storage.createAuditEvent({
+                actorType: "system",
+                actorId: "soft_policy_validator",
+                action: "policy_violation",
+                objectType: "agent",
+                objectId: agentId,
+                details: JSON.stringify({
+                  summary: `Soft policy violation: agent did not honor "${violation.policyName}" (${violation.enforcement})`,
+                  policyId: violation.policyId,
+                  policyName: violation.policyName,
+                  enforcement: violation.enforcement,
+                  domain: violation.domain,
+                  violatedRequirements: violation.violatedRequirements,
+                  evidence: violation.evidence,
+                  severity: violation.severity,
+                }),
+              });
+            } catch {}
+          }
         }
       }
     }
