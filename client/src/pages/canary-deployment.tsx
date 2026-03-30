@@ -48,6 +48,9 @@ import {
   RotateCcw,
   Rocket,
   Filter,
+  HeartPulse,
+  Info,
+  RefreshCw,
 } from "lucide-react";
 
 const TRAFFIC_STAGES = [1, 5, 25, 50, 100];
@@ -373,6 +376,23 @@ export default function CanaryDeploymentPage() {
     onError: (e: any) => toast({ title: "Failed to add rule", description: e.message, variant: "destructive" }),
   });
 
+  const healthSnapshotMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("POST", `/api/canary-deployments/${id}/health-snapshot`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/canary-deployments"] });
+      toast({ title: "Health signals refreshed" });
+    },
+    onError: (e: any) => toast({ title: "Health refresh failed", description: e.message, variant: "destructive" }),
+  });
+
+  function handleRefreshHealth() {
+    if (!selected) return;
+    healthSnapshotMutation.mutate(selected.id);
+  }
+
   const filteredDeployments = useMemo(() => {
     let list = deployments;
     if (statusFilter !== "all") {
@@ -640,6 +660,10 @@ export default function CanaryDeploymentPage() {
                   <TabsTrigger value="blast-radius" data-testid="tab-blast-radius">
                     <Target className="w-3.5 h-3.5 mr-1.5" />
                     Blast Radius
+                  </TabsTrigger>
+                  <TabsTrigger value="health-signals" data-testid="tab-health-signals">
+                    <HeartPulse className="w-3.5 h-3.5 mr-1.5" />
+                    Health Signals
                   </TabsTrigger>
                 </TabsList>
 
@@ -1003,6 +1027,168 @@ export default function CanaryDeploymentPage() {
                       </CardContent>
                     </Card>
                   )}
+                </TabsContent>
+
+                {/* Tab 5: Health Signals */}
+                <TabsContent value="health-signals" className="space-y-4 mt-4">
+                  {(() => {
+                    const rawGates = selected.industrySafetyGates as Record<string, unknown> | null;
+                    const isSnapshot = rawGates && rawGates._isHealthSnapshot === true;
+                    const snapshot = isSnapshot ? rawGates : null;
+                    const gates = snapshot?.gates as Record<string, { value: number | null; threshold: number | null; passes: boolean; unit: string }> | null;
+
+                    const GATE_LABELS: Record<string, string> = {
+                      errorRate: "Error Rate",
+                      avgLatency: "Avg Latency",
+                      policyCompliance: "Policy Compliance",
+                      costDrift: "Cost-per-Run Drift",
+                      downstreamFailureRate: "Downstream Failure Rate",
+                      evalPassRate: "Eval Pass Rate",
+                    };
+
+                    const GATE_DESCRIPTIONS: Record<string, string> = {
+                      errorRate: "Fraction of recent traces that resulted in an error or failure",
+                      avgLatency: "Mean latency across the last 50 traces",
+                      policyCompliance: "Traces with no hard policy gate failures",
+                      costDrift: "Ratio of canary avg cost-per-run vs agent baseline (1.0 = no drift)",
+                      downstreamFailureRate: "Failure rate of child traces whose parent is a canary trace",
+                      evalPassRate: "Average pass rate across all eval suites for this agent",
+                    };
+
+                    const GATE_ORDER = ["errorRate", "avgLatency", "policyCompliance", "costDrift", "downstreamFailureRate", "evalPassRate"];
+
+                    function formatValue(key: string, v: number | null, unit: string) {
+                      if (v === null) return "N/A";
+                      if (unit === "x") return `${v.toFixed(2)}×`;
+                      if (unit === "%") return `${v.toFixed(1)}%`;
+                      if (unit === "ms") return `${v.toLocaleString()} ms`;
+                      return `${v}`;
+                    }
+
+                    function formatThreshold(key: string, t: number | null, unit: string) {
+                      if (t === null) return "—";
+                      if (key === "errorRate" || key === "downstreamFailureRate") return `≤ ${t}${unit}`;
+                      if (key === "avgLatency") return `≤ ${t.toLocaleString()} ms`;
+                      if (key === "costDrift") return `≤ ${t.toFixed(1)}×`;
+                      return `≥ ${t}${unit}`;
+                    }
+
+                    return (
+                      <>
+                        <div className="rounded-md border border-blue-500/20 bg-blue-500/5 px-4 py-3 flex items-start gap-2.5" data-testid="notice-traffic-routing">
+                          <Info className="w-4 h-4 text-blue-600 dark:text-blue-400 mt-0.5 shrink-0" />
+                          <p className="text-sm text-muted-foreground">
+                            The traffic percentages shown reflect the <span className="font-medium text-foreground">recorded rollout stage</span>, not a live request-routing split. Real traffic-level canary routing requires a separate infrastructure layer.
+                          </p>
+                        </div>
+
+                        <Card>
+                          <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0 pb-2">
+                            <CardTitle className="text-base flex items-center gap-2">
+                              <HeartPulse className="w-4 h-4" />
+                              Live Health Signals
+                              {snapshot && (
+                                <span className="text-xs font-normal text-muted-foreground ml-1">
+                                  · updated {new Date(snapshot.computedAt as string).toLocaleTimeString()}
+                                </span>
+                              )}
+                            </CardTitle>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={handleRefreshHealth}
+                              disabled={healthSnapshotMutation.isPending}
+                              data-testid="button-refresh-health"
+                            >
+                              {healthSnapshotMutation.isPending
+                                ? <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+                                : <RefreshCw className="w-4 h-4 mr-1" />}
+                              Refresh
+                            </Button>
+                          </CardHeader>
+                          <CardContent>
+                            {!snapshot ? (
+                              <div className="flex flex-col items-center justify-center py-10 text-center gap-2" data-testid="health-pending-state">
+                                <HeartPulse className="w-8 h-8 text-muted-foreground/40" />
+                                <p className="text-sm font-medium">No health snapshot yet</p>
+                                <p className="text-xs text-muted-foreground max-w-xs">
+                                  Click <span className="font-medium">Refresh</span> to compute live health signals from recent traces for this agent.
+                                </p>
+                              </div>
+                            ) : (snapshot as Record<string, unknown>).noAgentFound ? (
+                              <div className="flex flex-col items-center justify-center py-10 text-center gap-2" data-testid="health-no-agent-state">
+                                <XCircle className="w-8 h-8 text-muted-foreground/40" />
+                                <p className="text-sm font-medium">Agent not found</p>
+                                <p className="text-xs text-muted-foreground max-w-xs">
+                                  No agent named <span className="font-medium">{selected.agentName}</span> was found in the system. Make sure the agent name matches exactly.
+                                </p>
+                              </div>
+                            ) : !gates || Object.keys(gates).length === 0 ? (
+                              <div className="flex flex-col items-center justify-center py-10 text-center gap-2" data-testid="health-insufficient-data">
+                                <Activity className="w-8 h-8 text-muted-foreground/40" />
+                                <p className="text-sm font-medium">Insufficient trace data</p>
+                                <p className="text-xs text-muted-foreground">Fewer than 5 traces available. Health signals will appear once more traces are recorded.</p>
+                              </div>
+                            ) : (
+                              <div className="space-y-0 divide-y">
+                                {GATE_ORDER.map(key => {
+                                  const gate = gates[key];
+                                  if (!gate) return null;
+                                  const isNA = gate.value === null;
+                                  return (
+                                    <div key={key} className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0" data-testid={`health-gate-${key}`}>
+                                      <div className="min-w-0">
+                                        <p className="text-sm font-medium">{GATE_LABELS[key] || key}</p>
+                                        <p className="text-xs text-muted-foreground mt-0.5">{GATE_DESCRIPTIONS[key]}</p>
+                                      </div>
+                                      <div className="flex items-center gap-3 shrink-0">
+                                        <div className="text-right">
+                                          <p className="text-sm font-semibold" data-testid={`health-value-${key}`}>
+                                            {formatValue(key, gate.value, gate.unit)}
+                                          </p>
+                                          <p className="text-xs text-muted-foreground">
+                                            threshold: {formatThreshold(key, gate.threshold, gate.unit)}
+                                          </p>
+                                        </div>
+                                        <Badge
+                                          variant="outline"
+                                          className={isNA
+                                            ? "bg-muted/50 text-muted-foreground text-[10px]"
+                                            : gate.passes
+                                              ? "bg-green-500/15 text-green-700 dark:text-green-400 text-[10px]"
+                                              : "bg-red-500/15 text-red-700 dark:text-red-400 text-[10px]"}
+                                          data-testid={`health-badge-${key}`}
+                                        >
+                                          {isNA
+                                            ? "N/A"
+                                            : gate.passes
+                                              ? <><CheckCircle2 className="w-3 h-3 mr-1 inline" />Pass</>
+                                              : <><XCircle className="w-3 h-3 mr-1 inline" />Fail</>}
+                                        </Badge>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+
+                        {snapshot && typeof (snapshot as Record<string, unknown>).allGatesPass === "boolean" && (
+                          <div className={`rounded-md border px-4 py-3 flex items-center gap-2.5 ${(snapshot as Record<string, unknown>).allGatesPass ? "border-green-500/30 bg-green-500/5" : "border-red-500/30 bg-red-500/5"}`} data-testid="health-overall-verdict">
+                            {(snapshot as Record<string, unknown>).allGatesPass
+                              ? <CheckCircle2 className="w-4 h-4 text-green-600 dark:text-green-400 shrink-0" />
+                              : <XCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0" />}
+                            <p className="text-sm font-medium">
+                              {(snapshot as Record<string, unknown>).allGatesPass
+                                ? "All health gates passing — candidate is eligible for promotion"
+                                : "One or more health gates failing — review signals before promoting"}
+                            </p>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                 </TabsContent>
               </Tabs>
             </div>

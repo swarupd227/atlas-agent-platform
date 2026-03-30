@@ -607,35 +607,134 @@ export function startWorker(intervalMs = 2000) {
   console.log("[worker] Autonomy auto-timeout validator started (5min interval)");
 }
 
+async function computeCanaryHealthSnapshot(dep: {
+  id: string;
+  agentId: string;
+  agentName: string | null;
+  environment: string;
+  canaryConfig: unknown;
+}) {
+  const config = (dep.canaryConfig as Record<string, unknown>) || {};
+  const maxErrorRate: number = (config.maxErrorRate as number) || 5;
+  const latencyThreshold: number = (config.latencyP99Threshold as number) || 5000;
+  const successThreshold: number = (config.successThreshold as number) || 95;
+  const minPolicyComplianceRate: number = (config.minPolicyComplianceRate as number) ?? 98;
+  const maxCostDriftMultiplier: number = (config.maxCostDriftMultiplier as number) ?? 1.5;
+  const maxDownstreamFailureRate: number = (config.maxDownstreamFailureRate as number) ?? 5;
+  const minEvalPassRate: number | null = (config.minEvalPassRate as number | null) ?? null;
+
+  const traces = await storage.getTracesByAgent(dep.agentId);
+  const recentTraces = traces
+    .filter(t => t.environment === dep.environment)
+    .sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime())
+    .slice(0, 50);
+
+  const total = recentTraces.length;
+
+  const failed = recentTraces.filter(t => t.status === "failed" || t.status === "error").length;
+  const errorRate = total > 0 ? (failed / total) * 100 : 0;
+  const avgLatency = total > 0 ? Math.round(recentTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / total) : 0;
+  const successRate = total > 0 ? ((total - failed) / total) * 100 : 100;
+
+  // Policy compliance rate: trace passes if policyChecks has no hard failures
+  const policyCompliant = recentTraces.filter(t => {
+    const checks = t.policyChecks as Array<Record<string, unknown>> | null;
+    if (!Array.isArray(checks)) return true;
+    return !checks.some(c => c.passed === false || c.result === "fail" || c.status === "failed");
+  }).length;
+  const policyComplianceRate = total > 0 ? (policyCompliant / total) * 100 : 100;
+
+  // Cost drift ratio vs agent baseline costPerRun
+  const agentData = await storage.getAgent(dep.agentId);
+  const baselineCost = agentData?.costPerRun;
+  const avgCostUsd = total > 0 ? recentTraces.reduce((s, t) => s + (t.costUsd || 0), 0) / total : 0;
+  const costDriftRatio = baselineCost && baselineCost > 0 ? avgCostUsd / baselineCost : null;
+
+  // Downstream failure rate: traces from other agents whose traceParentId points into canary traces
+  const canaryTraceIds = recentTraces.map(t => t.id);
+  const downstreamTraces = await storage.getTracesByParentIds(canaryTraceIds);
+  const downstreamFailed = downstreamTraces.filter(t => t.status === "failed" || t.status === "error").length;
+  const downstreamFailureRate = downstreamTraces.length > 0 ? (downstreamFailed / downstreamTraces.length) * 100 : 0;
+
+  // Eval pass rate from active eval suites
+  const evalSuitesList = await storage.getEvalsByAgent(dep.agentId);
+  const evalPassRate = evalSuitesList.length > 0
+    ? evalSuitesList.reduce((s, e) => s + (e.passRate || 0), 0) / evalSuitesList.length
+    : null;
+
+  // Gate verdicts
+  const errorRatePasses = errorRate <= maxErrorRate;
+  const latencyPasses = avgLatency <= latencyThreshold;
+  const policyPasses = policyComplianceRate >= minPolicyComplianceRate;
+  const costDriftPasses = costDriftRatio === null ? true : costDriftRatio <= maxCostDriftMultiplier;
+  const downstreamPasses = downstreamFailureRate <= maxDownstreamFailureRate;
+  const evalPasses = (minEvalPassRate === null || evalPassRate === null) ? true : evalPassRate >= minEvalPassRate;
+  const allGatesPass = errorRatePasses && latencyPasses && policyPasses && costDriftPasses && downstreamPasses && evalPasses;
+
+  const lastHealthSnapshot = {
+    computedAt: new Date().toISOString(),
+    traceCount: total,
+    gates: {
+      errorRate: { value: errorRate, threshold: maxErrorRate, passes: errorRatePasses, unit: "%" },
+      avgLatency: { value: avgLatency, threshold: latencyThreshold, passes: latencyPasses, unit: "ms" },
+      policyCompliance: { value: policyComplianceRate, threshold: minPolicyComplianceRate, passes: policyPasses, unit: "%" },
+      costDrift: { value: costDriftRatio, threshold: maxCostDriftMultiplier, passes: costDriftPasses, unit: "x" },
+      downstreamFailureRate: { value: downstreamFailureRate, threshold: maxDownstreamFailureRate, passes: downstreamPasses, unit: "%" },
+      evalPassRate: { value: evalPassRate, threshold: minEvalPassRate, passes: evalPasses, unit: "%" },
+    },
+    allGatesPass,
+  };
+
+  return {
+    total, failed, errorRate, avgLatency, successRate,
+    policyComplianceRate, costDriftRatio, downstreamFailureRate, evalPassRate,
+    allGatesPass, lastHealthSnapshot,
+    thresholds: { maxErrorRate, latencyThreshold, successThreshold, minPolicyComplianceRate, maxCostDriftMultiplier, maxDownstreamFailureRate, minEvalPassRate },
+  };
+}
+
 async function monitorCanaryDeployments() {
   const deployments = await storage.getDeployments();
   const canaryDeps = deployments.filter(d => d.status === "canary" && (d.canaryPercent || 0) < 100);
 
   for (const dep of canaryDeps) {
-    const traces = await storage.getTracesByAgent(dep.agentId);
-    const recentTraces = traces
-      .filter(t => t.environment === dep.environment)
-      .sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime())
-      .slice(0, 50);
+    const health = await computeCanaryHealthSnapshot({
+      id: dep.id,
+      agentId: dep.agentId,
+      agentName: dep.agentName,
+      environment: dep.environment,
+      canaryConfig: dep.canaryConfig,
+    });
 
-    const total = recentTraces.length;
-    if (total < 5) continue;
+    const { total, errorRate, avgLatency, successRate, policyComplianceRate, costDriftRatio, downstreamFailureRate, evalPassRate, allGatesPass, lastHealthSnapshot } = health;
+    const { maxErrorRate, latencyThreshold, successThreshold, minPolicyComplianceRate, maxCostDriftMultiplier, maxDownstreamFailureRate } = health.thresholds;
+    const stepSize = ((dep.canaryConfig as Record<string, unknown> || {}).stepPercent as number) || 10;
 
-    const failed = recentTraces.filter(t => t.status === "failed" || t.status === "error").length;
-    const errorRate = total > 0 ? (failed / total) * 100 : 0;
-    const avgLatency = total > 0 ? Math.round(recentTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / total) : 0;
-    const successRate = total > 0 ? ((total - failed) / total) * 100 : 100;
+    if (total < 5) {
+      // Still write snapshot even with insufficient data
+      await storage.updateDeployment(dep.id, {
+        canaryConfig: { ...(dep.canaryConfig as object || {}), lastHealthSnapshot },
+      });
+      continue;
+    }
 
-    const config = dep.canaryConfig as any || {};
-    const maxErrorRate = config.maxErrorRate || 5;
-    const latencyThreshold = config.latencyP99Threshold || 5000;
-    const successThreshold = config.successThreshold || 95;
-    const stepSize = config.stepPercent || 10;
+    if (!allGatesPass) {
+      const failDetails = [
+        `errorRate=${errorRate.toFixed(1)}% (max ${maxErrorRate}%)`,
+        `latency=${avgLatency}ms (max ${latencyThreshold}ms)`,
+        `successRate=${successRate.toFixed(1)}% (min ${successThreshold}%)`,
+        `policyCompliance=${policyComplianceRate.toFixed(1)}% (min ${minPolicyComplianceRate}%)`,
+        costDriftRatio !== null ? `costDrift=${costDriftRatio.toFixed(2)}x (max ${maxCostDriftMultiplier}x)` : null,
+        `downstreamFailureRate=${downstreamFailureRate.toFixed(1)}% (max ${maxDownstreamFailureRate}%)`,
+        evalPassRate !== null ? `evalPassRate=${evalPassRate.toFixed(1)}%` : null,
+      ].filter(Boolean).join(", ");
+      console.log(`[canary-monitor] ${dep.agentName} GATE FAILED: ${failDetails}`);
 
-    if (errorRate > maxErrorRate || avgLatency > latencyThreshold || successRate < successThreshold) {
-      console.log(`[canary-monitor] ${dep.agentName} GATE FAILED: errorRate=${errorRate.toFixed(1)}%, latency=${avgLatency}ms, successRate=${successRate.toFixed(1)}%`);
+      await storage.updateDeployment(dep.id, {
+        canaryConfig: { ...(dep.canaryConfig as object || {}), lastHealthSnapshot },
+      });
 
-      const autopromoteConfig = dep.autopromoteConfig as any;
+      const autopromoteConfig = dep.autopromoteConfig as Record<string, unknown>;
       if (autopromoteConfig?.rollbackOnFailure) {
         await storage.updateDeployment(dep.id, { status: "rolled_back", canaryPercent: 0, shadowEnabled: false });
         await storage.createAuditEvent({
@@ -644,7 +743,7 @@ async function monitorCanaryDeployments() {
           action: "canary_rollback",
           objectType: "deployment",
           objectId: dep.id,
-          details: `Canary auto-rolled back for ${dep.agentName}: errorRate=${errorRate.toFixed(1)}% (max ${maxErrorRate}%), successRate=${successRate.toFixed(1)}% (min ${successThreshold}%), latency=${avgLatency}ms (max ${latencyThreshold}ms)`,
+          details: `Canary auto-rolled back for ${dep.agentName}: ${failDetails}`,
         });
 
         if (dep.incidentId) {
@@ -682,7 +781,10 @@ async function monitorCanaryDeployments() {
 
     const currentPercent = dep.canaryPercent || 0;
     const newPercent = Math.min(currentPercent + stepSize, 100);
-    const updateData: Record<string, unknown> = { canaryPercent: newPercent };
+    const updateData: Record<string, unknown> = {
+      canaryPercent: newPercent,
+      canaryConfig: { ...(dep.canaryConfig as object || {}), lastHealthSnapshot },
+    };
 
     if (newPercent >= 100) {
       updateData.status = "active";
@@ -691,13 +793,23 @@ async function monitorCanaryDeployments() {
 
     await storage.updateDeployment(dep.id, updateData);
 
+    const passDetails = [
+      `errorRate=${errorRate.toFixed(1)}%`,
+      `latency=${avgLatency}ms`,
+      `successRate=${successRate.toFixed(1)}%`,
+      `policyCompliance=${policyComplianceRate.toFixed(1)}%`,
+      costDriftRatio !== null ? `costDrift=${costDriftRatio.toFixed(2)}x` : null,
+      `downstreamFailureRate=${downstreamFailureRate.toFixed(1)}%`,
+      evalPassRate !== null ? `evalPassRate=${evalPassRate.toFixed(1)}%` : null,
+    ].filter(Boolean).join(", ");
+
     await storage.createAuditEvent({
       actorType: "system",
       actorId: "canary_monitor",
       action: newPercent >= 100 ? "canary_promoted_full" : "canary_increased",
       objectType: "deployment",
       objectId: dep.id,
-      details: `Canary ${newPercent >= 100 ? "promoted to full" : `increased to ${newPercent}%`} for ${dep.agentName}. Gates passed: errorRate=${errorRate.toFixed(1)}%, successRate=${successRate.toFixed(1)}%, latency=${avgLatency}ms`,
+      details: `Canary ${newPercent >= 100 ? "promoted to full" : `increased to ${newPercent}%`} for ${dep.agentName}. Gates passed: ${passDetails}`,
     });
 
     if (newPercent >= 100 && dep.incidentId) {
@@ -731,7 +843,7 @@ async function monitorCanaryDeployments() {
       }
     }
 
-    console.log(`[canary-monitor] ${dep.agentName}: canary ${currentPercent}% -> ${newPercent}%`);
+    console.log(`[canary-monitor] ${dep.agentName}: canary ${currentPercent}% -> ${newPercent}% (all gates pass, ${passDetails})`);
     jobEvents.emit("canary_progress", { deploymentId: dep.id, agentId: dep.agentId, canaryPercent: newPercent });
   }
 }

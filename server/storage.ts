@@ -197,6 +197,7 @@ export interface IStorage {
   getTrace(id: string, orgId?: string): Promise<RunTrace | undefined>;
   getTracesByAgent(agentId: string, orgId?: string): Promise<RunTrace[]>;
   getRecentCompletedTracesByAgent(agentId: string, limit?: number): Promise<RunTrace[]>;
+  getTracesByParentIds(parentIds: string[]): Promise<RunTrace[]>;
   createTrace(trace: InsertRunTrace): Promise<RunTrace>;
 
   getEvalSuites(): Promise<EvalSuite[]>;
@@ -923,6 +924,13 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(runTraces.agentId, agentId), eq(runTraces.status, "completed")))
       .orderBy(desc(runTraces.startedAt))
       .limit(limitCount);
+  }
+
+  async getTracesByParentIds(parentIds: string[]) {
+    if (parentIds.length === 0) return [];
+    return db.select().from(runTraces)
+      .where(inArray(runTraces.traceParentId, parentIds))
+      .orderBy(desc(runTraces.startedAt));
   }
 
   async createTrace(trace: InsertRunTrace) {
