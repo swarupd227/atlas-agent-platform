@@ -96,44 +96,6 @@ function timeAgo(dateStr: string) {
   return `${diffDays}d ago`;
 }
 
-const INDUSTRY_SAFETY_GATES: Record<string, Array<{ label: string; passed: boolean }>> = {
-  healthcare: [
-    { label: "Max patient exposure: 50", passed: true },
-    { label: "Zero safety events required", passed: true },
-    { label: "Clinical accuracy above 98%", passed: false },
-    { label: "PHI data handling compliant", passed: true },
-  ],
-  financial_services: [
-    { label: "Max AUM exposure: $1M", passed: true },
-    { label: "Compliance floor: 99.9%", passed: true },
-    { label: "Trade execution latency < 50ms", passed: false },
-    { label: "Regulatory reporting intact", passed: true },
-  ],
-  manufacturing: [
-    { label: "No candidate during safety-critical ops", passed: true },
-    { label: "Max 2 production lines", passed: true },
-    { label: "Defect rate below threshold", passed: true },
-    { label: "Equipment safety interlock active", passed: false },
-  ],
-  insurance: [
-    { label: "Max claim exposure: $500K", passed: true },
-    { label: "Fraud detection accuracy > 95%", passed: true },
-    { label: "Solvency ratio maintained", passed: true },
-    { label: "Policyholder notification compliant", passed: false },
-  ],
-  retail: [
-    { label: "Max customer exposure: 1000", passed: true },
-    { label: "Cart abandonment rate stable", passed: true },
-    { label: "Payment processing unaffected", passed: true },
-    { label: "Inventory sync maintained", passed: false },
-  ],
-  technology_saas: [
-    { label: "SLO compliance: 99.9% uptime", passed: true },
-    { label: "API error rate below 0.5%", passed: true },
-    { label: "No PII exposure in logs", passed: true },
-    { label: "P99 latency within budget", passed: false },
-  ],
-};
 
 const INDUSTRY_KPIS: Record<string, Array<{ name: string; baseline: number; candidate: number; unit: string; higherIsBetter: boolean }>> = {
   healthcare: [
@@ -415,7 +377,6 @@ export default function CanaryDeploymentPage() {
   );
 
   const selectedIndustry = selected?.industry || industryId;
-  const safetyGates = INDUSTRY_SAFETY_GATES[selectedIndustry] || INDUSTRY_SAFETY_GATES.financial_services;
   const kpis = INDUSTRY_KPIS[selectedIndustry] || INDUSTRY_KPIS.financial_services;
   const defaultPromotionRules = INDUSTRY_PROMOTION_RULES[selectedIndustry] || INDUSTRY_PROMOTION_RULES.financial_services;
   const defaultRollbackRules = INDUSTRY_ROLLBACK_RULES[selectedIndustry] || INDUSTRY_ROLLBACK_RULES.financial_services;
@@ -743,24 +704,64 @@ export default function CanaryDeploymentPage() {
                   </Card>
 
                   <Card>
-                    <CardHeader className="pb-2">
+                    <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 space-y-0 pb-2">
                       <CardTitle className="text-base flex flex-wrap items-center gap-2">
                         <Shield className="w-4 h-4" />
-                        Industry Safety Gates
+                        Health Gate Summary
                       </CardTitle>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleRefreshHealth}
+                        disabled={healthSnapshotMutation.isPending}
+                        data-testid="button-refresh-health-traffic"
+                      >
+                        {healthSnapshotMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <RefreshCw className="w-4 h-4 mr-1" />}
+                        Refresh
+                      </Button>
                     </CardHeader>
                     <CardContent>
-                      <div className="space-y-2">
-                        {safetyGates.map((gate, idx) => (
-                          <div key={idx} className="flex flex-wrap items-center justify-between gap-2 py-2 border-b last:border-b-0" data-testid={`safety-gate-${idx}`}>
-                            <span className="text-sm">{gate.label}</span>
-                            <Badge variant="outline" className={gate.passed ? "bg-green-500/15 text-green-700 dark:text-green-400" : "bg-red-500/15 text-red-700 dark:text-red-400"}>
-                              {gate.passed ? <CheckCircle2 className="w-3 h-3 mr-1" /> : <XCircle className="w-3 h-3 mr-1" />}
-                              {gate.passed ? "Pass" : "Fail"}
-                            </Badge>
+                      {(() => {
+                        const rawGates = selected.industrySafetyGates as Record<string, unknown> | null;
+                        const snapshot = rawGates?.lastHealthSnapshot as Record<string, unknown> | null | undefined;
+                        const liveGates = snapshot?.gates as Record<string, { value: number | null; threshold: number | null; passes: boolean; unit: string }> | null;
+                        const GATE_LABELS: Record<string, string> = {
+                          errorRate: "Error Rate", avgLatency: "Avg Latency", policyCompliance: "Policy Compliance",
+                          costDrift: "Cost Drift", downstreamFailureRate: "Downstream Failures", evalPassRate: "Eval Pass Rate",
+                        };
+                        if (!snapshot) {
+                          return (
+                            <div className="py-4 flex flex-col items-center gap-2 text-center" data-testid="safety-gates-pending">
+                              <HeartPulse className="w-6 h-6 text-muted-foreground/40" />
+                              <p className="text-sm text-muted-foreground">No health data yet — click <span className="font-medium">Refresh</span> or open the Health Signals tab.</p>
+                            </div>
+                          );
+                        }
+                        if ((snapshot as Record<string, unknown>).noAgentFound) {
+                          return <p className="text-sm text-muted-foreground py-2" data-testid="safety-gates-no-agent">Agent <span className="font-medium">{selected.agentName}</span> not found — health gates unavailable.</p>;
+                        }
+                        if (!liveGates || Object.keys(liveGates).length === 0) {
+                          return <p className="text-sm text-muted-foreground py-2">Insufficient trace data — health gates will populate once traces are recorded.</p>;
+                        }
+                        return (
+                          <div className="space-y-2">
+                            {Object.entries(liveGates).map(([key, gate]) => (
+                              <div key={key} className="flex flex-wrap items-center justify-between gap-2 py-2 border-b last:border-b-0" data-testid={`safety-gate-${key}`}>
+                                <span className="text-sm">{GATE_LABELS[key] || key}</span>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs text-muted-foreground">
+                                    {gate.value !== null ? (gate.unit === "ms" ? `${gate.value.toLocaleString()} ms` : gate.unit === "x" ? `${gate.value.toFixed(2)}×` : `${gate.value.toFixed(1)}${gate.unit}`) : "N/A"}
+                                  </span>
+                                  <Badge variant="outline" className={gate.passes ? "bg-green-500/15 text-green-700 dark:text-green-400 text-[10px]" : "bg-red-500/15 text-red-700 dark:text-red-400 text-[10px]"}>
+                                    {gate.passes ? <CheckCircle2 className="w-3 h-3 mr-1 inline" /> : <XCircle className="w-3 h-3 mr-1 inline" />}
+                                    {gate.passes ? "Pass" : "Fail"}
+                                  </Badge>
+                                </div>
+                              </div>
+                            ))}
                           </div>
-                        ))}
-                      </div>
+                        );
+                      })()}
                     </CardContent>
                   </Card>
                 </TabsContent>
@@ -1033,8 +1034,7 @@ export default function CanaryDeploymentPage() {
                 <TabsContent value="health-signals" className="space-y-4 mt-4">
                   {(() => {
                     const rawGates = selected.industrySafetyGates as Record<string, unknown> | null;
-                    const isSnapshot = rawGates && rawGates._isHealthSnapshot === true;
-                    const snapshot = isSnapshot ? rawGates : null;
+                    const snapshot = rawGates?.lastHealthSnapshot as Record<string, unknown> | null | undefined;
                     const gates = snapshot?.gates as Record<string, { value: number | null; threshold: number | null; passes: boolean; unit: string }> | null;
 
                     const GATE_LABELS: Record<string, string> = {

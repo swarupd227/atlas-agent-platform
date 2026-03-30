@@ -1100,6 +1100,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       const allAgents = await storage.getAgents();
       const matchedAgent = allAgents.find(a => a.name === canaryDep.agentName);
 
+      // Default gate thresholds — same defaults as background monitor in worker.ts
       const thresholds = {
         maxErrorRate: 5,
         latencyThreshold: 5000,
@@ -1109,11 +1110,10 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         minEvalPassRate: null as number | null,
       };
 
-      let snapshot: Record<string, unknown>;
+      let lastHealthSnapshot: Record<string, unknown>;
 
       if (!matchedAgent) {
-        snapshot = {
-          _isHealthSnapshot: true,
+        lastHealthSnapshot = {
           computedAt: new Date().toISOString(),
           traceCount: 0,
           noAgentFound: true,
@@ -1131,10 +1131,13 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         const avgLatency = total > 0 ? Math.round(recentTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / total) : 0;
         const successRate = total > 0 ? ((total - failed) / total) * 100 : 100;
 
+        // Policy compliance: trace fails if policyChecks has a hard failure OR softPolicyViolations is non-empty
         const policyCompliant = recentTraces.filter(t => {
           const checks = t.policyChecks as Array<Record<string, unknown>> | null;
-          if (!Array.isArray(checks)) return true;
-          return !checks.some(c => c.passed === false || c.result === "fail" || c.status === "failed");
+          const softViolations = t.softPolicyViolations as Array<unknown> | null;
+          const hardFail = Array.isArray(checks) && checks.some(c => c.passed === false || c.result === "fail" || c.status === "failed");
+          const hasSoftViolations = Array.isArray(softViolations) && softViolations.length > 0;
+          return !hardFail && !hasSoftViolations;
         }).length;
         const policyComplianceRate = total > 0 ? (policyCompliant / total) * 100 : 100;
 
@@ -1160,8 +1163,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         const evalPasses = thresholds.minEvalPassRate === null || evalPassRate === null ? true : evalPassRate >= thresholds.minEvalPassRate;
         const allGatesPass = errorRatePasses && latencyPasses && policyPasses && costDriftPasses && downstreamPasses && evalPasses;
 
-        snapshot = {
-          _isHealthSnapshot: true,
+        lastHealthSnapshot = {
           computedAt: new Date().toISOString(),
           traceCount: total,
           gates: {
@@ -1177,11 +1179,13 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         };
       }
 
+      // Store snapshot under the canonical key in industrySafetyGates
+      const existingGates = (canaryDep.industrySafetyGates as Record<string, unknown>) || {};
       await storage.updateCanaryDeployment(canaryDep.id, {
-        industrySafetyGates: snapshot as Record<string, unknown>,
+        industrySafetyGates: { ...existingGates, lastHealthSnapshot },
       } as Parameters<typeof storage.updateCanaryDeployment>[1]);
 
-      res.json({ snapshot });
+      res.json({ snapshot: lastHealthSnapshot });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

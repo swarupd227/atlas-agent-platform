@@ -636,11 +636,13 @@ async function computeCanaryHealthSnapshot(dep: {
   const avgLatency = total > 0 ? Math.round(recentTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / total) : 0;
   const successRate = total > 0 ? ((total - failed) / total) * 100 : 100;
 
-  // Policy compliance rate: trace passes if policyChecks has no hard failures
+  // Policy compliance rate: trace fails if policyChecks has a hard failure OR softPolicyViolations is non-empty
   const policyCompliant = recentTraces.filter(t => {
     const checks = t.policyChecks as Array<Record<string, unknown>> | null;
-    if (!Array.isArray(checks)) return true;
-    return !checks.some(c => c.passed === false || c.result === "fail" || c.status === "failed");
+    const softViolations = t.softPolicyViolations as Array<unknown> | null;
+    const hardFail = Array.isArray(checks) && checks.some(c => c.passed === false || c.result === "fail" || c.status === "failed");
+    const hasSoftViolations = Array.isArray(softViolations) && softViolations.length > 0;
+    return !hardFail && !hasSoftViolations;
   }).length;
   const policyComplianceRate = total > 0 ? (policyCompliant / total) * 100 : 100;
 
