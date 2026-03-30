@@ -228,6 +228,8 @@ interface WizardState {
   blueprintId: string | null;
   blueprintName: string | null;
   industryAutoApplied: boolean;
+  templateSystemPrompt: string;
+  templateInstructions: string;
   templateSkills: {
     required: Array<{ skillId: string; skillName: string; domain: string; executionOrder: number }>;
     optional: Array<{ skillId: string; skillName: string; domain: string; executionOrder: number }>;
@@ -331,6 +333,8 @@ const defaultWizardState: WizardState = {
   blueprintId: null,
   blueprintName: null,
   industryAutoApplied: false,
+  templateSystemPrompt: "",
+  templateInstructions: "",
   templateSkills: {
     required: [],
     optional: [],
@@ -1213,6 +1217,8 @@ export default function AgentWizard() {
         : "",
       blueprintId: template.defaultBlueprintId || null,
       blueprintName: null,
+      templateSystemPrompt: (template.blueprintJson as Record<string, any>)?.systemPrompt || "",
+      templateInstructions: (template.blueprintJson as Record<string, any>)?.instructions || (template.blueprintJson as Record<string, any>)?.runtimeConfig?.prompt || "",
       templateSkills: (() => {
         const reqSkills = Array.isArray(template.requiredSkills)
           ? (template.requiredSkills as any[]).map((s: any, i: number) => ({
@@ -1364,13 +1370,16 @@ export default function AgentWizard() {
   function handleCreate() {
     const composedSystemPrompt = domainGlossary
       ? `You are an AI agent operating in the ${industry?.label || "industry"} domain.\n\n${domainGlossary}`
-      : undefined;
+      : wizardState.templateSystemPrompt || undefined;
 
     const linkedOutcome = outcomes?.find((o) => o.id === wizardState.outcomeId);
     let autoPrompt = "";
     if (linkedOutcome) {
       const kpiNames = (linkedOutcome as any).kpis?.map((k: any) => k.name).join(", ") || "";
       autoPrompt = `As an AI agent for ${industry?.label || "the organization"}, ${linkedOutcome.description || linkedOutcome.name}. ${kpiNames ? `Track and report on: ${kpiNames}.` : ""} Analyze available data using connected tools and provide actionable insights with compliance considerations.`;
+    }
+    if (!autoPrompt && wizardState.templateInstructions) {
+      autoPrompt = wizardState.templateInstructions;
     }
 
     const payload: Record<string, unknown> = {

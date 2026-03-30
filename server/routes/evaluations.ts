@@ -95,6 +95,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
 
       const blueprintJson: any = {
         systemPrompt: agent.systemPrompt || "",
+        instructions: rtConfig.prompt || "",
         runtimeConfig: {
           prompt: rtConfig.prompt || "",
           outputSchema: rtConfig.outputSchema || null,

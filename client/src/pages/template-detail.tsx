@@ -576,6 +576,7 @@ export default function TemplateDetail() {
         defaultRiskTier: sourceAgent.riskTier || "MEDIUM",
         defaultAutonomyMode: sourceAgent.autonomyMode || "assisted",
         systemPrompt: sourceAgent.systemPrompt || "",
+        instructions: (sourceAgent.runtimeConfig as any)?.prompt || "",
         tools: tools.length > 0 ? tools.map(t => ({ ...t, permissions: t.permissions ? [...t.permissions] : [] })) : [{ name: "", description: "", permissions: [] }],
         workflowNodes: blueprintNodes.length > 0 ? blueprintNodes.map(n => ({ ...n })) : [{ id: "step_1", type: "llm_call", label: "" }],
         dataAccess: permissions?.dataAccess ? permissions.dataAccess.join(", ") : "",
@@ -864,7 +865,7 @@ export default function TemplateDetail() {
   const startEditing = () => {
     if (!template) return;
     const tools = Array.isArray(template.toolsConfig) ? (template.toolsConfig as ToolConfig[]) : [];
-    const workflow = template.blueprintJson as { nodes?: WorkflowNode[] } | null;
+    const workflow = template.blueprintJson as { nodes?: WorkflowNode[]; systemPrompt?: string; instructions?: string; runtimeConfig?: { prompt?: string } } | null;
     const permissions = template.permissionsConfig as PermissionsConfig | null;
     const memory = template.memoryRagConfig as MemoryRagConfig;
     const policies = Array.isArray(template.policyBindings) ? (template.policyBindings as PolicyBinding[]) : [];
@@ -886,6 +887,8 @@ export default function TemplateDetail() {
       complianceCertifications: [...(template.complianceCertifications || [])],
       newCert: "",
       tools: tools.map(t => ({ ...t, permissions: t.permissions ? [...t.permissions] : [] })),
+      systemPrompt: workflow?.systemPrompt || "",
+      instructions: workflow?.instructions || workflow?.runtimeConfig?.prompt || "",
       workflowNodes: workflow?.nodes ? workflow.nodes.map(n => ({ ...n })) : [],
       dataAccess: permissions?.dataAccess ? permissions.dataAccess.join(", ") : "",
       apiAccess: permissions?.apiAccess ? permissions.apiAccess.join(", ") : "",
@@ -924,7 +927,7 @@ export default function TemplateDetail() {
       modelName: editData.modelName,
       tags: editData.tags,
       toolsConfig: editData.tools,
-      blueprintJson: { nodes: editData.workflowNodes, systemPrompt: editData.systemPrompt || "" },
+      blueprintJson: { nodes: editData.workflowNodes, systemPrompt: editData.systemPrompt || "", instructions: editData.instructions || "" },
       permissionsConfig: { dataAccess: dataAccessArr, apiAccess: apiAccessArr, writeAccess: writeAccessArr },
       memoryRagConfig: editData.memoryRagConfig,
       complianceCertifications: editData.complianceCertifications || [],
@@ -1317,6 +1320,24 @@ export default function TemplateDetail() {
                 rows={6}
                 className="font-mono text-xs"
                 data-testid="input-edit-system-prompt"
+              />
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium flex items-center gap-2">
+                <MessageSquare className="w-4 h-4 text-muted-foreground" /> Agent Task Instructions
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Textarea
+                value={editData.instructions || ""}
+                onChange={(e) => setEditData({ ...editData, instructions: e.target.value })}
+                placeholder="Describe the specific task or goal this agent should perform at runtime…"
+                rows={4}
+                className="font-mono text-xs"
+                data-testid="input-edit-instructions"
               />
             </CardContent>
           </Card>
