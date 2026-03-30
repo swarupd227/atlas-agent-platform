@@ -100,7 +100,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam, Skill, McpServer, McpServerTool, McpServerResource, AgentMcpServer, OntologyConcept, Blueprint, KnowledgeBase, AgentKnowledgeBase, AgentTrigger } from "@shared/schema";
+import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam, Skill, McpServer, McpServerTool, McpServerResource, AgentMcpServer, OntologyConcept, Blueprint, KnowledgeBase, AgentKnowledgeBase, AgentTrigger, Runbook } from "@shared/schema";
 import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck, ChevronDown, ChevronUp } from "lucide-react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useIndustry } from "@/components/industry-provider";
@@ -678,6 +678,9 @@ function AgentDetailInner() {
   });
   const { data: allSkills } = useQuery<Skill[]>({
     queryKey: ["/api/skills"],
+  });
+  const { data: allRunbooks } = useQuery<Runbook[]>({
+    queryKey: ["/api/runbooks"],
   });
   const { data: agentMcpLinks } = useQuery<AgentMcpServer[]>({
     queryKey: ["/api/agents", agentId, "mcp-servers"],
@@ -4178,6 +4181,64 @@ function AgentDetailInner() {
                   )}
                 </div>
               </>
+            );
+          })()}
+
+          {/* Operational Runbooks */}
+          {(() => {
+            const agentIndustry = industry?.id || "general";
+            const relevantRunbooks = (allRunbooks || []).filter((rb: Runbook) =>
+              rb.status === "active" && (rb.industry === agentIndustry || rb.industry === "general" || rb.industry === "enterprise")
+            );
+            if (relevantRunbooks.length === 0) return null;
+            const sevColor = (sev: string) => {
+              if (sev === "critical") return "border-red-500/30 bg-red-500/5 text-red-600 dark:text-red-400";
+              if (sev === "high") return "border-orange-500/30 bg-orange-500/5 text-orange-600 dark:text-orange-400";
+              if (sev === "low") return "border-green-500/30 bg-green-500/5 text-green-600 dark:text-green-400";
+              return "border-amber-500/30 bg-amber-500/5 text-amber-600 dark:text-amber-400";
+            };
+            return (
+              <Card data-testid="card-operational-runbooks">
+                <CardHeader className="pb-3">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <ScrollText className="w-4 h-4 text-muted-foreground" />
+                      <CardTitle className="text-sm font-medium">Operational Runbooks</CardTitle>
+                    </div>
+                    <Badge variant="outline" className="text-[10px]" data-testid="badge-runbook-count">
+                      {relevantRunbooks.length} runbook{relevantRunbooks.length !== 1 ? "s" : ""}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">Incident response, escalation, and operational procedures for this agent</p>
+                </CardHeader>
+                <CardContent className="pt-0">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {relevantRunbooks.slice(0, 8).map((rb: Runbook) => (
+                      <div key={rb.id} className={`flex flex-col gap-1.5 p-3 rounded-md border ${sevColor(rb.severity)}`} data-testid={`runbook-card-${rb.id}`}>
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex flex-col gap-0.5 min-w-0">
+                            <span className="text-xs font-semibold leading-tight">{rb.name}</span>
+                            {rb.description && (
+                              <p className="text-[11px] text-muted-foreground line-clamp-2">{rb.description}</p>
+                            )}
+                          </div>
+                          <Badge variant="outline" className={`text-[9px] shrink-0 capitalize ${sevColor(rb.severity)}`}>{rb.severity}</Badge>
+                        </div>
+                        <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                          <Badge variant="secondary" className="text-[9px] capitalize">{(rb.category || "").replace(/_/g, " ")}</Badge>
+                          <Badge variant="secondary" className="text-[9px] capitalize">{rb.triggerType?.replace(/_/g, " ")}</Badge>
+                          {Array.isArray(rb.steps) && rb.steps.length > 0 && (
+                            <span className="text-[10px] text-muted-foreground">{rb.steps.length} steps</span>
+                          )}
+                          {rb.estimatedDuration && (
+                            <span className="text-[10px] text-muted-foreground">~{rb.estimatedDuration}</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
             );
           })()}
         </TabsContent>
