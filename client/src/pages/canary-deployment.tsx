@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -97,44 +97,6 @@ function timeAgo(dateStr: string) {
 }
 
 
-const INDUSTRY_KPIS: Record<string, Array<{ name: string; baseline: number; candidate: number; unit: string; higherIsBetter: boolean }>> = {
-  healthcare: [
-    { name: "Clinical Accuracy", baseline: 96.2, candidate: 97.8, unit: "%", higherIsBetter: true },
-    { name: "Guideline Adherence", baseline: 94.5, candidate: 95.1, unit: "%", higherIsBetter: true },
-    { name: "Patient Satisfaction", baseline: 4.2, candidate: 4.4, unit: "/5", higherIsBetter: true },
-    { name: "Escalation Rate", baseline: 8.3, candidate: 6.7, unit: "%", higherIsBetter: false },
-  ],
-  financial_services: [
-    { name: "Trade Execution Accuracy", baseline: 99.7, candidate: 99.8, unit: "%", higherIsBetter: true },
-    { name: "Compliance Violation Rate", baseline: 0.3, candidate: 0.1, unit: "%", higherIsBetter: false },
-    { name: "Client Suitability Score", baseline: 92.4, candidate: 94.1, unit: "%", higherIsBetter: true },
-    { name: "Risk Assessment Accuracy", baseline: 95.8, candidate: 96.5, unit: "%", higherIsBetter: true },
-  ],
-  manufacturing: [
-    { name: "Defect Detection Accuracy", baseline: 97.1, candidate: 98.3, unit: "%", higherIsBetter: true },
-    { name: "False Positive Rate", baseline: 3.2, candidate: 2.1, unit: "%", higherIsBetter: false },
-    { name: "Mean Time to Detection", baseline: 4.5, candidate: 3.2, unit: "min", higherIsBetter: false },
-    { name: "Safety Compliance Rate", baseline: 99.1, candidate: 99.4, unit: "%", higherIsBetter: true },
-  ],
-  insurance: [
-    { name: "Claims Processing Accuracy", baseline: 94.6, candidate: 96.2, unit: "%", higherIsBetter: true },
-    { name: "Fraud Detection Rate", baseline: 87.3, candidate: 91.5, unit: "%", higherIsBetter: true },
-    { name: "Underwriting Accuracy", baseline: 93.1, candidate: 94.8, unit: "%", higherIsBetter: true },
-    { name: "Customer Retention Score", baseline: 88.5, candidate: 89.2, unit: "%", higherIsBetter: true },
-  ],
-  retail: [
-    { name: "Recommendation Accuracy", baseline: 78.4, candidate: 82.1, unit: "%", higherIsBetter: true },
-    { name: "Cart Abandonment Rate", baseline: 68.2, candidate: 64.5, unit: "%", higherIsBetter: false },
-    { name: "Search Relevance Score", baseline: 85.7, candidate: 88.3, unit: "%", higherIsBetter: true },
-    { name: "Inventory Prediction Error", baseline: 5.3, candidate: 4.1, unit: "%", higherIsBetter: false },
-  ],
-  technology_saas: [
-    { name: "API Uptime", baseline: 99.92, candidate: 99.96, unit: "%", higherIsBetter: true },
-    { name: "P99 Latency", baseline: 420, candidate: 380, unit: "ms", higherIsBetter: false },
-    { name: "Error Rate", baseline: 0.8, candidate: 0.4, unit: "%", higherIsBetter: false },
-    { name: "Throughput", baseline: 12500, candidate: 13200, unit: "rps", higherIsBetter: true },
-  ],
-};
 
 const INDUSTRY_PROMOTION_RULES: Record<string, string[]> = {
   healthcare: [
@@ -253,8 +215,6 @@ export default function CanaryDeploymentPage() {
   const [addRuleType, setAddRuleType] = useState<"promotion" | "rollback">("promotion");
   const [newRuleText, setNewRuleText] = useState("");
 
-  // Health snapshots keyed by canaryDeployment ID — sourced from deployments.canaryConfig.lastHealthSnapshot
-  const [healthSnapshots, setHealthSnapshots] = useState<Record<string, Record<string, unknown> | null>>({});
 
   const { data: deployments = [], isLoading } = useQuery<CanaryDeployment[]>({
     queryKey: ["/api/canary-deployments"],
@@ -308,17 +268,6 @@ export default function CanaryDeploymentPage() {
     onError: (e: any) => toast({ title: "Rollback failed", description: e.message, variant: "destructive" }),
   });
 
-  const refreshKpisMutation = useMutation({
-    mutationFn: async (data: { deploymentId: string; industry: string }) => {
-      const res = await apiRequest("POST", "/api/ai/canary-analyze", data);
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/canary-deployments"] });
-      toast({ title: "KPIs refreshed" });
-    },
-    onError: (e: any) => toast({ title: "KPI refresh failed", description: e.message, variant: "destructive" }),
-  });
 
   const addRuleMutation = useMutation({
     mutationFn: async ({ id, ruleType, rule }: { id: string; ruleType: "promotion" | "rollback"; rule: string }) => {
@@ -341,18 +290,11 @@ export default function CanaryDeploymentPage() {
     onError: (e: any) => toast({ title: "Failed to add rule", description: e.message, variant: "destructive" }),
   });
 
-  // Auto-load existing snapshot from deployments.canaryConfig.lastHealthSnapshot when selection changes
-  useEffect(() => {
-    if (!selectedId) return;
-    fetch(`/api/canary-deployments/${selectedId}/health-snapshot`)
-      .then(r => r.json())
-      .then(data => {
-        if (data.snapshot) {
-          setHealthSnapshots(prev => ({ ...prev, [selectedId]: data.snapshot }));
-        }
-      })
-      .catch(() => {});
-  }, [selectedId]);
+  // Load existing snapshot from deployments.canaryConfig.lastHealthSnapshot — uses authenticated query client
+  const { data: snapshotQueryData } = useQuery<{ snapshot: Record<string, unknown> | null }>({
+    queryKey: ["/api/canary-deployments", selectedId, "health-snapshot"],
+    enabled: !!selectedId,
+  });
 
   const healthSnapshotMutation = useMutation({
     mutationFn: async (id: string) => {
@@ -360,9 +302,7 @@ export default function CanaryDeploymentPage() {
       return res.json();
     },
     onSuccess: (data, id) => {
-      if (data.snapshot) {
-        setHealthSnapshots(prev => ({ ...prev, [id]: data.snapshot }));
-      }
+      queryClient.setQueryData(["/api/canary-deployments", id, "health-snapshot"], data);
       toast({ title: "Health signals refreshed" });
     },
     onError: (e: any) => toast({ title: "Health refresh failed", description: e.message, variant: "destructive" }),
@@ -395,7 +335,6 @@ export default function CanaryDeploymentPage() {
   );
 
   const selectedIndustry = selected?.industry || industryId;
-  const kpis = INDUSTRY_KPIS[selectedIndustry] || INDUSTRY_KPIS.financial_services;
   const defaultPromotionRules = INDUSTRY_PROMOTION_RULES[selectedIndustry] || INDUSTRY_PROMOTION_RULES.financial_services;
   const defaultRollbackRules = INDUSTRY_ROLLBACK_RULES[selectedIndustry] || INDUSTRY_ROLLBACK_RULES.financial_services;
   const blastRadiusData = INDUSTRY_BLAST_RADIUS[selectedIndustry] || INDUSTRY_BLAST_RADIUS.financial_services;
@@ -447,11 +386,6 @@ export default function CanaryDeploymentPage() {
   function handleRollback() {
     if (!selected) return;
     rollbackMutation.mutate(selected.id);
-  }
-
-  function handleRefreshKpis() {
-    if (!selected) return;
-    refreshKpisMutation.mutate({ deploymentId: selected.id, industry: selectedIndustry });
   }
 
   function handleAddRule() {
@@ -612,11 +546,11 @@ export default function CanaryDeploymentPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={handleRefreshKpis}
-                    disabled={refreshKpisMutation.isPending}
+                    onClick={handleRefreshHealth}
+                    disabled={healthSnapshotMutation.isPending}
                     data-testid="button-run-analysis"
                   >
-                    {refreshKpisMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <BarChart3 className="w-4 h-4 mr-1" />}
+                    {healthSnapshotMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <BarChart3 className="w-4 h-4 mr-1" />}
                     Run Analysis
                   </Button>
                 </div>
@@ -740,7 +674,7 @@ export default function CanaryDeploymentPage() {
                     </CardHeader>
                     <CardContent>
                       {(() => {
-                        const snapshot = (selectedId && healthSnapshots[selectedId]) || null;
+                        const snapshot = snapshotQueryData?.snapshot || null;
                         const liveGates = snapshot?.gates as Record<string, { value: number | null; threshold: number | null; passes: boolean; unit: string }> | null;
                         const GATE_LABELS: Record<string, string> = {
                           errorRate: "Error Rate", avgLatency: "Avg Latency", policyCompliance: "Policy Compliance",
@@ -783,62 +717,119 @@ export default function CanaryDeploymentPage() {
                   </Card>
                 </TabsContent>
 
-                {/* Tab 2: KPI Comparison */}
+                {/* Tab 2: Live KPI Metrics — sourced from deployments.canaryConfig.lastHealthSnapshot */}
                 <TabsContent value="kpis" className="space-y-4 mt-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <h3 className="text-base font-semibold">KPI Comparison</h3>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleRefreshKpis}
-                      disabled={refreshKpisMutation.isPending}
-                      data-testid="button-refresh-kpis"
-                    >
-                      {refreshKpisMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <BarChart3 className="w-4 h-4 mr-1" />}
-                      Refresh KPIs
-                    </Button>
-                  </div>
+                  {(() => {
+                    const snapshot = snapshotQueryData?.snapshot || null;
+                    const gates = snapshot?.gates as Record<string, { value: number | null; threshold: number | null; passes: boolean; unit: string }> | null;
+                    const GATE_LABELS: Record<string, string> = {
+                      errorRate: "Error Rate", avgLatency: "Avg Latency", policyCompliance: "Policy Compliance",
+                      costDrift: "Cost-per-Run Drift", downstreamFailureRate: "Downstream Failure Rate", evalPassRate: "Eval Pass Rate",
+                    };
+                    const GATE_ORDER = ["errorRate", "avgLatency", "policyCompliance", "costDrift", "downstreamFailureRate", "evalPassRate"];
+                    function formatLiveValue(key: string, v: number | null, unit: string) {
+                      if (v === null) return "N/A";
+                      if (unit === "x") return `${v.toFixed(2)}×`;
+                      if (unit === "%") return `${v.toFixed(1)}%`;
+                      if (unit === "ms") return `${v.toLocaleString()} ms`;
+                      return `${v}`;
+                    }
+                    function formatTarget(key: string, t: number | null, unit: string) {
+                      if (t === null) return "—";
+                      if (key === "errorRate" || key === "downstreamFailureRate") return `≤ ${t}${unit}`;
+                      if (key === "avgLatency") return `≤ ${t.toLocaleString()} ms`;
+                      if (key === "costDrift") return `≤ ${t.toFixed(1)}×`;
+                      return `≥ ${t}${unit}`;
+                    }
+                    return (
+                      <>
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <h3 className="text-base font-semibold">Live KPI Metrics</h3>
+                            {snapshot && (
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                From {(snapshot as Record<string, unknown>).traceCount as number} traces · updated {new Date((snapshot as Record<string, unknown>).computedAt as string).toLocaleTimeString()}
+                              </p>
+                            )}
+                          </div>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={handleRefreshHealth}
+                            disabled={healthSnapshotMutation.isPending}
+                            data-testid="button-refresh-kpis"
+                          >
+                            {healthSnapshotMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <BarChart3 className="w-4 h-4 mr-1" />}
+                            Refresh
+                          </Button>
+                        </div>
 
-                  <Card>
-                    <CardContent className="p-0">
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
-                          <thead>
-                            <tr className="border-b">
-                              <th className="text-left p-3 font-medium text-muted-foreground">KPI</th>
-                              <th className="text-right p-3 font-medium text-muted-foreground">Baseline</th>
-                              <th className="text-right p-3 font-medium text-muted-foreground">Candidate</th>
-                              <th className="text-right p-3 font-medium text-muted-foreground">Delta</th>
-                              <th className="text-center p-3 font-medium text-muted-foreground">Trend</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {kpis.map((kpi, idx) => {
-                              const delta = kpi.candidate - kpi.baseline;
-                              const isImproved = kpi.higherIsBetter ? delta > 0 : delta < 0;
-                              const isWorse = kpi.higherIsBetter ? delta < 0 : delta > 0;
-                              const deltaColor = isImproved ? "text-green-600 dark:text-green-400" : isWorse ? "text-red-600 dark:text-red-400" : "text-muted-foreground";
-                              return (
-                                <tr key={idx} className="border-b last:border-b-0" data-testid={`kpi-row-${idx}`}>
-                                  <td className="p-3 font-medium">{kpi.name}</td>
-                                  <td className="p-3 text-right text-muted-foreground">{kpi.baseline}{kpi.unit}</td>
-                                  <td className="p-3 text-right font-medium">{kpi.candidate}{kpi.unit}</td>
-                                  <td className={`p-3 text-right font-medium ${deltaColor}`}>
-                                    {delta > 0 ? "+" : ""}{delta.toFixed(1)}{kpi.unit}
-                                  </td>
-                                  <td className="p-3 text-center">
-                                    {isImproved && <ArrowUp className="w-4 h-4 text-green-600 dark:text-green-400 mx-auto" />}
-                                    {isWorse && <ArrowDown className="w-4 h-4 text-red-600 dark:text-red-400 mx-auto" />}
-                                    {!isImproved && !isWorse && <Minus className="w-4 h-4 text-muted-foreground mx-auto" />}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                    </CardContent>
-                  </Card>
+                        {!snapshot ? (
+                          <Card>
+                            <CardContent className="flex flex-col items-center justify-center py-12 text-center gap-2">
+                              <BarChart3 className="w-8 h-8 text-muted-foreground/40" />
+                              <p className="text-sm font-medium">No live metrics yet</p>
+                              <p className="text-xs text-muted-foreground max-w-xs">
+                                Click <span className="font-medium">Refresh</span> or use Run Analysis to compute live metrics from recent traces.
+                              </p>
+                            </CardContent>
+                          </Card>
+                        ) : (snapshot as Record<string, unknown>).noAgentFound ? (
+                          <Card>
+                            <CardContent className="flex flex-col items-center justify-center py-12 text-center gap-2">
+                              <XCircle className="w-8 h-8 text-muted-foreground/40" />
+                              <p className="text-sm font-medium">Agent not found</p>
+                              <p className="text-xs text-muted-foreground">No agent named <span className="font-medium">{selected.agentName}</span> found in the system.</p>
+                            </CardContent>
+                          </Card>
+                        ) : !gates || Object.keys(gates).length === 0 ? (
+                          <Card>
+                            <CardContent className="flex flex-col items-center justify-center py-12 text-center gap-2">
+                              <Activity className="w-8 h-8 text-muted-foreground/40" />
+                              <p className="text-sm font-medium">Insufficient trace data</p>
+                              <p className="text-xs text-muted-foreground">Fewer than 5 traces available. Metrics will populate once more traces are recorded.</p>
+                            </CardContent>
+                          </Card>
+                        ) : (
+                          <Card>
+                            <CardContent className="p-0">
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-sm">
+                                  <thead>
+                                    <tr className="border-b">
+                                      <th className="text-left p-3 font-medium text-muted-foreground">Metric</th>
+                                      <th className="text-right p-3 font-medium text-muted-foreground">Live Value</th>
+                                      <th className="text-right p-3 font-medium text-muted-foreground">Target</th>
+                                      <th className="text-center p-3 font-medium text-muted-foreground">Status</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {GATE_ORDER.map(key => {
+                                      const gate = gates[key];
+                                      if (!gate) return null;
+                                      return (
+                                        <tr key={key} className="border-b last:border-b-0" data-testid={`kpi-row-${key}`}>
+                                          <td className="p-3 font-medium">{GATE_LABELS[key] || key}</td>
+                                          <td className="p-3 text-right font-semibold">{formatLiveValue(key, gate.value, gate.unit)}</td>
+                                          <td className="p-3 text-right text-muted-foreground">{formatTarget(key, gate.threshold, gate.unit)}</td>
+                                          <td className="p-3 text-center">
+                                            <Badge variant="outline" className={gate.passes ? "bg-green-500/15 text-green-700 dark:text-green-400 text-[10px]" : "bg-red-500/15 text-red-700 dark:text-red-400 text-[10px]"}>
+                                              {gate.passes ? <CheckCircle2 className="w-3 h-3 mr-1 inline" /> : <XCircle className="w-3 h-3 mr-1 inline" />}
+                                              {gate.passes ? "Pass" : "Fail"}
+                                            </Badge>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        )}
+                      </>
+                    );
+                  })()}
                 </TabsContent>
 
                 {/* Tab 3: Rules */}
@@ -1050,7 +1041,7 @@ export default function CanaryDeploymentPage() {
                 {/* Tab 5: Health Signals */}
                 <TabsContent value="health-signals" className="space-y-4 mt-4">
                   {(() => {
-                    const snapshot = (selectedId && healthSnapshots[selectedId]) || null;
+                    const snapshot = snapshotQueryData?.snapshot || null;
                     const gates = snapshot?.gates as Record<string, { value: number | null; threshold: number | null; passes: boolean; unit: string }> | null;
 
                     const GATE_LABELS: Record<string, string> = {
