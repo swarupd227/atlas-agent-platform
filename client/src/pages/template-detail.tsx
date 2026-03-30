@@ -734,6 +734,8 @@ export default function TemplateDetail() {
 
     const merged = { ...editData };
     if (enhanced.description) merged.description = enhanced.description;
+    if (enhanced.systemPrompt) merged.systemPrompt = enhanced.systemPrompt;
+    if (enhanced.instructions) merged.instructions = enhanced.instructions;
     if (enhanced.tools && Array.isArray(enhanced.tools)) {
       merged.tools = enhanced.tools.map((t: any) => ({
         name: t.name || "",
@@ -833,7 +835,7 @@ export default function TemplateDetail() {
         modelName: merged.modelName,
         tags: merged.tags,
         toolsConfig: merged.tools,
-        blueprintJson: { nodes: merged.workflowNodes },
+        blueprintJson: { nodes: merged.workflowNodes, systemPrompt: merged.systemPrompt || "", instructions: merged.instructions || "" },
         permissionsConfig: { dataAccess: dataAccessArr, apiAccess: apiAccessArr, writeAccess: writeAccessArr },
         memoryRagConfig: merged.memoryRagConfig,
         complianceCertifications: merged.complianceCertifications || [],
@@ -3030,6 +3032,30 @@ export default function TemplateDetail() {
                     rows={3}
                     className="text-sm"
                     data-testid="preview-description"
+                  />
+                </div>
+              )}
+              {enhancePreview.systemPrompt !== undefined && (
+                <div>
+                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">System Prompt</h4>
+                  <Textarea
+                    value={enhancePreview.systemPrompt || ""}
+                    onChange={(e) => setEnhancePreview({ ...enhancePreview, systemPrompt: e.target.value })}
+                    rows={5}
+                    className="text-sm font-mono"
+                    data-testid="preview-system-prompt"
+                  />
+                </div>
+              )}
+              {enhancePreview.instructions !== undefined && (
+                <div>
+                  <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1">Agent Task Instructions</h4>
+                  <Textarea
+                    value={enhancePreview.instructions || ""}
+                    onChange={(e) => setEnhancePreview({ ...enhancePreview, instructions: e.target.value })}
+                    rows={4}
+                    className="text-sm font-mono"
+                    data-testid="preview-instructions"
                   />
                 </div>
               )}

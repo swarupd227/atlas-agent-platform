@@ -3334,20 +3334,22 @@ You MUST return recommendations for ALL of the following sections — no excepti
 
 Required sections in your JSON response:
 1. "description" (string): Expand to 2-4 detailed sentences about capabilities, use cases, and expected outcomes.
-2. "tools" (array of objects with "name", "description", "permissions" fields): 3-6 well-defined tools with clear names, descriptions, and realistic permissions arrays.
-3. "workflowNodes" (array of objects with "id", "type", "label" fields): 4-8 meaningful nodes. Available types: schema_validate, rag, llm_call, classifier, router, tool_call, human_review, transform, output_format.
-4. "permissions" (object with "dataAccess", "apiAccess", "writeAccess" arrays): Appropriate scopes based on the agent's purpose.
-5. "memoryRagConfig" (object with "vectorStore", "retrievalStrategy", "chunkSize", "embeddingModel", "topK"): Complete memory/RAG configuration.
-6. "policyBindings" (array of objects with "policyName", "enforcement" fields): 2-4 governance policies. Enforcement: hard/soft/advisory.
-7. "evalBindings" (array of objects with "suiteName", "schedule" fields): 1-3 evaluation suites. Schedule: on_deploy/daily/weekly/on_change/manual.
-8. "rollbackPlan" (object with "triggerConditions" array and "rollbackTargetVersion" string): Safety rollback configuration.
-9. "tags" (array of strings): 3-6 relevant tags for discoverability.
-10. "complexity" (string): One of: low, medium, high.
-11. "defaultRiskTier" (string): One of: LOW, MEDIUM, HIGH, CRITICAL.
-12. "defaultAutonomyMode" (string): One of: autonomous, assisted, supervised, manual.
-13. "preloadedSkills" (array of objects with "skillId", "skillName", "domain" fields): Select 3-8 skills from the AVAILABLE SKILL LIBRARY below that are most relevant for this agent's purpose. You MUST ONLY select skills from this list — do NOT invent or fabricate skill names. Each object must have "skillId" (exact ID from the catalog), "skillName" (exact name from the catalog), and "domain" (the skill's domain from the catalog).
-14. "requiredSkills" (array of objects with "skillId", "skillName", "domain", "executionOrder" fields): From the skills you selected in preloadedSkills, pick the 2-4 most critical ones that MUST be present when this template is used. Set executionOrder as integers starting from 1 to define execution sequence.
-15. "optionalSkills" (array of objects with "skillId", "skillName", "domain", "executionOrder" fields): The remaining skills from preloadedSkills that are recommended but not mandatory. Set executionOrder as integers continuing from the required skills sequence.
+2. "systemPrompt" (string): Write a complete, production-quality system prompt for this agent. It should define the agent's role, capabilities, behavioral constraints, output style, and any domain-specific knowledge it should apply. Minimum 3-6 sentences.
+3. "instructions" (string): Write a clear, actionable natural-language task description — what specific task or goal this agent performs at runtime. This is the task prompt the agent follows when invoked. Minimum 2-4 sentences.
+4. "tools" (array of objects with "name", "description", "permissions" fields): 3-6 well-defined tools with clear names, descriptions, and realistic permissions arrays.
+5. "workflowNodes" (array of objects with "id", "type", "label" fields): 4-8 meaningful nodes. Available types: schema_validate, rag, llm_call, classifier, router, tool_call, human_review, transform, output_format.
+6. "permissions" (object with "dataAccess", "apiAccess", "writeAccess" arrays): Appropriate scopes based on the agent's purpose.
+7. "memoryRagConfig" (object with "vectorStore", "retrievalStrategy", "chunkSize", "embeddingModel", "topK"): Complete memory/RAG configuration.
+8. "policyBindings" (array of objects with "policyName", "enforcement" fields): 2-4 governance policies. Enforcement: hard/soft/advisory.
+9. "evalBindings" (array of objects with "suiteName", "schedule" fields): 1-3 evaluation suites. Schedule: on_deploy/daily/weekly/on_change/manual.
+10. "rollbackPlan" (object with "triggerConditions" array and "rollbackTargetVersion" string): Safety rollback configuration.
+11. "tags" (array of strings): 3-6 relevant tags for discoverability.
+12. "complexity" (string): One of: low, medium, high.
+13. "defaultRiskTier" (string): One of: LOW, MEDIUM, HIGH, CRITICAL.
+14. "defaultAutonomyMode" (string): One of: autonomous, assisted, supervised, manual.
+15. "preloadedSkills" (array of objects with "skillId", "skillName", "domain" fields): Select 3-8 skills from the AVAILABLE SKILL LIBRARY below that are most relevant for this agent's purpose. You MUST ONLY select skills from this list — do NOT invent or fabricate skill names. Each object must have "skillId" (exact ID from the catalog), "skillName" (exact name from the catalog), and "domain" (the skill's domain from the catalog).
+16. "requiredSkills" (array of objects with "skillId", "skillName", "domain", "executionOrder" fields): From the skills you selected in preloadedSkills, pick the 2-4 most critical ones that MUST be present when this template is used. Set executionOrder as integers starting from 1 to define execution sequence.
+17. "optionalSkills" (array of objects with "skillId", "skillName", "domain", "executionOrder" fields): The remaining skills from preloadedSkills that are recommended but not mandatory. Set executionOrder as integers continuing from the required skills sequence.
 
 AVAILABLE SKILL LIBRARY (${industryFilter} industry — select ONLY from these):
 ${JSON.stringify(skillCatalogSummary, null, 2)}
@@ -3368,6 +3370,8 @@ Complexity: ${template.complexity || "medium"}
 Risk Tier: ${template.defaultRiskTier || "MEDIUM"}
 Autonomy Mode: ${template.defaultAutonomyMode || "assisted"}
 Model: ${template.modelProvider || "openai"} / ${template.modelName || "gpt-4.1"}
+Current System Prompt: ${template.systemPrompt || "Not set"}
+Current Agent Task Instructions: ${template.instructions || "Not set"}
 Current Tools: ${JSON.stringify(template.tools || [])}
 Current Workflow Nodes: ${JSON.stringify(template.workflowNodes || [])}
 Data Access: ${template.dataAccess || "none"}
