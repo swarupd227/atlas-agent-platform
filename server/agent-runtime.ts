@@ -904,16 +904,35 @@ ${outputText.substring(0, 3000)}`;
     const parsed = JSON.parse(raw.substring(jsonStart, jsonEnd + 1));
     if (!parsed.policyResults || !Array.isArray(parsed.policyResults)) return null;
 
-    return parsed.policyResults.map((r: any) => ({
-      policyId: String(r.policyId || ""),
-      policyName: String(r.policyName || ""),
-      enforcement: softPolicies.find(p => p.id === r.policyId)?.enforcement || "soft",
-      domain: softPolicies.find(p => p.id === r.policyId)?.domain || "general",
-      compliant: Boolean(r.compliant),
-      violatedRequirements: Array.isArray(r.violatedRequirements) ? r.violatedRequirements.map(String) : [],
-      evidence: String(r.evidence || ""),
-      severity: (["low", "medium", "high"] as const).includes(r.severity) ? r.severity : "low",
-    })) as SoftPolicyComplianceResult[];
+    const judgeMap = new Map<string, any>(
+      parsed.policyResults.map((r: any) => [String(r.policyId || ""), r])
+    );
+
+    return softPolicies.map(p => {
+      const r = judgeMap.get(p.id);
+      if (!r) {
+        return {
+          policyId: p.id,
+          policyName: p.name,
+          enforcement: p.enforcement,
+          domain: p.domain,
+          compliant: true,
+          violatedRequirements: [],
+          evidence: "No violation detected in agent output.",
+          severity: "low" as const,
+        };
+      }
+      return {
+        policyId: p.id,
+        policyName: p.name,
+        enforcement: p.enforcement,
+        domain: p.domain,
+        compliant: Boolean(r.compliant),
+        violatedRequirements: Array.isArray(r.violatedRequirements) ? r.violatedRequirements.map(String) : [],
+        evidence: String(r.evidence || ""),
+        severity: (["low", "medium", "high"] as const).includes(r.severity) ? r.severity as "low" | "medium" | "high" : "low",
+      };
+    });
   } catch {
     return null;
   }
