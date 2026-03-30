@@ -506,7 +506,7 @@ export default function TemplateDetail() {
 
   const { data: allSkills } = useQuery<Skill[]>({
     queryKey: ["/api/skills"],
-    enabled: skillLibraryOpen || showContextPreview,
+    enabled: skillLibraryOpen || showContextPreview || (!!sourceAgentId && isNew),
   });
 
   const { data: policyLibrary } = useQuery<Array<{ id: string; name: string; domain: string; description: string }>>({
@@ -519,12 +519,11 @@ export default function TemplateDetail() {
   });
 
   useEffect(() => {
-    if (sourceAgent && isNew && !prefillApplied.current) {
+    if (sourceAgent && isNew && !prefillApplied.current && allSkills) {
       prefillApplied.current = true;
       const agentBp = (sourceAgent.blueprintJson as Record<string, any>) || {};
       const blueprintNodes: WorkflowNode[] = Array.isArray(agentBp.nodes) ? agentBp.nodes : [];
       const tools = Array.isArray(sourceAgent.toolsConfig) ? (sourceAgent.toolsConfig as ToolConfig[]) : [];
-      const rtConfig = (sourceAgent.runtimeConfig as Record<string, any>) || {};
       const permissions = (sourceAgent.permissionsConfig as { dataAccess?: string[]; apiAccess?: string[]; writeAccess?: string[] } | null);
       const memoryConfig = (sourceAgent.memoryRagConfig as MemoryRagConfig);
       const policyData = sourceAgent.policyBindings;
@@ -555,12 +554,16 @@ export default function TemplateDetail() {
           ? ((sourceAgent as any).preloadedSkills as any[])
               .sort((a, b) => (a.loadOrder ?? 0) - (b.loadOrder ?? 0))
           : [];
-      const matchedSkills: SkillEntry[] = agentPreloadedSkills.map((s, i) => ({
-        skillId: s.skillId || "",
-        skillName: "",
-        domain: "",
-        executionOrder: i + 1,
-      }));
+      const matchedSkills: SkillEntry[] = agentPreloadedSkills.map((s, i) => {
+        const catalog = allSkills || [];
+        const found = catalog.find((sk: Skill) => sk.id === s.skillId);
+        return {
+          skillId: s.skillId || "",
+          skillName: found?.name || "",
+          domain: found?.domain || "",
+          executionOrder: i + 1,
+        };
+      });
       setEditData({
         name: `${sourceAgent.name} Template`,
         description: sourceAgent.description || "",
@@ -598,7 +601,7 @@ export default function TemplateDetail() {
         newTriggerCondition: "",
       });
     }
-  }, [sourceAgent, isNew]);
+  }, [sourceAgent, isNew, allSkills]);
 
   useEffect(() => {
     if (template && editing && Object.keys(editData).length === 0) {
