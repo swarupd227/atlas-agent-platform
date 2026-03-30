@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -253,6 +253,9 @@ export default function CanaryDeploymentPage() {
   const [addRuleType, setAddRuleType] = useState<"promotion" | "rollback">("promotion");
   const [newRuleText, setNewRuleText] = useState("");
 
+  // Health snapshots keyed by canaryDeployment ID — sourced from deployments.canaryConfig.lastHealthSnapshot
+  const [healthSnapshots, setHealthSnapshots] = useState<Record<string, Record<string, unknown> | null>>({});
+
   const { data: deployments = [], isLoading } = useQuery<CanaryDeployment[]>({
     queryKey: ["/api/canary-deployments"],
   });
@@ -338,13 +341,28 @@ export default function CanaryDeploymentPage() {
     onError: (e: any) => toast({ title: "Failed to add rule", description: e.message, variant: "destructive" }),
   });
 
+  // Auto-load existing snapshot from deployments.canaryConfig.lastHealthSnapshot when selection changes
+  useEffect(() => {
+    if (!selectedId) return;
+    fetch(`/api/canary-deployments/${selectedId}/health-snapshot`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.snapshot) {
+          setHealthSnapshots(prev => ({ ...prev, [selectedId]: data.snapshot }));
+        }
+      })
+      .catch(() => {});
+  }, [selectedId]);
+
   const healthSnapshotMutation = useMutation({
     mutationFn: async (id: string) => {
       const res = await apiRequest("POST", `/api/canary-deployments/${id}/health-snapshot`, {});
       return res.json();
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/canary-deployments"] });
+    onSuccess: (data, id) => {
+      if (data.snapshot) {
+        setHealthSnapshots(prev => ({ ...prev, [id]: data.snapshot }));
+      }
       toast({ title: "Health signals refreshed" });
     },
     onError: (e: any) => toast({ title: "Health refresh failed", description: e.message, variant: "destructive" }),
@@ -722,8 +740,7 @@ export default function CanaryDeploymentPage() {
                     </CardHeader>
                     <CardContent>
                       {(() => {
-                        const rawGates = selected.industrySafetyGates as Record<string, unknown> | null;
-                        const snapshot = rawGates?.lastHealthSnapshot as Record<string, unknown> | null | undefined;
+                        const snapshot = (selectedId && healthSnapshots[selectedId]) || null;
                         const liveGates = snapshot?.gates as Record<string, { value: number | null; threshold: number | null; passes: boolean; unit: string }> | null;
                         const GATE_LABELS: Record<string, string> = {
                           errorRate: "Error Rate", avgLatency: "Avg Latency", policyCompliance: "Policy Compliance",
@@ -1033,8 +1050,7 @@ export default function CanaryDeploymentPage() {
                 {/* Tab 5: Health Signals */}
                 <TabsContent value="health-signals" className="space-y-4 mt-4">
                   {(() => {
-                    const rawGates = selected.industrySafetyGates as Record<string, unknown> | null;
-                    const snapshot = rawGates?.lastHealthSnapshot as Record<string, unknown> | null | undefined;
+                    const snapshot = (selectedId && healthSnapshots[selectedId]) || null;
                     const gates = snapshot?.gates as Record<string, { value: number | null; threshold: number | null; passes: boolean; unit: string }> | null;
 
                     const GATE_LABELS: Record<string, string> = {

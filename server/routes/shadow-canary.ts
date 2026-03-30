@@ -1091,101 +1091,128 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
-  router.post("/api/canary-deployments/:id/health-snapshot", async (req, res) => {
+  // Shared helper: resolve agent + deployment for a canaryDeployment, compute 6-gate health snapshot,
+  // persist to deployments.canaryConfig.lastHealthSnapshot (same canonical key as background monitor)
+  async function computeAndPersistCanaryHealthSnapshot(canaryDepId: string): Promise<{ snapshot: Record<string, unknown>; deploymentId: string | null }> {
+    const canaryDep = await storage.getCanaryDeployment(canaryDepId);
+    if (!canaryDep) throw new Error("Canary deployment not found");
+
+    const allAgents = await storage.getAgents();
+    const matchedAgent = allAgents.find(a => a.name === canaryDep.agentName);
+
+    if (!matchedAgent) {
+      return { snapshot: { computedAt: new Date().toISOString(), traceCount: 0, noAgentFound: true, gates: {}, allGatesPass: null }, deploymentId: null };
+    }
+
+    // Find the linked deployment row to get configured thresholds and environment
+    const linkedDeployments = await storage.getDeploymentsByAgentId(matchedAgent.id);
+    const linkedDep = linkedDeployments.find(d => d.status === "canary") || linkedDeployments.find(d => d.status === "active") || linkedDeployments[0];
+    const depConfig = (linkedDep?.canaryConfig as Record<string, unknown>) || {};
+    const environment = linkedDep?.environment || "prod";
+
+    // Read thresholds from deployment config, fall back to safe defaults
+    const thresholds = {
+      maxErrorRate: (depConfig.maxErrorRate as number) || 5,
+      latencyThreshold: (depConfig.latencyP99Threshold as number) || 5000,
+      minPolicyComplianceRate: (depConfig.minPolicyComplianceRate as number) ?? 98,
+      maxCostDriftMultiplier: (depConfig.maxCostDriftMultiplier as number) ?? 1.5,
+      maxDownstreamFailureRate: (depConfig.maxDownstreamFailureRate as number) ?? 5,
+      minEvalPassRate: (depConfig.minEvalPassRate as number | null) ?? null,
+    };
+
+    const allTraces = await storage.getTracesByAgent(matchedAgent.id);
+    const recentTraces = allTraces
+      .filter(t => t.environment === environment)
+      .sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime())
+      .slice(0, 50);
+    const total = recentTraces.length;
+    const failed = recentTraces.filter(t => t.status === "failed" || t.status === "error").length;
+    const errorRate = total > 0 ? (failed / total) * 100 : 0;
+    const avgLatency = total > 0 ? Math.round(recentTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / total) : 0;
+    const successRate = total > 0 ? ((total - failed) / total) * 100 : 100;
+
+    // Policy compliance: trace fails if policyChecks has a hard failure OR softPolicyViolations is non-empty
+    const policyCompliant = recentTraces.filter(t => {
+      const checks = t.policyChecks as Array<Record<string, unknown>> | null;
+      const softViolations = t.softPolicyViolations as Array<unknown> | null;
+      const hardFail = Array.isArray(checks) && checks.some(c => c.passed === false || c.result === "fail" || c.status === "failed");
+      const hasSoftViolations = Array.isArray(softViolations) && softViolations.length > 0;
+      return !hardFail && !hasSoftViolations;
+    }).length;
+    const policyComplianceRate = total > 0 ? (policyCompliant / total) * 100 : 100;
+
+    const baselineCost = matchedAgent.costPerRun;
+    const avgCostUsd = total > 0 ? recentTraces.reduce((s, t) => s + (t.costUsd || 0), 0) / total : 0;
+    const costDriftRatio = baselineCost && baselineCost > 0 ? avgCostUsd / baselineCost : null;
+
+    const canaryTraceIds = recentTraces.map(t => t.id);
+    const downstreamTraces = await storage.getTracesByParentIds(canaryTraceIds);
+    const downstreamFailed = downstreamTraces.filter(t => t.status === "failed" || t.status === "error").length;
+    const downstreamFailureRate = downstreamTraces.length > 0 ? (downstreamFailed / downstreamTraces.length) * 100 : 0;
+
+    const evalSuitesList = await storage.getEvalsByAgent(matchedAgent.id);
+    const evalPassRate = evalSuitesList.length > 0
+      ? evalSuitesList.reduce((s, e) => s + (e.passRate || 0), 0) / evalSuitesList.length
+      : null;
+
+    const errorRatePasses = errorRate <= thresholds.maxErrorRate;
+    const latencyPasses = avgLatency <= thresholds.latencyThreshold;
+    const policyPasses = policyComplianceRate >= thresholds.minPolicyComplianceRate;
+    const costDriftPasses = costDriftRatio === null ? true : costDriftRatio <= thresholds.maxCostDriftMultiplier;
+    const downstreamPasses = downstreamFailureRate <= thresholds.maxDownstreamFailureRate;
+    const evalPasses = thresholds.minEvalPassRate === null || evalPassRate === null ? true : evalPassRate >= thresholds.minEvalPassRate;
+    const allGatesPass = errorRatePasses && latencyPasses && policyPasses && costDriftPasses && downstreamPasses && evalPasses;
+
+    const lastHealthSnapshot: Record<string, unknown> = {
+      computedAt: new Date().toISOString(),
+      traceCount: total,
+      gates: {
+        errorRate: { value: errorRate, threshold: thresholds.maxErrorRate, passes: errorRatePasses, unit: "%" },
+        avgLatency: { value: avgLatency, threshold: thresholds.latencyThreshold, passes: latencyPasses, unit: "ms" },
+        policyCompliance: { value: policyComplianceRate, threshold: thresholds.minPolicyComplianceRate, passes: policyPasses, unit: "%" },
+        costDrift: { value: costDriftRatio, threshold: thresholds.maxCostDriftMultiplier, passes: costDriftPasses, unit: "x" },
+        downstreamFailureRate: { value: downstreamFailureRate, threshold: thresholds.maxDownstreamFailureRate, passes: downstreamPasses, unit: "%" },
+        evalPassRate: { value: evalPassRate, threshold: thresholds.minEvalPassRate, passes: evalPasses, unit: "%" },
+      },
+      allGatesPass,
+      successRate,
+      deploymentId: linkedDep?.id || null,
+      environment,
+    };
+
+    // Persist to deployments.canaryConfig.lastHealthSnapshot — same canonical key as background monitor
+    if (linkedDep) {
+      await storage.updateDeployment(linkedDep.id, {
+        canaryConfig: { ...depConfig, lastHealthSnapshot },
+      });
+    }
+
+    return { snapshot: lastHealthSnapshot, deploymentId: linkedDep?.id || null };
+  }
+
+  router.get("/api/canary-deployments/:id/health-snapshot", async (req, res) => {
     try {
       const canaryDep = await storage.getCanaryDeployment(req.params.id);
       if (!canaryDep) return res.status(404).json({ error: "Not found" });
 
-      // Find the matching agent by name to get agentId and traces
       const allAgents = await storage.getAgents();
       const matchedAgent = allAgents.find(a => a.name === canaryDep.agentName);
+      if (!matchedAgent) return res.json({ snapshot: null });
 
-      // Default gate thresholds — same defaults as background monitor in worker.ts
-      const thresholds = {
-        maxErrorRate: 5,
-        latencyThreshold: 5000,
-        minPolicyComplianceRate: 98,
-        maxCostDriftMultiplier: 1.5,
-        maxDownstreamFailureRate: 5,
-        minEvalPassRate: null as number | null,
-      };
+      const linkedDeployments = await storage.getDeploymentsByAgentId(matchedAgent.id);
+      const linkedDep = linkedDeployments.find(d => d.status === "canary") || linkedDeployments.find(d => d.status === "active") || linkedDeployments[0];
+      if (!linkedDep) return res.json({ snapshot: null });
 
-      let lastHealthSnapshot: Record<string, unknown>;
+      const config = linkedDep.canaryConfig as Record<string, unknown> | null;
+      const snapshot = config?.lastHealthSnapshot || null;
+      res.json({ snapshot });
+    } catch (e: any) { res.status(500).json({ error: e.message }); }
+  });
 
-      if (!matchedAgent) {
-        lastHealthSnapshot = {
-          computedAt: new Date().toISOString(),
-          traceCount: 0,
-          noAgentFound: true,
-          gates: {},
-          allGatesPass: null,
-        };
-      } else {
-        const traces = await storage.getTracesByAgent(matchedAgent.id);
-        const recentTraces = traces
-          .sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime())
-          .slice(0, 50);
-        const total = recentTraces.length;
-        const failed = recentTraces.filter(t => t.status === "failed" || t.status === "error").length;
-        const errorRate = total > 0 ? (failed / total) * 100 : 0;
-        const avgLatency = total > 0 ? Math.round(recentTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / total) : 0;
-        const successRate = total > 0 ? ((total - failed) / total) * 100 : 100;
-
-        // Policy compliance: trace fails if policyChecks has a hard failure OR softPolicyViolations is non-empty
-        const policyCompliant = recentTraces.filter(t => {
-          const checks = t.policyChecks as Array<Record<string, unknown>> | null;
-          const softViolations = t.softPolicyViolations as Array<unknown> | null;
-          const hardFail = Array.isArray(checks) && checks.some(c => c.passed === false || c.result === "fail" || c.status === "failed");
-          const hasSoftViolations = Array.isArray(softViolations) && softViolations.length > 0;
-          return !hardFail && !hasSoftViolations;
-        }).length;
-        const policyComplianceRate = total > 0 ? (policyCompliant / total) * 100 : 100;
-
-        const baselineCost = matchedAgent.costPerRun;
-        const avgCostUsd = total > 0 ? recentTraces.reduce((s, t) => s + (t.costUsd || 0), 0) / total : 0;
-        const costDriftRatio = baselineCost && baselineCost > 0 ? avgCostUsd / baselineCost : null;
-
-        const canaryTraceIds = recentTraces.map(t => t.id);
-        const downstreamTraces = await storage.getTracesByParentIds(canaryTraceIds);
-        const downstreamFailed = downstreamTraces.filter(t => t.status === "failed" || t.status === "error").length;
-        const downstreamFailureRate = downstreamTraces.length > 0 ? (downstreamFailed / downstreamTraces.length) * 100 : 0;
-
-        const evalSuitesList = await storage.getEvalsByAgent(matchedAgent.id);
-        const evalPassRate = evalSuitesList.length > 0
-          ? evalSuitesList.reduce((s, e) => s + (e.passRate || 0), 0) / evalSuitesList.length
-          : null;
-
-        const errorRatePasses = errorRate <= thresholds.maxErrorRate;
-        const latencyPasses = avgLatency <= thresholds.latencyThreshold;
-        const policyPasses = policyComplianceRate >= thresholds.minPolicyComplianceRate;
-        const costDriftPasses = costDriftRatio === null ? true : costDriftRatio <= thresholds.maxCostDriftMultiplier;
-        const downstreamPasses = downstreamFailureRate <= thresholds.maxDownstreamFailureRate;
-        const evalPasses = thresholds.minEvalPassRate === null || evalPassRate === null ? true : evalPassRate >= thresholds.minEvalPassRate;
-        const allGatesPass = errorRatePasses && latencyPasses && policyPasses && costDriftPasses && downstreamPasses && evalPasses;
-
-        lastHealthSnapshot = {
-          computedAt: new Date().toISOString(),
-          traceCount: total,
-          gates: {
-            errorRate: { value: errorRate, threshold: thresholds.maxErrorRate, passes: errorRatePasses, unit: "%" },
-            avgLatency: { value: avgLatency, threshold: thresholds.latencyThreshold, passes: latencyPasses, unit: "ms" },
-            policyCompliance: { value: policyComplianceRate, threshold: thresholds.minPolicyComplianceRate, passes: policyPasses, unit: "%" },
-            costDrift: { value: costDriftRatio, threshold: thresholds.maxCostDriftMultiplier, passes: costDriftPasses, unit: "x" },
-            downstreamFailureRate: { value: downstreamFailureRate, threshold: thresholds.maxDownstreamFailureRate, passes: downstreamPasses, unit: "%" },
-            evalPassRate: { value: evalPassRate, threshold: thresholds.minEvalPassRate, passes: evalPasses, unit: "%" },
-          },
-          allGatesPass,
-          successRate,
-        };
-      }
-
-      // Store snapshot under the canonical key in industrySafetyGates
-      const existingGates = (canaryDep.industrySafetyGates as Record<string, unknown>) || {};
-      await storage.updateCanaryDeployment(canaryDep.id, {
-        industrySafetyGates: { ...existingGates, lastHealthSnapshot },
-      } as Parameters<typeof storage.updateCanaryDeployment>[1]);
-
-      res.json({ snapshot: lastHealthSnapshot });
+  router.post("/api/canary-deployments/:id/health-snapshot", async (req, res) => {
+    try {
+      const { snapshot } = await computeAndPersistCanaryHealthSnapshot(req.params.id);
+      res.json({ snapshot });
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
