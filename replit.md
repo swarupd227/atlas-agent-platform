@@ -113,6 +113,17 @@ Shell scripts (curl + jq) that create full-stack agent platform intelligence via
 
 **9-step provisioning pattern** (same for all OTC agents): Skills → KB → Policies → Agent (base) → PATCH (skills+policies+KB+blueprint) → KB-link → Dataset → Runbooks → EvalSuite+evalBindings
 
+### OTC-AGT-003: Customer Credit & Risk Assessment Agent
+
+| Script | Target | Purpose |
+|---|---|---|
+| `provision_otc_agt_003_dev.sh` | `localhost:5000` (staging) | Creates agent in dev environment |
+| `migrate_otc_agt_003_to_prod.sh` | `https://agent-lifecycle-management-platform.replit.app` | Creates agent in production |
+
+**Dev IDs**: Agent `b60f2e23-d021-40ea-8502-13027ecc6399`, KB `68913748-de1d-4b19-96b9-2c13be1b57a4`, Eval Suite `10c90b84-2f53-4ccd-b92c-51f156aa67e0`, Dataset `6a39e55b-d4e5-4153-8b87-11d84e424eec`; Skills: S1=`81c9f18e` (Credit Bureau Integration), S2=`a421e433` (Payment Pattern Analysis), S3=`80387fc8` (Financial Statement Parser), S4=`d02eb229` (Risk Scoring Model), S5=`ddfedf65` (News & Signal Monitoring), S6=`74a7060d` (Credit Decision Explanation); Policies: P1=`23da3393` (ECOA), P2=`15052890` (FCRA), P3=`2f40e30b` (Basel III/IFRS 9), P4=`85dc6baf` (GDPR/CCPA), P5=`8a210d32` (SOX), P6=`6564d827` (OFAC/AML); Runbooks: RB1=`8583625e` (Bureau API Down), RB2=`071ab5d5` (Mass Credit Breach), RB3=`9fa5477c` (False Credit Hold), RB4=`215d4516` (Customer Dispute), RB5=`94251883` (Periodic Review Backlog), RB6=`0e64caf1` (Credit Model Drift)
+
+**Resources**: 6 Skills, 1 KB, 6 Policies, 1 Agent (18 tools, 11-node blueprint with 1 human-in-loop gate), 6 Runbooks, 1 Eval Suite (800-case dataset); Category: Risk Management
+
 ## External Dependencies
 - **OpenAI**: Primary LLM provider for agent runtime, evaluations, AI enhancements, and embeddings.
 - **Anthropic**: Secondary LLM provider for Claude models with tool calling.

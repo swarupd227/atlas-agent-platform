@@ -1,0 +1,61 @@
+. Customer Credit & Risk Assessment Agent
+OTC-AGT-003  |  Category: Risk Management
+4.1 Description
+Continuously evaluates customer creditworthiness using internal payment history, external credit bureau data, and real-time financial signals. Dynamically adjusts credit limits, recommends payment terms, and flags high-risk accounts for review. Proactively identifies deteriorating credit conditions before they impact order flow.
+4.2 Workflow Steps
+22.	1. Trigger: new customer onboarding, periodic review, or order-triggered check
+23.	2. Retrieve internal payment history (DSO, aging, past-due frequency)
+24.	3. Pull external credit data (D&B, Experian, credit bureau scores)
+25.	4. Analyze financial statements if available (public filings, bank references)
+26.	5. Calculate composite risk score using weighted model
+27.	6. Determine recommended credit limit and payment terms
+28.	7. Compare against current exposure (open orders + open invoices)
+29.	8. Flag accounts exceeding risk thresholds for human review
+30.	9. Update credit record in ERP/CRM
+31.	10. Notify sales and order management of credit decisions
+32.	11. Schedule next periodic review based on risk tier
+
+4.3 Common Ontology
+The following entities and attributes form the shared data model referenced by this agent:
+Entity	Key Attributes
+Credit Score	internal score, external score, composite score, trend direction
+Credit Limit	recommended, approved, utilized, available
+Payment History	average days to pay, on-time %, dispute rate
+Risk Tier	low, medium, high, watch list, credit hold
+Financial Signal	revenue trend, profit margin, debt ratio, news sentiment
+Exposure	open orders value, open AR value, total exposure
+
+4.4 Claude Agent Skills
+The following skills should be developed and made available as context for this agent:
+Skill Name	Description
+Credit Bureau Integration Skill	Fetches D&B, Experian, or Equifax commercial reports
+Payment Pattern Analysis Skill	Analyzes historical payment behavior and trend detection
+Financial Statement Parser Skill	Extracts key ratios from uploaded financial statements
+Risk Scoring Model Skill	Composite scoring with configurable weights and thresholds
+News & Signal Monitoring Skill	Scans financial news for distress signals (layoffs, lawsuits, downgrades)
+Credit Decision Explanation Skill	Generates human-readable rationale for credit decisions
+
+4.5 Eval Dataset
+Recommended evaluation data and benchmarks for validating agent accuracy and performance:
+•	Historical credit decisions with actual payment outcomes (default/non-default)
+•	Customers across all risk tiers with known credit scores and limits
+•	Edge cases: rapid growth companies, seasonal businesses, conglomerates
+•	False positive/negative analysis: accounts flagged incorrectly in past
+•	Stress test scenarios: economic downturn simulations on portfolio
+•	Benchmark: decisions should match expert credit analyst 90%+ of the time
+
+4.6 Production Runbooks
+Operational procedures for handling common issues and failure scenarios:
+Scenario	Procedure
+Credit Bureau API Down	Fallback to cached scores with staleness warning; manual review queue
+Mass Credit Limit Breach	Bulk processing procedure during economic events
+False Credit Hold	Expedited release process with override authority levels
+Customer Dispute of Credit Decision	Escalation path, supporting documentation requirements
+Periodic Review Backlog	Prioritization by exposure size, triage procedure
+Credit Model Drift	Monitoring procedure, recalibration triggers, model retraining
+
+4.7 Regulatory Compliance & Policies
+Applicable regulations and compliance requirements:
+•	Equal Credit Opportunity Act (ECOA): Non-discriminatory credit decisions
+•	Fair Credit Reporting Act (FCRA): Proper use and disclosure of credit bureau data
+•	Basel III/IFRS 9: Exp
