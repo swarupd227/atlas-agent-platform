@@ -4318,29 +4318,38 @@ function AgentDetailInner() {
         {/* Skills Tab */}
         <TabsContent value="skills" className="flex flex-col gap-4 mt-0" data-testid="tab-content-skills">
           {(() => {
-            const agentSkillBindings = (agent as any).agentSkills || [];
-            const matchedSkills = allSkills?.filter((s: Skill) => {
-              if (agentSkillBindings.length > 0) {
-                return agentSkillBindings.some((b: any) => b.skillId === s.id || b === s.id);
-              }
-              const agentDept = agent.department || "";
-              return s.industry === industry?.id && (s.domain === agentDept || !agentDept);
-            }).slice(0, 8) || [];
+            const preloadedSkillBindings: Array<{ skillId: string; loadOrder: number }> =
+              Array.isArray((agent as any).preloadedSkills)
+                ? (agent as any).preloadedSkills
+                : [];
+            const matchedSkills: Skill[] = preloadedSkillBindings.length > 0
+              ? preloadedSkillBindings
+                  .sort((a, b) => (a.loadOrder ?? 0) - (b.loadOrder ?? 0))
+                  .map(binding => allSkills?.find((s: Skill) => s.id === binding.skillId))
+                  .filter((s): s is Skill => !!s)
+              : [];
 
             return (
               <>
                 <div className="flex items-center justify-between gap-4 flex-wrap">
                   <div>
                     <h3 className="text-base font-semibold flex items-center gap-2">
-                      <Sparkles className="w-4 h-4" /> Active Skills
+                      <Sparkles className="w-4 h-4" /> Linked Skills
                     </h3>
                     <p className="text-sm text-muted-foreground">
                       Composable skill units bound to this agent with performance tracking
                     </p>
                   </div>
-                  <Badge variant="outline" className="text-[11px]" data-testid="badge-skill-count">
-                    {matchedSkills.length} skill{matchedSkills.length !== 1 ? "s" : ""} active
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="text-[11px]" data-testid="badge-skill-count">
+                      {matchedSkills.length} skill{matchedSkills.length !== 1 ? "s" : ""} linked
+                    </Badge>
+                    <Link href="/skills">
+                      <Button variant="outline" size="sm" className="text-xs h-7" data-testid="button-browse-skills">
+                        <Sparkles className="w-3 h-3 mr-1" /> Browse Skills Library
+                      </Button>
+                    </Link>
+                  </div>
                 </div>
 
                 {matchedSkills.length > 0 ? (
@@ -4357,7 +4366,9 @@ function AgentDetailInner() {
                             <div className="flex items-start justify-between gap-2">
                               <div className="flex flex-col gap-1 min-w-0">
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-sm font-semibold">{skill.name}</span>
+                                  <Link href={`/skills/${skill.id}`} className="text-sm font-semibold hover:underline" data-testid={`link-skill-${skill.id}`}>
+                                    {skill.name}
+                                  </Link>
                                   <Badge variant="outline" className="text-[10px]">v{skill.version || "1.0"}</Badge>
                                 </div>
                                 <span className="text-[11px] text-muted-foreground">{skill.domain || "General"}</span>

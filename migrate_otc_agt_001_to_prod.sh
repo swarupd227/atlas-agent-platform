@@ -538,6 +538,223 @@ DS=$(post_api "Quote & Configuration Evaluation Dataset" "/api/golden-datasets" 
 echo "" >&2
 
 # =============================================================================
+# STEP 8: Create 6 Operational Runbooks (OTC-AGT-001 Incident & Escalation Docs)
+# =============================================================================
+echo "STEP 8: Creating 6 Operational Runbooks..." >&2
+
+cat > "$WORK/rb1.json" <<'ENDJSON'
+{
+  "name": "Pricing Rule Sync Failure",
+  "description": "Handles failures in syncing pricing tables from the ERP system. Provides steps to resync pricing data and fall back to cached prices when sync fails.",
+  "industry": "enterprise",
+  "category": "incident_response",
+  "triggerType": "manual",
+  "triggerConditions": ["pricing_rule_sync_failed", "erp_connection_timeout", "stale_price_list_detected"],
+  "steps": [
+    {"id": "s1", "label": "Detect sync failure",              "type": "detection",    "description": "Identify pricing rule sync failure via monitoring alert or agent error log"},
+    {"id": "s2", "label": "Activate cached price fallback",   "type": "action",       "description": "Set agent to use last-synced cached price list; flag all new quotes with staleness warning badge"},
+    {"id": "s3", "label": "Alert pricing operations team",    "type": "notification", "description": "Send alert to pricing-ops Slack channel and open P2 incident ticket in JIRA"},
+    {"id": "s4", "label": "Verify ERP connectivity",          "type": "diagnosis",    "description": "Check ERP API health endpoint; confirm network path and authentication token validity"},
+    {"id": "s5", "label": "Force resync from ERP",            "type": "remediation",  "description": "Trigger manual price list refresh from ERP master data; validate checksum of returned data"},
+    {"id": "s6", "label": "Validate prices post-resync",      "type": "validation",   "description": "Run spot-check comparison of 20 random SKUs against ERP reference; confirm < 0.01% deviation"},
+    {"id": "s7", "label": "Clear staleness flag and close",   "type": "resolution",   "description": "Remove staleness warning from agent; close JIRA ticket; notify affected quote owners to regenerate"}
+  ],
+  "approvalGates": [{"step": "s5", "role": "Pricing Operations Manager", "required": true}],
+  "autonomyLevel": "human_in_loop",
+  "status": "active",
+  "isPreBuilt": false,
+  "severity": "high",
+  "estimatedDuration": "30-60 minutes"
+}
+ENDJSON
+RB1=$(post_api "Runbook: Pricing Rule Sync Failure" "/api/runbooks" "$WORK/rb1.json")
+
+cat > "$WORK/rb2.json" <<'ENDJSON'
+{
+  "name": "Approval Timeout",
+  "description": "Escalation procedure when a quote approver does not respond within the defined SLA window. Ensures quotes are not stalled and revenue is not lost.",
+  "industry": "enterprise",
+  "category": "escalation",
+  "triggerType": "automated",
+  "triggerConditions": ["approver_no_response_4h", "approval_sla_breached"],
+  "steps": [
+    {"id": "s1", "label": "Detect approval SLA breach",          "type": "detection",   "description": "Agent or monitoring detects approver has not responded within 4 business hours"},
+    {"id": "s2", "label": "Send reminder to primary approver",   "type": "notification","description": "Send reminder email/Slack message to primary approver with quote context and urgency level"},
+    {"id": "s3", "label": "Wait 1 hour for response",            "type": "wait",        "description": "Allow 1 additional hour for primary approver response before escalation"},
+    {"id": "s4", "label": "Escalate to next approver tier",      "type": "escalation",  "description": "Route to next-tier approver per approval matrix; log escalation in audit trail"},
+    {"id": "s5", "label": "Notify sales rep and customer",       "type": "notification","description": "Inform AE of delay; optionally send customer holding message if quote validity is near expiry"},
+    {"id": "s6", "label": "Log SOX-compliant escalation record", "type": "audit",       "description": "Write full escalation record to audit log: original approver, escalation timestamp, new approver, reason code"},
+    {"id": "s7", "label": "Monitor until approval or rejection", "type": "monitoring",  "description": "Continue monitoring; if P1 deal and no response after 8h, escalate to CFO/Revenue Committee"}
+  ],
+  "approvalGates": [],
+  "autonomyLevel": "semi_autonomous",
+  "status": "active",
+  "isPreBuilt": false,
+  "severity": "medium",
+  "estimatedDuration": "5-8 hours"
+}
+ENDJSON
+RB2=$(post_api "Runbook: Approval Timeout" "/api/runbooks" "$WORK/rb2.json")
+
+cat > "$WORK/rb3.json" <<'ENDJSON'
+{
+  "name": "Quote Generation Error",
+  "description": "Retry logic and manual override procedure for failures in generating quote documents. Covers template errors, data binding failures, and service outages.",
+  "industry": "enterprise",
+  "category": "incident_response",
+  "triggerType": "automated",
+  "triggerConditions": ["quote_document_generation_failed", "pdf_service_error", "template_binding_error"],
+  "steps": [
+    {"id": "s1", "label": "Capture error details",             "type": "detection",   "description": "Log error type, stack trace, quote ID, customer ID, and document template used"},
+    {"id": "s2", "label": "Retry generation (up to 3 times)", "type": "remediation", "description": "Retry PDF generation with 5-second backoff between attempts; use backup template if primary fails"},
+    {"id": "s3", "label": "Fall back to DOCX if PDF fails",   "type": "fallback",    "description": "Attempt DOCX generation via secondary service if PDF service is unavailable"},
+    {"id": "s4", "label": "Create incident ticket",            "type": "escalation",  "description": "Open P2 JIRA ticket with full error context; assign to document service team"},
+    {"id": "s5", "label": "Notify account executive",          "type": "notification","description": "Inform AE of generation failure and expected resolution time"},
+    {"id": "s6", "label": "Manual override if auto-retry fails","type": "manual",     "description": "Document service team manually generates quote using offline template; attach to quote record in CRM"},
+    {"id": "s7", "label": "Deliver quote and close incident",  "type": "resolution",  "description": "Deliver quote via backup channel (email with manual PDF attachment); close incident ticket"}
+  ],
+  "approvalGates": [{"step": "s6", "role": "Document Service Lead", "required": true}],
+  "autonomyLevel": "human_in_loop",
+  "status": "active",
+  "isPreBuilt": false,
+  "severity": "medium",
+  "estimatedDuration": "1-4 hours"
+}
+ENDJSON
+RB3=$(post_api "Runbook: Quote Generation Error" "/api/runbooks" "$WORK/rb3.json")
+
+cat > "$WORK/rb4.json" <<'ENDJSON'
+{
+  "name": "Product Catalog Stale Data",
+  "description": "Force refresh procedure for stale product catalog data. Validates product master data against ERP and ensures agent uses current SKUs, configuration rules, and compatibility matrices.",
+  "industry": "enterprise",
+  "category": "data_management",
+  "triggerType": "scheduled",
+  "triggerConditions": ["catalog_freshness_check_failed", "product_master_sync_overdue", "erp_catalog_version_mismatch"],
+  "steps": [
+    {"id": "s1", "label": "Detect catalog staleness",     "type": "detection",        "description": "Compare local catalog version hash against ERP master; flag as stale if mismatch or age > 24 hours"},
+    {"id": "s2", "label": "Flag affected quotes",          "type": "impact_assessment","description": "Identify all in-flight quotes that reference potentially stale SKUs and mark for validation"},
+    {"id": "s3", "label": "Trigger ERP catalog refresh",  "type": "remediation",      "description": "Call ERP product master API to pull updated catalog; validate schema and record count"},
+    {"id": "s4", "label": "Validate against ERP master",  "type": "validation",       "description": "Compare refreshed catalog against ERP: verify SKU count, config rules count, and BOM completeness"},
+    {"id": "s5", "label": "Update local catalog store",   "type": "action",           "description": "Replace local catalog with validated refresh; update version hash and timestamp"},
+    {"id": "s6", "label": "Re-validate flagged quotes",   "type": "validation",       "description": "Re-run configuration validation on all flagged in-flight quotes; surface conflicts to account executives"},
+    {"id": "s7", "label": "Alert pricing ops and close",  "type": "resolution",       "description": "Notify pricing ops of refresh completion; document any SKU changes or deprecations found"}
+  ],
+  "approvalGates": [{"step": "s5", "role": "Catalog Data Steward", "required": true}],
+  "autonomyLevel": "semi_autonomous",
+  "status": "active",
+  "isPreBuilt": false,
+  "severity": "medium",
+  "estimatedDuration": "2-4 hours"
+}
+ENDJSON
+RB4=$(post_api "Runbook: Product Catalog Stale Data" "/api/runbooks" "$WORK/rb4.json")
+
+cat > "$WORK/rb5.json" <<'ENDJSON'
+{
+  "name": "High-Volume Quote Storm",
+  "description": "Rate limiting, queue management, and priority routing procedures for handling sudden high-volume quote request spikes that could degrade agent performance.",
+  "industry": "enterprise",
+  "category": "capacity_management",
+  "triggerType": "automated",
+  "triggerConditions": ["quote_queue_depth_exceeded", "agent_response_latency_p95_over_60s", "concurrent_quote_requests_spike"],
+  "steps": [
+    {"id": "s1", "label": "Detect volume spike",             "type": "detection",   "description": "Alert when queue depth exceeds 50 pending quotes or P95 latency exceeds 60 seconds"},
+    {"id": "s2", "label": "Activate priority queue routing", "type": "action",      "description": "Route enterprise and key account quotes to priority queue; batch SMB and internal requests"},
+    {"id": "s3", "label": "Apply rate limiting",             "type": "action",      "description": "Throttle non-priority quote submissions to 10 per minute; return 429 with retry-after header to clients"},
+    {"id": "s4", "label": "Notify account executives",       "type": "notification","description": "Inform AEs of increased processing times; provide estimated queue position for pending quotes"},
+    {"id": "s5", "label": "Scale agent compute resources",   "type": "remediation", "description": "Request additional compute allocation from infrastructure team; spin up parallel agent instances if available"},
+    {"id": "s6", "label": "Monitor queue drain",             "type": "monitoring",  "description": "Track queue depth every 5 minutes; escalate to engineering if queue does not reduce within 30 minutes"},
+    {"id": "s7", "label": "Restore normal operations",       "type": "resolution",  "description": "Disable rate limiting when queue depth < 10; log peak metrics for capacity planning review"}
+  ],
+  "approvalGates": [{"step": "s5", "role": "Infrastructure Lead", "required": true}],
+  "autonomyLevel": "semi_autonomous",
+  "status": "active",
+  "isPreBuilt": false,
+  "severity": "high",
+  "estimatedDuration": "1-3 hours"
+}
+ENDJSON
+RB5=$(post_api "Runbook: High-Volume Quote Storm" "/api/runbooks" "$WORK/rb5.json")
+
+cat > "$WORK/rb6.json" <<'ENDJSON'
+{
+  "name": "Rollback Procedure",
+  "description": "Procedure to void and reissue quotes after pricing rule corrections. Ensures compliance, customer notification, and audit trail completeness when pricing errors are discovered.",
+  "industry": "enterprise",
+  "category": "rollback",
+  "triggerType": "manual",
+  "triggerConditions": ["pricing_error_confirmed", "quote_void_requested", "regulatory_correction_required"],
+  "steps": [
+    {"id": "s1", "label": "Confirm pricing error scope",       "type": "detection",  "description": "Identify all quotes affected by the pricing rule error; document error type, date range, and customer segments impacted"},
+    {"id": "s2", "label": "Get legal/compliance sign-off",     "type": "approval",   "description": "Brief legal and compliance on error magnitude; obtain approval for rollback approach and customer communication plan"},
+    {"id": "s3", "label": "Void affected quotes in CRM",       "type": "action",     "description": "Set quote status to voided in CRM; preserve full audit trail of original pricing and void reason"},
+    {"id": "s4", "label": "Notify affected customers",         "type": "notification","description": "Send personalized notification to each affected customer explaining the error and reissuance process"},
+    {"id": "s5", "label": "Correct pricing rules",             "type": "remediation","description": "Apply corrected pricing rules in ERP; trigger full pricing rule sync per Pricing Rule Sync Failure runbook"},
+    {"id": "s6", "label": "Reissue corrected quotes",          "type": "action",     "description": "Generate corrected quotes for all affected customers; preserve original quote IDs with version suffix"},
+    {"id": "s7", "label": "SOX audit documentation",           "type": "audit",      "description": "File full incident report: root cause, affected quotes, customer notifications, corrected prices, reviewer sign-off; retain 7 years"},
+    {"id": "s8", "label": "Post-mortem and prevention",        "type": "resolution", "description": "Conduct blameless post-mortem; implement pricing rule validation checks to prevent recurrence; update runbook if needed"}
+  ],
+  "approvalGates": [
+    {"step": "s2", "role": "General Counsel / Compliance Officer", "required": true},
+    {"step": "s6", "role": "CFO or Revenue Committee", "required": true}
+  ],
+  "autonomyLevel": "human_in_loop",
+  "status": "active",
+  "isPreBuilt": false,
+  "severity": "critical",
+  "estimatedDuration": "2-5 business days"
+}
+ENDJSON
+RB6=$(post_api "Runbook: Rollback Procedure" "/api/runbooks" "$WORK/rb6.json")
+
+echo "" >&2
+
+# =============================================================================
+# STEP 9: Create Eval Suite and Set evalBindings on OTC Agent
+# =============================================================================
+echo "STEP 9: Creating Eval Suite and wiring evalBindings to OTC agent..." >&2
+
+jq -n --arg agent "$AGENT" --arg ds "$DS" '{
+  "agentId": $agent,
+  "name": "OTC-AGT-001 Quote & Configuration Regression Suite",
+  "type": "regression",
+  "industry": "enterprise",
+  "goldenDatasetId": $ds,
+  "schedule": "on_deploy",
+  "thresholdConfig": {
+    "minPassRate": 0.95,
+    "criticalDimensions": ["approval_routing_accuracy", "false_approval_bypass_rate"],
+    "criticalMinPassRate": 1.0
+  },
+  "scorerConfig": {
+    "primaryScorer": "exact_match",
+    "fallbackScorer": "llm_judge",
+    "pricingTolerance": 0.0001
+  },
+  "coverageTags": ["cpq", "pricing", "approval", "bundle", "multi-currency", "compliance"],
+  "environmentThresholds": {
+    "production": {"minPassRate": 0.97},
+    "staging": {"minPassRate": 0.93}
+  }
+}' > "$WORK/eval_suite.json"
+
+EVAL_SUITE=$(post_api "OTC-AGT-001 Eval Suite" "/api/evals" "$WORK/eval_suite.json")
+
+EVAL_PATCH=$(curl -s -X PATCH "${BASE_URL}/api/agents/${AGENT}" \
+  -H "Content-Type: application/json" \
+  -d "{\"evalBindings\": {\"suites\": [{\"suiteId\": \"${EVAL_SUITE}\", \"schedule\": \"on_deploy\", \"environment\": \"production\"}]}}")
+EVAL_PATCH_ID=$(echo "$EVAL_PATCH" | jq -r '.id // empty')
+if [ -z "$EVAL_PATCH_ID" ]; then
+  echo "  ✗ FAILED: evalBindings PATCH" >&2
+  echo "    Response: $EVAL_PATCH" >&2
+  exit 1
+fi
+echo "  ✓ evalBindings wired → suite $EVAL_SUITE" >&2
+
+echo "" >&2
+
+# =============================================================================
 # SUMMARY
 # =============================================================================
 echo "==================================================" >&2
@@ -563,6 +780,18 @@ echo "  Robinson-Patman Control:           $P2" >&2
 echo "  GDPR Customer Data Handling:       $P3" >&2
 echo "  ASC 606 / IFRS 15 Compliance:      $P4" >&2
 echo "  Anti-Bribery (FCPA/UK Bribery):    $P5" >&2
+echo "" >&2
+echo "Runbooks (6):" >&2
+echo "  Pricing Rule Sync Failure:         $RB1" >&2
+echo "  Approval Timeout:                  $RB2" >&2
+echo "  Quote Generation Error:            $RB3" >&2
+echo "  Product Catalog Stale Data:        $RB4" >&2
+echo "  High-Volume Quote Storm:           $RB5" >&2
+echo "  Rollback Procedure:                $RB6" >&2
+echo "" >&2
+echo "Evaluation:" >&2
+echo "  Eval Suite (OTC regression):       $EVAL_SUITE" >&2
+echo "  Golden Dataset:                    $DS" >&2
 echo "" >&2
 echo "All resources created at: $BASE_URL" >&2
 echo "==================================================" >&2

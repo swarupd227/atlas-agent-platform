@@ -550,14 +550,17 @@ export default function TemplateDetail() {
       const ontConcepts = Array.isArray((sourceAgent.ontologyTags as any)?.concepts)
         ? ((sourceAgent.ontologyTags as any).concepts as any[]).map((c: any) => typeof c === "string" ? c : c.conceptLabel || "").filter(Boolean)
         : [];
-      const matchedSkills: SkillEntry[] = Array.isArray(rtConfig.matchedSkills)
-        ? (rtConfig.matchedSkills as any[]).map((s: any, i: number) => ({
-            skillId: typeof s === "string" ? "" : (s.skillId || s.id || ""),
-            skillName: typeof s === "string" ? s : (s.name || s.skillName || `Skill ${i + 1}`),
-            domain: typeof s === "string" ? "" : (s.domain || ""),
-            executionOrder: i + 1,
-          }))
-        : [];
+      const agentPreloadedSkills: Array<{ skillId: string; loadOrder: number }> =
+        Array.isArray((sourceAgent as any).preloadedSkills)
+          ? ((sourceAgent as any).preloadedSkills as any[])
+              .sort((a, b) => (a.loadOrder ?? 0) - (b.loadOrder ?? 0))
+          : [];
+      const matchedSkills: SkillEntry[] = agentPreloadedSkills.map((s, i) => ({
+        skillId: s.skillId || "",
+        skillName: "",
+        domain: "",
+        executionOrder: i + 1,
+      }));
       setEditData({
         name: `${sourceAgent.name} Template`,
         description: sourceAgent.description || "",
@@ -591,7 +594,7 @@ export default function TemplateDetail() {
         rollbackTargetVersion: rollback?.rollbackTargetVersion || "previous_stable",
         requiredSkills: matchedSkills,
         optionalSkills: [],
-        preloadedSkills: [],
+        preloadedSkills: agentPreloadedSkills.map(s => ({ ...s })),
         newTriggerCondition: "",
       });
     }
