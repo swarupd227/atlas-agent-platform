@@ -607,7 +607,7 @@ export default function TemplateDetail() {
   useEffect(() => {
     if (template && editing && Object.keys(editData).length === 0) {
       const tools = Array.isArray(template.toolsConfig) ? (template.toolsConfig as ToolConfig[]) : [];
-      const workflow = template.blueprintJson as { nodes?: WorkflowNode[] } | null;
+      const workflow = template.blueprintJson as { nodes?: WorkflowNode[]; systemPrompt?: string; instructions?: string; runtimeConfig?: { prompt?: string } } | null;
       const permissions = template.permissionsConfig as PermissionsConfig | null;
       const memoryConfig = template.memoryRagConfig as MemoryRagConfig;
       const policies = Array.isArray(template.policyBindings) ? (template.policyBindings as PolicyBinding[]) : [];
@@ -626,6 +626,10 @@ export default function TemplateDetail() {
         modelName: template.modelName || "gpt-4.1",
         tags: [...(template.tags || [])],
         newTag: "",
+        complianceCertifications: [...(template.complianceCertifications || [])],
+        newCert: "",
+        systemPrompt: workflow?.systemPrompt || "",
+        instructions: workflow?.instructions || workflow?.runtimeConfig?.prompt || "",
         tools: tools.map(t => ({ ...t, permissions: t.permissions ? [...t.permissions] : [] })),
         workflowNodes: workflow?.nodes ? workflow.nodes.map(n => ({ ...n })) : [],
         dataAccess: permissions?.dataAccess ? permissions.dataAccess.join(", ") : "",
