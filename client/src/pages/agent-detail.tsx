@@ -2289,7 +2289,8 @@ function AgentDetailInner() {
                 const tokenUsage = trace.tokenUsage as any | null;
                 const promptInputs = trace.promptInputs as any | null;
                 const retrievedDocs = trace.retrievedDocs as any[] | null;
-                const hasExplainability = decisions || toolCalls || policyChecks || tokenUsage;
+                const softPolicyViolations = (trace as any).softPolicyViolations as any[] | null;
+                const hasExplainability = decisions || toolCalls || policyChecks || tokenUsage || softPolicyViolations;
                 return (
                   <div key={trace.id} className="flex flex-col">
                     <div
@@ -2387,6 +2388,47 @@ function AgentDetailInner() {
                                 )}
                                 <span>{pc.policy || pc.name || `Policy ${pi + 1}`}</span>
                                 <span className="text-muted-foreground">{pc.reason || ""}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {softPolicyViolations && softPolicyViolations.length > 0 && (
+                          <div className="flex flex-col gap-1.5" data-testid={`soft-policy-compliance-${trace.id}`}>
+                            <div className="flex items-center gap-1.5">
+                              <ShieldAlert className="w-3.5 h-3.5 text-amber-500" />
+                              <span className="text-[11px] font-medium text-muted-foreground">Soft Policy Compliance</span>
+                              <span className="text-[10px] text-muted-foreground ml-auto">
+                                {softPolicyViolations.filter((r: any) => !r.compliant).length > 0
+                                  ? `${softPolicyViolations.filter((r: any) => !r.compliant).length} violation${softPolicyViolations.filter((r: any) => !r.compliant).length !== 1 ? "s" : ""}`
+                                  : "all passed"}
+                              </span>
+                            </div>
+                            {softPolicyViolations.map((r: any, ri: number) => (
+                              <div key={ri} className="flex flex-col gap-1 p-2 rounded-md border bg-muted/10" data-testid={`soft-policy-result-${trace.id}-${ri}`}>
+                                <div className="flex items-center gap-2">
+                                  {r.compliant ? (
+                                    <CheckCircle className="w-3 h-3 text-emerald-500 shrink-0" />
+                                  ) : r.severity === "high" ? (
+                                    <XCircle className="w-3 h-3 text-red-500 shrink-0" />
+                                  ) : (
+                                    <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+                                  )}
+                                  <span className="text-xs font-medium truncate">{r.policyName}</span>
+                                  <Badge variant="outline" className={`text-[9px] ml-auto shrink-0 ${r.compliant ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400" : r.severity === "high" ? "border-red-500/30 text-red-600 dark:text-red-400" : "border-amber-500/30 text-amber-600 dark:text-amber-400"}`}>
+                                    {r.compliant ? "compliant" : `${r.severity} violation`}
+                                  </Badge>
+                                </div>
+                                {!r.compliant && r.violatedRequirements?.length > 0 && (
+                                  <div className="flex flex-col gap-0.5 ml-5">
+                                    {r.violatedRequirements.map((req: string, qi: number) => (
+                                      <span key={qi} className="text-[10px] text-red-600 dark:text-red-400">• {req}</span>
+                                    ))}
+                                  </div>
+                                )}
+                                {r.evidence && (
+                                  <p className="text-[10px] text-muted-foreground italic ml-5 line-clamp-2">{r.evidence}</p>
+                                )}
                               </div>
                             ))}
                           </div>

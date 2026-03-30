@@ -108,7 +108,7 @@ export interface ContextSectionMetric {
 }
 
 export interface RuntimeProgressEvent {
-  type: "discovery" | "planning" | "tool_call_start" | "tool_call_result" | "llm_thinking" | "iteration_complete" | "final_analysis" | "compliance_check" | "error";
+  type: "discovery" | "planning" | "tool_call_start" | "tool_call_result" | "llm_thinking" | "iteration_complete" | "final_analysis" | "compliance_check" | "policy_compliance_validation" | "error";
   timestamp: string;
   data: Record<string, any>;
 }
@@ -836,6 +836,89 @@ export function checkMemoryGovernanceViolations(
   return { violations };
 }
 
+export interface SoftPolicyComplianceResult {
+  policyId: string;
+  policyName: string;
+  enforcement: string;
+  domain: string;
+  compliant: boolean;
+  violatedRequirements: string[];
+  evidence: string;
+  severity: "low" | "medium" | "high";
+}
+
+export async function checkSoftPolicyCompliance(
+  outputText: string,
+  softPolicies: Array<{ id: string; name: string; enforcement: string; domain: string; policyJson: any }>
+): Promise<SoftPolicyComplianceResult[]> {
+  if (outputText.trim().length < 80 || softPolicies.length === 0) {
+    return [];
+  }
+
+  const policyDescriptions = softPolicies.map(p => {
+    const pj = p.policyJson && typeof p.policyJson === "object" ? p.policyJson : {};
+    const requirements: string[] = Array.isArray(pj.requirements) ? pj.requirements : [];
+    const desc = pj.description || p.name;
+    return { id: p.id, name: p.name, enforcement: p.enforcement, domain: p.domain, description: desc, requirements };
+  });
+
+  const judgePrompt = `You are a compliance auditor. An AI agent completed a task. Evaluate whether the agent's output satisfied each soft policy constraint listed below.
+
+Return ONLY a valid JSON object with this exact structure (no markdown, no explanation):
+{
+  "policyResults": [
+    {
+      "policyId": "<exact policyId from input>",
+      "policyName": "<exact policyName from input>",
+      "compliant": true or false,
+      "violatedRequirements": ["list violated requirement strings, empty array if compliant"],
+      "evidence": "1-2 sentence quote or paraphrase from the output supporting your judgment",
+      "severity": "low" or "medium" or "high"
+    }
+  ]
+}
+
+RULES:
+- Set compliant=true if the output satisfies the policy intent OR the policy was simply not triggered by this task
+- Set compliant=false ONLY if there is clear evidence the policy applied to this task AND was violated
+- severity "high" = serious irreversible harm; "medium" = meaningful recoverable gap; "low" = minor acknowledgment omission
+- violatedRequirements must list specific requirement strings from the policy that were not met
+
+POLICIES:
+${JSON.stringify(policyDescriptions, null, 2)}
+
+AGENT OUTPUT (first 3000 chars):
+${outputText.substring(0, 3000)}`;
+
+  try {
+    const judgeResult = await completeWithFallback(
+      [{ role: "user", content: judgePrompt }],
+      { temperature: 0, maxTokens: 1500, responseFormat: "json" }
+    );
+
+    const raw = judgeResult.content.trim();
+    const jsonStart = raw.indexOf("{");
+    const jsonEnd = raw.lastIndexOf("}");
+    if (jsonStart === -1 || jsonEnd === -1) return [];
+
+    const parsed = JSON.parse(raw.substring(jsonStart, jsonEnd + 1));
+    if (!parsed.policyResults || !Array.isArray(parsed.policyResults)) return [];
+
+    return parsed.policyResults.map((r: any) => ({
+      policyId: String(r.policyId || ""),
+      policyName: String(r.policyName || ""),
+      enforcement: softPolicies.find(p => p.id === r.policyId)?.enforcement || "soft",
+      domain: softPolicies.find(p => p.id === r.policyId)?.domain || "general",
+      compliant: Boolean(r.compliant),
+      violatedRequirements: Array.isArray(r.violatedRequirements) ? r.violatedRequirements.map(String) : [],
+      evidence: String(r.evidence || ""),
+      severity: (["low", "medium", "high"] as const).includes(r.severity) ? r.severity : "low",
+    })) as SoftPolicyComplianceResult[];
+  } catch {
+    return [];
+  }
+}
+
 export async function executePromptWithMcp(
   agentId: string,
   deploymentId: string,
@@ -846,7 +929,7 @@ export async function executePromptWithMcp(
   agentSystemPrompt?: string,
   options?: { conversational?: boolean; ontologyLabels?: string[]; runtimeConfig?: Record<string, any>; modelProvider?: string; modelName?: string; maxToolIterations?: number },
   onProgress?: (event: RuntimeProgressEvent) => void,
-): Promise<{ steps: any[]; success: boolean; summary: any; promptInputs?: any; provenanceSnapshot?: any; provenanceHash?: string; retrievedDocs?: any; conversationalResponse?: string; contextSectionMetrics?: ContextSectionMetric[] }> {
+): Promise<{ steps: any[]; success: boolean; summary: any; promptInputs?: any; provenanceSnapshot?: any; provenanceHash?: string; retrievedDocs?: any; conversationalResponse?: string; contextSectionMetrics?: ContextSectionMetric[]; softPolicyViolations?: SoftPolicyComplianceResult[] }> {
   const startTime = Date.now();
   const steps: any[] = [];
   const promptSectionMetrics: ContextSectionMetric[] = [];
@@ -1435,6 +1518,111 @@ After receiving tool results, provide a structured analysis with key findings, s
     failedChecks: complianceChecks.filter(c => c.status !== "pass").map(c => c.rule),
   });
 
+  // Soft Policy Semantic Compliance Validation
+  // Runs a batched LLM judge to verify the agent's output actually honored each soft constraint.
+  let softPolicyViolations: SoftPolicyComplianceResult[] = [];
+  try {
+    const agentRecordForPolicy = await storage.getAgent(agentId);
+    const rawPolicyBindings = Array.isArray(agentRecordForPolicy?.policyBindings)
+      ? (agentRecordForPolicy.policyBindings as Array<any>)
+      : [];
+    const softBindings = rawPolicyBindings.filter((pb: any) => {
+      const enf = (pb.enforcement || "soft").toLowerCase();
+      return enf !== "hard" && enf !== "hard_block";
+    });
+
+    if (softBindings.length > 0) {
+      const allOutputText = steps
+        .filter(s => s.status === "completed" && s.output)
+        .map(s => {
+          const out = s.output;
+          if (typeof out === "string") return out;
+          if (out.analysis) return typeof out.analysis === "string" ? out.analysis : JSON.stringify(out.analysis);
+          if (out.summary) return typeof out.summary === "string" ? out.summary : JSON.stringify(out.summary);
+          return JSON.stringify(out);
+        })
+        .join(" ");
+
+      const policyDetails = await Promise.all(
+        softBindings.map(async (pb: any) => {
+          const policyId = pb.policyId || pb.id || "";
+          if (!policyId) return null;
+          try {
+            const policy = await storage.getPolicy(policyId);
+            if (!policy) return null;
+            return {
+              id: policy.id,
+              name: policy.name,
+              enforcement: pb.enforcement || "soft",
+              domain: policy.domain,
+              policyJson: policy.policyJson || {},
+            };
+          } catch { return null; }
+        })
+      );
+
+      const resolvedPolicies = policyDetails.filter(Boolean) as Array<{
+        id: string; name: string; enforcement: string; domain: string; policyJson: any;
+      }>;
+
+      if (resolvedPolicies.length > 0) {
+        const policyValStep = {
+          id: `step_${steps.length + 1}`,
+          name: "Soft Policy Compliance Validation",
+          type: "policy_compliance_validation",
+          status: "running",
+          startedAt: new Date().toISOString(),
+          output: null as any,
+          completedAt: null as any,
+        };
+        steps.push(policyValStep);
+
+        softPolicyViolations = await checkSoftPolicyCompliance(allOutputText, resolvedPolicies);
+
+        const violatedPolicies = softPolicyViolations.filter(r => !r.compliant);
+        const lastPolicyStep = steps[steps.length - 1];
+        lastPolicyStep.status = "completed";
+        lastPolicyStep.completedAt = new Date().toISOString();
+        lastPolicyStep.output = {
+          policiesChecked: softPolicyViolations.length,
+          allCompliant: violatedPolicies.length === 0,
+          violations: violatedPolicies.length,
+          results: softPolicyViolations,
+          auditId: `SPV-${Date.now()}`,
+        };
+
+        emitProgress("policy_compliance_validation", {
+          policiesChecked: softPolicyViolations.length,
+          allCompliant: violatedPolicies.length === 0,
+          violations: violatedPolicies.length,
+          violatedPolicies: violatedPolicies.map(v => v.policyName),
+        });
+
+        for (const violation of violatedPolicies) {
+          try {
+            await storage.createAuditEvent({
+              actorType: "system",
+              actorId: "soft_policy_validator",
+              action: "policy_compliance.violation",
+              objectType: "agent",
+              objectId: agentId,
+              details: JSON.stringify({
+                summary: `Soft policy violation: agent did not honor "${violation.policyName}" (${violation.enforcement})`,
+                policyId: violation.policyId,
+                policyName: violation.policyName,
+                enforcement: violation.enforcement,
+                domain: violation.domain,
+                violatedRequirements: violation.violatedRequirements,
+                evidence: violation.evidence,
+                severity: violation.severity,
+              }),
+            });
+          } catch {}
+        }
+      }
+    }
+  } catch {}
+
   const failedSteps = steps.filter(s => s.status === "failed");
   const latencyMs = Date.now() - startTime;
 
@@ -1562,6 +1750,7 @@ After receiving tool results, provide a structured analysis with key findings, s
     retrievedDocs: kbRetrievals,
     contextSectionMetrics: promptSectionMetrics,
     ...(conversationalResponse ? { conversationalResponse } : {}),
+    ...(softPolicyViolations.length > 0 ? { softPolicyViolations } : {}),
   };
 }
 
@@ -2301,6 +2490,9 @@ async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: Runti
       retrievedDocs: (result as any).retrievedDocs || null,
       provenanceSnapshot: fullProvenanceSnapshot,
       provenanceHash: fullProvenanceHash,
+      ...(((result as any).softPolicyViolations as any[] | undefined)?.length
+        ? { softPolicyViolations: (result as any).softPolicyViolations }
+        : {}),
     });
 
     try {

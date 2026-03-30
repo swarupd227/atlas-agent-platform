@@ -1254,6 +1254,8 @@ function hashCode(str: string): number {
             progressData.content = "Analyzing...";
           } else if (event.type === "compliance_check") {
             progressData.content = "Checking compliance...";
+          } else if (event.type === "policy_compliance_validation") {
+            progressData.content = "Validating policy compliance...";
           }
           res.write(`data: ${JSON.stringify(progressData)}\n\n`);
         } catch {}
