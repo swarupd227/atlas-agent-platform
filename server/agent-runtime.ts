@@ -1565,7 +1565,7 @@ After receiving tool results, provide a structured analysis with key findings, s
         id: string; name: string; enforcement: string; domain: string; policyJson: any;
       }>;
 
-      if (resolvedPolicies.length > 0) {
+      if (resolvedPolicies.length > 0 && allOutputText.trim().length >= 80) {
         const policyValStep = {
           id: `step_${steps.length + 1}`,
           name: "Soft Policy Compliance Validation",
@@ -1603,7 +1603,7 @@ After receiving tool results, provide a structured analysis with key findings, s
             await storage.createAuditEvent({
               actorType: "system",
               actorId: "soft_policy_validator",
-              action: "policy_compliance.violation",
+              action: "policy_violation",
               objectType: "agent",
               objectId: agentId,
               details: JSON.stringify({

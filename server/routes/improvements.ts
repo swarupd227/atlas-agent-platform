@@ -92,6 +92,28 @@ const router = Router();
         }
       }
 
+      for (const trace of traces) {
+        const softViolations = ((trace as any).softPolicyViolations as any[] | null) || [];
+        for (const r of softViolations) {
+          if (!r.compliant) {
+            violations.push({
+              id: `spv-${trace.id}-${r.policyId || r.policyName}`,
+              traceId: trace.id,
+              agentId: trace.agentId,
+              agentName: agentMap.get(trace.agentId) || "Unknown Agent",
+              policyName: r.policyName || "Soft Policy",
+              rule: Array.isArray(r.violatedRequirements) && r.violatedRequirements.length > 0
+                ? r.violatedRequirements.join("; ")
+                : "Soft policy constraint not honored by agent output",
+              severity: r.severity || "medium",
+              timestamp: trace.startedAt?.toString() || new Date().toISOString(),
+              action: "warn",
+              blocked: false,
+            });
+          }
+        }
+      }
+
       const blockedTraces = traces.filter(t => t.status === "blocked");
       for (const trace of blockedTraces) {
         const existing = violations.find(v => v.traceId === trace.id);
