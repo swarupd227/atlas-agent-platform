@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ATLAS — AI Agent Orchestration Platform</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --ink:      #0f1117;
+      --ink-2:    #3a3f52;
+      --ink-3:    #6b7280;
+      --rule:     #e5e7eb;
+      --accent:   #4F46E5;
+      --accent-2: #7C3AED;
+      --teal:     #0891b2;
+      --bg:       #ffffff;
+      --surface:  #f8f9fb;
+    }
+
+    body {
+      font-family: 'Inter', -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    /* ── COVER ──────────────────────────────────────────────────── */
+    .cover {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: 1fr auto;
+      background: linear-gradient(135deg, #0f0f23 0%, #1a1235 45%, #0e1c3a 100%);
+      color: #fff;
+      padding: 72px 80px 48px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .cover::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 800px 600px at 70% 30%, rgba(79,70,229,0.18) 0%, transparent 70%),
+        radial-gradient(ellipse 600px 400px at 20% 80%, rgba(8,145,178,0.12) 0%, transparent 70%);
+    }
+
+    .cover-logo {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .cover-logo-mark {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 16px;
+      letter-spacing: -0.5px;
+    }
+
+    .cover-logo-text {
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: rgba(255,255,255,0.9);
+    }
+
+    .cover-body {
+      position: relative;
+      align-self: center;
+      padding: 80px 0 40px;
+    }
+
+    .cover-eyebrow {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: rgba(124,58,237,0.85);
+      background: rgba(124,58,237,0.12);
+      border: 1px solid rgba(124,58,237,0.25);
+      padding: 4px 12px;
+      border-radius: 100px;
+      margin-bottom: 28px;
+    }
+
+    .cover-headline {
+      font-size: clamp(40px, 5vw, 64px);
+      font-weight: 800;
+      line-height: 1.08;
+      letter-spacing: -0.03em;
+      max-width: 720px;
+      margin-bottom: 24px;
+    }
+
+    .cover-headline span {
+      background: linear-gradient(90deg, #818cf8, #a78bfa, #38bdf8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .cover-sub {
+      font-size: 18px;
+      font-weight: 400;
+      line-height: 1.6;
+      color: rgba(255,255,255,0.62);
+      max-width: 540px;
+      margin-bottom: 48px;
+    }
+
+    .cover-stats {
+      display: flex;
+      gap: 48px;
+    }
+
+    .cover-stat-val {
+      font-size: 32px;
+      font-weight: 700;
+      letter-spacing: -0.03em;
+      background: linear-gradient(90deg, #fff, rgba(255,255,255,0.7));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .cover-stat-label {
+      font-size: 12px;
+      font-weight: 500;
+      color: rgba(255,255,255,0.42);
+      letter-spacing: 0.04em;
+      margin-top: 2px;
+    }
+
+    .cover-footer {
+      position: relative;
+      border-top: 1px solid rgba(255,255,255,0.08);
+      padding-top: 28px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: rgba(255,255,255,0.35);
+      font-size: 12px;
+    }
+
+    /* ── LAYOUT ─────────────────────────────────────────────────── */
+    .page {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 80px 60px;
+    }
+
+    @media print {
+      .cover { page-break-after: always; }
+      .page   { page-break-inside: avoid; }
+    }
+
+    /* ── SECTION HEADERS ────────────────────────────────────────── */
+    .section-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 12px;
+    }
+
+    .section-label::before {
+      content: '';
+      display: block;
+      width: 20px;
+      height: 2px;
+      background: var(--accent);
+      border-radius: 1px;
+    }
+
+    h2 {
+      font-size: 36px;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      line-height: 1.15;
+      color: var(--ink);
+      margin-bottom: 16px;
+    }
+
+    .lead {
+      font-size: 17px;
+      font-weight: 400;
+      line-height: 1.65;
+      color: var(--ink-3);
+      max-width: 640px;
+      margin-bottom: 56px;
+    }
+
+    /* ── CAPABILITIES GRID ──────────────────────────────────────── */
+    .caps-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 2px;
+      background: var(--rule);
+      border: 1px solid var(--rule);
+      border-radius: 16px;
+      overflow: hidden;
+      margin-bottom: 72px;
+    }
+
+    .cap {
+      background: var(--bg);
+      padding: 32px 28px;
+    }
+
+    .cap-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 16px;
+      font-size: 20px;
+    }
+
+    .cap-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--ink);
+      margin-bottom: 8px;
+      letter-spacing: -0.01em;
+    }
+
+    .cap-body {
+      font-size: 13.5px;
+      line-height: 1.6;
+      color: var(--ink-3);
+    }
+
+    /* ── PILLARS ────────────────────────────────────────────────── */
+    .pillars {
+      background: var(--surface);
+      border: 1px solid var(--rule);
+      border-radius: 20px;
+      padding: 48px 48px 40px;
+      margin-bottom: 72px;
+    }
+
+    .pillars-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 32px;
+      margin-top: 36px;
+    }
+
+    .pillar {
+      display: flex;
+      gap: 16px;
+    }
+
+    .pillar-num {
+      flex-shrink: 0;
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 2px;
+    }
+
+    .pillar-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--ink);
+      margin-bottom: 5px;
+      letter-spacing: -0.01em;
+    }
+
+    .pillar-body {
+      font-size: 13px;
+      line-height: 1.58;
+      color: var(--ink-3);
+    }
+
+    /* ── USE CASES ──────────────────────────────────────────────── */
+    .usecases {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 20px;
+      margin-bottom: 72px;
+    }
+
+    .usecase {
+      border: 1px solid var(--rule);
+      border-radius: 14px;
+      padding: 28px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .usecase::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      border-radius: 14px 14px 0 0;
+    }
+
+    .usecase.uc1::before { background: linear-gradient(90deg, #4F46E5, #7C3AED); }
+    .usecase.uc2::before { background: linear-gradient(90deg, #0891b2, #06b6d4); }
+    .usecase.uc3::before { background: linear-gradient(90deg, #059669, #10b981); }
+    .usecase.uc4::before { background: linear-gradient(90deg, #d97706, #f59e0b); }
+
+    .usecase-tag {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      margin-bottom: 10px;
+    }
+
+    .usecase-title {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--ink);
+      margin-bottom: 8px;
+      letter-spacing: -0.01em;
+    }
+
+    .usecase-body {
+      font-size: 13px;
+      line-height: 1.58;
+      color: var(--ink-3);
+    }
+
+    /* ── CLOSING STRIP ──────────────────────────────────────────── */
+    .closing {
+      background: linear-gradient(135deg, #0f0f23 0%, #1a1235 50%, #0e1c3a 100%);
+      color: #fff;
+      padding: 72px 80px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 40px;
+      align-items: center;
+    }
+
+    .closing h3 {
+      font-size: 28px;
+      font-weight: 800;
+      letter-spacing: -0.025em;
+      line-height: 1.2;
+      margin-bottom: 12px;
+    }
+
+    .closing p {
+      font-size: 15px;
+      line-height: 1.6;
+      color: rgba(255,255,255,0.55);
+      max-width: 460px;
+    }
+
+    .closing-cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: linear-gradient(135deg, var(--accent), var(--accent-2));
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      padding: 14px 28px;
+      border-radius: 10px;
+      white-space: nowrap;
+      text-decoration: none;
+      letter-spacing: -0.01em;
+    }
+
+    /* ── DIVIDER ────────────────────────────────────────────────── */
+    hr {
+      border: none;
+      border-top: 1px solid var(--rule);
+      margin: 56px 0;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ╔══════════════════════════════════════════════════════╗ -->
+<!--                        COVER                          -->
+<!-- ╚══════════════════════════════════════════════════════╝ -->
+<div class="cover">
+  <div class="cover-logo">
+    <div class="cover-logo-mark">A</div>
+    <span class="cover-logo-text">ATLAS</span>
+  </div>
+
+  <div class="cover-body">
+    <span class="cover-eyebrow">AI Agent Orchestration Platform</span>
+    <h1 class="cover-headline">
+      Deploy AI agents that<br>
+      <span>act, decide, and govern</span><br>
+      themselves.
+    </h1>
+    <p class="cover-sub">
+      ATLAS gives enterprises a complete system for building, deploying,
+      and governing autonomous AI agents — with compliance baked in, not bolted on.
+    </p>
+    <div class="cover-stats">
+      <div>
+        <div class="cover-stat-val">Full-stack</div>
+        <div class="cover-stat-label">Agent lifecycle platform</div>
+      </div>
+      <div>
+        <div class="cover-stat-val">Zero-drift</div>
+        <div class="cover-stat-label">Compliance enforcement</div>
+      </div>
+      <div>
+        <div class="cover-stat-val">Any industry</div>
+        <div class="cover-stat-label">Ontology-governed context</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="cover-footer">
+    <span>Nous AI · agent-lifecycle-management-platform.replit.app</span>
+    <span>Confidential</span>
+  </div>
+</div>
+
+
+<!-- ╔══════════════════════════════════════════════════════╗ -->
+<!--                    CAPABILITIES                       -->
+<!-- ╚══════════════════════════════════════════════════════╝ -->
+<div class="page">
+  <div class="section-label">Platform Capabilities</div>
+  <h2>Everything the agent lifecycle needs.</h2>
+  <p class="lead">
+    From first prompt to production — ATLAS manages the full stack so your team
+    ships faster and stays in control.
+  </p>
+
+  <div class="caps-grid">
+    <div class="cap">
+      <div class="cap-icon" style="background:#ede9fe;">🗺️</div>
+      <div class="cap-title">Blueprint Studio</div>
+      <div class="cap-body">Design multi-node agent workflows visually. Wire tools, set budgets, and configure fallback paths before a single token runs.</div>
+    </div>
+    <div class="cap">
+      <div class="cap-icon" style="background:#dbeafe;">⚙️</div>
+      <div class="cap-title">Real Agent Runtime</div>
+      <div class="cap-body">Agents execute as live background workers — resolving API calls through registered integrations with full traceability.</div>
+    </div>
+    <div class="cap">
+      <div class="cap-icon" style="background:#d1fae5;">🛡️</div>
+      <div class="cap-title">Policy Enforcement</div>
+      <div class="cap-body">Bind regulatory policies (GDPR, SOX, OFAC) directly to agents. Every run is checked against active policy rules before and during execution.</div>
+    </div>
+    <div class="cap">
+      <div class="cap-icon" style="background:#fef3c7;">📊</div>
+      <div class="cap-title">Outcome Contracts</div>
+      <div class="cap-body">Define KPI targets and SLAs upfront. Agents inherit those contracts and surface drift signals the moment performance deviates.</div>
+    </div>
+    <div class="cap">
+      <div class="cap-icon" style="background:#fee2e2;">🔍</div>
+      <div class="cap-title">Shadow Replay & Canary</div>
+      <div class="cap-body">Validate agent changes against live traffic in shadow mode before promoting. Roll out incrementally with automatic rollback triggers.</div>
+    </div>
+    <div class="cap">
+      <div class="cap-icon" style="background:#e0f2fe;">🧠</div>
+      <div class="cap-title">Knowledge & RAG</div>
+      <div class="cap-body">Ground agents in verified internal knowledge via vector-embedded document collections — web crawls, PDFs, structured records.</div>
+    </div>
+  </div>
+
+  <!-- ── PILLARS ── -->
+  <div class="pillars">
+    <div class="section-label">Why ATLAS</div>
+    <h2 style="font-size:28px; margin-bottom:6px;">Built for enterprise AI operations.</h2>
+    <p style="font-size:15px; color:var(--ink-3); line-height:1.6;">
+      Four principles that differentiate ATLAS from generic agent frameworks.
+    </p>
+
+    <div class="pillars-grid">
+      <div class="pillar">
+        <div class="pillar-num">1</div>
+        <div>
+          <div class="pillar-title">Compliance is structural, not optional</div>
+          <div class="pillar-body">Policies are bound to agents, not to teams. Every execution generates an immutable audit trail — ready for regulators on day one.</div>
+        </div>
+      </div>
+      <div class="pillar">
+        <div class="pillar-num">2</div>
+        <div>
+          <div class="pillar-title">Outcomes drive everything</div>
+          <div class="pillar-body">Agents are not isolated scripts — they are built against outcome contracts. KPIs, SLAs, and risk tiers cascade from the contract down.</div>
+        </div>
+      </div>
+      <div class="pillar">
+        <div class="pillar-num">3</div>
+        <div>
+          <div class="pillar-title">Humans stay in the loop — selectively</div>
+          <div class="pillar-body">Configurable autonomy levels and intervention thresholds. High-stakes decisions escalate automatically; routine runs proceed without friction.</div>
+        </div>
+      </div>
+      <div class="pillar">
+        <div class="pillar-num">4</div>
+        <div>
+          <div class="pillar-title">Industry context out of the box</div>
+          <div class="pillar-body">Finance, insurance, logistics, healthcare — ATLAS ships with industry ontologies that pre-configure compliance rules, risk tiers, and evaluation criteria.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── USE CASES ── -->
+  <div class="section-label">Use Cases</div>
+  <h2>Runs wherever decisions happen.</h2>
+  <p class="lead" style="margin-bottom:32px;">
+    ATLAS agents operate across the full enterprise workflow stack — from back-office automation to real-time customer decisioning.
+  </p>
+
+  <div class="usecases">
+    <div class="usecase uc1">
+      <div class="usecase-tag">Order-to-Cash</div>
+      <div class="usecase-title">Credit & Risk Assessment</div>
+      <div class="usecase-body">Pull commercial credit bureau data, score customers against dynamic risk models, and generate ECOA-compliant decisioning in seconds — not days.</div>
+    </div>
+    <div class="usecase uc2">
+      <div class="usecase-tag">Financial Services</div>
+      <div class="usecase-title">AML / Compliance Screening</div>
+      <div class="usecase-body">OFAC screening, sanctions monitoring, and suspicious activity flagging — with full audit trails and automatic human escalation for high-risk cases.</div>
+    </div>
+    <div class="usecase uc3">
+      <div class="usecase-tag">Operations</div>
+      <div class="usecase-title">Supply Chain Disruption</div>
+      <div class="usecase-body">Monitor signals, assess downstream impact, and surface mitigation options in real time — giving ops teams a decision-ready brief, not a raw feed.</div>
+    </div>
+    <div class="usecase uc4">
+      <div class="usecase-tag">Marketing</div>
+      <div class="usecase-title">Next-Best-Action Decisioning</div>
+      <div class="usecase-body">Personalize email decisions across millions of subscribers in real time — with fatigue protection, send-time optimization, and performance feedback loops.</div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ╔══════════════════════════════════════════════════════╗ -->
+<!--                    CLOSING CTA                        -->
+<!-- ╚══════════════════════════════════════════════════════╝ -->
+<div class="closing">
+  <div>
+    <h3>Ready to put AI agents to work?</h3>
+    <p>See ATLAS in action with a live demo tailored to your industry and use case.</p>
+  </div>
+  <a class="closing-cta" href="https://agent-lifecycle-management-platform.replit.app">
+    Request a Demo →
+  </a>
+</div>
+
+</body>
+</html>
