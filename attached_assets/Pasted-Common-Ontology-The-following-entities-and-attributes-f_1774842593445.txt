@@ -1,0 +1,66 @@
+Common Ontology
+The following entities and attributes form the shared data model referenced by this agent:
+Entity	Key Attributes
+Product	SKU, product family, configuration rules, BOM (Bill of Materials)
+Price List	base price, tier pricing, volume breaks, currency, effective dates
+Discount	discount type (%, fixed, promotional), approval matrix, stacking rules
+Quote	quote ID, line items, total, validity, status, version history
+Customer	account ID, segment, contract ID, credit tier, preferred channel
+Approval	threshold, approver role, escalation path, SLA
+
+2.4 Claude Agent Skills
+The following skills should be developed and made available as context for this agent:
+Skill Name	Description
+Product Catalog Retrieval	RAG over product master data, configuration rules, compatibility matrices
+Pricing Engine Skill	Applies multi-tier pricing logic, discount stacking, currency conversion
+Approval Routing Skill	Evaluates discount/term thresholds and routes to correct approver
+Quote Document Generation	Produces formatted quote PDF/DOCX with terms and conditions
+Customer Context Skill	Retrieves customer history, contract terms, past quotes for personalization
+Channel Adaptation Skill	Formats output for email, portal, EDI, or API based on channel
+
+2.5 Eval Dataset
+Recommended evaluation data and benchmarks for validating agent accuracy and performance:
+•	500+ historical quote requests with known correct configurations and prices
+•	Edge cases: discontinued products, cross-region pricing, multi-currency quotes
+•	Approval boundary tests: quotes at, above, and below discount thresholds
+•	Bundle conflict scenarios: incompatible product combinations
+•	Regression suite: previously mis-priced quotes as negative examples
+•	Latency benchmarks: quote generation under 30 seconds target
+
+2.6 Production Runbooks
+Operational procedures for handling common issues and failure scenarios:
+Scenario	Procedure
+Pricing Rule Sync Failure	Steps to resync pricing tables from ERP; fallback to cached prices
+Approval Timeout	Escalation procedure when approver does not respond within SLA
+Quote Generation Error	Retry logic, manual override procedure, incident ticket creation
+Product Catalog Stale Data	Force refresh procedure, validation against ERP master
+High-Volume Quote Storm	Rate limiting, queue management, priority routing for key accounts
+Rollback Procedure	How to void and reissue quotes after pricing rule corrections
+
+2.7 Regulatory Compliance & Policies
+Applicable regulations and compliance requirements:
+•	SOX (Sarbanes-Oxley): Audit trail for pricing decisions and discount approvals
+•	Robinson-Patman Act: Price discrimination controls across similar customers
+•	GDPR/Data Privacy: Customer data handling in quotes, right to erasure
+•	Revenue Recognition (ASC 606 / IFRS 15): Proper bundling and allocation of transaction price
+•	Anti-Bribery (FCPA/UK Bribery Act): Controls on excessive discounts to government entities
+•	Industry-specific: FDA pricing for pharma, TILA for financial services, telecom tariff regulations
+
+2.8 Knowledgebase Reference
+Documents and data sources this agent needs access to:
+•	Product catalog with full configuration rules and compatibility matrices
+•	Pricing master data: price lists, discount schedules, promotional calendars
+•	Contract library: master service agreements, framework agreements, rate cards
+•	Quote templates by industry, region, and customer segment
+•	Competitor pricing intelligence (where legally available)
+•	Historical quote win/loss analysis with reasons
+
+2.9 Knowledge Graph
+Entity-relationship mappings showing how data entities connect within this agent's domain:
+Product -[HAS_CONFIGURATION]-> Configuration Rule
+Product -[COMPATIBLE_WITH]-> Product
+Product -[BELONGS_TO]-> Product Family
+Customer -[HAS_CONTRACT]-> Contract -[SPECIFIES]-> Price List
+Quote -[CONTAINS]-> Line Item -[REFERENCES]-> Product
+Quote -[REQUIRES_APPROVAL]-> Approval Workflow -[ASSIGNED_TO]-> Approver Role
+Discount -[GOVERNED_BY]-> Approval Matrix -[THRESHOLD]-> Amount
