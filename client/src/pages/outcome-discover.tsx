@@ -2183,7 +2183,7 @@ export default function OutcomeDiscover() {
               <div className="p-4 flex flex-col gap-4">
                 <Card>
                   <CardHeader className="p-4 pb-2">
-                    <CardTitle className="text-sm font-medium text-muted-foreground flex items-center justify-between gap-1.5 flex-wrap">
+                    <CardTitle className="text-sm font-medium flex items-center justify-between gap-1.5 flex-wrap">
                       <div className="flex items-center gap-1.5">
                         <Target className="w-3.5 h-3.5" />
                         Outcome Contract
@@ -2264,7 +2264,7 @@ export default function OutcomeDiscover() {
 
                 <Card>
                   <CardHeader className="p-4 pb-2">
-                    <CardTitle className="text-sm font-medium text-muted-foreground flex items-center justify-between gap-1.5 flex-wrap">
+                    <CardTitle className="text-sm font-medium flex items-center justify-between gap-1.5 flex-wrap">
                       <div className="flex items-center gap-1.5">
                         <BarChart3 className="w-3.5 h-3.5" />
                         Success Metrics ({proposal.kpis.length} KPIs)
@@ -2305,7 +2305,7 @@ export default function OutcomeDiscover() {
                   <Card>
                     <CardHeader className="p-4 pb-2">
                       <CardTitle
-                        className="text-sm font-medium text-muted-foreground flex items-center justify-between gap-1.5 cursor-pointer flex-wrap"
+                        className="text-sm font-medium flex items-center justify-between gap-1.5 cursor-pointer flex-wrap"
                         onClick={() => setShowKpiBenchmarks(!showKpiBenchmarks)}
                         data-testid="button-toggle-kpi-benchmarks"
                       >
@@ -2341,7 +2341,7 @@ export default function OutcomeDiscover() {
                 {proposal.proposedAgents && proposal.proposedAgents.length > 0 && (
                   <Card data-testid="card-proposed-agents">
                     <CardHeader className="p-4 pb-2">
-                      <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                      <CardTitle className="text-sm font-medium flex items-center gap-1.5">
                         <Bot className="w-3.5 h-3.5" />
                         AI Proposed Agent Architecture ({proposal.proposedAgents.length})
                       </CardTitle>
@@ -2426,7 +2426,7 @@ export default function OutcomeDiscover() {
                   <Card data-testid="card-platform-match">
                     <CardHeader className="p-4 pb-2">
                       <CardTitle
-                        className="text-sm font-medium text-muted-foreground flex items-center justify-between gap-1.5 cursor-pointer flex-wrap"
+                        className="text-sm font-medium flex items-center justify-between gap-1.5 cursor-pointer flex-wrap"
                         onClick={() => setShowPlatformMatch(!showPlatformMatch)}
                         data-testid="button-toggle-platform-match"
                       >
@@ -2629,7 +2629,7 @@ export default function OutcomeDiscover() {
                                 )}
                                 {t.toolNames && t.toolNames.length > 0 && (
                                   <div className="flex flex-col gap-0.5" data-testid={`template-tools-${t.id}`}>
-                                    <span className="text-[10px] text-muted-foreground/60 uppercase tracking-wide font-semibold">Tool Set</span>
+                                    <span className="text-xs text-muted-foreground/60 uppercase tracking-wide font-semibold">Tool Set</span>
                                     <div className="flex flex-wrap gap-1">
                                       {t.toolNames.slice(0, 5).map((tn, ti) => (
                                         <span key={ti} className="text-[10px] px-1 py-0.5 rounded border border-muted-foreground/20 text-muted-foreground bg-muted/30">{tn}</span>
@@ -2670,7 +2670,7 @@ export default function OutcomeDiscover() {
                 {(regulatoryConstraints || proposal) && (
                   <Card>
                     <CardHeader className="p-4 pb-2">
-                      <CardTitle className="text-sm font-medium text-muted-foreground flex items-center justify-between gap-1.5 flex-wrap">
+                      <CardTitle className="text-sm font-medium flex items-center justify-between gap-1.5 flex-wrap">
                         <div className="flex items-center gap-1.5">
                           <Shield className="w-3.5 h-3.5" />
                           Regulatory Constraints
@@ -2750,7 +2750,7 @@ export default function OutcomeDiscover() {
                   <Card data-testid="card-platform-policies">
                     <CardHeader className="p-4 pb-2">
                       <CardTitle
-                        className="text-sm font-medium text-muted-foreground flex items-center justify-between gap-1.5 cursor-pointer flex-wrap"
+                        className="text-sm font-medium flex items-center justify-between gap-1.5 cursor-pointer flex-wrap"
                         onClick={() => setShowRealPolicies(!showRealPolicies)}
                         data-testid="button-toggle-policies"
                       >
@@ -2851,7 +2851,7 @@ export default function OutcomeDiscover() {
                 {proposal.validationChecklist && proposal.validationChecklist.length > 0 && (
                   <Card>
                     <CardHeader className="p-4 pb-2">
-                      <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                      <CardTitle className="text-sm font-medium flex items-center gap-1.5 flex-wrap">
                         <ClipboardCheck className="w-3.5 h-3.5" />
                         Validation Checklist
                       </CardTitle>
