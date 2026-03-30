@@ -775,7 +775,7 @@ export default function OutcomeDetail() {
     if (!outcomeId) return;
     setRegeneratingGraph(true);
     try {
-      await apiRequest("PATCH", `/api/outcomes/${outcomeId}`, {});
+      await apiRequest("POST", `/api/outcomes/${outcomeId}/regenerate-constraint-graph`);
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId] });
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
       toast({ title: "Constraint graph updated", description: "Regenerated from current KPIs and outcome configuration." });

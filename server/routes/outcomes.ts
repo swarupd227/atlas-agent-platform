@@ -1414,6 +1414,206 @@ const router = Router();
     }
   });
 
+  router.get("/api/outcomes/:id/kill-chain-alerts", async (req, res) => {
+    try {
+      const outcomeId = req.params.id;
+      const outcome = await storage.getOutcome(outcomeId, getOrgId(req));
+      if (!outcome) return res.status(404).json({ message: "Outcome not found" });
+
+      const kpis = await storage.getKpisByOutcome(outcomeId);
+      const agents = (await storage.getAgents(getOrgId(req))).filter(a => a.outcomeId === outcomeId);
+
+      if (agents.length === 0) {
+        return res.json({ alerts: [], summary: { critical: 0, warning: 0, watch: 0, total: 0 } });
+      }
+
+      const allTraces = await storage.getTraces(getOrgId(req));
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+      const kpisWithThreshold = kpis.filter(k => k.slaThreshold != null && k.currentValue != null);
+
+      const computeHeadroom = (kpi: typeof kpis[0]): number => {
+        if (kpi.slaThreshold == null || kpi.currentValue == null) return Infinity;
+        const isInverse = /time|latency|incident|error|fail/i.test(kpi.name || "");
+        return isInverse
+          ? (kpi.slaThreshold - kpi.currentValue)
+          : (kpi.currentValue - kpi.slaThreshold);
+      };
+
+      const threatenedKpis = kpisWithThreshold.filter(k => computeHeadroom(k) < (k.slaThreshold || 1) * 0.2);
+
+      type KillChainAlert = {
+        alertId: string;
+        severity: string;
+        agentId: string;
+        agentName: string;
+        driftMetric: string;
+        driftPercent: number;
+        driftSeverity: string;
+        suiteName: string;
+        threatenedKpis: Array<{ kpiName: string; currentValue: number; slaThreshold: number; headroom: number; unit: string }>;
+        recommendedAction: string;
+        detectedAt: string;
+        healingPipelineId?: string;
+      };
+
+      const alerts: KillChainAlert[] = [];
+
+      for (const agent of agents) {
+        const agentTraces = allTraces.filter(t => t.agentId === agent.id);
+        const recentTraces = agentTraces.filter(t => t.startedAt && new Date(t.startedAt) >= sevenDaysAgo);
+
+        const baselinePassRate = agent.successRate != null ? agent.successRate * 100 : null;
+        const baselineLatencyMs = agent.avgLatencyMs ?? null;
+
+        if (recentTraces.length >= 3) {
+          const recentSuccessful = recentTraces.filter(t => t.status === "completed" || t.status === "success").length;
+          const currentPassRate = (recentSuccessful / recentTraces.length) * 100;
+
+          if (baselinePassRate !== null && baselinePassRate > 0) {
+            const passRateDrift = ((baselinePassRate - currentPassRate) / baselinePassRate) * 100;
+            if (passRateDrift > 10) {
+              const severity = passRateDrift > 35 ? "critical" : passRateDrift > 20 ? "warning" : "watch";
+              const alertThreatened = threatenedKpis
+                .filter(k => !/time|latency/i.test(k.name || ""))
+                .map(k => ({
+                  kpiName: k.name,
+                  currentValue: k.currentValue as number,
+                  slaThreshold: k.slaThreshold as number,
+                  headroom: Math.round(computeHeadroom(k) * 10) / 10,
+                  unit: k.unit || "",
+                }));
+
+              if (alertThreatened.length > 0 || passRateDrift > 25) {
+                alerts.push({
+                  alertId: `${agent.id}-passrate-${Date.now()}`,
+                  severity,
+                  agentId: agent.id,
+                  agentName: agent.name,
+                  driftMetric: "pass_rate",
+                  driftPercent: Math.round(passRateDrift * 10) / 10,
+                  driftSeverity: severity,
+                  suiteName: "Live Traces",
+                  threatenedKpis: alertThreatened.length > 0 ? alertThreatened : kpisWithThreshold.slice(0, 3).map(k => ({
+                    kpiName: k.name,
+                    currentValue: k.currentValue as number,
+                    slaThreshold: k.slaThreshold as number,
+                    headroom: Math.round(computeHeadroom(k) * 10) / 10,
+                    unit: k.unit || "",
+                  })),
+                  recommendedAction: `Pass rate degraded ${Math.round(passRateDrift)}% below baseline. Review recent run failures and consider rolling back model config.`,
+                  detectedAt: new Date().toISOString(),
+                });
+              }
+            }
+          }
+        }
+
+        if (recentTraces.length >= 3 && baselineLatencyMs !== null && baselineLatencyMs > 0) {
+          const recentAvgLatency = recentTraces.reduce((s, t) => s + (t.latencyMs || 0), 0) / recentTraces.length;
+          const latencyDrift = ((recentAvgLatency - baselineLatencyMs) / baselineLatencyMs) * 100;
+          if (latencyDrift > 30) {
+            const severity = latencyDrift > 80 ? "critical" : latencyDrift > 50 ? "warning" : "watch";
+            const latencyKpis = kpisWithThreshold.filter(k => /time|latency/i.test(k.name || "")).map(k => ({
+              kpiName: k.name,
+              currentValue: k.currentValue as number,
+              slaThreshold: k.slaThreshold as number,
+              headroom: Math.round(computeHeadroom(k) * 10) / 10,
+              unit: k.unit || "",
+            }));
+
+            if (latencyKpis.length > 0) {
+              alerts.push({
+                alertId: `${agent.id}-latency-${Date.now()}`,
+                severity,
+                agentId: agent.id,
+                agentName: agent.name,
+                driftMetric: "avg_latency",
+                driftPercent: Math.round(latencyDrift * 10) / 10,
+                driftSeverity: severity,
+                suiteName: "Live Traces",
+                threatenedKpis: latencyKpis,
+                recommendedAction: `Latency up ${Math.round(latencyDrift)}% vs baseline (${Math.round(recentAvgLatency)}ms vs ${baselineLatencyMs}ms). Check model provider status or switch to faster model tier.`,
+                detectedAt: new Date().toISOString(),
+              });
+            }
+          }
+        }
+
+        if (recentTraces.length >= 5) {
+          const failRate = recentTraces.filter(t => t.status === "failed" || t.status === "error").length / recentTraces.length;
+          if (failRate > 0.3 && (baselinePassRate === null || failRate * 100 > (100 - baselinePassRate) * 2)) {
+            const severity = failRate > 0.6 ? "critical" : "warning";
+            const alreadyHasAlert = alerts.some(a => a.agentId === agent.id && a.driftMetric === "pass_rate");
+            if (!alreadyHasAlert) {
+              const allKpisMapped = kpisWithThreshold.map(k => ({
+                kpiName: k.name,
+                currentValue: k.currentValue as number,
+                slaThreshold: k.slaThreshold as number,
+                headroom: Math.round(computeHeadroom(k) * 10) / 10,
+                unit: k.unit || "",
+              }));
+              alerts.push({
+                alertId: `${agent.id}-failrate-${Date.now()}`,
+                severity,
+                agentId: agent.id,
+                agentName: agent.name,
+                driftMetric: "pass_rate",
+                driftPercent: Math.round(failRate * 100 * 10) / 10,
+                driftSeverity: severity,
+                suiteName: "Live Traces",
+                threatenedKpis: allKpisMapped,
+                recommendedAction: `${Math.round(failRate * 100)}% failure rate over last 7 days. Inspect error logs and consider pausing agent until root cause is resolved.`,
+                detectedAt: new Date().toISOString(),
+              });
+            }
+          }
+        }
+      }
+
+      const summary = {
+        critical: alerts.filter(a => a.severity === "critical").length,
+        warning: alerts.filter(a => a.severity === "warning").length,
+        watch: alerts.filter(a => a.severity === "watch").length,
+        total: alerts.length,
+      };
+
+      res.json({ alerts, summary });
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  router.post("/api/outcomes/:id/regenerate-constraint-graph", async (req, res) => {
+    try {
+      const outcomeId = req.params.id;
+      const outcome = await storage.getOutcome(outcomeId, getOrgId(req));
+      if (!outcome) return res.status(404).json({ message: "Outcome not found" });
+
+      const kpis = await storage.getKpisByOutcome(outcomeId);
+      const graph = computeConstraintGraph(outcome, kpis);
+      const updated = await storage.updateOutcome(outcomeId, { constraintGraph: graph }, getOrgId(req));
+
+      await storage.createAuditEvent({
+        actorType: "user",
+        actorId: "system",
+        action: "outcome.constraint_graph_regenerated",
+        objectType: "outcome",
+        objectId: outcomeId,
+        details: JSON.stringify({
+          kpiCount: kpis.length,
+          nodeCount: Array.isArray((graph as any)?.nodes) ? (graph as any).nodes.length : 0,
+          edgeCount: Array.isArray((graph as any)?.edges) ? (graph as any).edges.length : 0,
+        }),
+        ontologyTags: resolveOntologyTags("outcome", "outcome.constraint_graph_regenerated"),
+      });
+
+      res.json({ success: true, updatedAt: new Date().toISOString(), outcome: updated });
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
   router.post("/api/kpis", async (req, res) => {
     try {
       const data = insertKpiDefinitionSchema.parse(req.body);
