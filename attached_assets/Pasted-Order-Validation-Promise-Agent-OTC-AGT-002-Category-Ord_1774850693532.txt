@@ -1,0 +1,82 @@
+Order Validation & Promise Agent
+OTC-AGT-002  |  Category: Order Processing
+3.1 Description
+Validates incoming orders against customer data, credit limits, tax jurisdiction, and shipping addresses. Checks stock availability and delivery feasibility, commits delivery promises, and creates clean orders routed to fulfillment. Replaces manual order entry that suffers from incomplete data, inconsistent validation, and delayed processing.
+3.2 Workflow Steps
+11.	1. Receive order (from accepted quote, EDI, portal, or manual entry)
+12.	2. Validate customer identity, account status, and credit standing
+13.	3. Validate product availability against real-time inventory
+14.	4. Verify shipping address against address validation service
+15.	5. Calculate taxes based on ship-from/ship-to jurisdiction
+16.	6. Apply payment terms per customer contract or credit policy
+17.	7. Check for order holds (credit hold, fraud flag, compliance block)
+18.	8. Commit delivery date based on inventory, lead time, and logistics
+19.	9. Create order record with all validated data in ERP/OMS
+20.	10. Send order confirmation to customer
+21.	11. Route order to Fulfillment & Exception Agent
+
+3.3 Common Ontology
+The following entities and attributes form the shared data model referenced by this agent:
+Entity	Key Attributes
+Order	order ID, type (standard, rush, backorder), status, source channel
+Customer	account, credit limit, credit exposure, payment terms, dunning level
+Address	ship-to, bill-to, validation status, tax jurisdiction code
+Inventory	location, available-to-promise (ATP), safety stock, lead time
+Tax	jurisdiction, tax code, exemption certificate, nexus rules
+Delivery Promise	requested date, committed date, carrier, service level
+
+3.4 Claude Agent Skills
+The following skills should be developed and made available as context for this agent:
+Skill Name	Description
+Customer Credit Check Skill	Real-time credit limit and exposure calculation against ERP
+Address Validation Skill	Integration with address standardization services (USPS, Google, Loqate)
+Tax Calculation Skill	Tax engine integration (Avalara, Vertex, or native ERP tax)
+ATP/Inventory Check Skill	Multi-location inventory query with allocation logic
+Fraud Detection Skill	Pattern matching on order anomalies (unusual quantities, new ship-to addresses)
+Order Enrichment Skill	Auto-fills missing fields from customer master and defaults
+
+3.5 Eval Dataset
+Recommended evaluation data and benchmarks for validating agent accuracy and performance:
+•	1000+ historical orders with known validation outcomes (pass/fail with reasons)
+•	Credit limit boundary cases: orders at 90%, 100%, 110% of credit limit
+•	Address edge cases: PO boxes, military addresses, international formats
+•	Tax exemption scenarios: resale certificates, government entities, tax holidays
+•	Multi-location ATP: split shipment scenarios, backorder triggers
+•	Fraud pattern examples: velocity checks, address mismatch, first-order anomalies
+
+3.6 Production Runbooks
+Operational procedures for handling common issues and failure scenarios:
+Scenario	Procedure
+Credit Check Service Down	Fallback to cached credit data with reduced limits; manual override process
+Address Validation Failure	Queue for manual review; partial validation with warning
+Tax Engine Timeout	Apply default tax rate with reconciliation flag
+Inventory Sync Lag	Staleness threshold alerts; manual ATP override procedure
+Bulk Order Ingestion Failure	Batch retry logic; partial processing with error report
+Order Stuck in Validation	Timeout thresholds, auto-escalation, manual release procedure
+
+3.7 Regulatory Compliance & Policies
+Applicable regulations and compliance requirements:
+•	Export Controls (EAR/ITAR): Denied party screening, product classification checks
+•	OFAC Sanctions: Customer and address screening against sanctions lists
+•	Sales Tax Nexus: Proper tax collection based on economic nexus thresholds
+•	PCI-DSS: Payment data handling if payment captured at order entry
+•	SOX: Segregation of duties between order creation and approval
+•	KYC/AML: Customer verification for high-value or regulated products
+
+3.8 Knowledgebase Reference
+Documents and data sources this agent needs access to:
+•	Customer master data: accounts, contacts, credit records, payment history
+•	Product master: SKUs, lead times, minimum order quantities, shipping restrictions
+•	Tax rate tables and exemption certificate repository
+•	Carrier rate cards and service level agreements
+•	Order processing SOPs by channel and order type
+•	Historical order exception log with resolution patterns
+
+3.9 Knowledge Graph
+Entity-relationship mappings showing how data entities connect within this agent's domain:
+Order -[PLACED_BY]-> Customer -[HAS_CREDIT]-> Credit Record
+Order -[CONTAINS]-> Order Line -[REFERENCES]-> Product
+Order -[SHIPS_TO]-> Address -[IN_JURISDICTION]-> Tax Zone
+Product -[AVAILABLE_AT]-> Inventory Location -[HAS_ATP]-> Quantity
+Customer -[SUBJECT_TO]-> Compliance Rule -[REQUIRES]-> Screening
+Order -[PROMISED_BY]-> Delivery Commitment -[USES]-> Carrier Service

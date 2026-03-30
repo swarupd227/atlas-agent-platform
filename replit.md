@@ -85,6 +85,34 @@ Organization-level data isolation has been implemented across the schema and sto
 
 **Isolation design**: In demo mode (`SECURITY_MODE=demo`) — no filtering (all records returned, backward compatible). In production mode — filtered to user's org. Platform-level tables (templates, regulations, ontology, MCP marketplace) remain global/unfiltered.
 
+## Order-to-Cash Agent Provisioning Scripts
+
+Shell scripts (curl + jq) that create full-stack agent platform intelligence via API. No hardcoded data — all resources created through API endpoints. Use `bash <script>` from the workspace root.
+
+### OTC-AGT-001: Quote & Configuration Agent
+
+| Script | Target | Purpose |
+|---|---|---|
+| `provision_otc_agt_001_dev.sh` | `localhost:5000` (staging) | Creates agent in dev environment |
+| `migrate_otc_agt_001_to_prod.sh` | `https://agent-lifecycle-management-platform.replit.app` | Creates agent in production |
+
+**Dev IDs**: Agent `3de530f4`, eval suite `3f41ebca`; Runbooks: `d8b16675`, `1d2cbee2`, `38a3c658`, `9a06591a`, `39988c4f`, `e9d919f5`
+
+**Resources**: 6 Skills (Product Catalog Retrieval, Pricing Engine, Approval Routing, Quote Document Generation, Customer Context, Channel Adaptation), 1 KB, 5 Policies (SOX, Robinson-Patman, GDPR, ASC606/IFRS15, FCPA), 1 Agent (15 tools, 10-node blueprint), 6 Runbooks, 1 Eval Suite (500-case dataset)
+
+### OTC-AGT-002: Order Validation & Promise Agent
+
+| Script | Target | Purpose |
+|---|---|---|
+| `provision_otc_agt_002_dev.sh` | `localhost:5000` (staging) | Creates agent in dev environment |
+| `migrate_otc_agt_002_to_prod.sh` | `https://agent-lifecycle-management-platform.replit.app` | Creates agent in production |
+
+**Dev IDs**: Agent `15f80d91-fcec-4819-817e-a71a8ce91de8`, KB `177b98ba`, Eval Suite `b2a1cd2c`, Dataset `42a42ea8`; Skills: S1=`2edbb815` (Credit Check), S2=`e6b75ec5` (Address Validation), S3=`4a57e695` (Tax Calculation), S4=`99c41797` (ATP/Inventory), S5=`99d1dd20` (Fraud Detection), S6=`142adc6d` (Order Enrichment); Policies: P1=`6faf98dd` (EAR/ITAR), P2=`20f69125` (OFAC), P3=`7aded418` (Sales Tax Nexus), P4=`9ce9b5e0` (PCI-DSS), P5=`f395b2ea` (SOX SoD), P6=`a60df2d2` (KYC/AML); Runbooks: RB1=`f5e45e52`, RB2=`81478f97`, RB3=`64d386d2`, RB4=`3b481325`, RB5=`4262aeeb`, RB6=`d9bdb26b`
+
+**Resources**: 6 Skills, 1 KB, 6 Policies, 1 Agent (20 tools, 14-node blueprint with 2 human-in-loop gates), 6 Runbooks, 1 Eval Suite (1000-case dataset)
+
+**9-step provisioning pattern** (same for all OTC agents): Skills → KB → Policies → Agent (base) → PATCH (skills+policies+KB+blueprint) → KB-link → Dataset → Runbooks → EvalSuite+evalBindings
+
 ## External Dependencies
 - **OpenAI**: Primary LLM provider for agent runtime, evaluations, AI enhancements, and embeddings.
 - **Anthropic**: Secondary LLM provider for Claude models with tool calling.
