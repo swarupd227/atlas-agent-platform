@@ -2167,7 +2167,7 @@ export default function OutcomeDiscover() {
           </div>
 
           {builderMode === "ai" && proposal && (
-            <div className="lg:w-[420px] border-t lg:border-t-0 lg:border-l overflow-y-auto shrink-0" data-testid="panel-proposal">
+            <div className="lg:w-[480px] border-t lg:border-t-0 lg:border-l overflow-y-auto shrink-0" data-testid="panel-proposal">
               <div className="px-4 py-3 border-b bg-gradient-to-r from-primary/[0.04] to-transparent">
                 <div className="flex items-center gap-2.5">
                   <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary/15 to-violet-500/10 flex items-center justify-center">
@@ -2175,15 +2175,15 @@ export default function OutcomeDiscover() {
                   </div>
                   <div className="flex flex-col gap-0">
                     <h3 className="text-sm font-semibold tracking-tight">Outcome Proposal</h3>
-                    <span className="text-[10px] text-muted-foreground">Review and accept to create contract</span>
+                    <span className="text-xs text-muted-foreground">Review and accept to create contract</span>
                   </div>
                 </div>
               </div>
 
               <div className="p-4 flex flex-col gap-4">
                 <Card>
-                  <CardHeader className="p-3 pb-1">
-                    <CardTitle className="text-xs font-medium text-muted-foreground flex items-center justify-between gap-1.5 flex-wrap">
+                  <CardHeader className="p-4 pb-2">
+                    <CardTitle className="text-sm font-medium text-muted-foreground flex items-center justify-between gap-1.5 flex-wrap">
                       <div className="flex items-center gap-1.5">
                         <Target className="w-3.5 h-3.5" />
                         Outcome Contract
@@ -2200,36 +2200,36 @@ export default function OutcomeDiscover() {
                       </Button>
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="p-3 pt-0 flex flex-col gap-2">
+                  <CardContent className="p-4 pt-1 flex flex-col gap-2">
                     <span className="text-sm font-semibold" data-testid="text-proposal-name">{proposal.outcomeContract.name}</span>
-                    <span className="text-xs text-muted-foreground">{proposal.outcomeContract.description}</span>
+                    <span className="text-sm text-muted-foreground">{proposal.outcomeContract.description}</span>
                     <div className="flex flex-col gap-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
                         {platformIntel?.compositeRisk ? (
                           <>
                             <Badge
                               variant={platformIntel.compositeRisk.level === "CRITICAL" || platformIntel.compositeRisk.level === "HIGH" ? "destructive" : "outline"}
-                              className={`text-[10px] ${platformIntel.compositeRisk.level === "LOW" ? "border-emerald-500/50 text-emerald-600 dark:text-emerald-400" : platformIntel.compositeRisk.level === "MEDIUM" ? "border-amber-500/50 text-amber-600 dark:text-amber-400" : ""}`}
+                              className={`text-xs ${platformIntel.compositeRisk.level === "LOW" ? "border-emerald-500/50 text-emerald-600 dark:text-emerald-400" : platformIntel.compositeRisk.level === "MEDIUM" ? "border-amber-500/50 text-amber-600 dark:text-amber-400" : ""}`}
                               data-testid="badge-composite-risk"
                             >
                               {platformIntel.compositeRisk.level} Composite Risk
                             </Badge>
                             {proposal.outcomeContract.riskTier && (
-                              <Badge variant="secondary" className="text-[9px] opacity-70" data-testid="badge-ai-risk-tier">
+                              <Badge variant="secondary" className="text-xs opacity-70" data-testid="badge-ai-risk-tier">
                                 AI: {proposal.outcomeContract.riskTier}
                               </Badge>
                             )}
                           </>
                         ) : (
-                          <Badge variant="outline" className="text-[10px]">{proposal.outcomeContract.riskTier} Risk</Badge>
+                          <Badge variant="outline" className="text-xs">{proposal.outcomeContract.riskTier} Risk</Badge>
                         )}
-                        <Badge variant="outline" className="text-[10px]">{proposal.outcomeContract.pricingModel.replace(/_/g, " ")}</Badge>
-                        {loadingIntel && <span className="text-[10px] text-muted-foreground animate-pulse">Computing risk…</span>}
+                        <Badge variant="outline" className="text-xs">{proposal.outcomeContract.pricingModel.replace(/_/g, " ")}</Badge>
+                        {loadingIntel && <span className="text-xs text-muted-foreground animate-pulse">Computing risk…</span>}
                       </div>
                       {platformIntel?.compositeRisk?.rationale && platformIntel.compositeRisk.rationale.length > 0 && (
                         <div className="flex flex-col gap-0.5" data-testid="text-composite-risk-rationale">
                           {platformIntel.compositeRisk.rationale.map((r, i) => (
-                            <span key={i} className="text-[10px] text-muted-foreground leading-relaxed">· {r}</span>
+                            <span key={i} className="text-xs text-muted-foreground leading-relaxed">· {r}</span>
                           ))}
                         </div>
                       )}
@@ -2245,11 +2245,11 @@ export default function OutcomeDiscover() {
                         return (
                           <div className="flex items-center gap-2 mt-1 px-2 py-1.5 rounded bg-yellow-500/10 border border-yellow-500/30" data-testid="banner-risk-upgrade">
                             <AlertTriangle className="w-3.5 h-3.5 text-yellow-600 dark:text-yellow-400 shrink-0" />
-                            <span className="text-[10px] text-yellow-700 dark:text-yellow-300 flex-1">Platform analysis suggests upgrading risk tier to <strong>{suggestedTier}</strong></span>
+                            <span className="text-xs text-yellow-700 dark:text-yellow-300 flex-1">Platform analysis suggests upgrading risk tier to <strong>{suggestedTier}</strong></span>
                             <Button
                               size="sm"
                               variant="outline"
-                              className="h-6 px-2 text-[10px] border-yellow-500/40 text-yellow-700 dark:text-yellow-300 hover:bg-yellow-500/10"
+                              className="h-6 px-2 text-xs border-yellow-500/40 text-yellow-700 dark:text-yellow-300 hover:bg-yellow-500/10"
                               onClick={() => setProposal((prev) => prev ? { ...prev, outcomeContract: { ...prev.outcomeContract, riskTier: suggestedTier } } : prev)}
                               data-testid="button-apply-risk-upgrade"
                             >
@@ -2263,8 +2263,8 @@ export default function OutcomeDiscover() {
                 </Card>
 
                 <Card>
-                  <CardHeader className="p-3 pb-1">
-                    <CardTitle className="text-xs font-medium text-muted-foreground flex items-center justify-between gap-1.5 flex-wrap">
+                  <CardHeader className="p-4 pb-2">
+                    <CardTitle className="text-sm font-medium text-muted-foreground flex items-center justify-between gap-1.5 flex-wrap">
                       <div className="flex items-center gap-1.5">
                         <BarChart3 className="w-3.5 h-3.5" />
                         Success Metrics ({proposal.kpis.length} KPIs)
@@ -2281,19 +2281,19 @@ export default function OutcomeDiscover() {
                       </Button>
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="p-3 pt-0 flex flex-col gap-2">
+                  <CardContent className="p-4 pt-1 flex flex-col gap-2">
                     {proposal.kpis.map((kpi, i) => (
                       <div key={i} className="flex flex-col gap-1 p-2 rounded-md bg-muted/50" data-testid={`kpi-proposal-${i}`}>
                         <div className="flex items-center justify-between gap-2 flex-wrap">
-                          <span className="text-xs font-medium">{kpi.name}</span>
-                          <Badge variant="outline" className="text-[10px]">Target: {kpi.target}{kpi.unit}</Badge>
+                          <span className="text-sm font-medium">{kpi.name}</span>
+                          <Badge variant="outline" className="text-xs">Target: {kpi.target}{kpi.unit}</Badge>
                         </div>
-                        <span className="text-[11px] text-muted-foreground">{kpi.measurement}</span>
+                        <span className="text-xs text-muted-foreground">{kpi.measurement}</span>
                         {kpi.currentBaseline !== null && (
                           <div className="flex items-center gap-2 flex-wrap">
-                            <span className="text-[10px] text-muted-foreground">Current: {kpi.currentBaseline}{kpi.unit}</span>
+                            <span className="text-xs text-muted-foreground">Current: {kpi.currentBaseline}{kpi.unit}</span>
                             <ArrowRight className="w-3 h-3 text-muted-foreground" />
-                            <span className="text-[10px] text-green-600 dark:text-green-400">Target: {kpi.target}{kpi.unit}</span>
+                            <span className="text-xs text-green-600 dark:text-green-400">Target: {kpi.target}{kpi.unit}</span>
                           </div>
                         )}
                       </div>
@@ -2303,9 +2303,9 @@ export default function OutcomeDiscover() {
 
                 {industryKpis && (
                   <Card>
-                    <CardHeader className="p-3 pb-1">
+                    <CardHeader className="p-4 pb-2">
                       <CardTitle
-                        className="text-xs font-medium text-muted-foreground flex items-center justify-between gap-1.5 cursor-pointer flex-wrap"
+                        className="text-sm font-medium text-muted-foreground flex items-center justify-between gap-1.5 cursor-pointer flex-wrap"
                         onClick={() => setShowKpiBenchmarks(!showKpiBenchmarks)}
                         data-testid="button-toggle-kpi-benchmarks"
                       >
@@ -2317,14 +2317,14 @@ export default function OutcomeDiscover() {
                       </CardTitle>
                     </CardHeader>
                     {showKpiBenchmarks && (
-                      <CardContent className="p-3 pt-0 flex flex-col gap-2">
+                      <CardContent className="p-4 pt-1 flex flex-col gap-2">
                         {industryKpis.map((kpi, i) => (
                           <div key={i} className="flex items-center justify-between gap-2 p-2 rounded-md bg-muted/50" data-testid={`industry-kpi-${i}`}>
                             <div className="flex flex-col gap-0.5 min-w-0 flex-1">
-                              <span className="text-xs font-medium">{kpi.name}</span>
+                              <span className="text-sm font-medium">{kpi.name}</span>
                               <div className="flex items-center gap-2 flex-wrap">
-                                <span className="text-[10px] text-green-600 dark:text-green-400">Target: {kpi.target}</span>
-                                <span className="text-[10px] text-muted-foreground">Benchmark: {kpi.benchmark}</span>
+                                <span className="text-xs text-green-600 dark:text-green-400">Target: {kpi.target}</span>
+                                <span className="text-xs text-muted-foreground">Benchmark: {kpi.benchmark}</span>
                               </div>
                             </div>
                             <Button variant="ghost" size="icon" data-testid={`button-add-kpi-${i}`}>
@@ -2340,13 +2340,13 @@ export default function OutcomeDiscover() {
                 {/* AI Proposed Agent Architecture — with per-agent MCP tool coverage chips */}
                 {proposal.proposedAgents && proposal.proposedAgents.length > 0 && (
                   <Card data-testid="card-proposed-agents">
-                    <CardHeader className="p-3 pb-1">
-                      <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                    <CardHeader className="p-4 pb-2">
+                      <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
                         <Bot className="w-3.5 h-3.5" />
                         AI Proposed Agent Architecture ({proposal.proposedAgents.length})
                       </CardTitle>
                     </CardHeader>
-                    <CardContent className="p-3 pt-0 flex flex-col gap-2">
+                    <CardContent className="p-4 pt-1 flex flex-col gap-2">
                       {proposal.proposedAgents.map((agent: { role?: string; name?: string; requiredTools?: string[]; tools?: string[]; autonomyMode?: string; riskTier?: string; description?: string }, i: number) => {
                         const agentName = agent.role || agent.name || `Agent ${i + 1}`;
                         const agentTools: string[] = agent.requiredTools || agent.tools || [];
@@ -2365,18 +2365,18 @@ export default function OutcomeDiscover() {
                           <div key={i} className="flex flex-col gap-1.5 p-2 rounded-md bg-muted/50 border border-transparent" data-testid={`proposed-agent-card-${i}`}>
                             <div className="flex items-center justify-between gap-2 flex-wrap">
                               <div className="flex flex-col min-w-0 flex-1">
-                                <span className="text-[11px] font-medium truncate" data-testid={`text-proposed-agent-name-${i}`}>{agentName}</span>
+                                <span className="text-sm font-medium truncate" data-testid={`text-proposed-agent-name-${i}`}>{agentName}</span>
                                 <div className="flex items-center gap-2 flex-wrap">
                                   {agent.autonomyMode && (
-                                    <span className="text-[10px] text-muted-foreground capitalize">{agent.autonomyMode}</span>
+                                    <span className="text-xs text-muted-foreground capitalize">{agent.autonomyMode}</span>
                                   )}
                                   {agent.riskTier && (
-                                    <Badge variant="outline" className={`text-[9px] ${agent.riskTier === "HIGH" || agent.riskTier === "CRITICAL" ? "border-red-500/40 text-red-600 dark:text-red-400" : agent.riskTier === "MEDIUM" ? "border-amber-500/40 text-amber-600 dark:text-amber-400" : "border-emerald-500/40 text-emerald-600 dark:text-emerald-400"}`}>
+                                    <Badge variant="outline" className={`text-xs ${agent.riskTier === "HIGH" || agent.riskTier === "CRITICAL" ? "border-red-500/40 text-red-600 dark:text-red-400" : agent.riskTier === "MEDIUM" ? "border-amber-500/40 text-amber-600 dark:text-amber-400" : "border-emerald-500/40 text-emerald-600 dark:text-emerald-400"}`}>
                                       {agent.riskTier}
                                     </Badge>
                                   )}
                                   {agentTools.length > 0 && (
-                                    <span className="text-[9px] text-muted-foreground" data-testid={`text-tool-score-proposed-${i}`}>
+                                    <span className="text-xs text-muted-foreground" data-testid={`text-tool-score-proposed-${i}`}>
                                       {registeredCount}/{agentTools.length} tools registered
                                     </span>
                                   )}
@@ -2388,7 +2388,7 @@ export default function OutcomeDiscover() {
                                 {toolChips.map((tc, j) => (
                                   <span
                                     key={j}
-                                    className={`inline-flex items-center gap-0.5 text-[9px] px-1 py-0.5 rounded border ${
+                                    className={`inline-flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded border ${
                                       tc.status === "exists" ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" :
                                       tc.status === "partial" ? "border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/5" :
                                       "border-red-500/40 text-red-600 dark:text-red-400 bg-red-500/5"
@@ -2412,7 +2412,7 @@ export default function OutcomeDiscover() {
                               </div>
                             )}
                             {!platformIntel && agentTools.length > 0 && (
-                              <span className="text-[9px] text-muted-foreground/60 italic">{agentTools.length} tools required — coverage loads with Platform Match</span>
+                              <span className="text-xs text-muted-foreground/60 italic">{agentTools.length} tools required — coverage loads with Platform Match</span>
                             )}
                           </div>
                         );
@@ -2424,9 +2424,9 @@ export default function OutcomeDiscover() {
                 {/* Platform Match Card (live agents + templates from intelligence endpoint) */}
                 {(platformIntel || loadingIntel) && (
                   <Card data-testid="card-platform-match">
-                    <CardHeader className="p-3 pb-1">
+                    <CardHeader className="p-4 pb-2">
                       <CardTitle
-                        className="text-xs font-medium text-muted-foreground flex items-center justify-between gap-1.5 cursor-pointer flex-wrap"
+                        className="text-sm font-medium text-muted-foreground flex items-center justify-between gap-1.5 cursor-pointer flex-wrap"
                         onClick={() => setShowPlatformMatch(!showPlatformMatch)}
                         data-testid="button-toggle-platform-match"
                       >
@@ -2434,7 +2434,7 @@ export default function OutcomeDiscover() {
                           <Cpu className="w-3.5 h-3.5" />
                           Platform Match
                           {platformIntel?.summary && (
-                            <Badge variant="outline" className="text-[9px] ml-1">
+                            <Badge variant="outline" className="text-xs ml-1">
                               {platformIntel.summary.liveAgentMatchCount} live · {platformIntel.summary.templateCount} templates
                             </Badge>
                           )}
@@ -2447,13 +2447,13 @@ export default function OutcomeDiscover() {
                       </CardTitle>
                     </CardHeader>
                     {showPlatformMatch && !loadingIntel && platformIntel && (
-                      <CardContent className="p-3 pt-0 flex flex-col gap-3">
+                      <CardContent className="p-4 pt-1 flex flex-col gap-3">
                         {/* Tier 1 — Live Agents with per-agent tool coverage chips */}
                         {platformIntel.matchedAgents.some((r) => r.matches.length > 0) && (
                           <div className="flex flex-col gap-1.5">
                             <div className="flex items-center justify-between gap-2">
-                              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Tier 1 — Live Agents</span>
-                              <span className="text-[9px] text-muted-foreground italic">Accept → bound on create · Reject → excluded from Agent Map</span>
+                              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tier 1 — Live Agents</span>
+                              <span className="text-xs text-muted-foreground italic">Accept → bound on create · Reject → excluded</span>
                             </div>
                             {platformIntel.matchedAgents.filter((r) => r.matches.length > 0).flatMap((r) => {
                               const rRoleLower = r.role.toLowerCase();
@@ -2497,15 +2497,15 @@ export default function OutcomeDiscover() {
                                         </svg>
                                         <div className="flex flex-col min-w-0">
                                           <div className="flex items-center gap-1.5 flex-wrap">
-                                            <span className="text-[11px] font-medium truncate">{a.name}</span>
+                                            <span className="text-sm font-medium truncate">{a.name}</span>
                                             {isUnhealthy && (
-                                              <span className="text-[9px] font-semibold px-1 py-0.5 rounded bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/30" data-testid={`badge-unhealthy-${a.id}`}>UNHEALTHY</span>
+                                              <span className="text-xs font-semibold px-1 py-0.5 rounded bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/30" data-testid={`badge-unhealthy-${a.id}`}>UNHEALTHY</span>
                                             )}
                                           </div>
                                           <div className="flex items-center gap-2 flex-wrap">
-                                            <span className="text-[10px] text-muted-foreground capitalize">{a.status}</span>
-                                            <span className="text-[10px] text-muted-foreground">{a.totalRuns.toLocaleString()} runs</span>
-                                            <span className="text-[10px] text-primary/70 italic">for: {r.role}</span>
+                                            <span className="text-xs text-muted-foreground capitalize">{a.status}</span>
+                                            <span className="text-xs text-muted-foreground">{a.totalRuns.toLocaleString()} runs</span>
+                                            <span className="text-xs text-primary/70 italic">for: {r.role}</span>
                                           </div>
                                         </div>
                                       </div>
@@ -2513,14 +2513,14 @@ export default function OutcomeDiscover() {
                                         <button
                                           type="button"
                                           onClick={() => setAgentDecision(a.id, 'accepted')}
-                                          className={`text-[9px] px-2 py-0.5 rounded border transition-colors ${agentDecision === 'accepted' ? "border-emerald-500/60 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 font-semibold" : "border-muted-foreground/30 text-muted-foreground hover:border-emerald-500/50 hover:text-emerald-600"}`}
+                                          className={`text-xs px-2 py-0.5 rounded border transition-colors ${agentDecision === 'accepted' ? "border-emerald-500/60 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 font-semibold" : "border-muted-foreground/30 text-muted-foreground hover:border-emerald-500/50 hover:text-emerald-600"}`}
                                           data-testid={`button-accept-agent-${a.id}`}
                                           title="Accept — assign this agent to the outcome"
                                         >✓ Accept</button>
                                         <button
                                           type="button"
                                           onClick={() => setAgentDecision(a.id, 'rejected')}
-                                          className={`text-[9px] px-2 py-0.5 rounded border transition-colors ${agentDecision === 'rejected' ? "border-red-500/60 text-red-600 dark:text-red-400 bg-red-500/10 font-semibold" : "border-muted-foreground/30 text-muted-foreground hover:border-red-500/50 hover:text-red-600"}`}
+                                          className={`text-xs px-2 py-0.5 rounded border transition-colors ${agentDecision === 'rejected' ? "border-red-500/60 text-red-600 dark:text-red-400 bg-red-500/10 font-semibold" : "border-muted-foreground/30 text-muted-foreground hover:border-red-500/50 hover:text-red-600"}`}
                                           data-testid={`button-reject-agent-${a.id}`}
                                           title="Reject — exclude from Agent Map"
                                         >✗ Reject</button>
@@ -2529,7 +2529,7 @@ export default function OutcomeDiscover() {
                                     {agentToolChips.length > 0 && (
                                       <div className="flex flex-col gap-1">
                                         <div className="flex items-center justify-between">
-                                          <span className="text-[9px] text-muted-foreground font-medium" data-testid={`text-tool-score-${a.id}`}>
+                                          <span className="text-xs text-muted-foreground font-medium" data-testid={`text-tool-score-${a.id}`}>
                                             {registeredCount}/{agentToolChips.length} tools registered
                                           </span>
                                         </div>
@@ -2537,7 +2537,7 @@ export default function OutcomeDiscover() {
                                           {agentToolChips.map((tc, i) => (
                                             <span
                                               key={i}
-                                              className={`inline-flex items-center gap-0.5 text-[9px] px-1 py-0.5 rounded border ${
+                                              className={`inline-flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded border ${
                                                 tc.status === "exists" ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" :
                                                 tc.status === "partial" ? "border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/5" :
                                                 "border-red-500/40 text-red-600 dark:text-red-400 bg-red-500/5"
@@ -2571,8 +2571,8 @@ export default function OutcomeDiscover() {
                         {platformIntel.matchedTemplates.length > 0 && (
                           <div className="flex flex-col gap-1.5">
                             <div className="flex items-center justify-between gap-2">
-                              <span className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">Tier 2 — Templates</span>
-                              <span className="text-[9px] text-muted-foreground italic">Accept → Agent Plan opens with this template · Reject → skip</span>
+                              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tier 2 — Templates</span>
+                              <span className="text-xs text-muted-foreground italic">Accept → opens with template · Reject → skip</span>
                             </div>
                             {platformIntel.matchedTemplates.slice(0, 3).map((t) => {
                               const templateDecision = templateDecisions[t.id];
@@ -2580,14 +2580,14 @@ export default function OutcomeDiscover() {
                                 <div key={t.id} className={`flex flex-col gap-1.5 p-2 rounded-md border transition-all ${templateDecision === 'accepted' ? "bg-emerald-500/5 border-emerald-500/30" : templateDecision === 'rejected' ? "bg-muted/20 border-muted-foreground/10 opacity-40" : "bg-muted/50 border-transparent"}`} data-testid={`platform-template-${t.id}`}>
                                   <div className="flex items-center justify-between gap-2">
                                     <div className="flex flex-col min-w-0 flex-1">
-                                      <span className="text-[11px] font-medium truncate">{t.name}</span>
+                                      <span className="text-sm font-medium truncate">{t.name}</span>
                                       <div className="flex items-center gap-2 flex-wrap">
-                                        {t.category && <span className="text-[10px] text-muted-foreground capitalize">{t.category}</span>}
-                                        <span className="text-[10px] text-muted-foreground capitalize">{t.complexity} complexity</span>
-                                        <span className="text-[10px] text-muted-foreground">{t.estimatedTimeToProd} to prod</span>
-                                        <span className="text-[10px] text-primary">{t.deploymentCount} deployments</span>
+                                        {t.category && <span className="text-xs text-muted-foreground capitalize">{t.category}</span>}
+                                        <span className="text-xs text-muted-foreground capitalize">{t.complexity} complexity</span>
+                                        <span className="text-xs text-muted-foreground">{t.estimatedTimeToProd} to prod</span>
+                                        <span className="text-xs text-primary">{t.deploymentCount} deployments</span>
                                         {t.defaultRiskTier && (
-                                          <Badge variant="outline" className={`text-[9px] ${t.defaultRiskTier === "HIGH" || t.defaultRiskTier === "CRITICAL" ? "border-red-500/40 text-red-600 dark:text-red-400" : t.defaultRiskTier === "MEDIUM" ? "border-amber-500/40 text-amber-600 dark:text-amber-400" : "border-emerald-500/40 text-emerald-600 dark:text-emerald-400"}`}>
+                                          <Badge variant="outline" className={`text-xs ${t.defaultRiskTier === "HIGH" || t.defaultRiskTier === "CRITICAL" ? "border-red-500/40 text-red-600 dark:text-red-400" : t.defaultRiskTier === "MEDIUM" ? "border-amber-500/40 text-amber-600 dark:text-amber-400" : "border-emerald-500/40 text-emerald-600 dark:text-emerald-400"}`}>
                                             {t.defaultRiskTier}
                                           </Badge>
                                         )}
@@ -2597,44 +2597,44 @@ export default function OutcomeDiscover() {
                                     <button
                                       type="button"
                                       onClick={() => setTemplateDecision(t.id, 'accepted')}
-                                      className={`text-[9px] px-2 py-0.5 rounded border transition-colors ${templateDecision === 'accepted' ? "border-emerald-500/60 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 font-semibold" : "border-muted-foreground/30 text-muted-foreground hover:border-emerald-500/50 hover:text-emerald-600"}`}
+                                      className={`text-xs px-2 py-0.5 rounded border transition-colors ${templateDecision === 'accepted' ? "border-emerald-500/60 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 font-semibold" : "border-muted-foreground/30 text-muted-foreground hover:border-emerald-500/50 hover:text-emerald-600"}`}
                                       data-testid={`button-accept-template-${t.id}`}
                                       title="Accept — open Agent Plan with this template after creation"
                                     >✓ Accept</button>
                                     <button
                                       type="button"
                                       onClick={() => setTemplateDecision(t.id, 'rejected')}
-                                      className={`text-[9px] px-2 py-0.5 rounded border transition-colors ${templateDecision === 'rejected' ? "border-red-500/60 text-red-600 dark:text-red-400 bg-red-500/10 font-semibold" : "border-muted-foreground/30 text-muted-foreground hover:border-red-500/50 hover:text-red-600"}`}
+                                      className={`text-xs px-2 py-0.5 rounded border transition-colors ${templateDecision === 'rejected' ? "border-red-500/60 text-red-600 dark:text-red-400 bg-red-500/10 font-semibold" : "border-muted-foreground/30 text-muted-foreground hover:border-red-500/50 hover:text-red-600"}`}
                                       data-testid={`button-reject-template-${t.id}`}
                                       title="Reject — skip this template in Agent Plan"
                                     >✗ Reject</button>
                                   </div>
                                 </div>
                                 {t.description && (
-                                  <span className="text-[10px] text-muted-foreground leading-relaxed line-clamp-2" data-testid={`text-template-desc-${t.id}`}>{t.description}</span>
+                                  <span className="text-xs text-muted-foreground leading-relaxed line-clamp-2" data-testid={`text-template-desc-${t.id}`}>{t.description}</span>
                                 )}
                                 {t.tags && t.tags.length > 0 && (
                                   <div className="flex flex-wrap gap-1" data-testid={`template-capabilities-${t.id}`}>
                                     {t.tags.slice(0, 5).map((tag, ti) => (
-                                      <span key={ti} className="text-[9px] px-1 py-0.5 rounded border border-muted-foreground/25 text-muted-foreground bg-muted/50">{tag}</span>
+                                      <span key={ti} className="text-[10px] px-1 py-0.5 rounded border border-muted-foreground/25 text-muted-foreground bg-muted/50">{tag}</span>
                                     ))}
                                   </div>
                                 )}
                                 {t.complianceCertifications && t.complianceCertifications.length > 0 && (
                                   <div className="flex flex-wrap gap-1" data-testid={`template-certs-${t.id}`}>
                                     {t.complianceCertifications.map((cert, ci) => (
-                                      <span key={ci} className="text-[9px] px-1 py-0.5 rounded border border-blue-500/30 text-blue-600 dark:text-blue-400 bg-blue-500/5 font-medium">{cert}</span>
+                                      <span key={ci} className="text-[10px] px-1 py-0.5 rounded border border-blue-500/30 text-blue-600 dark:text-blue-400 bg-blue-500/5 font-medium">{cert}</span>
                                     ))}
                                   </div>
                                 )}
                                 {t.toolNames && t.toolNames.length > 0 && (
                                   <div className="flex flex-col gap-0.5" data-testid={`template-tools-${t.id}`}>
-                                    <span className="text-[9px] text-muted-foreground/60 uppercase tracking-wide font-semibold">Tool Set</span>
+                                    <span className="text-[10px] text-muted-foreground/60 uppercase tracking-wide font-semibold">Tool Set</span>
                                     <div className="flex flex-wrap gap-1">
                                       {t.toolNames.slice(0, 5).map((tn, ti) => (
-                                        <span key={ti} className="text-[9px] px-1 py-0.5 rounded border border-muted-foreground/20 text-muted-foreground bg-muted/30">{tn}</span>
+                                        <span key={ti} className="text-[10px] px-1 py-0.5 rounded border border-muted-foreground/20 text-muted-foreground bg-muted/30">{tn}</span>
                                       ))}
-                                      {t.toolNames.length > 5 && <span className="text-[9px] text-muted-foreground/60 italic">+{t.toolNames.length - 5} more</span>}
+                                      {t.toolNames.length > 5 && <span className="text-[10px] text-muted-foreground/60 italic">+{t.toolNames.length - 5} more</span>}
                                     </div>
                                   </div>
                                 )}
@@ -2647,7 +2647,7 @@ export default function OutcomeDiscover() {
                         {platformIntel.matchedAgents.every((r) => r.matches.length === 0) && platformIntel.matchedTemplates.length === 0 && (
                           <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30 text-muted-foreground">
                             <Info className="w-3.5 h-3.5 shrink-0" />
-                            <span className="text-[11px]">No live agents or templates found matching the proposed roles. These will need to be built from scratch.</span>
+                            <span className="text-xs">No live agents or templates found matching the proposed roles. These will need to be built from scratch.</span>
                           </div>
                         )}
                       </CardContent>
@@ -2656,11 +2656,11 @@ export default function OutcomeDiscover() {
                 )}
 
                 <Card>
-                  <CardContent className="p-3 flex items-center gap-2">
+                  <CardContent className="p-4 flex items-center gap-2">
                     <Bot className="w-4 h-4 text-muted-foreground shrink-0" />
                     <div className="flex flex-col gap-0.5">
-                      <span className="text-xs font-medium">Agent Development Plan</span>
-                      <span className="text-[11px] text-muted-foreground">
+                      <span className="text-sm font-medium">Agent Development Plan</span>
+                      <span className="text-xs text-muted-foreground">
                         After creating this outcome, you can request an Agent Development Plan. An Agent Engineer will then propose and create agents from the outcome detail page.
                       </span>
                     </div>
@@ -2669,8 +2669,8 @@ export default function OutcomeDiscover() {
 
                 {(regulatoryConstraints || proposal) && (
                   <Card>
-                    <CardHeader className="p-3 pb-1">
-                      <CardTitle className="text-xs font-medium text-muted-foreground flex items-center justify-between gap-1.5 flex-wrap">
+                    <CardHeader className="p-4 pb-2">
+                      <CardTitle className="text-sm font-medium text-muted-foreground flex items-center justify-between gap-1.5 flex-wrap">
                         <div className="flex items-center gap-1.5">
                           <Shield className="w-3.5 h-3.5" />
                           Regulatory Constraints
@@ -2688,11 +2688,11 @@ export default function OutcomeDiscover() {
                         </Button>
                       </CardTitle>
                     </CardHeader>
-                    <CardContent className="p-3 pt-0 flex flex-col gap-2">
+                    <CardContent className="p-4 pt-1 flex flex-col gap-2">
                       {(!regulatoryConstraints || regulatoryConstraints.length === 0) && (
                         <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30 text-muted-foreground" data-testid="text-no-regulations">
                           <Shield className="w-3.5 h-3.5 shrink-0" />
-                          <span className="text-[11px]">No regulations detected. Click the refresh icon to detect applicable regulations for this outcome.</span>
+                          <span className="text-xs">No regulations detected. Click the refresh icon to detect applicable regulations for this outcome.</span>
                         </div>
                       )}
                       {regulatoryConstraints && regulatoryConstraints.map((reg, i) => (
@@ -2702,7 +2702,7 @@ export default function OutcomeDiscover() {
                               <span className="text-xs font-medium">{reg.regulation}</span>
                               <Badge
                                 variant={reg.classification === "Critical" ? "destructive" : reg.classification === "High-Risk" ? "default" : "outline"}
-                                className="text-[9px]"
+                                className="text-xs"
                               >
                                 {reg.classification}
                               </Badge>
@@ -2736,7 +2736,7 @@ export default function OutcomeDiscover() {
                           {expandedRegulations.has(i) && (
                             <div className="flex flex-col gap-1 pl-2 border-l-2 border-muted ml-1">
                               {reg.requirements.map((req, j) => (
-                                <span key={j} className="text-[10px] text-muted-foreground">{req}</span>
+                                <span key={j} className="text-xs text-muted-foreground">{req}</span>
                               ))}
                             </div>
                           )}
@@ -2748,9 +2748,9 @@ export default function OutcomeDiscover() {
 
                 {proposal && (
                   <Card data-testid="card-platform-policies">
-                    <CardHeader className="p-3 pb-1">
+                    <CardHeader className="p-4 pb-2">
                       <CardTitle
-                        className="text-xs font-medium text-muted-foreground flex items-center justify-between gap-1.5 cursor-pointer flex-wrap"
+                        className="text-sm font-medium text-muted-foreground flex items-center justify-between gap-1.5 cursor-pointer flex-wrap"
                         onClick={() => setShowRealPolicies(!showRealPolicies)}
                         data-testid="button-toggle-policies"
                       >
@@ -2758,7 +2758,7 @@ export default function OutcomeDiscover() {
                           <ShieldCheck className="w-3.5 h-3.5" />
                           Applicable Platform Policies
                           {platformIntel?.summary?.matchedPolicyCount !== undefined && (
-                            <Badge variant="outline" className="text-[9px] ml-1 border-primary/40 text-primary">
+                            <Badge variant="outline" className="text-xs ml-1 border-primary/40 text-primary">
                               {platformIntel.summary.matchedPolicyCount} live
                             </Badge>
                           )}
@@ -2767,7 +2767,7 @@ export default function OutcomeDiscover() {
                       </CardTitle>
                     </CardHeader>
                     {showRealPolicies && (
-                      <CardContent className="p-3 pt-0 flex flex-col gap-2">
+                      <CardContent className="p-4 pt-1 flex flex-col gap-2">
                         {/* Real policies from intel endpoint with enforcement type */}
                         {platformIntel?.matchedPolicies && platformIntel.matchedPolicies.length > 0 && (
                           <div className="flex flex-col gap-1.5">
@@ -2776,20 +2776,20 @@ export default function OutcomeDiscover() {
                               return (
                                 <div key={pol.id} className="flex flex-col gap-1 p-2 rounded-md bg-primary/5 border border-primary/10" data-testid={`real-policy-${i}`}>
                                   <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="text-[11px] font-medium">{pol.name}</span>
-                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-mono">{pol.domain}</span>
-                                    <span className="text-[9px] text-primary font-medium bg-primary/5 px-1 py-0.5 rounded-full border border-primary/20">LIVE</span>
+                                    <span className="text-sm font-medium">{pol.name}</span>
+                                    <span className="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary font-mono">{pol.domain}</span>
+                                    <span className="text-xs text-primary font-medium bg-primary/5 px-1 py-0.5 rounded-full border border-primary/20">LIVE</span>
                                     {pol.enforcementType && (
-                                      <span className={`text-[9px] font-medium px-1 py-0.5 rounded-full border ${pol.enforcementType === "auto" ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" : "border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/5"}`}>
+                                      <span className={`text-xs font-medium px-1 py-0.5 rounded-full border ${pol.enforcementType === "auto" ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" : "border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/5"}`}>
                                         {pol.enforcementType}
                                       </span>
                                     )}
                                   </div>
                                   {packName && (
-                                    <span className="text-[10px] text-muted-foreground/70 font-medium" data-testid={`text-real-policy-pack-${i}`}>{packName}</span>
+                                    <span className="text-xs text-muted-foreground/70 font-medium" data-testid={`text-real-policy-pack-${i}`}>{packName}</span>
                                   )}
                                   {pol.description && (
-                                    <span className="text-[10px] text-muted-foreground leading-relaxed">{pol.description}</span>
+                                    <span className="text-xs text-muted-foreground leading-relaxed">{pol.description}</span>
                                   )}
                                 </div>
                               );
@@ -2799,7 +2799,7 @@ export default function OutcomeDiscover() {
                         {(!platformIntel?.matchedPolicies || platformIntel.matchedPolicies.length === 0) && (
                           <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30 text-muted-foreground" data-testid="text-no-applicable-policies">
                             <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-                            <span className="text-[11px]">No platform policies matched for this industry. Governance reviews will be triggered at agent deployment.</span>
+                            <span className="text-xs">No platform policies matched for this industry. Governance reviews will be triggered at agent deployment.</span>
                           </div>
                         )}
                       </CardContent>
@@ -2816,7 +2816,7 @@ export default function OutcomeDiscover() {
                         data-testid="button-toggle-roi-estimate"
                         type="button"
                       >
-                        <CardTitle className="text-xs font-medium text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
+                        <CardTitle className="text-sm font-medium text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5">
                           <TrendingUp className="w-3.5 h-3.5" />
                           Estimated ROI
                         </CardTitle>
@@ -2841,7 +2841,7 @@ export default function OutcomeDiscover() {
                           )}
                         </div>
                         {proposal.roiEstimate.assumptionsSummary && (
-                          <p className="text-[11px] text-muted-foreground leading-relaxed" data-testid="text-roi-assumptions">{proposal.roiEstimate.assumptionsSummary}</p>
+                          <p className="text-xs text-muted-foreground leading-relaxed" data-testid="text-roi-assumptions">{proposal.roiEstimate.assumptionsSummary}</p>
                         )}
                       </CardContent>
                     )}
@@ -2850,13 +2850,13 @@ export default function OutcomeDiscover() {
 
                 {proposal.validationChecklist && proposal.validationChecklist.length > 0 && (
                   <Card>
-                    <CardHeader className="p-3 pb-1">
-                      <CardTitle className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                    <CardHeader className="p-4 pb-2">
+                      <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-1.5 flex-wrap">
                         <ClipboardCheck className="w-3.5 h-3.5" />
                         Validation Checklist
                       </CardTitle>
                     </CardHeader>
-                    <CardContent className="p-3 pt-0 flex flex-col gap-1.5">
+                    <CardContent className="p-4 pt-1 flex flex-col gap-1.5">
                       {proposal.validationChecklist.map((item, i) => (
                         <label
                           key={i}
@@ -2874,8 +2874,8 @@ export default function OutcomeDiscover() {
                       <div className="mt-2 flex flex-col gap-1">
                         <Progress value={(checkedItems.size / proposal.validationChecklist.length) * 100} className="h-1.5" />
                         <div className="flex items-center justify-between">
-                          <span className="text-[10px] text-muted-foreground">{checkedItems.size}/{proposal.validationChecklist.length} validated</span>
-                          {allChecked && <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium">All confirmed</span>}
+                          <span className="text-xs text-muted-foreground">{checkedItems.size}/{proposal.validationChecklist.length} validated</span>
+                          {allChecked && <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">All confirmed</span>}
                         </div>
                       </div>
                     </CardContent>
@@ -2944,11 +2944,11 @@ export default function OutcomeDiscover() {
                       return (
                         <>
                           <Card className="border-dashed" data-testid="card-readiness-score">
-                            <CardContent className="p-3 flex flex-col gap-2">
+                            <CardContent className="p-4 flex flex-col gap-2">
                               <div className="flex items-center justify-between gap-2">
                                 <div className="flex items-center gap-1.5">
                                   <Star className="w-3.5 h-3.5 text-muted-foreground" />
-                                  <span className="text-xs font-medium text-muted-foreground">Governance Readiness</span>
+                                  <span className="text-sm font-medium text-muted-foreground">Governance Readiness</span>
                                 </div>
                                 <span className={`text-xl font-bold tabular-nums ${scoreColor}`} data-testid="text-readiness-score">{readinessScore}<span className="text-xs font-normal">/100</span></span>
                               </div>
@@ -2956,12 +2956,12 @@ export default function OutcomeDiscover() {
                                 <div className={`h-full rounded-full ${progressColor} transition-all duration-500`} style={{ width: `${readinessScore}%` }} />
                               </div>
                               <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-                                <span className="text-[10px] text-muted-foreground">KPIs defined: <span className={hasKpis ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}>{hasKpis ? `${proposal.kpis?.length} KPIs` : "none"}</span></span>
-                                <span className="text-[10px] text-muted-foreground">Risk tier: <span className={hasRiskTier ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}>{proposal.outcomeContract?.riskTier || "unset"}</span></span>
-                                <span className="text-[10px] text-muted-foreground">Platform policies: <span className={hasPolicies ? "text-emerald-600 dark:text-emerald-400" : "text-amber-500"}>{platformIntel?.summary?.matchedPolicyCount || 0}</span></span>
-                                <span className="text-[10px] text-muted-foreground">Approval gates: <span className={hasApprovalGates ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}>{hasApprovalGates ? "covered" : "gaps"}</span></span>
-                                <span className="text-[10px] text-muted-foreground">Drift threshold: <span className={hasDriftDef ? "text-emerald-600 dark:text-emerald-400" : "text-amber-500"}>{hasDriftDef ? `${proposal.outcomeContract?.maxDriftPercent}%` : "unset"}</span></span>
-                                <span className="text-[10px] text-muted-foreground">SLA defined: <span className={hasSla ? "text-emerald-600 dark:text-emerald-400" : "text-amber-500"}>{hasSla ? "yes" : "no"}</span></span>
+                                <span className="text-xs text-muted-foreground">KPIs defined: <span className={hasKpis ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}>{hasKpis ? `${proposal.kpis?.length} KPIs` : "none"}</span></span>
+                                <span className="text-xs text-muted-foreground">Risk tier: <span className={hasRiskTier ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}>{proposal.outcomeContract?.riskTier || "unset"}</span></span>
+                                <span className="text-xs text-muted-foreground">Platform policies: <span className={hasPolicies ? "text-emerald-600 dark:text-emerald-400" : "text-amber-500"}>{platformIntel?.summary?.matchedPolicyCount || 0}</span></span>
+                                <span className="text-xs text-muted-foreground">Approval gates: <span className={hasApprovalGates ? "text-emerald-600 dark:text-emerald-400" : "text-red-500"}>{hasApprovalGates ? "covered" : "gaps"}</span></span>
+                                <span className="text-xs text-muted-foreground">Drift threshold: <span className={hasDriftDef ? "text-emerald-600 dark:text-emerald-400" : "text-amber-500"}>{hasDriftDef ? `${proposal.outcomeContract?.maxDriftPercent}%` : "unset"}</span></span>
+                                <span className="text-xs text-muted-foreground">SLA defined: <span className={hasSla ? "text-emerald-600 dark:text-emerald-400" : "text-amber-500"}>{hasSla ? "yes" : "no"}</span></span>
                               </div>
                             </CardContent>
                           </Card>
@@ -2985,7 +2985,7 @@ export default function OutcomeDiscover() {
                                     )}
                                     Create Outcome Contract
                                     {_readiness !== null && !createOutcomeMutation.isPending && (
-                                      <span className={`ml-2 text-[10px] font-normal tabular-nums ${_lowReadiness ? "text-amber-500" : "opacity-60"}`}>
+                                      <span className={`ml-2 text-xs font-normal tabular-nums ${_lowReadiness ? "text-amber-500" : "opacity-60"}`}>
                                         {_readiness}/100
                                       </span>
                                     )}
@@ -2998,7 +2998,7 @@ export default function OutcomeDiscover() {
                                 )}
                               </Tooltip>
                             </TooltipProvider>
-                            <p className="text-[10px] text-center text-muted-foreground">
+                            <p className="text-xs text-center text-muted-foreground">
                               {_lowReadiness
                                 ? `Readiness ${_readiness}/100 — review governance gaps above before creating`
                                 : allChecked
@@ -3013,7 +3013,7 @@ export default function OutcomeDiscover() {
                               return (
                                 <div className="flex items-start gap-2 mt-1 px-2 py-1.5 rounded bg-amber-500/10 border border-amber-500/30" data-testid="banner-tool-gap">
                                   <AlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0 mt-px" />
-                                  <span className="text-[10px] text-amber-700 dark:text-amber-300">{missingCount} tool{missingCount !== 1 ? "s" : ""} not yet in catalog — review before deploying</span>
+                                  <span className="text-xs text-amber-700 dark:text-amber-300">{missingCount} tool{missingCount !== 1 ? "s" : ""} not yet in catalog — review before deploying</span>
                                 </div>
                               );
                             })()}
