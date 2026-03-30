@@ -50,7 +50,10 @@ export function getDefaultOrgId(): string | undefined {
 }
 
 export function getOrgId(req: Request): string | undefined {
-  if (getSecurityMode() === "demo") return undefined;
+  if (getSecurityMode() === "demo") {
+    const headerOrgId = req.headers["x-organization-id"];
+    return typeof headerOrgId === "string" && headerOrgId ? headerOrgId : undefined;
+  }
   return req.authUser?.organizationId;
 }
 

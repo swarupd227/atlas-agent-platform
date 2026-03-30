@@ -43,12 +43,26 @@ if ! command -v jq &> /dev/null; then
   exit 1
 fi
 
+# ── Discover production org ID ────────────────────────────────────────────────
+echo "Discovering production organization ID..." >&2
+PROD_ORG_ID=$(curl -s "${BASE_URL}/api/agents" | jq -r '[.[] | .organizationId] | map(select(. != null and . != "")) | first // empty')
+if [ -z "$PROD_ORG_ID" ]; then
+  PROD_ORG_ID=$(curl -s "${BASE_URL}/api/skills" | jq -r '[.[] | .organizationId] | map(select(. != null and . != "")) | first // empty')
+fi
+if [ -z "$PROD_ORG_ID" ]; then
+  echo "ERROR: Could not discover production org ID. Ensure the production server has at least one agent or skill." >&2
+  exit 1
+fi
+echo "  Organization ID: $PROD_ORG_ID" >&2
+echo "" >&2
+
 # Helper: POST to endpoint, print label to stderr, return ID on stdout
 post_api() {
   local label="$1" endpoint="$2" payload_file="$3"
   local response id
   response=$(curl -s -X POST "${BASE_URL}${endpoint}" \
     -H "Content-Type: application/json" \
+    -H "X-Organization-Id: ${PROD_ORG_ID}" \
     -d @"${payload_file}")
   id=$(echo "$response" | jq -r '.id // empty')
   if [ -z "$id" ] || [ "$id" = "null" ]; then
@@ -589,6 +603,7 @@ jq -n \
 
 PATCH_RESP=$(curl -s -X PATCH "${BASE_URL}/api/agents/${AGENT}" \
   -H "Content-Type: application/json" \
+  -H "X-Organization-Id: ${PROD_ORG_ID}" \
   -d @"$WORK/agent_patch.json")
 PATCH_ID=$(echo "$PATCH_RESP" | jq -r '.id // empty')
 if [ -z "$PATCH_ID" ]; then
@@ -898,6 +913,7 @@ EVAL_SUITE=$(post_api "OTC-AGT-002 Eval Suite" "/api/evals" "$WORK/eval_suite.js
 
 EVAL_PATCH=$(curl -s -X PATCH "${BASE_URL}/api/agents/${AGENT}" \
   -H "Content-Type: application/json" \
+  -H "X-Organization-Id: ${PROD_ORG_ID}" \
   -d "{\"evalBindings\": {\"suites\": [{\"suiteId\": \"${EVAL_SUITE}\", \"schedule\": \"on_deploy\", \"environment\": \"production\"}]}}")
 EVAL_PATCH_ID=$(echo "$EVAL_PATCH" | jq -r '.id // empty')
 if [ -z "$EVAL_PATCH_ID" ]; then
