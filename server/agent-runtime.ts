@@ -899,7 +899,7 @@ ${outputText.substring(0, 3000)}`;
     const raw = judgeResult.content.trim();
     const jsonStart = raw.indexOf("{");
     const jsonEnd = raw.lastIndexOf("}");
-    if (jsonStart === -1 || jsonEnd === -1) return [];
+    if (jsonStart === -1 || jsonEnd === -1) return null;
 
     const parsed = JSON.parse(raw.substring(jsonStart, jsonEnd + 1));
     if (!parsed.policyResults || !Array.isArray(parsed.policyResults)) return null;
@@ -1532,16 +1532,31 @@ After receiving tool results, provide a structured analysis with key findings, s
     });
 
     if (softBindings.length > 0) {
-      const allOutputText = steps
-        .filter(s => s.status === "completed" && s.output)
-        .map(s => {
-          const out = s.output;
-          if (typeof out === "string") return out;
-          if (out.analysis) return typeof out.analysis === "string" ? out.analysis : JSON.stringify(out.analysis);
-          if (out.summary) return typeof out.summary === "string" ? out.summary : JSON.stringify(out.summary);
-          return JSON.stringify(out);
-        })
-        .join(" ");
+      const finalAnalysisStep = [...steps].reverse().find(
+        s => s.type === "ai_analysis" && s.status === "completed" && s.output
+      );
+      let finalAgentOutput = "";
+      if (finalAnalysisStep) {
+        const out = finalAnalysisStep.output;
+        if (typeof out === "string") {
+          finalAgentOutput = out;
+        } else if (out.analysis) {
+          const a = out.analysis;
+          if (typeof a === "string") {
+            finalAgentOutput = a;
+          } else {
+            const parts: string[] = [];
+            if (a.summary) parts.push(typeof a.summary === "string" ? a.summary : JSON.stringify(a.summary));
+            if (Array.isArray(a.findings)) parts.push(a.findings.join(" "));
+            if (Array.isArray(a.recommendedActions)) parts.push(a.recommendedActions.join(" "));
+            finalAgentOutput = parts.join(" ") || JSON.stringify(a);
+          }
+        } else if (out.summary) {
+          finalAgentOutput = typeof out.summary === "string" ? out.summary : JSON.stringify(out.summary);
+        } else {
+          finalAgentOutput = JSON.stringify(out);
+        }
+      }
 
       const policyDetails = await Promise.all(
         softBindings.map(async (pb: any) => {
@@ -1565,7 +1580,7 @@ After receiving tool results, provide a structured analysis with key findings, s
         id: string; name: string; enforcement: string; domain: string; policyJson: any;
       }>;
 
-      if (resolvedPolicies.length > 0 && allOutputText.trim().length >= 80) {
+      if (resolvedPolicies.length > 0 && finalAgentOutput.trim().length >= 80) {
         const policyValStep = {
           id: `step_${steps.length + 1}`,
           name: "Soft Policy Compliance Validation",
@@ -1577,7 +1592,7 @@ After receiving tool results, provide a structured analysis with key findings, s
         };
         steps.push(policyValStep);
 
-        const judgeResult = await checkSoftPolicyCompliance(allOutputText, resolvedPolicies);
+        const judgeResult = await checkSoftPolicyCompliance(finalAgentOutput, resolvedPolicies);
 
         if (judgeResult === null) {
           steps.pop();
