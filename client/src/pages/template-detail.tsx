@@ -980,7 +980,7 @@ export default function TemplateDetail() {
   const displayTemplate = template || null;
   const IconComponent = iconMap[displayTemplate?.icon || editData.icon || "bot"] || Bot;
   const tools = displayTemplate ? (Array.isArray(displayTemplate.toolsConfig) ? (displayTemplate.toolsConfig as ToolConfig[]) : []) : [];
-  const workflow = displayTemplate ? (displayTemplate.blueprintJson as { nodes?: WorkflowNode[] } | null) : null;
+  const workflow = displayTemplate ? (displayTemplate.blueprintJson as { nodes?: WorkflowNode[]; systemPrompt?: string; instructions?: string; runtimeConfig?: { prompt?: string } } | null) : null;
   const permissions = displayTemplate ? (displayTemplate.permissionsConfig as PermissionsConfig | null) : null;
   const memory = displayTemplate ? (displayTemplate.memoryRagConfig as MemoryRagConfig) : null;
   const policyBindings = displayTemplate ? (Array.isArray(displayTemplate.policyBindings) ? (displayTemplate.policyBindings as PolicyBinding[]) : []) : [];
@@ -2184,6 +2184,18 @@ export default function TemplateDetail() {
                     <span className="text-muted-foreground font-medium">Model: </span>
                     <span data-testid="text-model-config">{displayTemplate?.modelProvider} / {displayTemplate?.modelName}</span>
                   </div>
+                  {workflow?.systemPrompt && (
+                    <div className="text-xs">
+                      <span className="text-muted-foreground font-medium">System Prompt: </span>
+                      <pre className="mt-1 p-2 rounded bg-muted/60 whitespace-pre-wrap font-mono text-[11px] leading-relaxed max-h-32 overflow-y-auto" data-testid="text-view-system-prompt">{workflow.systemPrompt}</pre>
+                    </div>
+                  )}
+                  {(workflow?.instructions || workflow?.runtimeConfig?.prompt) && (
+                    <div className="text-xs">
+                      <span className="text-muted-foreground font-medium">Agent Task: </span>
+                      <pre className="mt-1 p-2 rounded bg-muted/60 whitespace-pre-wrap font-mono text-[11px] leading-relaxed max-h-32 overflow-y-auto" data-testid="text-view-instructions">{workflow.instructions || workflow.runtimeConfig?.prompt}</pre>
+                    </div>
+                  )}
                   {workflow?.nodes && workflow.nodes.length > 0 && (
                     <div className="text-xs">
                       <span className="text-muted-foreground font-medium">Prompt Structure: </span>
