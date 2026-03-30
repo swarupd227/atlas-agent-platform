@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRoute, useLocation, Link } from "wouter";
 import type { AgentTemplate, Agent } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -497,6 +497,8 @@ export default function TemplateDetail() {
     optionalSkills: [] as SkillEntry[],
   } : {});
 
+  const prefillApplied = useRef(false);
+
   const { data: template, isLoading } = useQuery<AgentTemplate>({
     queryKey: ["/api/agent-templates", templateId],
     enabled: !!templateId && !isNew,
@@ -517,7 +519,8 @@ export default function TemplateDetail() {
   });
 
   useEffect(() => {
-    if (sourceAgent && isNew && Object.keys(editData).length === 0) {
+    if (sourceAgent && isNew && !prefillApplied.current) {
+      prefillApplied.current = true;
       const agentBp = (sourceAgent.blueprintJson as Record<string, any>) || {};
       const blueprintNodes: WorkflowNode[] = Array.isArray(agentBp.nodes) ? agentBp.nodes : [];
       const tools = Array.isArray(sourceAgent.toolsConfig) ? (sourceAgent.toolsConfig as ToolConfig[]) : [];
