@@ -1755,47 +1755,48 @@ function AgentDetailInner() {
                 ))}
               </>
             ) : (() => {
-              const hs = computedStats?.hasData ? computedStats.healthScore : (agent.healthScore ?? 0);
-              const sr = computedStats?.hasData ? computedStats.successRate : (agent.successRate ?? 0);
-              const al = computedStats?.hasData ? computedStats.avgLatencyMs : (agent.avgLatencyMs ?? 0);
-              const cpr = computedStats?.hasData ? computedStats.costPerRun : (agent.costPerRun ?? 0);
-              const tr = computedStats?.hasData ? computedStats.totalRuns : (agent.totalRuns ?? 0);
+              const hasRealData = computedStats?.hasData === true;
+              const hs = hasRealData ? computedStats!.healthScore : null;
+              const sr = hasRealData ? computedStats!.successRate : null;
+              const al = hasRealData ? computedStats!.avgLatencyMs : null;
+              const cpr = hasRealData ? computedStats!.costPerRun : null;
+              const tr = hasRealData ? computedStats!.totalRuns : 0;
               return (
                 <>
                   <StatCard
                     title="Health Score"
-                    value={`${hs}%`}
+                    value={hs !== null ? `${hs}%` : "—"}
                     icon={Activity}
-                    variant={hs >= 80 ? "success" : hs >= 50 ? "warning" : "danger"}
+                    variant={hs !== null ? (hs >= 80 ? "success" : hs >= 50 ? "warning" : "danger") : "default"}
                     testId="stat-agent-health"
-                    subtitle={computedStats?.hasData ? `${tr} total runs` : "No execution data yet"}
+                    subtitle={hasRealData ? `${tr} total runs` : "No execution data yet"}
                     tooltip="Computed from success rate, recent performance, latency, and failure trends across all execution traces"
                   />
                   <StatCard
                     title="Success Rate"
-                    value={`${(sr * 100).toFixed(1)}%`}
+                    value={sr !== null ? `${(sr * 100).toFixed(1)}%` : "—"}
                     icon={CheckCircle}
-                    variant={sr >= 0.9 ? "success" : sr >= 0.7 ? "warning" : "danger"}
+                    variant={sr !== null ? (sr >= 0.9 ? "success" : sr >= 0.7 ? "warning" : "danger") : "default"}
                     testId="stat-agent-success"
-                    subtitle={computedStats?.hasData ? `${computedStats.recentFailures} recent failures` : "No execution data yet"}
+                    subtitle={hasRealData ? `${computedStats!.recentFailures} recent failures` : "No execution data yet"}
                     tooltip="Percentage of runs that completed successfully out of all execution traces"
                   />
                   <StatCard
                     title="Avg Latency"
-                    value={formatMs(al)}
+                    value={al !== null ? formatMs(al) : "—"}
                     icon={Clock}
-                    variant={al < 5000 ? "default" : al < 15000 ? "warning" : "danger"}
+                    variant={al !== null ? (al < 5000 ? "default" : al < 15000 ? "warning" : "danger") : "default"}
                     testId="stat-agent-latency"
-                    subtitle={computedStats?.hasData ? `Across ${tr} runs` : "No execution data yet"}
+                    subtitle={hasRealData ? `Across ${tr} runs` : "No execution data yet"}
                     tooltip="Average response time per execution, measured from trace start to completion"
                   />
                   <StatCard
                     title="Cost / Run"
-                    value={`$${cpr.toFixed(3)}`}
+                    value={cpr !== null ? `$${cpr.toFixed(3)}` : "—"}
                     icon={DollarSign}
                     variant="default"
                     testId="stat-agent-cost"
-                    subtitle={computedStats?.hasData ? `$${(computedStats.totalCost || 0).toFixed(2)} total` : "No execution data yet"}
+                    subtitle={hasRealData ? `$${(computedStats!.totalCost || 0).toFixed(2)} total` : "No execution data yet"}
                     tooltip="Average cost per execution based on actual API usage and token consumption"
                   />
                 </>
@@ -3281,7 +3282,7 @@ function AgentDetailInner() {
                             </tr>
                             <tr className="border-b">
                               <td className="py-1.5 pr-3 text-muted-foreground">Success Rate (KPI)</td>
-                              <td className="py-1.5 pr-3 font-medium">{agent?.successRate ? `${Math.round(agent.successRate * 100)}%` : "—"}</td>
+                              <td className="py-1.5 pr-3 font-medium">{computedStats?.hasData && agent?.successRate != null ? `${Math.round(agent.successRate * 100)}%` : "—"}</td>
                               <td className="py-1.5 font-medium text-muted-foreground">{replacementProposal.expectedSuccessRate ? `${Math.round(replacementProposal.expectedSuccessRate * 100)}%` : "Projected higher"}</td>
                             </tr>
                             <tr className="border-b">
@@ -3522,11 +3523,12 @@ function AgentDetailInner() {
         {/* MONITOR TAB */}
         <TabsContent value="monitor" className="flex flex-col gap-4 mt-0">
           {(() => {
-            const actualAvailability = (agent.successRate || 0) * 100;
+            const monitorHasData = computedStats?.hasData === true;
+            const actualAvailability = monitorHasData ? (computedStats!.successRate || 0) * 100 : 0;
             const targetAvailability = 99.5;
             const availabilityOk = actualAvailability >= targetAvailability;
 
-            const actualLatency = agent.avgLatencyMs || 0;
+            const actualLatency = monitorHasData ? (computedStats!.avgLatencyMs || 0) : 0;
             const targetLatency = 500;
             const latencyOk = actualLatency <= targetLatency;
 
@@ -3541,11 +3543,11 @@ function AgentDetailInner() {
             const costOk = monthlyCost <= costBudget;
 
             const anomalies: Array<{ icon: typeof AlertCircle; severity: string; description: string; timestamp: string }> = [];
-            if ((agent.healthScore || 0) < 80) anomalies.push({ icon: AlertTriangle, severity: "warning", description: "Health score degradation detected", timestamp: new Date(Date.now() - 3600000).toISOString() });
-            if ((agent.successRate || 0) < 0.9) anomalies.push({ icon: XCircle, severity: "critical", description: "Success rate below threshold", timestamp: new Date(Date.now() - 7200000).toISOString() });
-            if ((agent.avgLatencyMs || 0) > 30000) anomalies.push({ icon: Clock, severity: "warning", description: "Latency spike detected", timestamp: new Date(Date.now() - 1800000).toISOString() });
-            if ((agent.costPerRun || 0) > 0.1) anomalies.push({ icon: DollarSign, severity: "warning", description: "Cost per run exceeding budget", timestamp: new Date(Date.now() - 5400000).toISOString() });
-            if (anomalies.length === 0) anomalies.push({ icon: CheckCircle, severity: "info", description: "No critical anomalies in last 24h", timestamp: new Date().toISOString() });
+            if (monitorHasData && (computedStats!.healthScore || 0) < 80) anomalies.push({ icon: AlertTriangle, severity: "warning", description: "Health score degradation detected", timestamp: new Date(Date.now() - 3600000).toISOString() });
+            if (monitorHasData && (computedStats!.successRate || 0) < 0.9) anomalies.push({ icon: XCircle, severity: "critical", description: "Success rate below threshold", timestamp: new Date(Date.now() - 7200000).toISOString() });
+            if (monitorHasData && (computedStats!.avgLatencyMs || 0) > 30000) anomalies.push({ icon: Clock, severity: "warning", description: "Latency spike detected", timestamp: new Date(Date.now() - 1800000).toISOString() });
+            if (monitorHasData && (computedStats!.costPerRun || 0) > 0.1) anomalies.push({ icon: DollarSign, severity: "warning", description: "Cost per run exceeding budget", timestamp: new Date(Date.now() - 5400000).toISOString() });
+            if (anomalies.length === 0) anomalies.push({ icon: CheckCircle, severity: "info", description: monitorHasData ? "No critical anomalies in last 24h" : "No execution traces — run the agent to populate live metrics", timestamp: new Date().toISOString() });
 
             const monthlyRevenue = agent.monthlyRevenue || 0;
             const roi = monthlyCost > 0 ? ((monthlyRevenue - monthlyCost) / monthlyCost * 100) : 0;
@@ -3558,15 +3560,19 @@ function AgentDetailInner() {
                     <CardContent className="p-4 flex flex-col gap-2">
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <span className="text-xs text-muted-foreground">Availability SLO</span>
-                        <Badge variant="outline" className={`text-[10px] ${availabilityOk ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-red-500/15 text-red-600 dark:text-red-400"}`}>
-                          {availabilityOk ? "Within SLO" : "Breaching"}
-                        </Badge>
+                        {monitorHasData ? (
+                          <Badge variant="outline" className={`text-[10px] ${availabilityOk ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-red-500/15 text-red-600 dark:text-red-400"}`}>
+                            {availabilityOk ? "Within SLO" : "Breaching"}
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] text-muted-foreground">No data</Badge>
+                        )}
                       </div>
                       <div className="flex items-end gap-1">
-                        <span className="text-2xl font-semibold">{actualAvailability.toFixed(1)}%</span>
+                        <span className="text-2xl font-semibold">{monitorHasData ? `${actualAvailability.toFixed(1)}%` : "—"}</span>
                         <span className="text-xs text-muted-foreground mb-1">/ {targetAvailability}% target</span>
                       </div>
-                      <Progress value={Math.min(actualAvailability, 100)} className="h-2" />
+                      <Progress value={monitorHasData ? Math.min(actualAvailability, 100) : 0} className="h-2" />
                     </CardContent>
                   </Card>
 
@@ -3574,15 +3580,19 @@ function AgentDetailInner() {
                     <CardContent className="p-4 flex flex-col gap-2">
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <span className="text-xs text-muted-foreground">Latency P95 SLO</span>
-                        <Badge variant="outline" className={`text-[10px] ${latencyOk ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-red-500/15 text-red-600 dark:text-red-400"}`}>
-                          {latencyOk ? "Within SLO" : "Breaching"}
-                        </Badge>
+                        {monitorHasData ? (
+                          <Badge variant="outline" className={`text-[10px] ${latencyOk ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-red-500/15 text-red-600 dark:text-red-400"}`}>
+                            {latencyOk ? "Within SLO" : "Breaching"}
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] text-muted-foreground">No data</Badge>
+                        )}
                       </div>
                       <div className="flex items-end gap-1">
-                        <span className="text-2xl font-semibold">{actualLatency}ms</span>
+                        <span className="text-2xl font-semibold">{monitorHasData ? `${actualLatency}ms` : "—"}</span>
                         <span className="text-xs text-muted-foreground mb-1">/ {targetLatency}ms target</span>
                       </div>
-                      <Progress value={Math.min((actualLatency / targetLatency) * 100, 100)} className="h-2" />
+                      <Progress value={monitorHasData ? Math.min((actualLatency / targetLatency) * 100, 100) : 0} className="h-2" />
                     </CardContent>
                   </Card>
 
@@ -3590,15 +3600,19 @@ function AgentDetailInner() {
                     <CardContent className="p-4 flex flex-col gap-2">
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <span className="text-xs text-muted-foreground">Error Budget</span>
-                        <Badge variant="outline" className={`text-[10px] ${errorBudgetOk ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-red-500/15 text-red-600 dark:text-red-400"}`}>
-                          {errorBudgetOk ? "Remaining" : "Exhausted"}
-                        </Badge>
+                        {monitorHasData ? (
+                          <Badge variant="outline" className={`text-[10px] ${errorBudgetOk ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400" : "bg-red-500/15 text-red-600 dark:text-red-400"}`}>
+                            {errorBudgetOk ? "Remaining" : "Exhausted"}
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px] text-muted-foreground">No data</Badge>
+                        )}
                       </div>
                       <div className="flex items-end gap-1">
-                        <span className="text-2xl font-semibold">{errorBudgetRemaining.toFixed(2)}%</span>
-                        <span className="text-xs text-muted-foreground mb-1">budget {errorBudgetOk ? "remaining" : "overdrawn"}</span>
+                        <span className="text-2xl font-semibold">{monitorHasData ? `${errorBudgetRemaining.toFixed(2)}%` : "—"}</span>
+                        <span className="text-xs text-muted-foreground mb-1">{monitorHasData ? `budget ${errorBudgetOk ? "remaining" : "overdrawn"}` : "awaiting traces"}</span>
                       </div>
-                      <Progress value={errorBudgetOk ? ((errorBudgetRemaining / errorBudgetTarget) * 100) : 100} className="h-2" />
+                      <Progress value={monitorHasData ? (errorBudgetOk ? ((errorBudgetRemaining / errorBudgetTarget) * 100) : 100) : 0} className="h-2" />
                     </CardContent>
                   </Card>
 
@@ -5738,11 +5752,11 @@ function BlueprintModelConfig({ agent }: { agent: Agent }) {
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
           <div className="flex flex-col gap-0.5">
             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Cost / Run</span>
-            <span className="text-sm font-medium">${agent.costPerRun?.toFixed(3)}</span>
+            <span className="text-sm font-medium">{computedStats?.hasData && agent.costPerRun != null ? `$${agent.costPerRun.toFixed(3)}` : "—"}</span>
           </div>
           <div className="flex flex-col gap-0.5">
             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Avg Latency</span>
-            <span className="text-sm font-medium">{formatMs(agent.avgLatencyMs)}</span>
+            <span className="text-sm font-medium">{computedStats?.hasData && agent.avgLatencyMs != null ? formatMs(agent.avgLatencyMs) : "—"}</span>
           </div>
           <div className="flex flex-col gap-0.5">
             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Autonomy Mode</span>
