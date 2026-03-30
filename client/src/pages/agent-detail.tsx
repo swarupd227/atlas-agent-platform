@@ -2976,7 +2976,7 @@ function AgentDetailInner() {
           )}
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" data-testid="blueprint-config-grid">
-            <BlueprintModelConfig agent={agent} />
+            <BlueprintModelConfig agent={agent} hasComputedData={computedStats?.hasData} />
             <BlueprintToolsPermissions tools={agent.toolsConfig as any} permissions={agent.permissionsConfig as any} />
             <BlueprintMemoryRag config={agent.memoryRagConfig as any} />
             <BlueprintPolicyBindings bindings={agent.policyBindings as any} />
@@ -5765,7 +5765,7 @@ function OntologyComplianceCard({ agentId, hasOntologyTags }: { agentId: string;
   );
 }
 
-function BlueprintModelConfig({ agent }: { agent: Agent }) {
+function BlueprintModelConfig({ agent, hasComputedData }: { agent: Agent; hasComputedData?: boolean }) {
   return (
     <Card data-testid="section-model-config">
       <CardHeader className="pb-3">
@@ -5799,11 +5799,11 @@ function BlueprintModelConfig({ agent }: { agent: Agent }) {
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
           <div className="flex flex-col gap-0.5">
             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Cost / Run</span>
-            <span className="text-sm font-medium">{computedStats?.hasData && agent.costPerRun != null ? `$${agent.costPerRun.toFixed(3)}` : "—"}</span>
+            <span className="text-sm font-medium">{hasComputedData && agent.costPerRun != null ? `$${agent.costPerRun.toFixed(3)}` : "—"}</span>
           </div>
           <div className="flex flex-col gap-0.5">
             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Avg Latency</span>
-            <span className="text-sm font-medium">{computedStats?.hasData && agent.avgLatencyMs != null ? formatMs(agent.avgLatencyMs) : "—"}</span>
+            <span className="text-sm font-medium">{hasComputedData && agent.avgLatencyMs != null ? formatMs(agent.avgLatencyMs) : "—"}</span>
           </div>
           <div className="flex flex-col gap-0.5">
             <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Autonomy Mode</span>
