@@ -31,6 +31,8 @@ export async function runStartupMigrations() {
         triggered_by TEXT NOT NULL DEFAULT 'scheduled'
           CHECK (triggered_by IN ('scheduled', 'manual'))
       );
+      CREATE INDEX IF NOT EXISTS idx_audit_chain_health_checks_checked_at
+        ON audit_chain_health_checks (checked_at DESC);
     `);
     console.log("[db] Startup migrations complete");
   } catch (err: any) {

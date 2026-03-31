@@ -1455,20 +1455,35 @@ export class DatabaseStorage implements IStorage {
     });
 
     if (!integrityResult.valid) {
-      await this.createIncident({
-        agentId: "system",
-        agentName: "Audit Chain Monitor",
-        severity: "critical",
-        status: "open",
-        sourceMetric: "audit_chain_integrity",
-        sourceDetails: {
-          brokenAt: integrityResult.brokenAt,
-          totalEvents: integrityResult.totalEvents,
-          verifiedEvents: integrityResult.verifiedEvents,
-          healthCheckId: healthCheck.id,
-          triggeredBy,
-        },
-      });
+      // Deduplicate: only open a new incident if no open audit-chain incident exists.
+      // This prevents alert storms when the chain stays broken across multiple check cycles.
+      const [existing] = await db
+        .select({ id: incidents.id })
+        .from(incidents)
+        .where(
+          and(
+            eq(incidents.sourceMetric, "audit_chain_integrity"),
+            eq(incidents.status, "open")
+          )
+        )
+        .limit(1);
+
+      if (!existing) {
+        await this.createIncident({
+          agentId: "system",
+          agentName: "Audit Chain Monitor",
+          severity: "critical",
+          status: "open",
+          sourceMetric: "audit_chain_integrity",
+          sourceDetails: {
+            brokenAt: integrityResult.brokenAt,
+            totalEvents: integrityResult.totalEvents,
+            verifiedEvents: integrityResult.verifiedEvents,
+            healthCheckId: healthCheck.id,
+            triggeredBy,
+          },
+        });
+      }
     }
 
     return healthCheck;

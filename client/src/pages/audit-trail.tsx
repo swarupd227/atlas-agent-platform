@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { useToast } from "@/hooks/use-toast";
 import {
   Shield,
   Search,
@@ -91,6 +92,7 @@ function truncate(str: string | null | undefined, max: number): string {
 
 export default function AuditTrail() {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [search, setSearch] = useState("");
   const [actorType, setActorType] = useState("all");
   const [action, setAction] = useState("all");
@@ -126,6 +128,7 @@ export default function AuditTrail() {
     totalEvents: number;
     verifiedEvents: number;
     brokenAt?: number;
+    persistenceWarning?: string;
   }>({
     queryKey: ["/api/audit-events/verify-integrity"],
     enabled: false,
@@ -133,8 +136,15 @@ export default function AuditTrail() {
 
   const handleVerifyIntegrity = () => {
     setVerifyOpen(true);
-    refetchIntegrity().then(() => {
+    refetchIntegrity().then(({ data }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/audit-chain/health"] });
+      if (data?.persistenceWarning) {
+        toast({
+          title: "Health record not saved",
+          description: data.persistenceWarning,
+          variant: "destructive",
+        });
+      }
     });
   };
 
