@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import {
   Shield,
@@ -90,6 +90,7 @@ function truncate(str: string | null | undefined, max: number): string {
 }
 
 export default function AuditTrail() {
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [actorType, setActorType] = useState("all");
   const [action, setAction] = useState("all");
@@ -132,7 +133,9 @@ export default function AuditTrail() {
 
   const handleVerifyIntegrity = () => {
     setVerifyOpen(true);
-    refetchIntegrity();
+    refetchIntegrity().then(() => {
+      queryClient.invalidateQueries({ queryKey: ["/api/audit-chain/health"] });
+    });
   };
 
   const handleExportCsv = () => {

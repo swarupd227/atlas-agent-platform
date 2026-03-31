@@ -1428,7 +1428,7 @@ export class DatabaseStorage implements IStorage {
       .where(
         and(
           eq(jobs.type, "audit_chain_integrity_check"),
-          or(eq(jobs.status, "queued"), eq(jobs.status, "running"))
+          or(eq(jobs.status, "queued"), eq(jobs.status, "processing"))
         )
       )
       .limit(1);
