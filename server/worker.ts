@@ -515,49 +515,65 @@ const AUDIT_CHAIN_CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 
 async function processAuditChainIntegrityCheck(job: Job): Promise<Record<string, unknown>> {
   const startedAt = Date.now();
-  const result = await storage.verifyAuditChainIntegrity();
-  const durationMs = Date.now() - startedAt;
+  let checkResult: { valid: boolean; totalEvents: number; verifiedEvents: number; brokenAt?: number } | undefined;
+  let healthCheckId: string | undefined;
+  let jobError: Error | undefined;
 
-  const healthCheck = await storage.createAuditChainHealthCheck({
-    valid: result.valid,
-    totalEvents: result.totalEvents,
-    verifiedEvents: result.verifiedEvents,
-    brokenAt: result.brokenAt ?? null,
-    durationMs,
-    triggeredBy: (job.payload as Record<string, unknown>)?.triggeredBy as string ?? "scheduled",
-  });
+  try {
+    checkResult = await storage.verifyAuditChainIntegrity();
+    const durationMs = Date.now() - startedAt;
 
-  if (!result.valid) {
+    const healthCheck = await storage.createAuditChainHealthCheck({
+      valid: checkResult.valid,
+      totalEvents: checkResult.totalEvents,
+      verifiedEvents: checkResult.verifiedEvents,
+      brokenAt: checkResult.brokenAt ?? null,
+      durationMs,
+      triggeredBy: (job.payload as Record<string, unknown>)?.triggeredBy as string ?? "scheduled",
+    });
+    healthCheckId = healthCheck.id;
+
+    if (!checkResult.valid) {
+      try {
+        await storage.createIncident({
+          agentId: "system",
+          agentName: "Audit Chain Monitor",
+          severity: "critical",
+          status: "open",
+          sourceMetric: "audit_chain_integrity",
+          sourceDetails: {
+            brokenAt: checkResult.brokenAt,
+            totalEvents: checkResult.totalEvents,
+            verifiedEvents: checkResult.verifiedEvents,
+            healthCheckId: healthCheck.id,
+          },
+        });
+        console.warn(`[worker] Audit chain integrity BROKEN at sequence ${checkResult.brokenAt} — incident created`);
+      } catch (err: any) {
+        console.error("[worker] Failed to create audit chain breach incident:", err.message);
+      }
+    }
+  } catch (err: any) {
+    jobError = err;
+    console.error("[worker] Audit chain integrity check failed:", err.message);
+  } finally {
+    // Always re-enqueue so periodic checks continue even after transient failures
+    const nextRunAt = new Date(Date.now() + AUDIT_CHAIN_CHECK_INTERVAL_MS);
     try {
-      await storage.createIncident({
-        agentId: "system",
-        agentName: "Audit Chain Monitor",
-        severity: "critical",
-        status: "open",
-        sourceMetric: "audit_chain_integrity",
-        sourceDetails: {
-          brokenAt: result.brokenAt,
-          totalEvents: result.totalEvents,
-          verifiedEvents: result.verifiedEvents,
-          healthCheckId: healthCheck.id,
-        },
+      await storage.createJob({
+        type: "audit_chain_integrity_check",
+        status: "queued",
+        payload: { triggeredBy: "scheduled" },
+        scheduledFor: nextRunAt,
       });
-      console.warn(`[worker] Audit chain integrity BROKEN at sequence ${result.brokenAt} — incident created`);
-    } catch (err: any) {
-      console.error("[worker] Failed to create audit chain breach incident:", err.message);
+      console.log(`[worker] Audit chain check done: valid=${checkResult?.valid ?? "unknown"}, events=${checkResult?.verifiedEvents ?? "?"}/${checkResult?.totalEvents ?? "?"}, next at ${nextRunAt.toISOString()}`);
+    } catch (enqueueErr: any) {
+      console.error("[worker] Failed to re-enqueue audit chain check:", enqueueErr.message);
     }
   }
 
-  const nextRunAt = new Date(Date.now() + AUDIT_CHAIN_CHECK_INTERVAL_MS);
-  await storage.createJob({
-    type: "audit_chain_integrity_check",
-    status: "queued",
-    payload: { triggeredBy: "scheduled" },
-    scheduledFor: nextRunAt,
-  });
-
-  console.log(`[worker] Audit chain check done: valid=${result.valid}, events=${result.verifiedEvents}/${result.totalEvents}, next at ${nextRunAt.toISOString()}`);
-  return { ...result, durationMs, healthCheckId: healthCheck.id };
+  if (jobError) throw jobError;
+  return { ...checkResult, durationMs: Date.now() - startedAt, healthCheckId };
 }
 
 export async function enqueueAuditChainCheck() {
