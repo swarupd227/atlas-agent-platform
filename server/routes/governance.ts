@@ -1646,30 +1646,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     const durationMs = Date.now() - startedAt;
     let persistenceWarning: string | undefined;
     try {
-      const healthCheck = await storage.createAuditChainHealthCheck({
-        valid: result.valid,
-        totalEvents: result.totalEvents,
-        verifiedEvents: result.verifiedEvents,
-        brokenAt: result.brokenAt ?? null,
-        durationMs,
-        triggeredBy: "manual",
-      });
-      if (!result.valid) {
-        await storage.createIncident({
-          agentId: "system",
-          agentName: "Audit Chain Monitor",
-          severity: "critical",
-          status: "open",
-          sourceMetric: "audit_chain_integrity",
-          sourceDetails: {
-            brokenAt: result.brokenAt,
-            totalEvents: result.totalEvents,
-            verifiedEvents: result.verifiedEvents,
-            healthCheckId: healthCheck.id,
-            triggeredBy: "manual",
-          },
-        });
-      }
+      await storage.persistAuditChainCheckResult(result, durationMs, "manual");
     } catch (err: any) {
       persistenceWarning = `Health check result could not be persisted: ${err.message}`;
       console.error("[verify-integrity] Failed to persist health check or incident:", err.message);

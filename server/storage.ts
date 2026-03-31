@@ -303,6 +303,11 @@ export interface IStorage {
   createAuditChainHealthCheck(record: InsertAuditChainHealthCheck): Promise<AuditChainHealthCheck>;
   getAuditChainHealthChecks(limit: number): Promise<AuditChainHealthCheck[]>;
   getPendingAuditChainJob(): Promise<Job | null>;
+  persistAuditChainCheckResult(
+    integrityResult: { valid: boolean; totalEvents: number; verifiedEvents: number; brokenAt?: number },
+    durationMs: number,
+    triggeredBy: "scheduled" | "manual"
+  ): Promise<AuditChainHealthCheck>;
 
   getIncidents(orgId?: string): Promise<Incident[]>;
   getIncident(id: string, orgId?: string): Promise<Incident | undefined>;
@@ -1433,6 +1438,40 @@ export class DatabaseStorage implements IStorage {
       )
       .limit(1);
     return job ?? null;
+  }
+
+  async persistAuditChainCheckResult(
+    integrityResult: { valid: boolean; totalEvents: number; verifiedEvents: number; brokenAt?: number },
+    durationMs: number,
+    triggeredBy: "scheduled" | "manual"
+  ) {
+    const healthCheck = await this.createAuditChainHealthCheck({
+      valid: integrityResult.valid,
+      totalEvents: integrityResult.totalEvents,
+      verifiedEvents: integrityResult.verifiedEvents,
+      brokenAt: integrityResult.brokenAt ?? null,
+      durationMs,
+      triggeredBy,
+    });
+
+    if (!integrityResult.valid) {
+      await this.createIncident({
+        agentId: "system",
+        agentName: "Audit Chain Monitor",
+        severity: "critical",
+        status: "open",
+        sourceMetric: "audit_chain_integrity",
+        sourceDetails: {
+          brokenAt: integrityResult.brokenAt,
+          totalEvents: integrityResult.totalEvents,
+          verifiedEvents: integrityResult.verifiedEvents,
+          healthCheckId: healthCheck.id,
+          triggeredBy,
+        },
+      });
+    }
+
+    return healthCheck;
   }
 
   async getIncidents(orgId?: string) {

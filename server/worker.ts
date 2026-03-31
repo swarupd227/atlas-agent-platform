@@ -526,35 +526,11 @@ async function processAuditChainIntegrityCheck(job: Job): Promise<Record<string,
     const rawTrigger = (job.payload as Record<string, unknown>)?.triggeredBy;
     const triggeredBy: AuditChainTrigger = rawTrigger === "manual" ? "manual" : "scheduled";
 
-    const healthCheck = await storage.createAuditChainHealthCheck({
-      valid: checkResult.valid,
-      totalEvents: checkResult.totalEvents,
-      verifiedEvents: checkResult.verifiedEvents,
-      brokenAt: checkResult.brokenAt ?? null,
-      durationMs,
-      triggeredBy,
-    });
+    const healthCheck = await storage.persistAuditChainCheckResult(checkResult, durationMs, triggeredBy);
     healthCheckId = healthCheck.id;
 
     if (!checkResult.valid) {
-      try {
-        await storage.createIncident({
-          agentId: "system",
-          agentName: "Audit Chain Monitor",
-          severity: "critical",
-          status: "open",
-          sourceMetric: "audit_chain_integrity",
-          sourceDetails: {
-            brokenAt: checkResult.brokenAt,
-            totalEvents: checkResult.totalEvents,
-            verifiedEvents: checkResult.verifiedEvents,
-            healthCheckId: healthCheck.id,
-          },
-        });
-        console.warn(`[worker] Audit chain integrity BROKEN at sequence ${checkResult.brokenAt} — incident created`);
-      } catch (err: any) {
-        console.error("[worker] Failed to create audit chain breach incident:", err.message);
-      }
+      console.warn(`[worker] Audit chain integrity BROKEN at sequence ${checkResult.brokenAt} — incident created`);
     }
   } catch (err: any) {
     jobError = err;
