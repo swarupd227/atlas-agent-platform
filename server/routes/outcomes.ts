@@ -1756,38 +1756,32 @@ async function createOutcomeVersion(
       });
 
       let versionActuallyBumped = false;
-      let versionBumpError: string | null = null;
       if (kpiVersionWorthyChanged && updated.outcomeId) {
-        try {
-          const parentOutcome = await storage.getOutcome(updated.outcomeId, getOrgId(req));
-          if (parentOutcome) {
-            const kpiAuditDiff: Record<string, { from: unknown; to: unknown }> = {};
-            if (existingKpi) {
-              for (const f of VERSION_WORTHY_KPI_FIELDS) {
-                if (data[f] !== undefined && JSON.stringify(existingKpi[f]) !== JSON.stringify(data[f])) {
-                  kpiAuditDiff[`kpi_${f}`] = { from: existingKpi[f], to: data[f] };
-                }
+        const parentOutcome = await storage.getOutcome(updated.outcomeId, getOrgId(req));
+        if (parentOutcome) {
+          const kpiAuditDiff: Record<string, { from: unknown; to: unknown }> = {};
+          if (existingKpi) {
+            for (const f of VERSION_WORTHY_KPI_FIELDS) {
+              if (data[f] !== undefined && JSON.stringify(existingKpi[f]) !== JSON.stringify(data[f])) {
+                kpiAuditDiff[`kpi_${f}`] = { from: existingKpi[f], to: data[f] };
               }
             }
-            await createOutcomeVersion(
-              updated.outcomeId,
-              parentOutcome,
-              {},
-              kpiAuditDiff,
-              `KPI definition updated: ${updated.name}`,
-              "system",
-              "system",
-              getOrgId(req),
-            );
-            versionActuallyBumped = true;
           }
-        } catch (versionErr) {
-          console.error("[kpi-patch] Failed to bump outcome version:", versionErr);
-          versionBumpError = versionErr instanceof Error ? versionErr.message : "version bump failed";
+          await createOutcomeVersion(
+            updated.outcomeId,
+            parentOutcome,
+            {},
+            kpiAuditDiff,
+            `KPI definition updated: ${updated.name}`,
+            "system",
+            "system",
+            getOrgId(req),
+          );
+          versionActuallyBumped = true;
         }
       }
 
-      res.json({ ...updated, _versionBumped: versionActuallyBumped, ...(versionBumpError ? { _versionBumpError: versionBumpError } : {}) });
+      res.json({ ...updated, _versionBumped: versionActuallyBumped });
     } catch (e) {
       handleZodError(res, e);
     }
