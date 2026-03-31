@@ -1,5 +1,5 @@
 import { storage } from "./storage";
-import type { Job } from "@shared/schema";
+import type { Job, AuditChainTrigger } from "@shared/schema";
 import { EventEmitter } from "events";
 import { checkOntologyCompliance, executeScheduledAgentCycle } from "./agent-runtime";
 import { industryEvalFrameworks } from "./routes";
@@ -523,13 +523,16 @@ async function processAuditChainIntegrityCheck(job: Job): Promise<Record<string,
     checkResult = await storage.verifyAuditChainIntegrity();
     const durationMs = Date.now() - startedAt;
 
+    const rawTrigger = (job.payload as Record<string, unknown>)?.triggeredBy;
+    const triggeredBy: AuditChainTrigger = rawTrigger === "manual" ? "manual" : "scheduled";
+
     const healthCheck = await storage.createAuditChainHealthCheck({
       valid: checkResult.valid,
       totalEvents: checkResult.totalEvents,
       verifiedEvents: checkResult.verifiedEvents,
       brokenAt: checkResult.brokenAt ?? null,
       durationMs,
-      triggeredBy: (job.payload as Record<string, unknown>)?.triggeredBy as string ?? "scheduled",
+      triggeredBy,
     });
     healthCheckId = healthCheck.id;
 

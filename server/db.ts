@@ -34,7 +34,8 @@ export async function runStartupMigrations() {
     `);
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
-    console.error("[db] Startup migration error:", err.message);
+    console.error("[db] Startup migration FAILED:", err.message);
+    throw err; // Propagate so callers can fail-fast or log at higher severity
   } finally {
     client.release();
   }
