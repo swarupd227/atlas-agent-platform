@@ -1746,13 +1746,11 @@ async function createOutcomeVersion(
         return JSON.stringify(existingKpi[f]) !== JSON.stringify(data[f]);
       });
 
+      let versionActuallyBumped = false;
       if (kpiVersionWorthyChanged && updated.outcomeId) {
         try {
           const parentOutcome = await storage.getOutcome(updated.outcomeId, getOrgId(req));
           if (parentOutcome) {
-            // Build a pre-computed from→to diff from the KPI's true old/new values.
-            // This is passed as auditDiff so createOutcomeVersion doesn't try to
-            // auto-compute it from the outcome record (no outcome columns change).
             const kpiAuditDiff: Record<string, { from: unknown; to: unknown }> = {};
             if (existingKpi) {
               for (const f of VERSION_WORTHY_KPI_FIELDS) {
@@ -1761,26 +1759,24 @@ async function createOutcomeVersion(
                 }
               }
             }
-
-            // outcomeUpdates = {} — only the version number changes on the outcome row.
-            // KPI context lives entirely in the audit diff and reason string.
             await createOutcomeVersion(
               updated.outcomeId,
               parentOutcome,
-              {},             // no outcome columns to update beyond version
-              kpiAuditDiff,  // pre-computed true from→to KPI diff
+              {},
+              kpiAuditDiff,
               `KPI definition updated: ${updated.name}`,
               "system",
               "system",
-              getOrgId(req),  // always use request org — no cross-tenant fallback
+              getOrgId(req),
             );
+            versionActuallyBumped = true;
           }
         } catch (versionErr) {
           console.error("[kpi-patch] Failed to bump outcome version:", versionErr);
         }
       }
 
-      res.json({ ...updated, _versionBumped: kpiVersionWorthyChanged });
+      res.json({ ...updated, _versionBumped: versionActuallyBumped });
     } catch (e) {
       handleZodError(res, e);
     }
