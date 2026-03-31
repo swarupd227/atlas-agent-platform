@@ -1066,9 +1066,18 @@ async function createOutcomeVersion(
       const outcome = await storage.getOutcome(outcomeId, orgId);
       if (!outcome) return res.status(404).json({ message: "Outcome not found" });
 
-      const changes = (req.body.changes || {}) as Record<string, unknown>;
+      const rawChanges = req.body.changes ?? {};
       const reason = (req.body.reason || "").trim();
       if (!reason) return res.status(400).json({ message: "reason is required" });
+
+      const changesResult = insertOutcomeContractSchema
+        .omit({ organizationId: true })
+        .partial()
+        .safeParse(rawChanges);
+      if (!changesResult.success) {
+        return res.status(400).json({ message: "Invalid changes payload", errors: changesResult.error.flatten() });
+      }
+      const changes = changesResult.data as Record<string, unknown>;
 
       const { updated, downstreamImpact } = await createOutcomeVersion(
         outcomeId,
@@ -1747,6 +1756,7 @@ async function createOutcomeVersion(
       });
 
       let versionActuallyBumped = false;
+      let versionBumpError: string | null = null;
       if (kpiVersionWorthyChanged && updated.outcomeId) {
         try {
           const parentOutcome = await storage.getOutcome(updated.outcomeId, getOrgId(req));
@@ -1773,10 +1783,11 @@ async function createOutcomeVersion(
           }
         } catch (versionErr) {
           console.error("[kpi-patch] Failed to bump outcome version:", versionErr);
+          versionBumpError = versionErr instanceof Error ? versionErr.message : "version bump failed";
         }
       }
 
-      res.json({ ...updated, _versionBumped: versionActuallyBumped });
+      res.json({ ...updated, _versionBumped: versionActuallyBumped, ...(versionBumpError ? { _versionBumpError: versionBumpError } : {}) });
     } catch (e) {
       handleZodError(res, e);
     }
