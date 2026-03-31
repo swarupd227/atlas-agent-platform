@@ -29,6 +29,7 @@ export async function runStartupMigrations() {
         broken_at INTEGER,
         duration_ms INTEGER NOT NULL DEFAULT 0,
         triggered_by TEXT NOT NULL DEFAULT 'scheduled'
+          CHECK (triggered_by IN ('scheduled', 'manual'))
       );
     `);
     console.log("[db] Startup migrations complete");

@@ -2232,6 +2232,9 @@ export const insertAgentTriggerSchema = createInsertSchema(agentTriggers).omit({
 export type InsertAgentTrigger = z.infer<typeof insertAgentTriggerSchema>;
 export type AgentTrigger = typeof agentTriggers.$inferSelect;
 
+export const AUDIT_CHAIN_TRIGGER_VALUES = ["scheduled", "manual"] as const;
+export type AuditChainTrigger = typeof AUDIT_CHAIN_TRIGGER_VALUES[number];
+
 export const auditChainHealthChecks = pgTable("audit_chain_health_checks", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   checkedAt: timestamp("checked_at").defaultNow(),
@@ -2243,7 +2246,9 @@ export const auditChainHealthChecks = pgTable("audit_chain_health_checks", {
   triggeredBy: text("triggered_by").notNull().default("scheduled"),
 });
 
-export const insertAuditChainHealthCheckSchema = createInsertSchema(auditChainHealthChecks).omit({ id: true, checkedAt: true });
+export const insertAuditChainHealthCheckSchema = createInsertSchema(auditChainHealthChecks)
+  .omit({ id: true, checkedAt: true })
+  .extend({ triggeredBy: z.enum(AUDIT_CHAIN_TRIGGER_VALUES).default("scheduled") });
 export type InsertAuditChainHealthCheck = z.infer<typeof insertAuditChainHealthCheckSchema>;
 export type AuditChainHealthCheck = typeof auditChainHealthChecks.$inferSelect;
 

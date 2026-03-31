@@ -1644,6 +1644,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     const startedAt = Date.now();
     const result = await storage.verifyAuditChainIntegrity();
     const durationMs = Date.now() - startedAt;
+    let persistenceWarning: string | undefined;
     try {
       const healthCheck = await storage.createAuditChainHealthCheck({
         valid: result.valid,
@@ -1670,9 +1671,10 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
         });
       }
     } catch (err: any) {
+      persistenceWarning = `Health check result could not be persisted: ${err.message}`;
       console.error("[verify-integrity] Failed to persist health check or incident:", err.message);
     }
-    res.json(result);
+    res.json({ ...result, ...(persistenceWarning ? { persistenceWarning } : {}) });
   });
 
   router.get("/api/audit-chain/health", async (_req, res) => {
