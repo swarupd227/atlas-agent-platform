@@ -1427,9 +1427,7 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPendingAuditChainJob() {
-    // Only checks for "queued" status. A "processing" row left by a crashed process
-    // should NOT block startup from enqueuing a fresh check — otherwise monitoring
-    // permanently stalls after a crash. The worker only dequeues "queued" jobs.
+    // Queued-only: a crash-stuck "processing" row should not block re-enqueue.
     const [job] = await db
       .select()
       .from(jobs)
@@ -1443,15 +1441,7 @@ export class DatabaseStorage implements IStorage {
     return job ?? null;
   }
 
-  /**
-   * Persists a health check result and creates an incident if the chain is broken.
-   *
-   * **Incident deduplication policy:** Only one open "audit_chain_integrity" incident
-   * is maintained at a time. If the chain remains broken across multiple check cycles,
-   * a new incident is NOT opened until the existing one is resolved. This prevents
-   * alert storms while keeping the incident queue clean. Operators should resolve the
-   * incident after restoring chain integrity to re-arm future breach detection.
-   */
+  // Persists a health check and creates one incident per broken period (deduplicated).
   async persistAuditChainCheckResult(
     integrityResult: { valid: boolean; totalEvents: number; verifiedEvents: number; brokenAt?: number },
     durationMs: number,
