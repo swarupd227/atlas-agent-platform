@@ -570,7 +570,9 @@ export async function enqueueAuditChainCheck() {
     });
     console.log("[startup] Enqueued initial audit chain integrity check");
   } catch (err: any) {
-    console.error("[startup] Failed to enqueue audit chain check:", err.message);
+    // CRITICAL: enqueue failed — audit chain monitoring will NOT run until the next
+    // server restart successfully enqueues the job. Investigate immediately.
+    console.error("[startup] CRITICAL: Failed to enqueue audit chain check — monitoring is inactive:", err.message);
   }
 }
 
