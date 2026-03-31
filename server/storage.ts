@@ -1,4 +1,4 @@
-import { eq, desc, inArray, and, like, or, sql, isNull, lte, asc } from "drizzle-orm";
+import { eq, desc, inArray, and, like, or, sql, isNull, lte, asc, lt } from "drizzle-orm";
 import { createHash } from "crypto";
 import { db } from "./db";
 import { getDefaultOrgId } from "./auth";
@@ -163,6 +163,7 @@ import {
   contextRecommendations, type ContextRecommendation, type InsertContextRecommendation,
   agentTriggers, type AgentTrigger, type InsertAgentTrigger,
   organizations, type Organization, type InsertOrganization,
+  auditChainHealthChecks, type AuditChainHealthCheck, type InsertAuditChainHealthCheck,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -298,6 +299,10 @@ export interface IStorage {
   createComplianceReport(report: InsertComplianceReport): Promise<ComplianceReport>;
 
   verifyAuditChainIntegrity(): Promise<{ valid: boolean; totalEvents: number; verifiedEvents: number; brokenAt?: number }>;
+
+  createAuditChainHealthCheck(record: InsertAuditChainHealthCheck): Promise<AuditChainHealthCheck>;
+  getAuditChainHealthChecks(limit: number): Promise<AuditChainHealthCheck[]>;
+  getPendingAuditChainJob(): Promise<Job | null>;
 
   getIncidents(orgId?: string): Promise<Incident[]>;
   getIncident(id: string, orgId?: string): Promise<Incident | undefined>;
@@ -1405,6 +1410,29 @@ export class DatabaseStorage implements IStorage {
     }
 
     return { valid, totalEvents: events.length, verifiedEvents: sorted.length, brokenAt };
+  }
+
+  async createAuditChainHealthCheck(record: InsertAuditChainHealthCheck) {
+    const [created] = await db.insert(auditChainHealthChecks).values(record).returning();
+    return created;
+  }
+
+  async getAuditChainHealthChecks(limit: number) {
+    return db.select().from(auditChainHealthChecks).orderBy(desc(auditChainHealthChecks.checkedAt)).limit(limit);
+  }
+
+  async getPendingAuditChainJob() {
+    const [job] = await db
+      .select()
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.type, "audit_chain_integrity_check"),
+          or(eq(jobs.status, "queued"), eq(jobs.status, "running"))
+        )
+      )
+      .limit(1);
+    return job ?? null;
   }
 
   async getIncidents(orgId?: string) {

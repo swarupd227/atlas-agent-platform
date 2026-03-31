@@ -511,6 +511,74 @@ async function processAgentScheduledRun(job: Job): Promise<Record<string, unknow
   return { deploymentId, agentName, completedAt: new Date().toISOString(), nextIntervalMs: intervalMs };
 }
 
+const AUDIT_CHAIN_CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+
+async function processAuditChainIntegrityCheck(job: Job): Promise<Record<string, unknown>> {
+  const startedAt = Date.now();
+  const result = await storage.verifyAuditChainIntegrity();
+  const durationMs = Date.now() - startedAt;
+
+  const healthCheck = await storage.createAuditChainHealthCheck({
+    valid: result.valid,
+    totalEvents: result.totalEvents,
+    verifiedEvents: result.verifiedEvents,
+    brokenAt: result.brokenAt ?? null,
+    durationMs,
+    triggeredBy: (job.payload as Record<string, unknown>)?.triggeredBy as string ?? "scheduled",
+  });
+
+  if (!result.valid) {
+    try {
+      await storage.createIncident({
+        agentId: "system",
+        agentName: "Audit Chain Monitor",
+        severity: "critical",
+        status: "open",
+        sourceMetric: "audit_chain_integrity",
+        sourceDetails: {
+          brokenAt: result.brokenAt,
+          totalEvents: result.totalEvents,
+          verifiedEvents: result.verifiedEvents,
+          healthCheckId: healthCheck.id,
+        },
+      });
+      console.warn(`[worker] Audit chain integrity BROKEN at sequence ${result.brokenAt} — incident created`);
+    } catch (err: any) {
+      console.error("[worker] Failed to create audit chain breach incident:", err.message);
+    }
+  }
+
+  const nextRunAt = new Date(Date.now() + AUDIT_CHAIN_CHECK_INTERVAL_MS);
+  await storage.createJob({
+    type: "audit_chain_integrity_check",
+    status: "queued",
+    payload: { triggeredBy: "scheduled" },
+    scheduledFor: nextRunAt,
+  });
+
+  console.log(`[worker] Audit chain check done: valid=${result.valid}, events=${result.verifiedEvents}/${result.totalEvents}, next at ${nextRunAt.toISOString()}`);
+  return { ...result, durationMs, healthCheckId: healthCheck.id };
+}
+
+export async function enqueueAuditChainCheck() {
+  try {
+    const existing = await storage.getPendingAuditChainJob();
+    if (existing) {
+      console.log("[startup] Audit chain integrity check already queued, skipping initial enqueue");
+      return;
+    }
+    await storage.createJob({
+      type: "audit_chain_integrity_check",
+      status: "queued",
+      payload: { triggeredBy: "scheduled" },
+      scheduledFor: new Date(),
+    });
+    console.log("[startup] Enqueued initial audit chain integrity check");
+  } catch (err: any) {
+    console.error("[startup] Failed to enqueue audit chain check:", err.message);
+  }
+}
+
 export function startWorker(intervalMs = 2000) {
   if (workerRunning) return;
   workerRunning = true;
@@ -543,6 +611,8 @@ export function startWorker(intervalMs = 2000) {
             result = await processShadowReplay(job);
           } else if (job.type === "agent_scheduled_run") {
             result = await processAgentScheduledRun(job);
+          } else if (job.type === "audit_chain_integrity_check") {
+            result = await processAuditChainIntegrityCheck(job);
           } else {
             result = { message: `Unknown job type: ${job.type}` };
           }

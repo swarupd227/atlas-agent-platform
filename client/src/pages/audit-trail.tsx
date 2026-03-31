@@ -12,6 +12,8 @@ import {
   Hash,
   X,
   Loader2,
+  Activity,
+  Clock,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -44,7 +46,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { AuditEvent } from "@shared/schema";
+import type { AuditEvent, AuditChainHealthCheck } from "@shared/schema";
 
 function buildFilterParams(filters: {
   search: string;
@@ -110,6 +112,14 @@ export default function AuditTrail() {
     queryKey: [`/api/audit-events/filtered?${queryString}`],
   });
 
+  const { data: healthData, isLoading: healthLoading } = useQuery<{
+    latest: AuditChainHealthCheck | null;
+    history: AuditChainHealthCheck[];
+  }>({
+    queryKey: ["/api/audit-chain/health"],
+    refetchInterval: 5 * 60 * 1000,
+  });
+
   const { data: integrityData, isLoading: integrityLoading, refetch: refetchIntegrity } = useQuery<{
     valid: boolean;
     totalEvents: number;
@@ -158,6 +168,16 @@ export default function AuditTrail() {
   const total = data?.total || 0;
   const totalPages = data?.totalPages || 1;
 
+  const latest = healthData?.latest ?? null;
+  const history = healthData?.history ?? [];
+  const chainStatus = healthLoading
+    ? "checking"
+    : latest === null
+      ? "unknown"
+      : latest.valid
+        ? "valid"
+        : "broken";
+
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-audit-trail">
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -176,6 +196,106 @@ export default function AuditTrail() {
           </Button>
         </div>
       </div>
+
+      {/* Chain Health Status Widget */}
+      <Card data-testid="card-chain-health">
+        <CardContent className="pt-4 pb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+            <div className="flex items-center gap-3 min-w-0">
+              {chainStatus === "checking" ? (
+                <Loader2 className="w-6 h-6 animate-spin text-muted-foreground shrink-0" />
+              ) : chainStatus === "valid" ? (
+                <CheckCircle className="w-6 h-6 text-emerald-500 shrink-0" />
+              ) : chainStatus === "broken" ? (
+                <AlertTriangle className="w-6 h-6 text-red-500 shrink-0" />
+              ) : (
+                <Activity className="w-6 h-6 text-muted-foreground shrink-0" />
+              )}
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-semibold text-sm" data-testid="text-chain-status">
+                    Hash Chain:&nbsp;
+                    {chainStatus === "checking" ? (
+                      <span className="text-muted-foreground">Checking…</span>
+                    ) : chainStatus === "valid" ? (
+                      <span className="text-emerald-600 dark:text-emerald-400">VALID</span>
+                    ) : chainStatus === "broken" ? (
+                      <span className="text-red-600 dark:text-red-400">BROKEN</span>
+                    ) : (
+                      <span className="text-muted-foreground">No data yet</span>
+                    )}
+                  </span>
+                  {latest && (
+                    <Badge variant="secondary" className="text-xs" data-testid="badge-trigger-type">
+                      {latest.triggeredBy === "manual" ? "Manual check" : "Scheduled"}
+                    </Badge>
+                  )}
+                </div>
+                {latest && (
+                  <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                    <span className="text-xs text-muted-foreground flex items-center gap-1" data-testid="text-last-checked">
+                      <Clock className="w-3 h-3" />
+                      {new Date(latest.checkedAt!).toLocaleString()}
+                    </span>
+                    <span className="text-xs text-muted-foreground" data-testid="text-events-verified">
+                      {latest.verifiedEvents.toLocaleString()}&nbsp;/&nbsp;{latest.totalEvents.toLocaleString()} events verified
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      {latest.durationMs}ms
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {history.length > 0 && (
+              <div className="flex items-center gap-1.5 sm:ml-auto flex-shrink-0" data-testid="chain-history-strip">
+                <span className="text-xs text-muted-foreground mr-1">Last {Math.min(history.length, 10)}:</span>
+                {history.slice(0, 10).reverse().map((check) => (
+                  <Tooltip key={check.id}>
+                    <TooltipTrigger asChild>
+                      <div
+                        className={`w-2.5 h-2.5 rounded-full cursor-default ${
+                          check.valid
+                            ? "bg-emerald-500"
+                            : "bg-red-500"
+                        }`}
+                        data-testid={`dot-check-${check.id}`}
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom" className="text-xs">
+                      <p>{check.valid ? "VALID" : "BROKEN"}</p>
+                      <p className="text-muted-foreground">{new Date(check.checkedAt!).toLocaleString()}</p>
+                      <p className="text-muted-foreground">{check.triggeredBy}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                ))}
+              </div>
+            )}
+
+            {!healthData && !healthLoading && (
+              <span className="text-xs text-muted-foreground sm:ml-auto">
+                No health checks recorded yet. First check runs at startup.
+              </span>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Broken chain banner */}
+      {chainStatus === "broken" && latest?.brokenAt != null && (
+        <div
+          className="flex items-start gap-3 rounded-md border border-red-500/30 bg-red-500/10 px-4 py-3"
+          data-testid="banner-chain-broken"
+        >
+          <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5 shrink-0" />
+          <p className="text-sm text-red-600 dark:text-red-400">
+            <span className="font-semibold">Audit chain integrity breach detected.</span> The hash chain is broken starting at sequence number{" "}
+            <span className="font-mono font-bold" data-testid="text-banner-broken-at">{latest.brokenAt}</span>.
+            An incident has been created. Please review the chain immediately.
+          </p>
+        </div>
+      )}
 
       <Card>
         <CardHeader className="pb-3">

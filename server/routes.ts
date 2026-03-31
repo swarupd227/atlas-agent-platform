@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { startWorker } from "./worker";
+import { startWorker, enqueueAuditChainCheck } from "./worker";
 import authRouter from "./routes/auth";
 import toolConnectorsRouter from "./routes/tool-connectors";
 import governanceProxyRouter from "./routes/governance-proxy";
@@ -187,6 +187,9 @@ export async function registerRoutes(
 
   // Start the job worker
   startWorker();
+
+  // Enqueue initial audit chain integrity check (idempotent)
+  enqueueAuditChainCheck().catch((err: any) => console.error("[startup] enqueueAuditChainCheck:", err?.message));
 
   // Ensure Hearst NBA agents + MCP servers are registered
   ensureHearstAgents().catch((err: any) => console.error("[startup] ensureHearstAgents:", err?.message));

@@ -1641,8 +1641,32 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
   });
 
   router.get("/api/audit-events/verify-integrity", async (_req, res) => {
+    const startedAt = Date.now();
     const result = await storage.verifyAuditChainIntegrity();
+    const durationMs = Date.now() - startedAt;
+    try {
+      await storage.createAuditChainHealthCheck({
+        valid: result.valid,
+        totalEvents: result.totalEvents,
+        verifiedEvents: result.verifiedEvents,
+        brokenAt: result.brokenAt ?? null,
+        durationMs,
+        triggeredBy: "manual",
+      });
+    } catch (err: any) {
+      console.error("[verify-integrity] Failed to persist health check:", err.message);
+    }
     res.json(result);
+  });
+
+  router.get("/api/audit-chain/health", async (_req, res) => {
+    try {
+      const history = await storage.getAuditChainHealthChecks(20);
+      const latest = history[0] ?? null;
+      res.json({ latest, history });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   router.get("/api/policy-exceptions", async (_req, res) => {

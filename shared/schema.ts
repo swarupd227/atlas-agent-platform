@@ -2232,4 +2232,19 @@ export const insertAgentTriggerSchema = createInsertSchema(agentTriggers).omit({
 export type InsertAgentTrigger = z.infer<typeof insertAgentTriggerSchema>;
 export type AgentTrigger = typeof agentTriggers.$inferSelect;
 
+export const auditChainHealthChecks = pgTable("audit_chain_health_checks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  checkedAt: timestamp("checked_at").defaultNow(),
+  valid: boolean("valid").notNull(),
+  totalEvents: integer("total_events").notNull().default(0),
+  verifiedEvents: integer("verified_events").notNull().default(0),
+  brokenAt: integer("broken_at"),
+  durationMs: integer("duration_ms").notNull().default(0),
+  triggeredBy: text("triggered_by").notNull().default("scheduled"),
+});
+
+export const insertAuditChainHealthCheckSchema = createInsertSchema(auditChainHealthChecks).omit({ id: true, checkedAt: true });
+export type InsertAuditChainHealthCheck = z.infer<typeof insertAuditChainHealthCheckSchema>;
+export type AuditChainHealthCheck = typeof auditChainHealthChecks.$inferSelect;
+
 export * from "./models/chat";
