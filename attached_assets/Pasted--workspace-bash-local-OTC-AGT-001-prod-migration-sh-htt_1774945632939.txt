@@ -1,0 +1,48 @@
+~/workspace$ bash .local/OTC-AGT-001-prod-migration.sh https://agent-lifecycle-management-platform.replit.app
+bash .local/OTC-AGT-002-prod-migration.sh https://agent-lifecycle-management-platform.replit.app 
+bash .local/OTC-AGT-003-prod-migration.sh https://agent-lifecycle-management-platform.replit.app 
+bash .local/OTC-AGT-004-prod-migration.sh https://agent-lifecycle-management-platform.replit.app
+═══════════════════════════════════════════════════════
+ OTC-AGT-001 — Quote & Configuration Agent
+ Target: https://agent-lifecycle-management-platform.replit.app
+═══════════════════════════════════════════════════════
+
+Creating skills...
+═══════════════════════════════════════════════════════
+ OTC-AGT-002 — Order Validation & Promise Agent
+ Target: https://agent-lifecycle-management-platform.replit.app
+═══════════════════════════════════════════════════════
+
+Creating skills...
+═══════════════════════════════════════════════════════
+ OTC-AGT-003 — Customer Credit & Risk Assessment Agent
+ Target: https://agent-lifecycle-management-platform.replit.app
+═══════════════════════════════════════════════════════
+
+Creating skills...
+
+=============================================================
+  OTC-AGT-004 Inventory Availability and Promise Agent
+  Production Migration -- 2026-03-31 08:24 UTC
+=============================================================
+  Target: https://agent-lifecycle-management-platform.replit.app
+  Org ID: cf5754b1-ee80-4b51-8bf6-7be263c97527
+
+== STEP 1: Ontology Concepts ==
+check Concept: Inventory Record
+check Concept: Fulfillment Location
+check Concept: Available-to-Promise (ATP)
+check Concept: Capable-to-Promise (CTP)
+check Concept: Allocation Rule
+check Concept: Sourcing Decision
+
+== STEP 2: Knowledge Base ==
+~/workspace$ bash .local/OTC-AGT-001-prod-migration.sh https://agent-lifecycle-management-platform.replit.app
+═══════════════════════════════════════════════════════
+ OTC-AGT-001 — Quote & Configuration Agent
+ Target: https://agent-lifecycle-management-platform.replit.app
+═══════════════════════════════════════════════════════
+
+Creating skills...
+~/workspace$ ^C
+~/workspace$ 
