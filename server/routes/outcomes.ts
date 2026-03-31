@@ -959,12 +959,22 @@ const router = Router();
       const changes = req.body.changes || {};
       const reason = req.body.reason || "Version bump";
 
+      // Build a from→to diff for each changed field
+      const diff: Record<string, { from: any; to: any }> = {};
+      for (const [key, toVal] of Object.entries(changes)) {
+        const fromVal = (outcome as Record<string, any>)[key];
+        if (JSON.stringify(fromVal) !== JSON.stringify(toVal)) {
+          diff[key] = { from: fromVal, to: toVal };
+        }
+      }
+
       const updated = await storage.updateOutcome(outcomeId, {
         ...changes,
         version: newVersion,
       });
 
       await storage.createAuditEvent({
+        actorType: "user",
         objectType: "outcome",
         objectId: outcomeId,
         action: "version_created",
@@ -973,12 +983,68 @@ const router = Router();
           fromVersion: outcome.version,
           toVersion: newVersion,
           reason,
-          changes,
+          changes: diff,
         }),
         ontologyTags: resolveOntologyTags("outcome", "version_created", { details: reason }),
       });
 
-      res.status(201).json(updated);
+      // Downstream impact analysis (same as PATCH for SLA fields)
+      const kpis = await storage.getKpisByOutcome(outcomeId);
+      const allAgents = await storage.getAgents(getOrgId(req));
+      const boundAgents = allAgents.filter(a => a.outcomeId === outcomeId);
+      const nonCompliantAgents: Array<{ agentId: string; agentName: string; violations: Array<{ constraint: string; current: string; required: string; severity: string }> }> = [];
+      const RISK_LEVELS: Record<string, number> = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
+      const newRiskTier = (updated || outcome).riskTier || "MEDIUM";
+      const newSlaConfig = ((updated || outcome).slaConfig || {}) as Record<string, any>;
+
+      for (const agent of boundAgents) {
+        const violations: Array<{ constraint: string; current: string; required: string; severity: string }> = [];
+        if ((RISK_LEVELS[agent.riskTier] || 2) < (RISK_LEVELS[newRiskTier] || 2)) {
+          violations.push({ constraint: "Risk Tier", current: agent.riskTier, required: newRiskTier, severity: "critical" });
+        }
+        if (newSlaConfig.maxP95LatencyMs && agent.avgLatencyMs && agent.avgLatencyMs > newSlaConfig.maxP95LatencyMs) {
+          violations.push({ constraint: "P95 Latency", current: `${agent.avgLatencyMs}ms`, required: `<${newSlaConfig.maxP95LatencyMs}ms`, severity: "warning" });
+        }
+        for (const kpi of kpis) {
+          if (kpi.slaThreshold) {
+            const kpiNameLower = (kpi.name || "").toLowerCase();
+            if (agent.successRate != null && (kpiNameLower.includes("success") || kpiNameLower.includes("accuracy") || kpiNameLower.includes("rate"))) {
+              const agentRate = (agent.successRate || 0) * 100;
+              if (agentRate < kpi.slaThreshold) {
+                violations.push({ constraint: `KPI: ${kpi.name}`, current: `${agentRate.toFixed(1)}%`, required: `>=${kpi.slaThreshold}%`, severity: "warning" });
+              }
+            }
+          }
+        }
+        if (violations.length > 0) {
+          nonCompliantAgents.push({ agentId: agent.id, agentName: agent.name, violations });
+        }
+      }
+
+      if (nonCompliantAgents.length > 0) {
+        for (const agent of nonCompliantAgents) {
+          await storage.createAuditEvent({
+            actorType: "system",
+            actorId: "outcome_engine",
+            action: "agent.outcome_sla_review_required",
+            objectType: "agent",
+            objectId: agent.agentId,
+            details: JSON.stringify({
+              outcomeId,
+              outcomeName: (updated || outcome).name,
+              newVersion,
+              violations: agent.violations,
+              message: `Outcome contract versioned to v${newVersion} — agent "${agent.agentName}" needs reconfiguration`,
+            }),
+            ontologyTags: resolveOntologyTags("agent", "agent.outcome_sla_review_required"),
+          });
+        }
+      }
+
+      res.status(201).json({
+        ...(updated || outcome),
+        _downstreamImpact: { boundAgentCount: boundAgents.length, nonCompliantAgents },
+      });
     } catch (err) {
       res.status(500).json({ message: "Failed to create version" });
     }
@@ -1629,6 +1695,45 @@ const router = Router();
       const data = insertKpiDefinitionSchema.partial().parse(req.body);
       const updated = await storage.updateKpi(req.params.id, data);
       if (!updated) return res.status(404).json({ message: "Not found" });
+
+      // If version-worthy KPI fields changed, bump the parent outcome version
+      const kpiVersionWorthyChanged =
+        data.target !== undefined ||
+        data.slaThreshold !== undefined ||
+        data.weight !== undefined;
+
+      if (kpiVersionWorthyChanged && updated.outcomeId) {
+        try {
+          const parentOutcome = await storage.getOutcome(updated.outcomeId);
+          if (parentOutcome) {
+            const newVersion = (parentOutcome.version || 1) + 1;
+            await storage.updateOutcome(updated.outcomeId, { version: newVersion });
+            await storage.createAuditEvent({
+              actorType: "system",
+              actorId: "system",
+              action: "version_created",
+              objectType: "outcome",
+              objectId: updated.outcomeId,
+              details: JSON.stringify({
+                fromVersion: parentOutcome.version || 1,
+                toVersion: newVersion,
+                reason: `KPI definition updated: ${updated.name}`,
+                changes: {
+                  kpiId: { from: null, to: updated.id },
+                  kpiName: { from: null, to: updated.name },
+                  ...(data.target !== undefined ? { target: { from: null, to: data.target } } : {}),
+                  ...(data.slaThreshold !== undefined ? { slaThreshold: { from: null, to: data.slaThreshold } } : {}),
+                  ...(data.weight !== undefined ? { weight: { from: null, to: data.weight } } : {}),
+                },
+              }),
+              ontologyTags: resolveOntologyTags("outcome", "version_created", {}),
+            });
+          }
+        } catch (versionErr) {
+          console.error("[kpi-patch] Failed to bump outcome version:", versionErr);
+        }
+      }
+
       res.json(updated);
     } catch (e) {
       handleZodError(res, e);

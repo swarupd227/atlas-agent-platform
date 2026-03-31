@@ -423,6 +423,7 @@ export default function OutcomeDetail() {
   const [createKpiOpen, setCreateKpiOpen] = useState(false);
   const [editContractOpen, setEditContractOpen] = useState(false);
   const [editContractData, setEditContractData] = useState<Record<string, any>>({});
+  const [editContractReason, setEditContractReason] = useState("");
   const [editingKpiId, setEditingKpiId] = useState<string | null>(null);
   const [editKpiData, setEditKpiData] = useState<Record<string, any>>({});
   const [evidenceWindow, setEvidenceWindow] = useState("7d");
@@ -729,16 +730,29 @@ export default function OutcomeDetail() {
     enabled: !!outcomeId,
   });
 
+  const VERSION_WORTHY_FIELDS = ["riskTier", "riskThreshold", "maxDriftPercent", "slaConfig", "autoPauseTrigger", "approvalGates"] as const;
+
   const updateContractMutation = useMutation({
-    mutationFn: async (data: Record<string, any>) => {
+    mutationFn: async ({ data, reason }: { data: Record<string, any>; reason?: string }) => {
+      if (reason) {
+        const res = await apiRequest("POST", `/api/outcomes/${outcomeId}/versions`, { changes: data, reason });
+        return res.json();
+      }
       const res = await apiRequest("PATCH", `/api/outcomes/${outcomeId}`, data);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (result: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId] });
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId, "versions"] });
       setEditContractOpen(false);
-      toast({ title: "Contract updated" });
+      setEditContractReason("");
+      const newVersion = result?.version;
+      if (newVersion && newVersion > 1) {
+        toast({ title: `Contract updated to v${newVersion}`, description: "A new version has been recorded with the stated reason." });
+      } else {
+        toast({ title: "Contract updated" });
+      }
     },
     onError: (err: Error) => {
       toast({ title: "Failed to update contract", description: err.message, variant: "destructive" });
@@ -838,11 +852,18 @@ export default function OutcomeDetail() {
       const res = await apiRequest("PATCH", `/api/kpis/${id}`, data);
       return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (_result, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId, "kpis"] });
       queryClient.invalidateQueries({ queryKey: ["/api/kpis"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId, "versions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId] });
       setEditingKpiId(null);
-      toast({ title: "KPI updated successfully" });
+      const isVersionWorthy = variables.data.target !== undefined || variables.data.slaThreshold !== undefined || variables.data.weight !== undefined;
+      if (isVersionWorthy) {
+        toast({ title: "KPI updated — new contract version created", description: "A version was recorded for the parent outcome." });
+      } else {
+        toast({ title: "KPI updated successfully" });
+      }
     },
     onError: (err: Error) => {
       toast({ title: "Failed to update KPI", description: err.message, variant: "destructive" });
@@ -1076,6 +1097,7 @@ export default function OutcomeDetail() {
                 riskThreshold: outcome.riskThreshold ?? 0.8,
                 maxDriftPercent: outcome.maxDriftPercent ?? 10,
               });
+              setEditContractReason("");
             }
           }}>
             <DialogTrigger asChild>
@@ -1091,7 +1113,7 @@ export default function OutcomeDetail() {
                 className="flex flex-col gap-4"
                 onSubmit={(e) => {
                   e.preventDefault();
-                  updateContractMutation.mutate({
+                  const allChanges = {
                     name: editContractData.name,
                     description: editContractData.description,
                     riskTier: editContractData.riskTier,
@@ -1102,6 +1124,15 @@ export default function OutcomeDetail() {
                     volumeCap: editContractData.volumeCap ? parseInt(editContractData.volumeCap) : null,
                     riskThreshold: parseFloat(editContractData.riskThreshold) || 0.8,
                     maxDriftPercent: parseFloat(editContractData.maxDriftPercent) || 10,
+                  };
+                  const hasVersionWorthyChange = outcome && VERSION_WORTHY_FIELDS.some((field) => {
+                    const newVal = (allChanges as Record<string, any>)[field];
+                    const oldVal = (outcome as Record<string, any>)[field];
+                    return newVal !== undefined && String(newVal) !== String(oldVal ?? "");
+                  });
+                  updateContractMutation.mutate({
+                    data: allChanges,
+                    reason: hasVersionWorthyChange ? (editContractReason || "Contract updated") : undefined,
                   });
                 }}
               >
@@ -1156,6 +1187,36 @@ export default function OutcomeDetail() {
                     <Input type="number" step="0.1" value={editContractData.maxDriftPercent ?? 10} onChange={(e) => setEditContractData({ ...editContractData, maxDriftPercent: e.target.value })} data-testid="input-edit-max-drift" />
                   </div>
                 </div>
+                {(() => {
+                  const allChanges = {
+                    riskTier: editContractData.riskTier,
+                    riskThreshold: parseFloat(editContractData.riskThreshold) || 0.8,
+                    maxDriftPercent: parseFloat(editContractData.maxDriftPercent) || 10,
+                  };
+                  const hasVersionWorthyChange = outcome && VERSION_WORTHY_FIELDS.some((field) => {
+                    const newVal = (allChanges as Record<string, any>)[field];
+                    const oldVal = (outcome as Record<string, any>)[field];
+                    return newVal !== undefined && String(newVal) !== String(oldVal ?? "");
+                  });
+                  return hasVersionWorthyChange ? (
+                    <div className="flex flex-col gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+                      <Label className="text-amber-600 dark:text-amber-400 text-xs font-semibold flex items-center gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                        Reason for this version change (required)
+                      </Label>
+                      <Textarea
+                        value={editContractReason}
+                        onChange={(e) => setEditContractReason(e.target.value)}
+                        placeholder="e.g. Tightening risk threshold after Q1 review…"
+                        className="resize-none text-sm"
+                        rows={2}
+                        required
+                        data-testid="input-version-reason"
+                      />
+                      <p className="text-[10px] text-muted-foreground">Changing governance fields (Risk Tier, Thresholds, Drift %) creates a new contract version.</p>
+                    </div>
+                  ) : null;
+                })()}
                 <Button type="submit" disabled={updateContractMutation.isPending} data-testid="button-submit-edit-contract">
                   {updateContractMutation.isPending ? "Saving..." : "Save Changes"}
                 </Button>
@@ -3383,30 +3444,49 @@ function AuditTab({
           <Card>
             <CardContent className="p-0">
               <div className="divide-y">
-                {versions.map((ver, i) => (
-                  <div key={ver.version} className="flex items-center justify-between gap-3 px-4 py-3" data-testid={`row-version-${ver.version}`}>
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="flex flex-col items-center">
-                        <div className={`w-3 h-3 rounded-full ${i === 0 ? "bg-primary" : "bg-muted-foreground/30"}`} />
-                        {i < versions.length - 1 && <div className="w-0.5 h-4 bg-muted-foreground/20" />}
-                      </div>
-                      <div className="flex flex-col min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold">v{ver.version}</span>
-                          {i === 0 && <Badge variant="outline" className="text-[9px] bg-primary/15 text-primary border-primary/20">Current</Badge>}
+                {versions.map((ver, i) => {
+                  const diffEntries = Object.entries(ver.diff || {});
+                  return (
+                    <div key={ver.version} className="px-4 py-3 space-y-1.5" data-testid={`row-version-${ver.version}`}>
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <div className="flex flex-col items-center self-start mt-1">
+                            <div className={`w-3 h-3 rounded-full shrink-0 ${i === 0 ? "bg-primary" : "bg-muted-foreground/30"}`} />
+                            {i < versions.length - 1 && <div className="w-0.5 h-4 bg-muted-foreground/20" />}
+                          </div>
+                          <div className="flex flex-col min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-semibold">v{ver.version}</span>
+                              {i === 0 && <Badge variant="outline" className="text-[9px] bg-primary/15 text-primary border-primary/20">Current</Badge>}
+                            </div>
+                            <span className="text-xs text-muted-foreground">{ver.summary}</span>
+                            <span className="text-[10px] text-muted-foreground">by {ver.changedBy} · {relativeTime(ver.changedAt)}</span>
+                          </div>
                         </div>
-                        <span className="text-xs text-muted-foreground truncate">{ver.summary}</span>
-                        <span className="text-[10px] text-muted-foreground">by {ver.changedBy}</span>
+                        {diffEntries.length > 0 && (
+                          <Badge variant="outline" className="text-[9px] shrink-0">{diffEntries.length} {diffEntries.length === 1 ? "field" : "fields"}</Badge>
+                        )}
                       </div>
-                    </div>
-                    <div className="flex items-center gap-2 shrink-0">
-                      {Object.keys(ver.diff || {}).length > 0 && (
-                        <Badge variant="outline" className="text-[9px]">{Object.keys(ver.diff).length} fields</Badge>
+                      {diffEntries.length > 0 && (
+                        <div className="ml-6 flex flex-col gap-1">
+                          {diffEntries.map(([field, change]) => {
+                            const c = change as { from: any; to: any };
+                            const label = field.replace(/([A-Z])/g, " $1").replace(/^./, s => s.toUpperCase());
+                            return (
+                              <div key={field} className="flex items-center gap-1 text-[10px] text-muted-foreground" data-testid={`text-version-diff-${field}`}>
+                                <span className="font-medium text-foreground/70">{label}:</span>
+                                {c.from !== null && c.from !== undefined && (
+                                  <span className="line-through opacity-60">{String(c.from)}</span>
+                                )}
+                                <span className="text-emerald-600 dark:text-emerald-400 font-medium">{String(c.to ?? "—")}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
                       )}
-                      <span className="text-xs text-muted-foreground whitespace-nowrap">{relativeTime(ver.changedAt)}</span>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </CardContent>
           </Card>
