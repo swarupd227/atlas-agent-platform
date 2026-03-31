@@ -1,0 +1,82 @@
+Inventory Availability & Promise Agent
+OTC-AGT-004  |  Category: Supply Chain
+5.1 Description
+Provides real-time available-to-promise (ATP) and capable-to-promise (CTP) calculations across multiple warehouses, distribution centers, and manufacturing sites. Optimizes sourcing decisions, manages allocation rules for constrained inventory, and commits reliable delivery dates that balance customer satisfaction with operational efficiency.
+5.2 Workflow Steps
+33.	1. Receive availability inquiry (from Order Validation Agent or customer portal)
+34.	2. Query real-time inventory across all locations (on-hand, in-transit, on-order)
+35.	3. Apply allocation rules (customer priority, channel allocation, reserved stock)
+36.	4. Calculate ATP considering existing commitments and safety stock
+37.	5. If insufficient ATP, calculate CTP using production schedules and supplier lead times
+38.	6. Evaluate sourcing options: nearest warehouse, lowest cost, fastest delivery
+39.	7. Propose delivery date(s) with confidence levels
+40.	8. If split shipment needed, present options with cost/time trade-offs
+41.	9. Reserve inventory upon order commitment
+42.	10. Monitor committed orders for inventory shortfalls and trigger alerts
+43.	11. Rebalance allocations when supply or demand changes
+
+5.3 Common Ontology
+The following entities and attributes form the shared data model referenced by this agent:
+Entity	Key Attributes
+Inventory	on-hand, allocated, available, in-transit, on-order, safety stock
+Location	warehouse ID, region, capacity, handling capabilities, cut-off times
+ATP	available-to-promise date, quantity, location, confidence level
+CTP	capable-to-promise date, production slot, raw material availability
+Allocation Rule	customer tier, channel, product priority, reservation expiry
+Sourcing Decision	origin location, carrier, cost, transit time, carbon footprint
+
+5.4 Claude Agent Skills
+The following skills should be developed and made available as context for this agent:
+Skill Name	Description
+Multi-Location ATP Calculation Skill	Real-time ATP across all inventory nodes
+CTP Production Scheduling Skill	Queries MRP/MES for available production capacity
+Sourcing Optimization Skill	Selects optimal fulfillment location based on cost, time, and service level
+Allocation Management Skill	Applies fair-share and priority-based allocation during shortages
+Demand Signal Processing Skill	Incorporates forecast and pipeline data into ATP calculations
+Split Shipment Advisor Skill	Evaluates and recommends partial fulfillment strategies
+
+5.5 Eval Dataset
+Recommended evaluation data and benchmarks for validating agent accuracy and performance:
+•	Historical ATP queries with actual fulfillment outcomes (on-time delivery rate)
+•	Constrained inventory scenarios: allocation fairness and priority adherence
+•	Multi-location sourcing: optimal vs. actual sourcing decisions
+•	CTP accuracy: promised dates vs. actual production completion dates
+•	Split shipment decisions: cost and service level outcomes
+•	Peak season/promotional event stress tests
+
+5.6 Production Runbooks
+Operational procedures for handling common issues and failure scenarios:
+Scenario	Procedure
+Inventory Feed Stale/Down	Staleness detection, fallback to last-known quantities with buffer
+Over-Commitment Alert	Procedure to re-promise or notify affected orders
+Warehouse Outage	Rerouting logic, customer notification, expedite procedures
+Allocation Override	Authority levels for manual allocation changes
+Demand Spike Response	Emergency allocation rules, customer communication templates
+Inventory Reconciliation Discrepancy	Investigation and correction workflow
+
+5.7 Regulatory Compliance & Policies
+Applicable regulations and compliance requirements:
+•	Fair Allocation Practices: Equitable distribution during shortages (industry-specific rules)
+•	Customs & Trade: Export license requirements by product and destination
+•	Hazardous Materials: Storage, handling, and shipping regulations (DOT, IATA, IMO)
+•	FDA/Pharma: Lot tracking, expiry management, serialization requirements
+•	Cold Chain: Temperature monitoring and compliance for perishables/pharma
+•	ESG/Carbon Reporting: Emissions tracking for sourcing decisions
+
+5.8 Knowledgebase Reference
+Documents and data sources this agent needs access to:
+•	Warehouse network: locations, capabilities, capacity, cut-off times
+•	Product logistics profiles: weight, dimensions, handling requirements, hazmat class
+•	Carrier service matrices: transit times, rates, service levels by lane
+•	Demand forecast data and seasonal patterns
+•	Supplier lead time database with reliability scores
+•	Historical fulfillment performance by location and product
+
+5.9 Knowledge Graph
+Entity-relationship mappings showing how data entities connect within this agent's domain:
+Product -[STOCKED_AT]-> Location -[HAS_INVENTORY]-> Inventory Record
+Product -[PRODUCED_AT]-> Manufacturing Site -[HAS_CAPACITY]-> Production Schedule
+Location -[SERVED_BY]-> Carrier -[OFFERS]-> Service Level
+Customer -[ASSIGNED_TIER]-> Allocation Priority -[GOVERNS]-> Allocation Rule
+Order Line -[SOURCED_FROM]-> Location -[RESERVED]-> Inventory
+Product -[SUPPLIED_BY]-> Supplier -[LEAD_TIME]-> Duration
