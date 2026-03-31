@@ -182,6 +182,7 @@ export interface IStorage {
   deleteOutcome(id: string, orgId?: string): Promise<boolean>;
 
   getKpis(): Promise<KpiDefinition[]>;
+  getKpi(id: string): Promise<KpiDefinition | undefined>;
   getKpisByOutcome(outcomeId: string): Promise<KpiDefinition[]>;
   createKpi(kpi: InsertKpiDefinition): Promise<KpiDefinition>;
   updateKpi(id: string, data: Partial<KpiDefinition>): Promise<KpiDefinition | undefined>;
@@ -828,6 +829,11 @@ export class DatabaseStorage implements IStorage {
 
   async getKpis() {
     return db.select().from(kpiDefinitions);
+  }
+
+  async getKpi(id: string) {
+    const [kpi] = await db.select().from(kpiDefinitions).where(eq(kpiDefinitions.id, id));
+    return kpi;
   }
 
   async getKpisByOutcome(outcomeId: string) {

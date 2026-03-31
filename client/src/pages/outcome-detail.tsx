@@ -730,7 +730,9 @@ export default function OutcomeDetail() {
     enabled: !!outcomeId,
   });
 
-  const VERSION_WORTHY_FIELDS = ["riskTier", "riskThreshold", "maxDriftPercent", "slaConfig", "autoPauseTrigger", "approvalGates"] as const;
+  // Only the governance fields that are actually present in the edit dialog form.
+  // Changing any of these creates a new versioned contract record instead of a silent PATCH.
+  const VERSION_WORTHY_FIELDS = ["riskTier", "riskThreshold", "maxDriftPercent"] as const;
 
   const updateContractMutation = useMutation({
     mutationFn: async ({ data, reason }: { data: Record<string, any>; reason?: string }) => {
@@ -1130,9 +1132,12 @@ export default function OutcomeDetail() {
                     const oldVal = (outcome as Record<string, any>)[field];
                     return newVal !== undefined && String(newVal) !== String(oldVal ?? "");
                   });
+                  if (hasVersionWorthyChange && !editContractReason.trim()) {
+                    return;
+                  }
                   updateContractMutation.mutate({
                     data: allChanges,
-                    reason: hasVersionWorthyChange ? (editContractReason || "Contract updated") : undefined,
+                    reason: hasVersionWorthyChange ? editContractReason.trim() : undefined,
                   });
                 }}
               >

@@ -20,6 +20,112 @@ import {
 
 const router = Router();
 
+// ─── Shared outcome version-creation helper ──────────────────────────────────
+// Called by POST /api/outcomes/:id/versions and by KPI PATCH when
+// version-worthy KPI fields (target, slaThreshold, weight) change.
+// Both code paths must go through this single function so audit fidelity,
+// diff construction, and downstream-impact analysis are always consistent.
+async function createOutcomeVersion(
+  outcomeId: string,
+  existingOutcome: { version?: number | null; riskTier?: string | null; slaConfig?: unknown; [key: string]: unknown },
+  changes: Record<string, unknown>,
+  reason: string,
+  actorId: string,
+  actorType: "user" | "system",
+  orgId: string,
+): Promise<{
+  updated: Record<string, unknown>;
+  downstreamImpact: { boundAgentCount: number; nonCompliantAgents: Array<{ agentId: string; agentName: string; violations: Array<{ constraint: string; current: string; required: string; severity: string }> }> };
+}> {
+  const newVersion = (existingOutcome.version || 1) + 1;
+
+  // Build from→to diff using actual old values from the existing outcome
+  const diff: Record<string, { from: unknown; to: unknown }> = {};
+  for (const [key, toVal] of Object.entries(changes)) {
+    const fromVal = existingOutcome[key];
+    if (JSON.stringify(fromVal) !== JSON.stringify(toVal)) {
+      diff[key] = { from: fromVal, to: toVal };
+    }
+  }
+
+  const updated = await storage.updateOutcome(outcomeId, { ...(changes as Partial<typeof existingOutcome>), version: newVersion } as any);
+
+  await storage.createAuditEvent({
+    actorType,
+    objectType: "outcome",
+    objectId: outcomeId,
+    action: "version_created",
+    actorId,
+    details: JSON.stringify({
+      fromVersion: existingOutcome.version || 1,
+      toVersion: newVersion,
+      reason,
+      changes: diff,
+    }),
+    ontologyTags: resolveOntologyTags("outcome", "version_created", { details: reason }),
+  });
+
+  // Downstream impact analysis
+  const kpis = await storage.getKpisByOutcome(outcomeId);
+  const allAgents = await storage.getAgents(orgId);
+  const boundAgents = allAgents.filter(a => a.outcomeId === outcomeId);
+  const nonCompliantAgents: Array<{ agentId: string; agentName: string; violations: Array<{ constraint: string; current: string; required: string; severity: string }> }> = [];
+  const RISK_LEVELS: Record<string, number> = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
+  const effective = (updated || existingOutcome) as Record<string, any>;
+  const newRiskTier = effective.riskTier || "MEDIUM";
+  const newSlaConfig = (effective.slaConfig || {}) as Record<string, any>;
+
+  for (const agent of boundAgents) {
+    const violations: Array<{ constraint: string; current: string; required: string; severity: string }> = [];
+    if ((RISK_LEVELS[agent.riskTier] || 2) < (RISK_LEVELS[newRiskTier] || 2)) {
+      violations.push({ constraint: "Risk Tier", current: agent.riskTier, required: newRiskTier, severity: "critical" });
+    }
+    if (newSlaConfig.maxP95LatencyMs && agent.avgLatencyMs && agent.avgLatencyMs > newSlaConfig.maxP95LatencyMs) {
+      violations.push({ constraint: "P95 Latency", current: `${agent.avgLatencyMs}ms`, required: `<${newSlaConfig.maxP95LatencyMs}ms`, severity: "warning" });
+    }
+    for (const kpi of kpis) {
+      if (kpi.slaThreshold) {
+        const kpiNameLower = (kpi.name || "").toLowerCase();
+        if (agent.successRate != null && (kpiNameLower.includes("success") || kpiNameLower.includes("accuracy") || kpiNameLower.includes("rate"))) {
+          const agentRate = (agent.successRate || 0) * 100;
+          if (agentRate < kpi.slaThreshold) {
+            violations.push({ constraint: `KPI: ${kpi.name}`, current: `${agentRate.toFixed(1)}%`, required: `>=${kpi.slaThreshold}%`, severity: "warning" });
+          }
+        }
+      }
+    }
+    if (violations.length > 0) {
+      nonCompliantAgents.push({ agentId: agent.id, agentName: agent.name, violations });
+    }
+  }
+
+  if (nonCompliantAgents.length > 0) {
+    for (const agent of nonCompliantAgents) {
+      await storage.createAuditEvent({
+        actorType: "system",
+        actorId: "outcome_engine",
+        action: "agent.outcome_sla_review_required",
+        objectType: "agent",
+        objectId: agent.agentId,
+        details: JSON.stringify({
+          outcomeId,
+          outcomeName: effective.name,
+          newVersion,
+          violations: agent.violations,
+          message: `Outcome contract versioned to v${newVersion} — agent "${agent.agentName}" needs reconfiguration`,
+        }),
+        ontologyTags: resolveOntologyTags("agent", "agent.outcome_sla_review_required"),
+      });
+    }
+  }
+
+  return {
+    updated: (updated || existingOutcome) as Record<string, unknown>,
+    downstreamImpact: { boundAgentCount: boundAgents.length, nonCompliantAgents },
+  };
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
   router.get("/api/outcomes", async (req, res) => {
     const outcomes = await storage.getOutcomes(getOrgId(req));
     res.json(outcomes);
@@ -952,99 +1058,25 @@ const router = Router();
   router.post("/api/outcomes/:id/versions", async (req, res) => {
     try {
       const outcomeId = req.params.id;
-      const outcome = await storage.getOutcome(outcomeId, getOrgId(req));
+      const orgId = getOrgId(req);
+      const outcome = await storage.getOutcome(outcomeId, orgId);
       if (!outcome) return res.status(404).json({ message: "Outcome not found" });
 
-      const newVersion = (outcome.version || 1) + 1;
-      const changes = req.body.changes || {};
-      const reason = req.body.reason || "Version bump";
+      const changes = (req.body.changes || {}) as Record<string, unknown>;
+      const reason = (req.body.reason || "").trim();
+      if (!reason) return res.status(400).json({ message: "reason is required" });
 
-      // Build a from→to diff for each changed field
-      const diff: Record<string, { from: any; to: any }> = {};
-      for (const [key, toVal] of Object.entries(changes)) {
-        const fromVal = (outcome as Record<string, any>)[key];
-        if (JSON.stringify(fromVal) !== JSON.stringify(toVal)) {
-          diff[key] = { from: fromVal, to: toVal };
-        }
-      }
+      const { updated, downstreamImpact } = await createOutcomeVersion(
+        outcomeId,
+        outcome,
+        changes,
+        reason,
+        req.body.actorId || "system",
+        "user",
+        orgId,
+      );
 
-      const updated = await storage.updateOutcome(outcomeId, {
-        ...changes,
-        version: newVersion,
-      });
-
-      await storage.createAuditEvent({
-        actorType: "user",
-        objectType: "outcome",
-        objectId: outcomeId,
-        action: "version_created",
-        actorId: req.body.actorId || "system",
-        details: JSON.stringify({
-          fromVersion: outcome.version,
-          toVersion: newVersion,
-          reason,
-          changes: diff,
-        }),
-        ontologyTags: resolveOntologyTags("outcome", "version_created", { details: reason }),
-      });
-
-      // Downstream impact analysis (same as PATCH for SLA fields)
-      const kpis = await storage.getKpisByOutcome(outcomeId);
-      const allAgents = await storage.getAgents(getOrgId(req));
-      const boundAgents = allAgents.filter(a => a.outcomeId === outcomeId);
-      const nonCompliantAgents: Array<{ agentId: string; agentName: string; violations: Array<{ constraint: string; current: string; required: string; severity: string }> }> = [];
-      const RISK_LEVELS: Record<string, number> = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
-      const newRiskTier = (updated || outcome).riskTier || "MEDIUM";
-      const newSlaConfig = ((updated || outcome).slaConfig || {}) as Record<string, any>;
-
-      for (const agent of boundAgents) {
-        const violations: Array<{ constraint: string; current: string; required: string; severity: string }> = [];
-        if ((RISK_LEVELS[agent.riskTier] || 2) < (RISK_LEVELS[newRiskTier] || 2)) {
-          violations.push({ constraint: "Risk Tier", current: agent.riskTier, required: newRiskTier, severity: "critical" });
-        }
-        if (newSlaConfig.maxP95LatencyMs && agent.avgLatencyMs && agent.avgLatencyMs > newSlaConfig.maxP95LatencyMs) {
-          violations.push({ constraint: "P95 Latency", current: `${agent.avgLatencyMs}ms`, required: `<${newSlaConfig.maxP95LatencyMs}ms`, severity: "warning" });
-        }
-        for (const kpi of kpis) {
-          if (kpi.slaThreshold) {
-            const kpiNameLower = (kpi.name || "").toLowerCase();
-            if (agent.successRate != null && (kpiNameLower.includes("success") || kpiNameLower.includes("accuracy") || kpiNameLower.includes("rate"))) {
-              const agentRate = (agent.successRate || 0) * 100;
-              if (agentRate < kpi.slaThreshold) {
-                violations.push({ constraint: `KPI: ${kpi.name}`, current: `${agentRate.toFixed(1)}%`, required: `>=${kpi.slaThreshold}%`, severity: "warning" });
-              }
-            }
-          }
-        }
-        if (violations.length > 0) {
-          nonCompliantAgents.push({ agentId: agent.id, agentName: agent.name, violations });
-        }
-      }
-
-      if (nonCompliantAgents.length > 0) {
-        for (const agent of nonCompliantAgents) {
-          await storage.createAuditEvent({
-            actorType: "system",
-            actorId: "outcome_engine",
-            action: "agent.outcome_sla_review_required",
-            objectType: "agent",
-            objectId: agent.agentId,
-            details: JSON.stringify({
-              outcomeId,
-              outcomeName: (updated || outcome).name,
-              newVersion,
-              violations: agent.violations,
-              message: `Outcome contract versioned to v${newVersion} — agent "${agent.agentName}" needs reconfiguration`,
-            }),
-            ontologyTags: resolveOntologyTags("agent", "agent.outcome_sla_review_required"),
-          });
-        }
-      }
-
-      res.status(201).json({
-        ...(updated || outcome),
-        _downstreamImpact: { boundAgentCount: boundAgents.length, nonCompliantAgents },
-      });
+      res.status(201).json({ ...updated, _downstreamImpact: downstreamImpact });
     } catch (err) {
       res.status(500).json({ message: "Failed to create version" });
     }
@@ -1693,41 +1725,71 @@ const router = Router();
   router.patch("/api/kpis/:id", async (req, res) => {
     try {
       const data = insertKpiDefinitionSchema.partial().parse(req.body);
+
+      // Fetch old KPI values BEFORE updating so we can compute true from→to diffs
+      const existingKpi = await storage.getKpi(req.params.id);
       const updated = await storage.updateKpi(req.params.id, data);
       if (!updated) return res.status(404).json({ message: "Not found" });
 
-      // If version-worthy KPI fields changed, bump the parent outcome version
-      const kpiVersionWorthyChanged =
-        data.target !== undefined ||
-        data.slaThreshold !== undefined ||
-        data.weight !== undefined;
+      // Trigger a parent outcome version bump when version-worthy KPI fields change.
+      // Uses the shared createOutcomeVersion helper so diff construction, audit, and
+      // downstream-impact analysis follow the same code path as POST /versions.
+      const VERSION_WORTHY_KPI_FIELDS = ["target", "slaThreshold", "weight"] as const;
+      const kpiVersionWorthyChanged = VERSION_WORTHY_KPI_FIELDS.some(f => data[f] !== undefined);
 
       if (kpiVersionWorthyChanged && updated.outcomeId) {
         try {
           const parentOutcome = await storage.getOutcome(updated.outcomeId);
           if (parentOutcome) {
-            const newVersion = (parentOutcome.version || 1) + 1;
-            await storage.updateOutcome(updated.outcomeId, { version: newVersion });
-            await storage.createAuditEvent({
-              actorType: "system",
-              actorId: "system",
-              action: "version_created",
-              objectType: "outcome",
-              objectId: updated.outcomeId,
-              details: JSON.stringify({
-                fromVersion: parentOutcome.version || 1,
-                toVersion: newVersion,
-                reason: `KPI definition updated: ${updated.name}`,
-                changes: {
-                  kpiId: { from: null, to: updated.id },
-                  kpiName: { from: null, to: updated.name },
-                  ...(data.target !== undefined ? { target: { from: null, to: data.target } } : {}),
-                  ...(data.slaThreshold !== undefined ? { slaThreshold: { from: null, to: data.slaThreshold } } : {}),
-                  ...(data.weight !== undefined ? { weight: { from: null, to: data.weight } } : {}),
-                },
-              }),
-              ontologyTags: resolveOntologyTags("outcome", "version_created", {}),
-            });
+            // Build KPI-level diff with true from→to values from the old KPI record
+            const kpiChanges: Record<string, unknown> = {};
+            for (const field of VERSION_WORTHY_KPI_FIELDS) {
+              if (data[field] !== undefined) {
+                kpiChanges[`kpi_${field}`] = data[field];
+              }
+            }
+            // Encode KPI identity in the changes map for audit context
+            const changes: Record<string, unknown> = {
+              kpiId: updated.id,
+              kpiName: updated.name,
+              ...(existingKpi && data.target !== undefined ? { kpiTarget: data.target } : {}),
+              ...(existingKpi && data.slaThreshold !== undefined ? { kpiSlaThreshold: data.slaThreshold } : {}),
+              ...(existingKpi && data.weight !== undefined ? { kpiWeight: data.weight } : {}),
+            };
+            // Overlay actual old outcome values so the diff is against the outcome record
+            // (the KPI-specific "from" values are captured via existingKpi for audit context)
+            const outcomeChanges: Record<string, unknown> = { ...changes };
+            // Provide prior KPI field values to make the diff informative
+            if (existingKpi) {
+              if (data.target !== undefined && existingKpi.target !== data.target) {
+                outcomeChanges[`kpiTarget`] = data.target;
+              }
+              if (data.slaThreshold !== undefined && existingKpi.slaThreshold !== data.slaThreshold) {
+                outcomeChanges[`kpiSlaThreshold`] = data.slaThreshold;
+              }
+              if (data.weight !== undefined && existingKpi.weight !== data.weight) {
+                outcomeChanges[`kpiWeight`] = data.weight;
+              }
+            }
+
+            // Build an augmented outcome snapshot that carries the KPI's old values so
+            // createOutcomeVersion produces accurate from→to diffs in the audit event.
+            const kpiOldSnapshot = {
+              ...parentOutcome,
+              ...(existingKpi && data.target !== undefined ? { kpiTarget: existingKpi.target } : {}),
+              ...(existingKpi && data.slaThreshold !== undefined ? { kpiSlaThreshold: existingKpi.slaThreshold } : {}),
+              ...(existingKpi && data.weight !== undefined ? { kpiWeight: existingKpi.weight } : {}),
+            };
+
+            await createOutcomeVersion(
+              updated.outcomeId,
+              kpiOldSnapshot,
+              outcomeChanges,
+              `KPI definition updated: ${updated.name}`,
+              "system",
+              "system",
+              getDefaultOrgId(),
+            );
           }
         } catch (versionErr) {
           console.error("[kpi-patch] Failed to bump outcome version:", versionErr);
