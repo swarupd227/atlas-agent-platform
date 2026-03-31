@@ -21,14 +21,27 @@ import {
 const router = Router();
 
 // ─── Shared outcome version-creation helper ──────────────────────────────────
-// Called by POST /api/outcomes/:id/versions and by KPI PATCH when
-// version-worthy KPI fields (target, slaThreshold, weight) change.
-// Both code paths must go through this single function so audit fidelity,
-// diff construction, and downstream-impact analysis are always consistent.
+// Single code path used by both POST /api/outcomes/:id/versions (user edits)
+// and KPI PATCH (system-triggered bumps).  Guarantees identical diff
+// construction, audit event format, and downstream-impact analysis everywhere.
+//
+// Parameters:
+//   outcomeId       – outcome to version
+//   existingOutcome – current DB record (fetched before any update)
+//   outcomeUpdates  – fields to actually write to the outcome_contracts table
+//                     (must only contain valid schema columns; may be {} for
+//                      KPI-triggered bumps where no outcome columns change)
+//   auditDiff       – pre-computed from→to diff for the audit event, or null
+//                     to auto-compute from existingOutcome vs outcomeUpdates
+//   reason          – mandatory user-provided reason (non-empty)
+//   actorId         – who triggered the version
+//   actorType       – "user" | "system"
+//   orgId           – organisation scope for agent lookups
 async function createOutcomeVersion(
   outcomeId: string,
-  existingOutcome: { version?: number | null; riskTier?: string | null; slaConfig?: unknown; [key: string]: unknown },
-  changes: Record<string, unknown>,
+  existingOutcome: { version?: number | null; riskTier?: string | null; autoPauseTrigger?: boolean | null; riskThreshold?: number | null; slaConfig?: unknown; [key: string]: unknown },
+  outcomeUpdates: Record<string, unknown>,
+  auditDiff: Record<string, { from: unknown; to: unknown }> | null,
   reason: string,
   actorId: string,
   actorType: "user" | "system",
@@ -39,16 +52,20 @@ async function createOutcomeVersion(
 }> {
   const newVersion = (existingOutcome.version || 1) + 1;
 
-  // Build from→to diff using actual old values from the existing outcome
-  const diff: Record<string, { from: unknown; to: unknown }> = {};
-  for (const [key, toVal] of Object.entries(changes)) {
-    const fromVal = existingOutcome[key];
-    if (JSON.stringify(fromVal) !== JSON.stringify(toVal)) {
-      diff[key] = { from: fromVal, to: toVal };
+  // Compute diff — auto-detect from existingOutcome vs outcomeUpdates when not provided
+  const diff: Record<string, { from: unknown; to: unknown }> = auditDiff ?? (() => {
+    const d: Record<string, { from: unknown; to: unknown }> = {};
+    for (const [key, toVal] of Object.entries(outcomeUpdates)) {
+      const fromVal = existingOutcome[key];
+      if (JSON.stringify(fromVal) !== JSON.stringify(toVal)) {
+        d[key] = { from: fromVal, to: toVal };
+      }
     }
-  }
+    return d;
+  })();
 
-  const updated = await storage.updateOutcome(outcomeId, { ...(changes as Partial<typeof existingOutcome>), version: newVersion } as any);
+  // Persist version bump and any outcome field changes
+  const updated = await storage.updateOutcome(outcomeId, { ...outcomeUpdates, version: newVersion } as any);
 
   await storage.createAuditEvent({
     actorType,
@@ -65,15 +82,17 @@ async function createOutcomeVersion(
     ontologyTags: resolveOntologyTags("outcome", "version_created", { details: reason }),
   });
 
-  // Downstream impact analysis
+  // ── Downstream impact analysis (matches PATCH /api/outcomes/:id SLA logic) ──
   const kpis = await storage.getKpisByOutcome(outcomeId);
   const allAgents = await storage.getAgents(orgId);
   const boundAgents = allAgents.filter(a => a.outcomeId === outcomeId);
   const nonCompliantAgents: Array<{ agentId: string; agentName: string; violations: Array<{ constraint: string; current: string; required: string; severity: string }> }> = [];
   const RISK_LEVELS: Record<string, number> = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
-  const effective = (updated || existingOutcome) as Record<string, any>;
+  const effective = ((updated || existingOutcome) as Record<string, any>);
   const newRiskTier = effective.riskTier || "MEDIUM";
   const newSlaConfig = (effective.slaConfig || {}) as Record<string, any>;
+  // autoPauseTrigger: detect transition from disabled → enabled (same as PATCH)
+  const autoPauseTriggerActivated = !!(outcomeUpdates.autoPauseTrigger && !existingOutcome.autoPauseTrigger);
 
   for (const agent of boundAgents) {
     const violations: Array<{ constraint: string; current: string; required: string; severity: string }> = [];
@@ -93,6 +112,9 @@ async function createOutcomeVersion(
           }
         }
       }
+    }
+    if (autoPauseTriggerActivated && agent.status === "active" && (agent.healthScore || 100) < ((effective.riskThreshold || 0.8) * 100)) {
+      violations.push({ constraint: "Auto-Pause Trigger", current: `Health ${agent.healthScore}%`, required: `>=${((effective.riskThreshold || 0.8) * 100).toFixed(0)}%`, severity: "warning" });
     }
     if (violations.length > 0) {
       nonCompliantAgents.push({ agentId: agent.id, agentName: agent.name, violations });
@@ -120,7 +142,7 @@ async function createOutcomeVersion(
   }
 
   return {
-    updated: (updated || existingOutcome) as Record<string, unknown>,
+    updated: effective as Record<string, unknown>,
     downstreamImpact: { boundAgentCount: boundAgents.length, nonCompliantAgents },
   };
 }
@@ -1070,6 +1092,7 @@ async function createOutcomeVersion(
         outcomeId,
         outcome,
         changes,
+        null,   // auto-compute diff from existingOutcome vs changes
         reason,
         req.body.actorId || "system",
         "user",
@@ -1726,69 +1749,48 @@ async function createOutcomeVersion(
     try {
       const data = insertKpiDefinitionSchema.partial().parse(req.body);
 
-      // Fetch old KPI values BEFORE updating so we can compute true from→to diffs
+      // Fetch old KPI record before updating so we have true before/after values
       const existingKpi = await storage.getKpi(req.params.id);
       const updated = await storage.updateKpi(req.params.id, data);
       if (!updated) return res.status(404).json({ message: "Not found" });
 
-      // Trigger a parent outcome version bump when version-worthy KPI fields change.
-      // Uses the shared createOutcomeVersion helper so diff construction, audit, and
-      // downstream-impact analysis follow the same code path as POST /versions.
+      // Trigger a parent outcome version bump only when version-worthy KPI fields
+      // actually CHANGED (compare old vs new values, not just field presence).
+      // Uses the shared createOutcomeVersion helper so audit format and downstream-
+      // impact analysis are identical to POST /api/outcomes/:id/versions.
       const VERSION_WORTHY_KPI_FIELDS = ["target", "slaThreshold", "weight"] as const;
-      const kpiVersionWorthyChanged = VERSION_WORTHY_KPI_FIELDS.some(f => data[f] !== undefined);
+      const kpiVersionWorthyChanged = existingKpi !== undefined && VERSION_WORTHY_KPI_FIELDS.some(f => {
+        if (data[f] === undefined) return false;
+        return JSON.stringify(existingKpi[f]) !== JSON.stringify(data[f]);
+      });
 
       if (kpiVersionWorthyChanged && updated.outcomeId) {
         try {
-          const parentOutcome = await storage.getOutcome(updated.outcomeId);
+          const parentOutcome = await storage.getOutcome(updated.outcomeId, getOrgId(req));
           if (parentOutcome) {
-            // Build KPI-level diff with true from→to values from the old KPI record
-            const kpiChanges: Record<string, unknown> = {};
-            for (const field of VERSION_WORTHY_KPI_FIELDS) {
-              if (data[field] !== undefined) {
-                kpiChanges[`kpi_${field}`] = data[field];
-              }
-            }
-            // Encode KPI identity in the changes map for audit context
-            const changes: Record<string, unknown> = {
-              kpiId: updated.id,
-              kpiName: updated.name,
-              ...(existingKpi && data.target !== undefined ? { kpiTarget: data.target } : {}),
-              ...(existingKpi && data.slaThreshold !== undefined ? { kpiSlaThreshold: data.slaThreshold } : {}),
-              ...(existingKpi && data.weight !== undefined ? { kpiWeight: data.weight } : {}),
-            };
-            // Overlay actual old outcome values so the diff is against the outcome record
-            // (the KPI-specific "from" values are captured via existingKpi for audit context)
-            const outcomeChanges: Record<string, unknown> = { ...changes };
-            // Provide prior KPI field values to make the diff informative
+            // Build a pre-computed from→to diff from the KPI's true old/new values.
+            // This is passed as auditDiff so createOutcomeVersion doesn't try to
+            // auto-compute it from the outcome record (no outcome columns change).
+            const kpiAuditDiff: Record<string, { from: unknown; to: unknown }> = {};
             if (existingKpi) {
-              if (data.target !== undefined && existingKpi.target !== data.target) {
-                outcomeChanges[`kpiTarget`] = data.target;
-              }
-              if (data.slaThreshold !== undefined && existingKpi.slaThreshold !== data.slaThreshold) {
-                outcomeChanges[`kpiSlaThreshold`] = data.slaThreshold;
-              }
-              if (data.weight !== undefined && existingKpi.weight !== data.weight) {
-                outcomeChanges[`kpiWeight`] = data.weight;
+              for (const f of VERSION_WORTHY_KPI_FIELDS) {
+                if (data[f] !== undefined && JSON.stringify(existingKpi[f]) !== JSON.stringify(data[f])) {
+                  kpiAuditDiff[`kpi_${f}`] = { from: existingKpi[f], to: data[f] };
+                }
               }
             }
 
-            // Build an augmented outcome snapshot that carries the KPI's old values so
-            // createOutcomeVersion produces accurate from→to diffs in the audit event.
-            const kpiOldSnapshot = {
-              ...parentOutcome,
-              ...(existingKpi && data.target !== undefined ? { kpiTarget: existingKpi.target } : {}),
-              ...(existingKpi && data.slaThreshold !== undefined ? { kpiSlaThreshold: existingKpi.slaThreshold } : {}),
-              ...(existingKpi && data.weight !== undefined ? { kpiWeight: existingKpi.weight } : {}),
-            };
-
+            // outcomeUpdates = {} — only the version number changes on the outcome row.
+            // KPI context lives entirely in the audit diff and reason string.
             await createOutcomeVersion(
               updated.outcomeId,
-              kpiOldSnapshot,
-              outcomeChanges,
+              parentOutcome,
+              {},             // no outcome columns to update beyond version
+              kpiAuditDiff,  // pre-computed true from→to KPI diff
               `KPI definition updated: ${updated.name}`,
               "system",
               "system",
-              getDefaultOrgId(),
+              getOrgId(req),  // always use request org — no cross-tenant fallback
             );
           }
         } catch (versionErr) {

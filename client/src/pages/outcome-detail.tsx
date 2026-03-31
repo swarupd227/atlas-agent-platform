@@ -730,9 +730,11 @@ export default function OutcomeDetail() {
     enabled: !!outcomeId,
   });
 
-  // Only the governance fields that are actually present in the edit dialog form.
-  // Changing any of these creates a new versioned contract record instead of a silent PATCH.
-  const VERSION_WORTHY_FIELDS = ["riskTier", "riskThreshold", "maxDriftPercent"] as const;
+  // All SLA-critical governance fields per task spec.  The edit dialog currently
+  // exposes riskTier, riskThreshold, and maxDriftPercent.  slaConfig, autoPauseTrigger,
+  // and approvalGates are included so that if new form controls are added they
+  // are automatically version-routed without further client changes.
+  const VERSION_WORTHY_FIELDS = ["riskTier", "riskThreshold", "maxDriftPercent", "slaConfig", "autoPauseTrigger", "approvalGates"] as const;
 
   const updateContractMutation = useMutation({
     mutationFn: async ({ data, reason }: { data: Record<string, any>; reason?: string }) => {
