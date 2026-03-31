@@ -1645,7 +1645,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     const result = await storage.verifyAuditChainIntegrity();
     const durationMs = Date.now() - startedAt;
     try {
-      await storage.createAuditChainHealthCheck({
+      const healthCheck = await storage.createAuditChainHealthCheck({
         valid: result.valid,
         totalEvents: result.totalEvents,
         verifiedEvents: result.verifiedEvents,
@@ -1653,8 +1653,24 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
         durationMs,
         triggeredBy: "manual",
       });
+      if (!result.valid) {
+        await storage.createIncident({
+          agentId: "system",
+          agentName: "Audit Chain Monitor",
+          severity: "critical",
+          status: "open",
+          sourceMetric: "audit_chain_integrity",
+          sourceDetails: {
+            brokenAt: result.brokenAt,
+            totalEvents: result.totalEvents,
+            verifiedEvents: result.verifiedEvents,
+            healthCheckId: healthCheck.id,
+            triggeredBy: "manual",
+          },
+        });
+      }
     } catch (err: any) {
-      console.error("[verify-integrity] Failed to persist health check:", err.message);
+      console.error("[verify-integrity] Failed to persist health check or incident:", err.message);
     }
     res.json(result);
   });

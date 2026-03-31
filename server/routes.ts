@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { startWorker, enqueueAuditChainCheck } from "./worker";
+import { runStartupMigrations } from "./db";
 import authRouter from "./routes/auth";
 import toolConnectorsRouter from "./routes/tool-connectors";
 import governanceProxyRouter from "./routes/governance-proxy";
@@ -184,6 +185,9 @@ export async function registerRoutes(
   app.use(skillsRouter);
   app.use(autonomyRouter);
   app.use(shadowCanaryRouter);
+
+  // Run idempotent startup SQL migrations (CREATE TABLE IF NOT EXISTS)
+  runStartupMigrations().catch((err: any) => console.error("[startup] runStartupMigrations:", err?.message));
 
   // Start the job worker
   startWorker();
