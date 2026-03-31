@@ -50,7 +50,7 @@ async function createOutcomeVersion(
     return d;
   })();
 
-  const updated = await storage.updateOutcome(outcomeId, { ...(outcomeUpdates as Partial<OutcomeContract>), version: newVersion });
+  const updated = await storage.updateOutcome(outcomeId, { ...(outcomeUpdates as Partial<OutcomeContract>), version: newVersion }, orgId);
 
   await storage.createAuditEvent({
     actorType,

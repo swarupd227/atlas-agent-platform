@@ -745,15 +745,14 @@ export default function OutcomeDetail() {
       const res = await apiRequest("PATCH", `/api/outcomes/${outcomeId}`, data);
       return res.json();
     },
-    onSuccess: (result: any) => {
+    onSuccess: (result: any, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId] });
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId, "versions"] });
       setEditContractOpen(false);
       setEditContractReason("");
-      const newVersion = result?.version;
-      if (newVersion && newVersion > 1) {
-        toast({ title: `Contract updated to v${newVersion}`, description: "A new version has been recorded with the stated reason." });
+      if (variables.reason) {
+        toast({ title: `Contract updated to v${result?.version ?? "?"}`, description: "A new version has been recorded with the stated reason." });
       } else {
         toast({ title: "Contract updated" });
       }
