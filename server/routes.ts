@@ -195,8 +195,10 @@ export async function registerRoutes(
   // Start the job worker
   startWorker();
 
-  // Enqueue initial audit chain integrity check (idempotent)
-  enqueueAuditChainCheck();
+  // Enqueue initial audit chain integrity check (idempotent).
+  // Awaited so any enqueue failure is logged before the server continues.
+  // enqueueAuditChainCheck() handles its own errors internally (no rethrow).
+  await enqueueAuditChainCheck();
 
   // Ensure Hearst NBA agents + MCP servers are registered
   ensureHearstAgents().catch((err: any) => console.error("[startup] ensureHearstAgents:", err?.message));
