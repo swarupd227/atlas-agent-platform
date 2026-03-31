@@ -1129,8 +1129,9 @@ export default function OutcomeDetail() {
                   };
                   const hasVersionWorthyChange = outcome && VERSION_WORTHY_FIELDS.some((field) => {
                     const newVal = (allChanges as Record<string, any>)[field];
+                    if (newVal === undefined) return false;
                     const oldVal = (outcome as Record<string, any>)[field];
-                    return newVal !== undefined && String(newVal) !== String(oldVal ?? "");
+                    return JSON.stringify(newVal ?? null) !== JSON.stringify(oldVal ?? null);
                   });
                   if (hasVersionWorthyChange && !editContractReason.trim()) {
                     toast({ title: "Reason required", description: "Please explain why this governance field is changing before saving.", variant: "destructive" });
@@ -1201,8 +1202,9 @@ export default function OutcomeDetail() {
                   };
                   const hasVersionWorthyChange = outcome && VERSION_WORTHY_FIELDS.some((field) => {
                     const newVal = (allChanges as Record<string, any>)[field];
+                    if (newVal === undefined) return false;
                     const oldVal = (outcome as Record<string, any>)[field];
-                    return newVal !== undefined && String(newVal) !== String(oldVal ?? "");
+                    return JSON.stringify(newVal ?? null) !== JSON.stringify(oldVal ?? null);
                   });
                   return hasVersionWorthyChange ? (
                     <div className="flex flex-col gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
