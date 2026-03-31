@@ -1133,6 +1133,7 @@ export default function OutcomeDetail() {
                     return newVal !== undefined && String(newVal) !== String(oldVal ?? "");
                   });
                   if (hasVersionWorthyChange && !editContractReason.trim()) {
+                    toast({ title: "Reason required", description: "Please explain why this governance field is changing before saving.", variant: "destructive" });
                     return;
                   }
                   updateContractMutation.mutate({

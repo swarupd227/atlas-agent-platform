@@ -1104,7 +1104,7 @@ async function createOutcomeVersion(
 
       const auditEvents = await storage.getAuditEvents(getOrgId(req));
       const versionEvents = auditEvents.filter(
-        e => e.objectId === outcomeId && (e.action === "version_created" || e.action === "outcome_updated" || e.action === "create_outcome")
+        e => e.objectId === outcomeId && (e.action === "version_created" || e.action === "create_outcome")
       ).sort((a, b) => new Date(b.createdAt || "").getTime() - new Date(a.createdAt || "").getTime());
 
       const versions = versionEvents.map((evt) => {
