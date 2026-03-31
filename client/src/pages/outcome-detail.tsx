@@ -856,14 +856,13 @@ export default function OutcomeDetail() {
       const res = await apiRequest("PATCH", `/api/kpis/${id}`, data);
       return res.json();
     },
-    onSuccess: (_result, variables) => {
+    onSuccess: (result: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId, "kpis"] });
       queryClient.invalidateQueries({ queryKey: ["/api/kpis"] });
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId, "versions"] });
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId] });
       setEditingKpiId(null);
-      const isVersionWorthy = variables.data.target !== undefined || variables.data.slaThreshold !== undefined || variables.data.weight !== undefined;
-      if (isVersionWorthy) {
+      if (result?._versionBumped) {
         toast({ title: "KPI updated — new contract version created", description: "A version was recorded for the parent outcome." });
       } else {
         toast({ title: "KPI updated successfully" });

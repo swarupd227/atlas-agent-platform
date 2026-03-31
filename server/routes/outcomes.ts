@@ -2,7 +2,7 @@ import { Router } from "express";
 import { storage } from "../storage";
 import { db } from "../db";
 import { desc, eq } from "drizzle-orm";
-import { outcomeContracts, kpiDefinitions } from "@shared/schema";
+import { outcomeContracts, kpiDefinitions, type OutcomeContract } from "@shared/schema";
 import { z, ZodError } from "zod";
 import {
   insertOutcomeContractSchema,
@@ -20,23 +20,9 @@ import {
 
 const router = Router();
 
-// ─── Shared outcome version-creation helper ──────────────────────────────────
-// Single code path used by both POST /api/outcomes/:id/versions (user edits)
-// and KPI PATCH (system-triggered bumps).  Guarantees identical diff
-// construction, audit event format, and downstream-impact analysis everywhere.
-//
-// Parameters:
-//   outcomeId       – outcome to version
-//   existingOutcome – current DB record (fetched before any update)
-//   outcomeUpdates  – fields to actually write to the outcome_contracts table
-//                     (must only contain valid schema columns; may be {} for
-//                      KPI-triggered bumps where no outcome columns change)
-//   auditDiff       – pre-computed from→to diff for the audit event, or null
-//                     to auto-compute from existingOutcome vs outcomeUpdates
-//   reason          – mandatory user-provided reason (non-empty)
-//   actorId         – who triggered the version
-//   actorType       – "user" | "system"
-//   orgId           – organisation scope for agent lookups
+// Shared version-creation helper used by POST /versions and KPI PATCH.
+// Pass auditDiff=null to auto-compute from existingOutcome vs outcomeUpdates.
+// outcomeUpdates must only contain schema-valid OutcomeContract columns.
 async function createOutcomeVersion(
   outcomeId: string,
   existingOutcome: { version?: number | null; riskTier?: string | null; autoPauseTrigger?: boolean | null; riskThreshold?: number | null; slaConfig?: unknown; [key: string]: unknown },
@@ -64,8 +50,7 @@ async function createOutcomeVersion(
     return d;
   })();
 
-  // Persist version bump and any outcome field changes
-  const updated = await storage.updateOutcome(outcomeId, { ...outcomeUpdates, version: newVersion } as any);
+  const updated = await storage.updateOutcome(outcomeId, { ...(outcomeUpdates as Partial<OutcomeContract>), version: newVersion });
 
   await storage.createAuditEvent({
     actorType,
@@ -82,7 +67,6 @@ async function createOutcomeVersion(
     ontologyTags: resolveOntologyTags("outcome", "version_created", { details: reason }),
   });
 
-  // ── Downstream impact analysis (matches PATCH /api/outcomes/:id SLA logic) ──
   const kpis = await storage.getKpisByOutcome(outcomeId);
   const allAgents = await storage.getAgents(orgId);
   const boundAgents = allAgents.filter(a => a.outcomeId === outcomeId);
@@ -91,7 +75,6 @@ async function createOutcomeVersion(
   const effective = ((updated || existingOutcome) as Record<string, any>);
   const newRiskTier = effective.riskTier || "MEDIUM";
   const newSlaConfig = (effective.slaConfig || {}) as Record<string, any>;
-  // autoPauseTrigger: detect transition from disabled → enabled (same as PATCH)
   const autoPauseTriggerActivated = !!(outcomeUpdates.autoPauseTrigger && !existingOutcome.autoPauseTrigger);
 
   for (const agent of boundAgents) {
@@ -146,7 +129,6 @@ async function createOutcomeVersion(
     downstreamImpact: { boundAgentCount: boundAgents.length, nonCompliantAgents },
   };
 }
-// ─────────────────────────────────────────────────────────────────────────────
 
   router.get("/api/outcomes", async (req, res) => {
     const outcomes = await storage.getOutcomes(getOrgId(req));
@@ -1798,7 +1780,7 @@ async function createOutcomeVersion(
         }
       }
 
-      res.json(updated);
+      res.json({ ...updated, _versionBumped: kpiVersionWorthyChanged });
     } catch (e) {
       handleZodError(res, e);
     }
