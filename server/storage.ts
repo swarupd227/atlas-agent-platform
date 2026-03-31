@@ -1427,13 +1427,16 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPendingAuditChainJob() {
+    // Only checks for "queued" status. A "processing" row left by a crashed process
+    // should NOT block startup from enqueuing a fresh check — otherwise monitoring
+    // permanently stalls after a crash. The worker only dequeues "queued" jobs.
     const [job] = await db
       .select()
       .from(jobs)
       .where(
         and(
           eq(jobs.type, "audit_chain_integrity_check"),
-          or(eq(jobs.status, "queued"), eq(jobs.status, "processing"))
+          eq(jobs.status, "queued")
         )
       )
       .limit(1);
