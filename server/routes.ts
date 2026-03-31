@@ -188,8 +188,9 @@ export async function registerRoutes(
 
   // Run idempotent startup SQL migrations (CREATE TABLE IF NOT EXISTS).
   // Awaited before starting the worker so tables are guaranteed to exist before
-  // any jobs are dequeued and attempt to write to them.
-  await runStartupMigrations().catch((err: any) => console.error("[startup] runStartupMigrations:", err?.message));
+  // any jobs are dequeued and attempt to write to them. Errors are NOT caught here
+  // so migration failures are fatal and prevent degraded operation.
+  await runStartupMigrations();
 
   // Start the job worker
   startWorker();
