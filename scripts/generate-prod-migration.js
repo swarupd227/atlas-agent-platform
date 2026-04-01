@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 /**
- * Reads all LIT-AGT-001 entities from dev and generates a single CURL
- * migration script for production.
+ * Reads all LIT-AGT-001 entities from dev and generates a self-contained
+ * CURL migration script for production. Uses `node` (not python3) for all
+ * JSON operations — always available in the Replit environment.
  *
  * Usage:  node scripts/generate-prod-migration.js
  * Output: scripts/migrate-lit-agt-001-to-prod.sh
  *
- * Before running against prod, set:
- *   export PROD_BASE="https://your-production-domain.com"
+ * Run migration:
+ *   export PROD_BASE="https://agent-lifecycle-management-platform.replit.app"
+ *   bash scripts/migrate-lit-agt-001-to-prod.sh
  */
 
 const BASE = "http://localhost:5000";
@@ -51,47 +53,57 @@ async function get(path) {
   return r.json();
 }
 
-function j(obj) {
+// Escape for single-quoted shell strings
+function sq(obj) {
   return JSON.stringify(obj).replace(/'/g, "'\\''");
 }
 
-function curl(method, path, body, comment) {
-  const bodyStr = body ? `-d '${j(body)}'` : "";
+// node -pe snippet to extract .id from stdin JSON
+const EXTRACT_ID = `node -pe "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).id || ''"`;
+// For nested outcome response: {outcome:{id:...}}
+const EXTRACT_OUTCOME_ID = `node -pe "const d=JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')); (d.outcome && d.outcome.id) || d.id || ''"`;
+
+function curlPost(varName, path, payload, label) {
+  const extractor = varName === "OUTCOME_ID" ? EXTRACT_OUTCOME_ID : EXTRACT_ID;
   return [
-    comment ? `\n  # ${comment}` : "",
-    `  ${method}_RESP=$(curl -sf -X ${method} "\${PROD_BASE}${path}" \\`,
+    `  # ${label}`,
+    `  ${varName}=$(curl -sf -X POST "\${PROD_BASE}${path}" \\`,
     `    -H "Content-Type: application/json" \\`,
-    body ? `    ${bodyStr} || { echo "FAIL: ${method} ${path}"; exit 1; })` : `    || { echo "FAIL: ${method} ${path}"; exit 1; })`,
-    `  echo "  ✓  ${comment || path}"`,
-  ].filter(Boolean).join("\n");
+    `    -d '${sq(payload)}' | ${extractor})`,
+    `  [ -z "$${varName}" ] && { echo "FAIL: ${label}"; exit 1; }`,
+    `  echo "  ✓  ${label}: $${varName}"`,
+    ``,
+  ].join("\n");
 }
 
-function curlCapture(varName, method, path, body, comment) {
-  const bodyStr = body ? `-d '${j(body)}'` : "";
+function curlPostNoCapture(path, payload, label) {
   return [
-    comment ? `\n  # ${comment}` : "",
-    `  ${varName}=$(curl -sf -X ${method} "\${PROD_BASE}${path}" \\`,
+    `  # ${label}`,
+    `  curl -sf -X POST "\${PROD_BASE}${path}" \\`,
     `    -H "Content-Type: application/json" \\`,
-    body ? `    ${bodyStr} | ${varName === "RAW" ? "cat" : `python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))"` })` : `    | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")`,
-    `  [ -z "$${varName}" ] && { echo "FAIL: could not capture ID from ${method} ${path}"; exit 1; }`,
-    `  echo "  ✓  ${comment || path}: $${varName}"`,
-  ].filter(Boolean).join("\n");
+    `    -d '${sq(payload)}' > /dev/null || { echo "FAIL: ${label}"; exit 1; }`,
+    `  echo "  ✓  ${label}"`,
+    ``,
+  ].join("\n");
 }
 
-function curlCaptureNested(varName, nestedKey, method, path, body, comment) {
-  const bodyStr = body ? `-d '${j(body)}'` : "";
+// For payloads that need shell variable substitution — emit a node block
+function curlPostDynamic(varName, path, buildPayloadJs, label) {
+  const extractor = varName === "OUTCOME_ID" ? EXTRACT_OUTCOME_ID : EXTRACT_ID;
   return [
-    comment ? `\n  # ${comment}` : "",
-    `  ${varName}=$(curl -sf -X ${method} "\${PROD_BASE}${path}" \\`,
-    `    -H "Content-Type: application/json" \\`,
-    body ? `    ${bodyStr} | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('${nestedKey}',{}).get('id','') or d.get('id',''))")` : `    | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")`,
-    `  [ -z "$${varName}" ] && { echo "FAIL: could not capture ID from ${method} ${path}"; exit 1; }`,
-    `  echo "  ✓  ${comment || path}: $${varName}"`,
-  ].filter(Boolean).join("\n");
+    `  # ${label}`,
+    `  ${varName}=$(node -e "${buildPayloadJs.replace(/"/g, '\\"').replace(/\n/g, " ")}" | \\`,
+    `    curl -sf -X POST "\${PROD_BASE}${path}" \\`,
+    `      -H "Content-Type: application/json" \\`,
+    `      --data-binary @- | ${extractor})`,
+    `  [ -z "$${varName}" ] && { echo "FAIL: ${label}"; exit 1; }`,
+    `  echo "  ✓  ${label}: $${varName}"`,
+    ``,
+  ].join("\n");
 }
 
 async function main() {
-  console.log("Fetching dev data…");
+  console.log("Fetching all dev data…");
 
   const [agent, kb, evalSuite, outcome] = await Promise.all([
     get(`/api/agents/${IDS.agentId}`),
@@ -107,47 +119,48 @@ async function main() {
   const kpis      = await get(`/api/outcomes/${IDS.outcomeId}/kpis`);
   const kbSources = await get(`/api/knowledge-bases/${IDS.kbId}/sources`);
 
-  console.log(`  agent, kb (${kbSources.length} sources), ${skills.length} skills, ${policies.length} policies, ${runbooks.length} runbooks`);
-  console.log(`  ${testCases.length} test cases, eval suite, outcome (${kpis.length} KPIs)`);
+  console.log(`  ✓  ${skills.length} skills, ${policies.length} policies, ${runbooks.length} runbooks`);
+  console.log(`  ✓  KB with ${kbSources.length} sources, ${testCases.length} test cases, ${kpis.length} KPIs`);
 
-  // ── Build the shell script ─────────────────────────────────────────────────
   const lines = [];
 
+  // ── HEADER ─────────────────────────────────────────────────────────────────
   lines.push(`#!/usr/bin/env bash`);
-  lines.push(`# ============================================================`);
+  lines.push(`# ================================================================`);
   lines.push(`# LIT-AGT-001 Production Migration Script`);
   lines.push(`# Employment Compliance & Policy Advisory Agent`);
   lines.push(`# Generated: ${new Date().toISOString()}`);
-  lines.push(`# Dev Agent ID: ${IDS.agentId}`);
-  lines.push(`# ============================================================`);
+  lines.push(`# Requires: curl, node (no python3 required)`);
+  lines.push(`# ================================================================`);
   lines.push(`#`);
   lines.push(`# Usage:`);
-  lines.push(`#   export PROD_BASE="https://your-production-domain.com"`);
+  lines.push(`#   export PROD_BASE="https://agent-lifecycle-management-platform.replit.app"`);
   lines.push(`#   bash scripts/migrate-lit-agt-001-to-prod.sh`);
-  lines.push(`#`);
-  lines.push(`# Requires: curl, python3 (for JSON parsing)`);
-  lines.push(`# ============================================================`);
+  lines.push(`# ================================================================`);
   lines.push(``);
   lines.push(`set -euo pipefail`);
   lines.push(``);
-  lines.push(`PROD_BASE="\${PROD_BASE:-http://localhost:5000}"`);
+  lines.push(`PROD_BASE="\${PROD_BASE:-https://agent-lifecycle-management-platform.replit.app}"`);
   lines.push(`PROD_ORG_ID="${PROD_ORG_ID}"`);
   lines.push(``);
+  lines.push(`# Verify node is available (required for JSON extraction)`);
+  lines.push(`command -v node >/dev/null 2>&1 || { echo "ERROR: node is required but not found. Install Node.js first."; exit 1; }`);
+  lines.push(`command -v curl >/dev/null 2>&1 || { echo "ERROR: curl is required but not found."; exit 1; }`);
+  lines.push(``);
   lines.push(`echo ""`);
-  lines.push(`echo "═══════════════════════════════════════════════════════════════"`);
+  lines.push(`echo "════════════════════════════════════════════════════════════════"`);
   lines.push(`echo "  LIT-AGT-001 → Production Migration"`);
   lines.push(`echo "  Target: \${PROD_BASE}"`);
-  lines.push(`echo "═══════════════════════════════════════════════════════════════"`);
+  lines.push(`echo "════════════════════════════════════════════════════════════════"`);
   lines.push(`echo ""`);
 
-  // ── STEP 1: SKILLS ───────────────────────────────────────────────────────
+  // ── STEP 1: SKILLS ─────────────────────────────────────────────────────────
   lines.push(`echo "STEP 1/9  Creating 6 skills…"`);
-  lines.push(`(`);
-  const skillVars = [];
+  const skillVarNames = [];
   for (let i = 0; i < skills.length; i++) {
     const s = skills[i];
     const varName = `SKILL_${i + 1}_ID`;
-    skillVars.push(varName);
+    skillVarNames.push(varName);
     const body = {
       name: s.name,
       description: s.description,
@@ -161,16 +174,14 @@ async function main() {
       inputSchema: s.inputSchema || {},
       outputSchema: s.outputSchema || {},
       tags: s.tags || [],
-      status: s.status || "active"
+      status: s.status || "active",
     };
-    lines.push(curlCapture(varName, "POST", "/api/skills", body, `Skill: ${s.name}`));
+    lines.push(curlPost(varName, "/api/skills", body, `Skill: ${s.name}`));
   }
-  lines.push(`)`);
   lines.push(``);
 
-  // ── STEP 2: KNOWLEDGE BASE ────────────────────────────────────────────────
-  lines.push(`echo "STEP 2/9  Creating knowledge base…"`);
-  lines.push(`(`);
+  // ── STEP 2: KNOWLEDGE BASE ─────────────────────────────────────────────────
+  lines.push(`echo "STEP 2/9  Creating knowledge base and ingesting ${kbSources.length} sources…"`);
   const kbBody = {
     name: kb.name,
     description: kb.description,
@@ -180,31 +191,28 @@ async function main() {
     tags: kb.tags || [],
     embeddingModel: kb.embeddingModel || "text-embedding-3-small",
     chunkStrategy: kb.chunkStrategy || "paragraph",
-    retrievalConfig: kb.retrievalConfig || {}
+    retrievalConfig: kb.retrievalConfig || {},
   };
-  lines.push(curlCapture("KB_ID", "POST", "/api/knowledge-bases", kbBody, `KB: ${kb.name}`));
+  lines.push(curlPost("KB_ID", "/api/knowledge-bases", kbBody, `KB: ${kb.name}`));
 
-  // KB sources
   for (const src of kbSources) {
     const srcBody = {
       name: src.name,
       type: src.type || "text",
       content: src.content || src.text || "",
-      metadata: src.metadata || {}
+      metadata: src.metadata || {},
     };
-    lines.push(curlCapture("KB_SRC_ID", "POST", `"/api/knowledge-bases/\${KB_ID}/sources"`, srcBody, `KB Source: ${src.name}`));
+    lines.push(curlPostNoCapture(`/api/knowledge-bases/\${KB_ID}/sources/text`, srcBody, `KB Source: ${src.name.slice(0, 50)}`));
   }
-  lines.push(`)`);
   lines.push(``);
 
-  // ── STEP 3: RUNBOOKS ──────────────────────────────────────────────────────
+  // ── STEP 3: RUNBOOKS ───────────────────────────────────────────────────────
   lines.push(`echo "STEP 3/9  Creating 6 runbooks…"`);
-  lines.push(`(`);
-  const runbookVars = [];
+  const runbookVarNames = [];
   for (let i = 0; i < runbooks.length; i++) {
     const rb = runbooks[i];
     const varName = `RUNBOOK_${i + 1}_ID`;
-    runbookVars.push(varName);
+    runbookVarNames.push(varName);
     const body = {
       name: rb.name,
       description: rb.description,
@@ -213,21 +221,19 @@ async function main() {
       steps: rb.steps || [],
       triggers: rb.triggers || [],
       tags: rb.tags || [],
-      status: rb.status || "active"
+      status: rb.status || "active",
     };
-    lines.push(curlCapture(varName, "POST", "/api/runbooks", body, `Runbook: ${rb.name}`));
+    lines.push(curlPost(varName, "/api/runbooks", body, `Runbook: ${rb.name.slice(0, 50)}`));
   }
-  lines.push(`)`);
   lines.push(``);
 
-  // ── STEP 4: GOVERNANCE POLICIES ───────────────────────────────────────────
+  // ── STEP 4: POLICIES ───────────────────────────────────────────────────────
   lines.push(`echo "STEP 4/9  Creating 6 governance policies…"`);
-  lines.push(`(`);
-  const policyVars = [];
+  const policyVarNames = [];
   for (let i = 0; i < policies.length; i++) {
     const p = policies[i];
     const varName = `POLICY_${i + 1}_ID`;
-    policyVars.push(varName);
+    policyVarNames.push(varName);
     const body = {
       name: p.name,
       description: p.description,
@@ -238,16 +244,14 @@ async function main() {
       enforcement: p.enforcement || "soft",
       priority: p.priority || 50,
       tags: p.tags || [],
-      status: p.status || "active"
+      status: p.status || "active",
     };
-    lines.push(curlCapture(varName, "POST", "/api/policies", body, `Policy: ${p.name}`));
+    lines.push(curlPost(varName, "/api/policies", body, `Policy: ${p.name.slice(0, 50)}`));
   }
-  lines.push(`)`);
   lines.push(``);
 
-  // ── STEP 5: AGENT ─────────────────────────────────────────────────────────
+  // ── STEP 5: AGENT ──────────────────────────────────────────────────────────
   lines.push(`echo "STEP 5/9  Creating agent…"`);
-  lines.push(`(`);
   const agentBody = {
     name: agent.name,
     description: agent.description,
@@ -263,28 +267,20 @@ async function main() {
     orchestrationMode: agent.orchestrationMode || "sequential",
     version: agent.version || "1.0.0",
     organizationId: PROD_ORG_ID,
-    preloadedSkills: skillVars.map((_, i) => `\${${skillVars[i]}}`),
-    policyBindings: policyVars.map((_, i) => `\${${policyVars[i]}}`)
   };
-  // Skills and policies are added as shell variable references after the fact
-  const agentBodyForCurl = { ...agentBody };
-  delete agentBodyForCurl.preloadedSkills;
-  delete agentBodyForCurl.policyBindings;
-  lines.push(curlCapture("AGENT_ID", "POST", "/api/agents", agentBodyForCurl, `Agent: ${agent.name}`));
-  lines.push(`)`);
+  lines.push(curlPost("AGENT_ID", "/api/agents", agentBody, `Agent: ${agent.name}`));
   lines.push(``);
 
-  // ── STEP 6: GOLDEN DATASET ────────────────────────────────────────────────
-  lines.push(`echo "STEP 6/9  Creating golden dataset and 6 test cases…"`);
-  lines.push(`(`);
+  // ── STEP 6: GOLDEN DATASET + TEST CASES ────────────────────────────────────
+  lines.push(`echo "STEP 6/9  Creating golden dataset and ${testCases.length} test cases…"`);
   const dsBody = {
-    name: `Employment Compliance & Policy Advisory — Golden Dataset`,
+    name: "Employment Compliance & Policy Advisory — Golden Dataset",
     description: "Curated employment law test cases across jurisdiction identification, statutory citation, gap analysis, policy drafting, UPL compliance, and escalation logic",
     industry: "legal_services",
     qualityCoverage: 88.5,
-    tags: ["employment-law", "multi-state", "jurisdiction", "UPL", "policy-drafting", "citation-accuracy"]
+    tags: ["employment-law", "multi-state", "jurisdiction", "UPL", "policy-drafting", "citation-accuracy"],
   };
-  lines.push(curlCapture("DATASET_ID", "POST", "/api/golden-datasets", dsBody, "Golden Dataset"));
+  lines.push(curlPost("DATASET_ID", "/api/golden-datasets", dsBody, "Golden Dataset"));
 
   for (const tc of testCases) {
     const tcBody = {
@@ -296,50 +292,16 @@ async function main() {
       difficultyTier: tc.difficultyTier || "standard",
       scenarioCategory: tc.scenarioCategory || "compliance_critical",
       tags: tc.tags || [],
-      status: tc.status || "active"
+      status: tc.status || "active",
     };
-    lines.push(`  curl -sf -X POST "\${PROD_BASE}/api/golden-datasets/\${DATASET_ID}/test-cases" \\`);
-    lines.push(`    -H "Content-Type: application/json" \\`);
-    lines.push(`    -d '${j(tcBody)}' > /dev/null || { echo "FAIL: test case ${tc.name}"; exit 1; }`);
-    lines.push(`  echo "  ✓  Test case: ${tc.name}"`);
+    lines.push(curlPostNoCapture(`/api/golden-datasets/\${DATASET_ID}/test-cases`, tcBody, `Test case: ${tc.name.slice(0, 50)}`));
   }
-  lines.push(`)`);
   lines.push(``);
 
-  // ── STEP 7: EVAL SUITE ───────────────────────────────────────────────────
+  // ── STEP 7: EVAL SUITE ─────────────────────────────────────────────────────
   lines.push(`echo "STEP 7/9  Creating evaluation suite…"`);
-  lines.push(`(`);
-  const evalBody = {
-    agentId: `AGENT_ID_PLACEHOLDER`,
-    name: evalSuite.name,
-    type: evalSuite.type || "regression",
-    industry: evalSuite.industry || "legal_services",
-    goldenDatasetId: `DATASET_ID_PLACEHOLDER`,
-    thresholdConfig: evalSuite.thresholdConfig || { minPassRate: 0.90 },
-    scorerConfig: evalSuite.scorerConfig || {},
-    coverageTags: evalSuite.coverageTags || [],
-    environmentThresholds: evalSuite.environmentThresholds || {},
-    ontologyTags: evalSuite.ontologyTags || [],
-    schedule: evalSuite.schedule || "weekly"
-  };
-  // Render with shell vars
-  const evalBodyStr = j(evalBody)
-    .replace('"AGENT_ID_PLACEHOLDER"', '"\'$AGENT_ID\'"')
-    .replace('"DATASET_ID_PLACEHOLDER"', '"\'$DATASET_ID\'"');
-
-  lines.push(`  EVAL_ID=$(curl -sf -X POST "\${PROD_BASE}/api/evals" \\`);
-  lines.push(`    -H "Content-Type: application/json" \\`);
-  lines.push(`    -d "${evalBodyStr.replace(/"/g, '\\"').replace(/\$AGENT_ID/g, '$AGENT_ID').replace(/\$DATASET_ID/g, '$DATASET_ID')}" \\`);
-  lines.push(`    | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")`);
-  lines.push(`  [ -z "$EVAL_ID" ] && { echo "FAIL: eval suite"; exit 1; }`);
-  lines.push(`  echo "  ✓  Eval suite: $EVAL_ID"`);
-  lines.push(`)`);
-  lines.push(``);
-
-  // Simpler eval step using already-structured data
-  lines.splice(-9, 9); // remove the complex eval block, replace with simpler version
-  lines.push(`echo "STEP 7/9  Creating evaluation suite…"`);
-  const evalBodySimple = {
+  // Embed static parts; inject AGENT_ID and DATASET_ID via node at runtime
+  const evalStatic = {
     name: evalSuite.name,
     type: evalSuite.type || "regression",
     industry: evalSuite.industry || "legal_services",
@@ -348,25 +310,25 @@ async function main() {
     coverageTags: evalSuite.coverageTags || [],
     environmentThresholds: evalSuite.environmentThresholds || {},
     ontologyTags: evalSuite.ontologyTags || [],
-    schedule: evalSuite.schedule || "weekly"
+    schedule: evalSuite.schedule || "weekly",
   };
-  lines.push(`  EVAL_PAYLOAD='${j(evalBodySimple)}'`);
-  lines.push(`  EVAL_PAYLOAD_FULL=$(echo "$EVAL_PAYLOAD" | python3 -c "`);
-  lines.push(`import sys, json`);
-  lines.push(`d = json.load(sys.stdin)`);
-  lines.push(`d['agentId'] = '$AGENT_ID'`);
-  lines.push(`d['goldenDatasetId'] = '$DATASET_ID'`);
-  lines.push(`print(json.dumps(d))`);
-  lines.push(`")`);
-  lines.push(`  EVAL_ID=$(curl -sf -X POST "\${PROD_BASE}/api/evals" \\`);
-  lines.push(`    -H "Content-Type: application/json" \\`);
-  lines.push(`    -d "$EVAL_PAYLOAD_FULL" \\`);
-  lines.push(`    | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))")`);
+  const evalBuildJs = `
+const d = ${JSON.stringify(evalStatic)};
+d.agentId = process.env.AGENT_ID;
+d.goldenDatasetId = process.env.DATASET_ID;
+process.stdout.write(JSON.stringify(d));
+`.trim().replace(/\n/g, " ");
+
+  lines.push(`  # Eval Suite: ${evalSuite.name}`);
+  lines.push(`  EVAL_ID=$(AGENT_ID="$AGENT_ID" DATASET_ID="$DATASET_ID" node -e "${evalBuildJs.replace(/"/g, '\\"')}" | \\`);
+  lines.push(`    curl -sf -X POST "\${PROD_BASE}/api/evals" \\`);
+  lines.push(`      -H "Content-Type: application/json" \\`);
+  lines.push(`      --data-binary @- | ${EXTRACT_ID})`);
   lines.push(`  [ -z "$EVAL_ID" ] && { echo "FAIL: eval suite"; exit 1; }`);
   lines.push(`  echo "  ✓  Eval suite: $EVAL_ID"`);
   lines.push(``);
 
-  // ── STEP 8: OUTCOME ───────────────────────────────────────────────────────
+  // ── STEP 8: OUTCOME CONTRACT ───────────────────────────────────────────────
   lines.push(`echo "STEP 8/9  Creating outcome contract with ${kpis.length} KPIs…"`);
   const outcomeBody = {
     name: outcome.name,
@@ -384,8 +346,8 @@ async function main() {
     approvalGates: outcome.approvalGates || [],
     riskThreshold: outcome.riskThreshold,
     maxDriftPercent: outcome.maxDriftPercent,
-    autoPauseTrigger: outcome.autoPauseTrigger || true,
-    roiEstimate: outcome.roiEstimate || {}
+    autoPauseTrigger: outcome.autoPauseTrigger ?? true,
+    roiEstimate: outcome.roiEstimate || {},
   };
   const kpiArray = kpis.map(k => ({
     name: k.name,
@@ -395,90 +357,108 @@ async function main() {
     unit: k.unit,
     frequency: k.frequency,
     measurementMethod: k.measurementMethod,
-    thresholds: k.thresholds || {}
+    thresholds: k.thresholds || {},
   }));
 
-  lines.push(`  OUTCOME_PAYLOAD='${j({ outcome: outcomeBody, kpis: kpiArray })}'`);
-  lines.push(`  OUTCOME_PAYLOAD_FULL=$(echo "$OUTCOME_PAYLOAD" | python3 -c "`);
-  lines.push(`import sys, json`);
-  lines.push(`d = json.load(sys.stdin)`);
-  lines.push(`d['outcome']['attributionRules']['agentId'] = '$AGENT_ID'`);
-  lines.push(`print(json.dumps(d))`);
-  lines.push(`")`);
-  lines.push(`  OUTCOME_ID=$(curl -sf -X POST "\${PROD_BASE}/api/outcomes/with-kpis" \\`);
-  lines.push(`    -H "Content-Type: application/json" \\`);
-  lines.push(`    -d "$OUTCOME_PAYLOAD_FULL" \\`);
-  lines.push(`    | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('outcome',{}).get('id','') or d.get('id',''))")`);
+  const outcomeBuildJs = `
+const d = ${JSON.stringify({ outcome: outcomeBody, kpis: kpiArray })};
+d.outcome.attributionRules = d.outcome.attributionRules || {};
+d.outcome.attributionRules.agentId = process.env.AGENT_ID;
+process.stdout.write(JSON.stringify(d));
+`.trim().replace(/\n/g, " ");
+
+  lines.push(`  # Outcome contract: ${outcome.name}`);
+  lines.push(`  OUTCOME_ID=$(AGENT_ID="$AGENT_ID" node -e "${outcomeBuildJs.replace(/"/g, '\\"')}" | \\`);
+  lines.push(`    curl -sf -X POST "\${PROD_BASE}/api/outcomes/with-kpis" \\`);
+  lines.push(`      -H "Content-Type: application/json" \\`);
+  lines.push(`      --data-binary @- | ${EXTRACT_OUTCOME_ID})`);
   lines.push(`  [ -z "$OUTCOME_ID" ] && { echo "FAIL: outcome contract"; exit 1; }`);
   lines.push(`  echo "  ✓  Outcome contract: $OUTCOME_ID"`);
   lines.push(``);
 
-  // ── STEP 9: LINK ALL ─────────────────────────────────────────────────────
+  // ── STEP 9: LINK EVERYTHING ────────────────────────────────────────────────
   lines.push(`echo "STEP 9/9  Linking all intelligence to agent…"`);
   lines.push(``);
 
   // Link KB
   lines.push(`  # Link Knowledge Base`);
+  lines.push(`  KB_LINK_PAYLOAD='${sq({ priority: 1, retrievalConfig: { topK: 8, scoreThreshold: 0.72, rerankEnabled: true, jurisdictionFiltering: true, citationMode: "full" } })}'`);
+  lines.push(`  FULL_KB_PAYLOAD=$(node -e "const d=JSON.parse('${sq({ priority: 1, retrievalConfig: { topK: 8, scoreThreshold: 0.72, rerankEnabled: true, jurisdictionFiltering: true, citationMode: "full" } }).replace(/'/g, "'\\''")}'); d.knowledgeBaseId=process.env.KB_ID; process.stdout.write(JSON.stringify(d));" KB_ID="$KB_ID")`);
+  // Simpler approach - just inline:
+  lines.splice(-1, 1); // remove the complex FULL_KB_PAYLOAD line
   lines.push(`  curl -sf -X POST "\${PROD_BASE}/api/agents/\${AGENT_ID}/knowledge-bases" \\`);
   lines.push(`    -H "Content-Type: application/json" \\`);
-  lines.push(`    -d '{"knowledgeBaseId":"'"$KB_ID"'","priority":1,"retrievalConfig":{"topK":8,"scoreThreshold":0.72,"rerankEnabled":true,"jurisdictionFiltering":true,"citationMode":"full"}}' > /dev/null || { echo "FAIL: KB link"; exit 1; }`);
+  lines.push(`    -d "{\\"knowledgeBaseId\\":\\"$KB_ID\\",\\"priority\\":1,\\"retrievalConfig\\":{\\"topK\\":8,\\"scoreThreshold\\":0.72,\\"rerankEnabled\\":true,\\"jurisdictionFiltering\\":true,\\"citationMode\\":\\"full\\"}}" \\`);
+  lines.push(`    > /dev/null || { echo "FAIL: KB link"; exit 1; }`);
   lines.push(`  echo "  ✓  Knowledge base linked"`);
   lines.push(``);
 
-  // Link skills, policies, outcome, eval to agent via PATCH
-  lines.push(`  # Link skills, policies, outcome, eval suite`);
-  lines.push(`  LINK_PAYLOAD=$(python3 -c "`);
-  lines.push(`import json`);
-  lines.push(`skills = ['$SKILL_1_ID','$SKILL_2_ID','$SKILL_3_ID','$SKILL_4_ID','$SKILL_5_ID','$SKILL_6_ID']`);
-  lines.push(`policies = ['$POLICY_1_ID','$POLICY_2_ID','$POLICY_3_ID','$POLICY_4_ID','$POLICY_5_ID','$POLICY_6_ID']`);
-  lines.push(`print(json.dumps({'preloadedSkills': skills, 'policyBindings': policies, 'outcomeId': '$OUTCOME_ID', 'evalBindings': ['$EVAL_ID']}))`);
-  lines.push(`")`);
-  lines.push(`  curl -sf -X PATCH "\${PROD_BASE}/api/agents/\${AGENT_ID}" \\`);
-  lines.push(`    -H "Content-Type: application/json" \\`);
-  lines.push(`    -d "$LINK_PAYLOAD" > /dev/null || { echo "FAIL: agent link"; exit 1; }`);
+  // Link skills, policies, outcome, eval to agent via PATCH — build with node
+  const linkBuildJs = `
+const payload = {
+  preloadedSkills: [process.env.S1,process.env.S2,process.env.S3,process.env.S4,process.env.S5,process.env.S6],
+  policyBindings: [process.env.P1,process.env.P2,process.env.P3,process.env.P4,process.env.P5,process.env.P6],
+  outcomeId: process.env.OUTCOME_ID,
+  evalBindings: [process.env.EVAL_ID]
+};
+process.stdout.write(JSON.stringify(payload));
+`.trim().replace(/\n/g, " ");
+
+  lines.push(`  # Link skills, policies, outcome, eval to agent`);
+  lines.push(`  S1="$SKILL_1_ID" S2="$SKILL_2_ID" S3="$SKILL_3_ID" S4="$SKILL_4_ID" S5="$SKILL_5_ID" S6="$SKILL_6_ID" \\`);
+  lines.push(`  P1="$POLICY_1_ID" P2="$POLICY_2_ID" P3="$POLICY_3_ID" P4="$POLICY_4_ID" P5="$POLICY_5_ID" P6="$POLICY_6_ID" \\`);
+  lines.push(`  OUTCOME_ID="$OUTCOME_ID" EVAL_ID="$EVAL_ID" \\`);
+  lines.push(`  node -e "${linkBuildJs.replace(/"/g, '\\"')}" | \\`);
+  lines.push(`    curl -sf -X PATCH "\${PROD_BASE}/api/agents/\${AGENT_ID}" \\`);
+  lines.push(`      -H "Content-Type: application/json" \\`);
+  lines.push(`      --data-binary @- > /dev/null || { echo "FAIL: agent link"; exit 1; }`);
   lines.push(`  echo "  ✓  6 skills linked (preloadedSkills)"`);
   lines.push(`  echo "  ✓  6 policies linked (policyBindings)"`);
   lines.push(`  echo "  ✓  Outcome contract linked"`);
   lines.push(`  echo "  ✓  Eval suite linked"`);
   lines.push(``);
 
-  // ── LINK RUNBOOKS TO AGENT ────────────────────────────────────────────────
+  // Scope runbooks to agent
   lines.push(`  # Scope runbooks to agent`);
-  for (let i = 1; i <= runbookVars.length; i++) {
+  for (let i = 1; i <= runbooks.length; i++) {
     lines.push(`  curl -sf -X PATCH "\${PROD_BASE}/api/runbooks/\${RUNBOOK_${i}_ID}" \\`);
     lines.push(`    -H "Content-Type: application/json" \\`);
-    lines.push(`    -d '{"agentId":"'"$AGENT_ID"'"}' > /dev/null || true`);
+    lines.push(`    -d "{\\"agentId\\":\\"$AGENT_ID\\"}" > /dev/null || true`);
   }
   lines.push(`  echo "  ✓  6 runbooks scoped to agent"`);
   lines.push(``);
 
-  // ── FINAL SUMMARY ─────────────────────────────────────────────────────────
+  // ── FINAL SUMMARY ───────────────────────────────────────────────────────────
   lines.push(`echo ""`);
-  lines.push(`echo "══════════════════════════════════════════════════════════════"`);
+  lines.push(`echo "════════════════════════════════════════════════════════════════"`);
   lines.push(`echo "  ✅  LIT-AGT-001 MIGRATION TO PRODUCTION — COMPLETE"`);
-  lines.push(`echo "══════════════════════════════════════════════════════════════"`);
+  lines.push(`echo "════════════════════════════════════════════════════════════════"`);
   lines.push(`echo ""`);
   lines.push(`echo "  Production IDs:"`);
-  lines.push(`echo "  Agent ID:          $AGENT_ID"`);
-  lines.push(`echo "  Knowledge Base:    $KB_ID"`);
-  lines.push(`echo "  Skills (6):        $SKILL_1_ID $SKILL_2_ID $SKILL_3_ID $SKILL_4_ID $SKILL_5_ID $SKILL_6_ID"`);
-  lines.push(`echo "  Policies (6):      $POLICY_1_ID $POLICY_2_ID $POLICY_3_ID $POLICY_4_ID $POLICY_5_ID $POLICY_6_ID"`);
-  lines.push(`echo "  Runbooks (6):      $RUNBOOK_1_ID $RUNBOOK_2_ID $RUNBOOK_3_ID $RUNBOOK_4_ID $RUNBOOK_5_ID $RUNBOOK_6_ID"`);
-  lines.push(`echo "  Golden Dataset:    $DATASET_ID"`);
-  lines.push(`echo "  Eval Suite:        $EVAL_ID"`);
-  lines.push(`echo "  Outcome Contract:  $OUTCOME_ID"`);
+  lines.push(`echo "  Agent:           $AGENT_ID"`);
+  lines.push(`echo "  Knowledge Base:  $KB_ID"`);
+  lines.push(`echo "  Skills:          $SKILL_1_ID  $SKILL_2_ID  $SKILL_3_ID"`);
+  lines.push(`echo "                   $SKILL_4_ID  $SKILL_5_ID  $SKILL_6_ID"`);
+  lines.push(`echo "  Policies:        $POLICY_1_ID  $POLICY_2_ID  $POLICY_3_ID"`);
+  lines.push(`echo "                   $POLICY_4_ID  $POLICY_5_ID  $POLICY_6_ID"`);
+  lines.push(`echo "  Runbooks:        $RUNBOOK_1_ID  $RUNBOOK_2_ID  $RUNBOOK_3_ID"`);
+  lines.push(`echo "                   $RUNBOOK_4_ID  $RUNBOOK_5_ID  $RUNBOOK_6_ID"`);
+  lines.push(`echo "  Golden Dataset:  $DATASET_ID"`);
+  lines.push(`echo "  Eval Suite:      $EVAL_ID"`);
+  lines.push(`echo "  Outcome:         $OUTCOME_ID"`);
   lines.push(`echo ""`);
 
-  // Write to file
+  // Write the file
   const fs = await import("fs");
   const script = lines.join("\n") + "\n";
   fs.writeFileSync("scripts/migrate-lit-agt-001-to-prod.sh", script, { mode: 0o755 });
-  console.log("\n✅  Migration script written to: scripts/migrate-lit-agt-001-to-prod.sh");
-  console.log(`   Lines: ${lines.length}`);
-  console.log(`   Size:  ${Math.round(script.length / 1024)}KB`);
-  console.log("\n   To deploy:");
-  console.log('   export PROD_BASE="https://your-production-domain.com"');
-  console.log("   bash scripts/migrate-lit-agt-001-to-prod.sh\n");
+
+  console.log(`\n✅  Migration script written: scripts/migrate-lit-agt-001-to-prod.sh`);
+  console.log(`   Size: ${Math.round(script.length / 1024)}KB | Lines: ${lines.length}`);
+  console.log(`   Uses: curl + node (no python3)`);
+  console.log(`\n   Run:`);
+  console.log(`   export PROD_BASE="https://agent-lifecycle-management-platform.replit.app"`);
+  console.log(`   bash scripts/migrate-lit-agt-001-to-prod.sh\n`);
 }
 
 main().catch(e => { console.error("❌", e.message); process.exit(1); });
