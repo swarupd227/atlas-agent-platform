@@ -32,6 +32,9 @@ async function api(method, path, body) {
   const text = await res.text();
   let json;
   try { json = JSON.parse(text); } catch { json = text; }
+  if (typeof json === "string" && json.startsWith("<!DOCTYPE")) {
+    throw new Error(`${method} ${path} → route not found on server (HTML response) — route may not be deployed yet`);
+  }
   if (!res.ok) throw new Error(`${method} ${path} → ${res.status}: ${JSON.stringify(json)}`);
   return json;
 }
@@ -178,7 +181,7 @@ async function run() {
   log("FIX 2: AGT-001 policies — setting scopeId…");
   for (const polId of AGT001.policyIds) {
     try {
-      await api("PATCH", `/api/governance/policies/${polId}`, {
+      await api("PATCH", `/api/policies/${polId}`, {
         scopeId: AGT001.agentId,
         scopeType: "agent",
       });
@@ -194,7 +197,7 @@ async function run() {
   log("FIX 3: AGT-002 policies — verifying/setting scopeId…");
   for (const polId of AGT002.policyIds) {
     try {
-      await api("PATCH", `/api/governance/policies/${polId}`, {
+      await api("PATCH", `/api/policies/${polId}`, {
         scopeId: AGT002.agentId,
         scopeType: "agent",
       });
