@@ -7,6 +7,7 @@ import {
   Settings2,
   Shield,
   Monitor,
+  Scale,
   type LucideIcon,
 } from "lucide-react";
 
@@ -17,6 +18,7 @@ export type IndustryId =
   | "manufacturing"
   | "retail"
   | "technology_saas"
+  | "legal_services"
   | "custom";
 
 export type DataClassification = "public" | "internal" | "confidential" | "restricted";
@@ -256,6 +258,38 @@ export const INDUSTRIES: IndustryProfile[] = [
       { label: "Tenant Isolation", description: "Zero cross-tenant data exposure enforced across all operations" },
       { label: "Audit Trail", description: "Every agent action logged with full explainability" },
       { label: "Confidence Thresholds", description: "No auto-execution below 0.70 confidence score" },
+    ],
+  },
+  {
+    id: "legal_services",
+    label: "Legal Services",
+    shortLabel: "Legal",
+    description: "Law firms, corporate legal departments, and compliance teams with matter management, contract lifecycle automation, and eDiscovery workflows",
+    icon: Scale,
+    color: "hsl(220 35% 40%)",
+    ontology: "LKIF (Legal Knowledge Interchange Format) + SALI LMSS",
+    agentSkills: 94,
+    regulatoryFrameworks: ["ABA Model Rules", "GDPR", "CCPA/CPRA", "FCPA", "SOX", "FRCP eDiscovery", "EU AI Act", "HIPAA BAA (for health law)"],
+    goldenTemplates: 16,
+    subVerticals: ["Litigation & eDiscovery", "Corporate M&A", "Contract Management", "Intellectual Property", "Employment & Labor", "Compliance & Regulatory"],
+    jurisdictions: ["US", "EU", "UK", "APAC", "Global"],
+    integrationSystems: [
+      { id: "clio", name: "Clio", category: "Practice Management", description: "Cloud-based legal practice management software" },
+      { id: "imanage", name: "iManage", category: "Document Management", description: "Document and email management platform for legal teams" },
+      { id: "netdocuments", name: "NetDocuments", category: "Document Management", description: "Cloud document management for law firms" },
+      { id: "relativity", name: "Relativity", category: "eDiscovery", description: "Legal document review and eDiscovery platform" },
+      { id: "lexisnexis_law", name: "LexisNexis", category: "Legal Research", description: "Legal research, analytics, and workflow solutions" },
+      { id: "westlaw", name: "Westlaw", category: "Legal Research", description: "Legal research platform with case law and statutes" },
+      { id: "litera", name: "Litera", category: "Contract Lifecycle", description: "Document drafting, comparison, and contract lifecycle management" },
+      { id: "onit", name: "Onit", category: "Contract Lifecycle", description: "Enterprise legal management and contract automation" },
+    ],
+    departments: ["Litigation", "Corporate & M&A", "Contracts & Procurement", "Intellectual Property", "Employment & Labor", "Compliance & Regulatory", "Finance & Billing", "Operations", "IT & Knowledge Management", "Business Development"],
+    defaultGovernancePolicies: [
+      { label: "Attorney-Client Privilege", description: "All AI outputs and agent actions screened to protect privileged communications" },
+      { label: "Confidentiality Enforcement", description: "Matter data access restricted by role, client, and engagement; no cross-matter data leakage" },
+      { label: "Audit Trail", description: "Every agent action logged with full explainability for bar compliance and client reporting" },
+      { label: "PII Redaction", description: "Automatic redaction of client PII and sensitive matter data in all external outputs" },
+      { label: "Confidence Thresholds", description: "No auto-execution below 0.85 confidence score for legal research and drafting decisions" },
     ],
   },
   {

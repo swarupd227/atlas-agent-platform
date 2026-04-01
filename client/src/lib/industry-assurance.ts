@@ -1,4 +1,4 @@
-export type IndustryId = "healthcare" | "financial_services" | "manufacturing" | "insurance" | "retail" | "technology_saas";
+export type IndustryId = "healthcare" | "financial_services" | "manufacturing" | "insurance" | "retail" | "technology_saas" | "legal_services";
 
 export interface IndustryScorer {
   id: string;
@@ -58,6 +58,7 @@ export const industryLabels: Record<IndustryId, string> = {
   insurance: "Insurance",
   retail: "Retail",
   technology_saas: "Technology / SaaS",
+  legal_services: "Legal Services",
 };
 
 export const industryScorers: IndustryScorer[] = [

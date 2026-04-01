@@ -11659,6 +11659,7 @@ Respond with JSON:
         insurance: "Insurance (state regulated, actuarial requirements, claims processing, underwriting)",
         retail: "Retail (consumer protection, pricing regulations, inventory management, e-commerce)",
         technology_saas: "Technology / SaaS (SOC 2 certified, GDPR/CCPA compliant, SRE practices, API governance, cloud infrastructure)",
+        legal_services: "Legal Services (ABA Model Rules, attorney-client privilege, eDiscovery FRCP, matter confidentiality, GDPR/CCPA)",
       };
 
       const prompt = `Generate a runbook for the ${industryContext[industry] || industry} industry.
@@ -11703,6 +11704,7 @@ Include 4-7 steps with at least one approval gate for high-risk actions. Make it
         insurance: "Insurance (state regulated, actuarial requirements, claims processing, underwriting)",
         retail: "Retail (consumer protection, pricing regulations, inventory management, e-commerce)",
         technology_saas: "Technology / SaaS (SOC 2 certified, GDPR/CCPA compliant, SRE practices, API governance, cloud infrastructure)",
+        legal_services: "Legal Services (ABA Model Rules, attorney-client privilege, eDiscovery FRCP, matter confidentiality, GDPR/CCPA)",
       };
 
       const modeInstructions: Record<string, string> = {

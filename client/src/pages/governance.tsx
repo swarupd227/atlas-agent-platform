@@ -6275,6 +6275,7 @@ function CreatePolicyPackDialog({
     { value: "insurance", label: "Insurance" },
     { value: "retail", label: "Retail" },
     { value: "technology_saas", label: "Technology / SaaS" },
+    { value: "legal_services", label: "Legal Services" },
   ];
 
   return (
