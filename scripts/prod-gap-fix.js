@@ -209,8 +209,34 @@ async function run() {
     }
   }
 
-  // ── 4. AGT-002 agent: set systemPrompt ────────────────────────────────
-  log("FIX 4: AGT-002 agent — setting systemPrompt…");
+  // ── 4. Both agents: fix preloadedSkills format → [{skillId, loadOrder}] ──
+  log("FIX 4a: Both agents — fixing preloadedSkills format to {skillId, loadOrder} objects…");
+  const toBindings = (ids) => ids.map((skillId, i) => ({ skillId, loadOrder: i }));
+
+  try {
+    await api("PATCH", `/api/agents/${AGT001.agentId}`, {
+      preloadedSkills: toBindings(AGT001.skillIds),
+    });
+    ok(`AGT-001 preloadedSkills → ${AGT001.skillIds.length} bindings set`);
+    totalFixes++;
+  } catch (e) {
+    err(`AGT-001 preloadedSkills: ${e.message}`);
+    totalErrors++;
+  }
+
+  try {
+    await api("PATCH", `/api/agents/${AGT002.agentId}`, {
+      preloadedSkills: toBindings(AGT002.skillIds),
+    });
+    ok(`AGT-002 preloadedSkills → ${AGT002.skillIds.length} bindings set`);
+    totalFixes++;
+  } catch (e) {
+    err(`AGT-002 preloadedSkills: ${e.message}`);
+    totalErrors++;
+  }
+
+  // ── 5. AGT-002 agent: set systemPrompt ────────────────────────────────
+  log("FIX 5 (was 4): AGT-002 agent — setting systemPrompt…");
   try {
     await api("PATCH", `/api/agents/${AGT002.agentId}`, {
       systemPrompt: AGT002_SYSTEM_PROMPT,
