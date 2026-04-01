@@ -1,0 +1,82 @@
+Leave & Accommodation Management Agent
+LIT-AGT-010  |  Category: Leave & Accommodation
+11.1 Description
+Navigates the complex intersection of federal, state, and local leave laws and disability accommodation obligations. Maps to Littler's Leave and Accommodation practice area. The agent determines leave eligibility, manages the interactive accommodation process, tracks concurrent leave running, and ensures compliance with FMLA, ADA, state paid family leave, and local sick leave ordinances - one of the most complex compliance areas for multi-state employers.
+11.2 Workflow Steps
+100.	1. Receive leave or accommodation request (employee notice, certification, medical documentation)
+101.	2. Determine all applicable leave laws based on employee location, employer size, and reason
+102.	3. Calculate eligibility under each applicable law (FMLA, state FMLA, paid leave, sick leave)
+103.	4. Identify concurrent leave running and stacking implications
+104.	5. For accommodations: initiate interactive process, identify potential accommodations, assess undue hardship
+105.	6. Track leave usage against entitlements with real-time balance calculations
+106.	7. Manage medical certification requirements and recertification timelines
+107.	8. Generate required notices: FMLA designation, state-specific notices, ADA correspondence
+108.	9. Assess fitness-for-duty certification requirements at return from leave
+109.	10. Identify leave abuse indicators while respecting protected leave rights
+110.	11. Track leave trends and accommodation patterns for proactive compliance
+
+11.3 Common Ontology
+The following entities and attributes form the shared data model referenced by this agent:
+Entity	Key Attributes
+Leave Request	type (FMLA, state FMLA, ADA, sick, PFL), start date, duration, intermittent, status
+Leave Entitlement	law, eligibility criteria, duration, paid/unpaid, job protection, concurrent running
+Accommodation	request type, disability, functional limitation, proposed accommodation, status
+Interactive Process	meeting dates, participants, accommodations explored, undue hardship analysis
+Medical Certification	provider, condition, incapacity dates, recertification schedule
+Leave Balance	entitlement type, total available, used, remaining, expiration
+
+11.4 Claude Agent Skills
+The following skills should be developed and registered as context for this agent:
+Skill Name	Description
+Multi-Law Leave Eligibility Skill	Determines eligibility under all applicable federal, state, and local leave laws simultaneously
+Concurrent Leave Tracker Skill	Manages concurrent running of multiple leave entitlements with proper stacking
+Interactive Process Skill	Guides the ADA interactive accommodation process with documentation templates
+Leave Notice Generator Skill	Produces required notices under FMLA, state laws, and local ordinances
+Certification Management Skill	Tracks medical certifications, recertification schedules, and second opinions
+Leave Analytics Skill	Identifies patterns, abuse indicators, and compliance trends across workforce
+
+11.5 Eval Dataset
+Recommended evaluation data and benchmarks for validating agent accuracy and performance:
+•	Leave eligibility scenarios across 50+ jurisdictions with known correct determinations
+•	Concurrent leave calculation cases: correct stacking and running under multiple laws
+•	Accommodation interactive process: appropriate accommodation identification vs. expert assessment
+•	Notice requirements: correct identification of all required notices by jurisdiction
+•	Leave balance calculations: correct tracking of intermittent FMLA and paid leave usage
+•	Compliance edge cases: overlapping leaves, military leave, pregnancy accommodation, domestic violence leave
+
+11.6 Production Runbooks
+Operational procedures for handling common issues and failure scenarios:
+Scenario	Procedure
+New State Leave Law Effective	Impact assessment, system configuration, manager training, notice updates
+Leave Fraud Investigation	Documentation requirements, surveillance limitations, corrective action authority
+Mass Leave Event (pandemic, natural disaster)	Emergency leave protocol, tracking, return planning
+ADA Litigation Hold	Accommodation documentation preservation, interactive process audit
+Third-Party Leave Administrator Integration	Data sync, eligibility discrepancy resolution
+DOL FMLA Complaint Investigation	File audit, response preparation, attorney engagement
+
+11.7 Regulatory Compliance & Policies
+Applicable regulations and compliance requirements:
+•	FMLA (Family and Medical Leave Act): 12/26 weeks unpaid leave, eligibility, certification, reinstatement
+•	ADA (Americans with Disabilities Act): Reasonable accommodation, interactive process, undue hardship
+•	Pregnancy Workers Fairness Act (PWFA): Pregnancy-related accommodations
+•	State Paid Family Leave: California PFL, New York PFL, Washington PFML, and 10+ other state programs
+•	State/Local Sick Leave: Mandatory paid sick leave in 15+ states and numerous municipalities
+•	USERRA: Military leave and reemployment rights
+
+11.8 Knowledgebase Reference
+Documents and data sources this agent needs access to:
+•	FMLA regulations, DOL opinion letters, and Wage and Hour Division guidance
+•	ADA regulations, EEOC guidance on reasonable accommodation, and undue hardship analysis
+•	State-by-state leave law matrix: eligibility, duration, benefits, notice requirements
+•	Local sick leave ordinance database with compliance specifications
+•	Accommodation ideas library by disability type and job function
+•	Leave notice templates by jurisdiction and leave type
+
+11.9 Knowledge Graph
+Entity-relationship mappings showing how data entities connect within this agent domain:
+Leave Request -[UNDER]-> Leave Law(s) -[IN]-> Jurisdiction
+Employee -[ELIGIBLE_FOR]-> Leave Entitlement -[BASED_ON]-> Tenure/Hours/Employer Size
+Leave -[RUNS_CONCURRENTLY_WITH]-> Other Leave -[TRACKED_BY]-> Balance System
+Accommodation Request -[TRIGGERS]-> Interactive Process -[RESULTS_IN]-> Accommodation/Denial
+Medical Certification -[SUPPORTS]-> Leave Request -[RECERTIFIED_ON]-> Schedule
+Leave Pattern -[INDICATES]-> Compliance Risk / Abuse Indicator / Workforce Trend
