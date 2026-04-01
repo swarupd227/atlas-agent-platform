@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useIndustry } from "@/components/industry-provider";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import type { Skill } from "@shared/schema";
@@ -44,7 +45,11 @@ import {
   Pencil,
   Unlink,
   Trash2,
+  Scale,
+  Cpu,
+  Info,
 } from "lucide-react";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 const INDUSTRY_CONFIG: Record<string, { label: string; icon: typeof Building2; color: string }> = {
   financial_services: { label: "Financial Services", icon: Briefcase, color: "text-blue-600 dark:text-blue-400" },
@@ -52,7 +57,11 @@ const INDUSTRY_CONFIG: Record<string, { label: string; icon: typeof Building2; c
   manufacturing: { label: "Manufacturing", icon: Factory, color: "text-amber-600 dark:text-amber-400" },
   insurance: { label: "Insurance", icon: Shield, color: "text-indigo-600 dark:text-indigo-400" },
   retail: { label: "Retail", icon: ShoppingCart, color: "text-emerald-600 dark:text-emerald-400" },
-  cross_industry: { label: "Cross-Industry", icon: Building2, color: "text-gray-600 dark:text-gray-400" },
+  legal_services: { label: "Legal Services", icon: Scale, color: "text-violet-600 dark:text-violet-400" },
+  technology_saas: { label: "Technology / SaaS", icon: Cpu, color: "text-cyan-600 dark:text-cyan-400" },
+  supply_chain: { label: "Supply Chain", icon: GitBranch, color: "text-orange-600 dark:text-orange-400" },
+  enterprise: { label: "Enterprise", icon: Building2, color: "text-slate-600 dark:text-slate-400" },
+  cross_industry: { label: "Cross-Industry", icon: Layers, color: "text-gray-600 dark:text-gray-400" },
 };
 
 const TRUST_TIER_STYLES: Record<string, string> = {
@@ -81,9 +90,18 @@ function ScoreBar({ score }: { score: number }) {
 
 export default function SkillCatalog() {
   const { toast } = useToast();
+  const { industry: currentIndustry } = useIndustry();
   const [search, setSearch] = useState("");
-  const [industryFilter, setIndustryFilter] = useState("all");
+  const [industryFilter, setIndustryFilter] = useState(() =>
+    currentIndustry?.id ?? "all"
+  );
   const [domainFilter, setDomainFilter] = useState("all");
+
+  useEffect(() => {
+    if (currentIndustry?.id) {
+      setIndustryFilter(currentIndustry.id);
+    }
+  }, [currentIndustry?.id]);
   const [trustFilter, setTrustFilter] = useState("all");
   const [compatFilter, setCompatFilter] = useState("all");
   const [brokenDepFilter, setBrokenDepFilter] = useState(false);
@@ -96,7 +114,7 @@ export default function SkillCatalog() {
   const [aiEnhancingSkill, setAiEnhancingSkill] = useState<string | null>(null);
   const [sheetEnrichment, setSheetEnrichment] = useState<any>(null);
   const [aiGenerating, setAiGenerating] = useState(false);
-  const [generateIndustry, setGenerateIndustry] = useState("financial_services");
+  const [generateIndustry, setGenerateIndustry] = useState(() => currentIndustry?.id ?? "financial_services");
   const [generateDomain, setGenerateDomain] = useState("");
   const [generateName, setGenerateName] = useState("");
   const [generateDescription, setGenerateDescription] = useState("");
@@ -297,14 +315,15 @@ export default function SkillCatalog() {
 
   const clearFilters = () => {
     setSearch("");
-    setIndustryFilter("all");
+    setIndustryFilter(currentIndustry?.id ?? "all");
     setDomainFilter("all");
     setTrustFilter("all");
     setCompatFilter("all");
     setBrokenDepFilter(false);
   };
 
-  const hasFilters = search || industryFilter !== "all" || domainFilter !== "all" || trustFilter !== "all" || compatFilter !== "all" || brokenDepFilter;
+  const defaultIndustry = currentIndustry?.id ?? "all";
+  const hasFilters = search || industryFilter !== defaultIndustry || domainFilter !== "all" || trustFilter !== "all" || compatFilter !== "all" || brokenDepFilter;
 
   if (isLoading) {
     return (
@@ -422,21 +441,31 @@ export default function SkillCatalog() {
                   <SelectItem value="remote">Remote</SelectItem>
                 </SelectContent>
               </Select>
-              <Button
-                variant={brokenDepFilter ? "default" : "outline"}
-                size="sm"
-                onClick={() => setBrokenDepFilter(!brokenDepFilter)}
-                className="toggle-elevate"
-                data-testid="button-broken-dep-filter"
-              >
-                <Unlink className="w-3.5 h-3.5 mr-1" />
-                Broken Deps
-                {brokenDepCount > 0 && (
-                  <Badge variant="secondary" className="ml-1 text-[10px] px-1.5 py-0 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 no-default-hover-elevate no-default-active-elevate">
-                    {brokenDepCount}
-                  </Badge>
-                )}
-              </Button>
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={brokenDepFilter ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setBrokenDepFilter(!brokenDepFilter)}
+                      className="toggle-elevate"
+                      data-testid="button-broken-dep-filter"
+                    >
+                      <Unlink className="w-3.5 h-3.5 mr-1" />
+                      Broken Deps
+                      {brokenDepCount > 0 && (
+                        <Badge variant="secondary" className="ml-1 text-[10px] px-1.5 py-0 bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 no-default-hover-elevate no-default-active-elevate">
+                          {brokenDepCount}
+                        </Badge>
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-xs text-xs">
+                    <p className="font-semibold mb-1">{brokenDepCount} skill{brokenDepCount !== 1 ? "s" : ""} with broken dependencies</p>
+                    <p>These skills reference MCP tool connections or servers that are not currently registered in the platform. Connect the required MCP servers under Settings → Integrations to resolve.</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
               <Select value={sortBy} onValueChange={(v) => setSortBy(v as typeof sortBy)}>
                 <SelectTrigger className="w-[150px]" data-testid="select-sort">
                   <ArrowUpDown className="w-3.5 h-3.5 mr-1" />
