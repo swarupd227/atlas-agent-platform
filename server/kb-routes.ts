@@ -921,6 +921,22 @@ export function registerKnowledgeBaseRoutes(app: Express) {
     }
   });
 
+  app.patch("/api/knowledge-bases/:id/sources/:sourceId", async (req, res) => {
+    try {
+      const source = await storage.getKnowledgeSource(req.params.sourceId as string);
+      if (!source) return res.status(404).json({ message: "Source not found" });
+      const { name, status, metadata } = req.body;
+      const updates: Record<string, any> = {};
+      if (name !== undefined) updates.name = name;
+      if (status !== undefined) updates.status = status;
+      if (metadata !== undefined) updates.metadata = metadata;
+      const updated = await storage.updateKnowledgeSource(req.params.sourceId as string, updates);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+
   app.post("/api/knowledge-bases/:id/sources/:sourceId/reprocess", async (req, res) => {
     try {
       const source = await storage.getKnowledgeSource(req.params.sourceId as string);
