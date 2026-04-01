@@ -1,0 +1,82 @@
+Wage & Hour Compliance Audit Agent
+LIT-AGT-002  |  Category: Wage & Hour
+3.1 Description
+Conducts comprehensive wage and hour compliance audits across FLSA and state wage laws. Analyzes employee classifications (exempt vs. non-exempt), overtime calculations, meal and rest break compliance, minimum wage adherence, pay stub requirements, and predictive scheduling obligations. Maps to Littler's Wage & Hour practice area and Audit Quarterback (Audit QB) product, providing data-driven risk assessments that help employers proactively identify and remediate compliance issues before they become litigation.
+3.2 Workflow Steps
+12.	1. Ingest client payroll data, time records, job descriptions, and compensation structures
+13.	2. Map employee classifications against FLSA exemption tests (executive, administrative, professional, computer, outside sales)
+14.	3. Analyze state-specific exemption criteria for all applicable jurisdictions
+15.	4. Review overtime calculations against federal and state overtime rules (daily, weekly, 7th day, etc.)
+16.	5. Audit meal and rest break compliance (California, Oregon, Washington, and other state-specific rules)
+17.	6. Verify minimum wage compliance including tip credits, sub-minimum, and local ordinances
+18.	7. Check pay stub and record-keeping compliance by jurisdiction
+19.	8. Evaluate predictive/fair scheduling compliance for applicable jurisdictions and industries
+20.	9. Assess piece-rate, commission, and bonus inclusion in regular rate calculations
+21.	10. Generate risk-scored findings report with remediation recommendations and exposure estimates
+22.	11. Track remediation progress and schedule follow-up audits
+
+3.3 Common Ontology
+The following entities and attributes form the shared data model referenced by this agent:
+Entity	Key Attributes
+Employee	employee ID, job title, classification (exempt/non-exempt), duties, salary, location
+Exemption Test	test type (duties, salary basis, salary level), jurisdiction, threshold, result
+Payroll Record	pay period, hours worked, regular rate, overtime hours, deductions, net pay
+Violation	type, severity, affected employees count, back-pay exposure, penalty exposure
+Jurisdiction Rule	state/city, topic (overtime, meal break, minimum wage), rule details, effective date
+Audit Finding	finding ID, risk level (high/medium/low), description, remediation, exposure estimate
+
+3.4 Claude Agent Skills
+The following skills should be developed and registered as context for this agent:
+Skill Name	Description
+Classification Analysis Skill	Evaluates job duties against FLSA and state exemption tests with confidence scoring
+Overtime Calculation Engine Skill	Computes correct overtime under all applicable methods (weekly, daily, 7th day, ABC test)
+Meal & Break Compliance Skill	Analyzes time punch data for missed, short, or late meal/rest breaks
+Minimum Wage Tracker Skill	Real-time tracking of federal, state, and local minimum wage rates including scheduled increases
+Exposure Modeling Skill	Calculates potential back-pay, penalties, and liquidated damages by violation type
+Payroll Data Ingestion Skill	Parses and normalizes payroll exports from major HRIS/payroll systems (ADP, Workday, Paychex)
+
+3.5 Eval Dataset
+Recommended evaluation data and benchmarks for validating agent accuracy and performance:
+•	5,000+ employee classification scenarios with known correct exempt/non-exempt determinations
+•	Overtime calculation test cases across all state methodologies (CA daily OT, OR daily OT, standard weekly, etc.)
+•	Meal and rest break violation detection against manually reviewed time punch data
+•	Minimum wage compliance across 200+ jurisdictions with known rates and effective dates
+•	Exposure calculation accuracy: model outputs vs. actual settlement/judgment amounts
+•	Classification edge cases: hybrid roles, working managers, commissioned employees, gig workers
+
+3.6 Production Runbooks
+Operational procedures for handling common issues and failure scenarios:
+Scenario	Procedure
+Payroll Data Import Failure	Data format troubleshooting, manual mapping, partial analysis fallback
+DOL Investigation Response	Rapid audit procedure, document gathering checklist, attorney notification
+Mass Reclassification Alert	Impact assessment, cost modeling, implementation planning, communication templates
+New Minimum Wage Effective	Rate update procedure, affected employee identification, payroll system coordination
+Audit Finding Dispute	Escalation to Littler wage and hour attorney with supporting analysis
+Class Action Exposure Assessment	Rapid enterprise-wide analysis, sample selection methodology, damages modeling
+
+3.7 Regulatory Compliance & Policies
+Applicable regulations and compliance requirements:
+•	Fair Labor Standards Act (FLSA): Federal minimum wage, overtime, record-keeping, child labor
+•	State Wage & Hour Laws: California Labor Code, New York Labor Law, and 48 other state-specific regimes
+•	Local Ordinances: Municipal minimum wage, paid sick leave, fair scheduling (SF, Seattle, NYC, Chicago, etc.)
+•	Department of Labor (DOL) Investigations: Cooperation obligations, document production requirements
+•	PAGA (Private Attorneys General Act): California-specific representative action compliance
+•	State-Specific Pay Transparency: Colorado, California, New York, Washington pay range disclosure requirements
+
+3.8 Knowledgebase Reference
+Documents and data sources this agent needs access to:
+•	FLSA regulations and DOL opinion letters / fact sheets on all exemption categories
+•	State-by-state wage and hour requirements matrix (Littler GPS wage & hour surveys)
+•	Local ordinance database: municipal minimum wage, scheduling, and benefit mandates
+•	DOL Wage and Hour Division Field Operations Handbook
+•	Leading case law digest: key decisions on classification, overtime, and break compliance
+•	Industry-specific classification guides (healthcare, tech, retail, hospitality, transportation)
+
+3.9 Knowledge Graph
+Entity-relationship mappings showing how data entities connect within this agent domain:
+Employee -[CLASSIFIED_AS]-> Exempt/Non-Exempt -[TESTED_BY]-> Exemption Test
+Exemption Test -[DEFINED_BY]-> Jurisdiction Rule (federal + state)
+Employee -[PAID_UNDER]-> Payroll Record -[SUBJECT_TO]-> Overtime Rule
+Jurisdiction -[MANDATES]-> Minimum Wage / Break Rule / Scheduling Rule
+Audit Finding -[AFFECTS]-> Employee Group -[EXPOSURE]-> Dollar Amount
+Violation Pattern -[INDICATES]-> Systemic Issue -[REMEDIATED_BY]-> Policy Change

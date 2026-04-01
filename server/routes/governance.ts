@@ -926,12 +926,14 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     const policy = await storage.getPolicy(req.params.id as string, getOrgId(req));
     if (!policy) return res.status(404).json({ error: "Policy not found" });
 
-    const { policyJson, description, name, status } = req.body;
+    const { policyJson, description, name, status, scopeId, scopeType } = req.body;
     const updateData: Record<string, any> = {};
     if (policyJson !== undefined) updateData.policyJson = policyJson;
     if (description !== undefined) updateData.description = description;
     if (name !== undefined) updateData.name = name;
     if (status !== undefined) updateData.status = status;
+    if (scopeId !== undefined) updateData.scopeId = scopeId;
+    if (scopeType !== undefined) updateData.scopeType = scopeType;
 
     if (policyJson !== undefined) {
       const newVersion = (policy.version || 1) + 1;

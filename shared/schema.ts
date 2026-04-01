@@ -1869,6 +1869,7 @@ export const runbooks = pgTable("runbooks", {
   description: text("description"),
   industry: text("industry").notNull().default("general"),
   category: text("category").notNull().default("incident_response"),
+  agentId: varchar("agent_id"),
   triggerType: text("trigger_type").notNull().default("manual"),
   triggerConditions: jsonb("trigger_conditions").notNull().default(sql`'[]'::jsonb`),
   steps: jsonb("steps").notNull().default(sql`'[]'::jsonb`),
