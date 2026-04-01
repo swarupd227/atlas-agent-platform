@@ -1,0 +1,82 @@
+Workplace Investigation Agent
+LIT-AGT-003  |  Category: Investigations
+4.1 Description
+Supports the full lifecycle of workplace investigations into discrimination, harassment, retaliation, whistleblower complaints, and policy violations. Maps to Littler's Investigations and Discrimination & Harassment practice areas. The agent structures investigation plans, manages witness interview preparation, tracks evidence collection, analyzes findings against legal standards, and drafts investigation reports. It ensures investigations are thorough, timely, well-documented, and legally defensible.
+4.2 Workflow Steps
+23.	1. Receive complaint (formal charge, hotline report, manager escalation, litigation hold)
+24.	2. Classify complaint: discrimination, harassment, retaliation, theft, policy violation, safety
+25.	3. Assess scope, severity, and urgency; recommend investigator and investigation level
+26.	4. Generate investigation plan: witnesses to interview, documents to collect, timeline
+27.	5. Prepare witness interview outlines with legally required admonitions and key questions
+28.	6. Track evidence collection: documents, emails, video, physical evidence, electronic records
+29.	7. Analyze witness statements for consistency, corroboration, and credibility indicators
+30.	8. Apply relevant legal standards (Title VII, ADA, ADEA, state equivalents) to factual findings
+31.	9. Draft investigation summary report with findings, credibility assessments, and conclusions
+32.	10. Recommend corrective action based on severity, precedent, and proportionality
+33.	11. Generate litigation hold notice if necessary and archive complete investigation file
+
+4.3 Common Ontology
+The following entities and attributes form the shared data model referenced by this agent:
+Entity	Key Attributes
+Complaint	complaint ID, type, complainant, respondent, date, severity, status
+Investigation	investigation ID, scope, investigator, timeline, status, privilege designation
+Witness	name, role, relationship to parties, availability, interview status, credibility notes
+Evidence	type (document, email, video, testimony), source, collection date, chain of custody
+Finding	factual determination, legal standard applied, supporting evidence, confidence level
+Corrective Action	type (warning, suspension, termination, training, policy change), proportionality
+
+4.4 Claude Agent Skills
+The following skills should be developed and registered as context for this agent:
+Skill Name	Description
+Complaint Intake & Classification Skill	Categorizes complaints and assesses severity using NLP
+Investigation Plan Generator Skill	Creates structured investigation plans based on complaint type and scope
+Interview Preparation Skill	Generates witness-specific interview outlines with admonitions and key questions
+Evidence Management Skill	Tracks collection, chain of custody, and privilege logging
+Legal Standard Application Skill	Maps factual findings to applicable discrimination/harassment legal frameworks
+Investigation Report Drafting Skill	Produces structured reports following Littler's investigation methodology
+
+4.5 Eval Dataset
+Recommended evaluation data and benchmarks for validating agent accuracy and performance:
+•	500+ historical investigation files with known outcomes and corrective actions
+•	Complaint classification accuracy: type and severity prediction against experienced investigator assessment
+•	Investigation plan completeness: AI-generated plans vs. attorney-created plans
+•	Legal standard application: correct identification of applicable laws and burden-shifting frameworks
+•	Report quality: attorney review scores on thoroughness, objectivity, and legal defensibility
+•	Timeline adherence: investigation completion within policy-mandated timeframes
+
+4.6 Production Runbooks
+Operational procedures for handling common issues and failure scenarios:
+Scenario	Procedure
+Imminent Threat Detection	Emergency escalation to law enforcement, security, and senior management
+Conflict of Interest Discovery	Investigator reassignment procedure, scope adjustment
+Privilege Waiver Risk	Identification of inadvertent disclosure risks, remediation steps
+Complainant Retaliation Alert	Monitoring protocol, protective measures, documentation
+Parallel Government Investigation	Coordination procedure, document hold, outside counsel notification
+Investigation Integrity Breach	Evidence tampering detection, chain of custody documentation, escalation
+
+4.7 Regulatory Compliance & Policies
+Applicable regulations and compliance requirements:
+•	Title VII of the Civil Rights Act: Prompt and thorough investigation obligation (Faragher/Ellerth defense)
+•	ADA: Reasonable accommodation interactive process during investigations
+•	ADEA: Age discrimination investigation requirements and burden-shifting frameworks
+•	State Fair Employment Laws: California FEHA, New York Human Rights Law, Illinois HRA, etc.
+•	Whistleblower Protection: SOX, Dodd-Frank, and state whistleblower statutes
+•	Attorney-Client Privilege / Work Product: Upjohn warnings, privilege maintenance during investigations
+
+4.8 Knowledgebase Reference
+Documents and data sources this agent needs access to:
+•	Littler Investigation Toolkit: templates, checklists, and best practices
+•	Investigation methodology guides by complaint type and severity level
+•	Legal standards reference: burden-shifting frameworks, hostile work environment elements, retaliation tests
+•	Interview question banks by complaint type with legally required admonitions
+•	Corrective action precedent database: proportionality guidelines by offense type
+•	EEOC Enforcement Guidance on harassment, retaliation, and reasonable accommodations
+
+4.9 Knowledge Graph
+Entity-relationship mappings showing how data entities connect within this agent domain:
+Complaint -[FILED_BY]-> Complainant -[AGAINST]-> Respondent
+Investigation -[ASSIGNED_TO]-> Investigator -[FOLLOWS]-> Investigation Plan
+Witness -[PROVIDES]-> Testimony -[SUPPORTS/CONTRADICTS]-> Allegation
+Evidence -[COLLECTED_FROM]-> Source -[RELEVANT_TO]-> Finding
+Finding -[ANALYZED_UNDER]-> Legal Standard -[REQUIRES]-> Elements of Proof
+Corrective Action -[PROPORTIONAL_TO]-> Finding -[PRECEDENTED_BY]-> Prior Case
