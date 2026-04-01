@@ -4,7 +4,7 @@
  * Production Migration Script
  *
  * Usage:
- *   export PROD_BASE="https://agent-lifecycle-management-platform.replit.app"
+ *   PROD_BASE="https://agent-lifecycle-management-platform.replit.app" \
  *   node scripts/migrate-lit-agt-002-to-prod.js
  *
  * Requires: Node.js v18+ (native fetch). No other dependencies.
@@ -17,12 +17,13 @@
  * - schedule field on evals is a string — "weekly" not an object
  */
 
+import { readFileSync, writeFileSync } from "fs";
+
 const PROD_BASE = process.env.PROD_BASE || "https://agent-lifecycle-management-platform.replit.app";
 const PROD_ORG  = "cf5754b1-ee80-4b51-8bf6-7be263c97527";
 const DEV_BASE  = "http://localhost:5000";
 
-// ── IDs from scripts/lit-agt-002-dev-ids.json ─────────────────────────────────
-const DEV = JSON.parse(require("fs").readFileSync("scripts/lit-agt-002-dev-ids.json", "utf8"));
+const DEV = JSON.parse(readFileSync("scripts/lit-agt-002-dev-ids.json", "utf8"));
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -142,7 +143,6 @@ async function main() {
   step("3", "Creating 6 runbooks…");
   prod.runbookIds = [];
   for (const rb of runbooks) {
-    // agentId on runbook references the dev agent — create without it, link after agent created
     const res = await prodPost("/api/runbooks", forProd(rb, { agentId: null }));
     prod.runbookIds.push(res.id);
     log(`Runbook: ${rb.name.slice(0, 58)} → ${res.id}`);
@@ -152,7 +152,6 @@ async function main() {
   step("4", "Creating 6 governance policies…");
   prod.policyIds = [];
   for (const p of policies) {
-    // scopeId references the dev agent — create without it, link after agent created
     const res = await prodPost("/api/policies", forProd(p, { scopeId: null }));
     prod.policyIds.push(res.id);
     log(`Policy: ${p.name.slice(0, 58)} → ${res.id}`);
@@ -161,17 +160,16 @@ async function main() {
   // ── STEP 5: AGENT ─────────────────────────────────────────────────────────
   step("5", "Creating agent LIT-AGT-002…");
   const agentRes = await prodPost("/api/agents", forProd(agent, {
-    outcomeId:       null,  // linked in step 10
+    outcomeId:       null,
     preloadedSkills: prod.skillIds,
     policyBindings:  prod.policyIds,
-    evalBindings:    [],    // linked in step 10
+    evalBindings:    [],
   }));
   prod.agentId = agentRes.id;
   log(`Agent: ${agent.name} → ${agentRes.id}`);
 
   // ── STEP 6: GOLDEN DATASET ─────────────────────────────────────────────────
   step("6", `Creating golden dataset + ${testCases.length} test cases…`);
-  // Use forProd() on the actual dev dataset object — never hand-build the payload
   const dsRes = await prodPost("/api/golden-datasets", forProd(goldenDataset));
   prod.goldenDatasetId = dsRes.id;
   log(`Golden Dataset → ${dsRes.id}`);
@@ -188,7 +186,6 @@ async function main() {
 
   // ── STEP 7: EVAL SUITE ─────────────────────────────────────────────────────
   step("7", "Creating evaluation suite…");
-  // schedule must be a string ("weekly"), not an object — use forProd which passes it as-is from dev
   const evalRes = await prodPost("/api/evals", forProd(evalSuite, {
     agentId:         prod.agentId,
     goldenDatasetId: prod.goldenDatasetId,
@@ -229,7 +226,6 @@ async function main() {
   // ── STEP 10: COMPLETE ALL LINKAGES ─────────────────────────────────────────
   step("10", "Completing all cross-entity linkages…");
 
-  // Agent: outcome + eval suite
   await prodPatch(`/api/agents/${prod.agentId}`, {
     outcomeId:    prod.outcomeId,
     evalBindings: [prod.evalSuiteId],
@@ -237,7 +233,6 @@ async function main() {
   log("Outcome contract linked to agent");
   log("Eval suite linked to agent");
 
-  // Policies: set scopeId to prod agent
   for (const pId of prod.policyIds) {
     try {
       await prodPatch(`/api/policies/${pId}`, { scopeId: prod.agentId, scopeType: "agent" });
@@ -247,7 +242,6 @@ async function main() {
   }
   log("6 policies scoped to prod agent");
 
-  // Runbooks: set agentId to prod agent
   for (const rId of prod.runbookIds) {
     try {
       await prodPatch(`/api/runbooks/${rId}`, { agentId: prod.agentId });
@@ -258,10 +252,7 @@ async function main() {
   log("6 runbooks scoped to prod agent");
 
   // ── SAVE PROD IDS ──────────────────────────────────────────────────────────
-  require("fs").writeFileSync(
-    "scripts/lit-agt-002-prod-ids.json",
-    JSON.stringify(prod, null, 2)
-  );
+  writeFileSync("scripts/lit-agt-002-prod-ids.json", JSON.stringify(prod, null, 2));
 
   // ── SUMMARY ───────────────────────────────────────────────────────────────
   console.log("\n════════════════════════════════════════════════════════════════════");
