@@ -1,0 +1,82 @@
+Litigation Case Management Agent
+LIT-AGT-004  |  Category: Litigation
+5.1 Description
+Manages single-plaintiff employment litigation from charge intake through resolution. Maps to Littler's CaseSmart platform and Litigation & Trials practice area. The agent tracks deadlines, manages document production, analyzes case strengths and weaknesses, monitors budgets, and provides data-driven insights for case strategy. Designed to handle high volumes of EEOC charges and single-plaintiff lawsuits with consistent quality and cost efficiency.
+5.2 Workflow Steps
+34.	1. Receive new matter (EEOC charge, state agency complaint, or lawsuit filing)
+35.	2. Conflict check and matter opening with billing codes and staffing assignment
+36.	3. Analyze charge/complaint: extract claims, parties, factual allegations, relief sought
+37.	4. Calculate key deadlines: response due dates, statute of limitations, discovery cutoffs
+38.	5. Assess case strength: evaluate claims, defenses, and early resolution opportunities
+39.	6. Generate initial case assessment memo with strategy recommendations
+40.	7. Manage discovery: track production obligations, review schedules, privilege logging
+41.	8. Monitor litigation budget against alternative fee or case budget
+42.	9. Prepare dispositive motion analysis: identify viable summary judgment grounds
+43.	10. Track settlement negotiations: demand/offer history, authority levels, comparables
+44.	11. Update matter analytics dashboard: case trends, outcomes, cost metrics
+
+5.3 Common Ontology
+The following entities and attributes form the shared data model referenced by this agent:
+Entity	Key Attributes
+Matter	matter ID, type (EEOC charge, lawsuit), status, assigned team, billing arrangement
+Claim	claim type (discrimination, harassment, retaliation, wrongful termination), statute, elements
+Deadline	type (response, discovery, motion, trial), date, responsible attorney, status
+Discovery	type (interrogatories, document requests, depositions), status, cost, privilege issues
+Assessment	strength rating, risk level, recommended strategy, settlement range, confidence
+Budget	arrangement type (hourly, AFA, blended), projected spend, actual spend, variance
+
+5.4 Claude Agent Skills
+The following skills should be developed and registered as context for this agent:
+Skill Name	Description
+Charge Analysis Skill	NLP extraction of claims, facts, and relief from EEOC charges and complaints
+Deadline Calculator Skill	Computes all procedural deadlines across federal and state jurisdictions
+Case Assessment Skill	Evaluates claim viability, defense strength, and early resolution opportunities
+Budget Management Skill	Tracks spend against budget, forecasts costs by litigation phase
+Comparables Analysis Skill	Identifies similar cases with known outcomes for settlement valuation
+Dashboard Analytics Skill	Generates matter-level and portfolio-level performance metrics
+
+5.5 Eval Dataset
+Recommended evaluation data and benchmarks for validating agent accuracy and performance:
+•	10,000+ historical EEOC charges and lawsuits with known outcomes (settlement, judgment, dismissal)
+•	Deadline calculation accuracy: computed dates vs. actual court-imposed deadlines
+•	Case assessment reliability: early strength ratings correlated with actual outcomes
+•	Budget forecast accuracy: projected vs. actual spend by phase and matter type
+•	Settlement valuation: comparable-based ranges vs. actual resolution amounts
+•	CaseSmart benchmark data: cost per charge, average cycle time, outcome distribution
+
+5.6 Production Runbooks
+Operational procedures for handling common issues and failure scenarios:
+Scenario	Procedure
+Missed Deadline Alert	Emergency motion procedure, malpractice notification, corrective steps
+Client Budget Overrun	Variance analysis, scope adjustment, alternative fee renegotiation
+Mass Filing Event	Coordinated defense strategy, common answer templates, resource surge plan
+Opposing Counsel Discovery Dispute	Meet-and-confer protocol, motion to compel/protective order
+Settlement Authority Expiration	Client re-engagement procedure, updated assessment delivery
+Matter Staffing Change	Transition checklist, knowledge transfer, client notification
+
+5.7 Regulatory Compliance & Policies
+Applicable regulations and compliance requirements:
+•	Federal Rules of Civil Procedure: Compliance with discovery, pleading, and motion requirements
+•	Local Court Rules: Jurisdiction-specific procedural requirements and standing orders
+•	State Bar Ethics: Competent representation, communication obligations, conflict management
+•	Client Reporting Requirements: Insurance carrier reporting, corporate legal department updates
+•	Fee Arrangement Compliance: Hourly, contingency, and alternative fee billing ethics
+•	E-Filing Requirements: Court-specific electronic filing procedures and format rules
+
+5.8 Knowledgebase Reference
+Documents and data sources this agent needs access to:
+•	Littler CaseSmart matter database: 30,000+ historical matters with outcomes and metrics
+•	EEOC charge response templates by claim type and jurisdiction
+•	Dispositive motion brief banks: summary judgment and motion to dismiss precedents
+•	Settlement valuation data: ranges by claim type, jurisdiction, industry, and case facts
+•	Litigation cost benchmarks: average spend by phase, claim type, and complexity level
+•	Court-specific local rules and standing order database
+
+5.9 Knowledge Graph
+Entity-relationship mappings showing how data entities connect within this agent domain:
+Matter -[INVOLVES]-> Claim(s) -[UNDER]-> Statute -[IN]-> Jurisdiction
+Matter -[ASSIGNED_TO]-> Attorney Team -[BILLED_UNDER]-> Fee Arrangement
+Claim -[DEFENDED_BY]-> Defense Strategy -[SUPPORTED_BY]-> Evidence/Precedent
+Deadline -[FOR_MATTER]-> Matter -[IN_COURT]-> Court -[GOVERNED_BY]-> Local Rules
+Settlement -[COMPARED_TO]-> Comparable Cases -[WITH_OUTCOME]-> Resolution Type/Amount
+Matter -[PART_OF]-> Client Portfolio -[TRENDING]-> Pattern (e.g., recurring claim type)
