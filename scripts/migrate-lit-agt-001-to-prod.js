@@ -84,11 +84,12 @@ async function main() {
 
   // ── Fetch all dev data upfront ─────────────────────────────────────────────
   console.log("Fetching source data from dev…");
-  const [agent, kb, evalSuite, outcome] = await Promise.all([
+  const [agent, kb, evalSuite, outcome, goldenDataset] = await Promise.all([
     devGet(`/api/agents/${DEV_IDS.agentId}`),
     devGet(`/api/knowledge-bases/${DEV_IDS.kbId}`),
     devGet(`/api/evals/${DEV_IDS.evalSuiteId}`),
     devGet(`/api/outcomes/${DEV_IDS.outcomeId}`),
+    devGet(`/api/golden-datasets/${DEV_IDS.goldenDatasetId}`),
   ]);
   const [skills, policies, runbooks, testCases, kpis, kbSources] = await Promise.all([
     Promise.all(DEV_IDS.skillIds.map(id => devGet(`/api/skills/${id}`))),
@@ -161,13 +162,7 @@ async function main() {
 
   // ── STEP 6: GOLDEN DATASET + TEST CASES ─────────────────────────────────────
   step("6", `Creating golden dataset + ${testCases.length} test cases…`);
-  const dsRes = await prodPost("/api/golden-datasets", forProd({
-    name: "Employment Compliance & Policy Advisory — Golden Dataset",
-    description: "Curated employment law test cases: jurisdiction ID, citations, gap analysis, policy drafting, UPL compliance, escalation logic",
-    industry: "legal_services",
-    qualityCoverage: 88.5,
-    tags: ["employment-law","multi-state","jurisdiction","UPL","policy-drafting","citation-accuracy"],
-  }));
+  const dsRes = await prodPost("/api/golden-datasets", forProd(goldenDataset));
   prod.goldenDatasetId = dsRes.id;
   log(`Golden Dataset → ${dsRes.id}`);
 
