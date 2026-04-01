@@ -206,11 +206,13 @@ const industryLabels: Record<string, string> = {
   cross_industry: "Cross-Industry",
   custom: "Cross-Industry",
   technology: "Technology",
+  technology_saas: "Technology / SaaS",
   financial_services: "Financial Services",
   insurance: "Insurance",
   healthcare: "Healthcare",
   manufacturing: "Manufacturing",
   retail: "Retail & E-Commerce",
+  legal_services: "Legal Services",
   education: "Education",
   pharma: "Pharmaceuticals",
   media_entertainment: "Media & Entertainment",
@@ -223,8 +225,8 @@ const allCategories = [
 ];
 
 const allIndustries = [
-  "cross_industry", "technology", "financial_services", "insurance", "healthcare",
-  "manufacturing", "retail", "education", "pharma", "media_entertainment",
+  "cross_industry", "technology", "technology_saas", "financial_services", "insurance",
+  "healthcare", "manufacturing", "retail", "legal_services", "education", "pharma", "media_entertainment",
 ];
 
 const complexityOptions = ["low", "medium", "high"];
