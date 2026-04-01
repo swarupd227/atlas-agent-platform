@@ -1,0 +1,82 @@
+Employment Compliance & Policy Advisory Agent
+LIT-AGT-001  |  Category: HR Compliance
+2.1 Description
+Provides real-time, multi-jurisdiction employment law guidance for handbook policies, HR procedures, and day-to-day compliance questions. This agent maps to Littler's Handbooks & Policies and HR Advice & Counsel practice areas. It monitors legislative changes across all 50 U.S. states and international jurisdictions, identifies policy gaps, drafts compliant policy language, and alerts clients to regulatory developments that require immediate action. Designed to function as the AI backbone of a Littler GPS-style compliance platform.
+2.2 Workflow Steps
+1.	1. Receive compliance inquiry (policy question, handbook review, new regulation alert)
+2.	2. Identify applicable jurisdictions based on client footprint (states, countries, municipalities)
+3.	3. Query employment law knowledge base for current statutes, regulations, and case law
+4.	4. Cross-reference client's existing policies against current legal requirements
+5.	5. Identify compliance gaps and risks, ranked by severity and potential liability
+6.	6. Generate jurisdiction-specific policy language recommendations with citations
+7.	7. Flag conflicting requirements across jurisdictions and recommend harmonization approach
+8.	8. Route novel or high-risk questions to appropriate Littler attorney for review
+9.	9. Generate compliance summary memo for client's legal/HR team
+10.	10. Update monitoring watchlist for ongoing legislative and regulatory tracking
+11.	11. Archive advisory in matter management system with time/billing codes
+
+2.3 Common Ontology
+The following entities and attributes form the shared data model referenced by this agent:
+Entity	Key Attributes
+Jurisdiction	state, municipality, country, effective date, enforcement agency
+Policy	policy type, current version, applicable jurisdictions, last reviewed date, gaps
+Statute	citation, title, effective date, amendment history, enforcement penalties
+Regulation	agency, rule number, applicability criteria, compliance deadline
+Client Profile	entity name, locations, headcount by jurisdiction, industry, union status
+Advisory	question, analysis, recommendation, jurisdiction, attorney reviewer, confidence level
+
+2.4 Claude Agent Skills
+The following skills should be developed and registered as context for this agent:
+Skill Name	Description
+Multi-State Survey Skill	RAG over 50-state legislative surveys covering 60+ employment topics (mirrors Littler GPS)
+Policy Gap Analysis Skill	Compares client handbook language against current legal requirements by jurisdiction
+Legislative Tracking Skill	Monitors state and federal legislative feeds for new bills, amendments, and effective dates
+Policy Drafting Skill	Generates compliant policy language using approved templates and jurisdiction-specific requirements
+Conflict Resolution Skill	Identifies and proposes solutions for conflicting multi-jurisdictional requirements
+Client Context Skill	Retrieves client profile, industry, prior advisories, and existing policy documents
+
+2.5 Eval Dataset
+Recommended evaluation data and benchmarks for validating agent accuracy and performance:
+•	1,000+ historical compliance inquiries with known correct answers and applicable statutes
+•	Multi-state conflict scenarios: states with contradictory requirements on same topic (e.g., paid leave, cannabis, non-compete)
+•	New legislation response time: correctly identifying impact within 24 hours of enactment
+•	Policy drafting accuracy: generated language validated by Littler attorneys across 20+ topics
+•	Jurisdiction identification edge cases: remote workers, multi-state employees, temporary assignments
+•	Regression suite: previously incorrect advisories as negative examples
+
+2.6 Production Runbooks
+Operational procedures for handling common issues and failure scenarios:
+Scenario	Procedure
+Legislative Database Update Failure	Fallback to cached data with staleness warning; manual override procedure
+Conflicting Authority Alert	Escalation to Littler subject matter expert with analysis summary
+Client Handbook Bulk Review	Batch processing procedure, priority ranking, progress reporting
+Emergency Regulation Response	Rapid advisory generation, client blast notification, FAQ preparation
+Confidence Score Below Threshold	Automatic routing to attorney review with context package
+Multi-Jurisdiction Complexity Overflow	Decomposition strategy, parallel processing, consolidation procedure
+
+2.7 Regulatory Compliance & Policies
+Applicable regulations and compliance requirements:
+•	Attorney-Client Privilege: All advisories must maintain privilege markers and handling protocols
+•	Unauthorized Practice of Law (UPL): Agent outputs framed as research assistance, not legal advice without attorney review
+•	State Bar Ethics Rules: Compliance with jurisdiction-specific rules on technology-assisted legal services
+•	Confidentiality: Client data isolation, no cross-client data leakage, encryption at rest and in transit
+•	Model Rules of Professional Conduct: Rules 1.1 (Competence), 1.6 (Confidentiality), 5.3 (Supervision of Nonlawyers)
+•	Data Retention: Matter-specific retention schedules per client engagement letter and firm policy
+
+2.8 Knowledgebase Reference
+Documents and data sources this agent needs access to:
+•	Complete 50-state employment law survey database (Littler GPS equivalent) covering 60+ topics
+•	Federal employment statutes: FLSA, Title VII, ADA, FMLA, ADEA, WARN, NLRA, OSHA, ERISA
+•	International employment law guides covering 45+ countries
+•	Model handbook templates by industry, jurisdiction, and employee type
+•	Littler ASAP publications and client alerts library
+•	Regulatory agency guidance documents: DOL, EEOC, NLRB, OSHA, state equivalents
+
+2.9 Knowledge Graph
+Entity-relationship mappings showing how data entities connect within this agent domain:
+Jurisdiction -[ENACTS]-> Statute -[REQUIRES]-> Employer Obligation
+Policy -[COVERS]-> Topic -[GOVERNED_BY]-> Statute(s) in Jurisdiction(s)
+Client -[OPERATES_IN]-> Jurisdiction -[SUBJECT_TO]-> Regulatory Regime
+Statute -[AMENDED_BY]-> Amendment -[EFFECTIVE_ON]-> Date
+Advisory -[REFERENCES]-> Statute -[INTERPRETED_BY]-> Case Law / Agency Guidance
+Policy Gap -[IDENTIFIED_FOR]-> Client -[IN_JURISDICTION]-> State/Country
