@@ -351,6 +351,47 @@ async function run() {
     }
   }
 
+  // ── 9. Both agents: set ontologyTags as {conceptId,label,category} objects ──
+  log("FIX 9: Both agents — setting ontologyTags from legal_services concepts…");
+  try {
+    const allConcepts = await api("GET", "/api/ontology-concepts/all");
+    const byId = new Map(allConcepts.map(c => [c.id, c]));
+    const tag = (id) => {
+      const c = byId.get(id);
+      if (!c) throw new Error("Concept not found: "+id);
+      return { conceptId: c.id, label: c.label, category: c.category };
+    };
+
+    const agt001Tags = [
+      tag("legal_services-advisory-services-legal-opinion"),
+      tag("legal_services-transactional-services-regulatory-compliance"),
+      tag("legal_services-advisory-services-compliance-auditing"),
+      tag("legal_services-advisory-services-risk-assessment"),
+      tag("legal_services-legal-technology-process-knowledge-management"),
+      tag("legal_services-legal-technology-process-document-automation"),
+      tag("legal_services-litigation-services-legal-research"),
+    ];
+
+    const agt002Tags = [
+      tag("legal_services-advisory-services-compliance-auditing"),
+      tag("legal_services-advisory-services-risk-assessment"),
+      tag("legal_services-transactional-services-regulatory-compliance"),
+      tag("legal_services-litigation-services-legal-research"),
+      tag("legal_services-advisory-services-legal-opinion"),
+    ];
+
+    await api("PATCH", `/api/agents/${AGT001.agentId}`, { ontologyTags: agt001Tags });
+    ok(`AGT-001 ontologyTags → ${agt001Tags.length} concepts`);
+    totalFixes++;
+
+    await api("PATCH", `/api/agents/${AGT002.agentId}`, { ontologyTags: agt002Tags });
+    ok(`AGT-002 ontologyTags → ${agt002Tags.length} concepts`);
+    totalFixes++;
+  } catch (e) {
+    err(`ontologyTags: ${e.message}`);
+    totalErrors++;
+  }
+
   // ── Summary ────────────────────────────────────────────────────────────
   console.log("\n──────────────────────────────────────────");
   console.log(`PROD GAP FIX COMPLETE`);
