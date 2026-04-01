@@ -1,0 +1,47 @@
+{
+  "skillIds": [
+    "b7fd4a6e-d517-43af-93a3-06ec0b7777ba",
+    "61b5d3e8-d90f-41e2-b06c-d31724ed49b9",
+    "6a4dd306-83f9-430e-b614-7249a3d32157",
+    "806fd4b9-801d-4183-9d69-4a7b3cbdfa5a",
+    "68d4f034-8896-487e-bbdb-91c349023ede",
+    "6bb507a3-e28c-48e7-b727-7c54b8387d8e"
+  ],
+  "kbId": "e0d7788a-2560-48df-9859-c3147a8a9fe6",
+  "kbSourceIds": [
+    "5ada9420-1e24-4ed5-9ead-c619a540bf79",
+    "217d363e-7091-464b-a785-1948c88cdf85",
+    "45151f95-5c38-4a83-ab63-deaa8de0ddfa",
+    "f3a87ce7-fc4b-4ce3-a508-18fd2119c8ac",
+    "ab5a8c42-b3b5-4fe7-be7c-adc632ddbef8",
+    "08fe8dd5-1cec-4b3c-bb4d-92d88578b316"
+  ],
+  "runbookIds": [
+    "68237e0e-ea35-4921-ad23-ffd3bbf85678",
+    "9751139a-4f74-46cc-91ea-4022a00b9eb0",
+    "d7ec3264-eb71-4363-a3b1-a4da93ce47b2",
+    "b456ab5e-4bc3-4475-8bc7-9ab60107404d",
+    "ea979ce7-c42a-4744-9ae2-5794a4905b3a",
+    "b0d3ecb9-97f2-4faa-aade-77d99bc19264"
+  ],
+  "policyIds": [
+    "de2565c5-5eab-4852-96e2-1daf044dfa0c",
+    "69a226e4-0b21-4408-8081-0ddc1e9d7b7b",
+    "12e54dfc-c11c-4223-92ac-238a893eac81",
+    "fb84b3cd-6923-40a0-b6b1-ba35df30d409",
+    "4173718f-3d50-4230-a7b8-d8808412c4b7",
+    "724e125d-e3c0-4d39-b685-52a6a963c2d2"
+  ],
+  "agentId": "7d53cbd5-2a8f-4605-8fd7-be3071f8cf38",
+  "goldenDatasetId": "8d4e9606-2975-419e-8e6c-62c01feea90c",
+  "testCaseIds": [
+    "49535baf-1a79-41db-8684-d996a415039f",
+    "313ff92f-b062-4374-9c5a-000659b09c27",
+    "186739f1-19a8-44a3-8319-87d2d4462fd0",
+    "088b9bf7-af26-4083-bddf-dbd0d7885316",
+    "e378b9c9-e2e1-4157-ace5-8fb19ca9c2c5",
+    "f32e9faf-69d9-4dfa-b68a-d7affa9f6243"
+  ],
+  "evalSuiteId": "02de439b-5200-4e80-8c9c-0bf1c395e914",
+  "outcomeId": "d9bdae81-d17d-46f4-83cf-d6f37405c46e"
+}
