@@ -1,0 +1,47 @@
+Multi-State Policy Compliance Engine
+PROBLEM STATEMENT: MegaRetail Corp operates in 38 states. Three states (Minnesota, Maine, Illinois) just enacted new paid family leave laws effective January 2026. The client's General Counsel emails Littler: "Which of our policies need updating, what are the new obligations, and can you draft the required changes for our handbook?" Traditionally, this requires 3-4 attorneys, 2-3 weeks, and $45K-$60K in fees.
+
+DEMO OBJECTIVE: Show how Atlas delivers a complete multi-state compliance analysis in under 5 minutes with attorney review, reducing the time from weeks to hours and the cost by 70%.
+
+AGENTS INVOKED: LIT-AGT-001 (Employment Compliance & Policy Advisory Agent), LIT-AGT-010 (Leave & Accommodation Management Agent)
+
+Screen 2.1: Compliance Hub Dashboard
+Entry point. The attorney opens the Compliance Hub from the left sidebar.
+Layout: Three-Column Dashboard
+Left Column (25%): Active Regulatory Alerts panel. Shows a scrollable feed of recent legislative changes. Each alert is a card with: state flag icon, law name, effective date, severity badge (High/Medium/Low), number of affected clients. The top alert is highlighted in red: "MN HF-2024 Paid Family & Medical Leave - Effective Jan 1, 2026 - HIGH - 12 clients affected"
+Center Column (50%): Client Compliance Scorecard for MegaRetail Corp. A large donut chart showing: 31 Compliant (green), 4 Needs Review (amber), 3 Non-Compliant (red) across their 38-state footprint. Below the chart, a sortable table of states with columns: State, Compliance Status, Last Reviewed, Open Issues. The three non-compliant states (MN, ME, IL) are highlighted at top with red badges.
+Right Column (25%): Quick Actions panel: "Run New Compliance Scan" (gold CTA button), "Upload Client Handbook" (secondary), "Generate Policy Update Memo" (secondary), "Schedule Review" (secondary). Below: Recent Activity feed showing last 5 agent actions for this client.
+Key Interaction
+The attorney clicks the red "MN HF-2024" alert card. This triggers a slide-over detail panel from the right showing a summary of the new law, key provisions, and a prominent gold CTA button: "Analyze Impact for MegaRetail Corp". The attorney clicks this button.
+
+Screen 2.2: Agent Orchestration - Live Processing View
+Atlas shows the multi-agent orchestration in real-time as it processes the compliance analysis.
+Layout: Full-Width Orchestration Canvas
+Top Banner: "Compliance Analysis in Progress" with animated progress bar. Estimated time remaining shown.
+Agent Pipeline Visualization (60% height): A horizontal pipeline showing connected agent nodes. Left to right: (1) LIT-AGT-001 icon labeled "Regulatory Analysis" - pulsing blue, actively processing. (2) LIT-AGT-010 icon labeled "Leave Law Mapping" - queued, gray. (3) LIT-AGT-001 icon labeled "Policy Gap Analysis" - queued. (4) LIT-AGT-001 icon labeled "Draft Recommendations" - queued. As each step completes, the node turns green with a checkmark and the next node starts pulsing. Animated data particles flow along the connections between nodes.
+Live Activity Log (40% height): A streaming log panel showing real-time agent reasoning: "[10:42:03] LIT-AGT-001: Parsing MN HF-2024 - 47 sections identified... [10:42:05] LIT-AGT-001: Cross-referencing against MegaRetail Corp handbook v4.2... [10:42:08] LIT-AGT-010: Analyzing leave entitlement stacking with existing FMLA policy... [10:42:11] LIT-AGT-001: Gap identified - Section 3.7 Paid Leave does not include MN PFML..." Each log line has an agent badge, timestamp, and expandable detail.
+Bottom Status Bar: Documents analyzed: 3/3 | Jurisdictions scanned: 38/38 | Gaps identified: 7 | Time elapsed: 47 seconds
+Key Interaction
+This is a "watch it work" screen - the audience observes the agents processing in real-time. After approximately 90 seconds, a green completion banner appears: "Analysis Complete - 7 Compliance Gaps Identified Across 3 States" with a "View Results" gold CTA button.
+
+Screen 2.3: Compliance Gap Analysis Results
+The core deliverable screen. Displays the complete multi-state gap analysis.
+Layout: Map + Detail Split View
+Top Section - Interactive US Map (40% height): A choropleth map of the US showing MegaRetail's 38-state footprint. States are colored: green (compliant), amber (minor updates needed), red (non-compliant - MN, ME, IL highlighted with pulsing borders). Hovering over any state shows a tooltip with: state name, compliance score, number of gaps, primary issue. Clicking a state filters the detail table below.
+Middle Section - Gap Summary Cards (15% height): Three summary cards in a horizontal row: [MN - 3 Gaps - Paid Family Leave, Benefit Amount, Notice Requirements], [ME - 2 Gaps - Leave Duration, Employer Size Threshold], [IL - 2 Gaps - Employee Contribution, Job Protection Scope]. Each card has the state flag, gap count, and brief labels. Cards are clickable.
+Bottom Section - Detailed Gap Table (45% height): A rich data table with columns: #, State, Policy Section, Current Language, Required Update, Risk Level, Exposure Estimate, Agent Confidence. Each row is expandable to show: full statutory citation, comparison of current vs. required language (side-by-side diff view with red/green highlighting), recommended policy language (in blue), and a list of similar language from other Littler clients (anonymized benchmarks). Sort and filter controls at top.
+Sidebar Panel - Attorney Review Actions
+Approve/Modify/Flag: For each gap, the reviewing attorney can: Approve (green check - accepts recommended language), Modify (pencil icon - opens inline editor for attorney to refine language), Flag (orange flag - marks for escalation to practice group leader)
+Confidence Indicator: Each recommendation shows agent confidence: High (>90%), Medium (75-90%), Low (<75%). Low-confidence items are auto-flagged for attorney review with a yellow border.
+Citation Panel: Expandable right panel showing all statutory citations, regulatory guidance, and case law supporting each recommendation. Clickable links to Fastcase/Littler GPS for full text.
+Key Interaction
+The attorney reviews the Minnesota gaps, approves 2 recommendations, modifies 1 to strengthen language, then clicks "Generate Client Deliverable" gold CTA at bottom.
+
+Screen 2.4: Client Deliverable Generation
+Atlas generates the client-ready compliance memo and redlined handbook updates.
+Layout: Document Preview + Export Panel
+Main Area (75%) - Document Preview: A live preview of the generated compliance memo in Littler letterhead format. Sections include: Executive Summary (key findings and urgency), State-by-State Analysis (MN, ME, IL each with current gap, recommended update, statutory basis, implementation deadline), Recommended Handbook Redlines (redlined changes shown in track-changes format), Implementation Timeline (Gantt-style chart showing deadlines by state), and Risk Assessment (exposure estimates if gaps are not addressed).
+Right Panel (25%) - Export & Delivery: Output format selector: Word (with track changes), PDF, Email to Client. Client contact selector (pre-populated from matter). Cover letter template (editable). Billing code assignment. Matter association. "Deliver to Client" gold CTA button with confirmation dialog.
+Bottom Bar: "Add to Littler GPS" toggle (feeds anonymized findings back into the firm knowledge base). Time tracking: auto-captured time for billing. Privilege marker toggle.
+Demo Talking Point
+"What traditionally takes 2-3 weeks and $50K in attorney time was completed in under 5 minutes. The attorney's role shifted from research to review and refinement - the highest-value use of their expertise."

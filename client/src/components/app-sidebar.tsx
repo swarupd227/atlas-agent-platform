@@ -286,6 +286,14 @@ export function AppSidebar() {
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild data-active={location.startsWith("/demo/littler")}>
+                      <Link href="/demo/littler" data-testid="link-nav-littler-demo">
+                        <Scale className="w-4 h-4" />
+                        <span>Littler - Multi-State Compliance Engine</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
                 </SidebarMenu>
               </SidebarGroupContent>
             </CollapsibleContent>

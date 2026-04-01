@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { hearstLiveRunHandler, ensureHearstAgents } from "../hearst-live-run";
 import { fitchLiveRunHandler, ensureFitchAgents, getFitchPipelineAgentNames, getFitchAgentIdByName } from "../fitch-live-run";
+import { littlerLiveRunHandler } from "../littler-live-run";
 import { seedPartnerPortalRegistry } from "../seed-blackrock2-partner-portal";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
@@ -1147,6 +1148,18 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
 
   // ============================================================
   // END FITCH DEMO ROUTES
+  // ============================================================
+
+  // ============================================================
+  // LITTLER MENDELSON DEMO ROUTES
+  // Multi-State Policy Compliance Engine
+  // ============================================================
+
+  // GET /demo-api/littler/compliance-run — SSE live compliance analysis
+  router.get("/demo-api/littler/compliance-run", littlerLiveRunHandler);
+
+  // ============================================================
+  // END LITTLER DEMO ROUTES
   // ============================================================
 
 
