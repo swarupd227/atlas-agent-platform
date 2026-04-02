@@ -209,6 +209,24 @@ function formatTime(iso: string): string {
   return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}:${String(d.getSeconds()).padStart(2,"0")}`;
 }
 
+const TOOL_DESCRIPTIONS: Record<string, string> = {
+  get_call_report_schedules:   "Ingesting RC-N / RC-C / RI-B / RC-R call report schedules",
+  get_npa_schedule:            "Retrieving NPA and 90+ day past-due loan data",
+  get_charge_off_schedule:     "Pulling gross and net charge-off data by loan category",
+  get_capital_adequacy:        "Fetching CET1, Tier 1, total capital and leverage ratios",
+  get_peer_cohort_ratios:      "Loading G-SIB cohort median benchmarks across 18 ratios",
+  get_ratio_trends:            "Computing 8-quarter CAMELS ratio trend vectors",
+  get_threshold_breaches:      "Detecting threshold breaches with severity and QoQ delta",
+  get_transcript_sentiment:    "Running NLP on earnings call transcripts — credit / guidance / sector dims",
+  get_filing_language_changes: "Scanning 10-K filings for new and strengthened risk factors YoY",
+  get_news_signals:            "Classifying news articles (routine / emerging / material / crisis)",
+  get_news_volume_trend:       "Computing rolling 13-week news volume σ-deviation per bank",
+  get_report_template:         "Loading AQEWS-QUARTERLY-V3 assessment package template scaffold",
+  get_analyst_notes:           "Retrieving prior-quarter analyst observations for watch-list banks",
+  get_svb_backtest_data:       "Running SVB Q1 2022→Mar 2023 backtesting — 182-day advance warning",
+  get_rating_history:          "Fetching Fitch Viability Rating 8-quarter history for flagged banks",
+};
+
 function LiveFeedPanel({
   pipelineState,
   onClose,
@@ -248,7 +266,13 @@ function LiveFeedPanel({
               <span className="text-[9px] text-muted-foreground/40 mr-2">{formatTime(ev.timestamp)}</span>
               <span className="text-[9px] text-muted-foreground/60 mr-1">[{ev.tool}]</span>
               <span className={`text-[10px] ${getEventStyle(ev as any)}`}>
-                {ev.agentName} → {ev.tool} → {ev.success ? (ev.recordCount != null ? `${ev.recordCount} records` : "OK") : "failed"}
+                <span className="text-muted-foreground/50">{ev.agentName} — </span>
+                {TOOL_DESCRIPTIONS[ev.tool] ?? ev.tool}
+                {ev.success
+                  ? ev.recordCount != null
+                    ? <span className="text-muted-foreground/50"> — {ev.recordCount} records returned</span>
+                    : <span className="text-emerald-400/60"> ✓</span>
+                  : <span className="text-red-400"> ✗ failed</span>}
               </span>
             </div>
           </div>
