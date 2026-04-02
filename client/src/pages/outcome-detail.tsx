@@ -2433,9 +2433,27 @@ export default function OutcomeDetail() {
           </div>
           {(() => {
             const cg = outcome?.constraintGraph as any;
-            const discoveryPolicyIds = new Set<string>(Array.isArray(cg?.matchedPolicyIds) ? cg.matchedPolicyIds : []);
-            const discoveryPoliciesDetail: Array<{ policyId: string; name: string; domain: string; rationale?: string }> =
+
+            // Primary source: constraintGraph (outcomes created after the fix)
+            let discoveryPolicyIds = new Set<string>(Array.isArray(cg?.matchedPolicyIds) ? cg.matchedPolicyIds : []);
+            let discoveryPoliciesDetail: Array<{ policyId: string; name: string; domain: string; rationale?: string }> =
               Array.isArray(cg?.discoveryPolicies) ? cg.discoveryPolicies : [];
+
+            // Fallback: approval evidence package (outcomes created before the fix)
+            if (discoveryPolicyIds.size === 0) {
+              const outcomeApproval = outcomeApprovals.find(a =>
+                a.objectId === outcomeId && a.type === "outcome_review"
+              );
+              const evidence = (outcomeApproval as any)?.evidencePackage as any;
+              if (evidence) {
+                const epPolicyIds: string[] = (evidence.matchedPolicies || []).map((p: any) => p.id).filter(Boolean);
+                const aiPolicyIds: string[] = (evidence.applicablePolicies || []).map((p: any) => p.policyId).filter(Boolean);
+                discoveryPolicyIds = new Set([...epPolicyIds, ...aiPolicyIds]);
+                if (Array.isArray(evidence.applicablePolicies) && evidence.applicablePolicies.length > 0) {
+                  discoveryPoliciesDetail = evidence.applicablePolicies;
+                }
+              }
+            }
 
             const boundAgentIds = new Set(boundAgents.map(a => a.id));
             const activePolicies = (governancePolicies || []).filter(p => {
