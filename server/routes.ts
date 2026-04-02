@@ -37,6 +37,10 @@ import fitchFfiecDataRouter from "./mock-mcp/fitch-ffiec-data";
 import fitchNlpEngineRouter from "./mock-mcp/fitch-nlp-engine";
 import fitchAnalyticsRouter from "./mock-mcp/fitch-analytics";
 import fitchReportEngineRouter from "./mock-mcp/fitch-report-engine";
+import bbAuctionDataRouter from "./mock-mcp/bb-auction-data";
+import bbMarketDataRouter from "./mock-mcp/bb-market-data";
+import bbReportEngineRouter from "./mock-mcp/bb-report-engine";
+import { bbLiveRunHandler, getBBAgentRuns, getBBOutcomeData, getBBSelfHealingStatus, ensureBBAgents } from "./blackbook-live-run";
 import { registerMockMcpServers } from "./mock-mcp/register";
 
 export { computeConstraintGraph, recomputeOutcomeKpis };
@@ -142,6 +146,14 @@ export async function registerRoutes(
   app.use("/api/mock/fitch-nlp-engine", fitchNlpEngineRouter);
   app.use("/api/mock/fitch-analytics", fitchAnalyticsRouter);
   app.use("/api/mock/fitch-report-engine", fitchReportEngineRouter);
+  app.use("/api/mock/bb-auction-data", bbAuctionDataRouter);
+  app.use("/api/mock/bb-market-data", bbMarketDataRouter);
+  app.use("/api/mock/bb-report-engine", bbReportEngineRouter);
+
+  app.get("/demo-api/blackbook/live-run",    bbLiveRunHandler);
+  app.get("/demo-api/blackbook/agent-runs",  getBBAgentRuns);
+  app.get("/demo-api/blackbook/outcome",     getBBOutcomeData);
+  app.get("/demo-api/blackbook/self-healing", getBBSelfHealingStatus);
 
   app.post("/api/mock-mcp/register", async (_req, res) => {
     try {
@@ -201,6 +213,7 @@ export async function registerRoutes(
   // Ensure Hearst NBA agents + MCP servers are registered
   ensureHearstAgents().catch((err: any) => console.error("[startup] ensureHearstAgents:", err?.message));
   ensureFitchAgents().catch((err: any) => console.error("[startup] ensureFitchAgents:", err?.message));
+  ensureBBAgents().catch((err: any) => console.error("[startup] ensureBBAgents:", err?.message));
 
   return httpServer;
 }

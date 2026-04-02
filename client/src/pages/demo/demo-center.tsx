@@ -18,6 +18,7 @@ import {
   Layers,
   Clock,
   Tag,
+  BarChart2,
 } from "lucide-react";
 
 interface Demo {
@@ -127,6 +128,21 @@ const DEMOS: Demo[] = [
     tags: ["Risk Monitoring", "Early Warning", "Portfolio Analytics"],
   },
   {
+    id: "blackbook-valuation",
+    title: "Valuation Intelligence Platform",
+    client: "Black Book",
+    description:
+      "Four live AI agents protect and accelerate Black Book's vehicle valuation pipeline: anomaly detection across 142K+ daily auction transactions, 2–4 week early market shift signals, competitive intelligence vs KBB and NADA, and 85% automated Wholesale Insights report generation.",
+    industry: "Automotive Data",
+    industryId: "automotive",
+    route: "/demo/blackbook",
+    icon: BarChart2,
+    iconColor: "#E8640A",
+    duration: "15 min",
+    screens: 5,
+    tags: ["Vehicle Valuations", "Anomaly Detection", "Market Intelligence"],
+  },
+  {
     id: "littler-compliance-engine",
     title: "Multi-State Compliance Engine",
     client: "Littler Mendelson",
@@ -146,8 +162,9 @@ const DEMOS: Demo[] = [
 const INDUSTRY_FILTERS = [
   { id: "all", label: "All Industries" },
   { id: "financial_services", label: "Financial Services" },
-  { id: "legal_services", label: "Legal Services" },
   { id: "media_entertainment", label: "Media & Entertainment" },
+  { id: "automotive", label: "Automotive Data" },
+  { id: "legal_services", label: "Legal Services" },
 ];
 
 const industryBadgeStyle: Record<string, string> = {
@@ -157,6 +174,8 @@ const industryBadgeStyle: Record<string, string> = {
     "bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700",
   media_entertainment:
     "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950 dark:text-purple-300 dark:border-purple-800",
+  automotive:
+    "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950 dark:text-orange-300 dark:border-orange-800",
 };
 
 export default function DemoCenter() {
