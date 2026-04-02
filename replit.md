@@ -53,4 +53,36 @@ The Nous Agent Orchestrator uses a modern web stack: React, Vite, Tailwind CSS, 
 - **shadcn/ui**: UI component library.
 - **wouter**: Client-side routing library.
 - **Drizzle ORM**: Object-Relational Mapper.
-- **pgvector**: For similarity search within the Knowledge Base System.
+
+## OTC Agent Migration Status
+
+| Agent | Code | Status | PROD ID |
+|---|---|---|---|
+| Legal Research Agent | LIT-AGT-001 | PROD | (in platform) |
+| Contract Drafting Agent | LIT-AGT-002 | PROD | (in platform) |
+| Compliance Monitor Agent | LIT-AGT-010 | PROD | (in platform) |
+| Billing Agent (Littler) | LIT-AGT-003 | PROD | (in platform) |
+| Client Portal Agent | LIT-AGT-004 | PROD | (in platform) |
+| Fulfillment & Exception Agent | OTC-AGT-005 | PROD | f6d58adf (agent) |
+| Billing & Collections Agent | OTC-AGT-006 | DEV ✅ | 96705f33-085c-48a2-a99c-a2ed2baf7dde |
+
+### OTC-AGT-006 Dev IDs (from scripts/otc-agt-006-dev-ids.json)
+- **Agent**: `96705f33-085c-48a2-a99c-a2ed2baf7dde`
+- **KB**: `c32e2b16-16f5-457d-92b4-08ce9e2038e8` (6 sources)
+- **Skills (6)**: Invoice Generation, Tax Calculation, Cash Application, Dunning Management, Dispute Investigation, AR Reporting
+- **Runbooks (6)**: Invoice Gen Failure, Mass Payment Error, Tax Engine Down, Unmatched Payment, Dispute Backlog Surge, Month-End Close
+- **Policies (6)**: ASC-606/IFRS-15, Sales Tax/VAT, E-Invoicing, SOX, PCI-DSS, AML
+- **Golden Dataset**: `82674e38-e5c2-4669-a892-469d9b5fcf7a` (6 test cases)
+- **Eval Suite**: `a98898c3-c1b6-420c-ba05-daf05bdb218f`
+- **Outcome**: `cb0f6247-9bdf-4227-a979-c4807498ac6f`
+
+### Important Dev/Prod Notes
+- **NEVER use `db:push`** — drops embedding column; use raw SQL in `runStartupMigrations()` only
+- **Dev org**: `0c9bcf16-cdd9-45e2-87f6-6a839a7f7056`
+- **Prod org**: `cf5754b1-ee80-4b51-8bf6-7be263c97527`
+- **OTC-AGT-005 prod IDs**: `scripts/otc-agt-005-prod-ids.json`
+- **Prod URL**: `https://agent-lifecycle-management-platform.replit.app`
+
+### Export Frameworks (agent-export.tsx)
+Generic (ReAct Agent Loop), LangGraph, CrewAI, AutoGen, Semantic Kernel, Azure AI Foundry, OpenAI Assistants API, AWS Bedrock, Vertex AI, n8n, Databricks.
+Python-only frameworks (foundry, autogen, semantic-kernel) auto-switch language to Python via `useEffect`.

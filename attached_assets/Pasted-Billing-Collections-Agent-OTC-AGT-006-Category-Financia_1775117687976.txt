@@ -1,0 +1,82 @@
+Billing & Collections Agent
+OTC-AGT-006  |  Category: Financial
+7.1 Description
+Generates accurate invoices with proper tax application, manages payment capture and remittance processing, handles billing disputes, sends collection reminders, and reconciles incoming cash. Replaces manual invoicing that leads to errors, write-offs, and slow cash application.
+7.2 Workflow Steps
+55.	1. Receive delivery confirmation from Fulfillment Agent
+56.	2. Generate invoice with correct line items, quantities, prices, and discounts
+57.	3. Calculate and apply taxes based on jurisdiction and product taxability
+58.	4. Validate invoice against PO, contract, and order terms
+59.	5. Deliver invoice via customer-preferred channel (email, EDI, portal, mail)
+60.	6. Monitor payment due dates and initiate dunning sequence for overdue invoices
+61.	7. Process incoming payments and match to open invoices (cash application)
+62.	8. Handle partial payments, overpayments, and unidentified remittances
+63.	9. Manage billing disputes: capture, investigate, resolve, or escalate
+64.	10. Issue credit memos or debit memos as needed
+65.	11. Report on AR aging, DSO, and collection effectiveness
+
+7.3 Common Ontology
+The following entities and attributes form the shared data model referenced by this agent:
+Entity	Key Attributes
+Invoice	invoice ID, type (standard, credit, debit), status, due date, terms
+Payment	payment ID, method, amount, reference, application status
+Dispute	dispute ID, type (pricing, quantity, quality, duplicate), status, resolution
+Dunning	dunning level, next action date, communication history, escalation status
+Cash Application	match type (auto, manual), confidence score, remittance data
+Tax	tax code, rate, jurisdiction, exemption, filing period
+
+7.4 Claude Agent Skills
+The following skills should be developed and made available as context for this agent:
+Skill Name	Description
+Invoice Generation Skill	Creates compliant invoices with proper tax and formatting
+Tax Calculation Skill	Multi-jurisdiction tax computation with exemption handling
+Cash Application Skill	AI-powered matching of payments to invoices using remittance data
+Dunning Management Skill	Configurable dunning sequences with escalation logic
+Dispute Investigation Skill	Automated root cause analysis for billing disputes
+AR Reporting Skill	Generates aging reports, DSO analysis, and collection forecasts
+
+7.5 Eval Dataset
+Recommended evaluation data and benchmarks for validating agent accuracy and performance:
+•	Historical invoices with known accuracy outcomes (disputes, corrections)
+•	Cash application scenarios: perfect matches, partial payments, batch remittances
+•	Dunning effectiveness: collection rates by dunning sequence and customer segment
+•	Dispute resolution: root cause accuracy, resolution time, customer satisfaction
+•	Tax calculation accuracy: audit results, over/under collection rates
+•	Multi-currency scenarios: conversion, rounding, revaluation
+
+7.6 Production Runbooks
+Operational procedures for handling common issues and failure scenarios:
+Scenario	Procedure
+Invoice Generation Failure	Retry logic, manual invoice creation procedure
+Mass Payment File Processing Error	Partial processing, error isolation, resubmission
+Tax Engine Down	Default tax rate application with reconciliation flag
+Unmatched Payment Investigation	Escalation path, aging thresholds, write-off authority
+Dispute Backlog Surge	Triage procedure, prioritization by amount, temporary hold policy
+Month-End/Quarter-End Close	Cutoff procedures, accrual processing, reconciliation checklist
+
+7.7 Regulatory Compliance & Policies
+Applicable regulations and compliance requirements:
+•	Revenue Recognition (ASC 606 / IFRS 15): Proper timing and allocation of revenue
+•	Sales Tax / VAT: Correct calculation, collection, remittance, and filing
+•	E-Invoicing Mandates: Country-specific electronic invoicing requirements (India GST, EU, Latin America)
+•	SOX: Controls over invoice generation, payment processing, and journal entries
+•	PCI-DSS: Secure handling of payment card data
+•	Anti-Money Laundering: Suspicious payment pattern detection and reporting
+
+7.8 Knowledgebase Reference
+Documents and data sources this agent needs access to:
+•	Invoice templates by country, customer segment, and billing arrangement
+•	Tax rate tables, exemption certificate repository, nexus documentation
+•	Payment terms library: net 30, 2/10 net 30, milestone-based, etc.
+•	Dunning letter templates by severity level and customer relationship
+•	Dispute resolution procedures and decision trees
+•	Cash application matching rules and confidence thresholds
+
+7.9 Knowledge Graph
+Entity-relationship mappings showing how data entities connect within this agent's domain:
+Invoice -[FOR_ORDER]-> Order -[PLACED_BY]-> Customer
+Invoice -[CONTAINS]-> Invoice Line -[TAXED_BY]-> Tax Rule
+Payment -[APPLIED_TO]-> Invoice -[REDUCES]-> AR Balance
+Dispute -[RAISED_ON]-> Invoice -[INVESTIGATED_BY]-> Resolution Workflow
+Customer -[ON_DUNNING_LEVEL]-> Dunning Stage -[NEXT_ACTION]-> Communication
+Invoice -[COMPLIANT_WITH]-> E-Invoice Mandate -[FOR_COUNTRY]-> Country
