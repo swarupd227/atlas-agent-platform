@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, real, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, real, boolean, timestamp, jsonb, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -2245,7 +2245,9 @@ export const auditChainHealthChecks = pgTable("audit_chain_health_checks", {
   brokenAt: integer("broken_at"),
   durationMs: integer("duration_ms").notNull().default(0),
   triggeredBy: text("triggered_by").notNull().default("scheduled"),
-});
+}, (table) => [
+  index("idx_audit_chain_health_checks_checked_at").on(table.checkedAt),
+]);
 
 export const insertAuditChainHealthCheckSchema = createInsertSchema(auditChainHealthChecks)
   .omit({ id: true, checkedAt: true })
