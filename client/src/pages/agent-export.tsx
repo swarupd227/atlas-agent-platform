@@ -187,6 +187,13 @@ export default function AgentExport() {
     return () => window.removeEventListener("keydown", handler);
   }, [exportStep, showFileSearch]);
 
+  const PYTHON_ONLY_FRAMEWORKS = ["foundry", "autogen", "semantic-kernel"];
+  useEffect(() => {
+    if (PYTHON_ONLY_FRAMEWORKS.includes(exportFramework)) {
+      setExportFormat("python");
+    }
+  }, [exportFramework]);
+
   const filteredSearchFiles = useMemo(() => {
     if (!fileSearchQuery.trim()) return editedFilePaths;
     const q = fileSearchQuery.toLowerCase();
