@@ -254,6 +254,18 @@ export default function AgentExport() {
     if (exportFramework === "databricks") {
       items.push({ id: "dbx-creds", label: "Configure Databricks credentials", detail: "Set DATABRICKS_HOST and DATABRICKS_TOKEN" });
     }
+    if (exportFramework === "foundry") {
+      items.push({ id: "azure-foundry-creds", label: "Configure Azure AI Foundry credentials", detail: "Set AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, and AZURE_AI_PROJECT in .env" });
+    }
+    if (exportFramework === "semantic-kernel") {
+      items.push({ id: "sk-creds", label: "Configure Semantic Kernel credentials", detail: "Set AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_API_KEY (Azure) or OPENAI_API_KEY (OpenAI) and SK_SERVICE_ID in .env" });
+    }
+    if (exportFramework === "autogen") {
+      items.push({ id: "autogen-creds", label: "Configure AutoGen credentials", detail: "Set OPENAI_API_KEY or AZURE_OPENAI_ENDPOINT + AZURE_OPENAI_API_KEY; provide OAI_CONFIG_LIST for multi-model setups" });
+    }
+    if (exportFramework === "openai-assistants") {
+      items.push({ id: "oai-assistants-creds", label: "Configure OpenAI Assistants credentials", detail: "Set OPENAI_API_KEY; after first run save the generated OPENAI_ASSISTANT_ID to .env to avoid re-creation" });
+    }
 
     return items;
   }, [exportFormat, exportLlmProvider, exportFramework, otelEnabled, toolAdapterOverrides]);
@@ -1118,12 +1130,16 @@ function ConfigureStep({
                 <SelectValue placeholder="Select framework" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="generic">Generic (Ralph Loop)</SelectItem>
+                <SelectItem value="generic">Generic (ReAct Agent Loop)</SelectItem>
                 <SelectItem value="langgraph">LangGraph</SelectItem>
                 <SelectItem value="crewai">CrewAI</SelectItem>
+                <SelectItem value="autogen">AutoGen (Microsoft)</SelectItem>
+                <SelectItem value="semantic-kernel">Semantic Kernel (Microsoft)</SelectItem>
+                <SelectItem value="foundry">Azure AI Foundry</SelectItem>
+                <SelectItem value="openai-assistants">OpenAI Assistants API</SelectItem>
                 <SelectItem value="bedrock">AWS Bedrock Agents</SelectItem>
-                <SelectItem value="n8n">n8n Workflow</SelectItem>
                 <SelectItem value="vertex">Vertex AI Agent Builder</SelectItem>
+                <SelectItem value="n8n">n8n Workflow</SelectItem>
                 <SelectItem value="databricks">Databricks AgentBricks</SelectItem>
               </SelectContent>
             </Select>

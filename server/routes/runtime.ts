@@ -3200,6 +3200,41 @@ The "frameworkFiles" field should contain any framework-specific config/manifest
 3. Parse parameters from the Bedrock event format
 4. Return responses in Bedrock's expected responseBody format
 5. Include error handling for unknown tools and malformed parameters`,
+        foundry: `Requirements for the ENTRYPOINT file (${ctx.format === "typescript" ? "src/agent_flow.py" : "src/agent_flow.py"}) — Azure AI Foundry / Promptflow style (Python only):
+1. Use the Azure AI Foundry SDK (azure-ai-projects) to create an AgentClient using AZURE_AI_PROJECT connection string
+2. Define each tool as an Azure FunctionTool with name, description, and JSON Schema parameters derived from TOOL_REGISTRY
+3. Create the agent via client.agents.create_agent() with the system prompt, model deployment name, and tool list
+4. Implement the run loop: create_thread() → create_run() → poll run status → on requires_action, dispatch tool_calls to adapters and submit_tool_outputs → on completed, extract final message
+5. Include a flow.dag.yaml frameworkFile defining the Promptflow DAG: inputs, outputs, nodes mapping to each tool adapter, and the orchestrator node
+6. Accept task input as a Promptflow input variable and return the agent's final answer as output
+7. Log each tool call and iteration with Azure Application Insights trace format (operation_id, span_id)`,
+        "semantic-kernel": `Requirements for the ENTRYPOINT file (${ctx.format === "typescript" ? "src/kernel_agent.py" : "src/kernel_agent.py"}) — Microsoft Semantic Kernel style (Python):
+1. Import semantic_kernel and the correct AI service connector: AzureChatCompletion if AZURE_OPENAI_ENDPOINT is set, otherwise OpenAIChatCompletion
+2. Create a Kernel instance and add the AI service using SK_SERVICE_ID
+3. Define each tool as a @kernel_function decorated method inside a dedicated Plugin class; use annotations for parameter types derived from the tool's parameter schema
+4. Register all plugin classes on the kernel with kernel.add_plugin()
+5. Implement the agent loop using kernel.invoke() with a FunctionChoiceBehavior.Auto() prompt execution setting so the kernel auto-invokes tools
+6. Build the chat history with the system prompt, then stream the user task through kernel.invoke_stream() and collect the final response
+7. Handle max_iterations by checking the chat history length and injecting a stop instruction if exceeded
+8. Include clear logging of each plugin function invocation with input arguments`,
+        autogen: `Requirements for the ENTRYPOINT file (${ctx.format === "typescript" ? "src/autogen_agent.py" : "src/autogen_agent.py"}) — Microsoft AutoGen style (Python):
+1. Import autogen and build the llm_config dict from OAI_CONFIG_LIST or from OPENAI_API_KEY / AZURE_OPENAI_ENDPOINT env vars
+2. Create an AssistantAgent named after the agent (from agent.yaml) with the system_message set to the agent's system prompt
+3. Create a UserProxyAgent with human_input_mode="NEVER", max_consecutive_auto_reply equal to max_iterations, and code_execution_config=False
+4. Register each tool as a function on both agents using @assistant.register_for_llm and @user_proxy.register_for_execution decorators; derive function signatures from the tool's parameter schema
+5. Each registered function body should call the corresponding tool adapter and return its result
+6. Initiate the conversation via user_proxy.initiate_chat(assistant, message=task_input) where task_input comes from command line argv
+7. Print the final reply from the conversation
+8. Include clear logging of each function call with tool name and arguments`,
+        "openai-assistants": `Requirements for the ENTRYPOINT file (${ctx.format === "typescript" ? "src/assistants_agent.ts" : "src/assistants_agent.py"}):
+1. Import the ${provider === "openai" ? "OpenAI" : "OpenAI (forced for Assistants API)"} SDK and initialize the client
+2. Define TOOL_DEFINITIONS as an array of function-type tools; derive name, description, and parameters JSON Schema from TOOL_REGISTRY
+3. On startup, check OPENAI_ASSISTANT_ID env var; if set load the existing assistant, otherwise create a new one with the agent's name, system prompt (instructions), model, and TOOL_DEFINITIONS — then log the new assistant ID so the user can persist it
+4. Create a new Thread for each task run
+5. Add the task input as a user Message to the thread, then create a Run with the assistant
+6. Poll the run status in a loop: on requires_action, extract tool_calls, dispatch each to the matching tool adapter, collect outputs, and call submit_tool_outputs; on completed, retrieve the latest assistant message and return it
+7. Enforce max_iterations by counting polling cycles and cancelling the run if exceeded
+8. Include clear logging of run status transitions, tool calls, and final message`,
       };
 
       const fwInstr = frameworkInstructions[ctx.framework] || frameworkInstructions.generic;
@@ -3329,7 +3364,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
         llmProvider: z.enum(["openai", "anthropic"]).default("openai"),
         maxIterations: z.number().int().positive().default(agentMaxIter),
         completionPromise: z.string().default("TASK_COMPLETE"),
-        framework: z.enum(["generic", "langgraph", "crewai", "foundry", "bedrock", "n8n", "vertex", "databricks"]).default("generic"),
+        framework: z.enum(["generic", "langgraph", "crewai", "foundry", "autogen", "semantic-kernel", "openai-assistants", "bedrock", "n8n", "vertex", "databricks"]).default("generic"),
         toolAdapters: z.record(z.enum(["builtin", "customer", "stub"])).optional(),
         pinVersions: z.boolean().default(true),
         otelEnabled: z.boolean().default(false),
@@ -4494,13 +4529,16 @@ spec:
       {
         const isTs = format === "typescript";
         const entryMap: Record<string, { ts: string; py: string }> = {
-          generic:   { ts: "npx ts-node src/runtime/orchestrator.ts", py: "python src/runtime/orchestrator.py" },
-          langgraph: { ts: "npx ts-node graph.ts", py: "python graph.py" },
-          crewai:    { ts: "npx ts-node crew.ts", py: "python crew.py" },
-          foundry:   { ts: "npx ts-node entrypoint.ts", py: "python entrypoint.py" },
-          bedrock:   { ts: "npx ts-node lambda/handler.ts", py: "python lambda/handler.py" },
-          n8n:       { ts: "npx ts-node nodes/AgentNode.ts", py: "python nodes/agent_node.py" },
-          vertex:    { ts: "npx ts-node entrypoint.ts", py: "python entrypoint.py" },
+          generic:             { ts: "npx ts-node src/runtime/orchestrator.ts", py: "python src/runtime/orchestrator.py" },
+          langgraph:           { ts: "npx ts-node graph.ts", py: "python graph.py" },
+          crewai:              { ts: "npx ts-node crew.ts", py: "python crew.py" },
+          foundry:             { ts: "python src/agent_flow.py", py: "python src/agent_flow.py" },
+          autogen:             { ts: "python src/autogen_agent.py", py: "python src/autogen_agent.py" },
+          "semantic-kernel":   { ts: "python src/kernel_agent.py", py: "python src/kernel_agent.py" },
+          "openai-assistants": { ts: "npx ts-node src/assistants_agent.ts", py: "python src/assistants_agent.py" },
+          bedrock:             { ts: "npx ts-node lambda/handler.ts", py: "python lambda/handler.py" },
+          n8n:                 { ts: "npx ts-node nodes/AgentNode.ts", py: "python nodes/agent_node.py" },
+          vertex:              { ts: "npx ts-node entrypoint.ts", py: "python entrypoint.py" },
         };
         const entry = entryMap[framework] || entryMap.generic;
         const runCmd = isTs ? entry.ts : entry.py;
@@ -4578,7 +4616,7 @@ clean:
           format,
           llmProvider,
           framework,
-          pattern: "ralph_loop",
+          pattern: "react_loop",
           toolAdapters: toolAdapters || {},
           pinVersions,
           generatedAt: new Date().toISOString(),
@@ -4641,7 +4679,7 @@ clean:
         filePath: z.string().min(1),
         format: z.enum(["typescript", "python"]).default("typescript"),
         llmProvider: z.enum(["openai", "anthropic"]).default("openai"),
-        framework: z.enum(["generic", "langgraph", "crewai", "foundry", "bedrock", "n8n", "vertex", "databricks"]).default("generic"),
+        framework: z.enum(["generic", "langgraph", "crewai", "foundry", "autogen", "semantic-kernel", "openai-assistants", "bedrock", "n8n", "vertex", "databricks"]).default("generic"),
       });
       const { filePath, format, llmProvider, framework } = regenSchema.parse(req.body || {});
 

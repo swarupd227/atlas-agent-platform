@@ -630,7 +630,7 @@ function CreateReleaseWizard({
               <div className="flex items-center gap-2 p-2.5 rounded-md bg-emerald-500/5 border border-emerald-500/10">
                 <Download className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
                 <span className="text-[11px] text-muted-foreground">
-                  Source package mode generates a deployable code repository with Ralph Loop entrypoint, tool adapters, and dependency files for CI/CD pipelines. Managed runtime safeguards (canary, rollback) are not applicable in this mode.
+                  Source package mode generates a deployable code repository with a ReAct agent loop entrypoint, tool adapters, and dependency files for CI/CD pipelines. Managed runtime safeguards (canary, rollback) are not applicable in this mode.
                 </span>
               </div>
             )}
