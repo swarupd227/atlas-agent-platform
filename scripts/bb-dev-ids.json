@@ -1,0 +1,161 @@
+{
+  "createdAt": "2026-04-02T12:55:18.725Z",
+  "environment": "dev",
+  "orgId": "0c9bcf16-cdd9-45e2-87f6-6a839a7f7056",
+  "agents": {
+    "BB-AGT-001": {
+      "agentId": "be7f7911-c80a-4f5d-b59b-dac1572d508c",
+      "agentName": "Auction Data Quality Sentinel",
+      "kbId": "4ec1293d-4432-4632-a2df-fcefa5af3a59",
+      "skillIds": [
+        "fdc7cc0e-0ed6-40ff-bd98-16fd3692cef2",
+        "fb5a5e4d-95a7-4dee-9f93-be1f5fccddcc",
+        "8d659ae2-463a-422f-9f34-e515a1afa479",
+        "bde7e9d5-b401-4036-ab45-e1e7434887fe",
+        "75de9a72-6345-4e32-bcd9-8fc3373af485",
+        "c7287d38-ca6d-45ff-b0b5-4e1eb0a6a481"
+      ],
+      "runbookIds": [
+        "b723d590-5fcd-4838-bd24-6e75b26d35e3",
+        "863a6ed2-f0d9-4d5d-9576-c80fa97c6867",
+        "95c6e602-c775-4aaa-adfa-0375a7a50929",
+        "e3296e77-ac18-41c6-bf76-9ff8b0f5c719",
+        "7ead216e-5a1e-4254-b2c6-26ba787fcb0f",
+        "b520b806-7149-4019-b602-7c92ee1ab707"
+      ],
+      "policyIds": [
+        "e18b9d98-9153-4c65-b1f6-a53ca175ba67",
+        "638804d0-8402-4990-a9fd-200c42214f23",
+        "b53d3521-4e23-40a2-b055-005974079261",
+        "4d1c930a-f5d0-4b8a-a2f0-8182be7ba1ce",
+        "c178c744-8e5e-4e04-8ba5-3a49d335ca0a"
+      ],
+      "goldenDatasetId": "4f1b17f3-2e21-43df-8213-664ec3ed6cd4",
+      "testCaseIds": [
+        "1bfdccee-ac4e-4b8f-b71c-33f19ddb4297",
+        "09f27ce1-88d9-4f03-bfb3-e8b1f671f2fb",
+        "b68f5e9f-de11-4a1d-81be-6a598c256c17",
+        "7f73c23a-478d-48a0-af82-ca2bfdc308b9",
+        "c17a7326-21d8-4bbe-b90d-9ecc081626da",
+        "c07474e4-bef6-48d8-b1fc-3ab2b087bb29"
+      ],
+      "evalSuiteId": "43159508-f24e-4632-bef6-ffb4a154056b",
+      "outcomeId": "a8179100-0ee7-4c77-9227-ec427731ed05"
+    },
+    "BB-AGT-002": {
+      "agentId": "30168199-1d60-4e78-b7e8-89333191f21e",
+      "agentName": "Market Shift Detector",
+      "kbId": "25494a7e-d026-4f58-bd80-6ad0385ba848",
+      "skillIds": [
+        "409c11d8-ef06-466d-858b-6a1f8831f1be",
+        "28a44948-aa1c-49e1-b0c7-c5a35baba3bb",
+        "72589072-779d-414a-9d55-8c37ead18350",
+        "486e18d4-cd7d-41dc-a28d-dc3e4a645d0f",
+        "f33a444a-6236-4cd0-8644-dd2684df11b6",
+        "40474e22-852a-40d0-97dd-7504a428809f"
+      ],
+      "runbookIds": [
+        "f3a591e8-f699-48cd-8ffc-392afbcad6b7",
+        "973119bd-8628-4331-9f1c-0198f825b3e6",
+        "5431d66d-ae77-42ca-8f09-f71f1ec80cf9",
+        "9865bedc-712e-4323-8f2e-246d24f0e9ef",
+        "a87de18d-0fd3-4272-8ea6-f63047da715c",
+        "78e5d58a-0ce9-4cbb-9417-0e0330554de1"
+      ],
+      "policyIds": [
+        "d2d16ba3-8460-4513-8d27-a4c0a45d52b8",
+        "259429db-bf71-40a3-afe5-b01b4c9146a4",
+        "b326c8f4-58c4-4661-a1f9-1924dcdadf86",
+        "4ab5fb14-4a92-420f-bca8-dd9919f228e9"
+      ],
+      "goldenDatasetId": "10e57535-f512-44ce-a991-0acfde9260ad",
+      "testCaseIds": [
+        "5c686f1d-daa9-4f40-bbe6-dff85476dd9c",
+        "01e6cb2c-85a1-45c5-a920-0b210aa8c91c",
+        "d9caf85d-7867-4f90-80a7-665dad0d19fb",
+        "a9952397-c8f7-4d6e-bcef-2e9c70adf6c6",
+        "ff2cf211-14bb-4a77-9b11-a4886eb5e5b6",
+        "b86fe3fb-f2dd-4e2c-b5a0-e280e8b818d8"
+      ],
+      "evalSuiteId": "53c0bec6-6055-4e60-a4ad-ebcc733c36d3",
+      "outcomeId": "8ca38538-f345-475c-ad41-30a2f16a51c3"
+    },
+    "BB-AGT-003": {
+      "agentId": "de3b0b25-93f8-4f70-a78d-088468ae0b5b",
+      "agentName": "Competitive Intelligence Monitor",
+      "kbId": "0eee4bdb-3757-40c6-a225-b817995fc9da",
+      "skillIds": [
+        "b82946b4-dbdb-4ff5-a775-5544989ed38c",
+        "a4eb5bfb-9d4c-4e1d-885a-bb7d4f377fa8",
+        "193ea1fc-4da8-4ef6-8570-497438a4bc1e",
+        "a1bae5ad-6c88-438b-b511-df8b706b9fc0",
+        "499f1ec8-d514-4407-81a0-bf47d66d64d7",
+        "c605313c-22a0-47de-9eca-03f88a8144a1"
+      ],
+      "runbookIds": [
+        "a0268f38-6550-43d3-b33c-587e7bb81486",
+        "ffcd708c-23c2-4898-8e9f-f90351417f11",
+        "f093cdc2-70c5-4249-84d3-4d33f571665c",
+        "b8d40fcc-4710-45ea-a4e1-47a006c84f89",
+        "04927578-94ee-42a6-8106-b7157fce4813",
+        "1df7a08e-b7cf-4ec0-86c9-8400f3909dd3"
+      ],
+      "policyIds": [
+        "f757fba4-eed4-44ea-ab83-8e4840b5570e",
+        "d4c6ef6e-722f-4105-a6d4-de5a12164e5e",
+        "59f8c018-1586-44f1-9b46-fe63b2dc30db",
+        "a0cc14d7-1692-42bc-ab5d-c68739147a16"
+      ],
+      "goldenDatasetId": "dbe0dca1-db55-4d35-8614-9fe085dab3f5",
+      "testCaseIds": [
+        "e7e664be-4cd8-4832-89e0-87d572070d3d",
+        "2b449228-c97b-4930-ae57-e8677a479029",
+        "5c193de2-1daf-497e-bcd1-4c1ae95ff71f",
+        "8ccd40d5-ad5c-4b3c-b11f-6534147a9c8f",
+        "a9d47876-52ed-4a2f-993e-c0665d7a3a36",
+        "b4d52c27-252d-4dee-bb2c-3c7e793b38c3"
+      ],
+      "evalSuiteId": "6699f459-cd11-43aa-88ea-0d4d6e36c391",
+      "outcomeId": "70b4e468-013f-4cbf-8227-79dbc5a07776"
+    },
+    "BB-AGT-004": {
+      "agentId": "4c7a48b7-34ef-4e87-987b-528714e99ae8",
+      "agentName": "Narrative Insight Generator",
+      "kbId": "783d373e-3172-46a8-9a73-feef2a494828",
+      "skillIds": [
+        "ccbc91b6-b34a-4b52-8f39-a7bc87c59967",
+        "3e84ff95-2db5-47b8-b8a4-f85e314c967e",
+        "e16a6ba5-daf5-4418-bcd8-2cd79f5789f2",
+        "1187ceaf-9a5e-4108-8c89-19d25999929f",
+        "68c72ff5-7c39-48e8-9156-c76ff6a02bab",
+        "1f9f7bdc-70eb-4e55-b265-66fc6029f2d3"
+      ],
+      "runbookIds": [
+        "72d7c778-c3ee-4aa0-a82d-2cfe2359d925",
+        "fc41e891-f93c-476f-9dfc-4398ba9de38a",
+        "c490b2c7-a163-4099-a787-09c089a2d66e",
+        "7617b69f-b813-4146-a803-9bfba7ddd6a3",
+        "7b2c42ea-6c04-48b6-952c-e37566b913cd",
+        "04356386-aba9-4c86-92dc-f97044c21835"
+      ],
+      "policyIds": [
+        "fc8ae1c5-bb87-4c7b-a917-b0cf326e4de0",
+        "1d331cc4-8d6c-4f84-80dd-4ee5ff41cc42",
+        "8372f4cd-e616-4a8e-a357-509c2f2f9e67",
+        "4a380f57-5e59-4079-b9de-8c4e3df09426",
+        "2d972b74-6845-4c74-9435-9b3fa4f557e2"
+      ],
+      "goldenDatasetId": "ca38472e-ebbb-46e7-9e56-184471cdecd5",
+      "testCaseIds": [
+        "ba782366-0bab-4ae4-b1fc-d9ef104b91bf",
+        "cf595b40-d0ce-4bc8-8071-5b8e146ff332",
+        "51dd385b-e5e8-4506-a6b7-39783a991b5a",
+        "a63c361e-ebad-4e48-94f0-b1acd05f6f4d",
+        "1ff9e6e1-43ac-4754-8633-48c13cc2561e",
+        "05083460-821f-423c-ac42-d1aa89b821cc"
+      ],
+      "evalSuiteId": "0dee5b0b-6520-4295-8ecd-0d330fce2a36",
+      "outcomeId": "d7b52fae-d8e9-4d96-9a6f-a3294401c7a2"
+    }
+  }
+}

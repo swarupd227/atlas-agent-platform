@@ -1107,6 +1107,7 @@ const BB002_GOLDEN_DATASET = {
   industry: "automotive",
   domain: "market-intelligence",
   version: "1.0",
+  useCase: "Market Shift Detection & Intelligence",
   agentCode: "BB-AGT-002",
   tags: ["market-shift", "change-point-detection", "signal-fusion", "BB-AGT-002"],
 };
@@ -1655,6 +1656,7 @@ const BB003_GOLDEN_DATASET = {
   industry: "automotive",
   domain: "competitive-intelligence",
   version: "1.0",
+  useCase: "Competitive Intelligence Monitoring",
   agentCode: "BB-AGT-003",
   tags: ["competitive-intelligence", "divergence-analysis", "normalization", "BB-AGT-003"],
 };
@@ -2218,6 +2220,7 @@ const BB004_GOLDEN_DATASET = {
   industry: "automotive",
   domain: "content-reporting",
   version: "1.0",
+  useCase: "Narrative Report Generation",
   agentCode: "BB-AGT-004",
   tags: ["narrative-generation", "report-quality", "citation-accuracy", "editorial-voice", "BB-AGT-004"],
 };
