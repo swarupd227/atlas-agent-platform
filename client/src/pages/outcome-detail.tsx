@@ -933,10 +933,13 @@ export default function OutcomeDetail() {
     const current = k.currentValue ?? 0;
     const target = k.target;
     if (target == null) return 0;
+    // No data collected yet — always show 0% rather than a misleading value
+    if (current === 0) return 0;
     const op = k.targetOperator || ">=";
     const isInverse = op === "<=" || op === "<" || /time|latency|incident|error|fail/i.test(k.name || "");
-    if (target === 0) return current === 0 ? 100 : Math.max(0, 100 - current * 10);
-    if (isInverse) return Math.min(100, Math.max(0, (target / Math.max(current, 0.001)) * 100));
+    // target=0 with no current value is unmeasurable; target=0 with a real value uses reduction formula
+    if (target === 0) return Math.max(0, 100 - current * 10);
+    if (isInverse) return Math.min(100, Math.max(0, (target / current) * 100));
     return Math.min(100, Math.max(0, (current / target) * 100));
   };
   const avgProgress = kpis?.length
