@@ -4374,7 +4374,11 @@ def list_policies():
         files["src/autogen_agent.py"] = aiResult?.entrypoint || autoGenTemplate;
         files["tools/__init__.py"] = generatePyToolsInit(tools);
         for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
-        files["OAI_CONFIG_LIST"] = JSON.stringify([{ model: llmProvider === "openai" ? "gpt-4o" : "claude-3-5-sonnet-20241022", api_key: llmProvider === "openai" ? "${OPENAI_API_KEY}" : "${ANTHROPIC_API_KEY}" }], null, 2) + "\n";
+        // AutoGen uses OpenAI-compatible API format; for Anthropic users must proxy via LiteLLM or use azure_openai_api_type
+        const autoGenModelEntry = llmProvider === "openai"
+          ? { model: "gpt-4o", api_key: "${OPENAI_API_KEY}" }
+          : { model: "anthropic/claude-3-5-sonnet-20241022", api_key: "${ANTHROPIC_API_KEY}", api_type: "anthropic" };
+        files["OAI_CONFIG_LIST"] = JSON.stringify([autoGenModelEntry], null, 2) + "\n";
         const autoGenReqs = [...baseReqs, pin ? "pyautogen==0.3.1" : "pyautogen>=0.3.0"]; addLlmDep({}, autoGenReqs);
         files["requirements.txt"] = autoGenReqs.join("\n") + "\n";
         files["Dockerfile"] = aiResult?.dockerfile || dockerfilePy.replace("entrypoint.py", "src/autogen_agent.py");
