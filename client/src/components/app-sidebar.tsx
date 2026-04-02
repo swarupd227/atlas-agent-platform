@@ -37,10 +37,6 @@ import {
   Cpu,
   Code2,
   PlayCircle,
-  Building2,
-  MapPin,
-  Mail,
-  UserX,
 } from "lucide-react";
 import {
   Sidebar,
@@ -223,81 +219,18 @@ export function AppSidebar() {
           />
         )}
         <SidebarGroup className="py-0">
-          <Collapsible defaultOpen={location.startsWith("/demo/")}>
-            <CollapsibleTrigger asChild>
-              <button
-                type="button"
-                className="flex items-center gap-2 w-full px-3 py-2 text-xs font-medium text-muted-foreground uppercase tracking-wider hover:bg-sidebar-accent/50 rounded-md transition-colors"
-                data-testid="button-demo-toggle"
-              >
-                <PlayCircle className="w-3.5 h-3.5" />
-                <span className="flex-1 text-left">Demo</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-            </CollapsibleTrigger>
-            <CollapsibleContent>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild data-active={location === "/demo/blackrock"}>
-                      <Link href="/demo/blackrock" data-testid="link-nav-blackrock-demo">
-                        <Building2 className="w-4 h-4" />
-                        <span>AIM - Synthetic Worker</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild data-active={location.startsWith("/demo/blackrock2")}>
-                      <Link href="/demo/blackrock2" data-testid="link-nav-blackrock2-demo">
-                        <UserX className="w-4 h-4" />
-                        <span>AIM - Portal Offboarding</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild data-active={location.startsWith("/demo/kinective-coa")}>
-                      <Link href="/demo/kinective-coa" data-testid="link-nav-kinective-demo">
-                        <MapPin className="w-4 h-4" />
-                        <span>XNective - Change of Address</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild data-active={location.startsWith("/demo/moodys")}>
-                      <Link href="/demo/moodys" data-testid="link-nav-moodys-demo">
-                        <FileText className="w-4 h-4" />
-                        <span>Credit Assessment Package</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild data-active={location.startsWith("/demo/hearst")}>
-                      <Link href="/demo/hearst" data-testid="link-nav-hearst-demo">
-                        <Mail className="w-4 h-4" />
-                        <span>XYZ - NBA Email Orchestration</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild data-active={location.startsWith("/demo/fitch")}>
-                      <Link href="/demo/fitch" data-testid="link-nav-fitch-demo">
-                        <Shield className="w-4 h-4" />
-                        <span>ABC - Asset Quality Early Warning</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild data-active={location.startsWith("/demo/littler")}>
-                      <Link href="/demo/littler" data-testid="link-nav-littler-demo">
-                        <Scale className="w-4 h-4" />
-                        <span>Multi-State Compliance Engine</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </CollapsibleContent>
-          </Collapsible>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild data-active={location.startsWith("/demo")}>
+                  <Link href="/demo" data-testid="link-nav-demo-center">
+                    <PlayCircle className="w-4 h-4" />
+                    <span>Demo Center</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter />

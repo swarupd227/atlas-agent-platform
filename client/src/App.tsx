@@ -96,6 +96,7 @@ import MoodysDemo from "@/pages/demo/moodys-demo";
 import HearstDemo from "@/pages/demo/hearst-demo";
 import FitchDemo from "@/pages/demo/fitch-demo";
 import LittlerDemo from "@/pages/demo/littler-demo";
+import DemoCenter from "@/pages/demo/demo-center";
 import { Shield, LogOut } from "lucide-react";
 
 function HeaderControls() {
@@ -211,6 +212,7 @@ function DashboardRouter() {
       <Route path="/runbook-automation" component={RunbookAutomation} />
       <Route path="/model-providers" component={ModelProviders} />
       <Route path="/developer" component={DeveloperPortal} />
+      <Route path="/demo" component={DemoCenter} />
       <Route path="/demo/blackrock" component={BlackRockDemo} />
       <Route path="/demo/blackrock2" component={BlackRock2Demo} />
       <Route path="/demo/kinective-coa" component={KinectiveDemo} />
