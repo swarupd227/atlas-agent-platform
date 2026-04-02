@@ -211,27 +211,71 @@ async function createOutcomeVersion(
             : [],
         }));
 
-      // Tool catalog coverage
+      // Tool catalog coverage — match against individual tool functions AND MCP server names.
+      // The AI generates high-level integration names ("FFIEC MCP integration", "SEC EDGAR MCP interface")
+      // which map to MCP server names, not individual tool function names. Keyword-based server matching
+      // catches these so the coverage count is accurate.
+      const MCP_STOP_WORDS = new Set([
+        "mcp", "api", "integration", "interface", "engine", "system", "service",
+        "server", "tool", "data", "feed", "platform", "for", "the", "and", "legacy",
+        "compatibility", "enterprise", "internal", "external",
+      ]);
+
       const toolCoverage = toolNames.map((toolName) => {
         const nameLow = toolName.toLowerCase().replace(/[\s_-]+/g, "_");
+
+        // 1. Exact tool function name match
         const exactMatch = allTools.find((t) => t.name.toLowerCase().replace(/[\s_-]+/g, "_") === nameLow);
-        const partialMatch =
+
+        // 2. Substring tool function match
+        const partialToolMatch =
           !exactMatch &&
           allTools.find(
             (t) =>
               t.name.toLowerCase().includes(toolName.toLowerCase().replace(/_/g, " ")) ||
               toolName.toLowerCase().includes(t.name.toLowerCase().replace(/_/g, " "))
           );
-        const match = exactMatch || partialMatch;
+
+        // 3. Keyword match against MCP server names (handles AI-generated integration names)
+        let serverKeywordMatch: (typeof allServers)[0] | undefined;
+        if (!exactMatch && !partialToolMatch) {
+          const keywords = toolName
+            .toLowerCase()
+            .split(/[\s_\-\/()]+/)
+            .filter((w) => w.length > 2 && !MCP_STOP_WORDS.has(w));
+          if (keywords.length > 0) {
+            serverKeywordMatch = allServers.find((s) => {
+              const sNameLow = s.name.toLowerCase();
+              return keywords.some((kw) => sNameLow.includes(kw));
+            });
+          }
+        }
+
+        const toolMatch = exactMatch || partialToolMatch;
+        const status = exactMatch
+          ? "exists"
+          : partialToolMatch
+          ? "partial"
+          : serverKeywordMatch
+          ? "partial"
+          : "missing";
+
         return {
           proposedName: toolName,
-          status: exactMatch ? "exists" : partialMatch ? "partial" : "missing",
-          matchedTool: match
+          status,
+          matchedTool: toolMatch
             ? {
-                id: match.id,
-                name: match.name,
-                riskClassification: match.riskClassification || "low",
-                serverId: match.serverId,
+                id: toolMatch.id,
+                name: toolMatch.name,
+                riskClassification: toolMatch.riskClassification || "low",
+                serverId: toolMatch.serverId,
+              }
+            : serverKeywordMatch
+            ? {
+                id: serverKeywordMatch.id,
+                name: serverKeywordMatch.name,
+                riskClassification: "low",
+                serverId: serverKeywordMatch.id,
               }
             : null,
         };
