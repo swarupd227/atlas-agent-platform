@@ -1,0 +1,82 @@
+Fulfillment & Exception Agent
+OTC-AGT-005  |  Category: Fulfillment
+6.1 Description
+Monitors the end-to-end fulfillment lifecycle from order release through delivery. Detects and resolves exceptions including backorders, partial shipments, substitutions, and delivery delays. Coordinates proactive customer communications and manages escalations to prevent service failures.
+6.2 Workflow Steps
+44.	1. Receive released order from Order Validation Agent
+45.	2. Monitor pick, pack, and ship events from WMS/fulfillment systems
+46.	3. Detect exceptions: stock-outs, picking errors, carrier delays, address issues
+47.	4. For backorders: determine expected availability, offer alternatives or wait options
+48.	5. For partial shipments: calculate split economics, get customer preference
+49.	6. For substitutions: identify eligible alternatives, validate with customer
+50.	7. Update tracking information and share with customer proactively
+51.	8. Monitor carrier tracking for delivery exceptions (delay, damage, return-to-sender)
+52.	9. Confirm delivery and trigger warranty/service activation if applicable
+53.	10. Resolve post-delivery issues (missing items, wrong items, damage claims)
+54.	11. Feed resolution data back for continuous improvement
+
+6.3 Common Ontology
+The following entities and attributes form the shared data model referenced by this agent:
+Entity	Key Attributes
+Shipment	shipment ID, carrier, tracking number, status, estimated delivery
+Exception	type (backorder, short-ship, substitution, delay), severity, status
+Fulfillment Event	pick, pack, ship, in-transit, delivered, returned
+Backorder	original product, expected date, alternative products
+Carrier	carrier ID, service level, tracking URL, SLA, performance score
+Resolution	action taken, customer response, cycle time, satisfaction score
+
+6.4 Claude Agent Skills
+The following skills should be developed and made available as context for this agent:
+Skill Name	Description
+Fulfillment Event Monitoring Skill	Real-time tracking of WMS and carrier events
+Exception Detection & Classification Skill	Pattern recognition for fulfillment anomalies
+Alternative Product Recommendation Skill	Suggests substitutes based on compatibility and availability
+Customer Communication Skill	Generates proactive delay/exception notifications with options
+Carrier Performance Analysis Skill	Tracks carrier SLA adherence and recommends carrier switches
+Escalation Management Skill	Routes critical exceptions to appropriate teams with context
+
+6.5 Eval Dataset
+Recommended evaluation data and benchmarks for validating agent accuracy and performance:
+•	Historical fulfillment exceptions with resolution outcomes and customer satisfaction
+•	Backorder scenarios: alternative acceptance rates, wait-time tolerance
+•	Carrier delay patterns: detection accuracy and notification timeliness
+•	Substitution recommendations: acceptance rate, return rate
+•	Escalation appropriateness: correct routing, resolution time impact
+•	Communication effectiveness: customer response and satisfaction scores
+
+6.6 Production Runbooks
+Operational procedures for handling common issues and failure scenarios:
+Scenario	Procedure
+WMS Integration Down	Manual fulfillment status polling, warehouse contact procedure
+Mass Carrier Delay (weather, strike)	Bulk notification procedure, alternative carrier activation
+Critical Customer Exception	VIP handling procedure, expedited resolution
+Warehouse System Outage	Contingency fulfillment from alternate location
+Returns Surge	Capacity management, prioritization rules, temporary processing procedures
+Lost Shipment Investigation	Carrier claim process, replacement order procedure
+
+6.7 Regulatory Compliance & Policies
+Applicable regulations and compliance requirements:
+•	Consumer Protection: Delivery date promise regulations (FTC Mail/Telephone Order Rule)
+•	Hazmat Shipping: DOT, IATA dangerous goods regulations
+•	International Shipping: Customs documentation, country-specific import rules
+•	Temperature-Sensitive Products: Cold chain compliance documentation
+•	Product Recalls: Ability to trace and halt affected shipments
+•	Accessibility: Communication in accessible formats per ADA/WCAG
+
+6.8 Knowledgebase Reference
+Documents and data sources this agent needs access to:
+•	Fulfillment center SOPs: pick/pack procedures, exception handling guides
+•	Carrier service guides: transit times, restrictions, claim procedures
+•	Product substitution matrices: approved alternatives by product
+•	Customer communication templates: delay notices, options, apologies
+•	Exception resolution playbooks: step-by-step guides by exception type
+•	Historical exception patterns and seasonal trends
+
+6.9 Knowledge Graph
+Entity-relationship mappings showing how data entities connect within this agent's domain:
+Order -[FULFILLED_BY]-> Shipment -[CARRIED_BY]-> Carrier
+Shipment -[CONTAINS]-> Shipment Line -[SOURCED_FROM]-> Location
+Exception -[RELATED_TO]-> Shipment -[FOR_ORDER]-> Order
+Product -[SUBSTITUTABLE_WITH]-> Product (approved alternatives)
+Exception -[RESOLVED_BY]-> Resolution Action -[COMMUNICATED_TO]-> Customer
+Carrier -[PERFORMS_ON]-> Lane -[HAS_SLA]-> Service Level Agreement
