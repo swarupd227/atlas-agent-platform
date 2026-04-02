@@ -1155,6 +1155,9 @@ function ConfigureStep({
                 <SelectItem value="python">Python</SelectItem>
               </SelectContent>
             </Select>
+            {["foundry", "autogen", "semantic-kernel"].includes(exportFramework) && (
+              <p className="text-[11px] text-muted-foreground">Python only — this framework always exports Python regardless of language selection.</p>
+            )}
           </div>
           <div className="flex flex-col gap-2">
             <Label className="text-xs font-medium">LLM Provider</Label>
