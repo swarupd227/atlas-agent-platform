@@ -1766,9 +1766,23 @@ export default function OutcomeDetail() {
           <TabsTrigger value="governance" data-testid="tab-governance">
             <Gavel className="w-3.5 h-3.5 mr-1.5" />
             Governance
-            {governancePolicies && governancePolicies.filter(p => p.status === "active").length > 0 && (
-              <Badge variant="secondary" className="text-[9px] ml-1.5 h-4 px-1">{governancePolicies.filter(p => p.status === "active").length}</Badge>
-            )}
+            {(() => {
+              const _cgRaw2 = (outcome as any)?.constraintGraph as any;
+              const _cgIds: string[] = Array.isArray(_cgRaw2?.matchedPolicyIds) ? _cgRaw2.matchedPolicyIds : [];
+              const _aiIds: string[] = Array.isArray(_cgRaw2?.discoveryPolicies) ? _cgRaw2.discoveryPolicies.map((d: any) => d.policyId).filter(Boolean) : [];
+              const _disc = new Set([..._cgIds, ..._aiIds]);
+              if (_disc.size === 0) {
+                const _ep2 = (outcomeApprovals.find(a => a.objectId === outcomeId && a.type === "outcome_review") as any)?.evidencePackage as any;
+                if (_ep2) {
+                  (_ep2.matchedPolicies || []).forEach((p: any) => { if (p.id) _disc.add(p.id); });
+                  (_ep2.applicablePolicies || []).forEach((p: any) => { if (p.policyId) _disc.add(p.policyId); });
+                }
+              }
+              const badgeCount = _disc.size > 0 ? _disc.size : (governancePolicies || []).filter(p => p.status === "active").length;
+              return badgeCount > 0 ? (
+                <Badge variant="secondary" className="text-[9px] ml-1.5 h-4 px-1">{badgeCount}</Badge>
+              ) : null;
+            })()}
           </TabsTrigger>
           <TabsTrigger value="financial-ledger" data-testid="tab-financial-ledger">Financial Ledger</TabsTrigger>
           <TabsTrigger value="evidence-vault" data-testid="tab-evidence-vault">Evidence Vault</TabsTrigger>
@@ -2419,7 +2433,15 @@ export default function OutcomeDetail() {
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div>
               <h2 className="text-lg font-semibold">Governance Policies</h2>
-              <p className="text-sm text-muted-foreground">Active policies constraining agents bound to this outcome</p>
+              <p className="text-sm text-muted-foreground">
+                {(() => {
+                  const _cg = (outcome as any)?.constraintGraph as any;
+                  const _hasDiscovery = Array.isArray(_cg?.matchedPolicyIds) && _cg.matchedPolicyIds.length > 0;
+                  return _hasDiscovery
+                    ? "Policies identified as applicable during outcome discovery"
+                    : "Active policies constraining agents bound to this outcome";
+                })()}
+              </p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               {(governancePolicies || []).filter(p => p.status === "active").length > 0 && (
@@ -2494,7 +2516,9 @@ export default function OutcomeDetail() {
                 return acc;
               }, {});
 
-            const hasAny = activePolicies.length > 0 || aiOnlyPolicies.length > 0;
+            const hasAny = discoveryPolicyIds.size > 0
+              ? discoveryMatched.length > 0 || aiOnlyPolicies.length > 0
+              : activePolicies.length > 0 || aiOnlyPolicies.length > 0;
 
             return hasAny ? (
               <div className="space-y-5">
@@ -2552,8 +2576,8 @@ export default function OutcomeDetail() {
                   </div>
                 )}
 
-                {/* Org-wide active policies */}
-                {orgWide.length > 0 && (
+                {/* Org-wide active policies — only shown when no proposal-specific discovery data is present */}
+                {orgWide.length > 0 && discoveryPolicyIds.size === 0 && (
                   <div className="space-y-3">
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Org-wide Active Policies</span>
