@@ -1,0 +1,303 @@
+Auction Data Quality Sentinel Agent
+BB-AGT-001  |  Data Quality & Integrity  |  Scenario 1
+2.1 Description
+Continuously monitors every incoming auction transaction for statistical anomalies, data quality issues, and suspected fraud patterns. Processes 140,000+ daily transactions from Manheim, Adesa, independent auctions, and dealer-direct feeds, applying real-time statistical tests at the individual VIN level. Detects price outliers (>3 sigma from expected value), geographic pricing inconsistencies, suspicious multi-transaction VIN patterns (title-washing, odometer fraud), and volume anomalies that may indicate data feed issues or market disruption. This agent is the first line of defense for Black Book valuation accuracy, quarantining bad data before it can pollute the pricing model.
+2.2 Workflow Steps
+•	1. Ingest real-time auction transaction feed (VIN, auction house, sale date, sale price, region, seller/buyer type, condition)
+•	2. Decode VIN; enrich with vehicle history; retrieve current Black Book valuation and expected price range
+•	3. Apply statistical anomaly tests: Z-score against segment mean, IQR outlier detection, Mahalanobis distance for multivariate outliers
+•	4. Check geographic pricing inconsistency: same VIN/segment priced >25% differently across regions without condition justification
+•	5. Check suspicious VIN patterns: same VIN transacted 3+ times in 30 days (title-washing/odometer fraud signal)
+•	6. Check volume anomalies: segment transaction volume deviating >2 sigma from rolling 4-week average
+•	7. Classify flagged anomalies: Price Outlier, Geographic Inconsistency, Suspected Fraud, Volume Anomaly, Data Feed Issue
+•	8. For suspected fraud: auto-quarantine from pricing model immediately (Full Auto autonomy)
+•	9. For price/geographic outliers: flag for analyst review with supporting evidence and deviation magnitude
+•	10. Log all decisions in Resolution Ledger with source citations (transaction IDs, comparables, statistical test results)
+•	11. Feed clean transactions to valuation model pipeline; route quarantined to fraud investigation queue
+•	12. Generate daily data quality report: transactions processed, anomalies flagged, quarantined, resolved
+
+2.3 Common Ontology
+Entity	Key Attributes
+AuctionTx	txId, vin, auctionHouse, saleDate, salePrice, region, sellerType, buyerType, condition, anomalyFlag, quarantineStatus
+Vehicle	vin, year, make, model, trim, bodyStyle, fuelType (ICE|HEV|PHEV|BEV), mileage, condition, historyFlags[]
+Valuation	valId, vin, valueDate, wholesaleValue, retailValue, confidenceLevel, adjustments[], sourceTransactions[]
+Anomaly	anomalyId, type (priceOutlier|geoInconsistency|suspectedFraud|volumeAnomaly|feedIssue), severity, affectedTxIds[], deviationMagnitude
+MarketSegment	segmentId, name, avgWholesale, avgRetail, weeklyVolume, depreciationRate, volatilityIndex
+AuctionSource	sourceId, name, feedType (API|EDI|FTP), lastReceived, healthStatus, dailyVolume, qualityScore
+
+2.4 Claude Agent Skills
+Skill	Description
+Statistical Anomaly Detection Skill	Z-score, IQR, Mahalanobis distance, and DBSCAN clustering for multi-dimensional outlier detection on incoming transactions
+VIN Fraud Pattern Recognition Skill	Identifies title-washing, odometer rollback, and data fabrication patterns by analyzing VIN transaction histories across auction networks
+Geographic Price Normalization Skill	Adjusts expected prices for regional market factors (climate, demand density, transport costs) before flagging geographic inconsistencies
+Volume Anomaly Detection Skill	Monitors segment-level transaction volumes against seasonal baselines and rolling averages to detect feed outages or market disruptions
+Data Feed Health Monitoring Skill	Tracks auction source feed latency, completeness, and format consistency; detects degradation before it impacts valuations
+Anomaly Evidence Assembly Skill	Compiles supporting evidence packages for each flagged anomaly including comparable transactions and statistical test results
+
+2.5 Eval Dataset
+•	50 known data quality anomalies from past 12 months with labeled root causes and resolution actions
+•	20 confirmed fraud patterns (title-washing, odometer rollback) with labeled VIN histories and auction records
+•	30 market shift events that initially appeared as anomalies but were genuine market movements (false alarm tests)
+•	10,000 clean transactions as negative examples to measure false positive rate (target <=10%)
+•	5 historical data feed outages with known duration and detection delay for feed health monitoring validation
+•	Benchmarks: anomaly detection recall >=95%, false positive rate <=10%, processing latency <500ms per transaction
+
+2.6 Production Runbooks
+Scenario	Procedure
+Mass Anomaly Spike	When flagged anomalies exceed 2x daily average, auto-escalate to lead analyst; determine if genuine market event or data quality issue; adjust thresholds if confirmed
+Auction Feed Outage	Detect missing data within 15 min; flag affected regional valuations with reduced confidence; activate backup data enrichment; auto-restore and backfill on recovery
+Confirmed Fraud Pattern	Quarantine all related transactions; notify Black Book data integrity team; generate fraud investigation package with full VIN history and transaction chain
+False Positive Spike	When analyst dismissal rate exceeds 30%, trigger threshold recalibration; analyze dismissed anomalies for pattern; adjust statistical parameters
+Quarantine Review Backlog	When quarantined transactions exceed 500 pending review, prioritize by impact on published valuations; escalate to additional analysts; set 48-hour SLA
+Model Drift Detection	When anomaly distribution shifts significantly (KL divergence >0.1 from baseline), trigger full statistical parameter review and recalibration
+
+2.7 Regulatory Compliance & Policies
+•	Data Source Agreements: Compliance with auction house data licensing terms; no redistribution of raw transaction data; aggregation-only outputs
+•	FCRA (Fair Credit Reporting Act): Vehicle valuation data used in lending decisions must meet accuracy standards; anomaly detection supports FCRA compliance
+•	State Title Fraud Statutes: Fraud detection outputs may need to be reported to state DMVs and NICB under mandatory reporting obligations
+•	Gramm-Leach-Bliley Act: When valuation data is used by financial institutions, data quality must meet GLB accuracy requirements
+•	SOC 2 Type II: Audit trail requirements for all data quality decisions, quarantine actions, and resolution outcomes
+•	Black Book P1 - Valuation Integrity: No agent may directly modify a published valuation; agents flag and recommend only; analyst approval required
+
+2.8 Knowledgebase Reference
+•	Black Book complete vehicle valuation database: wholesale, retail, and residual values by VIN/segment/region
+•	Auction house transaction format specifications: Manheim, Adesa, independent auction data schemas and quality standards
+•	Historical anomaly case library: 12 months of flagged anomalies with root causes, resolutions, and analyst notes
+•	NICB fraud indicator reference: known title-washing patterns, VIN cloning signatures, odometer tampering indicators
+•	Regional market factor database: climate adjustments, demand density indices, transport cost corridors for geographic normalization
+•	Statistical methodology documentation: threshold derivation, calibration history, false positive/negative analysis for each detection method
+
+2.9 Knowledge Graph
+AuctionTx -[FOR_VEHICLE]-> Vehicle -[IN_SEGMENT]-> MarketSegment
+AuctionTx -[FROM_SOURCE]-> AuctionSource -[IN_REGION]-> GeographicRegion
+Anomaly -[DETECTED_IN]-> AuctionTx -[COMPARED_AGAINST]-> Valuation
+Vehicle -[HAS_HISTORY]-> TransactionHistory -[INDICATES]-> FraudPattern / CleanHistory
+Anomaly -[QUARANTINED_FROM]-> ValuationModel -[PENDING_REVIEW]-> Analyst
+AuctionSource -[HEALTH_STATUS]-> FeedMonitor -[TRIGGERS]-> BackupEnrichment
+ 
+3. Market Shift Detector Agent
+BB-AGT-002  |  Market Intelligence  |  Scenario 1
+3.1 Description
+Analyzes daily valuation movements across all vehicle segments (Compact Car, Mid-Size SUV, Full-Size Pickup, Luxury, EV) to detect accelerating depreciation or appreciation trends 2-4 weeks before they surface in standard weekly reports. Fuses structured data (auction prices, retail listings, days-on-lot, dealer inventory levels) with unstructured signals (OEM incentive announcements, recall news, tariff/trade policy changes, fuel price movements, economic indicators from FRED). This is Black Book competitive edge: detecting where the market is going before competitors see it.
+3.2 Workflow Steps
+•	1. Compute daily segment-level metrics: avg wholesale price, transaction volume, days-on-lot, retail listing price, bid-to-sale ratio
+•	2. Calculate rolling 3-week, 6-week, and 12-week moving averages for each metric by segment
+•	3. Apply change-point detection algorithms (CUSUM, PELT) to identify acceleration/deceleration in depreciation/appreciation trends
+•	4. Ingest unstructured signals: OEM newsfeeds for incentive changes, NHTSA for recalls, trade policy sources, EIA for fuel prices, FRED for economic indicators
+•	5. Classify each unstructured signal by: affected vehicle segments, directional impact, magnitude estimate, confidence level
+•	6. Fuse structured trend data with unstructured signals using weighted evidence model to produce composite shift signals
+•	7. Calculate lead time estimate: how many weeks ahead of standard weekly report would this shift become apparent
+•	8. Generate market shift alert: affected segments, trend direction/magnitude, supporting evidence, confidence level, projected valuation impact
+•	9. Route alerts: AMBER (emerging trend, 2+ weeks lead time) to Auto+Notify; RED (confirmed shift) to Confirm Before
+•	10. Feed confirmed shift intelligence to Narrative Insight Generator (BB-AGT-004) for weekly report inclusion
+•	11. Archive all alerts with subsequent validation data for continuous model improvement
+
+3.3 Common Ontology
+Entity	Key Attributes
+MarketSegment	segmentId, name, avgWholesale, avgRetail, avgDaysOnLot, weeklyVolumeChange, depreciationRate, trendDirection
+MarketAlert	alertId, segmentId, alertType (depreciation|appreciation|volatility), severity (AMBER|RED), signalSources[], narrative, detectedDate, leadTimeWeeks
+ExternalSignal	signalId, source (OEM|NHTSA|tradePolicy|fuelPrice|economic), detectedDate, affectedSegments[], directionalImpact, magnitude, confidence
+TrendMetric	segmentId, date, metric (avgWholesale|volume|daysOnLot|bidToSale), value, movingAvg3w, movingAvg6w, changePointFlag
+FuelPrice	date, regularGasoline, diesel, trend30d, impactOnSegments[]
+EconomicIndicator	source (FRED), series (consumerConfidence|autoLoanRate|unemployment), value, date, trend
+
+3.4 Claude Agent Skills
+Skill	Description
+Change-Point Detection Skill	Applies CUSUM and PELT algorithms to time-series valuation data to identify statistically significant trend breaks
+Signal Fusion Skill	Combines structured market data with unstructured intelligence using weighted evidence scoring for composite market shift assessments
+OEM Incentive Parser Skill	Monitors manufacturer incentive bulletins and classifies impact by vehicle segment, magnitude, and duration
+Economic Signal Integration Skill	Ingests FRED API data and correlates with historical valuation movements by segment
+Fuel Price Impact Modeler Skill	Calculates differential impact of fuel price changes on segment valuations using historical elasticity coefficients
+Lead Time Estimation Skill	Calculates how many weeks ahead of standard reporting a detected shift would surface
+
+3.5 Eval Dataset
+•	30 known market shift events from past 12 months with documented onset dates, peak dates, and magnitude
+•	Lead time validation: for each event, compare agent detection date vs. first appearance in standard weekly report
+•	20 false alarm scenarios: events that appeared to be shifts but normalized
+•	50 signal fusion cases where structured and unstructured signals were available, with known correct combined assessment
+•	Success criteria: market shift detection lead time >=2 weeks, false positive rate <=15%
+•	Benchmark: agent predictions vs. Black Book senior analyst team predictions on same data
+
+3.6 Production Runbooks
+Scenario	Procedure
+Conflicting Signal Resolution	When structured and unstructured signals conflict, increase confidence threshold before alerting; document conflicting evidence for analyst
+Black Swan Event Response	For unprecedented events (pandemic, natural disaster, policy shock), disable normal thresholds; switch to high-sensitivity mode; generate hourly reports
+FRED API Outage	Fall back to cached economic data with staleness warning; manual monitoring until API restores
+OEM Incentive Surprise	Major OEM unexpected incentive changes trigger immediate segment impact assessment bypassing daily cycle
+Seasonal Adjustment Drift	When detected shift aligns with seasonal pattern, apply seasonal decomposition before alerting to avoid false positives
+Alert Fatigue Management	When analysts dont act on >50% of AMBER alerts, review threshold calibration and signal weighting
+
+3.7 Regulatory Compliance & Policies
+•	Market Manipulation Prevention: Agent outputs must never be used to front-run or manipulate vehicle pricing markets
+•	Source Attribution (Black Book P2): Every alert must cite specific data points supporting the claim
+•	Competitive Data Handling (Black Book P3): Competitor pricing data used for divergence analysis only; never reproduce competitor values
+•	Insider Information: Early market intelligence handled according to Hearst information barrier policies
+•	SOC 2 Audit Trail: Full traceability of alert generation including input data, model parameters, confidence calculations
+•	Data Licensing Compliance: External data sources (FRED, NHTSA, OEM feeds) accessed within license terms
+
+3.8 Knowledgebase Reference
+•	Black Book historical valuation data: 10+ years of daily wholesale and retail values by segment and region
+•	OEM incentive history database: incentive programs by manufacturer, model, region, and effective dates
+•	FRED economic data integration: consumer confidence, auto loan rates, unemployment, GDP, fuel prices with historical correlation
+•	NHTSA recall database: recall announcements and historical impact on affected segment valuations
+•	Seasonal adjustment models: historical depreciation patterns by month, segment, and region
+•	Black Book weekly Wholesale Insights and Residual Values Insights archive: 5+ years for lead time validation
+
+3.9 Knowledge Graph
+MarketSegment -[SHOWS_TREND]-> TrendMetric -[DETECTED_BY]-> ChangePointAlgorithm
+ExternalSignal -[AFFECTS]-> MarketSegment -[WITH_IMPACT]-> DirectionalEstimate
+MarketAlert -[FUSES]-> TrendMetric + ExternalSignal -[CONFIDENCE]-> Score
+MarketAlert -[VALIDATED_BY]-> SubsequentData -[ACCURACY]-> PredictionRecord
+FuelPrice -[DIFFERENTIALLY_IMPACTS]-> Segment (Truck vs. EV vs. Sedan)
+EconomicIndicator -[CORRELATES_WITH]-> SegmentDepreciation -[LAG]-> WeeksDelay
+ 
+4. Competitive Intelligence Monitor Agent
+BB-AGT-003  |  Competitive Analysis  |  Scenario 1
+4.1 Description
+Tracks competitor vehicle valuation sources (KBB, NADA Guides, Manheim Market Report) for systematic divergence from Black Book values. When a segment shows growing divergence, the agent investigates whether Black Book is ahead of the market (good - detecting a shift earlier) or lagging (risk - competitor caught something BB missed). Produces weekly competitive positioning reports. Critical for protecting Black Book market position as the most trusted valuation source.
+4.2 Workflow Steps
+•	1. Ingest competitor valuation data from licensed sources: KBB trade-in values, NADA clean/rough trade, Manheim Market Report
+•	2. Normalize competitor values to comparable basis: wholesale vs. retail, condition grade alignment, regional adjustment
+•	3. Calculate divergence metrics by segment: absolute (dollar and percent), directional (same or opposite), trend (widening/narrowing)
+•	4. Classify divergence patterns: (a) BB Leading - moved first, (b) BB Lagging - competitors moved first, (c) Systematic Disagreement
+•	5. For Lagging patterns: trigger deep investigation - which signals are competitors seeing that BB is not?
+•	6. For Leading patterns: document as competitive advantage evidence for sales and client communications
+•	7. Generate weekly competitive positioning report: segment comparison, divergence trends, leadership/lagging classification
+•	8. Flag any segment where BB diverges >5% from all competitors (potential methodology issue)
+•	9. Monitor competitor product announcements and partnership news
+•	10. Archive all competitive intelligence with date stamps for longitudinal analysis
+
+4.3 Common Ontology
+Entity	Key Attributes
+CompetitorVal	source (KBB|NADA|Manheim), segmentId, value, valueType (wholesale|retail|tradeIn), date, normalizedValue
+DivergenceMetric	segmentId, bbValue, competitorValue, source, absoluteDiff, percentDiff, direction (leading|lagging|aligned), trend
+CompetitiveReport	reportId, weekEnding, segments[], highlights[], risks[], recommendations[]
+CompetitorProduct	competitor, productName, announcement, launchDate, capabilities, bbImpact
+PositioningClassification	segmentId, classification (leading|lagging|disagreement), evidenceSources[], confidence
+
+4.4 Claude Agent Skills
+Skill	Description
+Competitor Value Normalization Skill	Adjusts competitor valuations to comparable basis accounting for methodology differences
+Divergence Pattern Classification Skill	Classifies whether divergence indicates BB leadership, lagging, or structural methodology difference
+Root Cause Investigation Skill	When lagging detected, cross-references with Market Shift Detector to identify missed signals
+Competitive Report Generation Skill	Produces weekly formatted competitive positioning reports with visualizations
+Competitor Product Intelligence Skill	Monitors announcements, partnerships, and product launches for strategic impact
+Longitudinal Advantage Tracking Skill	Maintains rolling 12-month analysis of BB lead/lag position across all segments
+
+4.5 Eval Dataset
+•	12 months of competitor valuation data with known leading/lagging classifications validated by BB analysts
+•	20 cases where competitors detected a market shift first with root cause analysis
+•	20 cases where BB was ahead with documentation of data advantage
+•	Normalization accuracy: adjusted competitor values within +/-2% of true comparable basis
+•	Report quality: analyst satisfaction scores >=4.0/5.0 on auto-generated reports
+•	Classification accuracy: leading/lagging correct >=85% vs. analyst assessment
+
+4.6 Production Runbooks
+Scenario	Procedure
+Competitor Methodology Change	Reassess all divergence baselines; flag affected segments for recalibration
+Systematic Lagging Detected	When BB lagging in 3+ segments, escalate to VP Analytics with root cause and data recommendations
+Competitor Data Source Disruption	Switch to public-source approximation; flag affected metrics as reduced confidence
+New Competitor Entry	Add to monitoring framework within 2 weeks; establish baseline divergence
+Divergence Exceeds 10%	Trigger immediate methodology review for any segment >10% from all competitors
+Quarterly Calibration	Recalculate normalization factors and divergence baselines every 90 days
+
+4.7 Regulatory Compliance & Policies
+•	Competitive Data Handling (Black Book P3): Competitor pricing for divergence analysis only; never reproduce competitor values
+•	Antitrust Considerations: Competitive intelligence must comply with FTC guidelines; no price coordination
+•	Data Licensing Terms: Competitor data accessed only through licensed channels; no unauthorized scraping
+•	Confidentiality: Competitive positioning reports classified Black Book Confidential; restricted distribution
+•	SOC 2: All competitive data access, analysis, and report generation logged
+•	Hearst Information Barriers: Competitive intelligence not shared with other Hearst units with competitor relationships
+
+4.8 Knowledgebase Reference
+•	Competitor valuation methodology documentation: KBB, NADA, Manheim published methodologies
+•	Historical divergence data: 3+ years of BB vs. competitor comparisons by segment and region
+•	Competitor product and partnership announcements archive
+•	Black Book methodology documentation: internal models, data weighting, update cadence
+•	Market share and customer win/loss data for business outcome correlation
+•	Industry analyst reports on vehicle valuation market landscape
+
+4.9 Knowledge Graph
+BlackBookValuation -[COMPARED_WITH]-> CompetitorVal -[DIVERGENCE]-> DivergenceMetric
+DivergenceMetric -[CLASSIFIED_AS]-> Leading | Lagging | Disagreement
+Lagging -[INVESTIGATED_BY]-> RootCauseAnalysis -[CROSS_REFERENCES]-> MarketAlert
+CompetitiveReport -[COVERS_WEEK]-> DateRange -[FOR_SEGMENTS]-> MarketSegment[]
+CompetitorProduct -[THREATENS]-> BlackBookCapability -[REQUIRES]-> StrategicResponse
+PositioningClassification -[TRACKED_OVER]-> TimeSeries -[INFORMS]-> BusinessStrategy
+ 
+5. Narrative Insight Generator Agent
+BB-AGT-004  |  Content & Reporting  |  Scenario 1
+5.1 Description
+Synthesizes outputs from Agents 001-003 into Black Book weekly Wholesale Insights and Residual Values Insights reports published to customers. Generates data-backed market commentary per vehicle segment with visualizations, transforming 8-12 hours of analyst writing time per week into 3-minute draft generation with analyst review. Every claim backed by cited data sources. Operates under Confirm Before autonomy - analyst must review and approve before publication.
+5.2 Workflow Steps
+•	1. Aggregate weekly data: segment-level price movements, volume changes, days-on-lot trends, notable anomalies, market shift alerts
+•	2. Rank segments by newsworthiness: largest price movements, confirmed market shifts, notable anomalies, competitive divergences
+•	3. Generate Market Summary section: overall market direction, top movers, key drivers (economic, policy, seasonal)
+•	4. Generate per-segment analysis: price trend narrative, volume analysis, notable transactions, forward outlook, risk flags
+•	5. Generate EV Market Update section: Battery Adjusted Value trends, charging infrastructure developments, incentive impacts
+•	6. Generate Outlook section: forward-looking signals from Market Shift Detector, policy pipeline, seasonal expectations
+•	7. Auto-generate supporting visualizations: segment trend charts, heat maps, waterfall decompositions, YoY comparison tables
+•	8. Insert source citations for every factual claim: auction transaction counts, economic data series, OEM references
+•	9. Highlight sections requiring analyst judgment in yellow: subjective commentary, wide-confidence predictions
+•	10. Format in Black Book standard template with header, section structure, and branding
+•	11. Route to analyst for review with tracked changes capability
+•	12. Upon approval, publish to customer channels; archive with analyst edits for future training
+
+5.3 Common Ontology
+Entity	Key Attributes
+WeeklyReport	reportId, weekEnding, status (draft|review|published), sections[], analyst, publishDate
+ReportSection	sectionId, type (summary|segmentDetail|evUpdate|outlook), segmentId, narrative, citations[], charts[]
+Citation	citationId, type (auctionData|economicIndicator|oemAnnouncement|newsArticle), source, reference, dataPoints
+Visualization	chartId, type (trendLine|heatMap|waterfall|comparison), segment, dateRange, dataSource
+AnalystEdit	editId, section, originalText, editedText, editType (accept|modify|reject), reasoning
+PublicationChannel	channelId, type (email|portal|API|PDF), audience, distributionList
+
+5.4 Claude Agent Skills
+Skill	Description
+Market Narrative Generation Skill	Produces clear, data-backed commentary in Black Book editorial voice from segment data and shift alerts
+Segment Ranking Skill	Identifies most newsworthy segments and stories based on change magnitude, customer impact, and novelty
+Visualization Generation Skill	Creates standardized charts (trend lines, heat maps, waterfalls) in Black Book brand format
+Source Citation Assembly Skill	Attaches verifiable citations to every factual claim
+Analyst Collaboration Skill	Highlights sections needing human judgment, tracks edits, learns from edit patterns
+Template Formatting Skill	Formats reports in Black Book standard structure with branding and disclaimers
+
+5.5 Eval Dataset
+•	52 weeks of published Wholesale Insights reports with analyst edits tracked for training data
+•	Content quality: analyst acceptance rate >=85% with minor or no edits
+•	Factual accuracy: 100% citation accuracy against source data
+•	Editorial voice matching: BLEU/ROUGE scores against published reports
+•	Visualization accuracy: zero data-visualization mismatches
+•	Time savings: 85% reduction from 8-12 hours to 1-2 hours including review
+
+5.6 Production Runbooks
+Scenario	Procedure
+Analyst Rejects Entire Section	Flag for investigation - data quality, narrative, or subjective disagreement; feed into training
+Publication Deadline Pressure	Escalation reminders at T-4 and T-2 hours; CEO override for emergency publication
+Contradictory Data in Report	Auto-detect contradictory narratives across sections; flag for reconciliation before review
+Chart Generation Failure	Fall back to data tables; never publish without supporting data presentation
+Customer-Specific Report Requests	Adapt standard template with additional detail for premium client segments
+Regulatory Content	When report touches FCRA-relevant data, ensure compliance disclaimers included
+
+5.7 Regulatory Compliance & Policies
+•	Black Book P1 - Valuation Integrity: Report content framed as market observations, not valuation recommendations
+•	Black Book P2 - Source Attribution: Every factual claim must cite specific verifiable data sources
+•	Editorial Standards: Reports must maintain objectivity; no promotional language, no OEM favoritism
+•	FCRA Implications: Appropriate disclaimers when content could influence lending decisions
+•	Copyright & IP: Generated content is Black Book intellectual property; distribution restricted to subscribers
+•	Confirm Before Autonomy: No report published without explicit analyst approval; cannot be elevated to Auto
+
+5.8 Knowledgebase Reference
+•	Black Book editorial style guide: tone, terminology, formatting conventions, brand voice
+•	52+ weeks of published Wholesale Insights and Residual Values Insights reports
+•	Segment taxonomy and naming conventions used in Black Book publications
+•	Visualization standards: chart types, color palettes, axis formatting for Black Book reports
+•	Customer distribution lists and channel specifications per publication type
+•	Analyst feedback history: common edit patterns, quality issues, editorial preferences by analyst
+
+5.9 Knowledge Graph
+WeeklyReport -[CONTAINS]-> ReportSection[] -[FOR_SEGMENT]-> MarketSegment
+ReportSection -[CITES]-> Citation -[SOURCED_FROM]-> DataSource
+ReportSection -[INCLUDES]-> Visualization -[GENERATED_FROM]-> TrendMetric
+AnalystEdit -[MODIFIES]-> ReportSection -[IMPROVES]-> NarrativeModel
+WeeklyReport -[PUBLISHED_TO]-> Channel -[RECEIVED_BY]-> CustomerSegment
+MarketAlert (from BB-AGT-002) -[INCLUDED_IN]-> ReportSection -[WITH_CONTEXT]-> Narrative

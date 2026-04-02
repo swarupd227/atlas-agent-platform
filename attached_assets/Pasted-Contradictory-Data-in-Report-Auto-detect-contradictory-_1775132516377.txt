@@ -1,0 +1,29 @@
+Contradictory Data in Report	Auto-detect contradictory narratives across sections; flag for reconciliation before review
+Chart Generation Failure	Fall back to data tables; never publish without supporting data presentation
+Customer-Specific Report Requests	Adapt standard template with additional detail for premium client segments
+Regulatory Content	When report touches FCRA-relevant data, ensure compliance disclaimers included
+
+5.7 Regulatory Compliance & Policies
+•	Black Book P1 - Valuation Integrity: Report content framed as market observations, not valuation recommendations
+•	Black Book P2 - Source Attribution: Every factual claim must cite specific verifiable data sources
+•	Editorial Standards: Reports must maintain objectivity; no promotional language, no OEM favoritism
+•	FCRA Implications: Appropriate disclaimers when content could influence lending decisions
+•	Copyright & IP: Generated content is Black Book intellectual property; distribution restricted to subscribers
+•	Confirm Before Autonomy: No report published without explicit analyst approval; cannot be elevated to Auto
+
+5.8 Knowledgebase Reference
+•	Black Book editorial style guide: tone, terminology, formatting conventions, brand voice
+•	52+ weeks of published Wholesale Insights and Residual Values Insights reports
+•	Segment taxonomy and naming conventions used in Black Book publications
+•	Visualization standards: chart types, color palettes, axis formatting for Black Book reports
+•	Customer distribution lists and channel specifications per publication type
+•	Analyst feedback history: common edit patterns, quality issues, editorial preferences by analyst
+
+5.9 Knowledge Graph
+WeeklyReport -[CONTAINS]-> ReportSection[] -[FOR_SEGMENT]-> MarketSegment
+ReportSection -[CITES]-> Citation -[SOURCED_FROM]-> DataSource
+ReportSection -[INCLUDES]-> Visualization -[GENERATED_FROM]-> TrendMetric
+AnalystEdit -[MODIFIES]-> ReportSection -[IMPROVES]-> NarrativeModel
+WeeklyReport -[PUBLISHED_TO]-> Channel -[RECEIVED_BY]-> CustomerSegment
+MarketAlert (from BB-AGT-002) -[INCLUDED_IN]-> ReportSection -[WITH_CONTEXT]-> Narrative
+ 
