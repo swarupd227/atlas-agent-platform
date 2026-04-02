@@ -95,7 +95,7 @@ function resolveOntologyTags(
   tags.action_category = actionCategoryMap[action] || "general";
 
   if (opts?.agentOntologyTags && opts.agentOntologyTags.length > 0) {
-    tags.entity_type = opts.agentOntologyTags.map(t => t.conceptLabel).join(", ");
+    tags.entity_type = opts.agentOntologyTags.filter(t => t != null).map(t => t.conceptLabel).join(", ");
   }
 
   if (opts?.policyDomain) {
