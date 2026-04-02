@@ -480,6 +480,27 @@ export async function bbLiveRunHandler(req: Request, res: Response): Promise<voi
   }
 }
 
+// ─── Reset demo ───────────────────────────────────────────────────────────────
+
+export async function resetBBDemo(_req: Request, res: Response): Promise<void> {
+  try {
+    const agentIds = Object.values(BB_AGENT_IDS);
+    for (const agentId of agentIds) {
+      const deps = await storage.getDeploymentsByAgentId(agentId).catch(() => [] as any[]);
+      for (const dep of deps) {
+        await storage.updateDeployment(dep.id, {
+          status:        "pending",
+          deployedAt:    null as any,
+          resultSummary: null as any,
+        }).catch(() => {});
+      }
+    }
+    res.json({ success: true, message: "Demo reset — all agent runs cleared" });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err?.message });
+  }
+}
+
 // ─── Agent runs list for pipeline header ─────────────────────────────────────
 
 export async function getBBAgentRuns(_req: Request, res: Response): Promise<void> {

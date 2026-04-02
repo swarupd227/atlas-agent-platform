@@ -1,7 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
+import { apiRequest } from "@/lib/queryClient";
 import {
   LayoutDashboard,
   AlertTriangle,
@@ -19,6 +21,7 @@ import {
   Terminal,
   CheckCircle,
   XCircle,
+  RotateCcw,
 } from "lucide-react";
 
 import BBScreen1OutcomeCockpit from "./bb-s1-outcome-cockpit";
@@ -58,6 +61,103 @@ const STATUS_MAP: Record<string, { dot: string; label: string }> = {
 
 const BB_COLOR = "#E8640A";
 
+// ─── Pre-run placeholder ──────────────────────────────────────────────────────
+
+const SCREEN_PREVIEWS: Record<ScreenId, { description: string; bullets: string[] }> = {
+  "outcome": {
+    description: "Portfolio-level view of all 4 BB agents and their KPIs",
+    bullets: [
+      "Anomaly detection rate vs 95% target",
+      "Market shift lead-time advantage (currently 2.8 weeks)",
+      "Report automation percentage and analyst hours saved",
+      "14-week outcome confidence trajectory chart",
+    ],
+  },
+  "anomaly": {
+    description: "Live scan results from 142,183 today's auction transactions",
+    bullets: [
+      "Price outliers flagged by 3-sigma deviation test",
+      "Geographic arbitrage patterns across regions",
+      "Multi-auction VIN fraud detection with decision context",
+      "Quarantine summary protecting the valuation model",
+    ],
+  },
+  "market-shift": {
+    description: "Early warning alerts 2–4 weeks ahead of standard weekly reports",
+    bullets: [
+      "Segment shift alerts with fused signal breakdown",
+      "Auction volume trends and OEM incentive signals",
+      "Per-segment price velocity across all 12 segments",
+      "Projected lender exposure for flagged segments",
+    ],
+  },
+  "weekly-report": {
+    description: "Auto-drafted Wholesale Insights report — 85% generated in 3 minutes",
+    bullets: [
+      "Full market summary section (auto-generated)",
+      "Per-segment analysis for all 12 segments",
+      "Analyst review flags for statistically unusual conditions",
+      "8.5 analyst hours saved per weekly publication",
+    ],
+  },
+  "self-healing": {
+    description: "Real-time healing event: Manheim SE data feed offline for 4 minutes",
+    bullets: [
+      "5-stage autonomous pipeline: Detect → Diagnose → Remediate → Backfill → Validate",
+      "8,200 transactions recovered without analyst intervention",
+      "Comparison: 247 minutes vs 4 minutes without / with ATLAS",
+      "All 5 data feed health scores restored to 99%+",
+    ],
+  },
+};
+
+function PreRunPlaceholder({ screen, onRun }: { screen: ScreenId; onRun: () => void }) {
+  const preview = SCREEN_PREVIEWS[screen];
+  const ScreenIcon = SCREENS.find(s => s.id === screen)?.icon || LayoutDashboard;
+
+  return (
+    <div className="flex items-center justify-center h-full min-h-[400px]">
+      <div className="max-w-md w-full text-center space-y-5 px-4">
+        <div
+          className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto"
+          style={{ backgroundColor: `${BB_COLOR}18` }}
+        >
+          <ScreenIcon className="w-7 h-7" style={{ color: BB_COLOR }} />
+        </div>
+
+        <div>
+          <h3 className="text-base font-semibold">{preview.description}</h3>
+          <p className="text-sm text-muted-foreground mt-1.5">
+            Run the live pipeline to see real agent output on this screen.
+          </p>
+        </div>
+
+        <div className="text-left space-y-2 p-4 rounded-xl border bg-muted/20">
+          <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">What you'll see</p>
+          {preview.bullets.map((b, i) => (
+            <div key={i} className="flex items-start gap-2">
+              <span className="w-1.5 h-1.5 rounded-full mt-1.5 shrink-0" style={{ backgroundColor: `${BB_COLOR}aa` }} />
+              <p className="text-[11px] text-muted-foreground leading-relaxed">{b}</p>
+            </div>
+          ))}
+        </div>
+
+        <button
+          onClick={onRun}
+          className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-medium text-white mx-auto shadow-sm hover:opacity-90 active:scale-95 transition-all"
+          style={{ backgroundColor: BB_COLOR }}
+          data-testid="bb-placeholder-run-btn"
+        >
+          <Play className="w-4 h-4" />
+          Run Live Pipeline
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Event log styling ────────────────────────────────────────────────────────
+
 function getEventStyle(ev: LiveEvent) {
   if (ev.type === "run_start" || ev.type === "setup") return "text-blue-400";
   if (ev.type === "agent_start")                      return "text-amber-300 font-semibold";
@@ -81,6 +181,8 @@ function getEventIcon(ev: LiveEvent) {
   if (ev.type === "tool_call_result" && !ev.success)  return <span className="w-3 h-3 text-[8px] text-red-400 shrink-0 mt-0.5 flex items-center justify-center">✗</span>;
   return <Terminal className="w-3 h-3 text-muted-foreground/50 shrink-0 mt-0.5" />;
 }
+
+// ─── Live feed panel ──────────────────────────────────────────────────────────
 
 function LiveFeedPanel({ events, activeAgentName, running, onClose }: {
   events: LiveEvent[]; activeAgentName: string | null; running: boolean; onClose: () => void;
@@ -132,14 +234,17 @@ function LiveFeedPanel({ events, activeAgentName, running, onClose }: {
   );
 }
 
-function PipelineHeader({ liveRunning, activeAgentName }: { liveRunning: boolean; activeAgentName: string | null }) {
+// ─── Pipeline header ──────────────────────────────────────────────────────────
+
+function PipelineHeader({ liveRunning, activeAgentName, hasRun }: {
+  liveRunning: boolean; activeAgentName: string | null; hasRun: boolean;
+}) {
   const { data } = useQuery<any>({
     queryKey: ["/demo-api/blackbook/agent-runs"],
     refetchInterval: liveRunning ? 4000 : 30000,
   });
 
   const runs: any[] = data?.agentRuns || [];
-
   const placeholders = [
     "Auction Data Quality Sentinel",
     "Market Shift Detector",
@@ -164,7 +269,8 @@ function PipelineHeader({ liveRunning, activeAgentName }: { liveRunning: boolean
     <div className="flex items-stretch gap-1 py-3 border-b border-border/50 overflow-x-auto">
       {runs.map((run, i) => {
         const isRunning = liveRunning && activeAgentName === run.agentName;
-        const conf = STATUS_MAP[isRunning ? "running" : (run.runStatus || "idle")] || STATUS_MAP.idle;
+        const effectiveStatus = isRunning ? "running" : (hasRun ? (run.runStatus || "idle") : "idle");
+        const conf = STATUS_MAP[effectiveStatus] || STATUS_MAP.idle;
         return (
           <div key={run.agentId} className="flex items-center gap-1 flex-1 min-w-0">
             <div className={`flex-1 min-w-[130px] px-3 py-2 rounded-lg border transition-colors ${
@@ -193,8 +299,11 @@ function PipelineHeader({ liveRunning, activeAgentName }: { liveRunning: boolean
   );
 }
 
+// ─── Main demo shell ──────────────────────────────────────────────────────────
+
 export default function BlackBookDemo() {
   const [activeScreen, setActiveScreen]     = useState<ScreenId>("outcome");
+  const [hasRun, setHasRun]                 = useState(false);
   const [liveRunning, setLiveRunning]       = useState(false);
   const [liveComplete, setLiveComplete]     = useState(false);
   const [liveEvents, setLiveEvents]         = useState<LiveEvent[]>([]);
@@ -204,6 +313,18 @@ export default function BlackBookDemo() {
   const esRef       = useRef<EventSource | null>(null);
   const liveEventId = useRef(0);
   const queryClient = useQueryClient();
+
+  const resetMutation = useMutation({
+    mutationFn: () => apiRequest("POST", "/demo-api/blackbook/reset"),
+    onSuccess: () => {
+      setHasRun(false);
+      setLiveComplete(false);
+      setLiveEvents([]);
+      setShowLiveFeed(false);
+      liveEventId.current = 0;
+      queryClient.invalidateQueries({ queryKey: ["/demo-api/blackbook/agent-runs"] });
+    },
+  });
 
   const addEvent = useCallback((type: string, agentName: string, message: string, tool?: string, success?: boolean) => {
     const now  = new Date();
@@ -264,6 +385,7 @@ export default function BlackBookDemo() {
       esRef.current = null;
       setLiveRunning(false);
       setLiveComplete(true);
+      setHasRun(true);
       setLiveAgentName(null);
       queryClient.invalidateQueries({ queryKey: ["/demo-api/blackbook/agent-runs"] });
       queryClient.invalidateQueries({ queryKey: ["/demo-api/blackbook/outcome"] });
@@ -289,6 +411,9 @@ export default function BlackBookDemo() {
   useEffect(() => () => { stopLiveRun(); }, [stopLiveRun]);
 
   const renderScreen = () => {
+    if (!hasRun && !liveRunning) {
+      return <PreRunPlaceholder screen={activeScreen} onRun={startLiveRun} />;
+    }
     switch (activeScreen) {
       case "outcome":        return <BBScreen1OutcomeCockpit />;
       case "anomaly":        return <BBScreen2AnomalyDetection />;
@@ -322,6 +447,7 @@ export default function BlackBookDemo() {
         </div>
 
         <div className="flex items-center gap-3">
+          {/* SSE log toggle — only when pipeline has been started */}
           {(liveEvents.length > 0 || liveRunning) && (
             <button
               onClick={() => setShowLiveFeed(v => !v)}
@@ -334,6 +460,21 @@ export default function BlackBookDemo() {
             </button>
           )}
 
+          {/* Reset Demo — only after a run has completed */}
+          {liveComplete && (
+            <button
+              onClick={() => resetMutation.mutate()}
+              disabled={resetMutation.isPending}
+              data-testid="bb-reset-demo"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-border/60 bg-muted/30 text-muted-foreground hover:text-foreground hover:border-border transition-all disabled:opacity-50"
+            >
+              {resetMutation.isPending
+                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Resetting…</>
+                : <><RotateCcw className="w-3.5 h-3.5" /> Reset Demo</>}
+            </button>
+          )}
+
+          {/* Run Pipeline */}
           <button
             onClick={startLiveRun}
             disabled={liveRunning}
@@ -370,7 +511,7 @@ export default function BlackBookDemo() {
 
       {/* Pipeline header — 4 BB agents */}
       <div className="px-6 shrink-0">
-        <PipelineHeader liveRunning={liveRunning} activeAgentName={liveAgentName} />
+        <PipelineHeader liveRunning={liveRunning} activeAgentName={liveAgentName} hasRun={hasRun} />
       </div>
 
       {/* Screen tabs */}

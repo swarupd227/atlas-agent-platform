@@ -40,7 +40,7 @@ import fitchReportEngineRouter from "./mock-mcp/fitch-report-engine";
 import bbAuctionDataRouter from "./mock-mcp/bb-auction-data";
 import bbMarketDataRouter from "./mock-mcp/bb-market-data";
 import bbReportEngineRouter from "./mock-mcp/bb-report-engine";
-import { bbLiveRunHandler, getBBAgentRuns, getBBOutcomeData, getBBSelfHealingStatus, ensureBBAgents } from "./blackbook-live-run";
+import { bbLiveRunHandler, getBBAgentRuns, getBBOutcomeData, getBBSelfHealingStatus, resetBBDemo, ensureBBAgents } from "./blackbook-live-run";
 import { registerMockMcpServers } from "./mock-mcp/register";
 
 export { computeConstraintGraph, recomputeOutcomeKpis };
@@ -154,6 +154,7 @@ export async function registerRoutes(
   app.get("/demo-api/blackbook/agent-runs",  getBBAgentRuns);
   app.get("/demo-api/blackbook/outcome",     getBBOutcomeData);
   app.get("/demo-api/blackbook/self-healing", getBBSelfHealingStatus);
+  app.post("/demo-api/blackbook/reset",      resetBBDemo);
 
   app.post("/api/mock-mcp/register", async (_req, res) => {
     try {
