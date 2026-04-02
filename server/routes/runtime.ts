@@ -4228,24 +4228,15 @@ def list_policies():
           skills: tools.map(t => ({ name: t.name, description: t.description || "", type: "tool" })),
           configuration: { maxIterations, completionPromise, llmProvider },
         }, null, 2);
-        const foundryTemplateTs = `// Microsoft Foundry Agent Entry Point\n// Generated for ${agent.name}\nimport yaml from "js-yaml";\nimport fs from "fs";\nimport { loadSkills } from "./skills";\n\nconst manifest = JSON.parse(fs.readFileSync("foundry.manifest.json", "utf-8"));\nconst config = yaml.load(fs.readFileSync("agent.yaml", "utf-8")) as any;\nconst skills = loadSkills();\n\nasync function main() {\n  console.log(\`[Foundry Agent] \${manifest.name} starting...\`);\n  console.log(\`Skills loaded: \${Object.keys(skills).join(", ")}\`);\n  // Implement Foundry-compatible agent loop\n  let iteration = 0;\n  while (iteration < ${maxIterations}) {\n    iteration++;\n    // TODO: Call LLM, invoke skills, check completion\n    console.log(\`Iteration \${iteration}\`);\n    break;\n  }\n}\n\nmain().catch(console.error);\n`;
         const foundryTemplatePy = `# Microsoft Foundry Agent Entry Point\n# Generated for ${agent.name}\nimport yaml\nimport json\nfrom skills import load_skills\n\nwith open("foundry.manifest.json") as f:\n    manifest = json.load(f)\nwith open("agent.yaml") as f:\n    config = yaml.safe_load(f)\n\nskills = load_skills()\n\ndef main():\n    print(f"[Foundry Agent] {manifest['name']} starting...")\n    print(f"Skills loaded: {', '.join(skills.keys())}")\n    iteration = 0\n    while iteration < ${maxIterations}:\n        iteration += 1\n        print(f"Iteration {iteration}")\n        # TODO: Call LLM, invoke skills, check completion\n        break\n\nif __name__ == "__main__":\n    main()\n`;
-        if (format === "typescript") {
-          files["entrypoint.ts"] = aiResult?.entrypoint || foundryTemplateTs;
-          files["skills/index.ts"] = `// Skill implementations\n${tools.map(t => `export { default as ${t.name} } from "../tools/${t.name}";`).join("\n")}\n\nexport function loadSkills() {\n  return { ${tools.map(t => t.name).join(", ")} };\n}\n`;
-          files["tools/index.ts"] = generateTsToolsIndex(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name)); }
-          const deps = { ...baseDeps }; addLlmDep(deps, []);
-          files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node entrypoint.ts" }, dependencies: deps }, null, 2);
-        } else {
-          files["entrypoint.py"] = aiResult?.entrypoint || foundryTemplatePy;
-          files["skills/__init__.py"] = `# Skill implementations\n${tools.map(t => `from tools.${t.name} import execute as ${t.name}_execute`).join("\n")}\n\ndef load_skills():\n    return { ${tools.map(t => `"${t.name}": ${t.name}_execute`).join(", ")} }\n`;
-          files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
-          const reqs = [...baseReqs]; addLlmDep({}, reqs);
-          files["requirements.txt"] = reqs.join("\n") + "\n";
-        }
-        files["Dockerfile"] = aiResult?.dockerfile || (format === "typescript" ? dockerfile : dockerfilePy);
+        // Foundry is Python-only; format is always "python" here
+        files["src/agent_flow.py"] = aiResult?.entrypoint || foundryTemplatePy;
+        files["skills/__init__.py"] = `# Skill implementations\n${tools.map(t => `from tools.${t.name} import execute as ${t.name}_execute`).join("\n")}\n\ndef load_skills():\n    return { ${tools.map(t => `"${t.name}": ${t.name}_execute`).join(", ")} }\n`;
+        files["tools/__init__.py"] = generatePyToolsInit(tools);
+        for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+        const reqs = [...baseReqs]; addLlmDep({}, reqs);
+        files["requirements.txt"] = reqs.join("\n") + "\n";
+        files["Dockerfile"] = aiResult?.dockerfile || dockerfilePy.replace("entrypoint.py", "src/agent_flow.py");
       } else if (framework === "bedrock") {
         const openApiPaths: Record<string, any> = {};
         for (const tool of tools) {
@@ -4376,6 +4367,45 @@ def list_policies():
           pin ? "pyyaml==6.0.2" : "pyyaml>=6.0",
         ];
         files["requirements.txt"] = dbxReqs.join("\n") + "\n";
+      } else if (framework === "autogen") {
+        // AutoGen (Microsoft) — Python only
+        const autoGenTemplate = `# AutoGen Multi-Agent Orchestration\n# Generated for ${agent.name}\nimport os\nimport autogen\nfrom tools import load_tools\n\nconfig_list = autogen.config_list_from_json("OAI_CONFIG_LIST")\n\nassistant = autogen.AssistantAgent(\n    name="${agentSlug}_assistant",\n    system_message="""${systemPrompt.substring(0, 400).replace(/`/g, "'").replace(/\\/g, "\\\\")}""",\n    llm_config={"config_list": config_list, "max_tokens": 4096},\n)\n\nuser_proxy = autogen.UserProxyAgent(\n    name="user_proxy",\n    is_termination_msg=lambda msg: "${completionPromise}" in (msg.get("content") or ""),\n    human_input_mode="NEVER",\n    max_consecutive_auto_reply=${maxIterations},\n    code_execution_config=False,\n)\n\n# Register tools\ntools = load_tools()\nfor tool_name, tool_fn in tools.items():\n    autogen.register_function(\n        tool_fn,\n        caller=assistant,\n        executor=user_proxy,\n        name=tool_name,\n        description=tool_fn.__doc__ or tool_name,\n    )\n\n\ndef run(task: str) -> str:\n    user_proxy.initiate_chat(assistant, message=task)\n    last = user_proxy.last_message(assistant)\n    return (last or {}).get("content", "")\n\n\nif __name__ == "__main__":\n    run("Hello, what can you help me with?")\n`;
+        files["src/autogen_agent.py"] = aiResult?.entrypoint || autoGenTemplate;
+        files["tools/__init__.py"] = generatePyToolsInit(tools);
+        for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+        files["OAI_CONFIG_LIST"] = JSON.stringify([{ model: llmProvider === "openai" ? "gpt-4o" : "claude-3-5-sonnet-20241022", api_key: llmProvider === "openai" ? "${OPENAI_API_KEY}" : "${ANTHROPIC_API_KEY}" }], null, 2) + "\n";
+        const autoGenReqs = [...baseReqs, pin ? "pyautogen==0.3.1" : "pyautogen>=0.3.0"]; addLlmDep({}, autoGenReqs);
+        files["requirements.txt"] = autoGenReqs.join("\n") + "\n";
+        files["Dockerfile"] = aiResult?.dockerfile || dockerfilePy.replace("entrypoint.py", "src/autogen_agent.py");
+      } else if (framework === "semantic-kernel") {
+        // Semantic Kernel (Microsoft) — Python only
+        const skTemplate = `# Semantic Kernel Agent\n# Generated for ${agent.name}\nimport asyncio\nimport os\nfrom semantic_kernel import Kernel\nfrom semantic_kernel.connectors.ai.open_ai import ${llmProvider === "openai" ? "OpenAIChatCompletion" : "AzureChatCompletion"}\nfrom semantic_kernel.functions import kernel_function\nfrom tools import load_tools\n\nkernel = Kernel()\n${llmProvider === "openai" ? `kernel.add_service(OpenAIChatCompletion(service_id="${agentSlug}", ai_model_id="gpt-4o", api_key=os.environ["OPENAI_API_KEY"]))` : `kernel.add_service(AzureChatCompletion(service_id="${agentSlug}", deployment_name=os.environ["AZURE_OPENAI_DEPLOYMENT"], endpoint=os.environ["AZURE_OPENAI_ENDPOINT"], api_key=os.environ["AZURE_OPENAI_API_KEY"]))`}\n\n# Register tools as Semantic Kernel plugins\nclass AgentPlugin:\n${tools.length > 0 ? tools.map(t => `    @kernel_function(name="${t.name}", description="${(t.description || t.name).replace(/"/g, "'")}")\n    async def ${t.name}(self, **kwargs) -> str:\n        from tools.${t.name} import execute\n        return str(execute(kwargs))`).join("\n\n") : "    pass"}\n\nkernel.add_plugin(AgentPlugin(), plugin_name="${agentSlug}_tools")\n\n\nasync def run(task: str) -> str:\n    from semantic_kernel.connectors.ai.open_ai import OpenAIChatPromptExecutionSettings\n    settings = OpenAIChatPromptExecutionSettings(max_tokens=4096, auto_invoke_kernel_functions=True, max_auto_invoke_attempts=${maxIterations})\n    result = await kernel.invoke_prompt(task, service_id="${agentSlug}", settings=settings)\n    return str(result)\n\n\nif __name__ == "__main__":\n    asyncio.run(run("Hello, what can you help me with?"))\n`;
+        files["src/kernel_agent.py"] = aiResult?.entrypoint || skTemplate;
+        files["tools/__init__.py"] = generatePyToolsInit(tools);
+        for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+        const skReqs = [...baseReqs, pin ? "semantic-kernel==1.14.0" : "semantic-kernel>=1.14.0"]; addLlmDep({}, skReqs);
+        files["requirements.txt"] = skReqs.join("\n") + "\n";
+        files["Dockerfile"] = aiResult?.dockerfile || dockerfilePy.replace("entrypoint.py", "src/kernel_agent.py");
+      } else if (framework === "openai-assistants") {
+        // OpenAI Assistants API — TypeScript or Python
+        const oaiAssistantsTemplateTs = `// OpenAI Assistants API Agent\n// Generated for ${agent.name}\nimport OpenAI from "openai";\nimport * as fs from "fs";\nimport * as yaml from "js-yaml";\nimport { loadTools } from "./tools";\n\nconst client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });\nconst ASSISTANT_ID = process.env.OPENAI_ASSISTANT_ID || "";\nconst tools = loadTools();\n\nasync function run(userMessage: string): Promise<string> {\n  const thread = await client.beta.threads.create();\n  await client.beta.threads.messages.create(thread.id, { role: "user", content: userMessage });\n\n  let runObj = await client.beta.threads.runs.create(thread.id, { assistant_id: ASSISTANT_ID });\n\n  let attempts = 0;\n  while (attempts < ${maxIterations}) {\n    attempts++;\n    await new Promise(r => setTimeout(r, 1000));\n    runObj = await client.beta.threads.runs.retrieve(thread.id, runObj.id);\n\n    if (runObj.status === "completed") break;\n    if (runObj.status === "requires_action") {\n      const toolCalls = runObj.required_action?.submit_tool_outputs?.tool_calls || [];\n      const outputs = await Promise.all(toolCalls.map(async tc => ({\n        tool_call_id: tc.id,\n        output: JSON.stringify(await (tools as any)[tc.function.name]?.(JSON.parse(tc.function.arguments)) ?? {}),\n      })));\n      await client.beta.threads.runs.submitToolOutputs(thread.id, runObj.id, { tool_outputs: outputs });\n    }\n    if (["failed", "cancelled", "expired"].includes(runObj.status)) break;\n  }\n\n  const messages = await client.beta.threads.messages.list(thread.id);\n  const last = messages.data.find(m => m.role === "assistant");\n  return (last?.content?.[0] as any)?.text?.value || "";\n}\n\nrun("Hello, what can you help me with?").then(console.log).catch(console.error);\n`;
+        const oaiAssistantsTemplatePy = `# OpenAI Assistants API Agent\n# Generated for ${agent.name}\nimport os\nimport time\nimport json\nfrom openai import OpenAI\nfrom tools import load_tools\n\nclient = OpenAI(api_key=os.environ["OPENAI_API_KEY"])\nASSISTANT_ID = os.environ.get("OPENAI_ASSISTANT_ID", "")\ntools = load_tools()\n\n\ndef run(user_message: str) -> str:\n    thread = client.beta.threads.create()\n    client.beta.threads.messages.create(thread_id=thread.id, role="user", content=user_message)\n    run_obj = client.beta.threads.runs.create(thread_id=thread.id, assistant_id=ASSISTANT_ID)\n\n    for _ in range(${maxIterations}):\n        time.sleep(1)\n        run_obj = client.beta.threads.runs.retrieve(thread_id=thread.id, run_id=run_obj.id)\n        if run_obj.status == "completed":\n            break\n        if run_obj.status == "requires_action":\n            tool_calls = run_obj.required_action.submit_tool_outputs.tool_calls\n            outputs = []\n            for tc in tool_calls:\n                fn = tools.get(tc.function.name)\n                result = fn(json.loads(tc.function.arguments)) if fn else {}\n                outputs.append({"tool_call_id": tc.id, "output": json.dumps(result)})\n            client.beta.threads.runs.submit_tool_outputs(thread_id=thread.id, run_id=run_obj.id, tool_outputs=outputs)\n        if run_obj.status in ("failed", "cancelled", "expired"):\n            break\n\n    msgs = client.beta.threads.messages.list(thread_id=thread.id)\n    last = next((m for m in msgs.data if m.role == "assistant"), None)\n    return last.content[0].text.value if last else ""\n\n\nif __name__ == "__main__":\n    print(run("Hello, what can you help me with?"))\n`;
+        if (format === "typescript") {
+          files["src/assistants_agent.ts"] = aiResult?.entrypoint || oaiAssistantsTemplateTs;
+          files["tools/index.ts"] = generateTsToolsIndex(tools);
+          for (const tool of tools) { files[`tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name)); }
+          const deps = { ...baseDeps, openai: pin ? "4.77.0" : "^4.0.0" };
+          files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node src/assistants_agent.ts" }, dependencies: deps }, null, 2);
+          files["Dockerfile"] = aiResult?.dockerfile || dockerfile;
+        } else {
+          files["src/assistants_agent.py"] = aiResult?.entrypoint || oaiAssistantsTemplatePy;
+          files["tools/__init__.py"] = generatePyToolsInit(tools);
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+          const oaiReqs = [...baseReqs, pin ? "openai==1.58.1" : "openai>=1.0"];
+          files["requirements.txt"] = oaiReqs.join("\n") + "\n";
+          files["Dockerfile"] = aiResult?.dockerfile || dockerfilePy.replace("entrypoint.py", "src/assistants_agent.py");
+        }
+        files[".env.example"] = envExample + "OPENAI_ASSISTANT_ID=asst_your-assistant-id\n";
       }
 
       if (!files[".env.example"]) {
