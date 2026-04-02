@@ -4934,6 +4934,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
   const [undoStack, setUndoStack] = useState<UndoState[]>([]);
   const [redoStack, setRedoStack] = useState<UndoState[]>([]);
   const [updatedAgentIndices, setUpdatedAgentIndices] = useState<Set<number>>(new Set());
+  const updatedBadgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showCreateConfirm, setShowCreateConfirm] = useState(false);
 
   function deepCloneAgent(p: AgentProposal): AgentProposal {
@@ -5305,7 +5306,8 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
         }
       });
       setUpdatedAgentIndices(changed);
-      setTimeout(() => setUpdatedAgentIndices(new Set()), 8000);
+      if (updatedBadgeTimerRef.current) clearTimeout(updatedBadgeTimerRef.current);
+      updatedBadgeTimerRef.current = setTimeout(() => setUpdatedAgentIndices(new Set()), 8000);
       setProposals(newAgents);
       setOrchestrator(data.orchestrator || null);
       setPipeline(data.pipeline || null);
@@ -5788,7 +5790,10 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
                     <Badge variant="outline" className="text-[9px]">{orchestrator.riskTier} Risk</Badge>
                     <Badge variant="outline" className="text-[9px]">{orchestrator.autonomyMode}</Badge>
                   </div>
-                  <span className="text-[10px] text-muted-foreground">{orchestrator.systemPrompt ? orchestrator.systemPrompt.slice(0, 120) + (orchestrator.systemPrompt.length > 120 ? "…" : "") : orchestrator.role}</span>
+                  <span className="text-[10px] text-muted-foreground italic">{orchestrator.role}</span>
+                  {orchestrator.systemPrompt && (
+                    <span className="text-[10px] text-muted-foreground/70 truncate">{orchestrator.systemPrompt.slice(0, 120)}{orchestrator.systemPrompt.length > 120 ? "…" : ""}</span>
+                  )}
                 </div>
               </div>
             )}
@@ -5802,7 +5807,10 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
                     <Badge variant="outline" className="text-[9px]">{agent.riskTier} Risk</Badge>
                     <Badge variant="outline" className="text-[9px]">{agent.autonomyMode}</Badge>
                   </div>
-                  <span className="text-[10px] text-muted-foreground">{agent.systemPrompt ? agent.systemPrompt.slice(0, 120) + (agent.systemPrompt.length > 120 ? "…" : "") : agent.role}</span>
+                  <span className="text-[10px] text-muted-foreground italic">{agent.role}</span>
+                  {agent.systemPrompt && (
+                    <span className="text-[10px] text-muted-foreground/70 truncate">{agent.systemPrompt.slice(0, 120)}{agent.systemPrompt.length > 120 ? "…" : ""}</span>
+                  )}
                 </div>
               </div>
             ))}

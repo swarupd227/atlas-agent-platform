@@ -1145,26 +1145,19 @@ EXISTING AGENTS FOR THIS OUTCOME (avoid duplicating these)
 ${existingAgentNames.length > 0 ? existingAgentNames.join(", ") : "None yet"}
 
 ═══════════════════════════════════════════
-CHAIN-OF-THOUGHT PREAMBLE (mandatory — output this BEFORE the JSON)
-═══════════════════════════════════════════
-
-Before outputting the JSON, you MUST write a brief reasoning block in plain text (not inside the JSON). Structure it as:
-
-REASONING:
-1. KPIs analysed: [list each KPI, its domain, and whether it is independent or dependent on another KPI's output]
-2. Pattern decision: [state which pattern you selected and WHY based on the dependency matrix and KPI scan — reference specific agents and their data flow]
-3. Skill/tool gaps: [for each agent, flag any skill or MCP tool that would ideally exist but is missing from the registry — be explicit about gaps]
-4. estimatedImpact approach: [confirm you used actual baseline→target numeric values from the KPI definitions, or note which KPIs lacked numeric data]
-
-This reasoning is displayed to engineers reviewing the plan. Be concise (4-8 lines per section).
-
-═══════════════════════════════════════════
 RESPONSE FORMAT
 ═══════════════════════════════════════════
 
-Respond with a JSON object:
+Respond with a JSON object. Include a top-level "planReasoning" field with structured chain-of-thought analysis BEFORE the agent definitions. This field is displayed to engineers in the UI and must reflect your actual reasoning — not boilerplate.
+
 \`\`\`json
 {
+  "planReasoning": {
+    "kpisAnalysed": ["string - for each KPI: 'KPI name: domain (e.g. AR monitoring), independent/dependent and why'"],
+    "patternDecision": "string - which pattern you selected and WHY, citing specific agents and data flow from your dependency matrix",
+    "skillToolGaps": ["string - for each agent with missing ideal skills/MCP tools: 'Agent Name: missing X skill, Y MCP tool'"],
+    "estimatedImpactApproach": "string - confirm you used actual numeric baseline→target values, or note which KPIs lacked numeric data"
+  },
   "orchestrator": {
     "name": "string",
     "description": "string",
