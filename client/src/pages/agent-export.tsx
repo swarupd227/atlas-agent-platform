@@ -1170,6 +1170,9 @@ function ConfigureStep({
                 <SelectItem value="anthropic">Anthropic (Claude)</SelectItem>
               </SelectContent>
             </Select>
+            {exportLlmProvider === "anthropic" && ["semantic-kernel"].includes(exportFramework) && (
+              <p className="text-[11px] text-muted-foreground">Semantic Kernel natively supports Anthropic via the <code className="font-mono">semantic-kernel-connectors-ai-anthropic</code> connector — configure the service in the exported <code className="font-mono">src/kernel_agent.py</code>.</p>
+            )}
           </div>
           <div className="flex flex-col gap-2">
             <Label className="text-xs font-medium">Max Iterations</Label>
