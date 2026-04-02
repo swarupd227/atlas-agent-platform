@@ -18,7 +18,7 @@
 
 import { readFileSync, writeFileSync } from "fs";
 
-const PROD_BASE = "https://audit-dashboard-neilevanfox.replit.app";
+const PROD_BASE = "https://agent-lifecycle-management-platform.replit.app";
 const PROD_ORG  = "cf5754b1-ee80-4b51-8bf6-7be263c97527";
 const DEV_BASE  = "http://localhost:5000";
 
