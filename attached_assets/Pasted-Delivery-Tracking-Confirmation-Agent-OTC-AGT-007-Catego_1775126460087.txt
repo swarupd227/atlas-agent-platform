@@ -1,0 +1,82 @@
+Delivery Tracking & Confirmation Agent
+OTC-AGT-007  |  Category: Logistics
+8.1 Description
+Provides unified, real-time visibility into shipment status across multiple carriers and modes of transport. Proactively detects delivery risks, manages proof-of-delivery capture, triggers downstream processes upon confirmation, and enables customer self-service tracking.
+8.2 Workflow Steps
+66.	1. Receive shipment creation event from Fulfillment Agent
+67.	2. Register tracking across all carriers (parcel, LTL, FTL, ocean, air)
+68.	3. Poll or receive webhook updates on shipment milestones
+69.	4. Normalize tracking events into unified status model
+70.	5. Detect anomalies: delayed scan, route deviation, customs hold, temperature excursion
+71.	6. Send proactive notifications at key milestones (shipped, in-transit, out-for-delivery, delivered)
+72.	7. Capture proof-of-delivery (signature, photo, geolocation)
+73.	8. Confirm delivery and update order status
+74.	9. Trigger warranty activation, service setup, or survey if applicable
+75.	10. Handle failed deliveries: reschedule, redirect, or return
+76.	11. Archive tracking data for analytics and dispute resolution
+
+8.3 Common Ontology
+The following entities and attributes form the shared data model referenced by this agent:
+Entity	Key Attributes
+Tracking Event	timestamp, status code, location, carrier, description
+Shipment Milestone	shipped, in-transit, customs, out-for-delivery, delivered, exception
+Proof of Delivery	type (signature, photo, GPS), timestamp, recipient name
+Carrier Integration	API type (REST, EDI, webhook), polling frequency, SLA
+Delivery Exception	type (delay, damage, refused, lost), action required
+Notification	channel (email, SMS, push), template, trigger condition
+
+8.4 Claude Agent Skills
+The following skills should be developed and made available as context for this agent:
+Skill Name	Description
+Multi-Carrier Tracking Aggregation Skill	Normalizes events from 50+ carrier APIs
+Predictive ETA Skill	ML-based delivery time prediction considering traffic, weather, carrier patterns
+Anomaly Detection Skill	Identifies tracking gaps and unusual patterns
+Customer Notification Skill	Sends milestone-triggered notifications via preferred channel
+POD Capture & Validation Skill	Processes proof-of-delivery documents and images
+Delivery Analytics Skill	Generates carrier scorecards and delivery performance reports
+
+8.5 Eval Dataset
+Recommended evaluation data and benchmarks for validating agent accuracy and performance:
+•	Historical tracking data with actual delivery times for ETA prediction validation
+•	Anomaly cases: late deliveries that could have been detected earlier
+•	Multi-carrier shipments: tracking accuracy across different carrier APIs
+•	Notification timing: customer preference adherence and engagement rates
+•	POD accuracy: correct delivery confirmation rate
+•	Failed delivery resolution: success rate and cycle time
+
+8.6 Production Runbooks
+Operational procedures for handling common issues and failure scenarios:
+Scenario	Procedure
+Carrier API Down	Fallback polling schedule, manual tracking update procedure
+Mass Delivery Delay (weather event)	Bulk ETA update, proactive customer notification
+POD Dispute	Investigation procedure, carrier claim initiation
+Tracking Data Gap	Carrier contact procedure, estimated status interpolation
+International Customs Hold	Documentation requirements, broker escalation
+Carrier Data Format Change	Integration update procedure, data mapping review
+
+8.7 Regulatory Compliance & Policies
+Applicable regulations and compliance requirements:
+•	Consumer Notification: Shipping confirmation and tracking requirements (FTC regulations)
+•	International Trade: Customs documentation, AES filing, import compliance
+•	Data Retention: Tracking data retention periods by jurisdiction
+•	Privacy: Recipient data handling, geolocation data protection
+•	Chain of Custody: Documentation requirements for regulated products
+•	Environmental: Emissions reporting per shipment for sustainability compliance
+
+8.8 Knowledgebase Reference
+Documents and data sources this agent needs access to:
+•	Carrier integration specifications: API docs, event codes, SLA terms
+•	Tracking status normalization maps: carrier-specific to universal status codes
+•	Customer notification templates by milestone and channel
+•	Customs documentation requirements by country pair
+•	Failed delivery resolution procedures by carrier
+•	Historical carrier performance data by lane and service level
+
+8.9 Knowledge Graph
+Entity-relationship mappings showing how data entities connect within this agent's domain:
+Shipment -[TRACKED_BY]-> Carrier -[PROVIDES]-> Tracking Events
+Tracking Event -[AT_LOCATION]-> Facility -[IN_REGION]-> Geography
+Shipment -[DELIVERED_WITH]-> Proof of Delivery -[CONFIRMS]-> Order
+Delivery Exception -[REQUIRES]-> Resolution Action -[NOTIFIES]-> Customer
+Carrier -[OPERATES_ON]-> Lane -[HAS_PERFORMANCE]-> SLA Metric
+Shipment -[PASSES_THROUGH]-> Customs -[REQUIRES]-> Documentation
