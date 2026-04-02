@@ -783,10 +783,33 @@ const router = Router();
         } catch {}
       }
 
-      const industrySkills = allSkills.filter(s => s.industry === industryId || s.industry === "cross_industry").slice(0, 20);
+      const outcomeKeywords = [
+        ...(outcomeContract?.name || "").toLowerCase().split(/\W+/),
+        ...(outcomeContract?.description || "").toLowerCase().split(/\W+/),
+        ...((kpis || []) as any[]).map((k: any) => (k.name || "").toLowerCase()),
+      ].filter((w: string) => w.length > 3);
+
+      const relevanceScore = (obj: any): number => {
+        const text = [
+          obj.name || "",
+          obj.description || "",
+          ...(Array.isArray(obj.tags) ? obj.tags : []),
+          obj.domain || "",
+          obj.category || "",
+        ].join(" ").toLowerCase();
+        return outcomeKeywords.filter((k: string) => text.includes(k)).length;
+      };
+
+      const industrySkills = allSkills
+        .filter(s => s.industry === industryId || s.industry === "cross_industry")
+        .sort((a, b) => relevanceScore(b) - relevanceScore(a))
+        .slice(0, 8);
       const activePolicies = allPolicies.filter(p => p.status === "active").slice(0, 15);
       const existingOutcomeAgents = allAgents.filter(a => a.outcomeId === outcomeContract?.id);
-      const industryTemplates = templates.filter(t => t.industry === industryId || t.industry === "cross_industry").slice(0, 15);
+      const industryTemplates = templates
+        .filter(t => t.industry === industryId || t.industry === "cross_industry")
+        .sort((a, b) => relevanceScore(b) - relevanceScore(a))
+        .slice(0, 8);
       const industryRagPipelines = ragPipelines.filter((r: any) => r.industry === industryId || !r.industry).slice(0, 5);
 
       let feedbackSection = "";
@@ -834,7 +857,9 @@ You MUST incorporate this feedback into the new plan. Adjust the agents, roles, 
         memoryRagConfig: t.memoryRagConfig,
       }));
 
-      const ontologySummary = ontologyConcepts.slice(0, 20).map(c => ({
+      const ontologySummary = [...ontologyConcepts]
+        .sort((a, b) => relevanceScore(b) - relevanceScore(a))
+        .slice(0, 8).map(c => ({
         id: c.id,
         label: c.label,
         category: c.category,
@@ -979,7 +1004,8 @@ You MUST incorporate this feedback into the new plan. Adjust the agents, roles, 
 
       const mandateSection = stagedPipelines.length > 0 ? (() => {
         const top = stagedPipelines[0];
-        const stageLines = top.stages.map((s, i) => `  Stage ${i + 1}: "${s}" → create one dedicated worker agent named after this stage`).join("\n");
+        const stageLines = top.stages.map((s, i) => `  Stage ${i + 1}: "${s}" → create one dedicated worker agent named after this stage`).join("\n") +
+          `\n\nPARALLEL SUB-GROUPS WITHIN STAGES: Adjacent stages that share NO data dependency (i.e., Stage N+1 does NOT require Stage N's output as a mandatory input) MAY be placed in the same parallel tier in parallelGroups. Only place stages in SEPARATE sequential tiers when Stage N+1 genuinely requires Stage N's output. Use your agentDependencyMatrix analysis to confirm before forcing a sequential ordering.`;
         const coveredLines = top.coveredSystems.length > 0
           ? top.coveredSystems.map(s => `  - ${s}: COVERED by "${top.server}" (has MCP tools)`).join("\n")
           : "  (none detected from tool descriptions)";
@@ -1119,6 +1145,20 @@ EXISTING AGENTS FOR THIS OUTCOME (avoid duplicating these)
 ${existingAgentNames.length > 0 ? existingAgentNames.join(", ") : "None yet"}
 
 ═══════════════════════════════════════════
+CHAIN-OF-THOUGHT PREAMBLE (mandatory — output this BEFORE the JSON)
+═══════════════════════════════════════════
+
+Before outputting the JSON, you MUST write a brief reasoning block in plain text (not inside the JSON). Structure it as:
+
+REASONING:
+1. KPIs analysed: [list each KPI, its domain, and whether it is independent or dependent on another KPI's output]
+2. Pattern decision: [state which pattern you selected and WHY based on the dependency matrix and KPI scan — reference specific agents and their data flow]
+3. Skill/tool gaps: [for each agent, flag any skill or MCP tool that would ideally exist but is missing from the registry — be explicit about gaps]
+4. estimatedImpact approach: [confirm you used actual baseline→target numeric values from the KPI definitions, or note which KPIs lacked numeric data]
+
+This reasoning is displayed to engineers reviewing the plan. Be concise (4-8 lines per section).
+
+═══════════════════════════════════════════
 RESPONSE FORMAT
 ═══════════════════════════════════════════
 
@@ -1136,7 +1176,7 @@ Respond with a JSON object:
     "workflowSteps": ["string"],
     "tools": [{"name": "string - MUST be from MCP Tools registry above if available", "description": "string"}],
     "kpiBindings": ["string - bind ALL KPIs here"],
-    "estimatedImpact": "string",
+    "estimatedImpact": "string - FORMAT: '[KPI Name]: [baseline] → [target] ([∆%])'. Example: 'DSO: 45 → 38 days (−15%)'. If multiple KPIs: list each on a new line. Fallback to 'Contributes to [KPI name]' only if no baseline/target data exists.",
     "templateMatch": "string | null - exact name of matching Agent Template",
     "matchedSkills": ["string - exact skill names from Skills Library above"],
     "matchedOntologyConcepts": ["string - exact ontology concept labels from above"],
@@ -1159,7 +1199,7 @@ Respond with a JSON object:
       "workflowSteps": ["string"],
       "tools": [{"name": "string - from MCP Tools registry", "description": "string"}],
       "kpiBindings": ["string - specific KPIs this agent drives, weighted by importance"],
-      "estimatedImpact": "string - quantified using KPI baseline→target data",
+      "estimatedImpact": "string - FORMAT: '[KPI Name]: [baseline] → [target] ([∆%])'. Example: 'Invoice Match Rate: 82% → 94% (+12pp)'. Use actual KPI baseline/target values from the KPI DEFINITIONS section above. Fallback to 'Contributes to [KPI name]' only if no numeric data exists.",
       "templateMatch": "string | null",
       "matchedSkills": ["string - exact skill names from Skills Library"],
       "matchedOntologyConcepts": ["string - ontology concept labels"],
@@ -1259,13 +1299,26 @@ CRITICAL GUIDELINES
 13. STRUCTURED OUTPUT SCHEMA: For each worker agent that retrieves, processes, scores, or classifies batches of data records (leads, transactions, claims, patients, items, etc.), you MUST define an outputSchema with type="record_list". The fields array should describe the per-record structured output the agent must produce — include id, name/label, score (0-100), decision/classification, reasoning, and any domain-specific fields (e.g. escalation, riskLevel). Workers that only produce aggregate summaries or single metrics should use type="summary". The description should clearly state what each record represents. This enables the platform to render per-record results as interactive data tables.
 
 ═══════════════════════════════════════════
-ORCHESTRATION PATTERN SELECTION (CRITICAL — TWO-PHASE PROCESS)
+ORCHESTRATION PATTERN SELECTION (CRITICAL — THREE-PHASE PROCESS)
 ═══════════════════════════════════════════
 
-You MUST follow a strict two-phase process to select the correct orchestration pattern. Do NOT skip Phase 1.
+You MUST follow a strict three-phase process to select the correct orchestration pattern. Do NOT skip any phase.
+
+─── PHASE 0: KPI INDEPENDENCE SCAN (mandatory — do this FIRST) ───
+Before anything else, list each KPI from the contract and identify its PRIMARY DOMAIN:
+  - Data collection / ingestion
+  - Data enrichment / transformation
+  - Validation / compliance checking
+  - Reporting / aggregation / notification
+  - Execution / provisioning / write-back
+
+If two or more KPIs belong to COMPLETELY INDEPENDENT DOMAINS with no shared input data between their agents, those KPIs should be served by agents that execute IN PARALLEL. Independence means: the data one agent reads is entirely separate from the data the other reads, and neither agent requires the other's output to begin.
+
+Example — INDEPENDENT KPIs: "DSO monitoring" (reads AR aging data), "Cash auto-match accuracy" (reads bank transaction feed), "Tax accuracy" (reads invoice records) → three separate data sources, no shared state → strong parallel signal.
+Example — DEPENDENT KPIs: "Invoice validation rate" (validates invoice → produces validated invoice IDs) + "GL posting success" (needs validated invoice IDs to post) → sequential dependency, must be tiered.
 
 ─── PHASE 1: AGENT DEPENDENCY MATRIX (mandatory) ───
-Before selecting any pattern, you MUST analyse the data-flow dependencies between the agents you are proposing. For each agent, determine:
+For each agent you are proposing, determine:
   - INPUTS: What data, state, or results does this agent need before it can start? (e.g. "needs provisioned account IDs from the Provisioning Agent")
   - OUTPUTS: What does this agent produce when done? (e.g. "produces audit evidence report")
 
@@ -1277,38 +1330,46 @@ Then build the dependency matrix:
 You MUST include this matrix in "agentDependencyMatrix" inside the pipeline object (array of {agent, inputs, outputs, dependsOn}).
 
 ─── PHASE 1b: WORKFLOW ORDERING SIGNALS ───
-Read the outcome contract's description, system prompt, and workflow steps carefully. Look for:
+Read the outcome contract's description, system prompt, and workflow steps. Look for:
   - Numbered sequences (1. 2. 3. ... or Step 1, Step 2, etc.)
   - Imperative ordering language: "then", "after", "next", "before proceeding", "once X is done", "if empty, stop"
   - Conditional gates: "if compliance check fails, stop" (implies the check must precede downstream steps)
 
-If the outcome contains a numbered, ordered pipeline where steps explicitly depend on prior steps, this is a STRONG sequential signal. You MUST respect this ordering in parallelGroups and executionGraph — each ordered step maps to its own sequential tier UNLESS the source material explicitly states steps can run concurrently.
+IMPORTANT: Numbered steps do NOT automatically mean sequential execution. Many numbered steps describe independent checks or data enrichments that can run in parallel even when written sequentially in the description. CHECK whether each numbered step genuinely depends on the previous step's OUTPUT before assuming sequential. If step 3 could start before step 2 finishes (because it reads from a different data source), they should be in the same parallel tier.
 
-This rule applies ONLY when ordering language is present. If the outcome describes independent parallel tasks (e.g. "monitor email, social media, and CRM simultaneously"), honour that parallelism.
+Ordering signals that confirm sequential dependency: explicit output-as-input references ("uses the result of step 2"), gate conditions ("only if step 1 passes"), or writes that step 2 reads.
+Ordering signals that do NOT confirm dependency: steps are just listed in order, steps involve different systems, steps operate on different record types.
 
-─── PHASE 2: PATTERN SELECTION (derived from Phase 1) ───
-Using the dependency matrix and ordering signals from Phase 1, select the pattern that matches the actual data flow:
+─── PHASE 2: PATTERN SELECTION (derived from Phase 0 + Phase 1) ───
+Using the KPI independence scan, dependency matrix, and ordering signals, select the pattern that best matches the actual data flow:
 
-- "sequential": Agent A's output feeds Agent B, which feeds Agent C, etc. Each agent depends on the previous one's results. Use when the dependency matrix shows a LINEAR chain of dependencies. Example: Data Collector → Enricher → Scorer → Reporter.
-- "parallel": Agents work on INDEPENDENT sub-tasks with NO data dependencies between them. Use when the dependency matrix shows ZERO cross-agent dependencies. Example: Email Analyzer + Social Media Monitor + CRM Scanner all run simultaneously on different data sources.
-- "fan_out_fan_in": Multiple agents all receive the SAME input data independently, then their results are aggregated. Use when the dependency matrix shows several agents sharing one input but producing independent outputs, followed by an aggregation step. Example: Lead data → [Lead Scorer, Compliance Checker, Risk Assessor] → Report Aggregator.
-- "supervisor": The orchestrator must dynamically decide which agents to invoke based on intermediate results. Use when conditional branching or adaptive routing is needed. Example: Orchestrator evaluates initial analysis, then routes to specialist agents based on findings.
+- "sequential": EACH step requires the previous step's output as a MANDATORY INPUT. Use only when the dependency matrix shows an unbroken chain where every handoff is data-dependent.
+  Example: Invoice validation → Tax calculation (needs invoice total) → GL posting (needs tax-adjusted total). Each step is genuinely blocked by the prior step's output.
+
+- "parallel": Agents work on INDEPENDENT sub-tasks with no confirmed data dependency between them. Use when KPI independence scan shows fully separate domains AND the dependency matrix shows no cross-agent data flow.
+  Example: DSO monitoring + Cash auto-match + Tax accuracy checking → three independent KPI domains reading separate data sources, no shared state, run concurrently.
+
+- "fan_out_fan_in": Multiple agents all receive the SAME input data independently, then results are aggregated. Use when the dependency matrix shows several agents sharing one input but producing independent outputs, followed by aggregation.
+  Example: Customer invoice data → [Invoice Validator, Tax Calculator, Compliance Checker] → Report Aggregator.
+
+- "supervisor": The orchestrator must dynamically decide which agents to invoke based on intermediate results or unknown conditions at design time. Use when conditional branching or adaptive routing is genuinely needed.
+  Example: Dispute received → Orchestrator classifies dispute type → routes to Pricing Error Agent or Collections Agent based on category.
 
 CRITICAL RULES:
   - If ANY agent's input depends on another agent's output, those two agents MUST NOT be in the same parallel group — they must be in separate sequential tiers.
-  - Only place agents in the same parallel tier when the dependency matrix PROVES they have zero mutual data dependencies.
-  - The pattern must follow the DATA FLOW, not the KPI labels. Separate KPIs do NOT automatically mean parallel execution — agents tracking different KPIs often still have sequential data dependencies.
+  - Only place agents in the same parallel tier when the dependency matrix confirms they have no confirmed data dependency between them.
+  - The pattern must follow the DATA FLOW, not just step order. Separate KPIs CAN justify parallel execution when they are confirmed independent domains.
 
 For "patternReasoning", you MUST explain:
-  1. The dependency relationships discovered in Phase 1 (which agent depends on which)
-  2. Whether ordering signals from the outcome contract were detected
-  3. Why the chosen pattern matches these dependencies
-  4. If parallel: explicitly state why the parallel agents have NO data dependencies
+  1. The KPI independence scan results from Phase 0 (which KPIs belong to which domains)
+  2. The dependency relationships discovered in Phase 1 (which agent depends on which)
+  3. Whether ordering signals were genuine data dependencies or just sequential numbering
+  4. Why the chosen pattern matches the actual data flow
 
 For "parallelGroups", define execution tiers as arrays of agent role names:
-  - Each inner array contains agents that can run concurrently (PROVEN independent by the dependency matrix)
+  - Each inner array contains agents that can run concurrently (confirmed independent by the dependency matrix)
   - Arrays are ordered: the first group runs first, then the second group after all in the first complete, etc.
-  - Example: [["Lead Scorer", "Compliance Checker"], ["Report Generator"]] means Lead Scorer and Compliance Checker run in parallel (proven independent), then Report Generator runs after both complete.
+  - Example: [["DSO Monitor", "Cash Match Processor", "Tax Accuracy Agent"], ["Reporting Aggregator"]] means the first three run in parallel (independent KPI domains, separate data sources), then the aggregator runs after all three complete.
   - For sequential patterns, each group should contain exactly one agent role.
 
 For "executionGraph", provide an explicit stage-by-stage execution plan:
@@ -1421,7 +1482,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           systemsExtracted: Array.isArray(p.systemsExtracted) ? p.systemsExtracted : [],
           mcpGaps: Array.isArray(p.mcpGaps) ? p.mcpGaps : [],
           agentDependencyMatrix: Array.isArray(p.agentDependencyMatrix) ? p.agentDependencyMatrix : [],
-          pattern: p.pattern || "sequential",
+          pattern: p.pattern || "supervisor",
           patternReasoning: p.patternReasoning || "",
           description: p.description || "",
           edges: Array.isArray(p.edges) ? p.edges : [],

@@ -4289,7 +4289,7 @@ function BlueprintOverridePicker({ currentBlueprintId, currentBlueprintName, pat
   );
 }
 
-function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle, isCreating, onEdit, onDelete, onDuplicate, isDragging, onDragStart, onDragOver, onDrop }: {
+function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle, isCreating, onEdit, onDelete, onDuplicate, isDragging, onDragStart, onDragOver, onDrop, isUpdated }: {
   agent: AgentProposal;
   index: number;
   isOrchestrator: boolean;
@@ -4303,6 +4303,7 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
   onDragStart?: (e: React.DragEvent) => void;
   onDragOver?: (e: React.DragEvent) => void;
   onDrop?: (e: React.DragEvent) => void;
+  isUpdated?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [editData, setEditData] = useState<AgentProposal>({ ...agent });
@@ -4414,6 +4415,9 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
           {!isOrchestrator && (
             <Badge variant="secondary" className="text-[9px]">Worker {index + 1}</Badge>
           )}
+          {isUpdated && (
+            <Badge variant="outline" className="text-[9px] text-amber-600 dark:text-amber-400 border-amber-400/40 bg-amber-50 dark:bg-amber-950/30 animate-pulse" data-testid={`badge-updated-${isOrchestrator ? "orch" : index}`}>Updated</Badge>
+          )}
           <div className="flex items-center gap-0.5 ml-auto">
             <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setExpanded(!expanded)} data-testid={`button-edit-agent-${isOrchestrator ? "orch" : index}`}>
               {expanded ? <ChevronUp className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
@@ -4467,6 +4471,24 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
                 <TrendingUp className="w-3 h-3 text-emerald-500" />
               </div>
               <span className="text-[11px] text-emerald-700 dark:text-emerald-300 leading-snug">{agent.estimatedImpact}</span>
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap" data-testid={`readiness-scorecard-${isOrchestrator ? "orch" : index}`}>
+              {[
+                { label: "Skills", count: agent.matchedSkills?.length || 0, icon: <Brain className="w-2.5 h-2.5" /> },
+                { label: "KB", count: agent.suggestedKnowledgeBases?.length || 0, icon: <Database className="w-2.5 h-2.5" /> },
+                { label: "MCP Tools", count: agent.mcpToolBindings?.length || 0, icon: <Wrench className="w-2.5 h-2.5" /> },
+                { label: "Policies", count: agent.policyConstraints?.length || 0, icon: <Shield className="w-2.5 h-2.5" /> },
+              ].map(({ label, count, icon }) => (
+                <span
+                  key={label}
+                  className={`inline-flex items-center gap-0.5 text-[9px] font-medium px-1.5 py-0.5 rounded border ${count > 0 ? "bg-emerald-500/8 text-emerald-700 dark:text-emerald-400 border-emerald-500/20" : "bg-amber-500/8 text-amber-600 dark:text-amber-400 border-amber-400/20"}`}
+                  title={`${label}: ${count} assigned`}
+                  data-testid={`readiness-pill-${label.toLowerCase().replace(/\s+/g, "-")}-${isOrchestrator ? "orch" : index}`}
+                >
+                  {icon}
+                  {label} {count > 0 ? `(${count})` : "⚠"}
+                </span>
+              ))}
             </div>
             <CollapsibleSection title="Role & Workflow" icon={<Workflow className="w-3 h-3" />} defaultOpen={false} count={agent.workflowSteps?.length || 0} testId={`section-workflow-${isOrchestrator ? "orch" : index}`}>
               <div className="flex flex-col gap-2">
@@ -4591,6 +4613,11 @@ function AgentProposalCard({ agent, index, isOrchestrator, isSelected, onToggle,
                   </div>
                   <p className="text-[10px] text-muted-foreground">The runtime will render per-record results as an interactive data table in the trace viewer.</p>
                 </div>
+              </CollapsibleSection>
+            )}
+            {agent.systemPrompt && (
+              <CollapsibleSection title="System Prompt" icon={<FileCode className="w-3 h-3" />} defaultOpen={false} count={0} testId={`section-systemprompt-${isOrchestrator ? "orch" : index}`}>
+                <pre className="text-[9px] font-mono leading-relaxed text-muted-foreground whitespace-pre-wrap break-words max-h-[200px] overflow-y-auto p-2 rounded bg-muted/40 border" data-testid={`text-systemprompt-${isOrchestrator ? "orch" : index}`}>{agent.systemPrompt}</pre>
               </CollapsibleSection>
             )}
           </>
@@ -4906,6 +4933,8 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
 
   const [undoStack, setUndoStack] = useState<UndoState[]>([]);
   const [redoStack, setRedoStack] = useState<UndoState[]>([]);
+  const [updatedAgentIndices, setUpdatedAgentIndices] = useState<Set<number>>(new Set());
+  const [showCreateConfirm, setShowCreateConfirm] = useState(false);
 
   function deepCloneAgent(p: AgentProposal): AgentProposal {
     return {
@@ -5244,6 +5273,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
     }
     setGeneratingWithFeedback(true);
     setShowFeedback(false);
+    const prevProposals = proposals;
     try {
       const feedbackPayload: Record<string, unknown> = {
         outcomeContract: outcome,
@@ -5260,11 +5290,27 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
       const res = await apiRequest("POST", "/api/ai/propose-agents", feedbackPayload);
       const data = await res.json();
       pushUndo("Regenerate with feedback");
-      setProposals(data.agents || []);
+      const newAgents: AgentProposal[] = data.agents || [];
+      const changed = new Set<number>();
+      newAgents.forEach((newAgent, i) => {
+        const prev = prevProposals[i];
+        if (!prev) { changed.add(i); return; }
+        if (
+          prev.name !== newAgent.name ||
+          prev.role !== newAgent.role ||
+          prev.description !== newAgent.description ||
+          JSON.stringify(prev.workflowSteps) !== JSON.stringify(newAgent.workflowSteps)
+        ) {
+          changed.add(i);
+        }
+      });
+      setUpdatedAgentIndices(changed);
+      setTimeout(() => setUpdatedAgentIndices(new Set()), 8000);
+      setProposals(newAgents);
       setOrchestrator(data.orchestrator || null);
       setPipeline(data.pipeline || null);
       setGenerated(true);
-      const allIndices = new Set<number>((data.agents || []).map((_: any, i: number) => i));
+      const allIndices = new Set<number>(newAgents.map((_: any, i: number) => i));
       setSelectedIndices(allIndices);
       setOrchestratorSelected(!!data.orchestrator);
       if (data.proposalId) {
@@ -5676,6 +5722,24 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
                 className="min-h-[80px] text-xs"
                 data-testid="textarea-feedback"
               />
+              <div className="flex flex-wrap gap-1.5" data-testid="feedback-chips">
+                {[
+                  "Add human-in-the-loop review step for high-value items",
+                  "Split compliance validation into a separate agent",
+                  "Use autonomous mode for low-risk steps only",
+                  "Add a retry/fallback agent for failure scenarios",
+                ].map((chip) => (
+                  <button
+                    key={chip}
+                    type="button"
+                    onClick={() => setFeedbackText(prev => prev ? `${prev.trim()} ${chip}` : chip)}
+                    className="text-[10px] px-2 py-0.5 rounded-full border border-primary/20 bg-primary/5 text-primary hover:bg-primary/10 transition-colors"
+                    data-testid={`chip-feedback-${chip.slice(0, 20).replace(/\s+/g, "-").toLowerCase()}`}
+                  >
+                    + {chip}
+                  </button>
+                ))}
+              </div>
               <div className="flex items-center gap-2 justify-end">
                 <Button variant="ghost" size="sm" onClick={() => { setShowFeedback(false); setFeedbackText(""); }} data-testid="button-cancel-feedback">Cancel</Button>
                 <Button variant="outline" size="sm" onClick={generateProposals} disabled={generatingFresh} data-testid="button-regenerate-fresh">
@@ -5699,6 +5763,57 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
             <DialogDescription className="text-xs">Define a new agent to add to the development plan.</DialogDescription>
           </DialogHeader>
           <AddCustomAgentForm onAdd={addCustomAgent} onCancel={() => setShowAddAgent(false)} />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={showCreateConfirm} onOpenChange={setShowCreateConfirm}>
+        <DialogContent className="max-w-lg" data-testid="dialog-create-confirm">
+          <DialogHeader>
+            <DialogTitle className="text-sm flex items-center gap-2">
+              <Rocket className="w-4 h-4 text-primary" />
+              Confirm Agent Creation
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              The following {totalSelected} agent{totalSelected !== 1 ? "s" : ""} will be created. Review before confirming.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2 max-h-72 overflow-y-auto py-2">
+            {orchestratorSelected && orchestrator && (
+              <div className="flex items-start gap-2 p-2 rounded-md bg-primary/5 border border-primary/15" data-testid="confirm-item-orchestrator">
+                <Network className="w-3.5 h-3.5 text-primary mt-0.5 shrink-0" />
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-xs font-semibold">{orchestrator.name}</span>
+                    <Badge className="text-[9px] bg-primary/15 text-primary border-primary/20" variant="outline">Team Agent</Badge>
+                    <Badge variant="outline" className="text-[9px]">{orchestrator.riskTier} Risk</Badge>
+                    <Badge variant="outline" className="text-[9px]">{orchestrator.autonomyMode}</Badge>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground">{orchestrator.systemPrompt ? orchestrator.systemPrompt.slice(0, 120) + (orchestrator.systemPrompt.length > 120 ? "…" : "") : orchestrator.role}</span>
+                </div>
+              </div>
+            )}
+            {proposals.filter((_, i) => selectedIndices.has(i)).map((agent, idx) => (
+              <div key={idx} className="flex items-start gap-2 p-2 rounded-md bg-muted/40 border" data-testid={`confirm-item-worker-${idx}`}>
+                <Bot className="w-3.5 h-3.5 text-muted-foreground mt-0.5 shrink-0" />
+                <div className="flex flex-col gap-0.5 min-w-0">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-xs font-semibold">{agent.name}</span>
+                    <Badge variant="secondary" className="text-[9px]">Worker</Badge>
+                    <Badge variant="outline" className="text-[9px]">{agent.riskTier} Risk</Badge>
+                    <Badge variant="outline" className="text-[9px]">{agent.autonomyMode}</Badge>
+                  </div>
+                  <span className="text-[10px] text-muted-foreground">{agent.systemPrompt ? agent.systemPrompt.slice(0, 120) + (agent.systemPrompt.length > 120 ? "…" : "") : agent.role}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setShowCreateConfirm(false)} data-testid="button-cancel-create">Cancel</Button>
+            <Button size="sm" onClick={() => { setShowCreateConfirm(false); createSelectedAgents(); }} data-testid="button-confirm-create" className="shadow-sm shadow-primary/15">
+              <Rocket className="w-3.5 h-3.5 mr-1.5" />
+              Create {totalSelected} Agent{totalSelected !== 1 ? "s" : ""}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -5746,7 +5861,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
                   </div>
                 </div>
                 <Button
-                  onClick={createSelectedAgents}
+                  onClick={() => setShowCreateConfirm(true)}
                   disabled={creating || totalSelected === 0}
                   data-testid="button-create-selected-agents"
                   className="shadow-md shadow-primary/15"
@@ -5817,6 +5932,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
                 onDragStart={() => handleDragStart(i)}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={() => handleDrop(i)}
+                isUpdated={updatedAgentIndices.has(i)}
               />
             ))}
           </div>
