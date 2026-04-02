@@ -64,7 +64,7 @@ The Nous Agent Orchestrator uses a modern web stack: React, Vite, Tailwind CSS, 
 | Billing Agent (Littler) | LIT-AGT-003 | PROD | (in platform) |
 | Client Portal Agent | LIT-AGT-004 | PROD | (in platform) |
 | Fulfillment & Exception Agent | OTC-AGT-005 | PROD | f6d58adf (agent) |
-| Billing & Collections Agent | OTC-AGT-006 | DEV ✅ | 96705f33-085c-48a2-a99c-a2ed2baf7dde |
+| Billing & Collections Agent | OTC-AGT-006 | PROD ✅ | f516ede4-3ceb-4858-8b23-ede8cc851e78 |
 
 ### OTC-AGT-006 Dev IDs (from scripts/otc-agt-006-dev-ids.json)
 - **Agent**: `96705f33-085c-48a2-a99c-a2ed2baf7dde`
@@ -75,6 +75,16 @@ The Nous Agent Orchestrator uses a modern web stack: React, Vite, Tailwind CSS, 
 - **Golden Dataset**: `82674e38-e5c2-4669-a892-469d9b5fcf7a` (6 test cases)
 - **Eval Suite**: `a98898c3-c1b6-420c-ba05-daf05bdb218f`
 - **Outcome**: `cb0f6247-9bdf-4227-a979-c4807498ac6f`
+
+### OTC-AGT-006 PROD IDs (from scripts/otc-agt-006-prod-ids.json)
+- **Agent**: `f516ede4-3ceb-4858-8b23-ede8cc851e78`
+- **KB**: `9429b432-0206-4d8e-985f-7658db9b30b9` (6 sources)
+- **Skills (6)**: `931a9f18`, `6146bd02`, `0d976d0d`, `64003d39`, `5f9fe69c`, `2e316730`
+- **Runbooks (6)**: `ac82fea5`, `4f2ad8f6`, `a3f91bce`, `73e9bed3`, `c6156561`, `e38e52e4`
+- **Policies (6)**: `b1ca41a3`, `897898b9`, `3fbd7762`, `83a8e745`, `e3619c72`, `ba2b1356`
+- **Golden Dataset**: `abdd63bb-9c85-4d77-bb90-4debc435f959` (6 test cases)
+- **Eval Suite**: `3fe2763c-0536-465f-bde5-7f0cfe0a8f59`
+- **Outcome**: `3cf0091e-ad99-4901-a289-39921d0d5ae4`
 
 ### Important Dev/Prod Notes
 - **NEVER use `db:push`** — drops embedding column; use raw SQL in `runStartupMigrations()` only
