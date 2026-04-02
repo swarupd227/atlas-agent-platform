@@ -877,6 +877,10 @@ export default function OutcomeDiscover() {
 
   function handleAcceptProposal() {
     if (!proposal) return;
+    // Collect matched policy IDs from both platform intelligence and AI-selected applicable policies
+    const intelPolicyIds = (platformIntel?.matchedPolicies || []).map((p) => p.id).filter(Boolean);
+    const aiPolicyIds = (activeApplicablePolicies || []).map((p) => p.policyId).filter(Boolean);
+    const matchedPolicyIds = [...new Set([...intelPolicyIds, ...aiPolicyIds])];
     createOutcomeMutation.mutate({
       name: proposal.outcomeContract.name,
       description: proposal.outcomeContract.description,
@@ -896,6 +900,8 @@ export default function OutcomeDiscover() {
           : (Object.keys(withSla).length > 0 ? withSla : undefined);
       })(),
       ...(proposal.roiEstimate ? { roiEstimate: proposal.roiEstimate } : {}),
+      ...(matchedPolicyIds.length > 0 ? { matchedPolicyIds } : {}),
+      ...(activeApplicablePolicies.length > 0 ? { discoveryPolicies: activeApplicablePolicies } : {}),
     });
   }
 

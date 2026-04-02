@@ -447,9 +447,13 @@ async function createOutcomeVersion(
   router.post("/api/outcomes/with-kpis", checkPermission("create_modify_outcomes"), async (req, res) => {
     try {
       const { outcome: outcomeData, kpis: kpiData, constraints } = req.body;
+      // Extract discovery-phase policy data before schema validation strips unknown fields
+      const matchedPolicyIds: string[] = Array.isArray(outcomeData.matchedPolicyIds) ? outcomeData.matchedPolicyIds : [];
+      const discoveryPolicies: any[] = Array.isArray(outcomeData.discoveryPolicies) ? outcomeData.discoveryPolicies : [];
+      const { matchedPolicyIds: _mp, discoveryPolicies: _dp, ...cleanOutcomeData } = outcomeData;
       const parsedOutcome = insertOutcomeContractSchema.omit({ organizationId: true }).parse({
-        ...outcomeData,
-        slaConfig: constraints ? { constraints, ...(outcomeData.slaConfig || {}) } : outcomeData.slaConfig,
+        ...cleanOutcomeData,
+        slaConfig: constraints ? { constraints, ...(cleanOutcomeData.slaConfig || {}) } : cleanOutcomeData.slaConfig,
       });
       const parsedKpis = (kpiData && Array.isArray(kpiData))
         ? kpiData.map((kpi: any) => insertKpiDefinitionSchema.omit({ outcomeId: true }).parse({
@@ -469,7 +473,13 @@ async function createOutcomeVersion(
           createdKpis.push(created);
         }
         const graph = computeConstraintGraph(outcome, createdKpis);
-        const [updatedOutcome] = await tx.update(outcomeContracts).set({ constraintGraph: graph }).where(eq(outcomeContracts.id, outcome.id)).returning();
+        // Persist discovery-phase policy matches in the constraint graph so the Governance tab can show them
+        const graphWithPolicies = {
+          ...graph,
+          ...(matchedPolicyIds.length > 0 ? { matchedPolicyIds } : {}),
+          ...(discoveryPolicies.length > 0 ? { discoveryPolicies } : {}),
+        };
+        const [updatedOutcome] = await tx.update(outcomeContracts).set({ constraintGraph: graphWithPolicies }).where(eq(outcomeContracts.id, outcome.id)).returning();
         return { outcome: updatedOutcome, kpis: createdKpis };
       });
       res.status(201).json(result);

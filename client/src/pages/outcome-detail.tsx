@@ -2411,7 +2411,7 @@ export default function OutcomeDetail() {
           )}
         </TabsContent>
 
-        {/* Tab 3: Financial Ledger */}
+        {/* Tab 3: Governance */}
         <TabsContent value="governance" className="space-y-6" data-testid="tabcontent-governance">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div>
@@ -2432,6 +2432,11 @@ export default function OutcomeDetail() {
             </div>
           </div>
           {(() => {
+            const cg = outcome?.constraintGraph as any;
+            const discoveryPolicyIds = new Set<string>(Array.isArray(cg?.matchedPolicyIds) ? cg.matchedPolicyIds : []);
+            const discoveryPoliciesDetail: Array<{ policyId: string; name: string; domain: string; rationale?: string }> =
+              Array.isArray(cg?.discoveryPolicies) ? cg.discoveryPolicies : [];
+
             const boundAgentIds = new Set(boundAgents.map(a => a.id));
             const activePolicies = (governancePolicies || []).filter(p => {
               if (p.status !== "active") return false;
@@ -2441,12 +2446,16 @@ export default function OutcomeDetail() {
               if (st === "agent" && p.scopeId && boundAgentIds.has(p.scopeId)) return true;
               return false;
             });
-            const domainGroups = activePolicies.reduce<Record<string, Policy[]>>((acc, p) => {
-              const d = p.domain || "general";
-              if (!acc[d]) acc[d] = [];
-              acc[d].push(p);
-              return acc;
-            }, {});
+
+            // Split into discovery-matched vs. org-wide
+            const discoveryMatched = activePolicies.filter(p => discoveryPolicyIds.has(p.id));
+            const orgWide = activePolicies.filter(p => !discoveryPolicyIds.has(p.id));
+
+            // Also surface AI-identified policies that may not exist in the platform yet
+            const aiOnlyPolicies = discoveryPoliciesDetail.filter(
+              dp => !activePolicies.some(ap => ap.id === dp.policyId)
+            );
+
             const domainLabels: Record<string, string> = {
               data_handling: "Data Handling",
               tool_permissions: "Tool Permissions",
@@ -2455,23 +2464,97 @@ export default function OutcomeDetail() {
               compliance: "Compliance",
               general: "General",
             };
-            return activePolicies.length > 0 ? (
-              <div className="space-y-4">
-                {Object.entries(domainGroups).map(([domain, policies]) => (
-                  <Card key={domain}>
-                    <CardContent className="p-4">
-                      <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{domainLabels[domain] || domain}</span>
-                      <div className="flex items-center gap-2 mt-2 flex-wrap">
-                        {policies.map(p => (
-                          <Badge key={p.id} variant="outline" className="text-[10px] bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20" data-testid={`policy-badge-${p.id}`}>
-                            <Shield className="w-3 h-3 mr-1" />
-                            {p.name}
-                          </Badge>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
+
+            const groupByDomain = (policies: Policy[]) =>
+              policies.reduce<Record<string, Policy[]>>((acc, p) => {
+                const d = p.domain || "general";
+                if (!acc[d]) acc[d] = [];
+                acc[d].push(p);
+                return acc;
+              }, {});
+
+            const hasAny = activePolicies.length > 0 || aiOnlyPolicies.length > 0;
+
+            return hasAny ? (
+              <div className="space-y-5">
+                {/* Discovery-matched policies */}
+                {(discoveryMatched.length > 0 || aiOnlyPolicies.length > 0) && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-violet-500" />
+                      <span className="text-xs font-semibold text-violet-600 dark:text-violet-400 uppercase tracking-wider">Identified at Discovery</span>
+                      <Badge variant="outline" className="text-[10px] border-violet-500/30 text-violet-500 ml-1">{discoveryMatched.length + aiOnlyPolicies.length}</Badge>
+                    </div>
+                    {Object.entries(groupByDomain(discoveryMatched)).map(([domain, policies]) => (
+                      <Card key={domain} className="border-violet-500/20 bg-violet-500/5">
+                        <CardContent className="p-4">
+                          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{domainLabels[domain] || domain}</span>
+                          <div className="flex flex-col gap-2 mt-2">
+                            {policies.map(p => {
+                              const detail = discoveryPoliciesDetail.find(d => d.policyId === p.id);
+                              return (
+                                <div key={p.id} className="flex flex-col gap-0.5">
+                                  <Badge variant="outline" className="text-[10px] bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/30 self-start" data-testid={`policy-badge-${p.id}`}>
+                                    <Shield className="w-3 h-3 mr-1" />
+                                    {p.name}
+                                  </Badge>
+                                  {detail?.rationale && (
+                                    <p className="text-[10px] text-muted-foreground pl-1 italic">{detail.rationale}</p>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                    {aiOnlyPolicies.length > 0 && (
+                      <Card className="border-amber-500/20 bg-amber-500/5">
+                        <CardContent className="p-4">
+                          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Recommended — not yet in platform</span>
+                          <div className="flex flex-col gap-2 mt-2">
+                            {aiOnlyPolicies.map((dp, i) => (
+                              <div key={i} className="flex flex-col gap-0.5">
+                                <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30 self-start">
+                                  <Shield className="w-3 h-3 mr-1" />
+                                  {dp.name}
+                                </Badge>
+                                {dp.rationale && (
+                                  <p className="text-[10px] text-muted-foreground pl-1 italic">{dp.rationale}</p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </div>
+                )}
+
+                {/* Org-wide active policies */}
+                {orgWide.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Org-wide Active Policies</span>
+                      <Badge variant="outline" className="text-[10px] ml-1">{orgWide.length}</Badge>
+                    </div>
+                    {Object.entries(groupByDomain(orgWide)).map(([domain, policies]) => (
+                      <Card key={domain}>
+                        <CardContent className="p-4">
+                          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">{domainLabels[domain] || domain}</span>
+                          <div className="flex items-center gap-2 mt-2 flex-wrap">
+                            {policies.map(p => (
+                              <Badge key={p.id} variant="outline" className="text-[10px] bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20" data-testid={`policy-badge-${p.id}`}>
+                                <Shield className="w-3 h-3 mr-1" />
+                                {p.name}
+                              </Badge>
+                            ))}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : (
               <Card>
