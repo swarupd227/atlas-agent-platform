@@ -3371,7 +3371,10 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
         spanGranularity: z.enum(["none", "agent", "tool", "full", "per-node", "per-tool-call"]).default("per-node"),
       });
 
-      const { format, llmProvider, maxIterations, completionPromise, framework, toolAdapters, pinVersions, otelEnabled, spanGranularity } = exportSchema.parse(req.body || {});
+      const { format: rawFormat, llmProvider, maxIterations, completionPromise, framework, toolAdapters, pinVersions, otelEnabled, spanGranularity } = exportSchema.parse(req.body || {});
+
+      const PYTHON_ONLY_FRAMEWORKS = ["foundry", "autogen", "semantic-kernel"];
+      const format = PYTHON_ONLY_FRAMEWORKS.includes(framework) ? "python" : rawFormat;
 
       const blueprintJson = (agent.blueprintJson && typeof agent.blueprintJson === "object")
         ? agent.blueprintJson as Record<string, unknown>
