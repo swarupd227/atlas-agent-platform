@@ -5341,16 +5341,20 @@ function AgentDetailInner() {
               a.click();
               URL.revokeObjectURL(url);
             };
-            const healthyCount = modules.filter(m => m.health.status === "active").length;
+            const activeCount = modules.filter(m => m.health.status === "active").length;
+            const standbyCount = modules.filter(m => m.health.status === "standby").length;
+            const offlineCount = modules.filter(m => m.health.status === "offline").length;
             return (
               <>
                 {/* Health summary strip */}
-                <Card className={`border-l-4 ${healthyCount === modules.length ? "border-l-emerald-500" : healthyCount > 4 ? "border-l-amber-500" : "border-l-red-500"}`} data-testid="aar-health-strip">
+                <Card className={`border-l-4 ${offlineCount > 0 ? "border-l-red-500" : standbyCount > 0 ? "border-l-amber-500" : "border-l-emerald-500"}`} data-testid="aar-health-strip">
                   <CardContent className="p-3 flex items-center justify-between gap-4">
                     <div className="flex items-center gap-2">
-                      <span className={`w-2 h-2 rounded-full ${healthyCount === modules.length ? "bg-emerald-500" : healthyCount > 4 ? "bg-amber-500" : "bg-red-500"}`} />
+                      <span className={`w-2 h-2 rounded-full ${offlineCount > 0 ? "bg-red-500" : standbyCount > 0 ? "bg-amber-500" : "bg-emerald-500"}`} />
                       <span className="text-sm font-medium">
-                        {healthyCount === modules.length ? "All modules operational" : `${healthyCount}/${modules.length} modules active`}
+                        {offlineCount === 0 && standbyCount === 0
+                          ? "All modules operational"
+                          : `${activeCount} active · ${standbyCount} standby · ${offlineCount} offline`}
                       </span>
                     </div>
                     <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
@@ -5378,10 +5382,20 @@ function AgentDetailInner() {
                                   <span className="text-xs font-semibold font-mono">{mod.name}</span>
                                   <Badge
                                     variant="outline"
-                                    className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                                    className={`text-[10px] ${
+                                      mod.health.status === "active"
+                                        ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                                        : mod.health.status === "standby"
+                                          ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                                          : "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20"
+                                    }`}
                                     data-testid={`aar-module-status-${mod.id}`}
                                   >
-                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1" />
+                                    <span className={`w-1.5 h-1.5 rounded-full mr-1 ${
+                                      mod.health.status === "active" ? "bg-emerald-500"
+                                        : mod.health.status === "standby" ? "bg-amber-500"
+                                        : "bg-red-500"
+                                    }`} />
                                     {mod.health.status}
                                   </Badge>
                                 </div>

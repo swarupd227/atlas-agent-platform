@@ -1725,7 +1725,7 @@ The platform uses a comprehensive PostgreSQL schema managed by Drizzle ORM. Key 
 
 ## 42. Demo Environments
 
-Dedicated interactive demonstration environments showcasing specific ALMP capabilities with live Anthropic Claude agent execution, real-time SSE streaming, and pre-run state management.
+Dedicated interactive demonstration environments showcasing specific ALMP capabilities with live Anthropic Claude agent execution, real-time SSE streaming, and pre-run state management. All demo agents deployed in these environments are automatically provisioned with Atlas Agent Runtime (AAR) governance sidecars (see Section 43); their AAR status is visible on the Runtime (AAR) tab of each agent's cockpit.
 
 ### Hearst / Black Book Demo (`/demo/blackbook`)
 

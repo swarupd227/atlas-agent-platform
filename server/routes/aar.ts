@@ -99,9 +99,14 @@ function deriveModuleHealth(agentId: string, moduleId: string) {
 
   const metrics: ModuleMetric = metricsMap[moduleId] ?? { label: "Status", value: "OK", secondary: "" };
 
+  // Derive a realistic mixed health state: ~80% active, ~12% standby, ~8% offline
+  const statusSeed = seed % 100;
+  const status: "active" | "standby" | "offline" =
+    statusSeed < 80 ? "active" : statusSeed < 92 ? "standby" : "offline";
+
   return {
     moduleId,
-    status: "active" as const,
+    status,
     metricLabel: metrics.label,
     metricValue: metrics.value,
     metricSecondary: metrics.secondary,
@@ -292,7 +297,10 @@ router.patch("/api/agents/:agentId/aar", async (req, res) => {
     if (!agent) return res.status(404).json({ error: "Agent not found" });
 
     const { targetPlatform } = req.body;
-    const updated = await storage.upsertAarConfig(agentId, { targetPlatform });
+    if (!targetPlatform || typeof targetPlatform !== "string" || targetPlatform.trim().length === 0) {
+      return res.status(400).json({ error: "targetPlatform must be a non-empty string" });
+    }
+    const updated = await storage.upsertAarConfig(agentId, { targetPlatform: targetPlatform.trim() });
     res.json({ aarConfig: updated });
   } catch (err: any) {
     console.error("[AAR] PATCH error:", err);
