@@ -86,6 +86,28 @@ The Nous Agent Orchestrator uses a modern web stack: React, Vite, Tailwind CSS, 
 - **Eval Suite**: `3fe2763c-0536-465f-bde5-7f0cfe0a8f59`
 - **Outcome**: `3cf0091e-ad99-4901-a289-39921d0d5ae4`
 
+### OTC-AGT-008 Dev IDs (Dispute Resolution Agent)
+- **Agent**: `ff6f9c53-397f-4915-b362-d37a7d6d8299`
+- **Skills (6)**: Dispute Classification, Root Cause Analysis, Evidence Gathering, Resolution Recommendation, Customer Communication, Prevention Analytics
+- **Runbooks (6)**: Volume Spike Response, High-Value Escalation, Duplicate Dispute Detection, Aging Alert, Systematic Error Investigation, Customer Relationship at Risk
+- **Policies (6)**: SOX Audit Trail, Auto-Approval Threshold Control, FCBA Compliance, Segregation of Duties, Revenue Recognition Impact, Data Retention
+- **Golden Dataset**: `6d9bd008-1c5a-4290-a0f2-224f224cae04` (6 test cases)
+- **Eval Suite**: `82e09e3a-6b98-41e4-ba26-d5f60247e08f`
+
+### OTC-AGT-009 Dev IDs (Cash Application & Reconciliation Agent)
+- **Agent**: `99fe20ef-ec54-4447-9dac-e88e54827f84`
+- **Skills (6)**: Remittance Parsing, Intelligent Matching, Deduction Coding, Bank Reconciliation, Exception Prioritization, Cash Position Reporting
+- **Runbooks (6)**: Bank Feed Failure Recovery, Mass Payment File Error, Unapplied Cash Aging, Bank Recon Imbalance, Period-End Close, Remittance Format Change
+- **Policies (6)**: SOX Controls, Duplicate Payment Detection, Suspicious Payment Source, Period Cutoff, Unapplied Cash Escalation, Remittance Data Privacy
+- **Golden Dataset**: `0e08c13a-657b-4585-b4ca-ad9e53f57f67` (6 test cases)
+- **Eval Suite**: `b1e17e41-500f-4882-b171-6e71d1d97fdb`
+
+### Creation Scripts
+- `scripts/create-otc-agents.mjs` — Full Phase 1-6 creation (skills, agents, runbooks, policies, evals) for target URL
+- `scripts/create-otc-evals-v2.mjs` — Phase 6 only (golden datasets + test cases + eval suites)
+- `scripts/generate-prod-curl.mjs <PROD_URL> [TOKEN]` — Generates `scripts/prod-migration.sh` for prod migration
+- `scripts/otc-agents-created.json` — ID manifest from dev creation
+
 ### Important Dev/Prod Notes
 - **NEVER use `db:push`** — drops embedding column; use raw SQL in `runStartupMigrations()` only
 - **Dev org**: `0c9bcf16-cdd9-45e2-87f6-6a839a7f7056`

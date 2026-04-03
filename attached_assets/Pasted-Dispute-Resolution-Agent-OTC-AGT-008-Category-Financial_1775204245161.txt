@@ -1,0 +1,165 @@
+Dispute Resolution Agent
+OTC-AGT-008  |  Category: Financial
+9.1 Description
+Manages the full lifecycle of billing and order disputes from intake through resolution. Classifies disputes, performs automated root cause analysis, proposes resolutions, coordinates across departments, and ensures timely closure. Reduces write-offs and improves customer relationships through faster, more consistent dispute handling.
+9.2 Workflow Steps
+77.	1. Receive dispute (from customer, sales rep, or deduction on payment)
+78.	2. Classify dispute: pricing, quantity, quality, duplicate invoice, unauthorized deduction
+79.	3. Gather supporting evidence: PO, invoice, delivery proof, contract terms
+80.	4. Perform automated root cause analysis against order and fulfillment records
+81.	5. Route to appropriate resolver: billing, quality, logistics, sales
+82.	6. Propose resolution: full credit, partial credit, reject with evidence, rebill
+83.	7. Get approval for resolution above auto-approve threshold
+84.	8. Execute resolution: issue credit memo, adjust invoice, process refund
+85.	9. Communicate resolution to customer with supporting documentation
+86.	10. Update financial records and AR balances
+87.	11. Feed dispute data to prevention analytics
+
+9.3 Common Ontology
+The following entities and attributes form the shared data model referenced by this agent:
+Entity	Key Attributes
+Dispute	dispute ID, type, amount, status, age, priority
+Root Cause	category (pricing error, shipping damage, wrong item, deduction), evidence
+Resolution	type (credit, rebill, reject, write-off), amount, approval level
+Deduction	deduction code, amount, customer claim reference, validity
+Evidence	document type (POD, invoice, PO, photo), source, relevance
+SLA	response time, resolution time, escalation trigger
+
+9.4 Claude Agent Skills
+The following skills should be developed and made available as context for this agent:
+Skill Name	Description
+Dispute Classification Skill	NLP-based classification from customer communications and deduction codes
+Root Cause Analysis Skill	Cross-references order, fulfillment, and billing data for automated investigation
+Evidence Gathering Skill	Retrieves and assembles relevant documents from multiple systems
+Resolution Recommendation Skill	Proposes resolution based on evidence, policy, and historical patterns
+Customer Communication Skill	Generates dispute acknowledgment and resolution communications
+Prevention Analytics Skill	Identifies systemic issues driving dispute volume
+
+9.5 Eval Dataset
+Recommended evaluation data and benchmarks for validating agent accuracy and performance:
+•	Historical disputes with known root causes and resolutions
+•	Classification accuracy: dispute type prediction against manual classification
+•	Root cause analysis: automated finding vs. manual investigation outcome
+•	Resolution appropriateness: credit/rebill decisions compared to expert reviewers
+•	Cycle time benchmarks: resolution time by dispute type and complexity
+•	Prevention effectiveness: reduction in repeat dispute patterns
+
+9.6 Production Runbooks
+Operational procedures for handling common issues and failure scenarios:
+Scenario	Procedure
+Dispute Volume Spike	Triage procedure, temporary auto-resolution thresholds, resource allocation
+High-Value Dispute Escalation	Senior management notification, legal review triggers
+Duplicate Dispute Detection	Matching logic, merge procedure, customer notification
+Aging Dispute Alert	Escalation path at 30/60/90 day marks, management review
+Systematic Error Pattern	Root cause investigation, system correction, mass resolution procedure
+Customer Relationship at Risk	Priority handling, executive involvement, goodwill credit authority
+
+9.7 Regulatory Compliance & Policies
+Applicable regulations and compliance requirements:
+•	SOX: Audit trail for dispute resolutions, credit memo approvals, write-off authorization
+•	Revenue Recognition: Impact of credits and adjustments on recognized revenue
+•	Consumer Protection: Timely dispute response requirements (Fair Credit Billing Act for B2C)
+•	Tax: Tax implications of credit memos and adjustments
+•	Internal Controls: Segregation of duties between dispute investigation and resolution
+•	Data Retention: Dispute documentation retention requirements
+
+9.8 Knowledgebase Reference
+Documents and data sources this agent needs access to:
+•	Dispute resolution policies: thresholds, approval matrices, auto-resolution rules
+•	Root cause investigation guides by dispute type
+•	Customer communication templates: acknowledgment, update, resolution
+•	Deduction code mappings and validity assessment criteria
+•	Historical dispute analytics: patterns, root causes, resolution rates
+•	Cross-department escalation contacts and SLAs
+
+9.9 Knowledge Graph
+Entity-relationship mappings showing how data entities connect within this agent's domain:
+Dispute -[RAISED_ON]-> Invoice -[FOR_ORDER]-> Order
+Dispute -[CLASSIFIED_AS]-> Dispute Type -[INVESTIGATED_BY]-> Department
+Dispute -[ROOT_CAUSE]-> Issue -[EVIDENCED_BY]-> Document
+Dispute -[RESOLVED_WITH]-> Credit Memo / Rebill -[APPROVED_BY]-> Authority
+Dispute -[PART_OF_PATTERN]-> Systemic Issue -[AFFECTS]-> Customer Segment
+Customer -[HAS_DISPUTE_HISTORY]-> Dispute Record -[IMPACTS]-> Relationship Score
+ 
+10. Cash Application & Reconciliation Agent
+OTC-AGT-009  |  Category: Financial
+10.1 Description
+Automates the matching of incoming payments to open invoices using remittance data, bank statements, and intelligent matching algorithms. Handles complex scenarios like partial payments, consolidated payments, and deductions. Reconciles bank accounts and ensures accurate AR balances for financial reporting.
+10.2 Workflow Steps
+88.	1. Ingest payment data from bank feeds, lockbox, payment portals, and EDI
+89.	2. Parse remittance advice (structured EDI, email attachments, PDF, check stubs)
+90.	3. Match payments to open invoices using reference numbers, amounts, and customer ID
+91.	4. Handle exceptions: partial payments, overpayments, cross-invoice payments
+92.	5. Identify and code deductions (trade promotions, freight claims, early pay discounts)
+93.	6. Apply cash to matched invoices and update AR ledger
+94.	7. Route unmatched items to manual review queue with suggested matches
+95.	8. Process bank reconciliation: match bank statement lines to posted cash
+96.	9. Investigate and resolve reconciliation differences
+97.	10. Generate daily cash position report and AR balance confirmation
+98.	11. Close period: ensure all cash applied, clear suspense accounts
+
+10.3 Common Ontology
+The following entities and attributes form the shared data model referenced by this agent:
+Entity	Key Attributes
+Payment	amount, date, method, bank reference, payer, remittance data
+Remittance	invoice references, amounts, deduction codes, notes
+Match	type (auto, suggested, manual), confidence score, applied amount
+Deduction	code, amount, validity, offset invoice
+Bank Statement	statement date, transactions, beginning/ending balance
+Reconciliation	matched items, unmatched items, timing differences, errors
+
+10.4 Claude Agent Skills
+The following skills should be developed and made available as context for this agent:
+Skill Name	Description
+Remittance Parsing Skill	OCR and NLP extraction from PDF, email, and check stub remittances
+Intelligent Matching Skill	Multi-factor matching using amount, reference, date, and customer patterns
+Deduction Coding Skill	Classifies deductions using customer history and trade promotion data
+Bank Reconciliation Skill	Automated matching of bank transactions to posted cash receipts
+Exception Prioritization Skill	Ranks unmatched items by amount, age, and customer importance
+Cash Position Reporting Skill	Real-time cash visibility and forecasting
+
+10.5 Eval Dataset
+Recommended evaluation data and benchmarks for validating agent accuracy and performance:
+•	Historical payment files with known correct invoice matches
+•	Complex scenarios: batch payments covering 50+ invoices, partial payments, cross-currency
+•	Remittance parsing accuracy: structured vs. unstructured formats
+•	Deduction classification accuracy against manual coding
+•	Bank reconciliation completeness: auto-matched vs. manual intervention rate
+•	Processing speed benchmarks: target 90%+ auto-match rate
+
+10.6 Production Runbooks
+Operational procedures for handling common issues and failure scenarios:
+Scenario	Procedure
+Bank Feed Failure	Manual statement upload procedure, alternate feed activation
+Mass Payment File Error	Validation checks, partial processing, error isolation
+Unapplied Cash Aging	Escalation thresholds, investigation priority, write-off authority
+Reconciliation Imbalance	Investigation checklist, common causes, correction procedures
+Period-End Close Crunch	Prioritization, overtime authorization, temporary approval shortcuts
+Remittance Format Change	Customer notification, parser update procedure, manual workaround
+
+10.7 Regulatory Compliance & Policies
+Applicable regulations and compliance requirements:
+•	SOX: Controls over cash receipt processing, segregation of duties, reconciliation requirements
+•	Revenue Recognition: Cash application timing impacts on revenue recognition
+•	Banking Regulations: Know Your Customer for incoming payments, suspicious activity reporting
+•	Tax: Cash basis vs. accrual basis implications, withholding tax processing
+•	Audit: Reconciliation documentation, variance explanation requirements
+•	Anti-Fraud: Duplicate payment detection, unauthorized payment source identification
+
+10.8 Knowledgebase Reference
+Documents and data sources this agent needs access to:
+•	Cash application matching rules and confidence thresholds by customer segment
+•	Remittance format specifications: EDI 820, BAI2, SWIFT MT940, customer-specific formats
+•	Deduction code library with valid reason codes and processing rules
+•	Bank reconciliation procedures and common timing difference explanations
+•	Period-end close checklists and cutoff procedures
+•	Historical payment pattern data by customer for matching optimization
+
+10.9 Knowledge Graph
+Entity-relationship mappings showing how data entities connect within this agent's domain:
+Payment -[MATCHED_TO]-> Invoice -[OWED_BY]-> Customer
+Payment -[RECEIVED_VIA]-> Bank Account -[RECONCILED_WITH]-> Bank Statement
+Remittance -[ACCOMPANIES]-> Payment -[REFERENCES]-> Invoice(s)
+Deduction -[TAKEN_FROM]-> Payment -[CLASSIFIED_AS]-> Deduction Reason
+Customer -[PAYS_VIA]-> Payment Method -[PROCESSED_THROUGH]-> Payment Channel
+Reconciliation -[COVERS_PERIOD]-> Date Range -[CONFIRMS]-> AR Balance

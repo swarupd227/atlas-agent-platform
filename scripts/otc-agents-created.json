@@ -1,0 +1,124 @@
+{
+  "disputeEval": {
+    "dataset": {
+      "id": "6d9bd008-1c5a-4290-a0f2-224f224cae04"
+    },
+    "suite": {
+      "id": "82e09e3a-6b98-41e4-ba26-d5f60247e08f",
+      "agentId": "ff6f9c53-397f-4915-b362-d37a7d6d8299",
+      "skillId": null,
+      "name": "OTC-AGT-008 Dispute Resolution Core Regression Suite",
+      "type": "regression",
+      "passRate": 0,
+      "totalCases": 6,
+      "lastRunAt": null,
+      "thresholdConfig": {
+        "minPassRate": 0.92,
+        "resolutionAccuracy": 0.9,
+        "classificationAccuracy": 0.95
+      },
+      "scorerConfig": null,
+      "coverageTags": [
+        "dispute_classification",
+        "root_cause_analysis",
+        "resolution_recommendation",
+        "sla_compliance"
+      ],
+      "environmentThresholds": null,
+      "schedule": null,
+      "industry": "enterprise",
+      "goldenDatasetId": "6d9bd008-1c5a-4290-a0f2-224f224cae04",
+      "ontologyTags": [
+        "dispute",
+        "credit-memo",
+        "order-to-cash"
+      ]
+    }
+  },
+  "cashAppEval": {
+    "dataset": {
+      "id": "0e08c13a-657b-4585-b4ca-ad9e53f57f67",
+      "name": "OTC-AGT-009 Cash Application & Reconciliation Evaluation Dataset",
+      "description": "Evaluation dataset for the Cash Application & Reconciliation Agent covering remittance parsing accuracy, invoice matching rates, deduction classification, bank reconciliation completeness, and exception prioritization. Includes complex multi-invoice payments, cross-currency scenarios, and period-end close cases.",
+      "industry": "enterprise",
+      "useCase": "Cash Application and Bank Reconciliation",
+      "version": "1.0",
+      "testCaseCount": 0,
+      "scenarioCategories": {
+        "Exact Match": 20,
+        "Partial Payment": 15,
+        "Exception Handling": 15,
+        "Bank Reconciliation": 15,
+        "Consolidated Payment": 15,
+        "Deduction Classification": 20
+      },
+      "qualityCoverage": 0.93,
+      "coverageDimensions": [
+        "match_type",
+        "payment_complexity",
+        "remittance_format",
+        "deduction_type",
+        "period_timing"
+      ],
+      "benchmarkAvg": 0.92,
+      "benchmarkRange": {
+        "low": 0.85,
+        "high": 0.99
+      },
+      "contributorCount": 1,
+      "contributors": [
+        "Order-to-Cash Team"
+      ],
+      "growthHistory": [],
+      "status": "active",
+      "tags": [
+        "cash-application",
+        "order-to-cash",
+        "remittance",
+        "bank-reconciliation",
+        "matching"
+      ],
+      "aiGenerated": false,
+      "performanceBenchmarks": {
+        "autoMatchRate": 0.9,
+        "remittanceParsingAccuracy": 0.92,
+        "reconciliationCompleteness": 0.98,
+        "deductionClassificationAccuracy": 0.9
+      },
+      "dataRecordCount": 0,
+      "lastUpdatedAt": "2026-04-03T08:33:00.631Z",
+      "createdAt": "2026-04-03T08:33:00.631Z"
+    },
+    "suite": {
+      "id": "b1e17e41-500f-4882-b171-6e71d1d97fdb",
+      "agentId": "99fe20ef-ec54-4447-9dac-e88e54827f84",
+      "skillId": null,
+      "name": "OTC-AGT-009 Cash Application Core Regression Suite",
+      "type": "regression",
+      "passRate": 0,
+      "totalCases": 6,
+      "lastRunAt": null,
+      "thresholdConfig": {
+        "minPassRate": 0.9,
+        "autoMatchRateTarget": 0.9,
+        "parsingAccuracyTarget": 0.92
+      },
+      "scorerConfig": null,
+      "coverageTags": [
+        "remittance_parsing",
+        "invoice_matching",
+        "deduction_coding",
+        "bank_reconciliation"
+      ],
+      "environmentThresholds": null,
+      "schedule": null,
+      "industry": "enterprise",
+      "goldenDatasetId": "0e08c13a-657b-4585-b4ca-ad9e53f57f67",
+      "ontologyTags": [
+        "cash-application",
+        "remittance",
+        "order-to-cash"
+      ]
+    }
+  }
+}
