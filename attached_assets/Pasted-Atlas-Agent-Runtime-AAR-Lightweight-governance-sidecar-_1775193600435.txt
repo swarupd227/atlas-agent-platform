@@ -1,0 +1,13 @@
+Atlas Agent Runtime (AAR)
+Lightweight governance sidecar deployed alongside every Atlas-governed agent, regardless of where that agent runs. AAR is the enforcement point that ensures governance survives deployment to any cloud or platform.
+1.1 Module Architecture
+AAR is a single Go binary composed of 7 internal modules:
+Module	Responsibility	Internal Dependencies	External Interfaces
+**PolicyEngine**	Evaluate policies against action requests. Return BLOCK / ALERT / LOG.	Reads PolicyCache. Writes ProvenanceStore. Emits TelemetryEmitter.	Receives Policy Bundles from Control Plane via gRPC stream.
+**MCPProxy**	Intercept, authorize, rate-limit, and forward MCP tool calls. Behavior fingerprinting.	Calls PolicyEngine pre-forward. Logs ProvenanceStore. Emits TelemetryEmitter.	gRPC server (agent-facing). HTTP/gRPC client (MCP server-facing). Supports `streamable-http` and `SSE` MCP transports.
+**ProvenanceStore**	Capture, hash-chain, queue, and stream provenance events.	Receives from PolicyEngine, MCPProxy, AutonomyEnforcer. Uses CredentialManager for signing.	gRPC stream to Atlas Telemetry Collector. Local WAL (write-ahead log) for offline queuing.
+**TelemetryEmitter**	Emit structured metrics, traces, logs in OTLP format.	Receives from all modules.	OTLP/gRPC to Atlas Collector (primary). OTLP/HTTP to customer observability (secondary, optional).
+**AutonomyEnforcer**	Enforce current autonomy level. Route actions for approval when required.	Reads autonomy config from PolicyCache. Calls PolicyEngine for risk classification.	Receives autonomy transitions from Control Plane. Queues approval requests to Approval Service.
+**CredentialManager**	Manage X.509 certificates, API keys. Rotate on schedule. Inject into MCP calls.	Used by MCPProxy for mTLS. Used by ProvenanceStore for event signing.	Integrates with cloud-native secret stores: AWS Secrets Manager, GCP Secret Manager, Azure Key Vault, OCI Vault, HashiCorp Vault.
+**HealthMonitor**	Self-health checks. MCP server health probes. Behavior fingerprint drift detection.	Reads baseline fingerprints from PolicyCache. Alerts via TelemetryEmitter.	Exposes `/healthz` and `/readyz` HTTP endpoints. Reports heartbeat to Control Plane.
+
