@@ -18,6 +18,7 @@ import improvementsRouter from "./routes/improvements";
 import runtimeRouter from "./routes/runtime";
 import playgroundRouter from "./routes/playground";
 import aarRouter, { backfillAarConfigs } from "./routes/aar";
+import observabilityRouter from "./routes/observability";
 import {
   computeConstraintGraph,
   recomputeOutcomeKpis,
@@ -192,6 +193,7 @@ export async function registerRoutes(
   app.use(runtimeRouter);
   app.use(playgroundRouter);
   app.use(aarRouter);
+  app.use(observabilityRouter);
 
   // ── Remaining router modules ─────────────────────────────────
   app.use(llmProvidersRouter);

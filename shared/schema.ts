@@ -2272,4 +2272,26 @@ export const insertAarConfigSchema = createInsertSchema(aarConfigs).omit({ id: t
 export type InsertAarConfig = z.infer<typeof insertAarConfigSchema>;
 export type AarConfig = typeof aarConfigs.$inferSelect;
 
+// ─── Agent Alerts ─────────────────────────────────────────────────────────────
+export const agentAlerts = pgTable("agent_alerts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  orgId: varchar("org_id"),
+  agentId: varchar("agent_id").notNull(),
+  agentName: text("agent_name").notNull(),
+  alertType: text("alert_type").notNull().default("success_rate_drop"),
+  severity: text("severity").notNull().default("warning"),
+  message: text("message").notNull(),
+  currentValue: real("current_value"),
+  baselineValue: real("baseline_value"),
+  triggeredAt: timestamp("triggered_at").defaultNow(),
+  acknowledgedAt: timestamp("acknowledged_at"),
+}, (table) => [
+  index("idx_agent_alerts_agent_id").on(table.agentId),
+  index("idx_agent_alerts_triggered_at").on(table.triggeredAt),
+]);
+
+export const insertAgentAlertSchema = createInsertSchema(agentAlerts).omit({ id: true, triggeredAt: true });
+export type InsertAgentAlert = z.infer<typeof insertAgentAlertSchema>;
+export type AgentAlert = typeof agentAlerts.$inferSelect;
+
 export * from "./models/chat";

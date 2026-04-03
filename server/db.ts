@@ -32,6 +32,21 @@ export async function runStartupMigrations() {
           CHECK (triggered_by IN ('scheduled', 'manual'))
       );
       ALTER TABLE runbooks ADD COLUMN IF NOT EXISTS agent_id VARCHAR REFERENCES agents(id);
+      CREATE TABLE IF NOT EXISTS agent_alerts (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        org_id VARCHAR,
+        agent_id VARCHAR NOT NULL,
+        agent_name TEXT NOT NULL,
+        alert_type TEXT NOT NULL DEFAULT 'success_rate_drop',
+        severity TEXT NOT NULL DEFAULT 'warning',
+        message TEXT NOT NULL,
+        current_value REAL,
+        baseline_value REAL,
+        triggered_at TIMESTAMP DEFAULT NOW(),
+        acknowledged_at TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_agent_alerts_agent_id ON agent_alerts(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_agent_alerts_triggered_at ON agent_alerts(triggered_at);
       CREATE TABLE IF NOT EXISTS aar_configs (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         agent_id VARCHAR NOT NULL UNIQUE,

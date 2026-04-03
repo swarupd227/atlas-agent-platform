@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useLocation, Link } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import {
   LayoutDashboard,
   Target,
@@ -37,6 +38,7 @@ import {
   Cpu,
   Code2,
   PlayCircle,
+  MonitorCheck,
 } from "lucide-react";
 import {
   Sidebar,
@@ -74,6 +76,15 @@ export function AppSidebar() {
   const [location] = useLocation();
   const { role, isRouteAllowed } = useRole();
 
+  const { data: alertsData } = useQuery<any[]>({
+    queryKey: ["/api/observability/alerts"],
+    refetchInterval: 60000,
+    staleTime: 30000,
+  });
+  const unacknowledgedAlerts = Array.isArray(alertsData)
+    ? alertsData.filter((a: any) => !a.acknowledgedAt).length
+    : 0;
+
   const primaryNav: NavItem[] = [
     { title: "Overview", url: "/dashboard", icon: LayoutDashboard },
     { title: "Outcomes", url: "/outcomes", icon: Target },
@@ -81,6 +92,7 @@ export function AppSidebar() {
     { title: "Knowledge", url: "/knowledge-bases", icon: BookOpen },
     { title: "Deployments", url: "/deployments", icon: Rocket },
     { title: "Monitor", url: "/monitor", icon: Activity },
+    { title: "Fleet Health", url: "/observability", icon: MonitorCheck },
     { title: "Governance", url: "/governance", icon: Shield },
     { title: "Integrations", url: "/integrations", icon: Plug },
   ];
@@ -195,9 +207,17 @@ export function AppSidebar() {
                 {filteredPrimaryNav.map((item) => (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton asChild data-active={isActive(item.url)}>
-                      <Link href={item.url} data-testid={`link-nav-${item.title.toLowerCase()}`}>
+                      <Link href={item.url} data-testid={`link-nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}>
                         <item.icon className="w-4 h-4" />
-                        <span>{item.title}</span>
+                        <span className="flex-1">{item.title}</span>
+                        {item.url === "/observability" && unacknowledgedAlerts > 0 && (
+                          <span
+                            className="ml-auto text-[10px] font-bold bg-red-500 text-white rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-none"
+                            data-testid="badge-alert-count"
+                          >
+                            {unacknowledgedAlerts > 99 ? "99+" : unacknowledgedAlerts}
+                          </span>
+                        )}
                       </Link>
                     </SidebarMenuButton>
                   </SidebarMenuItem>

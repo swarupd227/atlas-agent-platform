@@ -98,6 +98,7 @@ import FitchDemo from "@/pages/demo/fitch-demo";
 import BlackBookDemo from "@/pages/demo/blackbook-demo";
 import LittlerDemo from "@/pages/demo/littler-demo";
 import DemoCenter from "@/pages/demo/demo-center";
+import ObservabilityPage from "@/pages/observability";
 import { Shield, LogOut } from "lucide-react";
 
 function HeaderControls() {
@@ -169,6 +170,7 @@ function DashboardRouter() {
       <Route path="/traces/:id" component={TraceDetail} />
       <Route path="/runtime/runs/:id" component={RunDetail} />
       <Route path="/monitor" component={Monitor} />
+      <Route path="/observability" component={ObservabilityPage} />
       <Route path="/governance/policy-engine" component={PolicyEngine} />
       <Route path="/governance" component={Governance} />
       <Route path="/audit-trail" component={AuditTrail} />

@@ -5,6 +5,7 @@ import { checkOntologyCompliance, executeScheduledAgentCycle } from "./agent-run
 import { industryEvalFrameworks } from "./routes";
 import { runLlmJudge, runAgentOnInput, buildAgentContext } from "./eval-judge";
 import { getDefaultProvider, getProvider, completeWithFallback } from "./llm-provider";
+import { runAlertCheck } from "./routes/observability";
 
 export const jobEvents = new EventEmitter();
 jobEvents.setMaxListeners(50);
@@ -670,6 +671,19 @@ export function startWorker(intervalMs = 2000) {
   };
   setTimeout(autonomyAutoTimeout, autonomyAutoTimeoutInterval);
   console.log("[worker] Autonomy auto-timeout validator started (5min interval)");
+
+  const alertCheckInterval = 300000;
+  const alertCheckRunner = async () => {
+    if (!workerRunning) return;
+    try {
+      await runAlertCheck();
+    } catch (err) {
+      if (!isDbConnectionError(err)) console.error("[worker] Alert check error:", err);
+    }
+    setTimeout(alertCheckRunner, alertCheckInterval);
+  };
+  setTimeout(alertCheckRunner, alertCheckInterval);
+  console.log("[worker] Observability alert checker started (5min interval)");
 }
 
 async function computeCanaryHealthSnapshot(dep: {
