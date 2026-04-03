@@ -142,9 +142,12 @@ export default function ObservabilityPage() {
   }
 
   const sortedAgents = [...(fleetData?.agents ?? [])].sort((a, b) => {
-    const av = a[sortKey] as number;
-    const bv = b[sortKey] as number;
-    return sortDir === "asc" ? av - bv : bv - av;
+    const av = a[sortKey];
+    const bv = b[sortKey];
+    if (typeof av === "string" && typeof bv === "string") {
+      return sortDir === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
+    }
+    return sortDir === "asc" ? (av as number) - (bv as number) : (bv as number) - (av as number);
   });
 
   function ColHeader({ label, k }: { label: string; k: SortKey }) {
@@ -195,6 +198,33 @@ export default function ObservabilityPage() {
           </Button>
         </div>
       </div>
+
+      {/* Unacknowledged alert banner */}
+      {!alertsLoading && unacknowledgedAlerts.length > 0 && (
+        <div
+          className="flex items-center gap-3 p-3 rounded-lg border border-red-300 bg-red-50 dark:border-red-800 dark:bg-red-950/30"
+          data-testid="banner-unacked-alerts"
+        >
+          <ShieldAlert className="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-red-800 dark:text-red-200">
+              {unacknowledgedAlerts.length} unacknowledged alert{unacknowledgedAlerts.length !== 1 ? "s" : ""} require attention
+            </p>
+            <p className="text-xs text-red-600 dark:text-red-400 truncate">
+              {unacknowledgedAlerts[0]?.agentName}: {unacknowledgedAlerts[0]?.message}
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="border-red-300 text-red-700 hover:bg-red-100 dark:border-red-700 dark:text-red-300 dark:hover:bg-red-900/40 flex-shrink-0"
+            onClick={() => document.querySelector<HTMLButtonElement>('[data-testid="tab-alerts"]')?.click()}
+            data-testid="button-view-alerts"
+          >
+            View Alerts
+          </Button>
+        </div>
+      )}
 
       {/* Fleet summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -311,7 +341,8 @@ export default function ObservabilityPage() {
                   <table className="w-full text-sm">
                     <thead className="border-b">
                       <tr>
-                        <th className="px-3 py-2 text-left text-xs font-medium text-muted-foreground">Agent</th>
+                        <ColHeader label="Agent" k="agentName" />
+                        <ColHeader label="Department" k="department" />
                         <ColHeader label="Success %" k="successRate7d" />
                         <ColHeader label="Error %" k="errorRate7d" />
                         <ColHeader label="P95 Latency" k="p95LatencyMs7d" />
@@ -331,7 +362,10 @@ export default function ObservabilityPage() {
                         >
                           <td className="px-3 py-2.5">
                             <div className="font-medium text-sm leading-tight">{agent.agentName}</div>
-                            <div className="text-xs text-muted-foreground">{agent.department}</div>
+                            <div className="text-xs text-muted-foreground">{agent.riskTier}</div>
+                          </td>
+                          <td className="px-3 py-2.5 text-xs text-muted-foreground">
+                            {agent.department}
                           </td>
                           <td className="px-3 py-2.5">
                             <span className={`font-medium ${healthColor(agent.successRate7d)}`}>

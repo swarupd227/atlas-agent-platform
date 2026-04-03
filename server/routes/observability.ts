@@ -361,14 +361,15 @@ export const otlpIngestRouter = Router();
 
 otlpIngestRouter.post("/ingest/otlp", async (req: Request, res) => {
   try {
-    const authHeader = req.headers["authorization"] ?? "";
     const ingestToken = process.env.ATLAS_INGEST_TOKEN;
+    if (!ingestToken) {
+      return res.status(503).json({ error: "OTLP ingest is not configured. Set ATLAS_INGEST_TOKEN to enable." });
+    }
 
-    if (ingestToken) {
-      const provided = authHeader.replace(/^Bearer\s+/i, "").trim();
-      if (provided !== ingestToken) {
-        return res.status(401).json({ error: "Unauthorized: invalid ingest token" });
-      }
+    const authHeader = String(req.headers["authorization"] ?? "");
+    const provided = authHeader.replace(/^Bearer\s+/i, "").trim();
+    if (provided !== ingestToken) {
+      return res.status(401).json({ error: "Unauthorized: invalid or missing ingest token" });
     }
 
     const orgHeader = req.headers["x-organization-id"];
