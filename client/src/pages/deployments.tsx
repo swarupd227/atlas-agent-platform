@@ -52,7 +52,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { usePermission, PermissionGate } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { Deployment, Agent, Approval, EvalSuite } from "@shared/schema";
+import type { Deployment, Agent, Approval, EvalSuite, AarConfig } from "@shared/schema";
 import { mandatoryPipelineStages, industryRollbackTriggers, evidencePackageItems, getIndustryFromAgent, industryLabels, type IndustryId, type DeploymentStageRecord, type DeploymentEvidenceRecord } from "@/lib/industry-deployment-pipeline";
 import { useIndustry } from "@/components/industry-provider";
 
@@ -85,6 +85,7 @@ function EnvironmentPanel({
   health,
   approvals,
   freezeStatus,
+  aarConfigsByAgentId,
 }: {
   env: string;
   deployments: Deployment[];
@@ -93,6 +94,7 @@ function EnvironmentPanel({
   health?: EnvHealth;
   approvals?: Approval[];
   freezeStatus?: FreezeStatus;
+  aarConfigsByAgentId?: Record<string, AarConfig>;
 }) {
   const envDeploys = deployments.filter((d) => d.environment === env);
   const active = envDeploys.filter((d) => d.status === "deployed" || d.status === "active");
@@ -252,15 +254,23 @@ function EnvironmentPanel({
                       {lastApproval.status === "approved" ? "Approved" : lastApproval.status === "pending" ? "Pending Approval" : lastApproval.status}
                     </Badge>
                   )}
-                  <Badge
-                    variant="outline"
-                    className="text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
-                    title="Atlas Agent Runtime (AAR) governance sidecar attached — view full status on the agent Runtime (AAR) tab"
-                    data-testid={`badge-aar-${dep.id}`}
-                  >
-                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1" />
-                    AAR
-                  </Badge>
+                  {(() => {
+                    const aarCfg = aarConfigsByAgentId?.[dep.agentId];
+                    const tooltip = aarCfg
+                      ? `AAR · Bundle: ${aarCfg.policyBundleVersion} · Platform: ${aarCfg.targetPlatform} · Synced: ${aarCfg.lastSyncedAt ? new Date(aarCfg.lastSyncedAt).toLocaleDateString() : "—"}`
+                      : "Atlas Agent Runtime (AAR) governance sidecar — view details on the agent Runtime (AAR) tab";
+                    return (
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
+                        title={tooltip}
+                        data-testid={`badge-aar-${dep.id}`}
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1" />
+                        AAR{aarCfg ? ` ${aarCfg.policyBundleVersion}` : ""}
+                      </Badge>
+                    );
+                  })()}
                 </div>
               </div>
             );
@@ -1222,6 +1232,9 @@ export default function Deployments() {
   const { data: evalSuites } = useQuery<EvalSuite[]>({
     queryKey: ["/api/eval-suites"],
   });
+  const { data: aarConfigsByAgentId } = useQuery<Record<string, AarConfig>>({
+    queryKey: ["/api/aar/configs"],
+  });
 
   const { industry: activeIndustry } = useIndustry();
 
@@ -1324,6 +1337,7 @@ export default function Deployments() {
           health={envHealth?.staging}
           approvals={approvals}
           freezeStatus={envFreezeMap.staging}
+          aarConfigsByAgentId={aarConfigsByAgentId}
         />
         <EnvironmentPanel
           env="pilot"
@@ -1333,6 +1347,7 @@ export default function Deployments() {
           health={envHealth?.pilot}
           approvals={approvals}
           freezeStatus={envFreezeMap.pilot}
+          aarConfigsByAgentId={aarConfigsByAgentId}
         />
         <EnvironmentPanel
           env="prod"
@@ -1342,6 +1357,7 @@ export default function Deployments() {
           health={envHealth?.prod}
           approvals={approvals}
           freezeStatus={envFreezeMap.prod}
+          aarConfigsByAgentId={aarConfigsByAgentId}
         />
       </div>
 

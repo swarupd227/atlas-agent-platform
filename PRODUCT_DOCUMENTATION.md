@@ -1792,4 +1792,69 @@ The demo uses four dedicated mock REST servers (see Section 37 for full endpoint
 
 ---
 
+## 43. Atlas Agent Runtime (AAR) — Governance Sidecar
+
+The **Atlas Agent Runtime (AAR)** is a lightweight, platform-agnostic governance sidecar deployed alongside every ALMP-managed agent. It enforces Atlas policies, intercepts MCP tool calls, captures provenance, emits telemetry, and reports health — all without requiring changes to the host agent binary.
+
+### Overview
+
+AAR is **agent-scoped**: one AAR config row exists per deployed agent, automatically created or refreshed on each deployment. It is **platform-agnostic**: a single configuration manifest (the AAR Package) is rendered per target platform (AWS Bedrock, GCP Vertex AI, Azure AI Foundry, Kubernetes, on-prem, or any custom environment).
+
+### AAR Modules (7)
+
+| Module | Responsibility |
+|---|---|
+| **PolicyEngine** | Evaluate policies against action requests. Return BLOCK / ALERT / LOG. |
+| **MCPProxy** | Intercept, authorize, rate-limit, and forward MCP tool calls. Behavior fingerprinting. |
+| **ProvenanceStore** | Capture, hash-chain, queue, and stream provenance events to Atlas Telemetry Collector. |
+| **TelemetryEmitter** | Emit structured metrics, traces, and logs in OpenTelemetry (OTLP) format. |
+| **AutonomyEnforcer** | Enforce current autonomy level. Route high-risk actions for approval without Control Plane round-trip. |
+| **CredentialManager** | Manage X.509 certificates and API keys. Rotate on schedule. Inject credentials into MCP calls. |
+| **HealthMonitor** | Self-health checks, MCP server health probes, behavior fingerprint drift detection. |
+
+### Runtime Footprint
+
+| Metric | Value |
+|---|---|
+| Container image size | < 50 MB |
+| Memory | 128–256 MB |
+| CPU overhead | < 5% per core |
+| Policy eval latency | < 5 ms per eval |
+
+### AAR API Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/agents/:agentId/aar` | Retrieve AAR config + 7-module health for a specific agent |
+| `PATCH` | `/api/agents/:agentId/aar` | Update `targetPlatform` (free-text; suggestions provided) |
+| `GET` | `/api/agents/:agentId/aar/package` | Download the rendered AAR Package JSON manifest |
+| `GET` | `/api/aar/configs` | Bulk fetch all AAR configs keyed by `agentId` |
+
+### Policy Bundle
+
+Each agent's AAR config includes a `policyBundleVersion` (e.g. `v1.7.57`) and a `lastSyncedAt` timestamp that is refreshed on every deployment. Bundle distribution is push-based with a 30-second grace period for non-critical rules (zero grace for critical rules).
+
+### Target Platform & Deployment Hints
+
+The `targetPlatform` field is free-text (supports arbitrary user-supplied values) with suggestions for common environments:
+
+- `atlas-native` — Managed ALMP runtime (default)
+- `aws-bedrock` — ECS sidecar / Lambda layer; AWS Secrets Manager; CloudWatch + OTLP
+- `gcp-vertex` — GKE sidecar / Cloud Run sidecar; GCP Secret Manager; Cloud Monitoring + OTLP
+- `azure-ai-foundry` — ACI sidecar / AKS DaemonSet; Azure Key Vault; Azure Monitor + OTLP
+- `kubernetes` — Pod sidecar container; Kubernetes Secrets or external vault; Prometheus + OTLP
+- `on-prem` — Docker sidecar or systemd service; HashiCorp Vault; Grafana / Prometheus
+
+### Frontend Integration
+
+- **Agent Detail Page → Runtime (AAR) tab**: 7-module health grid, policy bundle panel, target platform combobox (free-text + autocomplete suggestions), download package button, health summary strip.
+- **Deployments Page**: Every deployment row shows a blue **AAR** badge with a tooltip displaying the bundle version (`policyBundleVersion`), platform (`targetPlatform`), and last sync date (`lastSyncedAt`). Data is fetched once via `GET /api/aar/configs` and shared across all environment panels.
+
+### Auto-Generation & Backfill
+
+- `ensureAarConfig(agentId)` is called (fire-and-forget, non-blocking) after every new deployment is created. If a config already exists, it refreshes `lastSyncedAt`. If no config exists, it creates one with a deterministic `policyBundleVersion` seeded from the agent ID.
+- `backfillAarConfigs()` runs at startup and creates AAR configs for all currently-deployed agents that do not yet have one.
+
+---
+
 *This documentation reflects the current state of the ALMP platform as of April 2026. Features and capabilities are subject to ongoing development and enhancement.*

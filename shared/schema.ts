@@ -2258,7 +2258,7 @@ export type AuditChainHealthCheck = typeof auditChainHealthChecks.$inferSelect;
 // ─── Atlas Agent Runtime (AAR) ───────────────────────────────────────────────
 export const aarConfigs = pgTable("aar_configs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
-  agentId: varchar("agent_id").notNull().unique(),
+  agentId: varchar("agent_id").notNull().unique().references(() => agents.id),
   targetPlatform: text("target_platform").notNull().default("atlas-native"),
   policyBundleVersion: text("policy_bundle_version").notNull().default("v1.0.0"),
   moduleConfig: jsonb("module_config"),

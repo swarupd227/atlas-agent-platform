@@ -43,6 +43,16 @@ export async function runStartupMigrations() {
         created_at TIMESTAMP DEFAULT NOW(),
         updated_at TIMESTAMP DEFAULT NOW()
       );
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.table_constraints
+          WHERE table_name = 'aar_configs' AND constraint_name = 'aar_configs_agent_id_fkey'
+        ) THEN
+          ALTER TABLE aar_configs ADD CONSTRAINT aar_configs_agent_id_fkey
+            FOREIGN KEY (agent_id) REFERENCES agents(id);
+        END IF;
+      END $$;
     `);
     console.log("[db] Startup migrations complete");
   } catch (err: any) {

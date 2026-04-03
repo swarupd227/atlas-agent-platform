@@ -5447,24 +5447,43 @@ function AgentDetailInner() {
                         </CardTitle>
                       </CardHeader>
                       <CardContent className="flex flex-col gap-2 pt-0">
-                        <Select
-                          value={aarPlatform || aar.targetPlatform}
-                          onValueChange={(v) => {
-                            setAarPlatform(v);
-                            updateAarPlatformMutation.mutate(v);
-                          }}
-                        >
-                          <SelectTrigger className="h-8 text-xs" data-testid="select-aar-platform">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {PLATFORM_OPTIONS.map(p => (
-                              <SelectItem key={p} value={p} className="text-xs">{p}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <datalist id="aar-platform-suggestions">
+                          {PLATFORM_OPTIONS.map(p => (
+                            <option key={p} value={p} />
+                          ))}
+                        </datalist>
+                        <div className="flex gap-1.5">
+                          <Input
+                            list="aar-platform-suggestions"
+                            className="h-8 text-xs flex-1"
+                            value={aarPlatform || aar.targetPlatform}
+                            onChange={(e) => setAarPlatform(e.target.value)}
+                            onBlur={(e) => {
+                              const val = e.target.value.trim();
+                              if (val && val !== aar.targetPlatform) {
+                                updateAarPlatformMutation.mutate(val);
+                              }
+                            }}
+                            placeholder="e.g. aws-bedrock, custom"
+                            data-testid="input-aar-platform"
+                          />
+                          {(aarPlatform && aarPlatform !== aar.targetPlatform) && (
+                            <Button
+                              size="sm"
+                              className="h-8 px-2 text-xs"
+                              disabled={updateAarPlatformMutation.isPending}
+                              onClick={() => {
+                                const val = aarPlatform.trim();
+                                if (val) updateAarPlatformMutation.mutate(val);
+                              }}
+                              data-testid="button-apply-aar-platform"
+                            >
+                              Apply
+                            </Button>
+                          )}
+                        </div>
                         <p className="text-[10px] text-muted-foreground leading-snug">
-                          Determines platform-specific deployment hints in the AAR package manifest.
+                          Enter any platform or pick a suggestion. Determines platform-specific deployment hints in the AAR package manifest.
                         </p>
                       </CardContent>
                     </Card>

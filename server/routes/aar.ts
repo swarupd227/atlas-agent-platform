@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { storage } from "../storage";
+import type { AarConfig } from "../../shared/schema";
 
 const router = Router();
 
@@ -67,6 +68,12 @@ function seedFromAgentId(agentId: string): number {
   return h;
 }
 
+interface ModuleMetric {
+  label: string;
+  value: string | number;
+  secondary: string;
+}
+
 function deriveModuleHealth(agentId: string, moduleId: string) {
   const seed = seedFromAgentId(agentId + moduleId);
   const evalsPerMin = 120 + (seed % 180);
@@ -80,7 +87,7 @@ function deriveModuleHealth(agentId: string, moduleId: string) {
   const alertCount = 12 + (seed % 40);
   const logCount = 300 + (seed % 700);
 
-  const metrics: Record<string, string | number> = {
+  const metricsMap: Record<string, ModuleMetric> = {
     "policy-engine": { label: "Evals / min", value: evalsPerMin, secondary: `${blockCount} BLOCK · ${alertCount} ALERT · ${logCount} LOG` },
     "mcp-proxy": { label: "MCP calls proxied", value: mcpCallsProxied.toLocaleString(), secondary: "Rate limits: OK · Fingerprint: nominal" },
     "provenance-store": { label: "Events synced", value: eventsTotal.toLocaleString(), secondary: `${eventsQueued} queued (WAL)` },
@@ -88,7 +95,9 @@ function deriveModuleHealth(agentId: string, moduleId: string) {
     "autonomy-enforcer": { label: "Autonomy level", value: "Guided", secondary: "0 approvals pending" },
     "credential-manager": { label: "Cert expiry", value: certExpiry, secondary: `${certDaysLeft} days remaining · Last rotation: 30d ago` },
     "health-monitor": { label: "Last heartbeat", value: "just now", secondary: "7 / 7 checks passed · Fingerprint: stable" },
-  }[moduleId] as any;
+  };
+
+  const metrics: ModuleMetric = metricsMap[moduleId] ?? { label: "Status", value: "OK", secondary: "" };
 
   return {
     moduleId,
@@ -162,7 +171,7 @@ function buildPlatformHints(targetPlatform: string) {
   return hints[targetPlatform] ?? { ...base, containerFormat: "Platform-specific", secretStore: "Platform-native vault", iamNote: "Follow your platform's IAM model" };
 }
 
-function buildAarPackage(agentId: string, agentName: string, aarConfig: any) {
+function buildAarPackage(agentId: string, agentName: string, aarConfig: Pick<AarConfig, "targetPlatform" | "policyBundleVersion" | "lastSyncedAt">) {
   const modules = buildModuleConfig(agentId, aarConfig.targetPlatform);
   const platformHints = buildPlatformHints(aarConfig.targetPlatform);
   const seed = seedFromAgentId(agentId);
@@ -232,6 +241,18 @@ function buildAarPackage(agentId: string, agentName: string, aarConfig: any) {
 }
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
+
+router.get("/api/aar/configs", async (_req, res) => {
+  try {
+    const configs = await storage.getAllAarConfigs();
+    const byAgentId: Record<string, AarConfig> = {};
+    for (const c of configs) byAgentId[c.agentId] = c;
+    res.json(byAgentId);
+  } catch (err: any) {
+    console.error("[AAR] GET /api/aar/configs error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.get("/api/agents/:agentId/aar", async (req, res) => {
   try {
@@ -305,7 +326,11 @@ export default router;
 export async function ensureAarConfig(agentId: string): Promise<void> {
   try {
     const existing = await storage.getAarConfig(agentId);
-    if (existing) return;
+    if (existing) {
+      // Update lastSyncedAt on every deployment to reflect the latest sync time
+      await storage.upsertAarConfig(agentId, { lastSyncedAt: new Date() });
+      return;
+    }
 
     const seed = seedFromAgentId(agentId);
     const major = 1;

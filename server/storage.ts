@@ -766,6 +766,7 @@ export interface IStorage {
   seedDefaultOrganization(): Promise<Organization>;
 
   getAarConfig(agentId: string): Promise<AarConfig | undefined>;
+  getAllAarConfigs(): Promise<AarConfig[]>;
   upsertAarConfig(agentId: string, data: Partial<InsertAarConfig>): Promise<AarConfig>;
 }
 
@@ -3394,6 +3395,10 @@ export class DatabaseStorage implements IStorage {
   async getAarConfig(agentId: string): Promise<AarConfig | undefined> {
     const [row] = await db.select().from(aarConfigs).where(eq(aarConfigs.agentId, agentId));
     return row;
+  }
+
+  async getAllAarConfigs(): Promise<AarConfig[]> {
+    return db.select().from(aarConfigs);
   }
 
   async upsertAarConfig(agentId: string, data: Partial<InsertAarConfig>): Promise<AarConfig> {
