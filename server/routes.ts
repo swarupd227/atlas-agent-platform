@@ -18,7 +18,7 @@ import improvementsRouter from "./routes/improvements";
 import runtimeRouter from "./routes/runtime";
 import playgroundRouter from "./routes/playground";
 import aarRouter, { backfillAarConfigs } from "./routes/aar";
-import observabilityRouter, { otlpIngestRouter } from "./routes/observability";
+import observabilityRouter from "./routes/observability";
 import {
   computeConstraintGraph,
   recomputeOutcomeKpis,

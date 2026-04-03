@@ -154,7 +154,7 @@ router.get("/api/prometheus/metrics", async (req: Request, res) => {
     defineMetric("atlas_agent_cost_per_run_usd", "Agent average cost per run in USD (last 7 days)", "gauge");
     emitAgentLines("atlas_agent_cost_per_run_usd", m => m.costPerRun);
 
-    defineMetric("atlas_agent_total_runs", "Total agent runs in last 7 days", "counter");
+    defineMetric("atlas_agent_total_runs", "Total agent runs in last 7 days (rolling window)", "gauge");
     emitAgentLines("atlas_agent_total_runs", m => m.totalRuns);
 
     defineMetric("atlas_agent_health_score", "Agent health score (0-100)", "gauge");
@@ -165,7 +165,7 @@ router.get("/api/prometheus/metrics", async (req: Request, res) => {
       ? Math.round((metrics.reduce((a, m) => a + m.successRate, 0) / metrics.length) * 100) / 100
       : 0;
 
-    defineMetric("atlas_fleet_total_runs", "Total runs across all agents in last 7 days", "counter");
+    defineMetric("atlas_fleet_total_runs", "Total runs across all agents in last 7 days (rolling window)", "gauge");
     lines.push(`atlas_fleet_total_runs ${fleetTotalRuns}`);
 
     defineMetric("atlas_fleet_avg_success_rate", "Fleet-wide average success rate (0-100)", "gauge");
