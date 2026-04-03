@@ -292,6 +292,56 @@ router.post("/api/observability/alerts/:id/acknowledge", async (req: Request, re
   }
 });
 
+async function ingestOtlpBody(body: { resourceSpans?: any[] }, orgId: string | undefined): Promise<number> {
+  let accepted = 0;
+  for (const resourceSpan of (body.resourceSpans ?? [])) {
+    const resourceAttrs: Record<string, string> = {};
+    for (const attr of (resourceSpan.resource?.attributes ?? [])) {
+      resourceAttrs[attr.key] = attr.value?.stringValue ?? String(attr.value?.intValue ?? attr.value?.boolValue ?? "");
+    }
+    const agentId = resourceAttrs["atlas.agent.id"] ?? resourceAttrs["service.name"] ?? "unknown";
+
+    for (const scopeSpan of (resourceSpan.scopeSpans ?? [])) {
+      for (const span of (scopeSpan.spans ?? [])) {
+        const startNs = BigInt(span.startTimeUnixNano ?? 0);
+        const endNs = BigInt(span.endTimeUnixNano ?? 0);
+        const latencyMs = startNs > 0n && endNs > startNs
+          ? Number((endNs - startNs) / 1_000_000n)
+          : 0;
+        const status = span.status?.code === 2 ? "failed" : "completed";
+
+        const spanAttrs: Record<string, string> = {};
+        for (const attr of (span.attributes ?? [])) {
+          spanAttrs[attr.key] = attr.value?.stringValue ?? String(attr.value?.intValue ?? attr.value?.boolValue ?? "");
+        }
+
+        const traceId: string | null = span.traceId ?? null;
+        const spanId: string | null = span.spanId ?? null;
+
+        const rowId = traceId && spanId
+          ? `${traceId}:${spanId}`
+          : traceId ?? spanId ?? undefined;
+
+        await db.insert(runTraces).values({
+          id: rowId,
+          agentId,
+          organizationId: orgId ?? undefined,
+          versionId: spanId,
+          environment: "otlp",
+          status,
+          latencyMs,
+          costUsd: parseFloat(spanAttrs["atlas.cost_usd"] ?? "0") || 0,
+          inputSummary: `OTLP span: ${span.name ?? "unknown"}`,
+          outputSummary: span.status?.message ?? null,
+          toolCalls: span.attributes ? { traceId, spanId, attributes: span.attributes } : null,
+        }).onConflictDoNothing();
+        accepted++;
+      }
+    }
+  }
+  return accepted;
+}
+
 router.post("/api/observability/export/otlp", async (req: Request, res) => {
   try {
     const orgId = getOrgId(req);
@@ -299,53 +349,39 @@ router.post("/api/observability/export/otlp", async (req: Request, res) => {
     if (!body?.resourceSpans || !Array.isArray(body.resourceSpans)) {
       return res.status(400).json({ error: "Invalid OTLP payload: missing resourceSpans array" });
     }
-
-    let accepted = 0;
-    for (const resourceSpan of body.resourceSpans) {
-      const resourceAttrs: Record<string, string> = {};
-      for (const attr of (resourceSpan.resource?.attributes ?? [])) {
-        resourceAttrs[attr.key] = attr.value?.stringValue ?? String(attr.value?.intValue ?? attr.value?.boolValue ?? "");
-      }
-      const agentId = resourceAttrs["atlas.agent.id"] ?? resourceAttrs["service.name"] ?? "unknown";
-
-      for (const scopeSpan of (resourceSpan.scopeSpans ?? [])) {
-        for (const span of (scopeSpan.spans ?? [])) {
-          const startNs = BigInt(span.startTimeUnixNano ?? 0);
-          const endNs = BigInt(span.endTimeUnixNano ?? 0);
-          const latencyMs = startNs > 0n && endNs > startNs
-            ? Number((endNs - startNs) / 1_000_000n)
-            : 0;
-          const status = span.status?.code === 2 ? "failed" : "completed";
-
-          const spanAttrs: Record<string, string> = {};
-          for (const attr of (span.attributes ?? [])) {
-            spanAttrs[attr.key] = attr.value?.stringValue ?? String(attr.value?.intValue ?? attr.value?.boolValue ?? "");
-          }
-
-          const traceId = span.traceId ?? null;
-          const spanId = span.spanId ?? null;
-
-          await db.insert(runTraces).values({
-            agentId,
-            organizationId: orgId ?? undefined,
-            traceParentId: traceId,
-            versionId: spanId,
-            environment: "otlp",
-            status,
-            latencyMs,
-            costUsd: parseFloat(spanAttrs["atlas.cost_usd"] ?? "0") || 0,
-            inputSummary: `OTLP span: ${span.name ?? "unknown"}`,
-            outputSummary: span.status?.message ?? null,
-            toolCalls: span.attributes ? { traceId, spanId, attributes: span.attributes } : null,
-          });
-          accepted++;
-        }
-      }
-    }
-
+    const accepted = await ingestOtlpBody(body, orgId);
     res.json({ accepted });
   } catch (err: any) {
     console.error("[observability] OTLP ingest error:", err.message);
+    res.status(500).json({ error: "Failed to ingest OTLP traces" });
+  }
+});
+
+export const otlpIngestRouter = Router();
+
+otlpIngestRouter.post("/ingest/otlp", async (req: Request, res) => {
+  try {
+    const authHeader = req.headers["authorization"] ?? "";
+    const ingestToken = process.env.ATLAS_INGEST_TOKEN;
+
+    if (ingestToken) {
+      const provided = authHeader.replace(/^Bearer\s+/i, "").trim();
+      if (provided !== ingestToken) {
+        return res.status(401).json({ error: "Unauthorized: invalid ingest token" });
+      }
+    }
+
+    const orgHeader = req.headers["x-organization-id"];
+    const orgId = typeof orgHeader === "string" && orgHeader ? orgHeader : undefined;
+
+    const body = req.body as { resourceSpans?: any[] };
+    if (!body?.resourceSpans || !Array.isArray(body.resourceSpans)) {
+      return res.status(400).json({ error: "Invalid OTLP payload: missing resourceSpans array" });
+    }
+    const accepted = await ingestOtlpBody(body, orgId);
+    res.json({ accepted });
+  } catch (err: any) {
+    console.error("[observability] External OTLP ingest error:", err.message);
     res.status(500).json({ error: "Failed to ingest OTLP traces" });
   }
 });

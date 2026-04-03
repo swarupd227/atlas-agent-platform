@@ -7,6 +7,7 @@ import { seedDatabase } from "./seed";
 import { autoResumeRuntimes } from "./agent-runtime";
 import { authMiddleware, seedDefaultAdmin, getSecurityMode, setDefaultOrgId } from "./auth";
 import { storage } from "./storage";
+import { otlpIngestRouter } from "./routes/observability";
 
 process.on("uncaughtException", (err) => {
   console.error("[CRASH] Uncaught exception:", err.message, err.stack);
@@ -45,6 +46,7 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
+app.use(otlpIngestRouter);
 app.use("/api", authMiddleware);
 
 export function log(message: string, source = "express") {
