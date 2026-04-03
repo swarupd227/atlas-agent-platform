@@ -101,7 +101,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam, Skill, McpServer, McpServerTool, McpServerResource, AgentMcpServer, OntologyConcept, Blueprint, KnowledgeBase, AgentKnowledgeBase, AgentTrigger, Runbook } from "@shared/schema";
-import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck, ChevronDown, ChevronUp } from "lucide-react";
+import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck, ChevronDown, ChevronUp, HeartPulse } from "lucide-react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useIndustry } from "@/components/industry-provider";
 import { formatMs } from "@/components/shared-utils";
@@ -736,6 +736,31 @@ function AgentDetailInner() {
     },
     enabled: !!agentId,
   });
+  const { data: aarData, refetch: refetchAar } = useQuery<{
+    aarConfig: { id: string; agentId: string; targetPlatform: string; policyBundleVersion: string; lastSyncedAt: string; createdAt: string } | null;
+    modules: Array<{ id: string; name: string; icon: string; responsibility: string; interfaces: string[]; health: { status: string; metricLabel: string; metricValue: string | number; metricSecondary: string; lastHeartbeat: string } }> | null;
+    policyActions: { block: number; alert: number; log: number } | null;
+    agentName: string;
+  }>({
+    queryKey: ["/api/agents", agentId, "aar"],
+    queryFn: async () => {
+      if (!agentId) return { aarConfig: null, modules: null, policyActions: null, agentName: "" };
+      const res = await fetch(`/api/agents/${agentId}/aar`);
+      return res.json();
+    },
+    enabled: !!agentId,
+  });
+
+  const [aarPlatform, setAarPlatform] = useState("");
+  const updateAarPlatformMutation = useMutation({
+    mutationFn: (targetPlatform: string) => apiRequest("PATCH", `/api/agents/${agentId}/aar`, { targetPlatform }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "aar"] });
+      toast({ title: "AAR platform updated" });
+    },
+    onError: (err: Error) => toast({ title: "Failed to update platform", description: err.message, variant: "destructive" }),
+  });
+
   const { industry } = useIndustry();
 
   const [, navigate] = useLocation();
@@ -1691,6 +1716,7 @@ function AgentDetailInner() {
           const moreTabs = [
             { value: "evals", label: "Evals" },
             { value: "blueprint", label: "Blueprint" },
+            { value: "aar", label: "Runtime (AAR)" },
             { value: "lifecycle", label: "Lifecycle" },
             { value: "monitor", label: "Monitor" },
             { value: "autonomous", label: "Autonomous" },
@@ -2720,6 +2746,18 @@ function AgentDetailInner() {
                               <Badge className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" data-testid={`badge-runtime-running-${dep.id}`}>
                                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1 animate-pulse" />
                                 Running
+                              </Badge>
+                            )}
+                            {aarData?.aarConfig && (
+                              <Badge
+                                variant="outline"
+                                className="text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20 cursor-pointer"
+                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveTab("aar"); }}
+                                title={`AAR v${aarData.aarConfig.policyBundleVersion} · Platform: ${aarData.aarConfig.targetPlatform} · Synced: ${aarData.aarConfig.lastSyncedAt ? new Date(aarData.aarConfig.lastSyncedAt).toLocaleDateString() : "—"}`}
+                                data-testid={`badge-aar-${dep.id}`}
+                              >
+                                <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1" />
+                                AAR
                               </Badge>
                             )}
                           </div>
@@ -5264,6 +5302,236 @@ function AgentDetailInner() {
 
         <TabsContent value="gitops" className="flex flex-col gap-4 mt-0" data-testid="tab-content-gitops">
           <AgentGitOps agent={agent} />
+        </TabsContent>
+
+        <TabsContent value="aar" className="flex flex-col gap-4 mt-0" data-testid="tab-content-aar">
+          {!aarData?.aarConfig ? (
+            <Card>
+              <CardContent className="py-12 flex flex-col items-center gap-3 text-center">
+                <div className="w-12 h-12 rounded-full bg-muted flex items-center justify-center">
+                  <ShieldCheck className="w-6 h-6 text-muted-foreground" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium">No AAR attached yet</p>
+                  <p className="text-xs text-muted-foreground mt-1">Deploy this agent to automatically generate its Atlas Agent Runtime governance sidecar.</p>
+                </div>
+              </CardContent>
+            </Card>
+          ) : (() => {
+            const aar = aarData.aarConfig!;
+            const modules = aarData.modules ?? [];
+            const pa = aarData.policyActions ?? { block: 0, alert: 0, log: 0 };
+            const iconMap: Record<string, typeof ShieldCheck> = {
+              ShieldCheck, Network, Database, Activity, Layers, KeyRound,
+              HeartPulse,
+            };
+            const PLATFORM_OPTIONS = [
+              "atlas-native", "aws-bedrock", "gcp-vertex", "azure-ai-foundry",
+              "kubernetes", "on-prem", "custom",
+            ];
+            const handleDownload = async () => {
+              const res = await fetch(`/api/agents/${agentId}/aar/package`);
+              const blob = await res.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              const cd = res.headers.get("Content-Disposition") ?? "";
+              const match = cd.match(/filename="(.+?)"/);
+              a.download = match?.[1] ?? "aar-package.json";
+              a.click();
+              URL.revokeObjectURL(url);
+            };
+            const healthyCount = modules.filter(m => m.health.status === "active").length;
+            return (
+              <>
+                {/* Health summary strip */}
+                <Card className={`border-l-4 ${healthyCount === modules.length ? "border-l-emerald-500" : healthyCount > 4 ? "border-l-amber-500" : "border-l-red-500"}`} data-testid="aar-health-strip">
+                  <CardContent className="p-3 flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${healthyCount === modules.length ? "bg-emerald-500" : healthyCount > 4 ? "bg-amber-500" : "bg-red-500"}`} />
+                      <span className="text-sm font-medium">
+                        {healthyCount === modules.length ? "All modules operational" : `${healthyCount}/${modules.length} modules active`}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+                      <span>Bundle: <span className="font-mono font-medium text-foreground">{aar.policyBundleVersion}</span></span>
+                      <span>Platform: <span className="font-medium text-foreground">{aar.targetPlatform}</span></span>
+                      <span>Synced: {aar.lastSyncedAt ? new Date(aar.lastSyncedAt).toLocaleDateString() : "—"}</span>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                  {/* 7 module cards */}
+                  <div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-3" data-testid="aar-module-grid">
+                    {modules.map((mod) => {
+                      const Icon = iconMap[mod.icon] ?? ShieldCheck;
+                      return (
+                        <Card key={mod.id} className="border border-border/60" data-testid={`aar-module-card-${mod.id}`}>
+                          <CardContent className="p-4 flex flex-col gap-2">
+                            <div className="flex items-start gap-2">
+                              <div className="w-7 h-7 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                                <Icon className="w-3.5 h-3.5 text-primary" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-semibold font-mono">{mod.name}</span>
+                                  <Badge
+                                    variant="outline"
+                                    className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                                    data-testid={`aar-module-status-${mod.id}`}
+                                  >
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1" />
+                                    {mod.health.status}
+                                  </Badge>
+                                </div>
+                                <p className="text-[11px] text-muted-foreground mt-0.5 leading-snug">{mod.responsibility}</p>
+                              </div>
+                            </div>
+                            <div className="rounded-md bg-muted/50 px-2.5 py-1.5">
+                              <p className="text-[10px] text-muted-foreground">{mod.health.metricLabel}</p>
+                              <p className="text-xs font-semibold">{mod.health.metricValue}</p>
+                              {mod.health.metricSecondary && (
+                                <p className="text-[10px] text-muted-foreground">{mod.health.metricSecondary}</p>
+                              )}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
+                  </div>
+
+                  {/* Right panel: Policy Bundle + Platform + Download */}
+                  <div className="flex flex-col gap-3">
+                    <Card data-testid="aar-policy-bundle-panel">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-xs font-semibold flex items-center gap-1.5">
+                          <Shield className="w-3.5 h-3.5 text-muted-foreground" />
+                          Policy Bundle
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="flex flex-col gap-2 pt-0">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-muted-foreground">Version</span>
+                          <span className="text-xs font-mono font-semibold">{aar.policyBundleVersion}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-muted-foreground">Last synced</span>
+                          <span className="text-xs">{aar.lastSyncedAt ? new Date(aar.lastSyncedAt).toLocaleDateString() : "—"}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-muted-foreground">Distribution</span>
+                          <span className="text-xs">Push (live)</span>
+                        </div>
+                        <div className="h-px bg-border my-0.5" />
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-muted-foreground flex items-center gap-1"><XOctagon className="w-3 h-3 text-red-500" /> BLOCK</span>
+                          <span className="text-xs font-semibold text-red-600 dark:text-red-400">{pa.block}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-muted-foreground flex items-center gap-1"><AlertTriangle className="w-3 h-3 text-amber-500" /> ALERT</span>
+                          <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">{pa.alert}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] text-muted-foreground flex items-center gap-1"><FileText className="w-3 h-3 text-blue-500" /> LOG</span>
+                          <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">{pa.log}</span>
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    <Card data-testid="aar-platform-card">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-xs font-semibold flex items-center gap-1.5">
+                          <Cloud className="w-3.5 h-3.5 text-muted-foreground" />
+                          Target Platform
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="flex flex-col gap-2 pt-0">
+                        <Select
+                          value={aarPlatform || aar.targetPlatform}
+                          onValueChange={(v) => {
+                            setAarPlatform(v);
+                            updateAarPlatformMutation.mutate(v);
+                          }}
+                        >
+                          <SelectTrigger className="h-8 text-xs" data-testid="select-aar-platform">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {PLATFORM_OPTIONS.map(p => (
+                              <SelectItem key={p} value={p} className="text-xs">{p}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="text-[10px] text-muted-foreground leading-snug">
+                          Determines platform-specific deployment hints in the AAR package manifest.
+                        </p>
+                      </CardContent>
+                    </Card>
+
+                    <Button
+                      variant="outline"
+                      className="w-full gap-2"
+                      onClick={handleDownload}
+                      data-testid="button-download-aar-package"
+                    >
+                      <Download className="w-3.5 h-3.5" />
+                      Download AAR Package
+                    </Button>
+
+                    <Card>
+                      <CardContent className="p-3 flex flex-col gap-1.5">
+                        <p className="text-[11px] font-medium flex items-center gap-1">
+                          <Box className="w-3 h-3 text-muted-foreground" />
+                          Runtime footprint
+                        </p>
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-muted-foreground">Image size</span>
+                          <span className="font-mono">&lt; 50 MB</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-muted-foreground">Memory</span>
+                          <span className="font-mono">128–256 MB</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-muted-foreground">Latency overhead</span>
+                          <span className="font-mono">&lt; 5 ms / eval</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="text-muted-foreground">Offline mode</span>
+                          <span className="text-emerald-600 font-medium">WAL-buffered</span>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </div>
+
+                {/* Module interface details */}
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-xs font-semibold">Module Interface Map</CardTitle>
+                  </CardHeader>
+                  <CardContent className="pt-0">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {modules.map((mod) => (
+                        <div key={mod.id} className="rounded-md border bg-muted/20 p-2.5">
+                          <p className="text-[11px] font-semibold font-mono mb-1">{mod.name}</p>
+                          <div className="flex flex-col gap-0.5">
+                            {mod.interfaces.map((iface, i) => (
+                              <p key={i} className="text-[10px] text-muted-foreground flex items-center gap-1">
+                                <ArrowRight className="w-2.5 h-2.5 shrink-0" />
+                                {iface}
+                              </p>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              </>
+            );
+          })()}
         </TabsContent>
       </Tabs>
 

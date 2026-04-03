@@ -17,6 +17,7 @@ import governanceRouter from "./routes/governance";
 import improvementsRouter from "./routes/improvements";
 import runtimeRouter from "./routes/runtime";
 import playgroundRouter from "./routes/playground";
+import aarRouter, { backfillAarConfigs } from "./routes/aar";
 import {
   computeConstraintGraph,
   recomputeOutcomeKpis,
@@ -190,6 +191,7 @@ export async function registerRoutes(
   app.use(improvementsRouter);
   app.use(runtimeRouter);
   app.use(playgroundRouter);
+  app.use(aarRouter);
 
   // ── Remaining router modules ─────────────────────────────────
   app.use(llmProvidersRouter);
@@ -215,6 +217,9 @@ export async function registerRoutes(
   ensureHearstAgents().catch((err: any) => console.error("[startup] ensureHearstAgents:", err?.message));
   ensureFitchAgents().catch((err: any) => console.error("[startup] ensureFitchAgents:", err?.message));
   ensureBBAgents().catch((err: any) => console.error("[startup] ensureBBAgents:", err?.message));
+
+  // Backfill AAR configs for all already-deployed agents
+  backfillAarConfigs().catch((err: any) => console.error("[startup] backfillAarConfigs:", err?.message));
 
   return httpServer;
 }

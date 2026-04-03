@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { storage } from "../storage";
 import { db } from "../db";
+import { ensureAarConfig } from "./aar";
 import { desc, and, eq } from "drizzle-orm";
 import { traceSpans } from "@shared/schema";
 import { z, ZodError } from "zod";
@@ -1971,6 +1972,9 @@ const router = Router();
       if (deployment.version && deployment.agentId) {
         await storage.ensureAgentVersion(deployment.agentId, deployment.version, "active");
       }
+
+      // Auto-generate AAR config on first deployment (fire-and-forget, non-blocking)
+      ensureAarConfig(deployment.agentId).catch(() => {});
 
       const riskTier = agent?.riskTier || "LOW";
       const strategy = deployment.rolloutStrategy || "canary";

@@ -252,6 +252,15 @@ function EnvironmentPanel({
                       {lastApproval.status === "approved" ? "Approved" : lastApproval.status === "pending" ? "Pending Approval" : lastApproval.status}
                     </Badge>
                   )}
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
+                    title="Atlas Agent Runtime (AAR) governance sidecar attached — view full status on the agent Runtime (AAR) tab"
+                    data-testid={`badge-aar-${dep.id}`}
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1" />
+                    AAR
+                  </Badge>
                 </div>
               </div>
             );

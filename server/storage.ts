@@ -164,6 +164,7 @@ import {
   agentTriggers, type AgentTrigger, type InsertAgentTrigger,
   organizations, type Organization, type InsertOrganization,
   auditChainHealthChecks, type AuditChainHealthCheck, type InsertAuditChainHealthCheck,
+  aarConfigs, type AarConfig, type InsertAarConfig,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -763,6 +764,9 @@ export interface IStorage {
   createOrganization(org: InsertOrganization): Promise<Organization>;
   updateOrganization(id: string, data: Partial<Organization>): Promise<Organization | undefined>;
   seedDefaultOrganization(): Promise<Organization>;
+
+  getAarConfig(agentId: string): Promise<AarConfig | undefined>;
+  upsertAarConfig(agentId: string, data: Partial<InsertAarConfig>): Promise<AarConfig>;
 }
 
 function resolveOrgId(providedOrgId: string | null | undefined): string {
@@ -3385,6 +3389,28 @@ export class DatabaseStorage implements IStorage {
       db.update(skills).set({ organizationId: orgId }).where(isNull(skills.organizationId)),
     ]);
     return org;
+  }
+
+  async getAarConfig(agentId: string): Promise<AarConfig | undefined> {
+    const [row] = await db.select().from(aarConfigs).where(eq(aarConfigs.agentId, agentId));
+    return row;
+  }
+
+  async upsertAarConfig(agentId: string, data: Partial<InsertAarConfig>): Promise<AarConfig> {
+    const existing = await this.getAarConfig(agentId);
+    if (existing) {
+      const [updated] = await db
+        .update(aarConfigs)
+        .set({ ...data, updatedAt: new Date() })
+        .where(eq(aarConfigs.agentId, agentId))
+        .returning();
+      return updated;
+    }
+    const [created] = await db
+      .insert(aarConfigs)
+      .values({ agentId, ...data })
+      .returning();
+    return created;
   }
 }
 

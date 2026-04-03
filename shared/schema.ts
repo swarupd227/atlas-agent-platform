@@ -2255,4 +2255,21 @@ export const insertAuditChainHealthCheckSchema = createInsertSchema(auditChainHe
 export type InsertAuditChainHealthCheck = z.infer<typeof insertAuditChainHealthCheckSchema>;
 export type AuditChainHealthCheck = typeof auditChainHealthChecks.$inferSelect;
 
+// ─── Atlas Agent Runtime (AAR) ───────────────────────────────────────────────
+export const aarConfigs = pgTable("aar_configs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull().unique(),
+  targetPlatform: text("target_platform").notNull().default("atlas-native"),
+  policyBundleVersion: text("policy_bundle_version").notNull().default("v1.0.0"),
+  moduleConfig: jsonb("module_config"),
+  healthSummary: jsonb("health_summary"),
+  lastSyncedAt: timestamp("last_synced_at").defaultNow(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertAarConfigSchema = createInsertSchema(aarConfigs).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertAarConfig = z.infer<typeof insertAarConfigSchema>;
+export type AarConfig = typeof aarConfigs.$inferSelect;
+
 export * from "./models/chat";

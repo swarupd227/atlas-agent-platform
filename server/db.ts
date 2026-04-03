@@ -32,6 +32,17 @@ export async function runStartupMigrations() {
           CHECK (triggered_by IN ('scheduled', 'manual'))
       );
       ALTER TABLE runbooks ADD COLUMN IF NOT EXISTS agent_id VARCHAR REFERENCES agents(id);
+      CREATE TABLE IF NOT EXISTS aar_configs (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        agent_id VARCHAR NOT NULL UNIQUE,
+        target_platform TEXT NOT NULL DEFAULT 'atlas-native',
+        policy_bundle_version TEXT NOT NULL DEFAULT 'v1.0.0',
+        module_config JSONB,
+        health_summary JSONB,
+        last_synced_at TIMESTAMP DEFAULT NOW(),
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
     `);
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
