@@ -1,0 +1,48 @@
+. THE PROBLEM: ATLAS LOSES GOVERNANCE WHEN AGENTS LEAVE
+A client raised a critical question: “If we export agents from Atlas and deploy them on AWS Bedrock, how do you provide governance and observability? If you don’t, you’ve lost control.”
+The client then expanded the scope: “We have AWS, GCP, and Oracle Cloud. Business units will want agents close to their platform and data. How does Atlas remain the governance platform when agents run everywhere?”
+This is not an edge case. It is the default enterprise deployment pattern. Large enterprises don’t run everything in one place. They have:
+•	Data gravity: Data lives in AWS S3, GCP BigQuery, Oracle databases. Moving data to Atlas is expensive, slow, and often prohibited by data residency rules.
+•	Platform preferences per BU: Investment management runs on AWS Bedrock. Risk analytics runs on GCP Vertex AI. Core banking runs on Oracle Cloud. Each BU has its own cloud strategy.
+•	Latency requirements: Agents processing real-time trading data need to be co-located with the trading platform, not calling back to a central Atlas instance.
+•	Regulatory data residency: EU data must be processed in EU regions. APAC data must stay in APAC. Agents must run where the data lives.
+
+	Why This Is Existential for Atlas
+Today, Atlas governs agents because it RUNS them. If agents move to Bedrock, Vertex, or Oracle, Atlas becomes a development tool — useful for building agents but irrelevant once they’re deployed. That’s like SailPoint only working during onboarding but not after. The entire value proposition of Atlas — adaptive autonomy, provenance, policy enforcement, self-healing — evaporates. The client is right: without federated governance, Atlas is a workshop, not a platform.
+ 
+2. THE ARCHITECTURAL VISION: CONTROL PLANE / DATA PLANE
+The solution is a pattern proven at massive scale in infrastructure: separate the control plane from the data plane. Kubernetes does this — the control plane (API server, scheduler, etcd) runs centrally, but workloads run on nodes anywhere. Istio does this — the control plane (Pilot, Citadel) manages policy centrally, but Envoy sidecars enforce it at the edge. Atlas must do the same.
+The Two-Plane Architecture
+Component	Atlas Control Plane (Central)	Atlas Data Plane (Per-Cloud)
+Where it runs	Single Atlas instance (Nous-hosted, customer-hosted, or dedicated cloud region)	One per cloud environment: AWS Bedrock, GCP Vertex AI, Oracle Cloud, on-prem
+What it does	Agent Registry, Policy authoring & distribution, Outcome Contract management, Autonomy lifecycle, Provenance aggregation, Compliance reporting, Blueprint Studio	Agent execution, MCP tool invocation, Local policy enforcement, Telemetry collection, Provenance capture, Self-healing (local)
+Analogy	Kubernetes API Server + etcd + Scheduler	Kubelet + Container Runtime on each node
+Communication	Receives telemetry, pushes policies, manages lifecycle	Reports telemetry, receives policies, executes agents locally
+Failure mode	If control plane is down: agents continue running with last-known policies. No new deployments or policy changes until restored.	If data plane is down: only agents on that cloud are affected. Other clouds continue. Control plane detects and alerts.
+
+	The Key Principle
+Agents run where the data lives. Governance runs where the enterprise needs visibility. These are different places, and that’s fine — as long as the governance layer is architecturally decoupled from the execution layer.
+ 
+3. ATLAS AGENT RUNTIME (AAR): THE GOVERNANCE SIDECAR
+The Atlas Agent Runtime (AAR) is a lightweight container/sidecar that deploys alongside every Atlas-governed agent, regardless of where that agent runs. It is the enforcement point that ensures governance survives deployment.
+What AAR Does
+Think of AAR as the Envoy proxy of AI agent governance. Every request to or from the agent passes through AAR:
+•	Pre-execution policy gate: Before every agent action, AAR evaluates the action against cached policies (synced from Atlas Control Plane). BLOCK, ALERT, or LOG based on policy rules. The agent cannot bypass this — AAR is the only path to MCP tools.
+•	MCP proxy: AAR proxies all MCP tool calls. It enforces tool-level authorization, rate limiting, and behavior fingerprinting locally. The agent doesn’t call MCP servers directly — it calls AAR, which calls MCP servers.
+•	Provenance capture: AAR captures every decision, tool call, input, output, and timing. Provenance events are hash-chained locally and streamed to Atlas Control Plane asynchronously. If the network is down, provenance queues locally and syncs when connectivity restores.
+•	Telemetry emission: AAR emits structured telemetry (OpenTelemetry format): latency per tool call, error rates, action counts, policy evaluation results. Telemetry feeds Atlas’s Outcome Contract dashboards and Autonomy Engine.
+•	Autonomy enforcement: AAR knows the agent’s current autonomy level (Shadow/Supervised/Guided/Adaptive). It enforces: in Shadow mode, observe but don’t execute. In Supervised, queue for approval. In Guided, auto-execute low-risk but queue high-risk. This enforcement happens locally, not via round-trip to the control plane.
+•	Self-healing (local): AAR’s behavior fingerprinting detects MCP tool drift locally. It can auto-pause the agent and alert the control plane without waiting for central detection.
+•	Credential management: AAR manages the agent’s X.509 certificates and rotates them on schedule. Credentials are never exposed to the agent code itself.
+AAR Deployment Footprint
+Characteristic	Specification	Rationale
+Size	<50MB container image	Must be lightweight enough to deploy as a sidecar without impacting agent performance
+Memory	128-256MB resident	Policy cache, provenance queue, telemetry buffer
+Latency overhead	<5ms per policy evaluation	Local policy evaluation, no network round-trip to control plane
+Network dependency	Degraded-mode capable	Operates on cached policies if control plane is unreachable. Queues provenance/telemetry for later sync.
+Deployment	Container sidecar, Lambda layer, or native process	Adapts to deployment target: ECS sidecar on AWS, GKE sidecar on GCP, OCI container on Oracle, systemd on bare metal
+Languages	Go (compiled binary) with gRPC + REST APIs	Go for small binary size, low memory, cross-platform compilation. gRPC for agent communication, REST for management.
+
+	The Critical Design Decision
+AAR is NOT optional. An agent without AAR is an ungoverned agent. Atlas Control Plane will not register an agent that doesn’t have AAR deployed. This is the architectural guarantee that governance survives deployment. It’s the same principle as: you can’t join the Kubernetes cluster without a kubelet.
+ 
