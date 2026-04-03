@@ -3414,6 +3414,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async upsertAarConfig(agentId: string, data: Partial<InsertAarConfig>, orgId?: string): Promise<AarConfig> {
+    if (orgId) {
+      // Enforce org ownership: reject upsert if agent does not belong to this org
+      const agent = await this.getAgent(agentId, orgId);
+      if (!agent) throw new Error(`Agent ${agentId} not found in org ${orgId}`);
+    }
     const existing = await this.getAarConfig(agentId);
     if (existing) {
       const [updated] = await db
