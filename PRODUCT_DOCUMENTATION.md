@@ -387,6 +387,14 @@ The Agent Cockpit is a comprehensive dashboard for a single agent, organized int
 - Aggregated version changes, audit events, and recommendations with diff visualization.
 - "Time travel" capability to see agent state at any historical point.
 
+**Runtime (AAR) Tab**
+- Full Atlas Agent Runtime (AAR) governance sidecar status for this agent (see Section 43).
+- 7-module health grid (PolicyEngine, MCPProxy, ProvenanceStore, TelemetryEmitter, AutonomyEnforcer, CredentialManager, HealthMonitor) with live metrics per module.
+- Policy bundle panel: current bundle version, last sync timestamp, distribution mode.
+- Target platform selector: free-text combobox with suggestions (atlas-native, aws-bedrock, gcp-vertex, azure-ai-foundry, kubernetes, on-prem, custom). Persists to the AAR config and regenerates platform-specific deployment hints in the package manifest.
+- Download AAR Package button: produces a ready-to-deploy JSON manifest (`aar-package-<agent-name>.json`).
+- Health summary strip: all-modules-operational indicator + bundle version + platform + last-sync date.
+
 **Redaction Profiles**
 - R0 (No redaction), R1 (PII masked), R2 (Full redaction) settings.
 - Controls what data is visible in traces and audit events based on user roles.

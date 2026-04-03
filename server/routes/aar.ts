@@ -323,12 +323,24 @@ export default router;
 
 // ─── Auto-generation helper (called from deployment creation) ─────────────────
 
+function buildModuleSummary(agentId: string) {
+  const modules = buildModuleConfig(agentId, "atlas-native");
+  const moduleConfig = modules.map(m => ({ id: m.id, name: m.name, enabled: true }));
+  const healthSummary = {
+    totalModules: modules.length,
+    activeModules: modules.filter(m => m.health.status === "active").length,
+    lastCheckedAt: new Date().toISOString(),
+  };
+  return { moduleConfig, healthSummary };
+}
+
 export async function ensureAarConfig(agentId: string): Promise<void> {
   try {
+    const { moduleConfig, healthSummary } = buildModuleSummary(agentId);
     const existing = await storage.getAarConfig(agentId);
     if (existing) {
-      // Update lastSyncedAt on every deployment to reflect the latest sync time
-      await storage.upsertAarConfig(agentId, { lastSyncedAt: new Date() });
+      // Update lastSyncedAt and health snapshot on every deployment
+      await storage.upsertAarConfig(agentId, { lastSyncedAt: new Date(), moduleConfig, healthSummary });
       return;
     }
 
@@ -342,6 +354,8 @@ export async function ensureAarConfig(agentId: string): Promise<void> {
       targetPlatform: "atlas-native",
       policyBundleVersion,
       lastSyncedAt: new Date(),
+      moduleConfig,
+      healthSummary,
     });
   } catch (err: any) {
     console.error("[AAR] ensureAarConfig failed:", err.message);
