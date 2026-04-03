@@ -765,9 +765,9 @@ export interface IStorage {
   updateOrganization(id: string, data: Partial<Organization>): Promise<Organization | undefined>;
   seedDefaultOrganization(): Promise<Organization>;
 
-  getAarConfig(agentId: string): Promise<AarConfig | undefined>;
-  getAllAarConfigs(): Promise<AarConfig[]>;
-  upsertAarConfig(agentId: string, data: Partial<InsertAarConfig>): Promise<AarConfig>;
+  getAarConfig(agentId: string, orgId?: string): Promise<AarConfig | undefined>;
+  getAllAarConfigs(orgId?: string): Promise<AarConfig[]>;
+  upsertAarConfig(agentId: string, data: Partial<InsertAarConfig>, orgId?: string): Promise<AarConfig>;
 }
 
 function resolveOrgId(providedOrgId: string | null | undefined): string {
@@ -3392,16 +3392,28 @@ export class DatabaseStorage implements IStorage {
     return org;
   }
 
-  async getAarConfig(agentId: string): Promise<AarConfig | undefined> {
+  async getAarConfig(agentId: string, orgId?: string): Promise<AarConfig | undefined> {
+    if (orgId) {
+      // Verify the agent belongs to the org before returning its AAR config
+      const agent = await this.getAgent(agentId, orgId);
+      if (!agent) return undefined;
+    }
     const [row] = await db.select().from(aarConfigs).where(eq(aarConfigs.agentId, agentId));
     return row;
   }
 
-  async getAllAarConfigs(): Promise<AarConfig[]> {
+  async getAllAarConfigs(orgId?: string): Promise<AarConfig[]> {
+    if (orgId) {
+      // Only return configs for agents belonging to this org
+      const orgAgents = await this.getAgents(orgId);
+      const agentIds = orgAgents.map(a => a.id);
+      if (agentIds.length === 0) return [];
+      return db.select().from(aarConfigs).where(inArray(aarConfigs.agentId, agentIds));
+    }
     return db.select().from(aarConfigs);
   }
 
-  async upsertAarConfig(agentId: string, data: Partial<InsertAarConfig>): Promise<AarConfig> {
+  async upsertAarConfig(agentId: string, data: Partial<InsertAarConfig>, orgId?: string): Promise<AarConfig> {
     const existing = await this.getAarConfig(agentId);
     if (existing) {
       const [updated] = await db

@@ -256,17 +256,27 @@ function EnvironmentPanel({
                   )}
                   {(() => {
                     const aarCfg = aarConfigsByAgentId?.[dep.agentId];
+                    const summary = aarCfg?.healthSummary as { totalModules?: number; activeModules?: number } | null | undefined;
+                    const total = summary?.totalModules ?? 7;
+                    const active = summary?.activeModules ?? total;
+                    const healthState = active === total ? "green" : active >= Math.ceil(total * 0.7) ? "amber" : "red";
+                    const dotColor = healthState === "green" ? "bg-emerald-500" : healthState === "amber" ? "bg-amber-500" : "bg-red-500";
+                    const badgeColor = healthState === "green"
+                      ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
+                      : healthState === "amber"
+                        ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                        : "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20";
                     const tooltip = aarCfg
-                      ? `AAR · Bundle: ${aarCfg.policyBundleVersion} · Platform: ${aarCfg.targetPlatform} · Synced: ${aarCfg.lastSyncedAt ? new Date(aarCfg.lastSyncedAt).toLocaleDateString() : "—"}`
+                      ? `AAR · Bundle: ${aarCfg.policyBundleVersion} · Platform: ${aarCfg.targetPlatform} · Synced: ${aarCfg.lastSyncedAt ? new Date(aarCfg.lastSyncedAt).toLocaleDateString() : "—"} · ${active}/${total} modules active`
                       : "Atlas Agent Runtime (AAR) governance sidecar — view details on the agent Runtime (AAR) tab";
                     return (
                       <Badge
                         variant="outline"
-                        className="text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"
+                        className={`text-[10px] ${aarCfg ? badgeColor : "bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20"}`}
                         title={tooltip}
                         data-testid={`badge-aar-${dep.id}`}
                       >
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1" />
+                        <span className={`w-1.5 h-1.5 rounded-full mr-1 ${aarCfg ? dotColor : "bg-blue-500"}`} />
                         AAR{aarCfg ? ` ${aarCfg.policyBundleVersion}` : ""}
                       </Badge>
                     );

@@ -1973,8 +1973,10 @@ const router = Router();
         await storage.ensureAgentVersion(deployment.agentId, deployment.version, "active");
       }
 
-      // Auto-generate AAR config on first deployment (fire-and-forget, non-blocking)
-      ensureAarConfig(deployment.agentId).catch(() => {});
+      // Auto-generate/refresh AAR config when deployment reaches active/deployed state
+      if (deployment.status === "deployed" || deployment.status === "active") {
+        ensureAarConfig(deployment.agentId).catch(() => {});
+      }
 
       const riskTier = agent?.riskTier || "LOW";
       const strategy = deployment.rolloutStrategy || "canary";

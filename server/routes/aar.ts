@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { storage } from "../storage";
+import { getOrgId } from "../auth";
 import type { AarConfig } from "../../shared/schema";
 
 const router = Router();
@@ -247,9 +248,10 @@ function buildAarPackage(agentId: string, agentName: string, aarConfig: Pick<Aar
 
 // ─── Routes ───────────────────────────────────────────────────────────────────
 
-router.get("/api/aar/configs", async (_req, res) => {
+router.get("/api/aar/configs", async (req, res) => {
   try {
-    const configs = await storage.getAllAarConfigs();
+    const orgId = getOrgId(req);
+    const configs = await storage.getAllAarConfigs(orgId);
     const byAgentId: Record<string, AarConfig> = {};
     for (const c of configs) byAgentId[c.agentId] = c;
     res.json(byAgentId);
@@ -262,10 +264,11 @@ router.get("/api/aar/configs", async (_req, res) => {
 router.get("/api/agents/:agentId/aar", async (req, res) => {
   try {
     const { agentId } = req.params;
-    const agent = await storage.getAgent(agentId);
+    const orgId = getOrgId(req);
+    const agent = await storage.getAgent(agentId, orgId);
     if (!agent) return res.status(404).json({ error: "Agent not found" });
 
-    const aarConfig = await storage.getAarConfig(agentId);
+    const aarConfig = await storage.getAarConfig(agentId, orgId);
     if (!aarConfig) {
       return res.json({ aarConfig: null, modules: null, agentName: agent.name });
     }
@@ -293,14 +296,15 @@ router.get("/api/agents/:agentId/aar", async (req, res) => {
 router.patch("/api/agents/:agentId/aar", async (req, res) => {
   try {
     const { agentId } = req.params;
-    const agent = await storage.getAgent(agentId);
+    const orgId = getOrgId(req);
+    const agent = await storage.getAgent(agentId, orgId);
     if (!agent) return res.status(404).json({ error: "Agent not found" });
 
     const { targetPlatform } = req.body;
     if (!targetPlatform || typeof targetPlatform !== "string" || targetPlatform.trim().length === 0) {
       return res.status(400).json({ error: "targetPlatform must be a non-empty string" });
     }
-    const updated = await storage.upsertAarConfig(agentId, { targetPlatform: targetPlatform.trim() });
+    const updated = await storage.upsertAarConfig(agentId, { targetPlatform: targetPlatform.trim() }, orgId);
     res.json({ aarConfig: updated });
   } catch (err: any) {
     console.error("[AAR] PATCH error:", err);
@@ -311,10 +315,11 @@ router.patch("/api/agents/:agentId/aar", async (req, res) => {
 router.get("/api/agents/:agentId/aar/package", async (req, res) => {
   try {
     const { agentId } = req.params;
-    const agent = await storage.getAgent(agentId);
+    const orgId = getOrgId(req);
+    const agent = await storage.getAgent(agentId, orgId);
     if (!agent) return res.status(404).json({ error: "Agent not found" });
 
-    const aarConfig = await storage.getAarConfig(agentId);
+    const aarConfig = await storage.getAarConfig(agentId, orgId);
     const configData = aarConfig ?? { targetPlatform: "atlas-native", policyBundleVersion: "v1.0.0", lastSyncedAt: new Date() };
     const pkg = buildAarPackage(agentId, agent.name, configData);
 
@@ -375,15 +380,21 @@ export async function backfillAarConfigs(): Promise<void> {
     const agents = await storage.getAgents();
     const deployed = agents.filter(a => a.status === "deployed" || a.status === "active");
     let created = 0;
+    let refreshed = 0;
     for (const agent of deployed) {
       const existing = await storage.getAarConfig(agent.id);
       if (!existing) {
         await ensureAarConfig(agent.id);
         created++;
+      } else if (!existing.healthSummary || !existing.moduleConfig) {
+        // Refresh rows created before healthSummary/moduleConfig were populated
+        const { moduleConfig, healthSummary } = buildModuleSummary(agent.id);
+        await storage.upsertAarConfig(agent.id, { moduleConfig, healthSummary });
+        refreshed++;
       }
     }
-    if (created > 0) {
-      console.log(`[AAR] Backfilled ${created} AAR config(s) for existing deployed agents`);
+    if (created > 0 || refreshed > 0) {
+      console.log(`[AAR] Backfilled ${created} new + refreshed ${refreshed} AAR config(s) for deployed agents`);
     }
   } catch (err: any) {
     console.error("[AAR] backfillAarConfigs failed:", err.message);
