@@ -22,6 +22,7 @@ interface AgentMetrics {
   agentName: string;
   department: string;
   riskTier: string;
+  organizationId: string | null;
   successRate: number;
   errorRate: number;
   p50LatencyMs: number;
@@ -103,6 +104,7 @@ async function computeAgentMetrics(windowDays: number, orgId?: string): Promise<
       agentName: agent.name,
       department: agent.department ?? "General",
       riskTier: agent.riskTier ?? "MEDIUM",
+      organizationId: agent.organizationId ?? null,
       successRate,
       errorRate,
       p50LatencyMs: percentile(sortedLatencies, 50),
@@ -255,10 +257,11 @@ router.get("/api/observability/fleet", async (req: Request, res) => {
 router.get("/api/observability/alerts", async (req: Request, res) => {
   try {
     const orgId = getOrgId(req);
-    let query = db.select().from(agentAlerts).orderBy(desc(agentAlerts.triggeredAt)).limit(200);
-    const rows = await query;
-    const filtered = orgId ? rows.filter(r => !r.orgId || r.orgId === orgId) : rows;
-    res.json(filtered);
+    const rows = await db.select().from(agentAlerts)
+      .where(orgId ? eq(agentAlerts.orgId, orgId) : undefined)
+      .orderBy(desc(agentAlerts.triggeredAt))
+      .limit(200);
+    res.json(rows);
   } catch (err: any) {
     console.error("[observability] Alerts fetch error:", err.message);
     res.status(500).json({ error: "Failed to fetch alerts" });
@@ -270,16 +273,18 @@ router.post("/api/observability/alerts/:id/acknowledge", async (req: Request, re
     const { id } = req.params;
     const orgId = getOrgId(req);
 
-    if (orgId) {
-      const existing = await db.select().from(agentAlerts).where(eq(agentAlerts.id, id));
-      if (existing.length > 0 && existing[0].orgId && existing[0].orgId !== orgId) {
-        return res.status(403).json({ error: "Forbidden" });
-      }
-    }
+    const whereClause = orgId
+      ? and(eq(agentAlerts.id, id), eq(agentAlerts.orgId, orgId))
+      : eq(agentAlerts.id, id);
 
-    await db.update(agentAlerts)
+    const result = await db.update(agentAlerts)
       .set({ acknowledgedAt: new Date() })
-      .where(eq(agentAlerts.id, id));
+      .where(whereClause)
+      .returning({ id: agentAlerts.id });
+
+    if (result.length === 0) {
+      return res.status(404).json({ error: "Alert not found or access denied" });
+    }
     res.json({ success: true });
   } catch (err: any) {
     console.error("[observability] Alert acknowledge error:", err.message);
@@ -321,10 +326,10 @@ router.post("/api/observability/export/otlp", async (req: Request, res) => {
           const spanId = span.spanId ?? null;
 
           await db.insert(runTraces).values({
-            id: traceId ?? undefined,
             agentId,
             organizationId: orgId ?? undefined,
-            versionId: spanId ?? null,
+            traceParentId: traceId,
+            versionId: spanId,
             environment: "otlp",
             status,
             latencyMs,
@@ -389,6 +394,7 @@ export async function runAlertCheck() {
         await db.insert(agentAlerts).values({
           agentId: m.agentId,
           agentName: m.agentName,
+          orgId: m.organizationId ?? null,
           alertType: "success_rate_drop",
           severity,
           message,
