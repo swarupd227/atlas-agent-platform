@@ -46,6 +46,7 @@
 39. [API Reference](#39-api-reference)
 40. [Data Model](#40-data-model)
 41. [Security & Compliance](#41-security--compliance)
+42. [Demo Environments](#42-demo-environments)
 
 ---
 
@@ -76,7 +77,7 @@ ALMP (Agent Lifecycle Management Platform) is an enterprise-grade platform for m
 - **Frontend**: React, Vite, Tailwind CSS, shadcn/ui, wouter (routing), Recharts (charts), TanStack Query (data fetching)
 - **Backend**: Express.js REST API
 - **Database**: PostgreSQL with Drizzle ORM
-- **AI Providers**: OpenAI integration for conversational design and AI-powered features
+- **AI Providers**: OpenAI GPT-4.1 for platform-wide AI features; Anthropic Claude (claude-opus-4-5 / claude-sonnet-4-5) for live agent execution in demo environments
 
 ---
 
@@ -204,28 +205,61 @@ The Overview Dashboard provides a role-adaptive summary of platform health. Widg
 
 ---
 
-## 6. Outcome Builder
+## 6. Outcome Builder (Outcome Discovery)
 
-An AI-powered conversational interface for defining business goals and drafting outcome contracts.
+An AI-powered, multi-stage discovery interface that transforms a natural language business goal into a fully specified, governance-ready outcome contract with KPIs, ROI estimates, applicable policies, and matched agent recommendations.
 
-### Features
+### Discovery Flow
 
-- **Chat-Based Design**: Describe your business objectives in natural language. The AI assistant guides you through defining measurable KPIs, SLAs, and pricing models.
-- **Section-by-Section Drafting**: The AI generates structured sections covering:
-  - Outcome name and description
-  - Business context and objectives
-  - KPI definitions with targets and units
-  - SLA thresholds and breach levels
-  - Pricing model (per-unit, tiered, subscription, success-fee)
-  - Risk assessment
-  - Agent requirements
-  - Governance and compliance constraints
-  - Monitoring configuration
-  - Acceptance criteria
-  - Financial projections
-  - Implementation timeline
-- **Interactive Preview**: Review the AI-generated contract with editable sections. Add, remove, or modify any section before finalizing.
-- **Export to Outcome**: Convert the drafted contract into a live outcome in the platform.
+The Outcome Discovery experience has five distinct phases:
+
+**Phase 1 — Conversational Discovery**
+- Describe business objectives in natural language through a live chat interface.
+- The AI guides you through clarifying questions covering scope, industry, customer segment, success metrics, and compliance constraints.
+- Conversation history is preserved throughout the session.
+
+**Phase 2 — Proposal Generation**
+- On demand the AI generates a complete structured proposal containing:
+  - Outcome contract (name, description, risk tier, pricing model, price per unit, drift threshold, SLA configuration)
+  - KPI definitions with targets, units, measurement methodology, and current baselines
+  - ROI estimate (investment, monthly value, time-to-value, three-year NPV)
+  - Proposed agents with roles and justifications
+  - Applicable governance policies with rationale
+  - Regulatory constraints relevant to the industry
+  - Validation checklist items (pre-launch readiness)
+- A streaming SSE-based API powers real-time proposal generation.
+- The full proposal is rendered as an interactive preview card before acceptance.
+
+**Phase 3 — KPI Review & Editing**
+- Inline KPI editor allows renaming, retargeting, changing units, or removing KPIs before contract creation.
+- AI-generated KPI targets are pre-populated from the proposal.
+- Process flow builder: define the step-by-step workflow the outcome contract governs (drag-and-drop step reordering, individual step descriptions).
+
+**Phase 4 — Platform Intelligence**
+- The platform automatically queries its own registry to find:
+  - **Live agent matches**: Existing agents that can contribute to the outcome, with similarity scores and health indicators.
+  - **Template recommendations**: Pre-built agent templates with coverage scores.
+  - **Tool coverage**: MCP tools required for the outcome, with status (available / missing).
+  - **Matched governance policies**: Platform policies that apply to this outcome based on domain, industry, and risk tier.
+- Accept/reject decisions on individual agent and template recommendations before contract creation.
+
+**Phase 5 — Contract Creation & Approval**
+- Acceptance creates the outcome contract via `POST /api/outcomes/with-kpis` in a single transaction.
+- Discovery-matched policy IDs are persisted in `constraintGraph.matchedPolicyIds` on the contract.
+- AI-identified applicable policies (with rationale) are stored in `constraintGraph.discoveryPolicies`.
+- An approval record is automatically submitted (`type: "outcome_review"`) with a full evidence package including KPIs, agents, tool coverage, governance readiness score, and accepted/rejected decisions.
+- Accepted live agents are automatically bound to the new outcome contract.
+- Accepted templates seed the Agent Plan for further configuration.
+
+### Governance Readiness Score
+
+A 0–100 readiness score is calculated at the time of acceptance based on:
+- KPI definitions present (+20)
+- Risk tier set (+15)
+- Matched governance policies (+25)
+- No approval gate risk (+15)
+- Drift threshold configured (+10)
+- Base score (+15)
 
 ---
 
@@ -243,12 +277,54 @@ Manage outcome contracts that define the measurable results agents must deliver.
 
 ### Outcome Detail
 
-- **Contract Overview**: Full outcome contract details including description, pricing model, billing cycle, and customer assignment.
-- **KPI Dashboard**: Individual KPI cards showing current value, target, progress bar, SLA threshold, breach status, and trend direction.
-- **Evidence Panel**: Evaluation evidence linked to the outcome, with scoring results and confidence intervals.
-- **Agent Assignments**: Agents contributing to this outcome with their health scores and recent run traces.
-- **Financial Summary**: Revenue generated, billing events, and cost breakdown for this outcome.
-- **Timeline**: Chronological view of contract changes, KPI updates, and significant events.
+The Outcome Detail page is organized into a top contract overview section and a tabbed lower section.
+
+**Contract Overview Strip**
+- Contract metadata: name, description, status, risk tier, pricing model, billing cycle, and customer assignment.
+- Quick-stat tiles: KPI Progress (weighted average across all KPIs), Active Agents, Policy Activity (checks fired in last 24h), and Billing Activity (last 30-day revenue).
+- Inline edit action for governance-sensitive fields (risk tier, thresholds, drift %) that creates a new contract version on save.
+- Contract version selector to view historical states.
+
+**KPI Delivery Tab** *(default tab)*
+- KPI gauge rings (circular progress indicators) showing current value vs. target for each KPI.
+- Progress bar and percentage label per KPI.
+- SLA breach badges (SLA WARNING / SLA BREACH) when current value crosses the SLA threshold.
+- KPI time-series charts with trend sparklines.
+- Projected 30-day value based on observed daily rate of change.
+- Contributing agent list with run counts linked to each KPI.
+- KPI progress formula: `currentValue / target * 100` for standard KPIs; `target / currentValue * 100` for inverse KPIs (time, latency, error, incident, failure). New contracts always show 0% until agents report real values.
+- Add/edit/delete KPIs with an inline modal.
+
+**Agent Plan Tab**
+- Visual map of agents assigned to this outcome with status, health score, and run counts.
+- Accepted agent/template decisions from the discovery phase are carried forward here.
+- Quick-link to each agent's cockpit for configuration.
+
+**Governance Tab**
+- **Identified at Discovery** section (violet): policies specifically matched during outcome proposal generation, with AI-generated rationale per policy. Badge count reflects only discovery-matched policies.
+- **Org-wide Active Policies** section: shown only when no discovery-specific policy data is available (i.e., for outcomes created outside the discovery flow).
+- **Recommended — not yet in platform** section (amber): AI-identified policies that do not yet exist in the platform's policy library.
+- **Constrained Agents** list: agents bound to this outcome subject to the governance policies.
+- **Impact Network** button: opens the Policy Impact Graph visualizing how policies connect to skills, ontology terms, and bound agents.
+- Tab subtitle dynamically shows "Policies identified as applicable during outcome discovery" vs. "Active policies constraining agents bound to this outcome" depending on data source.
+
+**Financial Ledger Tab**
+- Revenue pipeline visualization: stages from contracted value through delivered, billed, and collected revenue.
+- Billing event list with drill-down to individual traces.
+- Cost breakdown by agent.
+
+**Evidence Vault Tab**
+- Evaluation evidence linked to the outcome with scoring results, confidence intervals, and run timestamps.
+- Correlated metrics: policy check counts, agent run counts, and KPI update history.
+
+**Risk & Remediation Tab**
+- Open incidents affecting this outcome.
+- Drift signals with severity and recommended actions.
+- Remediation actions taken with outcomes.
+
+**Constraint Graph Tab**
+- Interactive visualization of the outcome's constraint graph: risk dimensions, approval gates, SLA bounds, and policy bindings.
+- Computed from the outcome's `constraintGraph` JSONB field, populated at contract creation and updated on governance changes.
 
 ---
 
@@ -888,6 +964,15 @@ Certified Agent Compliance Layer for policy management and enforcement.
 - GDPR compliance checks.
 - Framework coverage scores and gap analysis.
 
+### Policy-Outcome Discovery Matching
+
+Policies can be matched to outcome contracts at the point of discovery:
+- During Outcome Discovery (Phase 4 — Platform Intelligence), the platform queries policies by domain, industry, and risk tier to find applicable rules.
+- The AI proposal generator additionally recommends policies by name with a rationale statement.
+- Matched policy IDs are written to `constraintGraph.matchedPolicyIds` on the outcome contract at creation time.
+- AI-recommended policies with rationale are stored in `constraintGraph.discoveryPolicies`.
+- The Governance tab on the Outcome Detail page reads these fields to display only the proposal-specific policies (hiding the generic org-wide pool when discovery data is present).
+
 ### Policy Enforcement
 
 - Pre-action policy checks before agent tool calls and actions.
@@ -1169,14 +1254,22 @@ Built-in mock REST APIs simulating real enterprise systems for demonstration and
 
 ### Available Mock Servers
 
+**General / Sales & Marketing**
 - **Salesforce CRM**: Simulates Salesforce record queries, contact/lead lookups, task creation, and opportunity management with deterministic financial services lead data.
 - **Marketo**: Simulates marketing automation lead management, campaign engagement data, and lead scoring with realistic inbound lead records.
 - **Adobe Analytics**: Simulates analytics report execution and data retrieval with configurable metrics and dimensions.
 
+**Fitch / Banking Supervision (Demo)**
+Four mock servers power the Fitch Asset Quality Analyzer demo:
+- **FFIEC Data Server** (`/api/mock/fitch-ffiec-data/*`): Simulates FFIEC bank call report data including RC-N/RC-C/RI-B/RC-R schedules for 10 banks, NPA schedules, charge-off schedules, and capital adequacy ratios. Returns deterministic data across all peer cohorts.
+- **Fitch Analytics Server** (`/api/mock/fitch-analytics/*`): Provides computed ratio trends, threshold breach analysis, peer cohort medians, SVB historical backtest data (8-quarter timeline with composite risk scores, labeled events, and FDIC seizure date), and A/B testing results.
+- **Fitch NLP Engine** (`/api/mock/fitch-nlp-engine/*`): Returns transcript sentiment scores (credit quality, forward guidance, sector concerns), filing language change analysis, news signal classifications (routine/emerging/material/crisis), and news volume trend (sigma-based alerts).
+- **Fitch Report Engine** (`/api/mock/fitch-report-engine/*`): Provides report template structures, analyst notes, and rating history for AQEWS quarterly report assembly.
+
 ### Features
 
 - **Deterministic Data**: Mock servers return consistent, realistic data for reproducible demonstrations and testing.
-- **Financial Services Domain**: Lead data is pre-configured with financial services domain attributes (segments, compliance flags, risk ratings, regulatory triggers).
+- **Financial Services Domain**: Lead and banking data is pre-configured with financial services domain attributes (segments, compliance flags, risk ratings, regulatory triggers, FFIEC schedules).
 - **Demo Seeding**: Automated demo setup via `POST /api/mock-mcp/seed-demo` to populate the platform with realistic agent configurations, MCP server registrations, and sample data.
 - **Tool Registration**: Mock servers register their tools in the MCP Tool Registry, making them available for agent blueprints and pipeline execution.
 
@@ -1209,6 +1302,8 @@ The platform exposes a comprehensive REST API. Below are the implemented endpoin
 | GET | `/api/outcomes` | List all outcome contracts |
 | GET | `/api/outcomes/:id` | Get outcome detail |
 | POST | `/api/outcomes` | Create outcome contract |
+| POST | `/api/outcomes/with-kpis` | Create outcome contract with KPIs in one transaction (used by Outcome Discovery) |
+| POST | `/api/outcomes/intelligence` | Query platform intelligence: matched agents, templates, tools, and policies for a proposed outcome |
 | PATCH | `/api/outcomes/:id` | Update outcome |
 | GET | `/api/outcomes/:id/kpis` | List KPIs for an outcome |
 | GET | `/api/outcomes/:id/evidence` | Get evaluation evidence for outcome |
@@ -1465,6 +1560,8 @@ The platform exposes a comprehensive REST API. Below are the implemented endpoin
 | Method | Endpoint | Description |
 |---|---|---|
 | POST | `/api/ai/chat` | Conversational AI for Outcome Builder |
+| POST | `/api/ai/generate-outcome-proposal` | SSE-streaming endpoint that generates a full outcome proposal from a conversation history |
+| POST | `/api/ai/enhance-outcome` | AI enhancement of an existing outcome proposal with additional context |
 | POST | `/api/ai/enhance-agent` | AI agent enhancement suggestions |
 | POST | `/api/ai/generate-test-cases` | AI-generated evaluation test cases |
 | POST | `/api/ai/generate-golden-dataset` | AI-generated golden evaluation datasets |
@@ -1477,6 +1574,25 @@ The platform exposes a comprehensive REST API. Below are the implemented endpoin
 | Method | Endpoint | Description |
 |---|---|---|
 | POST | `/api/mock-mcp/seed-demo` | Seed platform with demo data |
+| GET | `/api/mock/fitch-ffiec-data/call-report-schedules` | FFIEC call report schedules for a bank |
+| GET | `/api/mock/fitch-ffiec-data/npa-schedule` | Non-performing asset schedule |
+| GET | `/api/mock/fitch-ffiec-data/charge-off-schedule` | Charge-off and recovery schedule |
+| GET | `/api/mock/fitch-ffiec-data/capital-adequacy` | Capital adequacy ratios |
+| GET | `/api/mock/fitch-ffiec-data/peer-cohort-ratios` | Peer cohort median ratios |
+| GET | `/api/mock/fitch-analytics/ratio-trends` | Historical ratio trend data |
+| GET | `/api/mock/fitch-analytics/threshold-breaches` | Ratio threshold breach analysis |
+| GET | `/api/mock/fitch-analytics/svb-backtest` | SVB historical backtest timeline |
+| GET | `/api/mock/fitch-nlp-engine/transcript-sentiment` | Earnings call transcript sentiment |
+| GET | `/api/mock/fitch-nlp-engine/filing-language-changes` | 10-K/10-Q filing language shift analysis |
+| GET | `/api/mock/fitch-nlp-engine/news-signals` | News signal classification and severity |
+| GET | `/api/mock/fitch-nlp-engine/news-volume-trend` | News volume sigma-alert trend |
+| GET | `/api/mock/fitch-report-engine/report-template` | AQEWS report template structure |
+| GET | `/api/mock/fitch-report-engine/analyst-notes` | Analyst notes for a bank |
+| GET | `/api/mock/fitch-report-engine/rating-history` | Rating history for a bank |
+| POST | `/demo-api/blackbook/reset` | Reset Black Book demo to pre-run state |
+| GET | `/demo-api/blackbook/stream` | SSE stream for Black Book live agent execution |
+| POST | `/demo-api/fitch/reset` | Reset Fitch demo to pre-run state |
+| GET | `/demo-api/fitch/stream` | SSE stream for Fitch pipeline live execution |
 
 ---
 
@@ -1599,4 +1715,81 @@ The platform uses a comprehensive PostgreSQL schema managed by Drizzle ORM. Key 
 
 ---
 
-*This documentation reflects the current state of the ALMP platform as of February 2026. Features and capabilities are subject to ongoing development and enhancement.*
+## 42. Demo Environments
+
+Dedicated interactive demonstration environments showcasing specific ALMP capabilities with live Anthropic Claude agent execution, real-time SSE streaming, and pre-run state management.
+
+### Hearst / Black Book Demo (`/demo/blackbook`)
+
+A 5-screen interactive walkthrough of ALMP's media & publishing use case for the Hearst Black Book client.
+
+**Demo Structure**
+
+| Screen | Description |
+|---|---|
+| S1 — Overview | Platform context, outcome contracts, active agents summary |
+| S2 — Outcome Discovery | Live outcome proposal generation via AI chat |
+| S3 — Agent Orchestration | Multi-agent pipeline setup with tool assignments |
+| S4 — Live Agent Run | Real-time SSE feed of 4 Claude agents executing in sequence |
+| S5 — Business Outcomes | KPI progress, ROI delivery, and financial summary |
+
+**Live Agent Execution (Screen 4)**
+- Four Anthropic Claude agents run in sequence via the ALMP agent runtime:
+  - **BB-AGT-001** (claude-opus-4-5): Content Intelligence Agent — analyzes luxury market content signals
+  - **BB-AGT-002** (claude-opus-4-5): Brand Alignment Agent — validates brand voice and premium consistency
+  - **BB-AGT-003** (claude-opus-4-5): Revenue Attribution Agent — links content to revenue metrics
+  - **BB-AGT-004** (claude-opus-4-5): Executive Intelligence Agent — synthesizes strategic insights
+- Progress is streamed via `GET /demo-api/blackbook/stream` (SSE).
+- Each agent can show pre-run placeholder results (fast path) or trigger real Claude execution.
+- `POST /demo-api/blackbook/reset` returns the demo to its initial pre-run state.
+
+**Technical Notes**
+- Live execution uses `runAgentOnce(deploymentId, promptOverride, maxIterationsOverride, onProgress)`.
+- Runtime events fire on the `agent_execution` SSE event name.
+- Brand color: `#E8640A` (Black Book orange).
+
+---
+
+### Fitch Asset Quality Analyzer Demo (`/demo/fitch`)
+
+A 6-screen demo of ALMP's financial services / banking supervision use case for Fitch Ratings.
+
+**Demo Structure**
+
+| Screen | Description |
+|---|---|
+| S1 — Overview | Platform context, AQEWS pipeline summary, 10-bank peer cohort |
+| S2 — FFIEC Data Ingestion | Live ingest of call report schedules from the FFIEC mock server |
+| S3 — Ratio Engine | Financial ratio computation, peer benchmarking, threshold breach detection |
+| S4 — NLP & Risk Scoring | Transcript sentiment, news signals, composite risk score computation |
+| S5 — SVB Backtest | Historical SVB backtest: 8-quarter composite score timeline with first-alert and FDIC-seizure markers |
+| S6 — Report Assembly | AQEWS report generation: executive summary, sector heat map, banker assessment package |
+
+**Pipeline Agents**
+
+| Agent | Role |
+|---|---|
+| FFIEC Data Ingestor | Fetches RC-N/RC-C/RI-B/RC-R schedules for 10 banks from the FFIEC mock server (44 tool calls) |
+| Financial Ratio Engine | Computes NPL, NCO, CET1, and leverage ratios; runs peer benchmarking and breach detection |
+| Transcript & Filing Analyst | Analyzes earnings call sentiment and 10-K/10-Q language shift |
+| News Signal Processor | Classifies news by severity (routine/emerging/material/crisis) and detects volume sigma alerts |
+| Composite Risk Scorer | Aggregates all signals into a weighted composite score with watch-list and ratings-action flags |
+| Assessment Report Generator | Assembles the AQEWS AQEWS-QUARTERLY-V3 report and SVB backtest comparison package |
+
+**Server-Side Fallbacks**
+All 6 agents have server-side fallbacks that activate when the LLM omits required structured output fields, ensuring the demo never shows blank screens:
+- `ratio_engine` — recomputes `ratioTable` from mock analytics data
+- `transcript_analyst` — recomputes `sentimentScores` from mock NLP data
+- `news_processor` — recomputes `newsSeverity` from mock news signals
+- `risk_scorer` — recomputes composite scores from upstream agent outputs
+- `report_generator` — recomputes `svbComparison` and `assessmentPackage` from mock backtest and report template data
+
+**Mock MCP Servers**
+The demo uses four dedicated mock REST servers (see Section 37 for full endpoint list): FFIEC Data, Fitch Analytics, Fitch NLP Engine, and Fitch Report Engine.
+
+`POST /demo-api/fitch/reset` resets the pipeline to its initial pre-run state.
+`GET /demo-api/fitch/stream` streams SSE progress events as agents execute.
+
+---
+
+*This documentation reflects the current state of the ALMP platform as of April 2026. Features and capabilities are subject to ongoing development and enhancement.*
