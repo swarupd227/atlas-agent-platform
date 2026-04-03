@@ -2177,6 +2177,13 @@ const router = Router();
         }
       }
 
+      // Auto-generate/refresh AAR config when deployment transitions to deployed/active
+      const newStatus = req.body.status;
+      const wasAlreadyLive = existing.status === "deployed" || existing.status === "active";
+      if ((newStatus === "deployed" || newStatus === "active") && !wasAlreadyLive) {
+        ensureAarConfig(existing.agentId).catch(() => {});
+      }
+
       res.json(updated);
     } catch (e) {
       handleZodError(res, e);
@@ -2659,6 +2666,8 @@ const router = Router();
         if (srcTplId) {
           await storage.incrementTemplateDeployments(srcTplId);
         }
+        // Auto-generate/refresh AAR config when routing transition reaches active
+        ensureAarConfig(deployment.agentId).catch(() => {});
       }
 
       res.json(updated);
