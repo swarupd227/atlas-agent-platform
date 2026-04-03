@@ -31,6 +31,7 @@ interface AgentRow {
   agentId: string;
   agentName: string;
   department: string;
+  riskTier: string;
   successRate7d: number;
   errorRate7d: number;
   p50LatencyMs7d: number;
@@ -40,18 +41,25 @@ interface AgentRow {
   totalRuns7d: number;
   healthScore: number;
   successRate30d: number;
+  errorRate30d: number;
+  p95LatencyMs30d: number;
+  costPerRun30d: number;
   totalRuns30d: number;
+}
+
+interface FleetAggregate {
+  avgSuccessRate: number;
+  avgP95LatencyMs: number;
+  totalCostUsd: number;
+  totalRuns: number;
+  avgErrorRate: number;
+  agentCount: number;
 }
 
 interface FleetData {
   agents: AgentRow[];
-  fleet7d: {
-    avgSuccessRate: number;
-    avgP95LatencyMs: number;
-    totalCostUsd: number;
-    totalRuns: number;
-    avgErrorRate: number;
-  };
+  fleet7d: FleetAggregate;
+  fleet30d: FleetAggregate;
   topOffenders: AgentRow[];
 }
 
@@ -193,14 +201,19 @@ export default function ObservabilityPage() {
         <Card data-testid="card-avg-success-rate">
           <CardContent className="pt-4 pb-4">
             <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-              <CheckCircle className="w-3.5 h-3.5" /> Avg Success Rate
+              <CheckCircle className="w-3.5 h-3.5" /> Avg Success Rate (7d)
             </div>
             {fleetLoading ? (
               <Skeleton className="h-8 w-24" />
             ) : (
-              <div className={`text-2xl font-bold ${healthColor(fleet?.avgSuccessRate ?? 0)}`}>
-                {fleet?.avgSuccessRate?.toFixed(1) ?? "—"}%
-              </div>
+              <>
+                <div className={`text-2xl font-bold ${healthColor(fleet?.avgSuccessRate ?? 0)}`}>
+                  {fleet?.avgSuccessRate?.toFixed(1) ?? "—"}%
+                </div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  30d: {fleetData?.fleet30d?.avgSuccessRate?.toFixed(1) ?? "—"}%
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
@@ -208,14 +221,19 @@ export default function ObservabilityPage() {
         <Card data-testid="card-avg-p95-latency">
           <CardContent className="pt-4 pb-4">
             <div className="flex items-center gap-2 text-muted-foreground text-xs mb-1">
-              <Clock className="w-3.5 h-3.5" /> Avg P95 Latency
+              <Clock className="w-3.5 h-3.5" /> Avg P95 Latency (7d)
             </div>
             {fleetLoading ? (
               <Skeleton className="h-8 w-24" />
             ) : (
-              <div className="text-2xl font-bold">
-                {fleet ? formatMs(fleet.avgP95LatencyMs) : "—"}
-              </div>
+              <>
+                <div className="text-2xl font-bold">
+                  {fleet ? formatMs(fleet.avgP95LatencyMs) : "—"}
+                </div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  30d: {fleetData?.fleet30d ? formatMs(fleetData.fleet30d.avgP95LatencyMs) : "—"}
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
@@ -228,9 +246,14 @@ export default function ObservabilityPage() {
             {fleetLoading ? (
               <Skeleton className="h-8 w-24" />
             ) : (
-              <div className="text-2xl font-bold">
-                ${fleet?.totalCostUsd?.toFixed(2) ?? "0.00"}
-              </div>
+              <>
+                <div className="text-2xl font-bold">
+                  ${fleet?.totalCostUsd?.toFixed(2) ?? "0.00"}
+                </div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  30d: ${fleetData?.fleet30d?.totalCostUsd?.toFixed(2) ?? "0.00"}
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
@@ -243,9 +266,14 @@ export default function ObservabilityPage() {
             {fleetLoading ? (
               <Skeleton className="h-8 w-24" />
             ) : (
-              <div className="text-2xl font-bold">
-                {(fleet?.totalRuns ?? 0).toLocaleString()}
-              </div>
+              <>
+                <div className="text-2xl font-bold">
+                  {(fleet?.totalRuns ?? 0).toLocaleString()}
+                </div>
+                <div className="text-xs text-muted-foreground mt-0.5">
+                  30d: {(fleetData?.fleet30d?.totalRuns ?? 0).toLocaleString()}
+                </div>
+              </>
             )}
           </CardContent>
         </Card>

@@ -1,8 +1,8 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
 import { db } from "../db";
 import { runTraces, agents, agentAlerts } from "@shared/schema";
-import { eq, gte, and, isNull, desc } from "drizzle-orm";
-import { sql } from "drizzle-orm";
+import { eq, gte, and, isNull, desc, sql } from "drizzle-orm";
+import { getOrgId } from "../auth";
 
 const router = Router();
 
@@ -12,10 +12,16 @@ function percentile(sortedArr: number[], p: number): number {
   return sortedArr[Math.max(0, Math.min(idx, sortedArr.length - 1))];
 }
 
+function normalizeRate(raw: number | null | undefined, fallback: number): number {
+  if (raw == null) return fallback;
+  return raw <= 1 ? Math.round(raw * 10000) / 100 : raw;
+}
+
 interface AgentMetrics {
   agentId: string;
   agentName: string;
   department: string;
+  riskTier: string;
   successRate: number;
   errorRate: number;
   p50LatencyMs: number;
@@ -26,25 +32,40 @@ interface AgentMetrics {
   healthScore: number;
 }
 
-async function computeAgentMetrics(windowDays: number): Promise<AgentMetrics[]> {
+async function computeAgentMetrics(windowDays: number, orgId?: string): Promise<AgentMetrics[]> {
   const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
 
-  const allAgents = await db.select({
+  const agentQuery = db.select({
     id: agents.id,
     name: agents.name,
-    department: agents.status,
+    department: agents.department,
+    riskTier: agents.riskTier,
     healthScore: agents.healthScore,
     successRate: agents.successRate,
     costPerRun: agents.costPerRun,
-    riskTier: agents.riskTier,
+    organizationId: agents.organizationId,
   }).from(agents).where(eq(agents.status, "active"));
 
-  const traces = await db.select({
+  const allAgents = await agentQuery;
+  const scopedAgents = orgId
+    ? allAgents.filter(a => !a.organizationId || a.organizationId === orgId)
+    : allAgents;
+
+  const scopedAgentIds = new Set(scopedAgents.map(a => a.id));
+
+  const tracesQuery = db.select({
     agentId: runTraces.agentId,
     status: runTraces.status,
     latencyMs: runTraces.latencyMs,
     costUsd: runTraces.costUsd,
+    organizationId: runTraces.organizationId,
   }).from(runTraces).where(gte(runTraces.startedAt, since));
+
+  const allTraces = await tracesQuery;
+  const traces = allTraces.filter(t =>
+    scopedAgentIds.has(t.agentId) &&
+    (!orgId || !t.organizationId || t.organizationId === orgId)
+  );
 
   const byAgent = new Map<string, { latencies: number[]; costs: number[]; total: number; errors: number }>();
   for (const t of traces) {
@@ -58,7 +79,7 @@ async function computeAgentMetrics(windowDays: number): Promise<AgentMetrics[]> 
     if (t.costUsd != null && t.costUsd > 0) entry.costs.push(t.costUsd);
   }
 
-  return allAgents.map((agent) => {
+  return scopedAgents.map((agent) => {
     const data = byAgent.get(agent.id);
     const sortedLatencies = data ? [...data.latencies].sort((a, b) => a - b) : [];
     const avgCost = data && data.costs.length > 0
@@ -66,19 +87,22 @@ async function computeAgentMetrics(windowDays: number): Promise<AgentMetrics[]> 
       : (agent.costPerRun ?? 0);
     const totalRuns = data?.total ?? 0;
     const errors = data?.errors ?? 0;
+
     let successRate: number;
     if (totalRuns > 0) {
       successRate = Math.round(((totalRuns - errors) / totalRuns) * 10000) / 100;
     } else {
-      const raw = agent.successRate ?? 100;
-      successRate = raw <= 1 ? Math.round(raw * 10000) / 100 : raw;
+      successRate = normalizeRate(agent.successRate, 100);
     }
-    const errorRate = totalRuns > 0 ? Math.round((errors / totalRuns) * 10000) / 100 : Math.max(0, 100 - successRate);
+    const errorRate = totalRuns > 0
+      ? Math.round((errors / totalRuns) * 10000) / 100
+      : Math.max(0, 100 - successRate);
 
     return {
       agentId: agent.id,
       agentName: agent.name,
-      department: agent.riskTier ?? "MEDIUM",
+      department: agent.department ?? "General",
+      riskTier: agent.riskTier ?? "MEDIUM",
       successRate,
       errorRate,
       p50LatencyMs: percentile(sortedLatencies, 50),
@@ -86,86 +110,63 @@ async function computeAgentMetrics(windowDays: number): Promise<AgentMetrics[]> 
       p99LatencyMs: percentile(sortedLatencies, 99),
       costPerRun: Math.round(avgCost * 1000000) / 1000000,
       totalRuns,
-      healthScore: agent.healthScore != null
-        ? (agent.healthScore <= 1 ? Math.round(agent.healthScore * 10000) / 100 : agent.healthScore)
-        : successRate,
+      healthScore: normalizeRate(agent.healthScore, successRate),
     };
   });
 }
 
-router.get("/api/prometheus/metrics", async (_req, res) => {
+router.get("/api/prometheus/metrics", async (req: Request, res) => {
   try {
-    const metrics = await computeAgentMetrics(7);
+    const orgId = getOrgId(req);
+    const metrics = await computeAgentMetrics(7, orgId);
 
     const lines: string[] = [];
 
-    lines.push("# HELP atlas_agent_success_rate Agent success rate over last 7 days (percentage 0-100)");
-    lines.push("# TYPE atlas_agent_success_rate gauge");
-    for (const m of metrics) {
-      const labels = `agent_id="${m.agentId}",agent_name="${m.agentName.replace(/"/g, '\\"')}",department="${m.department}"`;
-      lines.push(`atlas_agent_success_rate{${labels}} ${m.successRate}`);
-    }
+    const defineMetric = (name: string, help: string, type: "gauge" | "counter") => {
+      lines.push(`# HELP ${name} ${help}`);
+      lines.push(`# TYPE ${name} ${type}`);
+    };
 
-    lines.push("# HELP atlas_agent_error_rate Agent error rate over last 7 days (percentage 0-100)");
-    lines.push("# TYPE atlas_agent_error_rate gauge");
-    for (const m of metrics) {
-      const labels = `agent_id="${m.agentId}",agent_name="${m.agentName.replace(/"/g, '\\"')}",department="${m.department}"`;
-      lines.push(`atlas_agent_error_rate{${labels}} ${m.errorRate}`);
-    }
+    const emitAgentLines = (metricName: string, getValue: (m: AgentMetrics) => number) => {
+      for (const m of metrics) {
+        const labels = `agent_id="${m.agentId}",agent_name="${m.agentName.replace(/"/g, '\\"')}",department="${m.department.replace(/"/g, '\\"')}",risk_tier="${m.riskTier}"`;
+        lines.push(`${metricName}{${labels}} ${getValue(m)}`);
+      }
+    };
 
-    lines.push("# HELP atlas_agent_latency_p50_ms Agent p50 latency in milliseconds (last 7 days)");
-    lines.push("# TYPE atlas_agent_latency_p50_ms gauge");
-    for (const m of metrics) {
-      const labels = `agent_id="${m.agentId}",agent_name="${m.agentName.replace(/"/g, '\\"')}",department="${m.department}"`;
-      lines.push(`atlas_agent_latency_p50_ms{${labels}} ${m.p50LatencyMs}`);
-    }
+    defineMetric("atlas_agent_success_rate", "Agent success rate over last 7 days (percentage 0-100)", "gauge");
+    emitAgentLines("atlas_agent_success_rate", m => m.successRate);
 
-    lines.push("# HELP atlas_agent_latency_p95_ms Agent p95 latency in milliseconds (last 7 days)");
-    lines.push("# TYPE atlas_agent_latency_p95_ms gauge");
-    for (const m of metrics) {
-      const labels = `agent_id="${m.agentId}",agent_name="${m.agentName.replace(/"/g, '\\"')}",department="${m.department}"`;
-      lines.push(`atlas_agent_latency_p95_ms{${labels}} ${m.p95LatencyMs}`);
-    }
+    defineMetric("atlas_agent_error_rate", "Agent error rate over last 7 days (percentage 0-100)", "gauge");
+    emitAgentLines("atlas_agent_error_rate", m => m.errorRate);
 
-    lines.push("# HELP atlas_agent_latency_p99_ms Agent p99 latency in milliseconds (last 7 days)");
-    lines.push("# TYPE atlas_agent_latency_p99_ms gauge");
-    for (const m of metrics) {
-      const labels = `agent_id="${m.agentId}",agent_name="${m.agentName.replace(/"/g, '\\"')}",department="${m.department}"`;
-      lines.push(`atlas_agent_latency_p99_ms{${labels}} ${m.p99LatencyMs}`);
-    }
+    defineMetric("atlas_agent_latency_p50_ms", "Agent p50 latency in milliseconds (last 7 days)", "gauge");
+    emitAgentLines("atlas_agent_latency_p50_ms", m => m.p50LatencyMs);
 
-    lines.push("# HELP atlas_agent_cost_per_run_usd Agent average cost per run in USD (last 7 days)");
-    lines.push("# TYPE atlas_agent_cost_per_run_usd gauge");
-    for (const m of metrics) {
-      const labels = `agent_id="${m.agentId}",agent_name="${m.agentName.replace(/"/g, '\\"')}",department="${m.department}"`;
-      lines.push(`atlas_agent_cost_per_run_usd{${labels}} ${m.costPerRun}`);
-    }
+    defineMetric("atlas_agent_latency_p95_ms", "Agent p95 latency in milliseconds (last 7 days)", "gauge");
+    emitAgentLines("atlas_agent_latency_p95_ms", m => m.p95LatencyMs);
 
-    lines.push("# HELP atlas_agent_total_runs Total agent runs in last 7 days");
-    lines.push("# TYPE atlas_agent_total_runs counter");
-    for (const m of metrics) {
-      const labels = `agent_id="${m.agentId}",agent_name="${m.agentName.replace(/"/g, '\\"')}",department="${m.department}"`;
-      lines.push(`atlas_agent_total_runs{${labels}} ${m.totalRuns}`);
-    }
+    defineMetric("atlas_agent_latency_p99_ms", "Agent p99 latency in milliseconds (last 7 days)", "gauge");
+    emitAgentLines("atlas_agent_latency_p99_ms", m => m.p99LatencyMs);
 
-    lines.push("# HELP atlas_agent_health_score Agent health score (0-100)");
-    lines.push("# TYPE atlas_agent_health_score gauge");
-    for (const m of metrics) {
-      const labels = `agent_id="${m.agentId}",agent_name="${m.agentName.replace(/"/g, '\\"')}",department="${m.department}"`;
-      lines.push(`atlas_agent_health_score{${labels}} ${m.healthScore}`);
-    }
+    defineMetric("atlas_agent_cost_per_run_usd", "Agent average cost per run in USD (last 7 days)", "gauge");
+    emitAgentLines("atlas_agent_cost_per_run_usd", m => m.costPerRun);
+
+    defineMetric("atlas_agent_total_runs", "Total agent runs in last 7 days", "counter");
+    emitAgentLines("atlas_agent_total_runs", m => m.totalRuns);
+
+    defineMetric("atlas_agent_health_score", "Agent health score (0-100)", "gauge");
+    emitAgentLines("atlas_agent_health_score", m => m.healthScore);
 
     const fleetTotalRuns = metrics.reduce((a, m) => a + m.totalRuns, 0);
     const fleetAvgSuccessRate = metrics.length > 0
       ? Math.round((metrics.reduce((a, m) => a + m.successRate, 0) / metrics.length) * 100) / 100
       : 0;
 
-    lines.push("# HELP atlas_fleet_total_runs Total runs across all agents in last 7 days");
-    lines.push("# TYPE atlas_fleet_total_runs counter");
+    defineMetric("atlas_fleet_total_runs", "Total runs across all agents in last 7 days", "counter");
     lines.push(`atlas_fleet_total_runs ${fleetTotalRuns}`);
 
-    lines.push("# HELP atlas_fleet_avg_success_rate Fleet-wide average success rate (0-100)");
-    lines.push("# TYPE atlas_fleet_avg_success_rate gauge");
+    defineMetric("atlas_fleet_avg_success_rate", "Fleet-wide average success rate (0-100)", "gauge");
     lines.push(`atlas_fleet_avg_success_rate ${fleetAvgSuccessRate}`);
 
     res.set("Content-Type", "text/plain; version=0.0.4; charset=utf-8");
@@ -176,11 +177,12 @@ router.get("/api/prometheus/metrics", async (_req, res) => {
   }
 });
 
-router.get("/api/observability/fleet", async (_req, res) => {
+router.get("/api/observability/fleet", async (req: Request, res) => {
   try {
+    const orgId = getOrgId(req);
     const [metrics7d, metrics30d] = await Promise.all([
-      computeAgentMetrics(7),
-      computeAgentMetrics(30),
+      computeAgentMetrics(7, orgId),
+      computeAgentMetrics(30, orgId),
     ]);
 
     const metricsMap30d = new Map(metrics30d.map(m => [m.agentId, m]));
@@ -191,6 +193,7 @@ router.get("/api/observability/fleet", async (_req, res) => {
         agentId: m.agentId,
         agentName: m.agentName,
         department: m.department,
+        riskTier: m.riskTier,
         successRate7d: m.successRate,
         errorRate7d: m.errorRate,
         p50LatencyMs7d: m.p50LatencyMs,
@@ -200,6 +203,9 @@ router.get("/api/observability/fleet", async (_req, res) => {
         totalRuns7d: m.totalRuns,
         healthScore: m.healthScore,
         successRate30d: m30?.successRate ?? m.successRate,
+        errorRate30d: m30?.errorRate ?? m.errorRate,
+        p95LatencyMs30d: m30?.p95LatencyMs ?? m.p95LatencyMs,
+        costPerRun30d: m30?.costPerRun ?? m.costPerRun,
         totalRuns30d: m30?.totalRuns ?? 0,
       };
     });
@@ -221,30 +227,56 @@ router.get("/api/observability/fleet", async (_req, res) => {
       avgErrorRate: metrics7d.length > 0
         ? Math.round((metrics7d.reduce((a, m) => a + m.errorRate, 0) / metrics7d.length) * 100) / 100
         : 0,
+      agentCount: metrics7d.length,
     };
 
-    res.json({ agents: agentRows, fleet7d, topOffenders });
+    const fleet30d = {
+      avgSuccessRate: metrics30d.length > 0
+        ? Math.round((metrics30d.reduce((a, m) => a + m.successRate, 0) / metrics30d.length) * 100) / 100
+        : 0,
+      avgP95LatencyMs: metrics30d.length > 0
+        ? Math.round(metrics30d.reduce((a, m) => a + m.p95LatencyMs, 0) / metrics30d.length)
+        : 0,
+      totalCostUsd: Math.round(metrics30d.reduce((a, m) => a + m.costPerRun * m.totalRuns, 0) * 100) / 100,
+      totalRuns: metrics30d.reduce((a, m) => a + m.totalRuns, 0),
+      avgErrorRate: metrics30d.length > 0
+        ? Math.round((metrics30d.reduce((a, m) => a + m.errorRate, 0) / metrics30d.length) * 100) / 100
+        : 0,
+      agentCount: metrics30d.length,
+    };
+
+    res.json({ agents: agentRows, fleet7d, fleet30d, topOffenders });
   } catch (err: any) {
     console.error("[observability] Fleet metrics error:", err.message);
     res.status(500).json({ error: "Failed to compute fleet metrics" });
   }
 });
 
-router.get("/api/observability/alerts", async (req, res) => {
+router.get("/api/observability/alerts", async (req: Request, res) => {
   try {
-    const rows = await db.select().from(agentAlerts)
-      .orderBy(desc(agentAlerts.triggeredAt))
-      .limit(200);
-    res.json(rows);
+    const orgId = getOrgId(req);
+    let query = db.select().from(agentAlerts).orderBy(desc(agentAlerts.triggeredAt)).limit(200);
+    const rows = await query;
+    const filtered = orgId ? rows.filter(r => !r.orgId || r.orgId === orgId) : rows;
+    res.json(filtered);
   } catch (err: any) {
     console.error("[observability] Alerts fetch error:", err.message);
     res.status(500).json({ error: "Failed to fetch alerts" });
   }
 });
 
-router.post("/api/observability/alerts/:id/acknowledge", async (req, res) => {
+router.post("/api/observability/alerts/:id/acknowledge", async (req: Request, res) => {
   try {
     const { id } = req.params;
+    const orgId = getOrgId(req);
+
+    if (orgId) {
+      const existing = await db.select().from(agentAlerts).where(eq(agentAlerts.id, id));
+      if (existing.length > 0 && existing[0].orgId && existing[0].orgId !== orgId) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+    }
+
     await db.update(agentAlerts)
       .set({ acknowledgedAt: new Date() })
       .where(eq(agentAlerts.id, id));
@@ -255,8 +287,9 @@ router.post("/api/observability/alerts/:id/acknowledge", async (req, res) => {
   }
 });
 
-router.post("/api/observability/export/otlp", async (req, res) => {
+router.post("/api/observability/export/otlp", async (req: Request, res) => {
   try {
+    const orgId = getOrgId(req);
     const body = req.body as { resourceSpans?: any[] };
     if (!body?.resourceSpans || !Array.isArray(body.resourceSpans)) {
       return res.status(400).json({ error: "Invalid OTLP payload: missing resourceSpans array" });
@@ -284,16 +317,21 @@ router.post("/api/observability/export/otlp", async (req, res) => {
             spanAttrs[attr.key] = attr.value?.stringValue ?? String(attr.value?.intValue ?? attr.value?.boolValue ?? "");
           }
 
+          const traceId = span.traceId ?? null;
+          const spanId = span.spanId ?? null;
+
           await db.insert(runTraces).values({
+            id: traceId ?? undefined,
             agentId,
-            versionId: span.spanId ?? null,
+            organizationId: orgId ?? undefined,
+            versionId: spanId ?? null,
             environment: "otlp",
             status,
             latencyMs,
             costUsd: parseFloat(spanAttrs["atlas.cost_usd"] ?? "0") || 0,
             inputSummary: `OTLP span: ${span.name ?? "unknown"}`,
             outputSummary: span.status?.message ?? null,
-            toolCalls: span.attributes ? { attributes: span.attributes } : null,
+            toolCalls: span.attributes ? { traceId, spanId, attributes: span.attributes } : null,
           });
           accepted++;
         }
@@ -324,27 +362,36 @@ export async function runAlertCheck() {
       if (!baseline || baseline.totalRuns < 10) continue;
 
       const delta = baseline.successRate - m.successRate;
-      if (delta > 10) {
-        const existingAlerts = await db.select().from(agentAlerts).where(
-          and(
-            eq(agentAlerts.agentId, m.agentId),
-            isNull(agentAlerts.acknowledgedAt),
-          )
-        );
-        const alreadyOpen = existingAlerts.some(a =>
-          a.alertType === "success_rate_drop" &&
-          a.triggeredAt &&
-          Date.now() - new Date(a.triggeredAt).getTime() < 6 * 60 * 60 * 1000
-        );
-        if (alreadyOpen) continue;
+      if (delta <= 10) continue;
 
-        const severity = delta > 20 ? "critical" : delta > 15 ? "high" : "warning";
+      const openAlerts = await db.select().from(agentAlerts).where(
+        and(
+          eq(agentAlerts.agentId, m.agentId),
+          eq(agentAlerts.alertType, "success_rate_drop"),
+          isNull(agentAlerts.acknowledgedAt),
+        )
+      );
+
+      const severity = delta > 20 ? "critical" : delta > 15 ? "high" : "warning";
+      const message = `Success rate dropped ${delta.toFixed(1)}pp below 30-day baseline (current: ${m.successRate.toFixed(1)}%, baseline: ${baseline.successRate.toFixed(1)}%)`;
+
+      if (openAlerts.length > 0) {
+        await db.update(agentAlerts)
+          .set({
+            severity,
+            message,
+            currentValue: m.successRate,
+            baselineValue: baseline.successRate,
+            triggeredAt: new Date(),
+          })
+          .where(eq(agentAlerts.id, openAlerts[0].id));
+      } else {
         await db.insert(agentAlerts).values({
           agentId: m.agentId,
           agentName: m.agentName,
           alertType: "success_rate_drop",
           severity,
-          message: `Success rate dropped ${delta.toFixed(1)}pp below 30-day baseline (current: ${m.successRate.toFixed(1)}%, baseline: ${baseline.successRate.toFixed(1)}%)`,
+          message,
           currentValue: m.successRate,
           baselineValue: baseline.successRate,
         });
