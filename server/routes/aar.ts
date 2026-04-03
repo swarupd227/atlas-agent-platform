@@ -180,7 +180,6 @@ function buildPlatformHints(targetPlatform: string) {
 function buildAarPackage(agentId: string, agentName: string, aarConfig: Pick<AarConfig, "targetPlatform" | "policyBundleVersion" | "lastSyncedAt">) {
   const modules = buildModuleConfig(agentId, aarConfig.targetPlatform);
   const platformHints = buildPlatformHints(aarConfig.targetPlatform);
-  const seed = seedFromAgentId(agentId);
 
   return {
     aarVersion: "1.0.0",
@@ -304,6 +303,13 @@ router.patch("/api/agents/:agentId/aar", async (req, res) => {
     if (!targetPlatform || typeof targetPlatform !== "string" || targetPlatform.trim().length === 0) {
       return res.status(400).json({ error: "targetPlatform must be a non-empty string" });
     }
+
+    // Only update an existing config; do not create one via PATCH (agent must be deployed first)
+    const existing = await storage.getAarConfig(agentId, orgId);
+    if (!existing) {
+      return res.status(404).json({ error: "AAR config not found — agent must be deployed before it can be configured" });
+    }
+
     const updated = await storage.upsertAarConfig(agentId, { targetPlatform: targetPlatform.trim() }, orgId);
     res.json({ aarConfig: updated });
   } catch (err: any) {
