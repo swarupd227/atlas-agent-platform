@@ -745,7 +745,7 @@ function AgentDetailInner() {
   }>({
     queryKey: ["/api/agents", agentId, "aar"],
     queryFn: async () => {
-      if (!agentId) return { aarConfig: null, modules: null, policyActions: null, agentName: "" };
+      if (!agentId) return { aarConfig: null, modules: null, processModel: null, policyActions: null, agentName: "" };
       const res = await fetch(`/api/agents/${agentId}/aar`);
       return res.json();
     },

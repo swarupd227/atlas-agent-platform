@@ -341,7 +341,7 @@ router.get("/api/agents/:agentId/aar", async (req, res) => {
 
     const aarConfig = await storage.getAarConfig(agentId, orgId);
     if (!aarConfig) {
-      return res.json({ aarConfig: null, modules: null, agentName: agent.name });
+      return res.json({ aarConfig: null, modules: null, processModel: null, policyActions: null, agentName: agent.name });
     }
 
     const modules = buildModuleConfig(agentId, aarConfig.targetPlatform);
