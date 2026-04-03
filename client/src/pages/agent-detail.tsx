@@ -739,6 +739,7 @@ function AgentDetailInner() {
   const { data: aarData, refetch: refetchAar } = useQuery<{
     aarConfig: { id: string; agentId: string; targetPlatform: string; policyBundleVersion: string; lastSyncedAt: string; createdAt: string } | null;
     modules: Array<{ id: string; name: string; icon: string; responsibility: string; interfaces: string[]; health: { status: string; metricLabel: string; metricValue: string | number; metricSecondary: string; lastHeartbeat: string } }> | null;
+    processModel: Array<{ id: string; name: string; role: string; timingLabel: string | null; timingSpec: Record<string, number> | null; status: "running" | "degraded" | "stopped" }> | null;
     policyActions: { block: number; alert: number; log: number } | null;
     agentName: string;
   }>({
@@ -5344,6 +5345,13 @@ function AgentDetailInner() {
             const activeCount = modules.filter(m => m.health.status === "active").length;
             const standbyCount = modules.filter(m => m.health.status === "standby").length;
             const offlineCount = modules.filter(m => m.health.status === "offline").length;
+            const processModel = aarData.processModel ?? [];
+            const goroutineStatusColor = (s: string) =>
+              s === "running" ? "bg-emerald-500" : s === "degraded" ? "bg-amber-500" : "bg-red-500";
+            const goroutineStatusText = (s: string) =>
+              s === "running" ? "text-emerald-600 dark:text-emerald-400"
+              : s === "degraded" ? "text-amber-600 dark:text-amber-400"
+              : "text-red-600 dark:text-red-400";
             return (
               <>
                 {/* Health summary strip */}
@@ -5364,6 +5372,49 @@ function AgentDetailInner() {
                     </div>
                   </CardContent>
                 </Card>
+
+                {/* Process Architecture — Section 1.2 */}
+                {processModel.length > 0 && (
+                  <Card data-testid="aar-process-architecture">
+                    <CardHeader className="pb-2 pt-3 px-4">
+                      <CardTitle className="text-xs font-semibold flex items-center gap-1.5">
+                        <Cpu className="w-3.5 h-3.5 text-muted-foreground" />
+                        Process Architecture — §1.2 Goroutines
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      <table className="w-full text-xs" data-testid="aar-goroutine-table">
+                        <thead>
+                          <tr className="border-b border-border/50">
+                            <th className="px-4 py-1.5 text-left font-medium text-muted-foreground w-32">Goroutine</th>
+                            <th className="px-4 py-1.5 text-left font-medium text-muted-foreground">Responsibility</th>
+                            <th className="px-4 py-1.5 text-left font-medium text-muted-foreground w-52 hidden sm:table-cell">Timing</th>
+                            <th className="px-4 py-1.5 text-left font-medium text-muted-foreground w-24">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {processModel.map((g) => (
+                            <tr key={g.id} className="border-b border-border/30 last:border-0 hover:bg-muted/20" data-testid={`aar-goroutine-${g.id}`}>
+                              <td className="px-4 py-2 font-mono font-semibold text-foreground">{g.name}</td>
+                              <td className="px-4 py-2 text-muted-foreground leading-snug">{g.role}</td>
+                              <td className="px-4 py-2 text-muted-foreground hidden sm:table-cell">
+                                {g.timingLabel
+                                  ? <span className="font-mono text-[10px] bg-muted px-1.5 py-0.5 rounded">{g.timingLabel}</span>
+                                  : <span className="text-border">—</span>}
+                              </td>
+                              <td className="px-4 py-2">
+                                <span className={`flex items-center gap-1.5 font-medium ${goroutineStatusText(g.status)}`}>
+                                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${goroutineStatusColor(g.status)}`} />
+                                  {g.status}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </CardContent>
+                  </Card>
+                )}
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                   {/* 7 module cards */}

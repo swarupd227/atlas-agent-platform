@@ -59,6 +59,60 @@ export const AAR_MODULES = [
   },
 ];
 
+// ─── Section 1.2 Process Model — 7 goroutines ────────────────────────────────
+
+export const AAR_GOROUTINES = [
+  {
+    id: "main",
+    name: "Main",
+    role: "Lifecycle management, signal handling, graceful shutdown",
+    timingSpec: null,
+    timingLabel: null,
+  },
+  {
+    id: "grpc-server",
+    name: "gRPC Server",
+    role: "Agent-facing API — receives action requests from the agent process",
+    timingSpec: null,
+    timingLabel: null,
+  },
+  {
+    id: "policy-sync",
+    name: "Policy Sync",
+    role: "Long-lived gRPC stream to Atlas Control Plane for policy updates",
+    timingSpec: null,
+    timingLabel: "Long-lived stream",
+  },
+  {
+    id: "provenance",
+    name: "Provenance",
+    role: "Streams events to Collector; manages local WAL for offline buffer",
+    timingSpec: null,
+    timingLabel: "Continuous stream + WAL",
+  },
+  {
+    id: "telemetry",
+    name: "Telemetry",
+    role: "Batches OTLP events (metrics, traces, logs) and flushes on schedule",
+    timingSpec: { flushIntervalMs: 10000 },
+    timingLabel: "Flush every 10s",
+  },
+  {
+    id: "health-check",
+    name: "Health Check",
+    role: "MCP server probes on schedule; heartbeat to Control Plane every 60s",
+    timingSpec: { mcpProbeIntervalSeconds: 30, heartbeatIntervalSeconds: 60 },
+    timingLabel: "Probe every 30s · Heartbeat every 60s",
+  },
+  {
+    id: "credential",
+    name: "Credential",
+    role: "Monitors cert expiry; triggers rotation 7 days before expiry",
+    timingSpec: { expiryWarningDays: 7, rotationPeriodDays: 30 },
+    timingLabel: "Rotation 7d before expiry",
+  },
+];
+
 // ─── Deterministic health simulation ─────────────────────────────────────────
 
 function seedFromAgentId(agentId: string): number {
@@ -119,6 +173,22 @@ function buildModuleConfig(agentId: string, targetPlatform: string) {
   return AAR_MODULES.map((m) => ({
     ...m,
     health: deriveModuleHealth(agentId, m.id),
+  }));
+}
+
+function deriveGoroutineStatus(agentId: string, goroutineId: string): "running" | "degraded" | "stopped" {
+  const seed = seedFromAgentId(agentId + "goroutine:" + goroutineId);
+  // Main goroutine is always running — no process without it
+  if (goroutineId === "main") return "running";
+  // ~85% running, ~10% degraded, ~5% stopped
+  const s = seed % 100;
+  return s < 85 ? "running" : s < 95 ? "degraded" : "stopped";
+}
+
+function buildProcessModel(agentId: string) {
+  return AAR_GOROUTINES.map((g) => ({
+    ...g,
+    status: deriveGoroutineStatus(agentId, g.id),
   }));
 }
 
@@ -226,7 +296,8 @@ function buildAarPackage(agentId: string, agentName: string, aarConfig: Pick<Aar
       localEnforcement: true,
     },
     credentialManager: {
-      certRotationDays: 30,
+      certExpiryWarningDays: 7,
+      certRotationPeriodDays: 30,
       vaultIntegration: platformHints.secretStore,
       mTlsEnabled: true,
     },
@@ -234,7 +305,8 @@ function buildAarPackage(agentId: string, agentName: string, aarConfig: Pick<Aar
     healthEndpoints: {
       healthz: "/healthz",
       readyz: "/readyz",
-      heartbeatIntervalSeconds: 15,
+      mcpProbeIntervalSeconds: 30,
+      heartbeatIntervalSeconds: 60,
     },
     controlPlane: {
       syncUrl: "https://atlas.internal/api/aar/sync",
@@ -273,6 +345,7 @@ router.get("/api/agents/:agentId/aar", async (req, res) => {
     }
 
     const modules = buildModuleConfig(agentId, aarConfig.targetPlatform);
+    const processModel = buildProcessModel(agentId);
     const seed = seedFromAgentId(agentId);
     const policyActions = {
       block: seed % 8,
@@ -283,6 +356,7 @@ router.get("/api/agents/:agentId/aar", async (req, res) => {
     return res.json({
       aarConfig,
       modules,
+      processModel,
       policyActions,
       agentName: agent.name,
     });
