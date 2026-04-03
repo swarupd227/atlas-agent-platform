@@ -128,3 +128,5 @@ The Nous Agent Orchestrator uses a modern web stack: React, Vite, Tailwind CSS, 
 ### Export Frameworks (agent-export.tsx)
 Generic (ReAct Agent Loop), LangGraph, CrewAI, AutoGen, Semantic Kernel, Azure AI Foundry, OpenAI Assistants API, AWS Bedrock, Vertex AI, n8n, Databricks.
 Python-only frameworks (foundry, autogen, semantic-kernel) auto-switch language to Python via `useEffect`.
+### OTC Agent Fix Script
+- `scripts/fix-otc-agents-complete.mjs` — Comprehensive PATCH for both OTC agents to populate all missing fields: blueprintJson (12-node workflow), toolsConfig (MCP servers + allowed tools), ontologyTags (6 domain concepts), policyBindings (6 policies linked), evalBindings (2 eval suites with schedule), memoryRagConfig, permissionsConfig, memoryGovernanceRules (3 rules), maturityScore, costPerRun, rollbackPlan. Parameterized: `node scripts/fix-otc-agents-complete.mjs [BASE_URL]`. Run without args for dev, supply prod URL for production.
