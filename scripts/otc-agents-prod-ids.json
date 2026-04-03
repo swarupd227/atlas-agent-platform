@@ -1,0 +1,13 @@
+{
+  "target": "https://agent-lifecycle-management-platform.replit.app",
+  "disputeAgent": {
+    "id": "6846942a-7d11-4eaf-9e8b-4be6a0deee72",
+    "evalDataset": "a3162b1f-d5ca-46d1-9b23-2b1deb24f1a5",
+    "evalSuite": "8dd77ace-4017-4aa6-844a-e1de25f53ed8"
+  },
+  "cashAgent": {
+    "id": "154b4fbe-92aa-4512-a0bb-483a18ea4fc6",
+    "evalDataset": "ec8bc508-35ac-40f3-a33b-3ceb26d5ef4a",
+    "evalSuite": "22214c0c-b053-43b9-bcee-b6022c878ee7"
+  }
+}

@@ -102,6 +102,16 @@ The Nous Agent Orchestrator uses a modern web stack: React, Vite, Tailwind CSS, 
 - **Golden Dataset**: `0e08c13a-657b-4585-b4ca-ad9e53f57f67` (6 test cases)
 - **Eval Suite**: `b1e17e41-500f-4882-b171-6e71d1d97fdb`
 
+### OTC-AGT-008 PROD IDs (Dispute Resolution Agent)
+- **Agent**: `6846942a-7d11-4eaf-9e8b-4be6a0deee72`
+- **Eval Dataset**: `a3162b1f-d5ca-46d1-9b23-2b1deb24f1a5` (6 test cases)
+- **Eval Suite**: `8dd77ace-4017-4aa6-844a-e1de25f53ed8`
+
+### OTC-AGT-009 PROD IDs (Cash Application & Reconciliation Agent)
+- **Agent**: `154b4fbe-92aa-4512-a0bb-483a18ea4fc6`
+- **Eval Dataset**: `ec8bc508-35ac-40f3-a33b-3ceb26d5ef4a` (6 test cases)
+- **Eval Suite**: `22214c0c-b053-43b9-bcee-b6022c878ee7`
+
 ### Creation Scripts
 - `scripts/create-otc-agents.mjs` — Full Phase 1-6 creation (skills, agents, runbooks, policies, evals) for target URL
 - `scripts/create-otc-evals-v2.mjs` — Phase 6 only (golden datasets + test cases + eval suites)
