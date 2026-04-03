@@ -1,0 +1,14 @@
+ATLAS GOVERNANCE MESH: POLICY DISTRIBUTION & ENFORCEMENT
+The Atlas Governance Mesh is the network of policy enforcement points (AARs) across all clouds, coordinated by the Atlas Control Plane. It ensures that policies authored centrally are enforced everywhere, consistently, in real time.
+Policy Lifecycle in Federated Model
+•	1. Author: Policies are authored in Atlas Control Plane (same as today). Policy Engine, Outcome Contracts, Autonomy configurations, regulatory overlays.
+•	2. Compile: Atlas compiles policies into a compact, evaluable format — a Policy Bundle. This is analogous to how Open Policy Agent (OPA) compiles Rego policies into bundles. The bundle is a self-contained artifact.
+•	3. Distribute: Atlas pushes Policy Bundles to all AARs that need them. Distribution is targeted: an agent on AWS Bedrock gets only the policies relevant to its scope, not the entire policy library. Uses secure, signed distribution (TLS + bundle signing).
+•	4. Cache: AAR caches the Policy Bundle locally. All policy evaluations happen against the local cache. No network dependency for enforcement.
+•	5. Enforce: AAR evaluates every agent action against the cached policies. Returns BLOCK/ALERT/LOG. Results are logged in the provenance stream.
+•	6. Refresh: When a policy changes in the Control Plane, a new bundle is compiled and pushed to affected AARs. AARs receive the update within seconds (push model) or pull at configurable intervals (pull model for air-gapped environments).
+Consistency Guarantees
+The federated model introduces a consistency challenge: what happens between a policy change and the moment all AARs receive it? Atlas handles this with three mechanisms:
+•	Policy versioning: Every Policy Bundle has a version number. The Control Plane knows which version each AAR is running. If an AAR is running an outdated version, the Control Plane can flag the agent as “policy-stale” and alert.
+•	Grace period: Critical policy changes (e.g., new BLOCK rules) can be configured with a zero-grace-period flag that pauses agent execution until the new policy is confirmed received.
+•	Eventual consistency for non-critical: Non-critical policy changes (e.g., LOG-level rules) propagate eventually. This is acceptable because the enforcement action is just logging.
