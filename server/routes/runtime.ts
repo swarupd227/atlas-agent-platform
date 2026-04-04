@@ -6747,7 +6747,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
             serverId: server.id,
             name: p.name,
             description: p.description,
-            arguments: p.arguments as unknown,
+            arguments: JSON.parse(JSON.stringify(p.arguments ?? null)),
             publishedStatus: "published",
             approvalStatus: "not_required",
           }));
@@ -7369,7 +7369,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
           if (livePrompts.status === "fulfilled") {
             await storage.deleteMcpServerPromptsByServer(server.id);
             for (const p of livePrompts.value) {
-              await storage.createMcpServerPrompt({ serverId: server.id, name: p.name, description: p.description, arguments: p.arguments as unknown, publishedStatus: "published", approvalStatus: "not_required" });
+              await storage.createMcpServerPrompt({ serverId: server.id, name: p.name, description: p.description, arguments: JSON.parse(JSON.stringify(p.arguments ?? null)), publishedStatus: "published", approvalStatus: "not_required" });
             }
           }
 
