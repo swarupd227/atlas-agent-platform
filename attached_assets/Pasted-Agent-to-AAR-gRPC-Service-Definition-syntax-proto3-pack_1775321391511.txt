@@ -1,0 +1,84 @@
+Agent-to-AAR gRPC Service Definition
+syntax = "proto3";
+package atlas.aar.v1;
+ 
+service AtlasAgentRuntime {
+  // Agent requests permission to execute an action
+  rpc EvaluateAction(ActionRequest) returns (ActionDecision);
+ 
+  // Agent requests a tool call (AAR proxies to MCP server)
+  rpc InvokeTool(ToolCallRequest) returns (ToolCallResponse);
+ 
+  // Streaming tool calls for long-running MCP operations
+  rpc InvokeToolStream(ToolCallRequest) returns (stream ToolCallChunk);
+ 
+  // Agent reports internal state (for provenance enrichment)
+  rpc ReportState(AgentStateReport) returns (Ack);
+ 
+  // Agent queries current autonomy level and policy constraints
+  rpc GetConstraints(ConstraintQuery) returns (ConstraintResponse);
+ 
+  // Agent submits a batch of completed actions for provenance recording
+  rpc RecordActions(ActionBatch) returns (Ack);
+}
+ 
+message ActionRequest {
+  string agent_id = 1;
+  string action_type = 2;          // "tool_call" | "data_access" | "state_change" | "delegation"
+  string tool_name = 3;            // MCP tool name (if tool_call)
+  string mcp_server = 4;           // Target MCP server ID
+  bytes  input_payload = 5;        // Serialized input (AAR hashes but does not inspect)
+  string correlation_id = 6;       // Cross-agent/cross-cloud correlation
+  map<string, string> metadata = 7; // Additional context
+}
+ 
+message ActionDecision {
+  enum Decision {
+    ALLOW = 0;
+    BLOCK = 1;
+    REQUIRE_APPROVAL = 2;
+    ALERT_AND_ALLOW = 3;
+  }
+  Decision decision = 1;
+  string reason = 2;               // Human-readable explanation
+  repeated string policies_evaluated = 3;
+  repeated string rules_triggered = 4;
+  string risk_level = 5;           // "low" | "medium" | "high" | "critical"
+  string approval_id = 6;          // If REQUIRE_APPROVAL, the approval request ID
+  int64 evaluation_time_us = 7;    // Microseconds taken for evaluation
+}
+ 
+message ToolCallRequest {
+  string agent_id = 1;
+  string tool_name = 2;
+  string mcp_server = 3;
+  bytes  arguments = 4;            // JSON-encoded MCP tool arguments
+  string correlation_id = 5;
+  int32  timeout_ms = 6;           // Client-specified timeout
+}
+ 
+message ToolCallResponse {
+  bool   success = 1;
+  bytes  result = 2;               // JSON-encoded MCP tool result
+  string error_code = 3;           // "ok" | "tool_error" | "policy_block" | "timeout" | "drift_detected" | "rate_limited"
+  string error_message = 4;
+  int64  latency_ms = 5;
+  string provenance_event_id = 6;  // ID of the provenance event recorded for this call
+}
+ 
+message ToolCallChunk {
+  bytes  data = 1;
+  bool   is_final = 2;
+  string error_code = 3;
+}
+ 
+message ConstraintResponse {
+  string autonomy_level = 1;       // "shadow" | "supervised" | "guided" | "adaptive"
+  repeated string allowed_tools = 2;
+  repeated string denied_tools = 3;
+  repeated string require_approval_tools = 4;
+  map<string, int32> rate_limits = 5;  // tool_name -> max_calls_per_hour
+  int64 policy_bundle_version = 6;
+  string policy_bundle_timestamp = 7;
+}
+
