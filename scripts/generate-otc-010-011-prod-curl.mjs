@@ -294,7 +294,7 @@ addSection("Phase 3a: Creating OTC-AGT-010 Returns & Refund Processing Agent");
     "RETURNS_AGENT_ID", "/api/agents", agentBase,
     [["s1","RETURNS_SKILL_1_ID"],["s2","RETURNS_SKILL_2_ID"],["s3","RETURNS_SKILL_3_ID"],
      ["s4","RETURNS_SKILL_4_ID"],["s5","RETURNS_SKILL_5_ID"],["s6","RETURNS_SKILL_6_ID"]],
-    `. + {preloadedSkills: [$s1,$s2,$s3,$s4,$s5,$s6]}`,
+    `. + {preloadedSkills: [{skillId:$s1,loadOrder:0},{skillId:$s2,loadOrder:1},{skillId:$s3,loadOrder:2},{skillId:$s4,loadOrder:3},{skillId:$s5,loadOrder:4},{skillId:$s6,loadOrder:5}]}`,
     `Creating agent: ${agentBase.name}`
   );
 }
@@ -317,7 +317,7 @@ addSection("Phase 3b: Creating OTC-AGT-011 Contract & Pricing Compliance Agent")
     "CONTRACT_AGENT_ID", "/api/agents", agentBase,
     [["s1","CONTRACT_SKILL_1_ID"],["s2","CONTRACT_SKILL_2_ID"],["s3","CONTRACT_SKILL_3_ID"],
      ["s4","CONTRACT_SKILL_4_ID"],["s5","CONTRACT_SKILL_5_ID"],["s6","CONTRACT_SKILL_6_ID"]],
-    `. + {preloadedSkills: [$s1,$s2,$s3,$s4,$s5,$s6]}`,
+    `. + {preloadedSkills: [{skillId:$s1,loadOrder:0},{skillId:$s2,loadOrder:1},{skillId:$s3,loadOrder:2},{skillId:$s4,loadOrder:3},{skillId:$s5,loadOrder:4},{skillId:$s6,loadOrder:5}]}`,
     `Creating agent: ${agentBase.name}`
   );
 }
