@@ -21,6 +21,14 @@ const STATUS_VARIANT: Record<string, "default" | "secondary" | "outline"> = {
   "production-enabled": "default",
 };
 
+const LOCALHOST_RX = [/^https?:\/\/localhost[:/]/i, /^https?:\/\/127\.0\.0\.1[:/]/i];
+
+function isRealMcpServer(server: McpServer): boolean {
+  if (!server.url) return false;
+  if (server.transportType !== "streamable-http" && server.transportType !== "sse") return false;
+  return !LOCALHOST_RX.some((rx) => rx.test(server.url!));
+}
+
 const HEALTH_COLOR: Record<string, string> = {
   healthy: "bg-green-500",
   degraded: "bg-yellow-500",
@@ -236,8 +244,17 @@ export default function McpServersPage() {
                     </Badge>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
+                    {isRealMcpServer(server) ? (
+                      <Badge className="text-[10px] bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 border-green-300 dark:border-green-700" variant="outline" data-testid={`badge-protocol-type-${server.id}`}>
+                        Real MCP
+                      </Badge>
+                    ) : (
+                      <Badge className="text-[10px] bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400 border-gray-300 dark:border-gray-600" variant="outline" data-testid={`badge-protocol-type-${server.id}`}>
+                        REST Proxy
+                      </Badge>
+                    )}
                     <span className="text-[11px] text-muted-foreground">
-                      Protocol: {server.negotiatedProtocolVersion || server.expectedProtocolVersion || "N/A"}
+                      v{server.negotiatedProtocolVersion || server.expectedProtocolVersion || "N/A"}
                     </span>
                   </div>
                 </CardContent>

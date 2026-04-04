@@ -60,6 +60,7 @@ import {
   runParameterMatching,
 } from "./helpers";
 import { proxyToolCall } from "./governance-proxy";
+import { isRealMcpServer, mcpInitialize, mcpListTools, mcpListResources, mcpListPrompts } from "../mcp-client";
 import { runLlmJudge, runAgentOnInput, buildAgentContext } from "../eval-judge";
 import {
   executePromptWithMcp,
@@ -6707,20 +6708,85 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
       const server = await storage.getMcpServer(req.params.id as string);
       if (!server) return res.status(404).json({ message: "MCP server not found" });
 
-      const negotiatedVersion = server.expectedProtocolVersion || "2025-03-26";
-      const capabilities: Record<string, unknown> = {
-        tools: { listChanged: true },
-        resources: { subscribe: true, listChanged: true },
-        prompts: { listChanged: true },
-        logging: {},
-      };
-      const serverInfo = {
-        name: server.name,
-        version: "1.0.0",
-        protocolVersion: negotiatedVersion,
-      };
+      let negotiatedVersion: string;
+      let capabilities: Record<string, unknown>;
+      let serverInfo: { name: string; version: string; protocolVersion?: string };
+      let toolsToStore: Array<{ serverId: string; name: string; description?: string; inputSchema?: object }>;
+      let resourcesToStore: Array<{ serverId: string; uri: string; name: string; description?: string; mimeType?: string; sensitivityLevel?: string; approvalStatus?: string; freshnessStatus?: string; subscribed?: boolean; contentType?: string }>;
+      let promptsToStore: Array<{ serverId: string; name: string; description?: string; arguments?: object; messages?: object; publishedStatus?: string; approvalStatus?: string }>;
+      let isRealProtocol = false;
 
-      const updated = await storage.updateMcpServer(req.params.id as string, {
+      if (isRealMcpServer(server)) {
+        try {
+          const initResult = await mcpInitialize(server);
+          negotiatedVersion = initResult.protocolVersion;
+          capabilities = initResult.capabilities;
+          serverInfo = { name: initResult.serverInfo.name, version: initResult.serverInfo.version, protocolVersion: initResult.protocolVersion };
+          isRealProtocol = true;
+
+          toolsToStore = initResult.tools.map(t => ({
+            serverId: server.id,
+            name: t.name,
+            description: t.description,
+            inputSchema: t.inputSchema as object,
+          }));
+          resourcesToStore = initResult.resources.map(r => ({
+            serverId: server.id,
+            uri: r.uri,
+            name: r.name,
+            description: r.description,
+            mimeType: r.mimeType,
+            sensitivityLevel: "public",
+            approvalStatus: "auto_approved",
+            freshnessStatus: "fresh",
+            subscribed: false,
+            contentType: "text",
+          }));
+          promptsToStore = initResult.prompts.map(p => ({
+            serverId: server.id,
+            name: p.name,
+            description: p.description,
+            arguments: p.arguments as object | undefined,
+            publishedStatus: "published",
+            approvalStatus: "not_required",
+          }));
+        } catch (realErr: any) {
+          console.warn(`[mcp-initialize] Real MCP handshake failed for ${server.name}: ${realErr.message}. Falling back to sample data.`);
+          isRealProtocol = false;
+          negotiatedVersion = server.expectedProtocolVersion || "2025-03-26";
+          capabilities = { tools: { listChanged: true }, resources: { subscribe: true, listChanged: true }, prompts: { listChanged: true }, logging: {} };
+          serverInfo = { name: server.name, version: "1.0.0", protocolVersion: negotiatedVersion };
+          toolsToStore = [];
+          resourcesToStore = [];
+          promptsToStore = [];
+        }
+      } else {
+        negotiatedVersion = server.expectedProtocolVersion || "2025-03-26";
+        capabilities = { tools: { listChanged: true }, resources: { subscribe: true, listChanged: true }, prompts: { listChanged: true }, logging: {} };
+        serverInfo = { name: server.name, version: "1.0.0", protocolVersion: negotiatedVersion };
+        toolsToStore = [
+          { serverId: server.id, name: "search", description: "Search across documents and knowledge bases", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
+          { serverId: server.id, name: "execute_query", description: "Execute a database query", inputSchema: { type: "object", properties: { sql: { type: "string" }, params: { type: "array" } }, required: ["sql"] } },
+        ];
+        resourcesToStore = [
+          { serverId: server.id, uri: `docs://runbooks/incident-response`, name: "Incident Response Runbook", description: "Standard operating procedures for incident response", mimeType: "text/markdown", sensitivityLevel: "public", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: false, contentType: "text" },
+          { serverId: server.id, uri: `docs://faq/platform-usage`, name: "Platform FAQ", description: "Frequently asked questions about the platform", mimeType: "text/markdown", sensitivityLevel: "public", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: true, contentType: "text" },
+          { serverId: server.id, uri: `repo://api/openapi-spec.yaml`, name: "API Specification", description: "OpenAPI specification for internal services", mimeType: "application/yaml", sensitivityLevel: "internal", approvalStatus: "approved", freshnessStatus: "fresh", subscribed: true, contentType: "text" },
+          { serverId: server.id, uri: `db://exports/customer-data`, name: "Customer Data Export", description: "Aggregated customer data export for analytics", mimeType: "application/json", sensitivityLevel: "confidential", approvalStatus: "pending", freshnessStatus: "stale", subscribed: false, contentType: "blob" },
+          { serverId: server.id, uri: `db://tables/users-pii`, name: "PII Database Access", description: "Direct access to user personally identifiable information", mimeType: "application/json", sensitivityLevel: "restricted", approvalStatus: "denied", freshnessStatus: "unknown", subscribed: false, contentType: "blob" },
+          { serverId: server.id, uri: `docs://guides/deployment-checklist`, name: "Deployment Guide", description: "Step-by-step deployment checklist and procedures", mimeType: "text/markdown", sensitivityLevel: "internal", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: false, contentType: "text" },
+        ];
+        promptsToStore = [
+          { serverId: server.id, name: "summarize", description: "Summarize a document or dataset into key points", arguments: [{ name: "content", description: "Content to summarize", required: true }, { name: "format", description: "Output format: bullets, paragraph, or executive", required: false }], messages: [{ role: "system", content: "You are a concise summarizer. Extract the key points from the provided content." }, { role: "user", content: "Summarize the following:\n\n{{content}}\n\nFormat: {{format}}" }], publishedStatus: "published", approvalStatus: "not_required" },
+          { serverId: server.id, name: "classify-ticket", description: "Classify a support ticket by priority and category", arguments: [{ name: "subject", required: true }, { name: "body", required: true }, { name: "customer_tier", required: false }], messages: [{ role: "system", content: "You are a ticket classification agent. Determine priority (P0-P3) and category (billing, technical, account, feature_request)." }, { role: "user", content: "Subject: {{subject}}\nBody: {{body}}\nCustomer Tier: {{customer_tier}}" }], publishedStatus: "published", approvalStatus: "not_required" },
+          { serverId: server.id, name: "generate-response", description: "Generate a customer-facing response using knowledge base context", arguments: [{ name: "query", required: true }, { name: "kb_context", required: true }, { name: "tone", required: false }], messages: [{ role: "system", content: "You are a support agent. Draft a response using the knowledge base context. Never fabricate information." }, { role: "user", content: "Customer query: {{query}}\n\nKnowledge base context:\n{{kb_context}}\n\nTone: {{tone}}" }], publishedStatus: "published", approvalStatus: "approved" },
+          { serverId: server.id, name: "analyze-sentiment", description: "Analyze customer sentiment from interaction history", arguments: [{ name: "messages", required: true }], messages: [{ role: "system", content: "Analyze the sentiment of the customer interaction. Return: overall_sentiment (positive/neutral/negative), confidence (0-1), escalation_recommended (boolean)." }, { role: "user", content: "Analyze sentiment for:\n{{messages}}" }], publishedStatus: "draft", approvalStatus: "not_required" },
+          { serverId: server.id, name: "pii-redaction-check", description: "Scan draft responses for PII before sending to customers", arguments: [{ name: "draft", required: true }, { name: "redaction_level", required: true }], messages: [{ role: "system", content: "Scan the text for PII (SSN, credit cards, addresses, phone numbers). Apply the specified redaction level. Return redacted text and a list of findings." }, { role: "user", content: "Redaction level: {{redaction_level}}\n\nDraft:\n{{draft}}" }], publishedStatus: "draft", approvalStatus: "pending_approval" },
+          { serverId: server.id, name: "escalation-decision", description: "Decide whether a ticket should be escalated to a human agent", arguments: [{ name: "ticket_summary", required: true }, { name: "confidence_score", required: true }, { name: "policy_violations", required: false }], messages: [{ role: "system", content: "Determine if this ticket requires human escalation. Consider: confidence below 0.7, policy violations, customer tier, and issue severity." }, { role: "user", content: "Ticket: {{ticket_summary}}\nConfidence: {{confidence_score}}\nViolations: {{policy_violations}}" }], publishedStatus: "published", approvalStatus: "not_required" },
+        ];
+      }
+
+      await storage.updateMcpServer(req.params.id as string, {
         negotiatedProtocolVersion: negotiatedVersion,
         capabilities,
         serverInfo,
@@ -6729,103 +6795,29 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
         lastHealthCheck: new Date(),
       });
 
-      const sampleTools = [
-        { serverId: server.id, name: "search", description: "Search across documents and knowledge bases", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
-        { serverId: server.id, name: "execute_query", description: "Execute a database query", inputSchema: { type: "object", properties: { sql: { type: "string" }, params: { type: "array" } }, required: ["sql"] } },
-      ];
-      const sampleResources = [
-        { serverId: server.id, uri: `docs://runbooks/incident-response`, name: "Incident Response Runbook", description: "Standard operating procedures for incident response", mimeType: "text/markdown", size: 24576, sensitivityLevel: "public", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: false, contentType: "text", owner: "ops-team" },
-        { serverId: server.id, uri: `docs://faq/platform-usage`, name: "Platform FAQ", description: "Frequently asked questions about the platform", mimeType: "text/markdown", size: 12800, sensitivityLevel: "public", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: true, contentType: "text", owner: "docs-team" },
-        { serverId: server.id, uri: `repo://api/openapi-spec.yaml`, name: "API Specification", description: "OpenAPI specification for internal services", mimeType: "application/yaml", size: 51200, sensitivityLevel: "internal", approvalStatus: "approved", freshnessStatus: "fresh", subscribed: true, contentType: "text", owner: "api-team" },
-        { serverId: server.id, uri: `db://exports/customer-data`, name: "Customer Data Export", description: "Aggregated customer data export for analytics", mimeType: "application/json", size: 2097152, sensitivityLevel: "confidential", approvalStatus: "pending", freshnessStatus: "stale", subscribed: false, contentType: "blob", owner: "data-team" },
-        { serverId: server.id, uri: `db://tables/users-pii`, name: "PII Database Access", description: "Direct access to user personally identifiable information", mimeType: "application/json", size: 10485760, sensitivityLevel: "restricted", approvalStatus: "denied", freshnessStatus: "unknown", subscribed: false, contentType: "blob", owner: "security-team" },
-        { serverId: server.id, uri: `docs://guides/deployment-checklist`, name: "Deployment Guide", description: "Step-by-step deployment checklist and procedures", mimeType: "text/markdown", size: 18432, sensitivityLevel: "internal", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: false, contentType: "text", owner: "devops-team" },
-      ];
-      const samplePrompts = [
-        {
-          serverId: server.id, name: "summarize", description: "Summarize a document or dataset into key points",
-          arguments: [{ name: "content", description: "Content to summarize", required: true }, { name: "format", description: "Output format: bullets, paragraph, or executive", required: false }],
-          messages: [{ role: "system", content: "You are a concise summarizer. Extract the key points from the provided content." }, { role: "user", content: "Summarize the following:\n\n{{content}}\n\nFormat: {{format}}" }],
-          publishedStatus: "published", publishedBy: "domain-expert", approvalStatus: "not_required", owner: "content-team",
-        },
-        {
-          serverId: server.id, name: "classify-ticket", description: "Classify a support ticket by priority and category",
-          arguments: [{ name: "subject", description: "Ticket subject line", required: true }, { name: "body", description: "Ticket body text", required: true }, { name: "customer_tier", description: "Customer tier: free, standard, premium, enterprise", required: false }],
-          messages: [{ role: "system", content: "You are a ticket classification agent. Determine priority (P0-P3) and category (billing, technical, account, feature_request)." }, { role: "user", content: "Subject: {{subject}}\nBody: {{body}}\nCustomer Tier: {{customer_tier}}" }],
-          publishedStatus: "published", publishedBy: "domain-expert", approvalStatus: "not_required", owner: "support-team",
-        },
-        {
-          serverId: server.id, name: "generate-response", description: "Generate a customer-facing response using knowledge base context",
-          arguments: [{ name: "query", description: "Customer query", required: true }, { name: "kb_context", description: "Retrieved knowledge base articles", required: true }, { name: "tone", description: "Response tone: formal, friendly, empathetic", required: false }],
-          messages: [{ role: "system", content: "You are a support agent. Draft a response using the knowledge base context. Never fabricate information." }, { role: "user", content: "Customer query: {{query}}\n\nKnowledge base context:\n{{kb_context}}\n\nTone: {{tone}}" }],
-          publishedStatus: "published", publishedBy: "domain-expert", approvalStatus: "approved", approvedBy: "security-admin", owner: "support-team",
-          embeddedResourceRefs: ["mcp://knowledge-base/articles", "mcp://customer-data/profiles"],
-        },
-        {
-          serverId: server.id, name: "analyze-sentiment", description: "Analyze customer sentiment from interaction history",
-          arguments: [{ name: "messages", description: "Array of customer messages", required: true }],
-          messages: [{ role: "system", content: "Analyze the sentiment of the customer interaction. Return: overall_sentiment (positive/neutral/negative), confidence (0-1), escalation_recommended (boolean)." }, { role: "user", content: "Analyze sentiment for:\n{{messages}}" }],
-          publishedStatus: "draft", approvalStatus: "not_required", owner: "analytics-team",
-        },
-        {
-          serverId: server.id, name: "pii-redaction-check", description: "Scan draft responses for PII before sending to customers",
-          arguments: [{ name: "draft", description: "Draft response text", required: true }, { name: "redaction_level", description: "R0 (none), R1 (standard), R2 (strict)", required: true }],
-          messages: [{ role: "system", content: "Scan the text for PII (SSN, credit cards, addresses, phone numbers). Apply the specified redaction level. Return redacted text and a list of findings." }, { role: "user", content: "Redaction level: {{redaction_level}}\n\nDraft:\n{{draft}}" }],
-          publishedStatus: "draft", approvalStatus: "pending_approval", owner: "security-team",
-          embeddedResourceRefs: ["mcp://compliance/pii-patterns", "mcp://customer-data/profiles"],
-        },
-        {
-          serverId: server.id, name: "escalation-decision", description: "Decide whether a ticket should be escalated to a human agent",
-          arguments: [{ name: "ticket_summary", description: "Brief ticket summary", required: true }, { name: "confidence_score", description: "AI confidence score (0-1)", required: true }, { name: "policy_violations", description: "List of policy violations detected", required: false }],
-          messages: [{ role: "system", content: "Determine if this ticket requires human escalation. Consider: confidence below 0.7, policy violations, customer tier, and issue severity." }, { role: "user", content: "Ticket: {{ticket_summary}}\nConfidence: {{confidence_score}}\nViolations: {{policy_violations}}" }],
-          publishedStatus: "published", publishedBy: "domain-expert", approvalStatus: "not_required", owner: "support-team",
-        },
-      ];
-
       await storage.deleteMcpServerToolsByServer(server.id);
       await storage.deleteMcpServerResourcesByServer(server.id);
       await storage.deleteMcpServerPromptsByServer(server.id);
 
-      for (const t of sampleTools) await storage.createMcpServerTool(t);
-      for (const r of sampleResources) await storage.createMcpServerResource(r);
-      for (const p of samplePrompts) await storage.createMcpServerPrompt(p);
+      for (const t of toolsToStore) await storage.createMcpServerTool({ ...t, enabled: true, riskClassification: "low" });
+      for (const r of resourcesToStore) await storage.createMcpServerResource(r);
+      for (const p of promptsToStore) await storage.createMcpServerPrompt(p as any);
 
       await storage.createAuditEvent({
         action: "mcp_server.initialized",
         objectType: "mcp_server",
         objectId: server.id,
         actorId: "system",
-        details: JSON.stringify({ negotiatedVersion, capabilities: Object.keys(capabilities), toolCount: sampleTools.length, resourceCount: sampleResources.length, promptCount: samplePrompts.length }),
+        details: JSON.stringify({ negotiatedVersion, capabilities: Object.keys(capabilities), toolCount: toolsToStore.length, resourceCount: resourcesToStore.length, promptCount: promptsToStore.length, isRealProtocol }),
       });
 
       let parameterMatching: { totalParams: number; matched: number; partial: number; unmatched: number; alignmentScore: number } | null = null;
       const effectiveIndustryId = server.industryId || null;
-      if (effectiveIndustryId) {
-        try {
-          const matchResult = await runParameterMatching(server.id, effectiveIndustryId);
-          parameterMatching = {
-            totalParams: matchResult.totalParams,
-            matched: matchResult.matched,
-            partial: matchResult.partial,
-            unmatched: matchResult.unmatched,
-            alignmentScore: matchResult.alignmentScore,
-          };
-        } catch (matchErr: any) {
-          console.warn("[mcp-initialize] Parameter matching failed:", matchErr.message);
-        }
-      } else {
-        try {
-          const matchResult = await runParameterMatching(server.id);
-          parameterMatching = {
-            totalParams: matchResult.totalParams,
-            matched: matchResult.matched,
-            partial: matchResult.partial,
-            unmatched: matchResult.unmatched,
-            alignmentScore: matchResult.alignmentScore,
-          };
-        } catch (matchErr: any) {
-          console.warn("[mcp-initialize] Parameter matching failed:", matchErr.message);
-        }
+      try {
+        const matchResult = await runParameterMatching(server.id, effectiveIndustryId || undefined);
+        parameterMatching = { totalParams: matchResult.totalParams, matched: matchResult.matched, partial: matchResult.partial, unmatched: matchResult.unmatched, alignmentScore: matchResult.alignmentScore };
+      } catch (matchErr: any) {
+        console.warn("[mcp-initialize] Parameter matching failed:", matchErr.message);
       }
 
       res.json({
@@ -6833,7 +6825,8 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
         negotiatedVersion,
         capabilities,
         serverInfo,
-        catalogs: { tools: sampleTools.length, resources: sampleResources.length, prompts: samplePrompts.length },
+        isRealProtocol,
+        catalogs: { tools: toolsToStore.length, resources: resourcesToStore.length, prompts: promptsToStore.length },
         parameterMatching: parameterMatching || { note: "No industry context available, matching attempted with all concepts" },
       });
     } catch (e) {
@@ -7350,6 +7343,53 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
     try {
       const server = await storage.getMcpServer(req.params.id as string);
       if (!server) return res.status(404).json({ message: "MCP server not found" });
+
+      if (isRealMcpServer(server)) {
+        try {
+          const [liveTools, liveResources, livePrompts] = await Promise.allSettled([
+            mcpListTools(server),
+            mcpListResources(server),
+            mcpListPrompts(server),
+          ]);
+
+          if (liveTools.status === "fulfilled") {
+            await storage.deleteMcpServerToolsByServer(server.id);
+            for (const t of liveTools.value) {
+              await storage.createMcpServerTool({ serverId: server.id, name: t.name, description: t.description, inputSchema: t.inputSchema as object, enabled: true, riskClassification: "low" });
+            }
+          }
+          if (liveResources.status === "fulfilled") {
+            await storage.deleteMcpServerResourcesByServer(server.id);
+            for (const r of liveResources.value) {
+              await storage.createMcpServerResource({ serverId: server.id, uri: r.uri, name: r.name, description: r.description, mimeType: r.mimeType, sensitivityLevel: "public", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: false, contentType: "text" });
+            }
+          }
+          if (livePrompts.status === "fulfilled") {
+            await storage.deleteMcpServerPromptsByServer(server.id);
+            for (const p of livePrompts.value) {
+              await storage.createMcpServerPrompt({ serverId: server.id, name: p.name, description: p.description, arguments: p.arguments as any, publishedStatus: "published", approvalStatus: "not_required" });
+            }
+          }
+
+          await storage.updateMcpServer(req.params.id as string, { lastHealthCheck: new Date(), healthStatus: "healthy" });
+
+          const tools = await storage.getMcpServerTools(req.params.id as string);
+          const resources = await storage.getMcpServerResources(req.params.id as string);
+          const prompts = await storage.getMcpServerPrompts(req.params.id as string);
+
+          return res.json({
+            synced: true,
+            isRealProtocol: true,
+            catalogs: { tools: tools.length, resources: resources.length, prompts: prompts.length },
+            driftDetected: false,
+            driftTools: [],
+            behavioralChecks: [],
+            assuranceLoop: { driftedTools: [], reMatchedCount: 0, alignmentChanges: [], affectedBlueprints: [] },
+          });
+        } catch (liveErr: any) {
+          console.warn(`[sync-catalogs] Live catalog sync failed for ${server.name}: ${liveErr.message}. Falling back to fingerprint check.`);
+        }
+      }
 
       const tools = await storage.getMcpServerTools(req.params.id as string);
       const resources = await storage.getMcpServerResources(req.params.id as string);

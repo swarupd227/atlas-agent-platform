@@ -6,6 +6,7 @@ import { createHash } from "crypto";
 import { sql } from "drizzle-orm";
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import { getProvider, completeWithFallback, buildCanonicalTools, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
+import { isRealMcpServer, mcpListTools, mcpCallTool as mcpSdkCallTool } from "./mcp-client";
 
 export function canonicalJsonStringify(obj: any): string {
   if (obj === null || obj === undefined) return JSON.stringify(obj);
@@ -618,6 +619,7 @@ interface AvailableTool {
   toolInputSchema: any;
   toolEndpoint?: string;
   toolMethod?: string;
+  isRealMcp?: boolean;
 }
 
 async function gatherAvailableTools(mcpServerIds: string[]): Promise<AvailableTool[]> {
@@ -625,6 +627,27 @@ async function gatherAvailableTools(mcpServerIds: string[]): Promise<AvailableTo
   for (const serverId of mcpServerIds) {
     const server = await storage.getMcpServer(serverId);
     if (!server || !server.url) continue;
+
+    if (isRealMcpServer(server)) {
+      try {
+        const liveDefs = await mcpListTools(server);
+        for (const def of liveDefs) {
+          availableTools.push({
+            serverId,
+            serverName: server.name,
+            serverUrl: server.url,
+            toolName: def.name,
+            toolDescription: def.description,
+            toolInputSchema: def.inputSchema,
+            isRealMcp: true,
+          });
+        }
+        continue;
+      } catch (err: any) {
+        console.warn(`[gatherAvailableTools] Live tools/list failed for ${server.name}, falling back to DB cache: ${err.message}`);
+      }
+    }
+
     const tools = await storage.getMcpServerTools(serverId);
     for (const tool of tools) {
       const ann = (tool.annotations && typeof tool.annotations === "object") ? tool.annotations as Record<string, any> : {};
@@ -637,6 +660,7 @@ async function gatherAvailableTools(mcpServerIds: string[]): Promise<AvailableTo
         toolInputSchema: tool.inputSchema || {},
         toolEndpoint: ann.endpoint || undefined,
         toolMethod: ann.method || undefined,
+        isRealMcp: false,
       });
     }
   }
@@ -657,6 +681,13 @@ function buildOpenAITools(availableTools: AvailableTool[]): OpenAI.ChatCompletio
 }
 
 async function callMcpTool(tool: AvailableTool, args: Record<string, any>): Promise<any> {
+  if (tool.isRealMcp) {
+    const server = await storage.getMcpServer(tool.serverId);
+    if (server) {
+      return mcpSdkCallTool(server, tool.toolName, args);
+    }
+  }
+
   const baseUrl = tool.serverUrl.replace(/\/$/, "");
   let endpointPath = tool.toolEndpoint ? `/${tool.toolEndpoint.replace(/^\//, "")}` : "";
   const method = (tool.toolMethod || "GET").toUpperCase();
