@@ -1,0 +1,12 @@
+{
+  "returnsAgent": {
+    "id": "d9a2e568-7a29-4376-a7fd-3580a2c012b0",
+    "evalDatasetId": "31122174-e48e-45be-909a-ffe0c28651ff",
+    "evalSuiteId": "592113e2-3497-4111-b65d-0dd2ce375e47"
+  },
+  "contractAgent": {
+    "id": "ffcce490-9c78-4130-a128-ded11a1b2d19",
+    "evalDatasetId": "30a15e22-257d-4dd1-a97e-3e0b582db3a0",
+    "evalSuiteId": "06ce7cc8-950f-457c-9594-7e1f815c85e8"
+  }
+}

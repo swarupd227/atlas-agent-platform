@@ -1,0 +1,165 @@
+Returns & Refund Processing Agent
+OTC-AGT-010  |  Category: Post-Sale
+11.1 Description
+Manages the complete reverse logistics process from return authorization through refund or replacement. Validates return eligibility, generates return labels, tracks return shipments, triggers inspection and restocking, and processes refunds or exchanges. Ensures consistent application of return policies while maintaining customer satisfaction.
+11.2 Workflow Steps
+99.	1. Receive return request (customer portal, call center, email, in-store)
+100.	2. Validate return eligibility: window, condition, product type, warranty status
+101.	3. Determine return type: refund, exchange, repair, warranty claim
+102.	4. Generate RMA (Return Merchandise Authorization) and return shipping label
+103.	5. Track return shipment to receiving facility
+104.	6. Receive and inspect returned goods (condition, completeness, damage)
+105.	7. Route to appropriate disposition: restock, refurbish, scrap, vendor return
+106.	8. Process financial resolution: refund, credit memo, exchange order
+107.	9. Update inventory for restocked items
+108.	10. Communicate resolution status to customer at each stage
+109.	11. Analyze return patterns for product quality and process improvements
+
+11.3 Common Ontology
+The following entities and attributes form the shared data model referenced by this agent:
+Entity	Key Attributes
+RMA	RMA number, type, status, reason code, original order reference
+Return Reason	defective, wrong item, not as described, changed mind, damaged in transit
+Inspection	condition assessment, defect type, photos, disposition recommendation
+Disposition	restock, refurbish, scrap, vendor return, customer keep
+Refund	method (original payment, store credit, check), amount, processing time
+Return Policy	window (days), conditions, exceptions, restocking fee
+
+11.4 Claude Agent Skills
+The following skills should be developed and made available as context for this agent:
+Skill Name	Description
+Return Eligibility Validation Skill	Checks policy rules, warranty status, and order history
+RMA Generation Skill	Creates authorization, generates labels, selects return routing
+Inspection Guidance Skill	Provides inspection checklists and disposition recommendations
+Refund Calculation Skill	Computes refund amount including restocking fees, shipping, and tax adjustments
+Return Pattern Analysis Skill	Identifies products and suppliers with high return rates
+Customer Communication Skill	Sends return status updates and resolution confirmations
+
+11.5 Eval Dataset
+Recommended evaluation data and benchmarks for validating agent accuracy and performance:
+•	Historical returns with eligibility decisions, inspection outcomes, and refund amounts
+•	Policy edge cases: borderline return windows, grey-area condition assessments
+•	Refund accuracy: correct calculation of partial refunds, restocking fees, tax adjustments
+•	Disposition accuracy: appropriate routing of returned goods
+•	Customer satisfaction: NPS scores for returns experience
+•	Processing time benchmarks: RMA to refund cycle time targets
+
+11.6 Production Runbooks
+Operational procedures for handling common issues and failure scenarios:
+Scenario	Procedure
+High-Volume Return Event (product recall, seasonal returns)	Surge capacity, expedited processing
+Fraudulent Return Detection	Investigation procedure, account flagging, escalation
+Refund Processing Failure	Manual refund procedure, customer notification, retry logic
+Damaged in Transit Claim	Carrier claim procedure, customer resolution options
+Cross-Border Return	Customs considerations, duty refund processing
+System Outage During Return Season	Manual RMA process, offline tracking
+
+11.7 Regulatory Compliance & Policies
+Applicable regulations and compliance requirements:
+•	Consumer Protection: State/federal return policy requirements, cooling-off periods
+•	Credit Card Regulations: Refund processing time requirements (Regulation Z)
+•	Environmental: Proper disposal of hazardous returned products (WEEE, battery disposal)
+•	Tax: Tax refund calculations, nexus considerations for returns
+•	Product Safety: Handling and reporting of defective product returns (CPSC)
+•	Data Privacy: Erasure of customer data from returned devices
+
+11.8 Knowledgebase Reference
+Documents and data sources this agent needs access to:
+•	Return policy documents by product category, channel, and region
+•	Inspection checklists and condition grading guides
+•	Disposition decision trees by product type and condition
+•	Refund processing procedures by payment method
+•	Return shipping logistics: carrier options, label generation, routing
+•	Fraud indicators and investigation procedures
+
+11.9 Knowledge Graph
+Entity-relationship mappings showing how data entities connect within this agent's domain:
+RMA -[FOR_ORDER]-> Original Order -[CONTAINS]-> Product
+Return -[REASON]-> Return Reason -[INDICATES]-> Quality Issue / Customer Preference
+Returned Item -[INSPECTED_AS]-> Condition -[ROUTED_TO]-> Disposition
+Refund -[ISSUED_FOR]-> RMA -[CREDITED_TO]-> Customer Account / Payment Method
+Product -[HAS_RETURN_RATE]-> Return Metric -[FLAGGED_FOR]-> Quality Review
+Return Policy -[APPLIES_TO]-> Product Category -[IN_REGION]-> Geography
+ 
+12. Contract & Pricing Compliance Agent
+OTC-AGT-011  |  Category: Governance
+12.1 Description
+Ensures all transactions comply with negotiated contract terms, pricing agreements, and trade policies. Monitors for pricing deviations, unauthorized discounts, expired contracts, and regulatory pricing violations. Provides audit-ready documentation and alerts for contract renewals.
+12.2 Workflow Steps
+110.	1. Ingest new or updated contracts, pricing agreements, and trade policies
+111.	2. Parse and extract key terms: pricing tiers, volume commitments, rebate schedules, SLAs
+112.	3. Monitor orders and invoices for contract compliance in real-time
+113.	4. Detect deviations: unauthorized pricing, exceeded discount limits, wrong terms applied
+114.	5. Flag non-compliant transactions for review and correction
+115.	6. Track volume commitments against actuals for rebate and tier qualification
+116.	7. Calculate earned rebates and accruals at period-end
+117.	8. Alert stakeholders on approaching contract expirations and renewal windows
+118.	9. Generate compliance audit reports with exception details
+119.	10. Maintain version-controlled contract repository with searchable terms
+120.	11. Support contract negotiation with analytics on historical performance
+
+12.3 Common Ontology
+The following entities and attributes form the shared data model referenced by this agent:
+Entity	Key Attributes
+Contract	contract ID, type, parties, effective dates, status, version
+Pricing Agreement	price list, tier structure, volume breaks, currency, validity
+Rebate	type (volume, growth, mix), calculation method, accrual, settlement
+Compliance Check	rule, result (pass/fail/warning), evidence, remediation
+Volume Commitment	target, actual, attainment %, tier qualification
+Term	clause type, text, obligations, penalties, SLA metrics
+
+12.4 Claude Agent Skills
+The following skills should be developed and made available as context for this agent:
+Skill Name	Description
+Contract Parsing Skill	NLP extraction of pricing terms, obligations, and conditions from contracts
+Real-Time Pricing Compliance Skill	Validates every transaction against applicable agreements
+Rebate Calculation Skill	Computes earned rebates based on actual volumes and agreement terms
+Contract Expiration Monitoring Skill	Alerts and workflows for upcoming renewals
+Audit Report Generation Skill	Produces compliance reports with exception details and trends
+Negotiation Analytics Skill	Historical performance data to support contract negotiations
+
+12.5 Eval Dataset
+Recommended evaluation data and benchmarks for validating agent accuracy and performance:
+•	Historical transactions with known compliance outcomes (pass/fail with reasons)
+•	Rebate calculations: computed vs. actual settled amounts
+•	Contract parsing accuracy: extracted terms vs. manually reviewed terms
+•	Pricing deviation detection: known unauthorized discounts and overrides
+•	Audit scenarios: simulated audit queries with expected documentation
+•	Volume commitment tracking accuracy against final period-end actuals
+
+12.6 Production Runbooks
+Operational procedures for handling common issues and failure scenarios:
+Scenario	Procedure
+Pricing Override Alert	Investigation procedure, authorization verification, correction workflow
+Contract Data Load Failure	Validation checks, manual entry fallback, reconciliation
+Mass Pricing Error	Impact assessment, correction options, customer notification
+Rebate Accrual Discrepancy	Investigation checklist, adjustment procedure
+Contract Expiration Without Renewal	Default pricing activation, sales notification
+Regulatory Pricing Audit	Documentation assembly, response procedures, timeline management
+
+12.7 Regulatory Compliance & Policies
+Applicable regulations and compliance requirements:
+•	Robinson-Patman Act: Price discrimination monitoring across similar customers
+•	Government Contract Pricing (FAR/DFARS): Compliance with federal pricing rules
+•	Anti-Kickback/Anti-Bribery: Monitoring for disguised payments through pricing
+•	Revenue Recognition: Contract modification accounting under ASC 606
+•	Trade Promotion Compliance: Regulatory requirements for rebates and promotions
+•	Transfer Pricing: Inter-company pricing compliance for multinational operations
+
+12.8 Knowledgebase Reference
+Documents and data sources this agent needs access to:
+•	Active contract repository with searchable terms and conditions
+•	Pricing policy manual: discount authority, override procedures, escalation matrix
+•	Rebate program documentation: calculation methods, settlement procedures
+•	Regulatory pricing guidelines by industry and jurisdiction
+•	Historical compliance audit reports and findings
+•	Contract templates and negotiation playbooks
+
+12.9 Knowledge Graph
+Entity-relationship mappings showing how data entities connect within this agent's domain:
+Contract -[BETWEEN]-> Company AND Customer -[SPECIFIES]-> Pricing Agreement
+Pricing Agreement -[CONTAINS]-> Price Tier -[QUALIFIED_BY]-> Volume Commitment
+Order -[CHECKED_AGAINST]-> Contract Terms -[RESULT]-> Compliance Status
+Rebate Program -[EARNED_BY]-> Customer -[CALCULATED_ON]-> Transaction Volume
+Contract -[VERSION]-> Amendment -[EFFECTIVE_FROM]-> Date
+Pricing Deviation -[DETECTED_ON]-> Transaction -[ESCALATED_TO]-> Pricing Authority
