@@ -42,19 +42,23 @@ export function isRealMcpServer(server: Pick<McpServer, "url" | "transportType">
 interface CachedConnection {
   client: Client;
   transport: StreamableHTTPClientTransport;
+  serverUrl: string;
 }
 
 const connectionCache = new Map<string, CachedConnection>();
 
 async function getConnection(serverId: string, serverUrl: string): Promise<CachedConnection> {
   const existing = connectionCache.get(serverId);
-  if (existing) return existing;
+  if (existing) {
+    if (existing.serverUrl === serverUrl) return existing;
+    evictConnection(serverId);
+  }
 
   const transport = new StreamableHTTPClientTransport(new URL(serverUrl));
   const client = new Client({ name: "atlas-platform", version: "1.0.0" });
   await client.connect(transport);
 
-  const conn: CachedConnection = { client, transport };
+  const conn: CachedConnection = { client, transport, serverUrl };
   connectionCache.set(serverId, conn);
   return conn;
 }

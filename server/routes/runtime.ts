@@ -7354,23 +7354,44 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
             mcpListPrompts(server),
           ]);
 
+          const catalogErrors: string[] = [];
+
           if (liveTools.status === "fulfilled") {
             await storage.deleteMcpServerToolsByServer(server.id);
             for (const t of liveTools.value) {
               await storage.createMcpServerTool({ serverId: server.id, name: t.name, description: t.description, inputSchema: t.inputSchema as object, enabled: true, riskClassification: "low" });
             }
+          } else {
+            catalogErrors.push(`tools: ${liveTools.reason?.message ?? "unknown error"}`);
           }
+
           if (liveResources.status === "fulfilled") {
             await storage.deleteMcpServerResourcesByServer(server.id);
             for (const r of liveResources.value) {
               await storage.createMcpServerResource({ serverId: server.id, uri: r.uri, name: r.name, description: r.description, mimeType: r.mimeType, sensitivityLevel: "public", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: false, contentType: "text" });
             }
+          } else {
+            catalogErrors.push(`resources: ${liveResources.reason?.message ?? "unknown error"}`);
           }
+
           if (livePrompts.status === "fulfilled") {
             await storage.deleteMcpServerPromptsByServer(server.id);
             for (const p of livePrompts.value) {
               await storage.createMcpServerPrompt({ serverId: server.id, name: p.name, description: p.description, arguments: JSON.parse(JSON.stringify(p.arguments ?? null)), publishedStatus: "published", approvalStatus: "not_required" });
             }
+          } else {
+            catalogErrors.push(`prompts: ${livePrompts.reason?.message ?? "unknown error"}`);
+          }
+
+          if (catalogErrors.length > 0) {
+            const allFailed = catalogErrors.length === 3;
+            await storage.updateMcpServer(req.params.id as string, { lastHealthCheck: new Date(), healthStatus: allFailed ? "degraded" : "healthy" });
+            return res.status(allFailed ? 502 : 207).json({
+              synced: false,
+              isRealProtocol: true,
+              partialSync: !allFailed,
+              catalogErrors,
+            });
           }
 
           await storage.updateMcpServer(req.params.id as string, { lastHealthCheck: new Date(), healthStatus: "healthy" });
