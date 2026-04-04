@@ -68,6 +68,36 @@ export async function runStartupMigrations() {
             FOREIGN KEY (agent_id) REFERENCES agents(id);
         END IF;
       END $$;
+      ALTER TABLE aar_configs ADD COLUMN IF NOT EXISTS allowed_tools JSONB;
+      ALTER TABLE aar_configs ADD COLUMN IF NOT EXISTS denied_tools JSONB;
+      ALTER TABLE aar_configs ADD COLUMN IF NOT EXISTS require_approval_tools JSONB;
+      ALTER TABLE aar_configs ADD COLUMN IF NOT EXISTS rate_limits JSONB;
+      CREATE TABLE IF NOT EXISTS aar_action_decisions (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        agent_id VARCHAR NOT NULL REFERENCES agents(id),
+        org_id VARCHAR,
+        tool_name TEXT NOT NULL,
+        server_id VARCHAR,
+        decision TEXT NOT NULL,
+        reason TEXT,
+        policies_evaluated JSONB,
+        rules_triggered JSONB,
+        risk_level TEXT,
+        approval_id VARCHAR,
+        evaluation_time_us INTEGER,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_aar_action_decisions_agent_id ON aar_action_decisions(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_aar_action_decisions_created_at ON aar_action_decisions(created_at);
+      CREATE TABLE IF NOT EXISTS aar_agent_state_reports (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        agent_id VARCHAR NOT NULL REFERENCES agents(id),
+        org_id VARCHAR,
+        report_type TEXT NOT NULL DEFAULT 'heartbeat',
+        payload JSONB,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_aar_agent_state_reports_agent_id ON aar_agent_state_reports(agent_id);
     `);
     console.log("[db] Startup migrations complete");
   } catch (err: any) {

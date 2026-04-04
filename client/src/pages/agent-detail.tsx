@@ -737,7 +737,7 @@ function AgentDetailInner() {
     enabled: !!agentId,
   });
   const { data: aarData, refetch: refetchAar } = useQuery<{
-    aarConfig: { id: string; agentId: string; targetPlatform: string; policyBundleVersion: string; lastSyncedAt: string; createdAt: string } | null;
+    aarConfig: { id: string; agentId: string; targetPlatform: string; policyBundleVersion: string; lastSyncedAt: string; createdAt: string; allowedTools: string[] | null; deniedTools: string[] | null; requireApprovalTools: string[] | null; rateLimits: Record<string, unknown> | null } | null;
     modules: Array<{ id: string; name: string; icon: string; responsibility: string; interfaces: string[]; health: { status: string; metricLabel: string; metricValue: string | number; metricSecondary: string; lastHeartbeat: string } }> | null;
     processModel: Array<{ id: string; name: string; role: string; timingLabel: string | null; timingSpec: Record<string, number> | null; status: "running" | "degraded" | "stopped" }> | null;
     policyActions: { block: number; alert: number; log: number } | null;
@@ -760,6 +760,30 @@ function AgentDetailInner() {
       toast({ title: "AAR platform updated" });
     },
     onError: (err: Error) => toast({ title: "Failed to update platform", description: err.message, variant: "destructive" }),
+  });
+
+  const { data: aarDecisionsData, refetch: refetchAarDecisions } = useQuery<{ decisions: Array<{ id: string; toolName: string; decision: string; reason: string | null; riskLevel: string | null; approvalId: string | null; evaluationTimeUs: number | null; createdAt: string }> }>({
+    queryKey: ["/api/agents", agentId, "aar", "decisions"],
+    queryFn: async () => {
+      if (!agentId) return { decisions: [] };
+      const res = await fetch(`/api/agents/${agentId}/aar/decisions?limit=50`);
+      return res.json();
+    },
+    enabled: !!agentId,
+  });
+
+  const [aarAllowedToolsInput, setAarAllowedToolsInput] = useState("");
+  const [aarDeniedToolsInput, setAarDeniedToolsInput] = useState("");
+  const [aarRequireApprovalToolsInput, setAarRequireApprovalToolsInput] = useState("");
+
+  const updateAarConstraintsMutation = useMutation({
+    mutationFn: (data: { allowedTools?: string[]; deniedTools?: string[]; requireApprovalTools?: string[] }) =>
+      apiRequest("PATCH", `/api/agents/${agentId}/aar`, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "aar"] });
+      toast({ title: "AAR constraints updated" });
+    },
+    onError: (err: Error) => toast({ title: "Failed to update constraints", description: err.message, variant: "destructive" }),
   });
 
   const { industry } = useIndustry();
@@ -5611,6 +5635,189 @@ function AgentDetailInner() {
                         </div>
                       ))}
                     </div>
+                  </CardContent>
+                </Card>
+
+                {/* Constraints Panel */}
+                <Card data-testid="aar-constraints-panel">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-xs font-semibold flex items-center gap-1.5">
+                      <Shield className="w-3.5 h-3.5 text-muted-foreground" />
+                      Tool Constraints
+                      <Badge variant="outline" className="text-[10px] ml-auto font-mono">GetConstraints RPC</Badge>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent className="flex flex-col gap-3 pt-0">
+                    <p className="text-[11px] text-muted-foreground leading-snug">
+                      Define which tools this agent can invoke freely, which require approval, and which are blocked. Separate tool names with commas.
+                    </p>
+                    {/* Allowed Tools */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] font-medium flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                        <CheckCircle className="w-3 h-3" />
+                        Allowed Tools (whitelist — empty = allow all)
+                      </label>
+                      <div className="flex gap-1.5">
+                        <Input
+                          className="h-8 text-xs flex-1 font-mono"
+                          placeholder="e.g. search, get_record, list_items"
+                          value={aarAllowedToolsInput !== "" ? aarAllowedToolsInput : (aar.allowedTools ?? []).join(", ")}
+                          onChange={(e) => setAarAllowedToolsInput(e.target.value)}
+                          data-testid="input-aar-allowed-tools"
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 px-2 text-xs"
+                          disabled={updateAarConstraintsMutation.isPending}
+                          onClick={() => {
+                            const tools = aarAllowedToolsInput.split(",").map(t => t.trim()).filter(Boolean);
+                            updateAarConstraintsMutation.mutate({ allowedTools: tools });
+                            setAarAllowedToolsInput("");
+                          }}
+                          data-testid="button-save-aar-allowed-tools"
+                        >
+                          Save
+                        </Button>
+                      </div>
+                    </div>
+                    {/* Denied Tools */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] font-medium flex items-center gap-1 text-red-600 dark:text-red-400">
+                        <XCircle className="w-3 h-3" />
+                        Denied Tools (always blocked)
+                      </label>
+                      <div className="flex gap-1.5">
+                        <Input
+                          className="h-8 text-xs flex-1 font-mono"
+                          placeholder="e.g. delete_record, send_email"
+                          value={aarDeniedToolsInput !== "" ? aarDeniedToolsInput : (aar.deniedTools ?? []).join(", ")}
+                          onChange={(e) => setAarDeniedToolsInput(e.target.value)}
+                          data-testid="input-aar-denied-tools"
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 px-2 text-xs"
+                          disabled={updateAarConstraintsMutation.isPending}
+                          onClick={() => {
+                            const tools = aarDeniedToolsInput.split(",").map(t => t.trim()).filter(Boolean);
+                            updateAarConstraintsMutation.mutate({ deniedTools: tools });
+                            setAarDeniedToolsInput("");
+                          }}
+                          data-testid="button-save-aar-denied-tools"
+                        >
+                          Save
+                        </Button>
+                      </div>
+                    </div>
+                    {/* Require Approval Tools */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] font-medium flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                        <AlertTriangle className="w-3 h-3" />
+                        Require Approval Tools
+                      </label>
+                      <div className="flex gap-1.5">
+                        <Input
+                          className="h-8 text-xs flex-1 font-mono"
+                          placeholder="e.g. wire_transfer, approve_invoice"
+                          value={aarRequireApprovalToolsInput !== "" ? aarRequireApprovalToolsInput : (aar.requireApprovalTools ?? []).join(", ")}
+                          onChange={(e) => setAarRequireApprovalToolsInput(e.target.value)}
+                          data-testid="input-aar-require-approval-tools"
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 px-2 text-xs"
+                          disabled={updateAarConstraintsMutation.isPending}
+                          onClick={() => {
+                            const tools = aarRequireApprovalToolsInput.split(",").map(t => t.trim()).filter(Boolean);
+                            updateAarConstraintsMutation.mutate({ requireApprovalTools: tools });
+                            setAarRequireApprovalToolsInput("");
+                          }}
+                          data-testid="button-save-aar-require-approval-tools"
+                        >
+                          Save
+                        </Button>
+                      </div>
+                    </div>
+                    {/* Summary row */}
+                    {(aar.allowedTools?.length || aar.deniedTools?.length || aar.requireApprovalTools?.length) ? (
+                      <div className="rounded-md bg-muted/40 p-2.5 flex flex-wrap gap-1.5">
+                        {(aar.allowedTools ?? []).map(t => (
+                          <Badge key={t} variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">{t}</Badge>
+                        ))}
+                        {(aar.deniedTools ?? []).map(t => (
+                          <Badge key={t} variant="outline" className="text-[10px] bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20">{t}</Badge>
+                        ))}
+                        {(aar.requireApprovalTools ?? []).map(t => (
+                          <Badge key={t} variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20">{t}</Badge>
+                        ))}
+                      </div>
+                    ) : null}
+                  </CardContent>
+                </Card>
+
+                {/* Action Decisions Log */}
+                <Card data-testid="aar-action-decisions-panel">
+                  <CardHeader className="pb-2">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-xs font-semibold flex items-center gap-1.5">
+                        <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+                        Action Decisions Log
+                        <Badge variant="outline" className="text-[10px] ml-1 font-mono">EvaluateAction RPC</Badge>
+                      </CardTitle>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-2 text-[10px]"
+                        onClick={() => refetchAarDecisions()}
+                        data-testid="button-refresh-aar-decisions"
+                      >
+                        Refresh
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    {(!aarDecisionsData?.decisions || aarDecisionsData.decisions.length === 0) ? (
+                      <div className="px-4 py-6 text-center text-xs text-muted-foreground">
+                        No policy decisions recorded yet. Decisions appear here when the AAR evaluates tool invocations.
+                      </div>
+                    ) : (
+                      <table className="w-full text-xs" data-testid="aar-decisions-table">
+                        <thead>
+                          <tr className="border-b border-border/50">
+                            <th className="px-4 py-1.5 text-left font-medium text-muted-foreground">Decision</th>
+                            <th className="px-4 py-1.5 text-left font-medium text-muted-foreground">Tool</th>
+                            <th className="px-4 py-1.5 text-left font-medium text-muted-foreground hidden md:table-cell">Reason</th>
+                            <th className="px-4 py-1.5 text-left font-medium text-muted-foreground w-28">Time</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {aarDecisionsData.decisions.map((d) => {
+                            const decisionColors: Record<string, string> = {
+                              ALLOW: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
+                              BLOCK: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20",
+                              REQUIRE_APPROVAL: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20",
+                              ALERT_AND_ALLOW: "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20",
+                            };
+                            const colorClass = decisionColors[d.decision] ?? "bg-muted text-muted-foreground border-border";
+                            return (
+                              <tr key={d.id} className="border-b border-border/30 last:border-0 hover:bg-muted/20" data-testid={`aar-decision-row-${d.id}`}>
+                                <td className="px-4 py-2">
+                                  <Badge variant="outline" className={`text-[10px] ${colorClass}`}>{d.decision}</Badge>
+                                </td>
+                                <td className="px-4 py-2 font-mono text-[11px]">{d.toolName}</td>
+                                <td className="px-4 py-2 text-muted-foreground hidden md:table-cell text-[11px] max-w-[240px] truncate">{d.reason ?? "—"}</td>
+                                <td className="px-4 py-2 text-muted-foreground text-[10px]">
+                                  {d.createdAt ? new Date(d.createdAt).toLocaleTimeString() : "—"}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
                   </CardContent>
                 </Card>
               </>

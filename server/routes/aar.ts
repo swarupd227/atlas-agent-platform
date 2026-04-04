@@ -3,6 +3,93 @@ import { storage } from "../storage";
 import { getOrgId } from "../auth";
 import type { AarConfig } from "../../shared/schema";
 
+const PROTO_SERVICE_DEFINITION = `
+syntax = "proto3";
+package atlas.aar.v1;
+
+service AtlasAgentRuntime {
+  rpc EvaluateAction (ActionRequest)      returns (ActionDecision);
+  rpc InvokeTool     (ToolCallRequest)    returns (ToolCallResponse);
+  rpc InvokeToolStream(ToolCallRequest)   returns (stream ToolCallChunk);
+  rpc ReportState    (AgentStateReport)   returns (Ack);
+  rpc GetConstraints (ConstraintQuery)    returns (ConstraintResponse);
+  rpc RecordActions  (ActionBatch)        returns (Ack);
+}
+
+message ActionRequest {
+  string agent_id    = 1;
+  string tool_name   = 2;
+  string server_id   = 3;
+  map<string, string> args = 4;
+  string context_id  = 5;
+}
+
+message ActionDecision {
+  string decision              = 1;
+  string reason                = 2;
+  repeated string policies_evaluated = 3;
+  repeated string rules_triggered    = 4;
+  string risk_level            = 5;
+  string approval_id           = 6;
+  int64  evaluation_time_us    = 7;
+}
+
+message ToolCallRequest {
+  string agent_id    = 1;
+  string tool_name   = 2;
+  string server_id   = 3;
+  map<string, string> args = 4;
+}
+
+message ToolCallResponse {
+  string result              = 1;
+  string provenance_event_id = 2;
+  ActionDecision policy_decision = 3;
+}
+
+message ToolCallChunk {
+  string chunk = 1;
+  bool   done  = 2;
+}
+
+message AgentStateReport {
+  string agent_id     = 1;
+  string report_type  = 2;
+  bytes  payload      = 3;
+}
+
+message Ack {
+  bool   success = 1;
+  string message = 2;
+}
+
+message ConstraintQuery {
+  string agent_id = 1;
+}
+
+message ConstraintResponse {
+  string        autonomy_level          = 1;
+  repeated string allowed_tools         = 2;
+  repeated string denied_tools          = 3;
+  repeated string require_approval_tools= 4;
+  map<string, string> rate_limits       = 5;
+  string policy_bundle_version          = 6;
+  string policy_bundle_timestamp        = 7;
+}
+
+message ActionBatch {
+  string         agent_id = 1;
+  repeated ActionRecord actions = 2;
+}
+
+message ActionRecord {
+  string tool_name   = 1;
+  string decision    = 2;
+  string reason      = 3;
+  string occurred_at = 4;
+}
+`.trim();
+
 const router = Router();
 
 // ─── Module definitions ───────────────────────────────────────────────────────
@@ -247,7 +334,7 @@ function buildPlatformHints(targetPlatform: string) {
   return hints[targetPlatform] ?? { ...base, containerFormat: "Platform-specific", secretStore: "Platform-native vault", iamNote: "Follow your platform's IAM model" };
 }
 
-function buildAarPackage(agentId: string, agentName: string, aarConfig: Pick<AarConfig, "targetPlatform" | "policyBundleVersion" | "lastSyncedAt">) {
+function buildAarPackage(agentId: string, agentName: string, aarConfig: Pick<AarConfig, "targetPlatform" | "policyBundleVersion" | "lastSyncedAt" | "allowedTools" | "deniedTools" | "requireApprovalTools" | "rateLimits">) {
   const modules = buildModuleConfig(agentId, aarConfig.targetPlatform);
   const platformHints = buildPlatformHints(aarConfig.targetPlatform);
 
@@ -314,6 +401,13 @@ function buildAarPackage(agentId: string, agentName: string, aarConfig: Pick<Aar
       provenanceStreamEndpoint: "atlas-telemetry-collector:4318",
       maxOfflineQueueMb: 512,
     },
+    constraintConfig: {
+      allowedTools: (aarConfig.allowedTools as string[] | null) ?? [],
+      deniedTools: (aarConfig.deniedTools as string[] | null) ?? [],
+      requireApprovalTools: (aarConfig.requireApprovalTools as string[] | null) ?? [],
+      rateLimits: (aarConfig.rateLimits as Record<string, unknown> | null) ?? {},
+    },
+    grpcServiceDefinition: PROTO_SERVICE_DEFINITION,
   };
 }
 
@@ -373,10 +467,7 @@ router.patch("/api/agents/:agentId/aar", async (req, res) => {
     const agent = await storage.getAgent(agentId, orgId);
     if (!agent) return res.status(404).json({ error: "Agent not found" });
 
-    const { targetPlatform } = req.body;
-    if (!targetPlatform || typeof targetPlatform !== "string" || targetPlatform.trim().length === 0) {
-      return res.status(400).json({ error: "targetPlatform must be a non-empty string" });
-    }
+    const { targetPlatform, allowedTools, deniedTools, requireApprovalTools, rateLimits } = req.body;
 
     // Only update an existing config; do not create one via PATCH (agent must be deployed first)
     const existing = await storage.getAarConfig(agentId, orgId);
@@ -384,7 +475,20 @@ router.patch("/api/agents/:agentId/aar", async (req, res) => {
       return res.status(404).json({ error: "AAR config not found — agent must be deployed before it can be configured" });
     }
 
-    const updated = await storage.upsertAarConfig(agentId, { targetPlatform: targetPlatform.trim() }, orgId);
+    const patch: Record<string, unknown> = {};
+    if (targetPlatform && typeof targetPlatform === "string" && targetPlatform.trim()) {
+      patch.targetPlatform = targetPlatform.trim();
+    }
+    if (allowedTools !== undefined) patch.allowedTools = allowedTools;
+    if (deniedTools !== undefined) patch.deniedTools = deniedTools;
+    if (requireApprovalTools !== undefined) patch.requireApprovalTools = requireApprovalTools;
+    if (rateLimits !== undefined) patch.rateLimits = rateLimits;
+
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ error: "Nothing to update — provide targetPlatform, allowedTools, deniedTools, requireApprovalTools, or rateLimits" });
+    }
+
+    const updated = await storage.upsertAarConfig(agentId, patch as any, orgId);
     res.json({ aarConfig: updated });
   } catch (err: any) {
     console.error("[AAR] PATCH error:", err);
@@ -400,7 +504,7 @@ router.get("/api/agents/:agentId/aar/package", async (req, res) => {
     if (!agent) return res.status(404).json({ error: "Agent not found" });
 
     const aarConfig = await storage.getAarConfig(agentId, orgId);
-    const configData = aarConfig ?? { targetPlatform: "atlas-native", policyBundleVersion: "v1.0.0", lastSyncedAt: new Date() };
+    const configData = aarConfig ?? { targetPlatform: "atlas-native", policyBundleVersion: "v1.0.0", lastSyncedAt: new Date(), allowedTools: null, deniedTools: null, requireApprovalTools: null, rateLimits: null };
     const pkg = buildAarPackage(agentId, agent.name, configData);
 
     res.setHeader("Content-Type", "application/json");
@@ -408,6 +512,390 @@ router.get("/api/agents/:agentId/aar/package", async (req, res) => {
     res.json(pkg);
   } catch (err: any) {
     console.error("[AAR] Package error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Helper: evaluate action against stored AAR constraint lists ──────────────
+
+async function evaluateActionAgainstConstraints(
+  agentId: string,
+  toolName: string,
+  serverId: string | undefined,
+  orgId: string,
+): Promise<{
+  decision: string;
+  reason: string;
+  policiesEvaluated: string[];
+  rulesTriggered: string[];
+  riskLevel: string;
+}> {
+  const agent = await storage.getAgent(agentId, orgId);
+  const aarConfig = await storage.getAarConfig(agentId);
+
+  const riskLevel = agent?.riskTier ?? "medium";
+  const autonomyMode = agent?.autonomyMode ?? "supervised";
+
+  const allowedTools: string[] = (aarConfig?.allowedTools as string[] | null) ?? [];
+  const deniedTools: string[] = (aarConfig?.deniedTools as string[] | null) ?? [];
+  const requireApprovalTools: string[] = (aarConfig?.requireApprovalTools as string[] | null) ?? [];
+
+  const policiesEvaluated = ["constraint-list-policy", "autonomy-policy"];
+  const rulesTriggered: string[] = [];
+
+  // Denied list takes precedence
+  if (deniedTools.length > 0 && deniedTools.includes(toolName)) {
+    rulesTriggered.push("denied-tool-list");
+    return { decision: "BLOCK", reason: `Tool '${toolName}' is in the denied tools list`, policiesEvaluated, rulesTriggered, riskLevel };
+  }
+
+  // Allowed list: if non-empty, only listed tools pass
+  if (allowedTools.length > 0 && !allowedTools.includes(toolName)) {
+    rulesTriggered.push("not-in-allowed-list");
+    return { decision: "BLOCK", reason: `Tool '${toolName}' is not in the allowed tools list`, policiesEvaluated, rulesTriggered, riskLevel };
+  }
+
+  // Require-approval list
+  if (requireApprovalTools.length > 0 && requireApprovalTools.includes(toolName)) {
+    rulesTriggered.push("require-approval-tool-list");
+    return { decision: "REQUIRE_APPROVAL", reason: `Tool '${toolName}' requires explicit approval before invocation`, policiesEvaluated, rulesTriggered, riskLevel };
+  }
+
+  // High-risk agents in supervised mode get ALERT_AND_ALLOW for all tool calls
+  if ((riskLevel === "high" || riskLevel === "HIGH") && autonomyMode === "supervised") {
+    rulesTriggered.push("high-risk-supervised-alert");
+    return { decision: "ALERT_AND_ALLOW", reason: `Tool '${toolName}' invocation logged — agent is high-risk in supervised mode`, policiesEvaluated, rulesTriggered, riskLevel };
+  }
+
+  return { decision: "ALLOW", reason: "Action passed all constraint checks", policiesEvaluated, rulesTriggered, riskLevel };
+}
+
+// ─── RPC 1: EvaluateAction ────────────────────────────────────────────────────
+// POST /api/agents/:agentId/aar/evaluate-action
+
+router.post("/api/agents/:agentId/aar/evaluate-action", async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const orgId = getOrgId(req);
+    const agent = await storage.getAgent(agentId, orgId);
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+    const { tool_name, server_id, args } = req.body;
+    if (!tool_name || typeof tool_name !== "string") {
+      return res.status(400).json({ error: "tool_name is required" });
+    }
+
+    const startUs = Date.now() * 1000;
+    const evaluation = await evaluateActionAgainstConstraints(agentId, tool_name, server_id, orgId);
+    const evaluationTimeUs = Date.now() * 1000 - startUs;
+
+    let approvalId: string | undefined;
+    if (evaluation.decision === "REQUIRE_APPROVAL") {
+      const approval = await storage.createApproval({
+        organizationId: orgId,
+        type: "tool-invocation",
+        objectType: "mcp-tool",
+        objectId: server_id ?? agentId,
+        objectName: tool_name,
+        riskScore: evaluation.riskLevel === "high" || evaluation.riskLevel === "HIGH" ? 0.8 : 0.5,
+        status: "pending",
+        requestedBy: agentId,
+        requesterType: "agent",
+        description: `AAR policy requires approval for tool '${tool_name}' invoked by agent '${agent.name}'`,
+      });
+      approvalId = approval.id;
+    }
+
+    const decision = await storage.createAarActionDecision({
+      agentId,
+      orgId,
+      toolName: tool_name,
+      serverId: server_id,
+      decision: evaluation.decision,
+      reason: evaluation.reason,
+      policiesEvaluated: evaluation.policiesEvaluated,
+      rulesTriggered: evaluation.rulesTriggered,
+      riskLevel: evaluation.riskLevel,
+      approvalId,
+      evaluationTimeUs,
+    });
+
+    const actionDecision = {
+      decision: decision.decision,
+      reason: decision.reason,
+      policies_evaluated: decision.policiesEvaluated ?? [],
+      rules_triggered: decision.rulesTriggered ?? [],
+      risk_level: decision.riskLevel,
+      approval_id: decision.approvalId,
+      evaluation_time_us: decision.evaluationTimeUs,
+    };
+
+    const statusCode = evaluation.decision === "BLOCK" ? 403 : 200;
+    res.status(statusCode).json(actionDecision);
+  } catch (err: any) {
+    console.error("[AAR] evaluate-action error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── RPC 2: InvokeTool ────────────────────────────────────────────────────────
+// POST /api/agents/:agentId/aar/invoke-tool
+
+router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const orgId = getOrgId(req);
+    const agent = await storage.getAgent(agentId, orgId);
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+    const { tool_name, server_id, args } = req.body;
+    if (!tool_name || typeof tool_name !== "string") {
+      return res.status(400).json({ error: "tool_name is required" });
+    }
+
+    const startUs = Date.now() * 1000;
+    const evaluation = await evaluateActionAgainstConstraints(agentId, tool_name, server_id, orgId);
+    const evaluationTimeUs = Date.now() * 1000 - startUs;
+
+    let approvalId: string | undefined;
+    if (evaluation.decision === "REQUIRE_APPROVAL") {
+      const approval = await storage.createApproval({
+        organizationId: orgId,
+        type: "tool-invocation",
+        objectType: "mcp-tool",
+        objectId: server_id ?? agentId,
+        objectName: tool_name,
+        riskScore: 0.7,
+        status: "pending",
+        requestedBy: agentId,
+        requesterType: "agent",
+        description: `AAR invoke-tool approval required: tool '${tool_name}' by agent '${agent.name}'`,
+      });
+      approvalId = approval.id;
+    }
+
+    await storage.createAarActionDecision({
+      agentId, orgId, toolName: tool_name, serverId: server_id,
+      decision: evaluation.decision, reason: evaluation.reason,
+      policiesEvaluated: evaluation.policiesEvaluated, rulesTriggered: evaluation.rulesTriggered,
+      riskLevel: evaluation.riskLevel, approvalId, evaluationTimeUs,
+    });
+
+    if (evaluation.decision === "BLOCK") {
+      return res.status(403).json({
+        error: "Tool invocation blocked by AAR policy",
+        reason: evaluation.reason,
+        policy_decision: { decision: "BLOCK", reason: evaluation.reason, risk_level: evaluation.riskLevel },
+      });
+    }
+
+    if (evaluation.decision === "REQUIRE_APPROVAL") {
+      return res.status(202).json({
+        message: "Tool invocation queued for approval",
+        approval_id: approvalId,
+        policy_decision: { decision: "REQUIRE_APPROVAL", reason: evaluation.reason, approval_id: approvalId },
+      });
+    }
+
+    // Proceed with the tool call
+    const auditEvent = await storage.createAuditEvent({
+      organizationId: orgId,
+      action: "aar.invoke_tool",
+      objectType: "mcp-tool",
+      objectId: server_id ?? agentId,
+      actorId: agentId,
+      actorType: "agent",
+      details: JSON.stringify({ toolName: tool_name, serverId: server_id, args: args ?? {}, policyDecision: evaluation.decision }),
+    });
+
+    // For AAR proxy invocation, we log and return the result
+    // Actual MCP execution is done via the agent-runtime path; here we return a provenance token
+    res.json({
+      result: JSON.stringify({ status: "proxied", tool: tool_name, args: args ?? {} }),
+      provenance_event_id: auditEvent.id,
+      policy_decision: {
+        decision: evaluation.decision,
+        reason: evaluation.reason,
+        risk_level: evaluation.riskLevel,
+        evaluation_time_us: evaluationTimeUs,
+      },
+    });
+  } catch (err: any) {
+    console.error("[AAR] invoke-tool error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── RPC 3: InvokeToolStream (SSE) ───────────────────────────────────────────
+// GET /api/agents/:agentId/aar/invoke-tool/stream
+
+router.get("/api/agents/:agentId/aar/invoke-tool/stream", async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const orgId = getOrgId(req);
+    const agent = await storage.getAgent(agentId, orgId);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+
+    const tool_name = req.query.tool_name as string;
+    const server_id = req.query.server_id as string | undefined;
+    if (!tool_name) {
+      res.status(400).json({ error: "tool_name query param is required" });
+      return;
+    }
+
+    const evaluation = await evaluateActionAgainstConstraints(agentId, tool_name, server_id, orgId);
+
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    if (evaluation.decision === "BLOCK") {
+      res.write(`data: ${JSON.stringify({ chunk: null, done: true, error: "BLOCKED", reason: evaluation.reason })}\n\n`);
+      res.end();
+      return;
+    }
+
+    // Simulate streaming chunks
+    const chunks = [
+      `Tool '${tool_name}' invocation started`,
+      `Policy check: ${evaluation.decision}`,
+      `Executing tool call...`,
+      `Result: { status: "ok", tool: "${tool_name}" }`,
+    ];
+
+    let i = 0;
+    const interval = setInterval(() => {
+      if (i < chunks.length) {
+        res.write(`data: ${JSON.stringify({ chunk: chunks[i], done: false })}\n\n`);
+        i++;
+      } else {
+        res.write(`data: ${JSON.stringify({ chunk: null, done: true })}\n\n`);
+        clearInterval(interval);
+        res.end();
+      }
+    }, 250);
+
+    req.on("close", () => clearInterval(interval));
+  } catch (err: any) {
+    console.error("[AAR] invoke-tool/stream error:", err);
+    res.end();
+  }
+});
+
+// ─── RPC 4: ReportState ──────────────────────────────────────────────────────
+// POST /api/agents/:agentId/aar/report-state
+
+router.post("/api/agents/:agentId/aar/report-state", async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const orgId = getOrgId(req);
+    const agent = await storage.getAgent(agentId, orgId);
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+    const { report_type, payload } = req.body;
+
+    await storage.createAarAgentStateReport({
+      agentId,
+      orgId,
+      reportType: report_type ?? "heartbeat",
+      payload: payload ?? null,
+    });
+
+    res.json({ success: true, message: "State report recorded" });
+  } catch (err: any) {
+    console.error("[AAR] report-state error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── RPC 5: GetConstraints ───────────────────────────────────────────────────
+// GET /api/agents/:agentId/aar/constraints
+
+router.get("/api/agents/:agentId/aar/constraints", async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const orgId = getOrgId(req);
+    const agent = await storage.getAgent(agentId, orgId);
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+    const aarConfig = await storage.getAarConfig(agentId, orgId);
+    if (!aarConfig) return res.status(404).json({ error: "AAR config not found" });
+
+    const constraintResponse = {
+      autonomy_level: agent.autonomyMode ?? "supervised",
+      allowed_tools: (aarConfig.allowedTools as string[] | null) ?? [],
+      denied_tools: (aarConfig.deniedTools as string[] | null) ?? [],
+      require_approval_tools: (aarConfig.requireApprovalTools as string[] | null) ?? [],
+      rate_limits: (aarConfig.rateLimits as Record<string, unknown> | null) ?? {},
+      policy_bundle_version: aarConfig.policyBundleVersion,
+      policy_bundle_timestamp: aarConfig.lastSyncedAt?.toISOString() ?? new Date().toISOString(),
+    };
+
+    res.json(constraintResponse);
+  } catch (err: any) {
+    console.error("[AAR] constraints error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── RPC 6: RecordActions ────────────────────────────────────────────────────
+// POST /api/agents/:agentId/aar/record-actions
+
+router.post("/api/agents/:agentId/aar/record-actions", async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const orgId = getOrgId(req);
+    const agent = await storage.getAgent(agentId, orgId);
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+    const { actions } = req.body;
+    if (!Array.isArray(actions)) {
+      return res.status(400).json({ error: "actions must be an array" });
+    }
+
+    for (const action of actions) {
+      await storage.createAuditEvent({
+        organizationId: orgId,
+        action: "aar.record_action",
+        objectType: "mcp-tool",
+        objectId: agentId,
+        actorId: agentId,
+        actorType: "agent",
+        details: JSON.stringify({
+          toolName: action.tool_name,
+          decision: action.decision,
+          reason: action.reason,
+          occurredAt: action.occurred_at ?? new Date().toISOString(),
+        }),
+      });
+    }
+
+    res.json({ success: true, message: `Recorded ${actions.length} action(s)` });
+  } catch (err: any) {
+    console.error("[AAR] record-actions error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── UI: Action Decisions listing ────────────────────────────────────────────
+// GET /api/agents/:agentId/aar/decisions
+
+router.get("/api/agents/:agentId/aar/decisions", async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const orgId = getOrgId(req);
+    const agent = await storage.getAgent(agentId, orgId);
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+    const limit = Math.min(parseInt(String(req.query.limit ?? "50"), 10), 200);
+    const decisions = await storage.listAarActionDecisions(agentId, orgId, limit);
+    res.json({ decisions });
+  } catch (err: any) {
+    console.error("[AAR] decisions error:", err);
     res.status(500).json({ error: err.message });
   }
 });

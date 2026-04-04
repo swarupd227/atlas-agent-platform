@@ -2263,6 +2263,10 @@ export const aarConfigs = pgTable("aar_configs", {
   policyBundleVersion: text("policy_bundle_version").notNull().default("v1.0.0"),
   moduleConfig: jsonb("module_config"),
   healthSummary: jsonb("health_summary"),
+  allowedTools: jsonb("allowed_tools"),
+  deniedTools: jsonb("denied_tools"),
+  requireApprovalTools: jsonb("require_approval_tools"),
+  rateLimits: jsonb("rate_limits"),
   lastSyncedAt: timestamp("last_synced_at").defaultNow(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -2271,6 +2275,39 @@ export const aarConfigs = pgTable("aar_configs", {
 export const insertAarConfigSchema = createInsertSchema(aarConfigs).omit({ id: true, createdAt: true, updatedAt: true });
 export type InsertAarConfig = z.infer<typeof insertAarConfigSchema>;
 export type AarConfig = typeof aarConfigs.$inferSelect;
+
+export const aarActionDecisions = pgTable("aar_action_decisions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull().references(() => agents.id),
+  orgId: varchar("org_id"),
+  toolName: text("tool_name").notNull(),
+  serverId: varchar("server_id"),
+  decision: text("decision").notNull(),
+  reason: text("reason"),
+  policiesEvaluated: jsonb("policies_evaluated"),
+  rulesTriggered: jsonb("rules_triggered"),
+  riskLevel: text("risk_level"),
+  approvalId: varchar("approval_id"),
+  evaluationTimeUs: integer("evaluation_time_us"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAarActionDecisionSchema = createInsertSchema(aarActionDecisions).omit({ id: true, createdAt: true });
+export type InsertAarActionDecision = z.infer<typeof insertAarActionDecisionSchema>;
+export type AarActionDecision = typeof aarActionDecisions.$inferSelect;
+
+export const aarAgentStateReports = pgTable("aar_agent_state_reports", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id").notNull().references(() => agents.id),
+  orgId: varchar("org_id"),
+  reportType: text("report_type").notNull().default("heartbeat"),
+  payload: jsonb("payload"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertAarAgentStateReportSchema = createInsertSchema(aarAgentStateReports).omit({ id: true, createdAt: true });
+export type InsertAarAgentStateReport = z.infer<typeof insertAarAgentStateReportSchema>;
+export type AarAgentStateReport = typeof aarAgentStateReports.$inferSelect;
 
 // ─── Agent Alerts ─────────────────────────────────────────────────────────────
 export const agentAlerts = pgTable("agent_alerts", {

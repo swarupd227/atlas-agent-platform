@@ -165,6 +165,8 @@ import {
   organizations, type Organization, type InsertOrganization,
   auditChainHealthChecks, type AuditChainHealthCheck, type InsertAuditChainHealthCheck,
   aarConfigs, type AarConfig, type InsertAarConfig,
+  aarActionDecisions, type AarActionDecision, type InsertAarActionDecision,
+  aarAgentStateReports, type AarAgentStateReport, type InsertAarAgentStateReport,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -768,6 +770,9 @@ export interface IStorage {
   getAarConfig(agentId: string, orgId?: string): Promise<AarConfig | undefined>;
   getAllAarConfigs(orgId?: string): Promise<AarConfig[]>;
   upsertAarConfig(agentId: string, data: Partial<InsertAarConfig>, orgId?: string): Promise<AarConfig>;
+  createAarActionDecision(decision: InsertAarActionDecision): Promise<AarActionDecision>;
+  listAarActionDecisions(agentId: string, orgId?: string, limit?: number): Promise<AarActionDecision[]>;
+  createAarAgentStateReport(report: InsertAarAgentStateReport): Promise<AarAgentStateReport>;
 }
 
 function resolveOrgId(providedOrgId: string | null | undefined): string {
@@ -3432,6 +3437,29 @@ export class DatabaseStorage implements IStorage {
       .insert(aarConfigs)
       .values({ agentId, ...data })
       .returning();
+    return created;
+  }
+
+  async createAarActionDecision(decision: InsertAarActionDecision): Promise<AarActionDecision> {
+    const [created] = await db.insert(aarActionDecisions).values(decision).returning();
+    return created;
+  }
+
+  async listAarActionDecisions(agentId: string, orgId?: string, limit = 50): Promise<AarActionDecision[]> {
+    if (orgId) {
+      const agent = await this.getAgent(agentId, orgId);
+      if (!agent) return [];
+    }
+    return db
+      .select()
+      .from(aarActionDecisions)
+      .where(eq(aarActionDecisions.agentId, agentId))
+      .orderBy(desc(aarActionDecisions.createdAt))
+      .limit(limit);
+  }
+
+  async createAarAgentStateReport(report: InsertAarAgentStateReport): Promise<AarAgentStateReport> {
+    const [created] = await db.insert(aarAgentStateReports).values(report).returning();
     return created;
   }
 }
