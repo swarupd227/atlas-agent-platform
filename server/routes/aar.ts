@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
-import type { AarConfig } from "../../shared/schema";
+import type { AarConfig, InsertAarConfig } from "../../shared/schema";
+import { mcpCallTool } from "../mcp-client";
 
 const PROTO_SERVICE_DEFINITION = `
 syntax = "proto3";
@@ -475,7 +476,7 @@ router.patch("/api/agents/:agentId/aar", async (req, res) => {
       return res.status(404).json({ error: "AAR config not found — agent must be deployed before it can be configured" });
     }
 
-    const patch: Record<string, unknown> = {};
+    const patch: Partial<InsertAarConfig> = {};
     if (targetPlatform && typeof targetPlatform === "string" && targetPlatform.trim()) {
       patch.targetPlatform = targetPlatform.trim();
     }
@@ -488,7 +489,7 @@ router.patch("/api/agents/:agentId/aar", async (req, res) => {
       return res.status(400).json({ error: "Nothing to update — provide targetPlatform, allowedTools, deniedTools, requireApprovalTools, or rateLimits" });
     }
 
-    const updated = await storage.upsertAarConfig(agentId, patch as any, orgId);
+    const updated = await storage.upsertAarConfig(agentId, patch, orgId);
     res.json({ aarConfig: updated });
   } catch (err: any) {
     console.error("[AAR] PATCH error:", err);
@@ -697,7 +698,40 @@ router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
       });
     }
 
-    // Proceed with the tool call
+    // Proceed with the tool call — proxy through MCP
+    let toolResult: unknown = null;
+    let invocationError: string | undefined;
+
+    if (server_id) {
+      const mcpServer = await storage.getMcpServer(server_id);
+      if (mcpServer) {
+        try {
+          toolResult = await mcpCallTool(mcpServer, tool_name, args ?? {});
+        } catch (toolErr: any) {
+          invocationError = toolErr.message;
+          console.error(`[AAR] invoke-tool MCP call failed: ${toolErr.message}`);
+        }
+      } else {
+        invocationError = `MCP server '${server_id}' not found`;
+      }
+    } else {
+      // No server_id: look up first server tool matching the tool_name
+      const allTools = await storage.getAllMcpServerTools();
+      const matched = allTools.find(t => t.name === tool_name);
+      if (matched) {
+        const mcpServer = await storage.getMcpServer(matched.serverId);
+        if (mcpServer) {
+          try {
+            toolResult = await mcpCallTool(mcpServer, tool_name, args ?? {});
+          } catch (toolErr: any) {
+            invocationError = toolErr.message;
+          }
+        }
+      } else {
+        invocationError = `No MCP server tool found for tool name '${tool_name}'`;
+      }
+    }
+
     const auditEvent = await storage.createAuditEvent({
       organizationId: orgId,
       action: "aar.invoke_tool",
@@ -705,13 +739,11 @@ router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
       objectId: server_id ?? agentId,
       actorId: agentId,
       actorType: "agent",
-      details: JSON.stringify({ toolName: tool_name, serverId: server_id, args: args ?? {}, policyDecision: evaluation.decision }),
+      details: JSON.stringify({ toolName: tool_name, serverId: server_id, args: args ?? {}, policyDecision: evaluation.decision, error: invocationError }),
     });
 
-    // For AAR proxy invocation, we log and return the result
-    // Actual MCP execution is done via the agent-runtime path; here we return a provenance token
     res.json({
-      result: JSON.stringify({ status: "proxied", tool: tool_name, args: args ?? {} }),
+      result: toolResult !== null ? JSON.stringify(toolResult) : null,
       provenance_event_id: auditEvent.id,
       policy_decision: {
         decision: evaluation.decision,
@@ -719,6 +751,7 @@ router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
         risk_level: evaluation.riskLevel,
         evaluation_time_us: evaluationTimeUs,
       },
+      ...(invocationError ? { invocation_error: invocationError } : {}),
     });
   } catch (err: any) {
     console.error("[AAR] invoke-tool error:", err);

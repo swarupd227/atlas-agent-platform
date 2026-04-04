@@ -775,9 +775,10 @@ function AgentDetailInner() {
   const [aarAllowedToolsInput, setAarAllowedToolsInput] = useState("");
   const [aarDeniedToolsInput, setAarDeniedToolsInput] = useState("");
   const [aarRequireApprovalToolsInput, setAarRequireApprovalToolsInput] = useState("");
+  const [aarRateLimitsInput, setAarRateLimitsInput] = useState("");
 
   const updateAarConstraintsMutation = useMutation({
-    mutationFn: (data: { allowedTools?: string[]; deniedTools?: string[]; requireApprovalTools?: string[] }) =>
+    mutationFn: (data: { allowedTools?: string[]; deniedTools?: string[]; requireApprovalTools?: string[]; rateLimits?: Record<string, unknown> }) =>
       apiRequest("PATCH", `/api/agents/${agentId}/aar`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/agents", agentId, "aar"] });
@@ -5740,6 +5741,49 @@ function AgentDetailInner() {
                           Save
                         </Button>
                       </div>
+                    </div>
+                    {/* Rate Limits */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[11px] font-medium flex items-center gap-1 text-blue-600 dark:text-blue-400">
+                        <Activity className="w-3 h-3" />
+                        Rate Limits (JSON — e.g. {"{"}"tool_name": 10{"}"})
+                      </label>
+                      <div className="flex gap-1.5">
+                        <Input
+                          className="h-8 text-xs flex-1 font-mono"
+                          placeholder='{"search": 100, "write_record": 10}'
+                          value={aarRateLimitsInput !== "" ? aarRateLimitsInput : (aar.rateLimits ? JSON.stringify(aar.rateLimits) : "")}
+                          onChange={(e) => setAarRateLimitsInput(e.target.value)}
+                          data-testid="input-aar-rate-limits"
+                        />
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 px-2 text-xs"
+                          disabled={updateAarConstraintsMutation.isPending}
+                          onClick={() => {
+                            try {
+                              const parsed = aarRateLimitsInput.trim() ? JSON.parse(aarRateLimitsInput.trim()) : {};
+                              updateAarConstraintsMutation.mutate({ rateLimits: parsed });
+                              setAarRateLimitsInput("");
+                            } catch {
+                              toast({ title: "Invalid JSON for rate limits", variant: "destructive" });
+                            }
+                          }}
+                          data-testid="button-save-aar-rate-limits"
+                        >
+                          Save
+                        </Button>
+                      </div>
+                      {aar.rateLimits && Object.keys(aar.rateLimits as Record<string, unknown>).length > 0 && (
+                        <div className="rounded-md bg-muted/40 px-2.5 py-1.5 flex flex-wrap gap-2">
+                          {Object.entries(aar.rateLimits as Record<string, unknown>).map(([tool, limit]) => (
+                            <span key={tool} className="text-[10px] font-mono text-muted-foreground">
+                              <span className="text-blue-600 dark:text-blue-400">{tool}</span>: {String(limit)}/min
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     {/* Summary row */}
                     {(aar.allowedTools?.length || aar.deniedTools?.length || aar.requireApprovalTools?.length) ? (

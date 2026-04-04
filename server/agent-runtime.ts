@@ -687,62 +687,62 @@ async function evaluateActionPolicy(
   toolName: string,
   serverId: string | undefined,
 ): Promise<{ decision: string; reason: string; approvalId?: string }> {
+  const agent = await storage.getAgent(agentId);
+  const aarConfig = await storage.getAarConfig(agentId);
+
+  const riskLevel: string = agent?.riskTier ?? "MEDIUM";
+  const autonomyMode: string = agent?.autonomyMode ?? "supervised";
+
+  const allowedTools: string[] = (aarConfig?.allowedTools as string[] | null) ?? [];
+  const deniedTools: string[] = (aarConfig?.deniedTools as string[] | null) ?? [];
+  const requireApprovalTools: string[] = (aarConfig?.requireApprovalTools as string[] | null) ?? [];
+
+  const policiesEvaluated = ["constraint-list-policy", "autonomy-policy"];
+  const rulesTriggered: string[] = [];
+
+  let decision = "ALLOW";
+  let reason = "Action passed all constraint checks";
+  let approvalId: string | undefined;
+
+  if (deniedTools.length > 0 && deniedTools.includes(toolName)) {
+    rulesTriggered.push("denied-tool-list");
+    decision = "BLOCK";
+    reason = `Tool '${toolName}' is in the denied tools list`;
+  } else if (allowedTools.length > 0 && !allowedTools.includes(toolName)) {
+    rulesTriggered.push("not-in-allowed-list");
+    decision = "BLOCK";
+    reason = `Tool '${toolName}' is not in the allowed tools list`;
+  } else if (requireApprovalTools.length > 0 && requireApprovalTools.includes(toolName)) {
+    rulesTriggered.push("require-approval-tool-list");
+    decision = "REQUIRE_APPROVAL";
+    reason = `Tool '${toolName}' requires explicit approval before invocation`;
+  } else if ((riskLevel === "high" || riskLevel === "HIGH") && autonomyMode === "supervised") {
+    rulesTriggered.push("high-risk-supervised-alert");
+    decision = "ALERT_AND_ALLOW";
+    reason = `Tool '${toolName}' invocation logged — agent is high-risk in supervised mode`;
+  }
+
+  if (decision === "REQUIRE_APPROVAL" && agent) {
+    const approval = await storage.createApproval({
+      organizationId: agent.organizationId ?? null,
+      type: "tool-invocation",
+      objectType: "mcp-tool",
+      objectId: serverId ?? agentId,
+      objectName: toolName,
+      riskScore: 0.7,
+      status: "pending",
+      requestedBy: agentId,
+      requesterType: "agent",
+      description: `AAR policy gate: agent '${agent.name}' requires approval to call tool '${toolName}'`,
+    });
+    approvalId = approval.id;
+  }
+
+  // Persist the decision (best-effort — do not let persistence failure block policy enforcement)
   try {
-    const agent = await storage.getAgent(agentId);
-    const aarConfig = await storage.getAarConfig(agentId);
-
-    const riskLevel: string = (agent as any)?.riskTier ?? "medium";
-    const autonomyMode: string = (agent as any)?.autonomyMode ?? "supervised";
-
-    const allowedTools: string[] = (aarConfig?.allowedTools as string[] | null) ?? [];
-    const deniedTools: string[] = (aarConfig?.deniedTools as string[] | null) ?? [];
-    const requireApprovalTools: string[] = (aarConfig?.requireApprovalTools as string[] | null) ?? [];
-
-    const policiesEvaluated = ["constraint-list-policy", "autonomy-policy"];
-    const rulesTriggered: string[] = [];
-
-    let decision = "ALLOW";
-    let reason = "Action passed all constraint checks";
-    let approvalId: string | undefined;
-
-    if (deniedTools.length > 0 && deniedTools.includes(toolName)) {
-      rulesTriggered.push("denied-tool-list");
-      decision = "BLOCK";
-      reason = `Tool '${toolName}' is in the denied tools list`;
-    } else if (allowedTools.length > 0 && !allowedTools.includes(toolName)) {
-      rulesTriggered.push("not-in-allowed-list");
-      decision = "BLOCK";
-      reason = `Tool '${toolName}' is not in the allowed tools list`;
-    } else if (requireApprovalTools.length > 0 && requireApprovalTools.includes(toolName)) {
-      rulesTriggered.push("require-approval-tool-list");
-      decision = "REQUIRE_APPROVAL";
-      reason = `Tool '${toolName}' requires explicit approval before invocation`;
-    } else if ((riskLevel === "high" || riskLevel === "HIGH") && autonomyMode === "supervised") {
-      rulesTriggered.push("high-risk-supervised-alert");
-      decision = "ALERT_AND_ALLOW";
-      reason = `Tool '${toolName}' invocation logged — agent is high-risk in supervised mode`;
-    }
-
-    if (decision === "REQUIRE_APPROVAL" && agent) {
-      const approval = await storage.createApproval({
-        organizationId: (agent as any).organizationId ?? null,
-        type: "tool-invocation",
-        objectType: "mcp-tool",
-        objectId: serverId ?? agentId,
-        objectName: toolName,
-        riskScore: 0.7,
-        status: "pending",
-        requestedBy: agentId,
-        requesterType: "agent",
-        description: `AAR policy gate: agent '${agent.name}' requires approval to call tool '${toolName}'`,
-      });
-      approvalId = approval.id;
-    }
-
-    // Persist the decision
     await storage.createAarActionDecision({
       agentId,
-      orgId: (agent as any)?.organizationId ?? null,
+      orgId: agent?.organizationId ?? null,
       toolName,
       serverId: serverId ?? null,
       decision,
@@ -753,17 +753,15 @@ async function evaluateActionPolicy(
       approvalId: approvalId ?? null,
       evaluationTimeUs: 0,
     });
-
-    if (decision === "ALERT_AND_ALLOW") {
-      console.warn(`[AAR] ALERT_AND_ALLOW: agent=${agentId} tool=${toolName} reason=${reason}`);
-    }
-
-    return { decision, reason, approvalId };
-  } catch (err: any) {
-    // Fail-open: if policy evaluation itself errors, log and allow to avoid blocking legitimate calls
-    console.error(`[AAR] evaluateActionPolicy error (fail-open): ${err.message}`);
-    return { decision: "ALLOW", reason: "Policy evaluation error — fail-open" };
+  } catch (persistErr: any) {
+    console.error(`[AAR] evaluateActionPolicy: failed to persist decision (non-fatal): ${persistErr.message}`);
   }
+
+  if (decision === "ALERT_AND_ALLOW") {
+    console.warn(`[AAR] ALERT_AND_ALLOW: agent=${agentId} tool=${toolName} reason=${reason}`);
+  }
+
+  return { decision, reason, approvalId };
 }
 
 async function callMcpTool(tool: AvailableTool, args: Record<string, any>): Promise<any> {
