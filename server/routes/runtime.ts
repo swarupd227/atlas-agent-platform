@@ -16,6 +16,7 @@ import {
   insertMcpServerToolSchema,
   insertMcpServerResourceSchema,
   insertMcpServerPromptSchema,
+  type InsertMcpServerPrompt,
   insertMcpServerAuthSchema,
   insertMcpElicitationSchema,
   insertTraceSpanSchema,
@@ -6713,7 +6714,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
       let serverInfo: { name: string; version: string; protocolVersion?: string };
       let toolsToStore: Array<{ serverId: string; name: string; description?: string; inputSchema?: object }>;
       let resourcesToStore: Array<{ serverId: string; uri: string; name: string; description?: string; mimeType?: string; sensitivityLevel?: string; approvalStatus?: string; freshnessStatus?: string; subscribed?: boolean; contentType?: string }>;
-      let promptsToStore: Array<{ serverId: string; name: string; description?: string; arguments?: object; messages?: object; publishedStatus?: string; approvalStatus?: string }>;
+      let promptsToStore: InsertMcpServerPrompt[];
       let isRealProtocol = false;
 
       if (isRealMcpServer(server)) {
@@ -6746,19 +6747,20 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
             serverId: server.id,
             name: p.name,
             description: p.description,
-            arguments: p.arguments as object | undefined,
+            arguments: p.arguments as unknown,
             publishedStatus: "published",
             approvalStatus: "not_required",
           }));
         } catch (realErr: any) {
-          console.warn(`[mcp-initialize] Real MCP handshake failed for ${server.name}: ${realErr.message}. Falling back to sample data.`);
-          isRealProtocol = false;
-          negotiatedVersion = server.expectedProtocolVersion || "2025-03-26";
-          capabilities = { tools: { listChanged: true }, resources: { subscribe: true, listChanged: true }, prompts: { listChanged: true }, logging: {} };
-          serverInfo = { name: server.name, version: "1.0.0", protocolVersion: negotiatedVersion };
-          toolsToStore = [];
-          resourcesToStore = [];
-          promptsToStore = [];
+          console.error(`[mcp-initialize] Real MCP handshake failed for ${server.name}: ${realErr.message}`);
+          await storage.createAuditEvent({
+            action: "mcp_server.initialize_failed",
+            objectType: "mcp_server",
+            objectId: server.id,
+            actorId: "system",
+            details: JSON.stringify({ error: realErr.message, serverName: server.name }),
+          });
+          return res.status(502).json({ message: `Real MCP handshake failed: ${realErr.message}` });
         }
       } else {
         negotiatedVersion = server.expectedProtocolVersion || "2025-03-26";
@@ -6801,7 +6803,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
 
       for (const t of toolsToStore) await storage.createMcpServerTool({ ...t, enabled: true, riskClassification: "low" });
       for (const r of resourcesToStore) await storage.createMcpServerResource(r);
-      for (const p of promptsToStore) await storage.createMcpServerPrompt(p as any);
+      for (const p of promptsToStore) await storage.createMcpServerPrompt(p);
 
       await storage.createAuditEvent({
         action: "mcp_server.initialized",
@@ -7367,7 +7369,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
           if (livePrompts.status === "fulfilled") {
             await storage.deleteMcpServerPromptsByServer(server.id);
             for (const p of livePrompts.value) {
-              await storage.createMcpServerPrompt({ serverId: server.id, name: p.name, description: p.description, arguments: p.arguments as any, publishedStatus: "published", approvalStatus: "not_required" });
+              await storage.createMcpServerPrompt({ serverId: server.id, name: p.name, description: p.description, arguments: p.arguments as unknown, publishedStatus: "published", approvalStatus: "not_required" });
             }
           }
 

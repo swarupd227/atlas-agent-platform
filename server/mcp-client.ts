@@ -51,10 +51,10 @@ async function getClient(serverId: string, serverUrl: string): Promise<Client> {
   return client;
 }
 
-function evictClient(serverId: string) {
+function evictClient(serverId: string): void {
   const c = clientCache.get(serverId);
   if (c) {
-    try { c.close(); } catch {}
+    try { c.close(); } catch { /* ignore */ }
     clientCache.delete(serverId);
   }
 }
@@ -65,17 +65,28 @@ export async function mcpInitialize(server: McpServer): Promise<McpInitResult> {
   evictClient(server.id);
   const client = await getClient(server.id, server.url);
 
-  const serverInfo = client.getServerVersion() ?? { name: server.name, version: "unknown" };
-  const capabilities = (client.getServerCapabilities() ?? {}) as Record<string, unknown>;
+  const sdkServerVersion = client.getServerVersion();
+  const sdkCapabilities = client.getServerCapabilities() ?? {};
+
+  const serverInfo = {
+    name: sdkServerVersion?.name ?? server.name,
+    version: sdkServerVersion?.version ?? "unknown",
+  };
+  const capabilities = sdkCapabilities as Record<string, unknown>;
+  const protocolVersion = server.expectedProtocolVersion ?? "2025-03-26";
+
+  const hasTools = "tools" in sdkCapabilities;
+  const hasResources = "resources" in sdkCapabilities;
+  const hasPrompts = "prompts" in sdkCapabilities;
 
   const [toolsResult, resourcesResult, promptsResult] = await Promise.allSettled([
-    capabilities.tools ? client.listTools() : Promise.resolve({ tools: [] }),
-    capabilities.resources ? client.listResources() : Promise.resolve({ resources: [] }),
-    capabilities.prompts ? client.listPrompts() : Promise.resolve({ prompts: [] }),
+    hasTools ? client.listTools() : Promise.resolve({ tools: [] }),
+    hasResources ? client.listResources() : Promise.resolve({ resources: [] }),
+    hasPrompts ? client.listPrompts() : Promise.resolve({ prompts: [] }),
   ]);
 
   const tools: McpToolDef[] = toolsResult.status === "fulfilled"
-    ? (toolsResult.value.tools ?? []).map((t: any) => ({
+    ? toolsResult.value.tools.map((t) => ({
         name: t.name,
         description: t.description ?? "",
         inputSchema: (t.inputSchema ?? {}) as Record<string, unknown>,
@@ -83,7 +94,7 @@ export async function mcpInitialize(server: McpServer): Promise<McpInitResult> {
     : [];
 
   const resources: McpResourceDef[] = resourcesResult.status === "fulfilled"
-    ? (resourcesResult.value.resources ?? []).map((r: any) => ({
+    ? resourcesResult.value.resources.map((r) => ({
         uri: r.uri,
         name: r.name,
         description: r.description,
@@ -92,26 +103,18 @@ export async function mcpInitialize(server: McpServer): Promise<McpInitResult> {
     : [];
 
   const prompts: McpPromptDef[] = promptsResult.status === "fulfilled"
-    ? (promptsResult.value.prompts ?? []).map((p: any) => ({
+    ? promptsResult.value.prompts.map((p) => ({
         name: p.name,
         description: p.description,
-        arguments: p.arguments,
+        arguments: p.arguments?.map((a) => ({
+          name: a.name,
+          description: a.description,
+          required: a.required,
+        })),
       }))
     : [];
 
-  const sdkProtocolVersion = (client as any)._options?.protocolVersion
-    ?? (client as any).protocolVersion
-    ?? server.expectedProtocolVersion
-    ?? "2025-03-26";
-
-  return {
-    protocolVersion: sdkProtocolVersion,
-    capabilities,
-    serverInfo: { name: serverInfo.name, version: serverInfo.version },
-    tools,
-    resources,
-    prompts,
-  };
+  return { protocolVersion, capabilities, serverInfo, tools, resources, prompts };
 }
 
 export async function mcpListTools(server: McpServer): Promise<McpToolDef[]> {
@@ -119,12 +122,12 @@ export async function mcpListTools(server: McpServer): Promise<McpToolDef[]> {
   let client: Client;
   try {
     client = await getClient(server.id, server.url);
-  } catch (err) {
+  } catch {
     evictClient(server.id);
     client = await getClient(server.id, server.url);
   }
   const result = await client.listTools();
-  return (result.tools ?? []).map((t: any) => ({
+  return result.tools.map((t) => ({
     name: t.name,
     description: t.description ?? "",
     inputSchema: (t.inputSchema ?? {}) as Record<string, unknown>,
@@ -140,7 +143,7 @@ export async function mcpCallTool(
   let client: Client;
   try {
     client = await getClient(server.id, server.url);
-  } catch (err) {
+  } catch {
     evictClient(server.id);
     client = await getClient(server.id, server.url);
   }
@@ -152,7 +155,7 @@ export async function mcpListResources(server: McpServer): Promise<McpResourceDe
   if (!server.url) throw new Error("MCP server has no URL");
   const client = await getClient(server.id, server.url);
   const result = await client.listResources();
-  return (result.resources ?? []).map((r: any) => ({
+  return result.resources.map((r) => ({
     uri: r.uri,
     name: r.name,
     description: r.description,
@@ -164,9 +167,13 @@ export async function mcpListPrompts(server: McpServer): Promise<McpPromptDef[]>
   if (!server.url) throw new Error("MCP server has no URL");
   const client = await getClient(server.id, server.url);
   const result = await client.listPrompts();
-  return (result.prompts ?? []).map((p: any) => ({
+  return result.prompts.map((p) => ({
     name: p.name,
     description: p.description,
-    arguments: p.arguments,
+    arguments: p.arguments?.map((a) => ({
+      name: a.name,
+      description: a.description,
+      required: a.required,
+    })),
   }));
 }

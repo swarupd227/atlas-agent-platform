@@ -628,7 +628,9 @@ async function gatherAvailableTools(mcpServerIds: string[]): Promise<AvailableTo
     const server = await storage.getMcpServer(serverId);
     if (!server || !server.url) continue;
 
-    if (isRealMcpServer(server)) {
+    const realServer = isRealMcpServer(server);
+
+    if (realServer) {
       try {
         const liveDefs = await mcpListTools(server);
         for (const def of liveDefs) {
@@ -660,7 +662,7 @@ async function gatherAvailableTools(mcpServerIds: string[]): Promise<AvailableTo
         toolInputSchema: tool.inputSchema || {},
         toolEndpoint: ann.endpoint || undefined,
         toolMethod: ann.method || undefined,
-        isRealMcp: false,
+        isRealMcp: realServer,
       });
     }
   }
