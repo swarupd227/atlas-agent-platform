@@ -517,6 +517,35 @@ router.get("/api/agents/:agentId/aar/package", async (req, res) => {
   }
 });
 
+// ─── Helper: dispatch a tool call through MCP, shared by POST and stream ──────
+
+async function invokeViaMcp(
+  toolName: string,
+  serverId: string | undefined,
+  args: Record<string, unknown>,
+): Promise<{ result: unknown; error?: string }> {
+  if (serverId) {
+    const mcpServer = await storage.getMcpServer(serverId);
+    if (!mcpServer) return { result: null, error: `MCP server '${serverId}' not found` };
+    try {
+      return { result: await mcpCallTool(mcpServer, toolName, args) };
+    } catch (e: any) {
+      return { result: null, error: e.message };
+    }
+  }
+  // No server_id: locate first MCP server that hosts this tool
+  const allTools = await storage.getAllMcpServerTools();
+  const matched = allTools.find(t => t.name === toolName);
+  if (!matched) return { result: null, error: `No MCP server tool found for '${toolName}'` };
+  const mcpServer = await storage.getMcpServer(matched.serverId);
+  if (!mcpServer) return { result: null, error: `MCP server for tool '${toolName}' not found` };
+  try {
+    return { result: await mcpCallTool(mcpServer, toolName, args) };
+  } catch (e: any) {
+    return { result: null, error: e.message };
+  }
+}
+
 // ─── Helper: evaluate action against stored AAR constraint lists ──────────────
 
 async function evaluateActionAgainstConstraints(
@@ -532,7 +561,7 @@ async function evaluateActionAgainstConstraints(
   riskLevel: string;
 }> {
   const agent = await storage.getAgent(agentId, orgId);
-  const aarConfig = await storage.getAarConfig(agentId);
+  const aarConfig = await storage.getAarConfig(agentId, orgId);
 
   const riskLevel = agent?.riskTier ?? "medium";
   const autonomyMode = agent?.autonomyMode ?? "supervised";
@@ -698,38 +727,10 @@ router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
       });
     }
 
-    // Proceed with the tool call — proxy through MCP
-    let toolResult: unknown = null;
-    let invocationError: string | undefined;
-
-    if (server_id) {
-      const mcpServer = await storage.getMcpServer(server_id);
-      if (mcpServer) {
-        try {
-          toolResult = await mcpCallTool(mcpServer, tool_name, args ?? {});
-        } catch (toolErr: any) {
-          invocationError = toolErr.message;
-          console.error(`[AAR] invoke-tool MCP call failed: ${toolErr.message}`);
-        }
-      } else {
-        invocationError = `MCP server '${server_id}' not found`;
-      }
-    } else {
-      // No server_id: look up first server tool matching the tool_name
-      const allTools = await storage.getAllMcpServerTools();
-      const matched = allTools.find(t => t.name === tool_name);
-      if (matched) {
-        const mcpServer = await storage.getMcpServer(matched.serverId);
-        if (mcpServer) {
-          try {
-            toolResult = await mcpCallTool(mcpServer, tool_name, args ?? {});
-          } catch (toolErr: any) {
-            invocationError = toolErr.message;
-          }
-        }
-      } else {
-        invocationError = `No MCP server tool found for tool name '${tool_name}'`;
-      }
+    // Proceed with the tool call — proxy through MCP via shared helper
+    const { result: toolResult, error: invocationError } = await invokeViaMcp(tool_name, server_id, args ?? {});
+    if (invocationError) {
+      console.error(`[AAR] invoke-tool MCP call failed: ${invocationError}`);
     }
 
     const auditEvent = await storage.createAuditEvent({
@@ -792,12 +793,27 @@ router.get("/api/agents/:agentId/aar/invoke-tool/stream", async (req, res) => {
       return;
     }
 
-    // Simulate streaming chunks
+    if (evaluation.decision === "REQUIRE_APPROVAL") {
+      res.write(`data: ${JSON.stringify({ chunk: null, done: true, error: "REQUIRE_APPROVAL", reason: evaluation.reason })}\n\n`);
+      res.end();
+      return;
+    }
+
+    // Invoke via shared MCP helper and stream the result
+    const { result: toolResult, error: invocationError } = await invokeViaMcp(tool_name, server_id, {});
+
+    if (invocationError) {
+      res.write(`data: ${JSON.stringify({ chunk: null, done: true, error: "INVOCATION_ERROR", reason: invocationError })}\n\n`);
+      res.end();
+      return;
+    }
+
+    const resultStr = toolResult !== null ? JSON.stringify(toolResult) : `{ "status": "ok", "tool": "${tool_name}" }`;
     const chunks = [
       `Tool '${tool_name}' invocation started`,
       `Policy check: ${evaluation.decision}`,
       `Executing tool call...`,
-      `Result: { status: "ok", tool: "${tool_name}" }`,
+      resultStr,
     ];
 
     let i = 0;
