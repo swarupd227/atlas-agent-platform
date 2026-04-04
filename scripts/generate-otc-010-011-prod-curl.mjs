@@ -39,16 +39,27 @@ async function devGet(path) {
 // ── Bash script helpers ──────────────────────────────────────────────────────
 const AUTH = PROD_TOKEN ? `-H "Authorization: ${PROD_TOKEN}"` : `-H "x-organization-id: ${PROD_ORG_ID}"`;
 
-function curlPost(path, bodyExpr) {
+/**
+ * Returns bash lines that POST base64-encoded JSON to prod.
+ * Base64 encoding prevents ANY bash special-character interpretation
+ * (backticks, $vars, quotes) in the JSON payload.
+ * bodyB64  = base64-encoded static JSON string (no runtime vars needed)
+ * bodyExpr = bash expression that evaluates to JSON at runtime (for dynamic IDs)
+ */
+function curlPostStatic(path, obj) {
+  const b64 = Buffer.from(JSON.stringify(obj)).toString("base64");
   return `curl -fsS -X POST "${PROD_URL}${path}" \\
   -H "Content-Type: application/json" \\
   ${AUTH} \\
-  -d "${bodyExpr}"`;
+  -d "$(echo "${b64}" | base64 -d)"`;
 }
 
-function esc(obj) {
-  // Produce a jq-safe JSON string for embedding in bash heredoc/single-line
-  return JSON.stringify(JSON.stringify(obj));
+function curlPostExpr(path, bashJsonExpr) {
+  // bodyExpr is a bash expression that already produces clean JSON (from jq)
+  return `curl -fsS -X POST "${PROD_URL}${path}" \\
+  -H "Content-Type: application/json" \\
+  ${AUTH} \\
+  -d "${bashJsonExpr}"`;
 }
 
 function bashVar(varName, curlCmd, field = ".id") {
@@ -185,6 +196,43 @@ function policyPayload(p, agentIdVar) {
   };
 }
 
+// ── Bash generation helpers ───────────────────────────────────────────────────
+// b64(obj) → single-quoted base64 string safe for embedding in bash
+// The base64 string is never interpreted by bash (no backticks, no $vars)
+function b64(obj) {
+  return `'${Buffer.from(JSON.stringify(obj)).toString("base64")}'`;
+}
+
+// Emit: VARNAME=$(curl ... -d "$(echo B64 | base64 -d)" | jq -r '.id')
+function postStatic(varName, path, obj, label) {
+  lines.push(`echo "  ${label}"`);
+  lines.push(`${varName}=$(curl -fsS -X POST '${PROD_URL}${path}' \\`);
+  lines.push(`  -H 'Content-Type: application/json' \\`);
+  lines.push(`  -H '${AUTH.replace(/-H "/,'').replace(/"$/,'')}' \\`);
+  lines.push(`  -d "$(echo ${b64(obj)} | base64 -d)" | jq -r '.id')`);
+  lines.push(`echo "  ${varName}: $${varName}"`);
+}
+
+// Emit: curl ... -d "$SOME_VAR" > /dev/null  (for test cases with dynamic URL)
+function postStaticNoId(path, obj, label) {
+  lines.push(`echo "  ${label}"`);
+  lines.push(`curl -fsS -X POST '${PROD_URL}${path}' \\`);
+  lines.push(`  -H 'Content-Type: application/json' \\`);
+  lines.push(`  -H '${AUTH.replace(/-H "/,'').replace(/"$/,'')}' \\`);
+  lines.push(`  -d "$(echo ${b64(obj)} | base64 -d)" > /dev/null`);
+}
+
+// Emit: VARNAME=$(echo B64 | base64 -d | jq -c --arg k v '. + {...}' | curl ...)
+function postWithIds(varName, path, obj, jqArgs, jqExpr, label) {
+  lines.push(`echo "  ${label}"`);
+  const jqArgStr = jqArgs.map(([k, v]) => `--arg ${k} "$${v}"`).join(" ");
+  lines.push(`${varName}=$(echo ${b64(obj)} | base64 -d | jq -c ${jqArgStr} '${jqExpr}' | curl -fsS -X POST '${PROD_URL}${path}' \\`);
+  lines.push(`  -H 'Content-Type: application/json' \\`);
+  lines.push(`  -H '${AUTH.replace(/-H "/,'').replace(/"$/,'')}' \\`);
+  lines.push(`  -d @- | jq -r '.id')`);
+  lines.push(`echo "  ${varName}: $${varName}"`);
+}
+
 // ── Construct the bash file ──────────────────────────────────────────────────
 const lines = [];
 lines.push(`#!/usr/bin/env bash`);
@@ -193,9 +241,12 @@ lines.push(`# OTC-AGT-010 & OTC-AGT-011 Production Migration Script`);
 lines.push(`# Generated: ${new Date().toISOString()}`);
 lines.push(`# Target:    ${PROD_URL}`);
 lines.push(`# Org:       ${PROD_ORG_ID}`);
+lines.push(`# All JSON payloads are base64-encoded to prevent bash`);
+lines.push(`# interpretation of special characters (backticks, dollar signs)`);
 lines.push(`# ============================================================`);
 lines.push(`set -euo pipefail`);
 lines.push(`command -v jq >/dev/null 2>&1 || { echo "ERROR: jq is required"; exit 1; }`);
+lines.push(`command -v base64 >/dev/null 2>&1 || { echo "ERROR: base64 is required"; exit 1; }`);
 lines.push(`echo ""`);
 lines.push(`echo "OTC-AGT-010 & OTC-AGT-011 Production Migration"`);
 lines.push(`echo "Target: ${PROD_URL}"`);
@@ -207,54 +258,45 @@ function addSection(title) {
   lines.push(`echo "== ${title} =="`);
 }
 
+// Build the AUTH header value for single-quote embedding
+const authHeader = PROD_TOKEN ? `Authorization: ${PROD_TOKEN}` : `x-organization-id: ${PROD_ORG_ID}`;
+
 // ── Phase 1: OTC-AGT-010 Skills ──────────────────────────────────────────────
 addSection("Phase 1: Creating OTC-AGT-010 Returns & Refund Processing Skills");
 returnsSkills.forEach((s, i) => {
-  const varName = `RETURNS_SKILL_${i + 1}_ID`;
-  lines.push(`echo "  Creating skill: ${s.name}"`);
-  const payload = skillPayload(s);
-  lines.push(bashVar(varName,
-    curlPost("/api/skills", `$(echo ${esc(payload)} | jq -c .)`)));
+  postStatic(`RETURNS_SKILL_${i + 1}_ID`, "/api/skills", skillPayload(s),
+    `Creating skill: ${s.name}`);
 });
 lines.push(``);
 
 // ── Phase 2: OTC-AGT-011 Skills ──────────────────────────────────────────────
 addSection("Phase 2: Creating OTC-AGT-011 Contract & Pricing Compliance Skills");
 contractSkills.forEach((s, i) => {
-  const varName = `CONTRACT_SKILL_${i + 1}_ID`;
-  lines.push(`echo "  Creating skill: ${s.name}"`);
-  const payload = skillPayload(s);
-  lines.push(bashVar(varName,
-    curlPost("/api/skills", `$(echo ${esc(payload)} | jq -c .)`)));
+  postStatic(`CONTRACT_SKILL_${i + 1}_ID`, "/api/skills", skillPayload(s),
+    `Creating skill: ${s.name}`);
 });
 lines.push(``);
 
 // ── Phase 3a: OTC-AGT-010 Agent ──────────────────────────────────────────────
 addSection("Phase 3a: Creating OTC-AGT-010 Returns & Refund Processing Agent");
 {
-  const rSkillVars = returnsSkills.map((_, i) => `$RETURNS_SKILL_${i + 1}_ID`).join('","');
   const agentBase = {
-    name: returnsAgent.name,
-    agentCode: "OTC-AGT-010",
-    description: returnsAgent.description,
-    systemPrompt: returnsAgent.systemPrompt,
+    name: returnsAgent.name, agentCode: "OTC-AGT-010",
+    description: returnsAgent.description, systemPrompt: returnsAgent.systemPrompt,
     department: returnsAgent.department || "Finance",
     riskTier: returnsAgent.riskTier || "HIGH",
     autonomyMode: returnsAgent.autonomyMode || "supervised",
     modelProvider: returnsAgent.modelProvider || "anthropic",
     modelName: returnsAgent.modelName || "claude-opus-4-5",
-    status: "active",
-    runtimeConfig: returnsAgent.runtimeConfig || {},
+    status: "active", runtimeConfig: returnsAgent.runtimeConfig || {},
   };
-  // Build bash command with dynamic skill IDs
-  lines.push(`echo "  Creating agent: ${agentBase.name}"`);
-  lines.push(`RETURNS_AGENT_PAYLOAD=$(echo ${esc(agentBase)} | jq -c \\`);
-  lines.push(`  --arg s1 "$RETURNS_SKILL_1_ID" --arg s2 "$RETURNS_SKILL_2_ID" \\`);
-  lines.push(`  --arg s3 "$RETURNS_SKILL_3_ID" --arg s4 "$RETURNS_SKILL_4_ID" \\`);
-  lines.push(`  --arg s5 "$RETURNS_SKILL_5_ID" --arg s6 "$RETURNS_SKILL_6_ID" \\`);
-  lines.push(`  '. + {preloadedSkills: [$s1,$s2,$s3,$s4,$s5,$s6]}')`);
-  lines.push(bashVar("RETURNS_AGENT_ID",
-    curlPost("/api/agents", `$RETURNS_AGENT_PAYLOAD`)));
+  postWithIds(
+    "RETURNS_AGENT_ID", "/api/agents", agentBase,
+    [["s1","RETURNS_SKILL_1_ID"],["s2","RETURNS_SKILL_2_ID"],["s3","RETURNS_SKILL_3_ID"],
+     ["s4","RETURNS_SKILL_4_ID"],["s5","RETURNS_SKILL_5_ID"],["s6","RETURNS_SKILL_6_ID"]],
+    `. + {preloadedSkills: [$s1,$s2,$s3,$s4,$s5,$s6]}`,
+    `Creating agent: ${agentBase.name}`
+  );
 }
 lines.push(``);
 
@@ -262,132 +304,110 @@ lines.push(``);
 addSection("Phase 3b: Creating OTC-AGT-011 Contract & Pricing Compliance Agent");
 {
   const agentBase = {
-    name: contractAgent.name,
-    agentCode: "OTC-AGT-011",
-    description: contractAgent.description,
-    systemPrompt: contractAgent.systemPrompt,
+    name: contractAgent.name, agentCode: "OTC-AGT-011",
+    description: contractAgent.description, systemPrompt: contractAgent.systemPrompt,
     department: contractAgent.department || "Finance",
     riskTier: contractAgent.riskTier || "HIGH",
     autonomyMode: contractAgent.autonomyMode || "supervised",
     modelProvider: contractAgent.modelProvider || "anthropic",
     modelName: contractAgent.modelName || "claude-opus-4-5",
-    status: "active",
-    runtimeConfig: contractAgent.runtimeConfig || {},
+    status: "active", runtimeConfig: contractAgent.runtimeConfig || {},
   };
-  lines.push(`echo "  Creating agent: ${agentBase.name}"`);
-  lines.push(`CONTRACT_AGENT_PAYLOAD=$(echo ${esc(agentBase)} | jq -c \\`);
-  lines.push(`  --arg s1 "$CONTRACT_SKILL_1_ID" --arg s2 "$CONTRACT_SKILL_2_ID" \\`);
-  lines.push(`  --arg s3 "$CONTRACT_SKILL_3_ID" --arg s4 "$CONTRACT_SKILL_4_ID" \\`);
-  lines.push(`  --arg s5 "$CONTRACT_SKILL_5_ID" --arg s6 "$CONTRACT_SKILL_6_ID" \\`);
-  lines.push(`  '. + {preloadedSkills: [$s1,$s2,$s3,$s4,$s5,$s6]}')`);
-  lines.push(bashVar("CONTRACT_AGENT_ID",
-    curlPost("/api/agents", `$CONTRACT_AGENT_PAYLOAD`)));
+  postWithIds(
+    "CONTRACT_AGENT_ID", "/api/agents", agentBase,
+    [["s1","CONTRACT_SKILL_1_ID"],["s2","CONTRACT_SKILL_2_ID"],["s3","CONTRACT_SKILL_3_ID"],
+     ["s4","CONTRACT_SKILL_4_ID"],["s5","CONTRACT_SKILL_5_ID"],["s6","CONTRACT_SKILL_6_ID"]],
+    `. + {preloadedSkills: [$s1,$s2,$s3,$s4,$s5,$s6]}`,
+    `Creating agent: ${agentBase.name}`
+  );
 }
 lines.push(``);
 
 // ── Phase 4a: OTC-AGT-010 Runbooks ───────────────────────────────────────────
 addSection("Phase 4a: Creating OTC-AGT-010 Returns Runbooks");
 rRunbooks.forEach((r, i) => {
-  const varName = `RETURNS_RUNBOOK_${i + 1}_ID`;
-  lines.push(`echo "  Creating runbook: ${r.name}"`);
   const payload = {
-    name: r.name,
-    description: r.description || "",
-    trigger: r.trigger || "manual",
-    triggerConditions: r.triggerConditions || [],
-    steps: r.steps || [],
-    expectedOutcome: r.expectedOutcome || "",
+    name: r.name, description: r.description || "",
+    trigger: r.trigger || "manual", triggerConditions: r.triggerConditions || [],
+    steps: r.steps || [], expectedOutcome: r.expectedOutcome || "",
     rollbackProcedure: r.rollbackProcedure || null,
     escalationMatrix: r.escalationMatrix || {},
-    tags: r.tags || [],
-    status: r.status || "active",
-    version: r.version || "1.0",
-    industry: r.industry || "enterprise",
+    tags: r.tags || [], status: r.status || "active",
+    version: r.version || "1.0", industry: r.industry || "enterprise",
     domain: r.domain || "Order-to-Cash",
   };
-  lines.push(`RETURNS_RB_${i + 1}_PAYLOAD=$(echo ${esc(payload)} | jq -c \\`);
-  lines.push(`  --arg aid "$RETURNS_AGENT_ID" '. + {agentId: $aid}')`);
-  lines.push(bashVar(varName, curlPost("/api/runbooks", `$RETURNS_RB_${i + 1}_PAYLOAD`)));
+  postWithIds(
+    `RETURNS_RUNBOOK_${i + 1}_ID`, "/api/runbooks", payload,
+    [["aid","RETURNS_AGENT_ID"]],
+    `. + {agentId: $aid}`,
+    `Creating runbook: ${r.name}`
+  );
 });
 lines.push(``);
 
 // ── Phase 4b: OTC-AGT-011 Runbooks ───────────────────────────────────────────
 addSection("Phase 4b: Creating OTC-AGT-011 Contract & Pricing Compliance Runbooks");
 cRunbooks.forEach((r, i) => {
-  const varName = `CONTRACT_RUNBOOK_${i + 1}_ID`;
-  lines.push(`echo "  Creating runbook: ${r.name}"`);
   const payload = {
-    name: r.name,
-    description: r.description || "",
-    trigger: r.trigger || "manual",
-    triggerConditions: r.triggerConditions || [],
-    steps: r.steps || [],
-    expectedOutcome: r.expectedOutcome || "",
+    name: r.name, description: r.description || "",
+    trigger: r.trigger || "manual", triggerConditions: r.triggerConditions || [],
+    steps: r.steps || [], expectedOutcome: r.expectedOutcome || "",
     rollbackProcedure: r.rollbackProcedure || null,
     escalationMatrix: r.escalationMatrix || {},
-    tags: r.tags || [],
-    status: r.status || "active",
-    version: r.version || "1.0",
-    industry: r.industry || "enterprise",
+    tags: r.tags || [], status: r.status || "active",
+    version: r.version || "1.0", industry: r.industry || "enterprise",
     domain: r.domain || "Order-to-Cash",
   };
-  lines.push(`CONTRACT_RB_${i + 1}_PAYLOAD=$(echo ${esc(payload)} | jq -c \\`);
-  lines.push(`  --arg aid "$CONTRACT_AGENT_ID" '. + {agentId: $aid}')`);
-  lines.push(bashVar(varName, curlPost("/api/runbooks", `$CONTRACT_RB_${i + 1}_PAYLOAD`)));
+  postWithIds(
+    `CONTRACT_RUNBOOK_${i + 1}_ID`, "/api/runbooks", payload,
+    [["aid","CONTRACT_AGENT_ID"]],
+    `. + {agentId: $aid}`,
+    `Creating runbook: ${r.name}`
+  );
 });
 lines.push(``);
 
 // ── Phase 5a: OTC-AGT-010 Policies ───────────────────────────────────────────
 addSection("Phase 5a: Creating OTC-AGT-010 Returns Policies");
 returnsPolicies.forEach((p, i) => {
-  const varName = `RETURNS_POLICY_${i + 1}_ID`;
-  lines.push(`echo "  Creating policy: ${p.name}"`);
   const payload = {
-    name: p.name,
-    description: p.description || "",
-    policyType: p.policyType || "operational",
-    severity: p.severity || "high",
+    name: p.name, description: p.description || "",
+    policyType: p.policyType || "operational", severity: p.severity || "high",
     enforcementMode: p.enforcementMode || "block",
-    conditions: p.conditions || [],
-    actions: p.actions || [],
-    exceptions: p.exceptions || [],
-    regulatoryBasis: p.regulatoryBasis || [],
-    tags: p.tags || [],
-    status: p.status || "active",
-    industry: p.industry || "enterprise",
-    domain: p.domain || "Order-to-Cash",
+    conditions: p.conditions || [], actions: p.actions || [],
+    exceptions: p.exceptions || [], regulatoryBasis: p.regulatoryBasis || [],
+    tags: p.tags || [], status: p.status || "active",
+    industry: p.industry || "enterprise", domain: p.domain || "Order-to-Cash",
     version: p.version || "1.0",
   };
-  lines.push(`RETURNS_POL_${i + 1}_PAYLOAD=$(echo ${esc(payload)} | jq -c \\`);
-  lines.push(`  --arg aid "$RETURNS_AGENT_ID" '. + {scopeId: $aid, scopeType: "agent"}')`);
-  lines.push(bashVar(varName, curlPost("/api/policies", `$RETURNS_POL_${i + 1}_PAYLOAD`)));
+  postWithIds(
+    `RETURNS_POLICY_${i + 1}_ID`, "/api/policies", payload,
+    [["aid","RETURNS_AGENT_ID"]],
+    `. + {scopeId: $aid, scopeType: "agent"}`,
+    `Creating policy: ${p.name}`
+  );
 });
 lines.push(``);
 
 // ── Phase 5b: OTC-AGT-011 Policies ───────────────────────────────────────────
 addSection("Phase 5b: Creating OTC-AGT-011 Contract & Pricing Compliance Policies");
 contractPolicies.forEach((p, i) => {
-  const varName = `CONTRACT_POLICY_${i + 1}_ID`;
-  lines.push(`echo "  Creating policy: ${p.name}"`);
   const payload = {
-    name: p.name,
-    description: p.description || "",
-    policyType: p.policyType || "operational",
-    severity: p.severity || "high",
+    name: p.name, description: p.description || "",
+    policyType: p.policyType || "operational", severity: p.severity || "high",
     enforcementMode: p.enforcementMode || "block",
-    conditions: p.conditions || [],
-    actions: p.actions || [],
-    exceptions: p.exceptions || [],
-    regulatoryBasis: p.regulatoryBasis || [],
-    tags: p.tags || [],
-    status: p.status || "active",
-    industry: p.industry || "enterprise",
-    domain: p.domain || "Order-to-Cash",
+    conditions: p.conditions || [], actions: p.actions || [],
+    exceptions: p.exceptions || [], regulatoryBasis: p.regulatoryBasis || [],
+    tags: p.tags || [], status: p.status || "active",
+    industry: p.industry || "enterprise", domain: p.domain || "Order-to-Cash",
     version: p.version || "1.0",
   };
-  lines.push(`CONTRACT_POL_${i + 1}_PAYLOAD=$(echo ${esc(payload)} | jq -c \\`);
-  lines.push(`  --arg aid "$CONTRACT_AGENT_ID" '. + {scopeId: $aid, scopeType: "agent"}')`);
-  lines.push(bashVar(varName, curlPost("/api/policies", `$CONTRACT_POL_${i + 1}_PAYLOAD`)));
+  postWithIds(
+    `CONTRACT_POLICY_${i + 1}_ID`, "/api/policies", payload,
+    [["aid","CONTRACT_AGENT_ID"]],
+    `. + {scopeId: $aid, scopeType: "agent"}`,
+    `Creating policy: ${p.name}`
+  );
 });
 lines.push(``);
 
@@ -395,55 +415,46 @@ lines.push(``);
 addSection("Phase 6a: Creating OTC-AGT-010 Eval Dataset & Suite");
 {
   const dsPayload = {
-    name: returnsDataset.name,
-    description: returnsDataset.description || "",
+    name: returnsDataset.name, description: returnsDataset.description || "",
     industry: returnsDataset.industry || "enterprise",
-    useCase: returnsDataset.useCase || "",
-    version: returnsDataset.version || "1.0",
-    status: "active",
-    tags: returnsDataset.tags || [],
+    useCase: returnsDataset.useCase || "", version: returnsDataset.version || "1.0",
+    status: "active", tags: returnsDataset.tags || [],
     scenarioCategories: returnsDataset.scenarioCategories || {},
     coverageDimensions: returnsDataset.coverageDimensions || [],
     qualityCoverage: returnsDataset.qualityCoverage || 0,
     performanceBenchmarks: returnsDataset.performanceBenchmarks || [],
   };
-  lines.push(`echo "  Creating OTC-AGT-010 eval dataset..."`);
-  lines.push(bashVar("RETURNS_DATASET_ID",
-    curlPost("/api/golden-datasets", `$(echo ${esc(dsPayload)} | jq -c .)`)));
+  postStatic("RETURNS_DATASET_ID", "/api/golden-datasets", dsPayload, "Creating OTC-AGT-010 eval dataset...");
 
   rTestCases.forEach((tc, i) => {
     const tcPayload = {
-      name: tc.name,
-      inputScenario: tc.inputScenario,
-      expectedBehavior: tc.expectedBehavior,
+      name: tc.name, inputScenario: tc.inputScenario, expectedBehavior: tc.expectedBehavior,
       evaluationCriteria: tc.evaluationCriteria || [],
       difficultyTier: tc.difficultyTier || "routine",
       scenarioCategory: tc.scenarioCategory || "happy_path",
-      tags: tc.tags || [],
-      status: tc.status || "active",
+      tags: tc.tags || [], status: tc.status || "active",
     };
+    // Test cases use a dynamic URL with $RETURNS_DATASET_ID — build separately
     lines.push(`echo "  Adding test case ${i + 1}: ${tc.name.substring(0, 50)}..."`);
-    lines.push(`curl -fsS -X POST "${PROD_URL}/api/golden-datasets/$RETURNS_DATASET_ID/test-cases" \\
-  -H "Content-Type: application/json" \\
-  ${AUTH} \\
-  -d "$(echo ${esc(tcPayload)} | jq -c .)" > /dev/null`);
+    lines.push(`curl -fsS -X POST "${PROD_URL}/api/golden-datasets/\${RETURNS_DATASET_ID}/test-cases" \\`);
+    lines.push(`  -H 'Content-Type: application/json' \\`);
+    lines.push(`  -H '${authHeader}' \\`);
+    lines.push(`  -d "$(echo ${b64(tcPayload)} | base64 -d)" > /dev/null`);
   });
 
   const suitePayload = {
     name: returnsSuite?.name || "OTC-AGT-010 Returns & Refund Processing Core Regression Suite",
-    type: returnsSuite?.type || "regression",
-    industry: returnsSuite?.industry || "enterprise",
-    totalCases: rTestCases.length,
-    passRate: 0,
+    type: returnsSuite?.type || "regression", industry: returnsSuite?.industry || "enterprise",
+    totalCases: rTestCases.length, passRate: 0,
     thresholdConfig: returnsSuite?.thresholdConfig || { minPassRate: 0.95 },
-    coverageTags: returnsSuite?.coverageTags || [],
-    ontologyTags: returnsSuite?.ontologyTags || [],
+    coverageTags: returnsSuite?.coverageTags || [], ontologyTags: returnsSuite?.ontologyTags || [],
   };
-  lines.push(`echo "  Creating OTC-AGT-010 eval suite..."`);
-  lines.push(`RETURNS_SUITE_PAYLOAD=$(echo ${esc(suitePayload)} | jq -c \\`);
-  lines.push(`  --arg aid "$RETURNS_AGENT_ID" --arg did "$RETURNS_DATASET_ID" \\`);
-  lines.push(`  '. + {agentId: $aid, goldenDatasetId: $did}')`);
-  lines.push(bashVar("RETURNS_SUITE_ID", curlPost("/api/evals", `$RETURNS_SUITE_PAYLOAD`)));
+  postWithIds(
+    "RETURNS_SUITE_ID", "/api/evals", suitePayload,
+    [["aid","RETURNS_AGENT_ID"],["did","RETURNS_DATASET_ID"]],
+    `. + {agentId: $aid, goldenDatasetId: $did}`,
+    "Creating OTC-AGT-010 eval suite..."
+  );
 }
 lines.push(``);
 
@@ -451,55 +462,45 @@ lines.push(``);
 addSection("Phase 6b: Creating OTC-AGT-011 Eval Dataset & Suite");
 {
   const dsPayload = {
-    name: contractDataset.name,
-    description: contractDataset.description || "",
+    name: contractDataset.name, description: contractDataset.description || "",
     industry: contractDataset.industry || "enterprise",
-    useCase: contractDataset.useCase || "",
-    version: contractDataset.version || "1.0",
-    status: "active",
-    tags: contractDataset.tags || [],
+    useCase: contractDataset.useCase || "", version: contractDataset.version || "1.0",
+    status: "active", tags: contractDataset.tags || [],
     scenarioCategories: contractDataset.scenarioCategories || {},
     coverageDimensions: contractDataset.coverageDimensions || [],
     qualityCoverage: contractDataset.qualityCoverage || 0,
     performanceBenchmarks: contractDataset.performanceBenchmarks || [],
   };
-  lines.push(`echo "  Creating OTC-AGT-011 eval dataset..."`);
-  lines.push(bashVar("CONTRACT_DATASET_ID",
-    curlPost("/api/golden-datasets", `$(echo ${esc(dsPayload)} | jq -c .)`)));
+  postStatic("CONTRACT_DATASET_ID", "/api/golden-datasets", dsPayload, "Creating OTC-AGT-011 eval dataset...");
 
   cTestCases.forEach((tc, i) => {
     const tcPayload = {
-      name: tc.name,
-      inputScenario: tc.inputScenario,
-      expectedBehavior: tc.expectedBehavior,
+      name: tc.name, inputScenario: tc.inputScenario, expectedBehavior: tc.expectedBehavior,
       evaluationCriteria: tc.evaluationCriteria || [],
       difficultyTier: tc.difficultyTier || "routine",
       scenarioCategory: tc.scenarioCategory || "happy_path",
-      tags: tc.tags || [],
-      status: tc.status || "active",
+      tags: tc.tags || [], status: tc.status || "active",
     };
     lines.push(`echo "  Adding test case ${i + 1}: ${tc.name.substring(0, 50)}..."`);
-    lines.push(`curl -fsS -X POST "${PROD_URL}/api/golden-datasets/$CONTRACT_DATASET_ID/test-cases" \\
-  -H "Content-Type: application/json" \\
-  ${AUTH} \\
-  -d "$(echo ${esc(tcPayload)} | jq -c .)" > /dev/null`);
+    lines.push(`curl -fsS -X POST "${PROD_URL}/api/golden-datasets/\${CONTRACT_DATASET_ID}/test-cases" \\`);
+    lines.push(`  -H 'Content-Type: application/json' \\`);
+    lines.push(`  -H '${authHeader}' \\`);
+    lines.push(`  -d "$(echo ${b64(tcPayload)} | base64 -d)" > /dev/null`);
   });
 
   const suitePayload = {
     name: contractSuite?.name || "OTC-AGT-011 Contract & Pricing Compliance Core Regression Suite",
-    type: contractSuite?.type || "regression",
-    industry: contractSuite?.industry || "enterprise",
-    totalCases: cTestCases.length,
-    passRate: 0,
+    type: contractSuite?.type || "regression", industry: contractSuite?.industry || "enterprise",
+    totalCases: cTestCases.length, passRate: 0,
     thresholdConfig: contractSuite?.thresholdConfig || { minPassRate: 0.97 },
-    coverageTags: contractSuite?.coverageTags || [],
-    ontologyTags: contractSuite?.ontologyTags || [],
+    coverageTags: contractSuite?.coverageTags || [], ontologyTags: contractSuite?.ontologyTags || [],
   };
-  lines.push(`echo "  Creating OTC-AGT-011 eval suite..."`);
-  lines.push(`CONTRACT_SUITE_PAYLOAD=$(echo ${esc(suitePayload)} | jq -c \\`);
-  lines.push(`  --arg aid "$CONTRACT_AGENT_ID" --arg did "$CONTRACT_DATASET_ID" \\`);
-  lines.push(`  '. + {agentId: $aid, goldenDatasetId: $did}')`);
-  lines.push(bashVar("CONTRACT_SUITE_ID", curlPost("/api/evals", `$CONTRACT_SUITE_PAYLOAD`)));
+  postWithIds(
+    "CONTRACT_SUITE_ID", "/api/evals", suitePayload,
+    [["aid","CONTRACT_AGENT_ID"],["did","CONTRACT_DATASET_ID"]],
+    `. + {agentId: $aid, goldenDatasetId: $did}`,
+    "Creating OTC-AGT-011 eval suite..."
+  );
 }
 lines.push(``);
 
