@@ -1,0 +1,65 @@
+{
+  "agentId": "f66c0581-0104-4744-8658-dd2213872a40",
+  "agentName": "Customer Communication & Notification Agent",
+  "agentCode": "OTC-AGT-012",
+  "knowledgeBaseId": "0f04ee8a-6446-4c7c-b00d-9abe4ba52b2d",
+  "skillIds": [
+    {
+      "name": "Event-Driven Notification Skill",
+      "id": "6d10754b-6dd5-45ab-9d4f-9bb180156865",
+      "loadOrder": 0
+    },
+    {
+      "name": "Template Rendering Skill",
+      "id": "73619086-806b-4301-b082-1e46086f8334",
+      "loadOrder": 1
+    },
+    {
+      "name": "Channel Orchestration Skill",
+      "id": "87ca6ec4-e557-48d5-99fb-c52d83c0cc74",
+      "loadOrder": 2
+    },
+    {
+      "name": "Preference Management Skill",
+      "id": "a645c370-8726-4b89-9d7f-27d8fb6c309b",
+      "loadOrder": 3
+    },
+    {
+      "name": "Communication Analytics Skill",
+      "id": "8fc1894e-c7e0-4cc9-a405-c8e04506754d",
+      "loadOrder": 4
+    },
+    {
+      "name": "Self-Service Portal Skill",
+      "id": "9755290f-4b4d-43d0-8c31-59a5b5287300",
+      "loadOrder": 5
+    }
+  ],
+  "policyIds": [
+    {
+      "name": "CAN-SPAM / GDPR / CASL Email Compliance",
+      "id": "b3c4f1e2-6fae-4191-8c8f-b8814f572a0b"
+    },
+    {
+      "name": "TCPA SMS Consent and Quiet Hours Enforcement",
+      "id": "b2fd4a16-966e-4c5b-a560-4b4126d6fa85"
+    },
+    {
+      "name": "Customer Data Privacy and Communication Data Handling",
+      "id": "4728cd61-f919-42d5-828a-95c56ffb65f4"
+    },
+    {
+      "name": "Communication Records Retention",
+      "id": "11486bfa-5679-4ee8-abcc-1f19dc56069a"
+    },
+    {
+      "name": "Communication Storm and Abuse Prevention Circuit Breaker",
+      "id": "1fd7f619-8f7a-4cb0-bba8-0ee65e370852"
+    }
+  ],
+  "goldenDatasetId": "a1181108-7801-4988-9579-2448595f8590",
+  "evalSuiteId": "26161426-0f15-4dd7-b7be-a31f81279d4a",
+  "createdAt": "2026-04-05T06:09:41.715Z",
+  "environment": "dev",
+  "orgId": "0c9bcf16-cdd9-45e2-87f6-6a839a7f7056"
+}

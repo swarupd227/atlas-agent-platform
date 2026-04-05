@@ -1,0 +1,83 @@
+Customer Communication & Notification Agent
+OTC-AGT-012  |  Category: Customer Experience
+13.1 Description
+Orchestrates all customer-facing communications across the order-to-cash lifecycle. Manages multi-channel notifications (email, SMS, portal, EDI), ensures consistent messaging, personalizes communications based on customer preferences, and provides a unified communication log for service teams.
+13.2 Workflow Steps
+121.	1. Subscribe to O2C lifecycle events (order, shipment, delivery, invoice, payment)
+122.	2. Determine notification eligibility based on event type and customer preferences
+123.	3. Select communication channel (email, SMS, push, portal, EDI) per customer setting
+124.	4. Personalize message using customer data, order context, and brand guidelines
+125.	5. Render message from templates with dynamic content insertion
+126.	6. Send communication and track delivery status (sent, delivered, opened, bounced)
+127.	7. Handle bounces and undeliverable messages with fallback channels
+128.	8. Manage customer communication preferences and opt-out requests
+129.	9. Log all communications in unified customer timeline
+130.	10. Provide self-service tracking portal with real-time status
+131.	11. Analyze communication effectiveness (open rates, response rates, satisfaction impact)
+
+13.3 Common Ontology
+The following entities and attributes form the shared data model referenced by this agent:
+Entity	Key Attributes
+Communication	ID, type, channel, status, timestamp, content hash
+Template	template ID, event trigger, channel variants, personalization fields
+Preference	customer ID, channel preferences, frequency limits, opt-outs
+Event Trigger	O2C event type, conditions, priority, timing rules
+Delivery Status	sent, delivered, opened, clicked, bounced, failed
+Communication Log	unified timeline, searchable, filterable by type/channel
+
+13.4 Claude Agent Skills
+The following skills should be developed and made available as context for this agent:
+Skill Name	Description
+Event-Driven Notification Skill	Subscribes to O2C events and triggers appropriate communications
+Template Rendering Skill	Dynamic content insertion with brand-consistent formatting
+Channel Orchestration Skill	Routes messages to optimal channel based on preferences and urgency
+Preference Management Skill	Handles opt-in/opt-out, frequency capping, quiet hours
+Communication Analytics Skill	Tracks engagement metrics and identifies improvement opportunities
+Self-Service Portal Skill	Powers real-time order/shipment/invoice status portal
+
+13.5 Eval Dataset
+Recommended evaluation data and benchmarks for validating agent accuracy and performance:
+•	Communication delivery rates by channel (email, SMS, push, portal)
+•	Personalization accuracy: correct customer name, order details, status information
+•	Timing appropriateness: notification sent within SLA of triggering event
+•	Preference adherence: communications align with customer opt-in/opt-out settings
+•	Template rendering: correct formatting across email clients and devices
+•	Customer satisfaction correlation: communication quality vs. CSAT/NPS
+
+13.6 Production Runbooks
+Operational procedures for handling common issues and failure scenarios:
+Scenario	Procedure
+Email Delivery Failure (mass bounce)	Root cause investigation, list hygiene, ISP reputation check
+SMS Gateway Outage	Fallback to email, delayed retry, customer notification
+Template Rendering Error	Fallback to plain text, error logging, manual send procedure
+GDPR Data Subject Request	Communication preference update, history retrieval/deletion
+Communication Storm (system sends excessive messages)	Circuit breaker activation, dedup logic
+Brand/Legal Compliance Issue	Template recall procedure, correction and resend workflow
+
+13.7 Regulatory Compliance & Policies
+Applicable regulations and compliance requirements:
+•	CAN-SPAM / GDPR / CASL: Email marketing and transactional communication rules
+•	TCPA: SMS/phone communication consent requirements
+•	Accessibility (WCAG/ADA): Accessible email and portal design
+•	Data Privacy: Customer preference data handling, right to erasure
+•	Records Retention: Communication log retention requirements by jurisdiction
+•	Industry-Specific: FDA communication requirements for pharma, FINRA for financial services
+
+13.8 Knowledgebase Reference
+Documents and data sources this agent needs access to:
+•	Communication templates library by event type, channel, and language
+•	Brand guidelines: tone, style, logos, color palette, legal disclaimers
+•	Channel specifications: email size limits, SMS character limits, push notification guidelines
+•	Customer segmentation for communication personalization
+•	Communication best practices: send time optimization, frequency guidelines
+•	Regulatory requirements by country for transactional communications
+
+13.9 Knowledge Graph
+Entity-relationship mappings showing how data entities connect within this agent's domain:
+O2C Event -[TRIGGERS]-> Notification Rule -[SELECTS]-> Template
+Template -[RENDERED_FOR]-> Customer -[VIA]-> Channel
+Customer -[PREFERS]-> Channel Preference -[WITHIN]-> Communication Policy
+Communication -[LOGGED_IN]-> Customer Timeline -[VISIBLE_TO]-> Service Team
+Communication -[HAS_STATUS]-> Delivery Receipt -[MEASURED_BY]-> Engagement Metric
+Template -[COMPLIANT_WITH]-> Regulatory Requirement -[FOR_JURISDICTION]-> Region
+ 
