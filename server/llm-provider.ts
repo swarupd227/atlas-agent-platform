@@ -236,6 +236,7 @@ function cbRecordFailure(providerName: string): void {
 export interface LLMProvider {
   readonly providerName: string;
   complete(messages: LLMMessage[], options?: LLMCompletionOptions): Promise<LLMCompletionResult>;
+  streamComplete?(messages: LLMMessage[], options: LLMCompletionOptions | undefined, onChunk: (chunk: string) => void): Promise<LLMCompletionResult>;
   embed?(texts: string[], model?: string): Promise<LLMEmbeddingResult>;
   healthCheck(): Promise<{ ok: boolean; latencyMs: number; error?: string }>;
   getInfo(): LLMProviderInfo;
@@ -339,6 +340,126 @@ class OpenAIProvider implements LLMProvider {
       tokensUsed: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
       costUsd: estimateCost(promptTokens, completionTokens, OPENAI_MODELS, model),
       rawAssistantMessage: choice?.message,
+    };
+  }
+
+  async streamComplete(
+    messages: LLMMessage[],
+    options: LLMCompletionOptions | undefined,
+    onChunk: (chunk: string) => void,
+  ): Promise<LLMCompletionResult> {
+    const model = options?.model || "gpt-4.1";
+
+    const openaiMessages: OpenAI.ChatCompletionMessageParam[] = messages.map((m) => {
+      if (m.role === "tool") {
+        return { role: "tool" as const, content: m.content, tool_call_id: m.tool_call_id || "" };
+      }
+      if (m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0) {
+        return {
+          role: "assistant" as const,
+          content: m.content || null,
+          tool_calls: m.tool_calls.map((tc) => ({
+            id: tc.id,
+            type: "function" as const,
+            function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
+          })),
+        };
+      }
+      return { role: m.role as "system" | "user" | "assistant", content: m.content };
+    });
+
+    const openaiTools: OpenAI.ChatCompletionTool[] | undefined =
+      options?.tools && options.tools.length > 0
+        ? options.tools.map((t) => ({
+            type: "function" as const,
+            function: {
+              name: t.name,
+              description: t.description,
+              parameters:
+                t.parameters && Object.keys(t.parameters).length > 0
+                  ? t.parameters
+                  : { type: "object", properties: {}, additionalProperties: true },
+            },
+          }))
+        : undefined;
+
+    cbCheck(this.providerName);
+
+    let fullContent = "";
+    const toolCallsMap: Record<number, { id: string; name: string; arguments: string }> = {};
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let totalTokens = 0;
+
+    try {
+      const stream = await withRetry(
+        () =>
+          this.client.chat.completions.create({
+            model,
+            messages: openaiMessages,
+            tools: openaiTools,
+            max_completion_tokens: options?.maxTokens || 4096,
+            stream: true,
+            stream_options: { include_usage: true },
+            ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
+          }),
+        this.providerName,
+      );
+
+      for await (const chunk of stream) {
+        const delta = chunk.choices[0]?.delta;
+        if (delta?.content) {
+          fullContent += delta.content;
+          onChunk(delta.content);
+        }
+        if (delta?.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const idx = tc.index ?? 0;
+            if (!toolCallsMap[idx]) {
+              toolCallsMap[idx] = { id: "", name: "", arguments: "" };
+            }
+            if (tc.id) toolCallsMap[idx].id = tc.id;
+            if (tc.function?.name) toolCallsMap[idx].name += tc.function.name;
+            if (tc.function?.arguments) toolCallsMap[idx].arguments += tc.function.arguments;
+          }
+        }
+        if (chunk.usage) {
+          promptTokens = chunk.usage.prompt_tokens || 0;
+          completionTokens = chunk.usage.completion_tokens || 0;
+          totalTokens = chunk.usage.total_tokens || 0;
+        }
+      }
+      cbRecordSuccess(this.providerName);
+    } catch (err) {
+      cbRecordFailure(this.providerName);
+      throw err;
+    }
+
+    const toolCalls: CanonicalToolCall[] = Object.values(toolCallsMap).map((tc) => ({
+      id: tc.id,
+      name: tc.name,
+      arguments: (() => {
+        try {
+          return JSON.parse(tc.arguments || "{}");
+        } catch {
+          return {};
+        }
+      })(),
+    }));
+
+    return {
+      content: fullContent,
+      toolCalls,
+      tokensUsed: { prompt: promptTokens, completion: completionTokens, total: totalTokens },
+      costUsd: estimateCost(promptTokens, completionTokens, OPENAI_MODELS, model),
+      rawAssistantMessage: {
+        content: fullContent,
+        tool_calls: toolCalls.map((tc) => ({
+          id: tc.id,
+          type: "function",
+          function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
+        })),
+      },
     };
   }
 
@@ -525,6 +646,118 @@ class AnthropicProvider implements LLMProvider {
     };
   }
 
+  async streamComplete(
+    messages: LLMMessage[],
+    options: LLMCompletionOptions | undefined,
+    onChunk: (chunk: string) => void,
+  ): Promise<LLMCompletionResult> {
+    const model = options?.model || "claude-sonnet-4-5";
+
+    let systemPrompt = "";
+    const anthropicMessages: Anthropic.MessageParam[] = [];
+
+    for (const m of messages) {
+      if (m.role === "system") {
+        systemPrompt += (systemPrompt ? "\n\n" : "") + m.content;
+        continue;
+      }
+      if (m.role === "assistant" && m.tool_calls && m.tool_calls.length > 0) {
+        const contentBlocks: Anthropic.ContentBlockParam[] = [];
+        if (m.content) contentBlocks.push({ type: "text", text: m.content });
+        for (const tc of m.tool_calls) {
+          contentBlocks.push({ type: "tool_use", id: tc.id, name: tc.name, input: tc.arguments });
+        }
+        anthropicMessages.push({ role: "assistant", content: contentBlocks });
+        continue;
+      }
+      if (m.role === "tool") {
+        anthropicMessages.push({
+          role: "user",
+          content: [{ type: "tool_result", tool_use_id: m.tool_call_id || "", content: m.content }],
+        });
+        continue;
+      }
+      anthropicMessages.push({ role: m.role as "user" | "assistant", content: m.content });
+    }
+
+    if (anthropicMessages.length === 0) {
+      anthropicMessages.push({ role: "user", content: "Hello" });
+    }
+
+    const anthropicTools: Anthropic.Tool[] | undefined =
+      options?.tools && options.tools.length > 0
+        ? options.tools.map((t) => ({
+            name: t.name,
+            description: t.description,
+            input_schema: {
+              type: "object" as const,
+              ...(t.parameters && typeof t.parameters === "object" ? t.parameters : {}),
+            },
+          }))
+        : undefined;
+
+    cbCheck(this.providerName);
+
+    let fullContent = "";
+    const toolCalls: CanonicalToolCall[] = [];
+
+    try {
+      const stream = await withRetry(
+        () =>
+          this.client.messages.stream({
+            model,
+            max_tokens: options?.maxTokens || 4096,
+            ...(systemPrompt ? { system: systemPrompt } : {}),
+            messages: anthropicMessages,
+            ...(anthropicTools ? { tools: anthropicTools } : {}),
+            ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
+          }),
+        this.providerName,
+      );
+
+      for await (const event of stream) {
+        if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+          fullContent += event.delta.text;
+          onChunk(event.delta.text);
+        }
+      }
+
+      const finalMsg = await stream.finalMessage();
+      for (const block of finalMsg.content) {
+        if (block.type === "tool_use") {
+          toolCalls.push({
+            id: block.id,
+            name: block.name,
+            arguments: (block.input as Record<string, any>) || {},
+          });
+        }
+      }
+
+      const promptTokens = finalMsg.usage.input_tokens || 0;
+      const completionTokens = finalMsg.usage.output_tokens || 0;
+
+      cbRecordSuccess(this.providerName);
+
+      return {
+        content: fullContent,
+        toolCalls,
+        tokensUsed: { prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens },
+        costUsd: estimateCost(promptTokens, completionTokens, ANTHROPIC_MODELS, model),
+        rawAssistantMessage: {
+          content: fullContent,
+          tool_calls: toolCalls.map((tc) => ({
+            id: tc.id,
+            type: "function",
+            function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
+          })),
+        },
+      };
+    } catch (err) {
+      cbRecordFailure(this.providerName);
+      throw err;
+    }
+  }
+
   async healthCheck(): Promise<{ ok: boolean; latencyMs: number; error?: string }> {
     const start = Date.now();
     try {
@@ -689,6 +922,65 @@ export async function completeWithFallback(
 
       console.warn(
         `[llm-provider] completeWithFallback: provider "${provider.providerName}" failed (reason=${reason})` +
+          (i < providerList.length - 1 ? `, cascading to "${providerList[i + 1].providerName}"` : "") +
+          `. Error: ${msg}`
+      );
+    }
+  }
+
+  throw new Error(`[llm-provider] All providers failed. Errors: ${errors.join(" | ")}`);
+}
+
+/**
+ * Like completeWithFallback but streams text tokens via onChunk as they arrive.
+ * Falls back to the next provider on transient/circuit errors.
+ * If a provider doesn't implement streamComplete, falls back to complete() and
+ * delivers the full content as a single chunk.
+ */
+export async function streamCompleteWithFallback(
+  messages: LLMMessage[],
+  options: LLMCompletionOptions | undefined,
+  onChunk: (chunk: string) => void,
+  providers?: LLMProvider[],
+): Promise<LLMCompletionResult> {
+  let providerList: LLMProvider[];
+  if (providers && providers.length > 0) {
+    providerList = providers;
+  } else {
+    const primary = getDefaultProvider();
+    const fallbackName = primary.providerName === "openai" ? "anthropic" : "openai";
+    providerList = [primary, getProvider(fallbackName)];
+  }
+
+  const errors: string[] = [];
+  for (let i = 0; i < providerList.length; i++) {
+    const provider = providerList[i];
+    const effectiveOptions: LLMCompletionOptions | undefined =
+      i === 0 ? options : (options ? { ...options, model: undefined } : undefined);
+    try {
+      let result: LLMCompletionResult;
+      if (provider.streamComplete) {
+        result = await provider.streamComplete(messages, effectiveOptions, onChunk);
+      } else {
+        result = await provider.complete(messages, effectiveOptions);
+        if (result.content) onChunk(result.content);
+      }
+      if (i > 0) {
+        console.info(`[llm-provider] streamCompleteWithFallback: succeeded on fallback provider "${provider.providerName}"`);
+      }
+      return result;
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const reason = cascadeReason(err);
+      errors.push(`${provider.providerName}[${reason}]: ${msg}`);
+      if (!isCascadable(err)) {
+        console.error(
+          `[llm-provider] streamCompleteWithFallback: permanent error from "${provider.providerName}" (reason=${reason}), not cascading. Error: ${msg}`
+        );
+        throw err;
+      }
+      console.warn(
+        `[llm-provider] streamCompleteWithFallback: provider "${provider.providerName}" failed (reason=${reason})` +
           (i < providerList.length - 1 ? `, cascading to "${providerList[i + 1].providerName}"` : "") +
           `. Error: ${msg}`
       );

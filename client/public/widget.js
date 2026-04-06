@@ -339,11 +339,17 @@
             try {
               var event = JSON.parse(payload);
 
-              if (event.type === 'status') {
+              if (event.type === 'text_delta' && event.delta) {
+                streamingContent += event.delta;
+                streamingStatus = '';
+                render();
+                scrollToBottom();
+              } else if (event.type === 'status') {
                 streamingStatus = event.content || '';
                 render();
                 scrollToBottom();
               } else if (event.type === 'tool_call_start') {
+                streamingContent = '';
                 streamingStatus = event.content || 'Using tools...';
                 render();
                 scrollToBottom();
@@ -352,7 +358,7 @@
                 render();
                 scrollToBottom();
               } else if (event.type === 'complete') {
-                streamingContent = event.content || '';
+                streamingContent = event.content || streamingContent;
                 streamingStatus = '';
                 render();
                 scrollToBottom();

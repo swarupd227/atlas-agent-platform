@@ -469,7 +469,7 @@ export default function AgentPlayground() {
             try {
               const payload = JSON.parse(line.slice(6));
 
-              if (payload.type && payload.type !== "complete" && !payload.done) {
+              if (payload.type && payload.type !== "complete" && payload.type !== "text_delta" && !payload.done) {
                 const progressEvent: ProgressEvent = {
                   type: payload.type as ProgressEventType,
                   timestamp: payload.timestamp || new Date().toISOString(),
@@ -504,7 +504,10 @@ export default function AgentPlayground() {
                 }
               }
 
-              if (payload.type === "complete" && payload.content) {
+              if (payload.type === "text_delta" && payload.delta) {
+                accumulated += payload.delta;
+                onChunk(accumulated);
+              } else if (payload.type === "complete" && payload.content) {
                 accumulated = payload.content;
                 onChunk(accumulated);
               } else if (payload.content && !payload.type) {

@@ -1250,7 +1250,9 @@ function hashCode(str: string): number {
       const onProgress = (event: RuntimeProgressEvent) => {
         try {
           const progressData: Record<string, any> = { type: event.type, timestamp: event.timestamp };
-          if (event.type === "tool_call_start") {
+          if (event.type === "text_delta") {
+            progressData.delta = event.data.delta;
+          } else if (event.type === "tool_call_start") {
             progressData.content = `Using ${event.data.tool || "tool"}...`;
           } else if (event.type === "llm_thinking") {
             progressData.content = "Analyzing...";

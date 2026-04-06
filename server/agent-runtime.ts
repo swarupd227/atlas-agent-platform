@@ -5,7 +5,7 @@ import OpenAI from "openai";
 import { createHash } from "crypto";
 import { sql } from "drizzle-orm";
 import { searchKnowledgeBaseChunks } from "./embeddings";
-import { getProvider, completeWithFallback, buildCanonicalTools, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
+import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
 import { isRealMcpServer, mcpListTools, mcpCallTool as mcpSdkCallTool } from "./mcp-client";
 
 export function canonicalJsonStringify(obj: any): string {
@@ -109,7 +109,7 @@ export interface ContextSectionMetric {
 }
 
 export interface RuntimeProgressEvent {
-  type: "discovery" | "planning" | "tool_call_start" | "tool_call_result" | "llm_thinking" | "iteration_complete" | "final_analysis" | "compliance_check" | "policy_compliance_validation" | "error";
+  type: "discovery" | "planning" | "tool_call_start" | "tool_call_result" | "llm_thinking" | "iteration_complete" | "final_analysis" | "compliance_check" | "policy_compliance_validation" | "error" | "text_delta";
   timestamp: string;
   data: Record<string, any>;
 }
@@ -1263,7 +1263,7 @@ After receiving tool results, provide a structured analysis with key findings, s
   const maxCostPerRunUsd: number = typeof runtimeConfig.maxCostPerRunUsd === "number" ? runtimeConfig.maxCostPerRunUsd : 1.0;
 
   try {
-    const planResult = await completeWithFallback(
+    const planResult = await streamCompleteWithFallback(
       [
         { role: "system", content: systemMessage },
         { role: "user", content: prompt },
@@ -1272,6 +1272,11 @@ After receiving tool results, provide a structured analysis with key findings, s
         model: modelName,
         tools: canonicalTools.length > 0 ? canonicalTools : undefined,
         maxTokens: 4096,
+      },
+      (chunk) => {
+        if (onProgress) {
+          onProgress({ type: "text_delta", timestamp: new Date().toISOString(), data: { delta: chunk } });
+        }
       },
       [llmProvider, fallbackLlmProvider],
     );
@@ -1436,12 +1441,17 @@ After receiving tool results, provide a structured analysis with key findings, s
 
       if (iterationsUsed < MAX_TOOL_ITERATIONS) {
         try {
-          const continueResult = await completeWithFallback(
+          const continueResult = await streamCompleteWithFallback(
             conversationMessages,
             {
               model: modelName,
               tools: canonicalTools.length > 0 ? canonicalTools : undefined,
               maxTokens: 4096,
+            },
+            (chunk) => {
+              if (onProgress) {
+                onProgress({ type: "text_delta", timestamp: new Date().toISOString(), data: { delta: chunk } });
+              }
             },
             [llmProvider, fallbackLlmProvider],
           );
@@ -1541,12 +1551,17 @@ After receiving tool results, provide a structured analysis with key findings, s
           ...(currentContent && currentToolCalls.length === 0 ? [{ role: "assistant" as const, content: currentContent }] : []),
           { role: "user" as const, content: analysisPrompt },
         ];
-        const analysisResult = await completeWithFallback(
+        const analysisResult = await streamCompleteWithFallback(
           analysisMessages,
           {
             model: modelName,
             maxTokens: hasRecordData || hasOutputSchema ? 16384 : 4096,
             ...(isConversational ? {} : { responseFormat: "json" as const }),
+          },
+          (chunk) => {
+            if (onProgress && isConversational) {
+              onProgress({ type: "text_delta", timestamp: new Date().toISOString(), data: { delta: chunk } });
+            }
           },
           [llmProvider, fallbackLlmProvider],
         );
