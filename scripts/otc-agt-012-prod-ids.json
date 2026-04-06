@@ -1,0 +1,13 @@
+{
+  "agentId": "19feb92a-aeb0-47d9-841b-b0277eb99070",
+  "agentName": "Customer Communication & Notification Agent",
+  "agentCode": "OTC-AGT-012",
+  "knowledgeBaseId": "6ee7b83c-c34f-4703-afcd-32a9304be45e",
+  "goldenDatasetId": "cf14da83-796f-4dc2-84f3-964ef0817203",
+  "evalSuiteId": "6ba1bf82-503b-4d79-977d-20aee405af1b",
+  "policyIds": ["9ddc338e-f6e3-403b-b5dc-249129f53e99", "88c958c1-ec6f-489e-8215-8410d049ed01", "c06e3361-cfd4-4e7e-9402-f30fb06c8785", "6c12c7d0-481b-49c4-bb63-e6e622aeebf7", "51cd8836-d47a-43de-8093-11dfe8f3e7b1"],
+  "skillIds": ["ea4c1b22-92e0-4865-b66c-894f09624feb", "a5eb7a58-9f78-4e39-8b18-50bf94fbf300", "aec1a87d-581c-4221-81e2-cfe24276937f", "57015b67-1ba5-4511-9c33-5003d59523a9", "f385615a-b5cb-4a02-a125-54d9967ff24a", "d29b3f43-e06e-4bcb-b13f-e14748abc033"],
+  "migratedAt": "2026-04-05T06:16:32.642Z",
+  "environment": "prod",
+  "orgId": "cf5754b1-ee80-4b51-8bf6-7be263c97527"
+}
