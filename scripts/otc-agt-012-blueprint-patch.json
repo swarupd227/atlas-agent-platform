@@ -1,0 +1,42 @@
+{
+  "agentId": "19feb92a-aeb0-47d9-841b-b0277eb99070",
+  "agentName": "Customer Communication & Notification Agent",
+  "agentCode": "OTC-AGT-012",
+  "blueprintId": "43e63f37-5652-47b9-af32-9a701eebd2ee",
+  "blueprintName": "Customer Communication & Notification Agent — O2C Workflow",
+  "ontologyTags": [
+    {
+      "label": "Customer Communication Orchestration",
+      "category": "Customer Experience",
+      "conceptId": "otc-013"
+    },
+    {
+      "label": "Multi-Channel Notification Delivery",
+      "category": "Operations",
+      "conceptId": "otc-014"
+    },
+    {
+      "label": "CAN-SPAM / GDPR / CASL Email Compliance",
+      "category": "Compliance",
+      "conceptId": "otc-015"
+    },
+    {
+      "label": "TCPA SMS Consent & Quiet Hours Enforcement",
+      "category": "Compliance",
+      "conceptId": "otc-016"
+    },
+    {
+      "label": "Customer Communication Preference Management",
+      "category": "Customer Experience",
+      "conceptId": "otc-017"
+    },
+    {
+      "label": "Communication Analytics & Engagement Optimization",
+      "category": "Analytics",
+      "conceptId": "otc-018"
+    }
+  ],
+  "patchedAt": "2026-04-06T13:32:34.573Z",
+  "environment": "prod",
+  "orgId": "cf5754b1-ee80-4b51-8bf6-7be263c97527"
+}
