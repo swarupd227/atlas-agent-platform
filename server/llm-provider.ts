@@ -401,6 +401,7 @@ class OpenAIProvider implements LLMProvider {
             max_completion_tokens: options?.maxTokens || 4096,
             stream: true,
             stream_options: { include_usage: true },
+            ...(options?.responseFormat === "json" ? { response_format: { type: "json_object" as const } } : {}),
             ...(options?.temperature !== undefined ? { temperature: options.temperature } : {}),
           }),
         this.providerName,
@@ -695,6 +696,10 @@ class AnthropicProvider implements LLMProvider {
             },
           }))
         : undefined;
+
+    if (options?.responseFormat === "json" && systemPrompt) {
+      systemPrompt += "\n\nIMPORTANT: You must respond with valid JSON only. Do not include any text outside the JSON object.";
+    }
 
     cbCheck(this.providerName);
 

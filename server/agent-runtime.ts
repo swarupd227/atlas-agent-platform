@@ -1263,23 +1263,34 @@ After receiving tool results, provide a structured analysis with key findings, s
   const maxCostPerRunUsd: number = typeof runtimeConfig.maxCostPerRunUsd === "number" ? runtimeConfig.maxCostPerRunUsd : 1.0;
 
   try {
-    const planResult = await streamCompleteWithFallback(
-      [
-        { role: "system", content: systemMessage },
-        { role: "user", content: prompt },
-      ],
-      {
-        model: modelName,
-        tools: canonicalTools.length > 0 ? canonicalTools : undefined,
-        maxTokens: 4096,
-      },
-      (chunk) => {
-        if (onProgress) {
-          onProgress({ type: "text_delta", timestamp: new Date().toISOString(), data: { delta: chunk } });
-        }
-      },
-      [llmProvider, fallbackLlmProvider],
-    );
+    const planResult = await (onProgress
+      ? streamCompleteWithFallback(
+          [
+            { role: "system", content: systemMessage },
+            { role: "user", content: prompt },
+          ],
+          {
+            model: modelName,
+            tools: canonicalTools.length > 0 ? canonicalTools : undefined,
+            maxTokens: 4096,
+          },
+          (chunk) => {
+            onProgress({ type: "text_delta", timestamp: new Date().toISOString(), data: { delta: chunk } });
+          },
+          [llmProvider, fallbackLlmProvider],
+        )
+      : completeWithFallback(
+          [
+            { role: "system", content: systemMessage },
+            { role: "user", content: prompt },
+          ],
+          {
+            model: modelName,
+            tools: canonicalTools.length > 0 ? canonicalTools : undefined,
+            maxTokens: 4096,
+          },
+          [llmProvider, fallbackLlmProvider],
+        ));
 
     totalPromptTokens += planResult.tokensUsed.prompt;
     totalCompletionTokens += planResult.tokensUsed.completion;
@@ -1441,20 +1452,28 @@ After receiving tool results, provide a structured analysis with key findings, s
 
       if (iterationsUsed < MAX_TOOL_ITERATIONS) {
         try {
-          const continueResult = await streamCompleteWithFallback(
-            conversationMessages,
-            {
-              model: modelName,
-              tools: canonicalTools.length > 0 ? canonicalTools : undefined,
-              maxTokens: 4096,
-            },
-            (chunk) => {
-              if (onProgress) {
-                onProgress({ type: "text_delta", timestamp: new Date().toISOString(), data: { delta: chunk } });
-              }
-            },
-            [llmProvider, fallbackLlmProvider],
-          );
+          const continueResult = await (onProgress
+            ? streamCompleteWithFallback(
+                conversationMessages,
+                {
+                  model: modelName,
+                  tools: canonicalTools.length > 0 ? canonicalTools : undefined,
+                  maxTokens: 4096,
+                },
+                (chunk) => {
+                  onProgress({ type: "text_delta", timestamp: new Date().toISOString(), data: { delta: chunk } });
+                },
+                [llmProvider, fallbackLlmProvider],
+              )
+            : completeWithFallback(
+                conversationMessages,
+                {
+                  model: modelName,
+                  tools: canonicalTools.length > 0 ? canonicalTools : undefined,
+                  maxTokens: 4096,
+                },
+                [llmProvider, fallbackLlmProvider],
+              ));
 
           totalPromptTokens += continueResult.tokensUsed.prompt;
           totalCompletionTokens += continueResult.tokensUsed.completion;
@@ -1551,20 +1570,27 @@ After receiving tool results, provide a structured analysis with key findings, s
           ...(currentContent && currentToolCalls.length === 0 ? [{ role: "assistant" as const, content: currentContent }] : []),
           { role: "user" as const, content: analysisPrompt },
         ];
-        const analysisResult = await streamCompleteWithFallback(
-          analysisMessages,
-          {
-            model: modelName,
-            maxTokens: hasRecordData || hasOutputSchema ? 16384 : 4096,
-            ...(isConversational ? {} : { responseFormat: "json" as const }),
-          },
-          (chunk) => {
-            if (onProgress && isConversational) {
-              onProgress({ type: "text_delta", timestamp: new Date().toISOString(), data: { delta: chunk } });
-            }
-          },
-          [llmProvider, fallbackLlmProvider],
-        );
+        const analysisResult = await (onProgress && isConversational
+          ? streamCompleteWithFallback(
+              analysisMessages,
+              {
+                model: modelName,
+                maxTokens: hasRecordData || hasOutputSchema ? 16384 : 4096,
+              },
+              (chunk) => {
+                onProgress({ type: "text_delta", timestamp: new Date().toISOString(), data: { delta: chunk } });
+              },
+              [llmProvider, fallbackLlmProvider],
+            )
+          : completeWithFallback(
+              analysisMessages,
+              {
+                model: modelName,
+                maxTokens: hasRecordData || hasOutputSchema ? 16384 : 4096,
+                ...(isConversational ? {} : { responseFormat: "json" as const }),
+              },
+              [llmProvider, fallbackLlmProvider],
+            ));
 
         totalPromptTokens += analysisResult.tokensUsed.prompt;
         totalCompletionTokens += analysisResult.tokensUsed.completion;
