@@ -5266,6 +5266,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
     const newPipeline = rebuildPipeline(newProposals, orchestrator, pipeline);
     if (newPipeline) setPipeline(newPipeline);
     setDirty(true);
+    flushSave(newProposals, orchestrator, newPipeline || pipeline);
   }
 
   function editOrchestrator(updated: AgentProposal) {
@@ -5274,6 +5275,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
     const newPipeline = rebuildPipeline(proposals, updated, pipeline);
     if (newPipeline) setPipeline(newPipeline);
     setDirty(true);
+    flushSave(proposals, updated, newPipeline || pipeline);
   }
 
   function deleteWorker(index: number) {
@@ -5374,17 +5376,44 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
     setDragIndex(null);
   }
 
+  async function flushSave(
+    currentWorkers: typeof proposals,
+    currentOrchestrator: typeof orchestrator,
+    currentPipeline: typeof pipeline,
+    currentSelectedIndices: Set<number> = selectedIndices,
+    currentOrchestratorSelected: boolean = orchestratorSelected,
+  ) {
+    if (!proposalId) return;
+    try {
+      const res = await apiRequest("PATCH", `/api/agent-proposals/${proposalId}`, {
+        selectedIndices: Array.from(currentSelectedIndices),
+        orchestratorSelected: currentOrchestratorSelected,
+        workers: currentWorkers,
+        orchestrator: currentOrchestrator,
+        pipeline: currentPipeline,
+      });
+      const saved = await res.json();
+      queryClient.setQueryData(["/api/agent-proposals", outcome.id], saved);
+      setLastSaved(new Date().toISOString());
+      setDirty(false);
+    } catch {
+      // silent — dirty badge remains, user can retry via Save Plan
+    }
+  }
+
   async function savePlan() {
     if (!proposalId) return;
     setSaving(true);
     try {
-      await apiRequest("PATCH", `/api/agent-proposals/${proposalId}`, {
+      const res = await apiRequest("PATCH", `/api/agent-proposals/${proposalId}`, {
         selectedIndices: Array.from(selectedIndices),
         orchestratorSelected,
         workers: proposals,
         orchestrator,
         pipeline,
       });
+      const saved = await res.json();
+      queryClient.setQueryData(["/api/agent-proposals", outcome.id], saved);
       setLastSaved(new Date().toISOString());
       setDirty(false);
       toast({ title: "Plan saved", description: "Your agent development plan has been saved." });
