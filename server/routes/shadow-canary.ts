@@ -669,8 +669,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
           industry,
           status: "pending",
           version: agent.currentVersion || "1.0.0",
-          // releaseNotes (not in schema): `Auto-deployment for ${agent.name}`,
-          
+          organizationId: agent.organizationId,
         });
         const depVersion = deployment.version || agent.currentVersion || "1.0.0";
         await storage.ensureAgentVersion(req.params.id, depVersion, "active");
