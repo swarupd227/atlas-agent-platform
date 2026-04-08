@@ -3118,6 +3118,21 @@ ${missingRequiredTest}
         args = ${validArgsConstruction}
         with pytest.raises(RuntimeError, match="connection refused"):
             ${fnName}(args)
+
+${isStub ? `    def test_adapter_real_call_returns_stub_dict(self):
+        """Stub adapters must return a dict with _stub=True (never raise)."""
+        args = ${validArgsConstruction}
+        result = ${fnName}(args)
+        assert isinstance(result, dict), f"Expected dict from stub, got {type(result)}"
+        assert result.get("_stub") is True, f"Expected _stub=True in stub result: {result}"
+        assert "status" in result, "Stub result should contain 'status' key"
+        assert "message" in result, "Stub result should contain 'message' key"
+` : `    def test_adapter_real_call_returns_valid_result(self):
+        """Adapter real call returns a dict or raises (if customer-implemented)."""
+        args = ${validArgsConstruction}
+        result = ${fnName}(args)
+        assert isinstance(result, dict), f"Expected dict from adapter, got {type(result)}"
+`}
 `;
   }
 
