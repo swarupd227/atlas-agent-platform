@@ -40,7 +40,7 @@ export interface RfqEntity {
 
 export const NOVATECH_RFQ_SEGMENTS: Array<{ text: string; entity?: RfqEntity["type"] }> = [
   { text: "From: Jim Davis, Procurement Director\nMeridian Manufacturing\n\nTo: NovaTech Industries — Sales\nDate: April 8, 2026\nSubject: Request for Quotation — Capital Equipment Package\n\nDear NovaTech Team,\n\nPlease provide a formal quotation for the following capital equipment package in support of our FY26 plant expansion programme.\n\n" },
-  { text: "REQUIRED EQUIPMENT:\n• Model X-7200 Turbine Assembly x 4 (Series A) + x 3 (Series B) + additional accessories\n• Series K Filtration Units — full package (30 line items)\n• Control Electronics Package including CX-series controllers and HMI panels", entity: "product" },
+  { text: "REQUIRED EQUIPMENT:\n• Model X-7200 Turbine Assembly x 4 (Series A) + x 3 (Series B) + additional accessories [Atlas note: X-7200 → X-7250 substitution applied due to supply discontinuation]\n• Series K Filtration Units — full package (30 line items)\n• Control Electronics Package including CX-series controllers and HMI panels", entity: "product" },
   { text: "\n\nPRICING REQUIREMENT:\nMeridian is ", },
   { text: "requesting 12% off current list pricing", entity: "pricing" },
   { text: " across all line items, consistent with our projected FY26 spend. We have a long-standing MSA (contract MSA-2024-0892) and believe our relationship warrants this tier.\n\nDELIVERY REQUIREMENTS:\nSplit delivery across ", },
@@ -94,8 +94,8 @@ function mkItem(
 
 export const LINE_ITEMS: LineItem[] = [
   // ── Turbine Assemblies (12 line items) ─────────────────────────────────
-  mkItem( 1,"TX-7200-A","Turbine Assembly X-7200 Series A","turbine",4,18_500,32,8),
-  mkItem( 2,"TX-7200-B","Turbine Assembly X-7200 Series B","turbine",3,21_200,28,8),
+  mkItem( 1,"TX-7250-A","Turbine Assembly X-7250 Series A (SUBSTITUTED from X-7200)","turbine",4,18_500,32,6,{ substituted: true, substituteFor: "TX-7200-A" }),
+  mkItem( 2,"TX-7250-B","Turbine Assembly X-7250 Series B (SUBSTITUTED from X-7200)","turbine",3,21_200,28,6,{ substituted: true, substituteFor: "TX-7200-B" }),
   mkItem( 3,"TX-7100-STD","Turbine Assembly X-7100 Standard","turbine",2,15_800,31,6),
   mkItem( 4,"TX-7300-HD","Turbine Assembly X-7300 Heavy Duty","turbine",1,38_600,35,10),
   mkItem( 5,"TX-6800-CMP","Turbine Assembly X-6800 Compact","turbine",1,12_400,29,6),
@@ -151,25 +151,25 @@ export const COMPATIBILITY_RULES = [
   {
     id: "COMP-01",
     status: "substitution",
-    title: "Controller Compatibility",
-    detail: "CE-CX440-STD is incompatible with TX-7200-A/B firmware v3.2+. Recommend CX-450-ENH (same price, full compatibility).",
-    item: "CE-CX440-STD → CE-CX450-ENH",
-    severity: "amber" as const,
-  },
-  {
-    id: "LEAD-01",
-    status: "alert",
-    title: "Lead Time Alert — Original CX-440",
-    detail: "CE-CX440-STD had an 8-week lead time. Substituted CX-450-ENH is 6 weeks — order by April 15 for Q3 delivery.",
-    item: "CE-CX440-STD",
+    title: "Turbine Model Substitution",
+    detail: "X-7200 Series A/B (7 units) discontinued in APAC supply chain. Atlas recommends X-7250 Series A/B — identical performance spec, same price, shorter 6-week lead time vs 8-week for X-7200.",
+    item: "TX-7200-A/B → TX-7250-A/B",
     severity: "amber" as const,
   },
   {
     id: "COMP-02",
+    status: "substitution",
+    title: "Controller Compatibility",
+    detail: "CE-CX440-STD is not certified for X-7250 firmware v3.2+. Atlas substitutes CX-450-ENH (same price, fully certified for X-7250, 6-week lead time).",
+    item: "CE-CX440-STD → CE-CX450-ENH",
+    severity: "amber" as const,
+  },
+  {
+    id: "COMP-03",
     status: "ok",
     title: "Bundle Compatibility: P-220",
     detail: "Turbine Assemblies + Series K Filtration qualifies for Package Discount P-220 (additional 2% off list after volume discount).",
-    item: "TX-7200-* + FK-S*",
+    item: "TX-7250-* + FK-S*",
     severity: "green" as const,
   },
   {

@@ -160,18 +160,18 @@ const DEMOS: Demo[] = [
   },
   {
     id: "novatech-otc-quote",
-    title: "Intelligent Quote Configuration",
+    title: "Intelligent Quote & Configuration",
     client: "NovaTech Industries",
     description:
-      "End-to-end Order-to-Cash quote automation for B2B manufacturing. Two agents parse a 47-SKU RFQ, run compatibility checks, apply waterfall pricing with bundle optimisation, route for discount approval, and generate a professional quote document — in 90 seconds.",
+      "Pre-Order stage of the Order-to-Cash cycle. Two Atlas agents run in parallel — OTC-AGT-001 (Quote & Configuration) and OTC-AGT-011 (Contract & Pricing Compliance) — to parse a 47-SKU RFQ, apply compatibility substitutions, run waterfall pricing, route for VP approval, and generate Quote Q-78432 in under 90 seconds.",
     industry: "Manufacturing",
     industryId: "manufacturing",
     route: "/demo/otc-quote",
     icon: Factory,
     iconColor: "#FF6B35",
-    duration: "10 min",
+    duration: "8 min",
     screens: 4,
-    tags: ["Order-to-Cash", "CPQ", "B2B Manufacturing"],
+    tags: ["Order-to-Cash", "Pre-Order", "CPQ", "B2B Manufacturing"],
   },
 ];
 

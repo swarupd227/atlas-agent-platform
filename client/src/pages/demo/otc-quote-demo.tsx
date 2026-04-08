@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { FileText, ChevronRight, Inbox, Settings2, BarChart2, Send } from "lucide-react";
@@ -21,6 +21,23 @@ export default function OtcQuoteDemo() {
 
   const isRunning = state.status === "running";
   const isComplete = state.status === "complete";
+  const lastAdvancedRef = useRef(0);
+
+  // Auto-advance: S2→S3 after pricing_optimisation completes; S3→S4 after quote_generation completes.
+  // A 2-second dwell ensures the user briefly sees each screen before advancing.
+  useEffect(() => {
+    const hasPricing = state.results.some(r => r.role === "pricing_optimisation");
+    const hasQuote = state.results.some(r => r.role === "quote_generation");
+
+    if (hasQuote && screen === 3 && lastAdvancedRef.current < 4) {
+      const t = setTimeout(() => { lastAdvancedRef.current = 4; setScreen(4); }, 2000);
+      return () => clearTimeout(t);
+    }
+    if (hasPricing && screen === 2 && lastAdvancedRef.current < 3) {
+      const t = setTimeout(() => { lastAdvancedRef.current = 3; setScreen(3); }, 2000);
+      return () => clearTimeout(t);
+    }
+  }, [state.results, screen]);
 
   const getScreenStatus = (id: number): "active" | "complete" | "available" | "locked" => {
     if (id === screen) return "active";
