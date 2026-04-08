@@ -1893,7 +1893,7 @@ export class DatabaseStorage implements IStorage {
   async getPoliciesByScope(scopeType: string, scopeId?: string) {
     if (scopeId) {
       return db.select().from(policies).where(
-        eq(policies.scopeType, scopeType)
+        and(eq(policies.scopeType, scopeType), eq(policies.scopeId, scopeId)),
       );
     }
     return db.select().from(policies).where(eq(policies.scopeType, scopeType));

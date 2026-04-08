@@ -1,8 +1,53 @@
 import { Router } from "express";
+import { createHash } from "crypto";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
 import type { AarConfig, InsertAarConfig } from "../../shared/schema";
 import { mcpCallTool } from "../mcp-client";
+
+// ─── Task 1: Token-bucket rate limiter (in-memory, per agentId:toolName) ─────
+interface TokenBucket {
+  tokens: number;
+  lastRefill: number;
+  capacity: number;
+  refillRatePerMs: number;
+}
+const _rateLimitBuckets = new Map<string, TokenBucket>();
+
+function consumeRateLimitToken(
+  agentId: string,
+  toolName: string,
+  rateLimits: Record<string, unknown> | null,
+): boolean {
+  const key = `${agentId}:${toolName}`;
+  const rpm = (rateLimits?.requestsPerMinute as number | undefined) ?? 600;
+  const burst = (rateLimits?.burstCapacity as number | undefined) ?? 50;
+  const capacity = Math.min(rpm, burst);
+  const refillRatePerMs = rpm / 60_000;
+
+  const now = Date.now();
+  let bucket = _rateLimitBuckets.get(key);
+  if (!bucket) {
+    bucket = { tokens: capacity, lastRefill: now, capacity, refillRatePerMs };
+    _rateLimitBuckets.set(key, bucket);
+  }
+  const elapsed = now - bucket.lastRefill;
+  bucket.tokens = Math.min(capacity, bucket.tokens + elapsed * refillRatePerMs);
+  bucket.lastRefill = now;
+  if (bucket.tokens < 1) return false;
+  bucket.tokens -= 1;
+  return true;
+}
+
+// ─── Task 4: TelemetryEmitter in-process counters ─────────────────────────────
+// atlas.agent.policy.evaluations — keyed by "decision"
+const _policyEvalCounters = new Map<string, number>();
+// atlas.mcp.tool_calls.total — keyed by "agentId:toolName:success|failure"
+const _toolCallCounters = new Map<string, number>();
+
+function _incCounter(map: Map<string, number>, key: string) {
+  map.set(key, (map.get(key) ?? 0) + 1);
+}
 
 const PROTO_SERVICE_DEFINITION = `
 syntax = "proto3";
@@ -523,14 +568,17 @@ async function invokeViaMcp(
   toolName: string,
   serverId: string | undefined,
   args: Record<string, unknown>,
-): Promise<{ result: unknown; error?: string }> {
+): Promise<{ result: unknown; error?: string; matchedToolId?: string }> {
   if (serverId) {
     const mcpServer = await storage.getMcpServer(serverId);
     if (!mcpServer) return { result: null, error: `MCP server '${serverId}' not found` };
+    // Try to find the specific tool record for fingerprinting
+    const allTools = await storage.getAllMcpServerTools();
+    const matchedTool = allTools.find(t => t.serverId === serverId && t.name === toolName);
     try {
-      return { result: await mcpCallTool(mcpServer, toolName, args) };
+      return { result: await mcpCallTool(mcpServer, toolName, args), matchedToolId: matchedTool?.id };
     } catch (e: any) {
-      return { result: null, error: e.message };
+      return { result: null, error: e.message, matchedToolId: matchedTool?.id };
     }
   }
   // No server_id: locate first MCP server that hosts this tool
@@ -540,9 +588,9 @@ async function invokeViaMcp(
   const mcpServer = await storage.getMcpServer(matched.serverId);
   if (!mcpServer) return { result: null, error: `MCP server for tool '${toolName}' not found` };
   try {
-    return { result: await mcpCallTool(mcpServer, toolName, args) };
+    return { result: await mcpCallTool(mcpServer, toolName, args), matchedToolId: matched.id };
   } catch (e: any) {
-    return { result: null, error: e.message };
+    return { result: null, error: e.message, matchedToolId: matched.id };
   }
 }
 
@@ -560,8 +608,11 @@ async function evaluateActionAgainstConstraints(
   rulesTriggered: string[];
   riskLevel: string;
 }> {
-  const agent = await storage.getAgent(agentId, orgId);
-  const aarConfig = await storage.getAarConfig(agentId, orgId);
+  const [agent, aarConfig, agentPolicies] = await Promise.all([
+    storage.getAgent(agentId, orgId),
+    storage.getAarConfig(agentId, orgId),
+    storage.getPoliciesByScope("agent", agentId),
+  ]);
 
   const riskLevel = agent?.riskTier ?? "medium";
   const autonomyMode = agent?.autonomyMode ?? "supervised";
@@ -569,9 +620,22 @@ async function evaluateActionAgainstConstraints(
   const allowedTools: string[] = (aarConfig?.allowedTools as string[] | null) ?? [];
   const deniedTools: string[] = (aarConfig?.deniedTools as string[] | null) ?? [];
   const requireApprovalTools: string[] = (aarConfig?.requireApprovalTools as string[] | null) ?? [];
+  const rateLimits = (aarConfig?.rateLimits as Record<string, unknown> | null) ?? null;
 
-  const policiesEvaluated = ["constraint-list-policy", "autonomy-policy"];
+  // Task 2: Collect real policy IDs alongside built-in policy names
+  const policiesEvaluated: string[] = [
+    "constraint-list-policy",
+    "autonomy-policy",
+    ...agentPolicies.map(p => p.id),
+  ];
   const rulesTriggered: string[] = [];
+
+  // Task 1: Rate-limit check (token bucket per agentId:toolName)
+  const allowed = consumeRateLimitToken(agentId, toolName, rateLimits);
+  if (!allowed) {
+    rulesTriggered.push("rate-limit-exceeded");
+    return { decision: "BLOCK", reason: `Rate limit exceeded for tool '${toolName}' by agent '${agentId}'`, policiesEvaluated, rulesTriggered, riskLevel };
+  }
 
   // Denied list takes precedence
   if (deniedTools.length > 0 && deniedTools.includes(toolName)) {
@@ -589,6 +653,26 @@ async function evaluateActionAgainstConstraints(
   if (requireApprovalTools.length > 0 && requireApprovalTools.includes(toolName)) {
     rulesTriggered.push("require-approval-tool-list");
     return { decision: "REQUIRE_APPROVAL", reason: `Tool '${toolName}' requires explicit approval before invocation`, policiesEvaluated, rulesTriggered, riskLevel };
+  }
+
+  // Task 2: Evaluate attached policy rules from the policies table
+  for (const policy of agentPolicies) {
+    if (policy.status !== "active") continue;
+    const pj = policy.policyJson as { rules?: Array<{ name?: string; condition?: { toolName?: string | string[] }; block?: boolean }> } | null;
+    const rules = pj?.rules ?? [];
+    for (const rule of rules) {
+      const cond = rule.condition?.toolName;
+      const matches =
+        !cond ||
+        (Array.isArray(cond) ? cond.includes(toolName) : cond === toolName);
+      if (matches) {
+        const ruleName = rule.name ?? `policy-${policy.id}-rule`;
+        rulesTriggered.push(ruleName);
+        if (rule.block) {
+          return { decision: "BLOCK", reason: `Tool '${toolName}' blocked by policy rule '${ruleName}' (policy: ${policy.name})`, policiesEvaluated, rulesTriggered, riskLevel };
+        }
+      }
+    }
   }
 
   // High-risk agents in supervised mode get ALERT_AND_ALLOW for all tool calls
@@ -662,6 +746,29 @@ router.post("/api/agents/:agentId/aar/evaluate-action", async (req, res) => {
 
     const statusCode = evaluation.decision === "BLOCK" ? 403 : 200;
     res.status(statusCode).json(actionDecision);
+
+    // Task 3: ProvenanceStore.Record(policy_eval_event) — fire-and-forget after response
+    storage.createAuditEvent({
+      organizationId: orgId,
+      action: "aar.policy.evaluated",
+      objectType: "mcp-tool",
+      objectId: server_id ?? agentId,
+      actorId: agentId,
+      actorType: "agent",
+      details: JSON.stringify({
+        toolName: tool_name,
+        serverId: server_id,
+        decision: evaluation.decision,
+        reason: evaluation.reason,
+        policiesEvaluated: evaluation.policiesEvaluated,
+        rulesTriggered: evaluation.rulesTriggered,
+        riskLevel: evaluation.riskLevel,
+        evaluationTimeUs,
+      }),
+    }).catch(e => console.error("[AAR] provenance policy_eval_event failed:", e));
+
+    // Task 4: TelemetryEmitter — atlas.agent.policy.evaluations counter
+    _incCounter(_policyEvalCounters, evaluation.decision);
   } catch (err: any) {
     console.error("[AAR] evaluate-action error:", err);
     res.status(500).json({ error: err.message });
@@ -727,12 +834,44 @@ router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
       });
     }
 
+    // Task 5: Capture pre-call fingerprint snapshot from mcpServerTools
+    const allToolsForFingerprint = await storage.getAllMcpServerTools();
+    const preCallTool = allToolsForFingerprint.find(t =>
+      t.name === tool_name && (!server_id || t.serverId === server_id),
+    );
+    const preCallFingerprintHash = preCallTool?.fingerprintHash ?? null;
+    const behaviorBaseline = preCallTool?.behaviorBaseline as Record<string, unknown> | null;
+    const maxDriftPercent = 10; // default; could come from aar_configs if added later
+
     // Proceed with the tool call — proxy through MCP via shared helper
-    const { result: toolResult, error: invocationError } = await invokeViaMcp(tool_name, server_id, args ?? {});
+    const { result: toolResult, error: invocationError, matchedToolId } = await invokeViaMcp(tool_name, server_id, args ?? {});
     if (invocationError) {
       console.error(`[AAR] invoke-tool MCP call failed: ${invocationError}`);
     }
 
+    // Task 5: Post-call fingerprint + drift detection
+    const responseBody = toolResult !== null ? JSON.stringify(toolResult) : "";
+    const postCallHash = createHash("sha256").update(responseBody).digest("hex");
+    let driftDetected = false;
+    if (preCallFingerprintHash && preCallFingerprintHash !== postCallHash) {
+      // Simple drift heuristic: character-edit distance ratio vs baseline length
+      const baselineLen = (behaviorBaseline?.avgResponseLength as number | undefined) ?? responseBody.length;
+      const responseLenDelta = Math.abs(responseBody.length - baselineLen);
+      const driftRatio = (responseLenDelta / (baselineLen || 1)) * 100;
+      if (driftRatio > maxDriftPercent) {
+        driftDetected = true;
+        const toolIdToUpdate = matchedToolId ?? preCallTool?.id;
+        if (toolIdToUpdate) {
+          storage.updateMcpServerTool(toolIdToUpdate, {
+            driftStatus: "DRIFT_DETECTED",
+            lastDriftAt: new Date(),
+          }).catch(e => console.error("[AAR] drift status update failed:", e));
+        }
+        console.warn(`[AAR] DRIFT_DETECTED for tool '${tool_name}' agent '${agentId}' — drift ${driftRatio.toFixed(1)}% > ${maxDriftPercent}%`);
+      }
+    }
+
+    // Task 3: ProvenanceStore.Record(tool_call_event) — enriched audit event
     const auditEvent = await storage.createAuditEvent({
       organizationId: orgId,
       action: "aar.invoke_tool",
@@ -740,8 +879,21 @@ router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
       objectId: server_id ?? agentId,
       actorId: agentId,
       actorType: "agent",
-      details: JSON.stringify({ toolName: tool_name, serverId: server_id, args: args ?? {}, policyDecision: evaluation.decision, error: invocationError }),
+      details: JSON.stringify({
+        toolName: tool_name,
+        serverId: server_id,
+        args: args ?? {},
+        policyDecision: evaluation.decision,
+        error: invocationError,
+        preCallFingerprintHash,
+        postCallFingerprintHash: postCallHash,
+        driftDetected,
+      }),
     });
+
+    // Task 4: TelemetryEmitter — atlas.mcp.tool_calls.total counter
+    _incCounter(_toolCallCounters, `${agentId}:${tool_name}:${invocationError ? "failure" : "success"}`);
+    _incCounter(_policyEvalCounters, evaluation.decision);
 
     res.json({
       result: toolResult !== null ? JSON.stringify(toolResult) : null,
@@ -752,10 +904,43 @@ router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
         risk_level: evaluation.riskLevel,
         evaluation_time_us: evaluationTimeUs,
       },
+      ...(driftDetected ? { drift_detected: true, drift_status: "DRIFT_DETECTED" } : {}),
       ...(invocationError ? { invocation_error: invocationError } : {}),
     });
   } catch (err: any) {
     console.error("[AAR] invoke-tool error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ─── Task 4: GET /api/agents/:agentId/aar/metrics ────────────────────────────
+// Returns in-process TelemetryEmitter counter snapshots in OTLP-compatible JSON.
+
+router.get("/api/agents/:agentId/aar/metrics", async (req, res) => {
+  try {
+    const { agentId } = req.params;
+    const orgId = getOrgId(req);
+    const agent = await storage.getAgent(agentId, orgId);
+    if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+    // atlas.agent.policy.evaluations — per-decision counts for this process lifetime
+    const policyMetrics = Array.from(_policyEvalCounters.entries()).map(([decision, value]) => ({
+      name: "atlas.agent.policy.evaluations",
+      labels: { decision },
+      value,
+    }));
+
+    // atlas.mcp.tool_calls.total — per agentId:toolName:outcome, filtered to this agent
+    const toolMetrics = Array.from(_toolCallCounters.entries())
+      .filter(([key]) => key.startsWith(`${agentId}:`))
+      .map(([key, value]) => {
+        const [, toolName, outcome] = key.split(":");
+        return { name: "atlas.mcp.tool_calls.total", labels: { agentId, toolName, outcome }, value };
+      });
+
+    res.json({ metrics: [...policyMetrics, ...toolMetrics] });
+  } catch (err: any) {
+    console.error("[AAR] metrics error:", err);
     res.status(500).json({ error: err.message });
   }
 });
