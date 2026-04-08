@@ -2858,14 +2858,16 @@ def ${tool.name}(args: ${className}) -> dict:
 
     for (const [key, v] of Object.entries(props)) {
       let pyType = "str";
-      let defaultVal = '""';
-      if (v.type === "integer") { pyType = "int"; defaultVal = "0"; }
-      else if (v.type === "number") { pyType = "float"; defaultVal = "0.0"; }
-      else if (v.type === "boolean") { pyType = "bool"; defaultVal = "False"; }
-      else if (v.type === "array" || v.type === "object") { pyType = v.type === "array" ? "list" : "dict"; defaultVal = "None"; }
+      if (v.type === "integer") pyType = "int";
+      else if (v.type === "number") pyType = "float";
+      else if (v.type === "boolean") pyType = "bool";
+      else if (v.type === "array") pyType = "list";
+      else if (v.type === "object") pyType = "dict";
 
       const isReq = required.has(key);
-      paramParts.push(`${key}: ${isReq ? pyType : `Optional[${pyType}]`}${isReq ? "" : ` = ${defaultVal}`}`);
+      // Optional parameters are always Optional[T] = None (not a type-specific default)
+      // so callers can safely omit them; LangChain sees None as "not supplied".
+      paramParts.push(`${key}: ${isReq ? pyType : `Optional[${pyType}]`}${isReq ? "" : " = None"}`);
       argParts.push(`${key}=${key}`);
     }
 
