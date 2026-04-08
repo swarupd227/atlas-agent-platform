@@ -3305,7 +3305,7 @@ ${toolsJson}
 
 ${fwInstr}
 
-Requirements for each TOOL ADAPTER file (Python — MANDATORY contract):
+${ctx.format === "python" ? `Requirements for each Python TOOL ADAPTER file (MANDATORY contract — test files import these symbols):
 1. MUST define a @dataclass named <ToolNamePascalCase>Args (e.g. for "application_manager" → "Application_managerArgs").
    Add one field per parameter in the tool's schema with a matching Python type and a safe default value:
    string → str = "", number/integer → int = 0, boolean → bool = False, array → list = None (field(default_factory=list)),
@@ -3314,7 +3314,15 @@ Requirements for each TOOL ADAPTER file (Python — MANDATORY contract):
 3. MUST define a module-level function: def _execute(args: <ClassName>) -> dict — this is the internal implementation entry point (raise NotImplementedError for stubs). Tests mock/patch this function.
 4. MUST define a public function def <tool_name>(args: <ClassName>) -> dict that delegates to _execute(args) and returns its result.
 5. Include the tool description as a docstring on the public function.
-6. Log the call: print(f"[<tool_name>] called with: {args}")
+6. Log the call: print(f"[<tool_name>] called with: {args}")` : `Requirements for each TypeScript TOOL ADAPTER file:
+1. Each adapter must have a typed function signature derived from the tool's parameter schema
+2. Export the function as the default export and as a named export
+3. Export a const inputSchema object matching the tool's parameter JSON Schema
+4. Export an async _execute function that contains the actual implementation logic; the public function delegates to it
+5. Include the tool's description as a JSDoc comment
+6. Include clear TODO comments showing exactly what API/system to connect to based on the tool's purpose
+7. Log the call with the tool name and args (console.log)
+8. Throw NotImplementedError with a clear message so developers know to implement it`}
 
 IMPORTANT: Keep all code concise. Do NOT include a README or lengthy documentation strings in your JSON output.
 Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and properly closed.`;
