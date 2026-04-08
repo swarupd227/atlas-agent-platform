@@ -1,0 +1,39 @@
+Demo 1: Intelligent Quote Configuration
+PROBLEM STATEMENT: NovaTech's largest customer, Meridian Manufacturing ($28M annual spend), sends an RFQ for a complex equipment package: 3 product lines, 47 SKUs, tiered volume pricing, a custom bundle with compatibility constraints, multi-site delivery (4 plants), and a request for 12% discount off list - which exceeds the sales rep's 8% authority. Today this quote takes a senior sales engineer 4-6 hours to configure, price, and route for approval. Errors in manual pricing cause 3-5% revenue leakage.
+
+DEMO OBJECTIVE: Show Atlas configuring the full quote in 90 seconds - product configuration with compatibility checks, intelligent pricing with discount optimization, approval routing, and professional quote document generation.
+
+AGENTS INVOKED: OTC-AGT-001 (Quote & Configuration Agent), OTC-AGT-011 (Contract & Pricing Compliance Agent)
+
+Screen 2.1: Quote Workspace - Request Intake
+Entry point. The sales rep opens a new quote from the customer's RFQ email.
+Layout: Request Parsing + Customer Context Split
+Left Panel (50%) - RFQ Parser: The customer's RFQ email/PDF is displayed in a document viewer. OTC-AGT-001 badge. NLP-highlighted entities in the RFQ text: [PRODUCTS] in blue ("Model X-7200 turbine assembly x 12", "Series K filtration units x 30"), [PRICING] in green ("requesting 12% off current list"), [DELIVERY] in purple ("split to 4 plants: Detroit, Houston, Phoenix, Portland"), [TIMELINE] in amber ("need delivery by Q3 FY26"). Below the document: auto-extracted structured data in editable form fields - 47 line items parsed, 3 product families identified, 4 ship-to addresses, requested discount: 12%.
+Right Panel (50%) - Customer 360 Context: OTC-AGT-011 badge. Meridian Manufacturing customer card: Annual Spend: $28.4M (Tier 1), Active Contract: MSA-2024-0892 (expires Dec 2026), Contract Discount Schedule: 8% standard / 10% at $30M+ / 12% at $35M+, Current YTD Spend: $21.7M (projected $29M - below 12% tier), Credit Status: A+ (green), Open AR: $1.2M (current), Average Days to Pay: 32, Last Quote: Q-77891 ($340K, won), Relationship Manager: Sarah Chen. Insight callout in orange border: "Customer requesting 12% discount but projected annual spend ($29M) qualifies only for 10% tier. Upsell opportunity: $6M additional spend unlocks 12% tier."
+Key Interaction
+The rep reviews the parsed RFQ, confirms line items, and clicks "Configure & Price" orange CTA.
+
+Screen 2.2: Intelligent Configuration Engine
+Atlas configures the product bundle with compatibility checks and optimization.
+Layout: Configuration Canvas + Rules Panel
+Main Area (70%) - Visual Configuration Canvas: A visual product configuration workspace showing the 47 SKUs organized by product family in a tree/card layout. Three product family groups displayed as expandable sections: (1) Turbine Assemblies (12 units) - blue cards, (2) Filtration Systems (30 units) - green cards, (3) Control Electronics (5 units) - purple cards. Compatibility lines drawn between interdependent products (e.g., turbine model X-7200 requires compatible controller CX-440). A red alert flag on 2 items: "Model K-3100 filter incompatible with X-7200 turbine mounting bracket. Recommended substitute: K-3200 (same price, compatible fitment)." Compatible alternatives shown as swappable cards with drag-and-drop.
+Right Panel (30%) - Configuration Rules & Optimization: OTC-AGT-001 badge. Rules applied: (1) Compatibility: 45/47 items compatible (2 substitutions recommended), (2) Bundle Opportunity: "Bundling turbine + filtration qualifies for Package Discount P-220 (additional 2% off)", (3) Minimum Order: All items above MOQ thresholds (green check), (4) Lead Time Alert: "CX-440 controller has 8-week lead time - order by April 15 for Q3 delivery" (amber alert). Bottom section: "AI Recommendations" - "Add 3x spare filter cartridges (K-3200-SPARE) to unlock maintenance bundle pricing: $4,200 savings for customer, $2,100 incremental margin for NovaTech."
+Key Interaction
+Rep accepts both substitutions, adds the spare cartridge recommendation, and clicks "Generate Pricing".
+
+Screen 2.3: Pricing & Discount Optimization
+Atlas applies multi-tier pricing logic and optimizes the discount structure.
+Layout: Pricing Waterfall + Approval Decision
+Top Section (40%) - Pricing Waterfall Visualization: A horizontal waterfall chart showing price build-up from left to right: List Price ($487,200) > Volume Discount (-$48,720 / 10%) > Bundle Discount P-220 (-$8,769 / additional 2%) > Contract Pricing Adjustment (-$0 / already in tier) > Net Price ($429,711). Below the waterfall: two comparison bars - "Customer Requested" ($428,736 at 12%) vs. "Atlas Optimized" ($429,711 at effective 11.8%). Delta: $975 in NovaTech's favor. A green callout: "Optimized pricing is within $975 of customer's target while protecting margin. Bundle discount achieves near-equivalent result without exceeding contract tier authority."
+Center Section (35%) - Line Item Detail Table: A sortable data table: Line #, SKU, Description, Qty, Unit List Price, Discount %, Unit Net Price, Extended Price, Margin %, Lead Time. Color-coded margin column: green (>30%), amber (20-30%), red (<20%). Totals row at bottom. An expandable "Margin Analysis" sub-row for each item showing cost breakdown and competitive price comparison where available.
+Bottom Section (25%) - Approval Routing Decision: OTC-AGT-001 badge. Approval analysis panel: "Effective Discount: 11.8% - Exceeds rep authority (8%) but within Regional VP authority (15%)". Auto-generated approval request with: deal summary, margin impact, customer context, competitive justification, and recommended approval. Two CTAs: "Route for Approval" (sends to Regional VP Sarah Chen with one-click approve in email/mobile) and "Adjust Pricing" (reopens pricing editor).
+Key Interaction
+Rep clicks "Route for Approval". A simulated notification shows Sarah Chen approving on her mobile in 2 minutes. The screen updates to show "APPROVED" green badge.
+
+Screen 2.4: Quote Document Generation & Delivery
+Atlas generates the professional quote document ready for customer delivery.
+Layout: Document Preview + Delivery Panel
+Main Area (70%) - Quote Document Preview: A live-rendered preview of the professional quote document in NovaTech branded format. Sections: Cover page with quote number (Q-78432), Meridian Manufacturing header, and validity period (30 days). Executive Summary with total pricing and key terms. Detailed Line Items table with all 48 SKUs (including added spares), unit pricing, and extended totals. Delivery Schedule showing split-shipment plan across 4 plants with committed dates. Terms & Conditions referencing MSA-2024-0892. Signature block. The document looks polished and print-ready.
+Right Panel (30%) - Delivery & Tracking: Output format selector: PDF, Word (editable), Email (inline), Customer Portal. Customer contact selector (pre-populated: Jim Davis, Procurement Director, Meridian). Cover email template (editable, pre-populated with key deal points). "Send Quote" orange CTA. Below: Quote Tracking section showing status lifecycle - Sent > Viewed > Accepted/Revised/Expired. Win probability indicator: 78% (based on customer history and deal characteristics). Follow-up reminder scheduler.
+Demo Talking Point
+"A 47-SKU multi-site quote with compatibility checks, tiered pricing, bundle optimization, discount approval, and professional document generation - done in 90 seconds. The current manual process takes 4-6 hours and has a 3-5% pricing error rate. Atlas eliminated the errors, optimized the deal (found $2,100 in incremental margin), and identified a $6M upsell opportunity to unlock the customer's requested discount tier."
