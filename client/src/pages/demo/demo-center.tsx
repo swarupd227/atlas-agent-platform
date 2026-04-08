@@ -19,6 +19,7 @@ import {
   Clock,
   Tag,
   BarChart2,
+  Factory,
 } from "lucide-react";
 
 interface Demo {
@@ -157,6 +158,21 @@ const DEMOS: Demo[] = [
     screens: 4,
     tags: ["Employment Law", "Compliance", "Multi-Jurisdiction"],
   },
+  {
+    id: "novatech-otc-quote",
+    title: "Intelligent Quote Configuration",
+    client: "NovaTech Industries",
+    description:
+      "End-to-end Order-to-Cash quote automation for B2B manufacturing. Two agents parse a 47-SKU RFQ, run compatibility checks, apply waterfall pricing with bundle optimisation, route for discount approval, and generate a professional quote document — in 90 seconds.",
+    industry: "Manufacturing",
+    industryId: "manufacturing",
+    route: "/demo/otc-quote",
+    icon: Factory,
+    iconColor: "#FF6B35",
+    duration: "10 min",
+    screens: 4,
+    tags: ["Order-to-Cash", "CPQ", "B2B Manufacturing"],
+  },
 ];
 
 const INDUSTRY_FILTERS = [
@@ -165,6 +181,7 @@ const INDUSTRY_FILTERS = [
   { id: "media_entertainment", label: "Media & Entertainment" },
   { id: "automotive", label: "Automotive Data" },
   { id: "legal_services", label: "Legal Services" },
+  { id: "manufacturing", label: "Manufacturing" },
 ];
 
 const industryBadgeStyle: Record<string, string> = {
@@ -176,6 +193,8 @@ const industryBadgeStyle: Record<string, string> = {
     "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950 dark:text-purple-300 dark:border-purple-800",
   automotive:
     "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950 dark:text-orange-300 dark:border-orange-800",
+  manufacturing:
+    "bg-orange-50 text-orange-800 border-orange-300 dark:bg-orange-950/50 dark:text-orange-300 dark:border-orange-800/50",
 };
 
 export default function DemoCenter() {

@@ -2,6 +2,7 @@ import { Router } from "express";
 import { hearstLiveRunHandler, ensureHearstAgents } from "../hearst-live-run";
 import { fitchLiveRunHandler, ensureFitchAgents, getFitchPipelineAgentNames, getFitchAgentIdByName } from "../fitch-live-run";
 import { littlerLiveRunHandler } from "../littler-live-run";
+import { otcQuoteLiveRunHandler } from "../otc-quote-live-run";
 import { seedPartnerPortalRegistry } from "../seed-blackrock2-partner-portal";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
@@ -1160,6 +1161,18 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
 
   // ============================================================
   // END LITTLER DEMO ROUTES
+  // ============================================================
+
+  // ============================================================
+  // OTC QUOTE DEMO ROUTES — Intelligent Quote Configuration
+  // NovaTech Industries · Meridian Manufacturing · Q-78432
+  // ============================================================
+
+  // GET /demo-api/otc-quote/live-run — SSE 4-step quote pipeline
+  router.get("/demo-api/otc-quote/live-run", otcQuoteLiveRunHandler);
+
+  // ============================================================
+  // END OTC QUOTE DEMO ROUTES
   // ============================================================
 
 

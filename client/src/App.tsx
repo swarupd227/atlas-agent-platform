@@ -97,6 +97,7 @@ import HearstDemo from "@/pages/demo/hearst-demo";
 import FitchDemo from "@/pages/demo/fitch-demo";
 import BlackBookDemo from "@/pages/demo/blackbook-demo";
 import LittlerDemo from "@/pages/demo/littler-demo";
+import OtcQuoteDemo from "@/pages/demo/otc-quote-demo";
 import DemoCenter from "@/pages/demo/demo-center";
 import ObservabilityPage from "@/pages/observability";
 import { Shield, LogOut } from "lucide-react";
@@ -225,6 +226,7 @@ function DashboardRouter() {
       <Route path="/demo/fitch" component={FitchDemo} />
       <Route path="/demo/blackbook" component={BlackBookDemo} />
       <Route path="/demo/littler" component={LittlerDemo} />
+      <Route path="/demo/otc-quote" component={OtcQuoteDemo} />
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>
