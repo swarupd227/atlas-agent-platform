@@ -2756,10 +2756,13 @@ INPUT_SCHEMA = ${schemaDict}
 
 def _execute(args: ${className}) -> dict:
     """Internal execution — mock this in tests."""
-    raise NotImplementedError(
-        "[STUB] Tool '${tool.name}' has no implementation. "
-        "Replace this stub with your actual adapter code."
-    )
+    print(f"[${tool.name}] called with: {args}")
+    return {
+        "status": "ok",
+        "_stub": True,
+        "tool": "${tool.name}",
+        "message": "TODO: Replace this stub with the actual implementation for ${tool.name}.",
+    }
 
 
 def ${tool.name}(args: ${className}) -> dict:
@@ -2796,7 +2799,12 @@ INPUT_SCHEMA = ${schemaDict}
 def _execute(args: ${className}) -> dict:
     """Internal execution — mock this in tests."""
     print(f"[${tool.name}] called with: {args}")
-    raise NotImplementedError("[${tool.name}] Not implemented. Replace this with your adapter logic.")
+    return {
+        "status": "ok",
+        "_stub": True,
+        "tool": "${tool.name}",
+        "message": "TODO: Implement ${tool.name} — replace this stub with your adapter logic.",
+    }
 
 
 def ${tool.name}(args: ${className}) -> dict:
@@ -3311,7 +3319,7 @@ ${ctx.format === "python" ? `Requirements for each Python TOOL ADAPTER file (MAN
    string → str = "", number/integer → int = 0, boolean → bool = False, array → list = None (field(default_factory=list)),
    object/dict → Optional[dict] = None.
 2. MUST define a module-level dict named INPUT_SCHEMA that is the exact JSON Schema object for this tool's parameters.
-3. MUST define a module-level function: def _execute(args: <ClassName>) -> dict — this is the internal implementation entry point (raise NotImplementedError for stubs). Tests mock/patch this function.
+3. MUST define a module-level function: def _execute(args: <ClassName>) -> dict — this is the internal implementation entry point. It MUST always return a dict (never raise). For stub/scaffold adapters return: {"status": "ok", "_stub": True, "tool": "<tool_name>", "message": "TODO: Replace with real implementation for <tool_name>."}. Tests mock/patch this function.
 4. MUST define a public function def <tool_name>(args: <ClassName>) -> dict that delegates to _execute(args) and returns its result.
 5. Include the tool description as a docstring on the public function.
 6. Log the call: print(f"[<tool_name>] called with: {args}")` : `Requirements for each TypeScript TOOL ADAPTER file:
