@@ -773,6 +773,7 @@ export interface IStorage {
   createAarActionDecision(decision: InsertAarActionDecision): Promise<AarActionDecision>;
   listAarActionDecisions(agentId: string, orgId?: string, limit?: number): Promise<AarActionDecision[]>;
   createAarAgentStateReport(report: InsertAarAgentStateReport): Promise<AarAgentStateReport>;
+  updateMcpServerToolDriftStatus(toolId: string, driftStatus: string): Promise<void>;
 }
 
 function resolveOrgId(providedOrgId: string | null | undefined): string {
@@ -3461,6 +3462,13 @@ export class DatabaseStorage implements IStorage {
   async createAarAgentStateReport(report: InsertAarAgentStateReport): Promise<AarAgentStateReport> {
     const [created] = await db.insert(aarAgentStateReports).values(report).returning();
     return created;
+  }
+
+  async updateMcpServerToolDriftStatus(toolId: string, driftStatus: string): Promise<void> {
+    await db
+      .update(mcpServerTools)
+      .set({ driftStatus, lastDriftAt: new Date() })
+      .where(eq(mcpServerTools.id, toolId));
   }
 }
 

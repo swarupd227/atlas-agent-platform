@@ -681,7 +681,7 @@ async function evaluateActionAgainstConstraints(
   const allowed = consumeRateLimitToken(agentId, toolName, rateLimits);
   if (!allowed) {
     rulesTriggered.push("rate-limit-exceeded");
-    return { decision: "BLOCK", reason: `Rate limit exceeded for tool '${toolName}' by agent '${agentId}'`, policiesEvaluated, rulesTriggered, riskLevel };
+    return { decision: "BLOCK", reason: "rate-limit-exceeded", policiesEvaluated, rulesTriggered, riskLevel };
   }
 
   // Denied list takes precedence
@@ -897,37 +897,51 @@ router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
       console.error(`[AAR] invoke-tool MCP call failed: ${invocationError}`);
     }
 
-    // Task 5: Post-call fingerprint + drift detection
-    const responseBody = toolResult !== null ? JSON.stringify(toolResult) : "";
-    const postCallHash = createHash("sha256").update(responseBody).digest("hex");
+    // Task 5: Post-call fingerprint + drift detection (only on successful MCP calls)
     let driftDetected = false;
     let driftRatio = 0;
+    let postCallHash: string | null = null;
 
-    if (preCallFingerprintHash && preCallFingerprintHash !== postCallHash) {
-      // Character-deviation ratio: compare response length against stored baseline.
-      // Formula: |current_len - baseline_len| / max(current_len, baseline_len) * 100
-      // This is equivalent to a normalized character-level deviation, bounded [0, 100].
-      // If behaviorBaseline.sampleResponse exists, use actual string length for comparison;
-      // otherwise fall back to behaviorBaseline.avgResponseLength, then self-compare (0% drift).
-      const sampleResponse = behaviorBaseline?.sampleResponse as string | undefined;
-      const avgResponseLength = behaviorBaseline?.avgResponseLength as number | undefined;
-      const baselineLen = sampleResponse != null
-        ? sampleResponse.length
-        : (avgResponseLength ?? responseBody.length);
+    if (!invocationError && toolResult !== null && preCallFingerprintHash) {
+      const responseBody = JSON.stringify(toolResult);
+      postCallHash = createHash("sha256").update(responseBody).digest("hex");
 
-      const maxLen = Math.max(responseBody.length, baselineLen) || 1;
-      driftRatio = (Math.abs(responseBody.length - baselineLen) / maxLen) * 100;
+      if (preCallFingerprintHash !== postCallHash) {
+        // Two-factor drift scoring:
+        // 1. Character-deviation ratio: normalized length difference, bounded [0,100].
+        //    |current_len - baseline_len| / max(current_len, baseline_len) * 100
+        // 2. Jaccard-like token similarity on whitespace-split tokens when sampleResponse exists.
+        //    1 - |intersection| / |union| gives [0,1]; multiply by 100 for % drift.
+        const sampleResponse = behaviorBaseline?.sampleResponse as string | undefined;
+        const avgResponseLength = behaviorBaseline?.avgResponseLength as number | undefined;
+        const baselineLen = sampleResponse != null
+          ? sampleResponse.length
+          : (avgResponseLength ?? responseBody.length);
 
-      if (driftRatio > maxDriftPercent) {
-        driftDetected = true;
-        const toolIdToUpdate = matchedToolId ?? preCallTool?.id;
-        if (toolIdToUpdate) {
-          storage.updateMcpServerTool(toolIdToUpdate, {
-            driftStatus: "DRIFT_DETECTED",
-            lastDriftAt: new Date(),
-          }).catch(e => console.error("[AAR] drift status update failed:", e));
+        const maxLen = Math.max(responseBody.length, baselineLen) || 1;
+        const charDeviation = (Math.abs(responseBody.length - baselineLen) / maxLen) * 100;
+
+        let jaccardDrift = 0;
+        if (sampleResponse) {
+          const aTokens = new Set(responseBody.split(/\s+/).filter(Boolean));
+          const bTokens = new Set(sampleResponse.split(/\s+/).filter(Boolean));
+          const intersection = [...aTokens].filter(t => bTokens.has(t)).length;
+          const union = new Set([...aTokens, ...bTokens]).size || 1;
+          jaccardDrift = (1 - intersection / union) * 100;
         }
-        console.warn(`[AAR] DRIFT_DETECTED tool='${tool_name}' agent='${agentId}' drift=${driftRatio.toFixed(1)}% threshold=${maxDriftPercent}%`);
+
+        // Use the higher of the two metrics as the overall drift score
+        driftRatio = Math.max(charDeviation, jaccardDrift);
+
+        if (driftRatio > maxDriftPercent) {
+          driftDetected = true;
+          const toolIdToUpdate = matchedToolId ?? preCallTool?.id;
+          if (toolIdToUpdate) {
+            storage.updateMcpServerToolDriftStatus(toolIdToUpdate, "DRIFT_DETECTED")
+              .catch(e => console.error("[AAR] drift status update failed:", e));
+          }
+          console.warn(`[AAR] DRIFT_DETECTED tool='${tool_name}' agent='${agentId}' drift=${driftRatio.toFixed(1)}% threshold=${maxDriftPercent}%`);
+        }
       }
     }
 
