@@ -4,9 +4,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   CheckCircle2, AlertTriangle, TrendingUp, User, CreditCard,
-  Building2, FileText, Clock,
+  Building2, FileText, Clock, Activity,
 } from "lucide-react";
-import { NOVATECH_RFQ_SEGMENTS, MERIDIAN_CONTEXT, LINE_ITEMS } from "./otc-quote-constants";
+import { NOVATECH_RFQ_SEGMENTS, MERIDIAN_CONTEXT, LINE_ITEMS, useOtcQuotePipeline } from "./otc-quote-constants";
 
 interface Props {
   onRunAndNavigate: () => void;
@@ -57,12 +57,36 @@ export default function OtcQuoteS1Intake({ onRunAndNavigate }: Props) {
   const [confirmed, setConfirmed] = useState<Record<number, boolean>>({
     0: true, 1: true, 2: true,
   });
+  const { logs, isRunning, status } = useOtcQuotePipeline();
+  const recentLogs = logs.slice(-5);
 
   const families = FAMILIES;
   const totalList = LINE_ITEMS.reduce((s, i) => s + i.extendedListPrice, 0);
 
   return (
-    <div className="flex h-full min-h-0 overflow-hidden px-6 py-4 gap-4">
+    <div className="flex flex-col h-full min-h-0 overflow-hidden">
+
+      {/* ── SSE Agent Trace Strip (S1 — always visible when running/complete) ── */}
+      {(isRunning || status === "complete") && (
+        <div className="shrink-0 border-b border-orange-500/20 bg-orange-500/5 px-6 py-2 flex items-center gap-3">
+          <Activity className={`w-3 h-3 text-orange-400 shrink-0 ${isRunning ? "animate-pulse" : ""}`} />
+          <div className="flex flex-col gap-0.5 flex-1 min-w-0">
+            {recentLogs.length > 0
+              ? recentLogs.slice(-2).map((l, i) => (
+                  <span key={i} className="text-[9px] font-mono text-muted-foreground truncate">
+                    <span className="text-orange-400">[{l.agentCode}]</span>{" "}
+                    <span className={l.type === "complete" ? "text-green-400" : l.type === "error" ? "text-red-400" : ""}>{l.message}</span>
+                  </span>
+                ))
+              : <span className="text-[9px] font-mono text-orange-400/70">Atlas orchestration initiated — OTC-AGT-001 + OTC-AGT-011 starting…</span>
+            }
+          </div>
+          {isRunning && <Badge className="text-[8px] shrink-0 animate-pulse" style={{ background: "rgba(255,107,53,0.12)", borderColor: "rgba(255,107,53,0.3)", color: "#FF6B35" }}>⬤ Live</Badge>}
+          {status === "complete" && <Badge className="text-[8px] shrink-0 bg-green-500/10 text-green-400 border-green-500/20">Q-78432 ✓</Badge>}
+        </div>
+      )}
+
+      <div className="flex flex-1 min-h-0 overflow-hidden px-6 py-4 gap-4">
 
       {/* ── Left: RFQ Parser ──────────────────────────────────────────── */}
       <div className="flex flex-col gap-3 w-1/2 min-h-0 overflow-hidden">
@@ -283,6 +307,7 @@ export default function OtcQuoteS1Intake({ onRunAndNavigate }: Props) {
           </CardContent>
         </Card>
       </div>
+    </div>
     </div>
   );
 }

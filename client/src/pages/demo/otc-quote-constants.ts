@@ -318,7 +318,18 @@ function notify() {
 
 let _timerInterval: ReturnType<typeof setInterval> | null = null;
 
-export function useOtcQuotePipeline(): { state: OtcPipelineState; trigger: () => void } {
+export interface OtcQuotePipelineHook {
+  // Top-level convenience fields (required API shape)
+  status: OtcPipelineState["status"];
+  logs: OtcLogEntry[];
+  currentStep: number;
+  isRunning: boolean;
+  trigger: () => void;
+  // Full state for screens that need granular access
+  state: OtcPipelineState;
+}
+
+export function useOtcQuotePipeline(): OtcQuotePipelineHook {
   const [state, setState] = useState<OtcPipelineState>(() => getCachedOtcPipeline());
 
   useEffect(() => {
@@ -434,5 +445,12 @@ export function useOtcQuotePipeline(): { state: OtcPipelineState; trigger: () =>
     };
   }, []);
 
-  return { state, trigger };
+  return {
+    state,
+    trigger,
+    status: state.status,
+    logs: state.logEntries,
+    currentStep: state.currentStep,
+    isRunning: state.status === "running",
+  };
 }

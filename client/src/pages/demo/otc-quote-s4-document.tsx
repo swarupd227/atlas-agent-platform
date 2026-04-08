@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
   FileText, Send, CheckCircle2, Download, Mail, Globe,
-  TrendingUp, AlertTriangle, ChevronRight,
+  TrendingUp, AlertTriangle, ChevronRight, Activity,
 } from "lucide-react";
 import {
   QUOTE_DOC, MERIDIAN_CONTEXT, DELIVERY_SCHEDULE, PRICING_WATERFALL,
@@ -159,7 +159,8 @@ function QuoteDocument() {
 }
 
 export default function OtcQuoteS4Document() {
-  const { state } = useOtcQuotePipeline();
+  const { state, logs } = useOtcQuotePipeline();
+  const completionLogs = logs.filter(l => l.type === "complete" || l.agentCode === "SYSTEM");
   const [format, setFormat] = useState("pdf");
   const [sent, setSent] = useState(false);
   const [coverEmail, setCoverEmail] = useState(
@@ -322,6 +323,43 @@ export default function OtcQuoteS4Document() {
                 </p>
               </div>
             </div>
+          </CardContent>
+        </Card>
+
+        {/* SSE Execution Trace (S4) */}
+        <Card className="border-border/30 shrink-0" data-testid="s4-agent-trace">
+          <CardHeader className="py-2 px-3 border-b border-border/20">
+            <CardTitle className="text-[11px] flex items-center gap-1.5">
+              <Activity className="w-3 h-3 text-orange-400" />
+              Pipeline Execution Trace
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-2">
+            {completionLogs.length > 0 ? (
+              <div className="flex flex-col gap-1">
+                {completionLogs.map((l, i) => (
+                  <div key={i} className="flex items-start gap-1.5">
+                    <span className={`text-[8px] font-mono shrink-0 ${l.type === "complete" ? "text-green-400" : "text-orange-400"}`}>[{l.agentCode}]</span>
+                    <span className="text-[8px] text-muted-foreground leading-tight">{l.message}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1">
+                {[
+                  { code: "OTC-AGT-001", msg: "rfq intake complete ✓ · OTC-AGT-011 parallel ✓" },
+                  { code: "OTC-AGT-001", msg: "product config complete ✓ · 3 substitutions applied" },
+                  { code: "OTC-AGT-011", msg: "pricing optimisation complete ✓ · $429,711 net" },
+                  { code: "OTC-AGT-001", msg: "quote generation complete ✓ · Q-78432 ready" },
+                  { code: "SYSTEM", msg: "Quote Q-78432 approved — Sarah Chen, Regional VP" },
+                ].map((l, i) => (
+                  <div key={i} className="flex items-start gap-1.5">
+                    <span className="text-[8px] font-mono shrink-0 text-green-400">[{l.code}]</span>
+                    <span className="text-[8px] text-muted-foreground leading-tight">{l.msg}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 

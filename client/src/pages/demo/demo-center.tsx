@@ -29,6 +29,7 @@ interface Demo {
   description: string;
   industry: string;
   industryId: string;
+  stage?: string;
   route: string;
   icon: React.ComponentType<{ className?: string }>;
   iconColor: string;
@@ -159,13 +160,14 @@ const DEMOS: Demo[] = [
     tags: ["Employment Law", "Compliance", "Multi-Jurisdiction"],
   },
   {
-    id: "novatech-otc-quote",
+    id: "otc-quote",
     title: "Intelligent Quote & Configuration",
     client: "NovaTech Industries",
     description:
-      "Pre-Order stage of the Order-to-Cash cycle. Two Atlas agents run in parallel — OTC-AGT-001 (Quote & Configuration) and OTC-AGT-011 (Contract & Pricing Compliance) — to parse a 47-SKU RFQ, apply compatibility substitutions, run waterfall pricing, route for VP approval, and generate Quote Q-78432 in under 90 seconds.",
+      "Pre-Order stage of the Order-to-Cash cycle. Two Atlas agents run in parallel — OTC-AGT-001 (Quote & Configuration) and OTC-AGT-011 (Contract & Pricing Compliance) — to parse a 47-SKU RFQ, apply compatibility substitutions (X-7200→X-7250), run waterfall pricing, route for VP approval, and generate Quote Q-78432 in under 90 seconds.",
     industry: "Manufacturing",
     industryId: "manufacturing",
+    stage: "Pre-Order",
     route: "/demo/otc-quote",
     icon: Factory,
     iconColor: "#FF6B35",
