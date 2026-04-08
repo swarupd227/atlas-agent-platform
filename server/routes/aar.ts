@@ -28,8 +28,8 @@ function consumeRateLimitToken(
   const perTool = rateLimits?.[toolName] as Record<string, unknown> | undefined;
   const effective = perTool ?? rateLimits;
   const rpm = (effective?.requestsPerMinute as number | undefined) ?? 600;
-  // burst is the peak capacity; honor it as configured (may exceed rpm for short spikes)
-  const burst = (effective?.burstCapacity as number | undefined) ?? Math.ceil(rpm / 10);
+  // burst is the peak capacity; spec-mandated fallback is exactly 50
+  const burst = (effective?.burstCapacity as number | undefined) ?? 50;
   const capacity = burst;
   const refillRatePerMs = rpm / 60_000;
 
@@ -697,13 +697,7 @@ async function evaluateActionAgainstConstraints(
     return { decision: "BLOCK", reason: `Tool '${toolName}' is not in the allowed tools list`, policiesEvaluated, rulesTriggered, riskLevel };
   }
 
-  // Require-approval list
-  if (requireApprovalTools.length > 0 && requireApprovalTools.includes(toolName)) {
-    rulesTriggered.push("require-approval-tool-list");
-    return { decision: "REQUIRE_APPROVAL", reason: `Tool '${toolName}' requires explicit approval before invocation`, policiesEvaluated, rulesTriggered, riskLevel };
-  }
-
-  // Task 2: Evaluate attached policy rules — supports toolName, args, and combined conditions
+  // Task 2: Evaluate attached policy rules FIRST — block rules override all other outcomes
   for (const policy of agentPolicies) {
     if (policy.status !== "active") continue;
     const pj = policy.policyJson as { rules?: PolicyRule[] } | null;
@@ -717,6 +711,12 @@ async function evaluateActionAgainstConstraints(
         }
       }
     }
+  }
+
+  // Require-approval list (after block rules, so policies can override to BLOCK)
+  if (requireApprovalTools.length > 0 && requireApprovalTools.includes(toolName)) {
+    rulesTriggered.push("require-approval-tool-list");
+    return { decision: "REQUIRE_APPROVAL", reason: `Tool '${toolName}' requires explicit approval before invocation`, policiesEvaluated, rulesTriggered, riskLevel };
   }
 
   // High-risk agents in supervised mode get ALERT_AND_ALLOW for all tool calls
@@ -918,26 +918,35 @@ router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
         //    |current_len - baseline_len| / max(current_len, baseline_len) * 100
         // 2. Jaccard-like token similarity on whitespace-split tokens when sampleResponse exists.
         //    1 - |intersection| / |union| gives [0,1]; multiply by 100 for % drift.
+        // Fallback: when pre-call fingerprint hash changed but no usable baseline exists,
+        //           treat the mismatch as 100% drift (max deviation).
         const sampleResponse = behaviorBaseline?.sampleResponse as string | undefined;
         const avgResponseLength = behaviorBaseline?.avgResponseLength as number | undefined;
-        const baselineLen = sampleResponse != null
-          ? sampleResponse.length
-          : (avgResponseLength ?? responseBody.length);
+        const hasUsableBaseline = sampleResponse != null || avgResponseLength != null;
 
-        const maxLen = Math.max(responseBody.length, baselineLen) || 1;
-        const charDeviation = (Math.abs(responseBody.length - baselineLen) / maxLen) * 100;
+        if (!hasUsableBaseline && hashChanged) {
+          // No baseline to quantify the drift — hash mismatch alone is treated as full drift
+          driftRatio = 100;
+        } else {
+          const baselineLen = sampleResponse != null
+            ? sampleResponse.length
+            : (avgResponseLength ?? responseBody.length);
 
-        let jaccardDrift = 0;
-        if (sampleResponse) {
-          const aTokens = new Set(responseBody.split(/\s+/).filter(Boolean));
-          const bTokens = new Set(sampleResponse.split(/\s+/).filter(Boolean));
-          const intersection = [...aTokens].filter(t => bTokens.has(t)).length;
-          const union = new Set([...aTokens, ...bTokens]).size || 1;
-          jaccardDrift = (1 - intersection / union) * 100;
+          const maxLen = Math.max(responseBody.length, baselineLen) || 1;
+          const charDeviation = (Math.abs(responseBody.length - baselineLen) / maxLen) * 100;
+
+          let jaccardDrift = 0;
+          if (sampleResponse) {
+            const aTokens = new Set(responseBody.split(/\s+/).filter(Boolean));
+            const bTokens = new Set(sampleResponse.split(/\s+/).filter(Boolean));
+            const intersection = [...aTokens].filter(t => bTokens.has(t)).length;
+            const union = new Set([...aTokens, ...bTokens]).size || 1;
+            jaccardDrift = (1 - intersection / union) * 100;
+          }
+
+          // Use the higher of the two metrics as the overall drift score
+          driftRatio = Math.max(charDeviation, jaccardDrift);
         }
-
-        // Use the higher of the two metrics as the overall drift score
-        driftRatio = Math.max(charDeviation, jaccardDrift);
 
         if (driftRatio > maxDriftPercent) {
           driftDetected = true;
