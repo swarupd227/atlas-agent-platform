@@ -2805,6 +2805,35 @@ def ${tool.name}(args: ${className}) -> dict:
 `;
   }
 
+  /**
+   * Returns true only when an AI-generated Python tool adapter contains all
+   * the symbols that the generated test files import.  Adapters that pass this
+   * check are used as-is; those that fail fall back to generatePyToolAdapter().
+   */
+  function pyAdapterHasRequiredSymbols(code: string, toolName: string, className: string): boolean {
+    return (
+      code.includes("INPUT_SCHEMA") &&
+      code.includes(className) &&
+      code.includes("def _execute(") &&
+      code.includes(`def ${toolName}(`)
+    );
+  }
+
+  /**
+   * Picks the best Python tool adapter: the AI-generated version when it
+   * satisfies the required-symbol contract, otherwise the deterministic template.
+   */
+  function selectPyToolAdapter(
+    aiResult: { toolAdapters?: Record<string, string> } | null | undefined,
+    tool: { name: string; description?: string; parameters?: Record<string, unknown> },
+    getAdapterTypeFn: (name: string) => "builtin" | "customer" | "stub",
+  ): string {
+    const className = tool.name.charAt(0).toUpperCase() + tool.name.slice(1) + "Args";
+    const aiCode = aiResult?.toolAdapters?.[tool.name];
+    if (aiCode && pyAdapterHasRequiredSymbols(aiCode, tool.name, className)) return aiCode;
+    return generatePyToolAdapter(tool, getAdapterTypeFn(tool.name));
+  }
+
   function generateTsToolsIndex(tools: Array<{ name: string }>): string {
     const exports = tools.map(t => `export { ${t.name} } from "./${t.name}";`).join("\n");
     const imports = tools.map(t => `import { ${t.name} } from "./${t.name}";`).join("\n");
@@ -3276,12 +3305,16 @@ ${toolsJson}
 
 ${fwInstr}
 
-Requirements for each TOOL ADAPTER file:
-1. Each adapter must have a typed function signature derived from the tool's parameter schema
-2. Include the tool's description as a docstring/JSDoc comment
-3. Include clear TODO comments showing exactly what API/system to connect to based on the tool's purpose
-4. Log the call with the tool name and args
-5. Throw/raise NotImplementedError with a clear message so developers know to implement it
+Requirements for each TOOL ADAPTER file (Python — MANDATORY contract):
+1. MUST define a @dataclass named <ToolNamePascalCase>Args (e.g. for "application_manager" → "Application_managerArgs").
+   Add one field per parameter in the tool's schema with a matching Python type and a safe default value:
+   string → str = "", number/integer → int = 0, boolean → bool = False, array → list = None (field(default_factory=list)),
+   object/dict → Optional[dict] = None.
+2. MUST define a module-level dict named INPUT_SCHEMA that is the exact JSON Schema object for this tool's parameters.
+3. MUST define a module-level function: def _execute(args: <ClassName>) -> dict — this is the internal implementation entry point (raise NotImplementedError for stubs). Tests mock/patch this function.
+4. MUST define a public function def <tool_name>(args: <ClassName>) -> dict that delegates to _execute(args) and returns its result.
+5. Include the tool description as a docstring on the public function.
+6. Log the call: print(f"[<tool_name>] called with: {args}")
 
 IMPORTANT: Keep all code concise. Do NOT include a README or lengthy documentation strings in your JSON output.
 Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and properly closed.`;
@@ -4005,7 +4038,7 @@ export function listPolicies(): Array<{ name: string; domain: string | null }> {
 
           files["src/tools/__init__.py"] = generatePyToolsInit(tools);
           for (const tool of tools) {
-            files[`src/tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name));
+            files[`src/tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType);
           }
 
           {
@@ -4202,7 +4235,7 @@ def list_policies():
           files["graph.py"] = aiResult?.entrypoint || lgTemplatePy;
           files["nodes/__init__.py"] = `# Graph node implementations\nfrom graph import agent_node, tool_node\n`;
           files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
           files["langgraph.json"] = JSON.stringify({ graphs: { agent: "./graph.py:app" }, env: llmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY" }, null, 2);
           const reqs = [...baseReqs, pin ? "langgraph==0.2.60" : "langgraph>=0.2.0", pin ? "langchain-core==0.3.28" : "langchain-core>=0.3.0"];
           if (llmProvider === "openai") reqs.push(pin ? "langchain-openai==0.2.14" : "langchain-openai>=0.2.0", pin ? "openai==1.58.1" : "openai>=1.0"); else reqs.push(pin ? "langchain-anthropic==0.2.8" : "langchain-anthropic>=0.2.0", pin ? "anthropic==0.30.1" : "anthropic>=0.30");
@@ -4225,7 +4258,7 @@ def list_policies():
         } else {
           files["crew.py"] = aiResult?.entrypoint || crewTemplatePy;
           files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
           const reqs = [...baseReqs, pin ? "crewai==0.80.0" : "crewai>=0.80.0"]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
@@ -4242,7 +4275,7 @@ def list_policies():
         files["src/agent_flow.py"] = aiResult?.entrypoint || foundryTemplatePy;
         files["skills/__init__.py"] = `# Skill implementations\n${tools.map(t => `from tools.${t.name} import ${t.name}`).join("\n")}\n\n\ndef load_skills():\n    return { ${tools.map(t => `"${t.name}": ${t.name}`).join(", ")} }\n`;
         files["tools/__init__.py"] = generatePyToolsInit(tools);
-        for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+        for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
         const reqs = [...baseReqs]; addLlmDep({}, reqs);
         files["requirements.txt"] = reqs.join("\n") + "\n";
         files["flow.dag.yaml"] = `# Azure AI Foundry / Promptflow DAG\n# Generated for ${agent.name}\n$schema: https://azuremlschemas.azureedge.net/promptflow/latest/Flow.schema.json\ndisplay_name: ${agent.name}\nname: ${agentSlug}\ndescription: "${(agent.description || "").replace(/"/g, "'").substring(0, 200)}"\ninputs:\n  query:\n    type: string\noutputs:\n  response:\n    type: string\n    reference: \${agent_flow.output}\nnodes:\n- name: agent_flow\n  type: python\n  source:\n    type: code\n    path: src/agent_flow.py\n  inputs:\n    query: \${inputs.query}\n  use_variants: false\nenvironment:\n  python_requirements_txt: requirements.txt\n`;
@@ -4276,7 +4309,7 @@ def list_policies():
         } else {
           files["lambda/handler.py"] = aiResult?.entrypoint || bedrockTemplatePy;
           files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
           files["template.yaml"] = `AWSTemplateFormatVersion: "2010-09-09"\nTransform: AWS::Serverless-2016-10-31\nDescription: "${agent.name} Bedrock Agent Lambda"\nResources:\n  AgentFunction:\n    Type: AWS::Serverless::Function\n    Properties:\n      Handler: lambda/handler.handler\n      Runtime: python3.11\n      Timeout: 30\n      MemorySize: 256\n`;
           const reqs = [...baseReqs, pin ? "boto3==1.34.162" : "boto3>=1.34.0"]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
@@ -4320,7 +4353,7 @@ def list_policies():
               name: "apiKey", type: "string", default: "" }],
           }, null, 2);
           files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
           const reqs = [...baseReqs]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
@@ -4343,7 +4376,7 @@ def list_policies():
           files["entrypoint.py"] = `# GCP Vertex AI Agent Entry Point\n# Generated for ${agent.name}\nimport yaml\nimport json\nfrom extensions import load_extensions\n\nwith open("agent-config.json") as f:\n    agent_config = json.load(f)\nwith open("agent.yaml") as f:\n    config = yaml.safe_load(f)\n\nextensions = load_extensions()\n\ndef main():\n    print(f"[Vertex AI Agent] {agent_config['displayName']} starting...")\n    print(f"Extensions loaded: {', '.join(extensions.keys())}")\n    iteration = 0\n    while iteration < ${maxIterations}:\n        iteration += 1\n        print(f"Iteration {iteration}")\n        # TODO: Call Vertex AI Gemini, invoke extensions, check completion\n        break\n\nif __name__ == "__main__":\n    main()\n`;
           files["extensions/__init__.py"] = `# Vertex AI Extension implementations\n${tools.map(t => `from tools.${t.name} import execute as ${t.name}_execute`).join("\n")}\n\ndef load_extensions():\n    return { ${tools.map(t => `"${t.name}": ${t.name}_execute`).join(", ")} }\n`;
           files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
           const reqs = [...baseReqs, pin ? "google-cloud-aiplatform==1.60.0" : "google-cloud-aiplatform>=1.60.0"]; addLlmDep({}, reqs);
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
@@ -4360,7 +4393,7 @@ def list_policies():
         files["tools/__init__.py"] = `# AgentBricks Tool Registry\n# Generated for: ${agent.name}\n${tools.map(t => `from tools.${t.name} import ${t.name}`).join("\n")}\n\n\ndef load_tools():\n    """Return all tool callables for binding to the LLM."""\n    return [${tools.map(t => t.name).join(", ")}]\n`;
 
         for (const tool of tools) {
-          files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name));
+          files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType);
         }
 
         files["databricks.yml"] = `# Databricks Asset Bundle (DAB)\n# Deploy with: databricks bundle deploy\nbundle:\n  name: ${agentSlugDbx}_bundle\n\nworkspace:\n  host: \${DATABRICKS_HOST}\n  root_path: /Shared/.bundle/\${bundle.name}/\${bundle.environment}\n\ntargets:\n  dev:\n    default: true\n    mode: development\n    workspace:\n      host: \${DATABRICKS_HOST}\n\n  staging:\n    mode: development\n    workspace:\n      host: \${DATABRICKS_HOST}\n\n  prod:\n    mode: production\n    workspace:\n      host: \${DATABRICKS_HOST}\n\nresources:\n  jobs:\n    deploy_agent:\n      name: Deploy ${agent.name}\n      tasks:\n        - task_key: log_model\n          python_wheel_task:\n            entry_point: agent.py\n          job_cluster_key: agent_cluster\n      job_clusters:\n        - job_cluster_key: agent_cluster\n          new_cluster:\n            spark_version: 15.4.x-scala2.12\n            node_type_id: Standard_DS3_v2\n            num_workers: 1\n            spark_env_vars:\n              DATABRICKS_HOST: \${DATABRICKS_HOST}\n              DATABRICKS_TOKEN: \${DATABRICKS_TOKEN}\n`;
@@ -4382,7 +4415,7 @@ def list_policies():
         const autoGenTemplate = `# AutoGen Multi-Agent Orchestration\n# Generated for ${agent.name}\nimport os\nimport sys\nsys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))\nimport autogen\nfrom tools import load_tools\n\nconfig_list = autogen.config_list_from_json("OAI_CONFIG_LIST")\n\nassistant = autogen.AssistantAgent(\n    name="${agentSlug}_assistant",\n    system_message="""${systemPrompt.substring(0, 400).replace(/`/g, "'").replace(/\\/g, "\\\\")}""",\n    llm_config={"config_list": config_list, "max_tokens": 4096},\n)\n\nuser_proxy = autogen.UserProxyAgent(\n    name="user_proxy",\n    is_termination_msg=lambda msg: "${completionPromise}" in (msg.get("content") or ""),\n    human_input_mode="NEVER",\n    max_consecutive_auto_reply=${maxIterations},\n    code_execution_config=False,\n)\n\n# Register tools\ntools = load_tools()\nfor tool_name, tool_fn in tools.items():\n    autogen.register_function(\n        tool_fn,\n        caller=assistant,\n        executor=user_proxy,\n        name=tool_name,\n        description=tool_fn.__doc__ or tool_name,\n    )\n\n\ndef run(task: str) -> str:\n    user_proxy.initiate_chat(assistant, message=task)\n    last = user_proxy.last_message(assistant)\n    return (last or {}).get("content", "")\n\n\nif __name__ == "__main__":\n    run("Hello, what can you help me with?")\n`;
         files["src/autogen_agent.py"] = aiResult?.entrypoint || autoGenTemplate;
         files["tools/__init__.py"] = generatePyToolsInit(tools);
-        for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+        for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
         // AutoGen uses OpenAI-compatible API format; for Anthropic users must proxy via LiteLLM or use azure_openai_api_type
         const autoGenModelEntry = llmProvider === "openai"
           ? { model: "gpt-4o", api_key: "${OPENAI_API_KEY}" }
@@ -4399,7 +4432,7 @@ def list_policies():
         const skTemplate = `# Semantic Kernel Agent\n# Generated for ${agent.name}\nimport asyncio\nimport os\nimport sys\nsys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))\nfrom semantic_kernel import Kernel\nfrom semantic_kernel.functions import kernel_function\nfrom tools import load_tools\n\n${skServiceSetup}\n\n# Register tools as Semantic Kernel plugins\nclass AgentPlugin:\n${tools.length > 0 ? tools.map(t => `    @kernel_function(name="${t.name}", description="${(t.description || t.name).replace(/"/g, "'")}")\n    async def ${t.name}(self, **kwargs) -> str:\n        from tools.${t.name} import ${t.name} as _fn\n        return str(_fn(kwargs))`).join("\n\n") : "    pass"}\n\nkernel.add_plugin(AgentPlugin(), plugin_name="${agentSlug}_tools")\n\n\nasync def run(task: str) -> str:\n    from semantic_kernel.connectors.ai import PromptExecutionSettings\n    from semantic_kernel.connectors.ai.function_choice_behavior import FunctionChoiceBehavior\n    settings = PromptExecutionSettings(extension_data={"max_tokens": 4096})\n    settings.function_choice_behavior = FunctionChoiceBehavior.Auto(max_auto_invoke_attempts=${maxIterations})\n    result = await kernel.invoke_prompt(task, service_id=SERVICE_ID, settings=settings)\n    return str(result)\n\n\nif __name__ == "__main__":\n    asyncio.run(run("Hello, what can you help me with?"))\n`;
         files["src/kernel_agent.py"] = aiResult?.entrypoint || skTemplate;
         files["tools/__init__.py"] = generatePyToolsInit(tools);
-        for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+        for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
         const skReqs = [...baseReqs, pin ? "semantic-kernel==1.14.0" : "semantic-kernel>=1.14.0"]; addLlmDep({}, skReqs);
         files["requirements.txt"] = skReqs.join("\n") + "\n";
         files["Dockerfile"] = aiResult?.dockerfile || dockerfilePy.replace("entrypoint.py", "src/kernel_agent.py");
@@ -4419,7 +4452,7 @@ def list_policies():
         } else {
           files["src/assistants_agent.py"] = aiResult?.entrypoint || oaiAssistantsTemplatePy;
           files["tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) { files[`tools/${tool.name}.py`] = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, getAdapterType(tool.name)); }
+          for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
           const oaiReqs = [...baseReqs, pin ? "openai==1.58.1" : "openai>=1.0"];
           files["requirements.txt"] = oaiReqs.join("\n") + "\n";
           files["Dockerfile"] = aiResult?.dockerfile || dockerfilePy.replace("entrypoint.py", "src/assistants_agent.py");
