@@ -28,8 +28,9 @@ function consumeRateLimitToken(
   const perTool = rateLimits?.[toolName] as Record<string, unknown> | undefined;
   const effective = perTool ?? rateLimits;
   const rpm = (effective?.requestsPerMinute as number | undefined) ?? 600;
-  const burst = (effective?.burstCapacity as number | undefined) ?? 50;
-  const capacity = Math.min(rpm, burst);
+  // burst is the peak capacity; honor it as configured (may exceed rpm for short spikes)
+  const burst = (effective?.burstCapacity as number | undefined) ?? Math.ceil(rpm / 10);
+  const capacity = burst;
   const refillRatePerMs = rpm / 60_000;
 
   const now = Date.now();
@@ -799,6 +800,7 @@ router.post("/api/agents/:agentId/aar/evaluate-action", async (req, res) => {
       actorId: agentId,
       actorType: "agent",
       details: JSON.stringify({
+        agentId,
         toolName: tool_name,
         serverId: server_id,
         decision: evaluation.decision,
@@ -902,11 +904,15 @@ router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
     let driftRatio = 0;
     let postCallHash: string | null = null;
 
-    if (!invocationError && toolResult !== null && preCallFingerprintHash) {
+    // Drift runs on successful calls where either a pre-call hash or a baseline exists
+    if (!invocationError && toolResult !== null && preCallTool) {
       const responseBody = JSON.stringify(toolResult);
       postCallHash = createHash("sha256").update(responseBody).digest("hex");
 
-      if (preCallFingerprintHash !== postCallHash) {
+      // Skip if hash matches (no change) — but still score if no hash but baseline exists
+      const hashChanged = preCallFingerprintHash ? preCallFingerprintHash !== postCallHash : false;
+      const hasBaseline = !!(preCallTool.behaviorBaseline);
+      if (hashChanged || (hasBaseline && !preCallFingerprintHash)) {
         // Two-factor drift scoring:
         // 1. Character-deviation ratio: normalized length difference, bounded [0,100].
         //    |current_len - baseline_len| / max(current_len, baseline_len) * 100
