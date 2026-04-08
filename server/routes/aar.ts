@@ -14,14 +14,21 @@ interface TokenBucket {
 }
 const _rateLimitBuckets = new Map<string, TokenBucket>();
 
+// rateLimits can be either:
+//   { requestsPerMinute: 600, burstCapacity: 50 }  ← global
+//   { "tool_name": { requestsPerMinute: 100, burstCapacity: 10 }, ...global... } ← per-tool
 function consumeRateLimitToken(
   agentId: string,
   toolName: string,
   rateLimits: Record<string, unknown> | null,
 ): boolean {
   const key = `${agentId}:${toolName}`;
-  const rpm = (rateLimits?.requestsPerMinute as number | undefined) ?? 600;
-  const burst = (rateLimits?.burstCapacity as number | undefined) ?? 50;
+
+  // Per-tool limits take priority over global limits
+  const perTool = rateLimits?.[toolName] as Record<string, unknown> | undefined;
+  const effective = perTool ?? rateLimits;
+  const rpm = (effective?.requestsPerMinute as number | undefined) ?? 600;
+  const burst = (effective?.burstCapacity as number | undefined) ?? 50;
   const capacity = Math.min(rpm, burst);
   const refillRatePerMs = rpm / 60_000;
 
@@ -596,11 +603,51 @@ async function invokeViaMcp(
 
 // ─── Helper: evaluate action against stored AAR constraint lists ──────────────
 
+type PolicyRuleCondition = {
+  toolName?: string | string[];
+  args?: Record<string, string | number | boolean>;
+};
+
+type PolicyRule = {
+  name?: string;
+  condition?: PolicyRuleCondition;
+  block?: boolean;
+};
+
+/** Returns true when the rule condition matches the given toolName + args. */
+function matchesPolicyRule(
+  rule: PolicyRule,
+  toolName: string,
+  args: Record<string, unknown>,
+): boolean {
+  const cond = rule.condition;
+  if (!cond) return true; // unconditional rule always matches
+
+  // toolName condition: absent means any tool; present must match exactly or be in array
+  const toolCond = cond.toolName;
+  const toolMatches =
+    !toolCond ||
+    (Array.isArray(toolCond) ? toolCond.includes(toolName) : toolCond === toolName);
+  if (!toolMatches) return false;
+
+  // args condition: each key in cond.args must match the corresponding invocation arg
+  const argsCond = cond.args;
+  if (argsCond) {
+    for (const [k, v] of Object.entries(argsCond)) {
+      const actual = args[k];
+      if (String(actual ?? "") !== String(v)) return false;
+    }
+  }
+
+  return true;
+}
+
 async function evaluateActionAgainstConstraints(
   agentId: string,
   toolName: string,
   serverId: string | undefined,
   orgId: string,
+  args: Record<string, unknown> = {},
 ): Promise<{
   decision: string;
   reason: string;
@@ -630,7 +677,7 @@ async function evaluateActionAgainstConstraints(
   ];
   const rulesTriggered: string[] = [];
 
-  // Task 1: Rate-limit check (token bucket per agentId:toolName)
+  // Task 1: Rate-limit check (token bucket per agentId:toolName, supports per-tool limits)
   const allowed = consumeRateLimitToken(agentId, toolName, rateLimits);
   if (!allowed) {
     rulesTriggered.push("rate-limit-exceeded");
@@ -655,17 +702,13 @@ async function evaluateActionAgainstConstraints(
     return { decision: "REQUIRE_APPROVAL", reason: `Tool '${toolName}' requires explicit approval before invocation`, policiesEvaluated, rulesTriggered, riskLevel };
   }
 
-  // Task 2: Evaluate attached policy rules from the policies table
+  // Task 2: Evaluate attached policy rules — supports toolName, args, and combined conditions
   for (const policy of agentPolicies) {
     if (policy.status !== "active") continue;
-    const pj = policy.policyJson as { rules?: Array<{ name?: string; condition?: { toolName?: string | string[] }; block?: boolean }> } | null;
+    const pj = policy.policyJson as { rules?: PolicyRule[] } | null;
     const rules = pj?.rules ?? [];
     for (const rule of rules) {
-      const cond = rule.condition?.toolName;
-      const matches =
-        !cond ||
-        (Array.isArray(cond) ? cond.includes(toolName) : cond === toolName);
-      if (matches) {
+      if (matchesPolicyRule(rule, toolName, args)) {
         const ruleName = rule.name ?? `policy-${policy.id}-rule`;
         rulesTriggered.push(ruleName);
         if (rule.block) {
@@ -700,7 +743,7 @@ router.post("/api/agents/:agentId/aar/evaluate-action", async (req, res) => {
     }
 
     const startUs = Date.now() * 1000;
-    const evaluation = await evaluateActionAgainstConstraints(agentId, tool_name, server_id, orgId);
+    const evaluation = await evaluateActionAgainstConstraints(agentId, tool_name, server_id, orgId, args ?? {});
     const evaluationTimeUs = Date.now() * 1000 - startUs;
 
     let approvalId: string | undefined;
@@ -791,7 +834,7 @@ router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
     }
 
     const startUs = Date.now() * 1000;
-    const evaluation = await evaluateActionAgainstConstraints(agentId, tool_name, server_id, orgId);
+    const evaluation = await evaluateActionAgainstConstraints(agentId, tool_name, server_id, orgId, args ?? {});
     const evaluationTimeUs = Date.now() * 1000 - startUs;
 
     let approvalId: string | undefined;
@@ -841,7 +884,12 @@ router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
     );
     const preCallFingerprintHash = preCallTool?.fingerprintHash ?? null;
     const behaviorBaseline = preCallTool?.behaviorBaseline as Record<string, unknown> | null;
-    const maxDriftPercent = 10; // default; could come from aar_configs if added later
+    // Read maxDriftPercent from aarConfig.moduleConfig.mcpProxy.fingerprinting (fallback: 10%)
+    const aarCfgForDrift = await storage.getAarConfig(agentId, orgId);
+    const moduleConfig = aarCfgForDrift?.moduleConfig as Record<string, unknown> | null;
+    const mcpProxyCfg = moduleConfig?.mcpProxy as Record<string, unknown> | null;
+    const fingerprintCfg = mcpProxyCfg?.fingerprinting as Record<string, unknown> | null;
+    const maxDriftPercent = (fingerprintCfg?.maxDriftPercent as number | undefined) ?? 10;
 
     // Proceed with the tool call — proxy through MCP via shared helper
     const { result: toolResult, error: invocationError, matchedToolId } = await invokeViaMcp(tool_name, server_id, args ?? {});
@@ -853,11 +901,23 @@ router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
     const responseBody = toolResult !== null ? JSON.stringify(toolResult) : "";
     const postCallHash = createHash("sha256").update(responseBody).digest("hex");
     let driftDetected = false;
+    let driftRatio = 0;
+
     if (preCallFingerprintHash && preCallFingerprintHash !== postCallHash) {
-      // Simple drift heuristic: character-edit distance ratio vs baseline length
-      const baselineLen = (behaviorBaseline?.avgResponseLength as number | undefined) ?? responseBody.length;
-      const responseLenDelta = Math.abs(responseBody.length - baselineLen);
-      const driftRatio = (responseLenDelta / (baselineLen || 1)) * 100;
+      // Character-deviation ratio: compare response length against stored baseline.
+      // Formula: |current_len - baseline_len| / max(current_len, baseline_len) * 100
+      // This is equivalent to a normalized character-level deviation, bounded [0, 100].
+      // If behaviorBaseline.sampleResponse exists, use actual string length for comparison;
+      // otherwise fall back to behaviorBaseline.avgResponseLength, then self-compare (0% drift).
+      const sampleResponse = behaviorBaseline?.sampleResponse as string | undefined;
+      const avgResponseLength = behaviorBaseline?.avgResponseLength as number | undefined;
+      const baselineLen = sampleResponse != null
+        ? sampleResponse.length
+        : (avgResponseLength ?? responseBody.length);
+
+      const maxLen = Math.max(responseBody.length, baselineLen) || 1;
+      driftRatio = (Math.abs(responseBody.length - baselineLen) / maxLen) * 100;
+
       if (driftRatio > maxDriftPercent) {
         driftDetected = true;
         const toolIdToUpdate = matchedToolId ?? preCallTool?.id;
@@ -867,7 +927,7 @@ router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
             lastDriftAt: new Date(),
           }).catch(e => console.error("[AAR] drift status update failed:", e));
         }
-        console.warn(`[AAR] DRIFT_DETECTED for tool '${tool_name}' agent '${agentId}' — drift ${driftRatio.toFixed(1)}% > ${maxDriftPercent}%`);
+        console.warn(`[AAR] DRIFT_DETECTED tool='${tool_name}' agent='${agentId}' drift=${driftRatio.toFixed(1)}% threshold=${maxDriftPercent}%`);
       }
     }
 
@@ -888,6 +948,7 @@ router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
         preCallFingerprintHash,
         postCallFingerprintHash: postCallHash,
         driftDetected,
+        driftRatio: driftRatio > 0 ? parseFloat(driftRatio.toFixed(2)) : 0,
       }),
     });
 
@@ -965,7 +1026,7 @@ router.get("/api/agents/:agentId/aar/invoke-tool/stream", async (req, res) => {
       return;
     }
 
-    const evaluation = await evaluateActionAgainstConstraints(agentId, tool_name, server_id, orgId);
+    const evaluation = await evaluateActionAgainstConstraints(agentId, tool_name, server_id, orgId, {});
 
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
