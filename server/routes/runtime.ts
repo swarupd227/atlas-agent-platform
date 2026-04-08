@@ -2842,6 +2842,45 @@ def ${tool.name}(args: ${className}) -> dict:
     return generatePyToolAdapter(tool, getAdapterTypeFn(tool.name));
   }
 
+  /**
+   * Generates a @tool-decorated Python wrapper function for a single tool that
+   * can be consumed by LangChain's llm.bind_tools() / tool_map[name].invoke().
+   * Each parameter is expanded from the JSON schema so LangChain can infer the
+   * input schema; the body delegates to the tool module's _execute + XxxArgs.
+   */
+  function buildDbxToolWrapper(tool: { name: string; description?: string; parameters?: Record<string, unknown> }): string {
+    const className = tool.name.charAt(0).toUpperCase() + tool.name.slice(1) + "Args";
+    const props = (tool.parameters?.properties || {}) as Record<string, Record<string, unknown>>;
+    const required = new Set(Array.isArray(tool.parameters?.required) ? tool.parameters!.required as string[] : []);
+
+    const paramParts: string[] = [];
+    const argParts: string[] = [];
+
+    for (const [key, v] of Object.entries(props)) {
+      let pyType = "str";
+      let defaultVal = '""';
+      if (v.type === "integer") { pyType = "int"; defaultVal = "0"; }
+      else if (v.type === "number") { pyType = "float"; defaultVal = "0.0"; }
+      else if (v.type === "boolean") { pyType = "bool"; defaultVal = "False"; }
+      else if (v.type === "array" || v.type === "object") { pyType = v.type === "array" ? "list" : "dict"; defaultVal = "None"; }
+
+      const isReq = required.has(key);
+      paramParts.push(`${key}: ${isReq ? pyType : `Optional[${pyType}]`}${isReq ? "" : ` = ${defaultVal}`}`);
+      argParts.push(`${key}=${key}`);
+    }
+
+    const paramStr = paramParts.join(", ");
+    const argsStr = argParts.join(", ");
+    const funcDesc = (tool.description || `Tool: ${tool.name}`).replace(/"""/g, "'''");
+
+    return [
+      `@tool`,
+      `def ${tool.name}(${paramStr}) -> dict:`,
+      `    """${funcDesc}"""`,
+      `    return _${tool.name}_execute(${className}(${argsStr}))`,
+    ].join("\n");
+  }
+
   function generateTsToolsIndex(tools: Array<{ name: string }>): string {
     const exports = tools.map(t => `export { ${t.name} } from "./${t.name}";`).join("\n");
     const imports = tools.map(t => `import { ${t.name} } from "./${t.name}";`).join("\n");
@@ -4421,7 +4460,27 @@ def list_policies():
 
         files["agent.py"] = `# Databricks AgentBricks Agent\n# Generated for: ${agent.name}\n# Framework: Mosaic AI Agent Framework (MLflow + LangChain)\nimport yaml\nimport mlflow\nfrom databricks_langchain import ChatDatabricks\nfrom langchain_core.messages import AIMessage, HumanMessage, ToolMessage\nfrom langchain_core.tools import tool\nfrom tools import load_tools\n\n# Enable automatic MLflow tracing for LangChain\nmlflow.langchain.autolog()\n\n# Load agent configuration\nwith open("config.yaml") as f:\n    config = yaml.safe_load(f)\n\n# Initialize Databricks-hosted LLM\nllm = ChatDatabricks(\n    endpoint=config["model"]["endpoint"],\n    max_tokens=config["model"].get("max_tokens", 4096),\n    temperature=config["model"].get("temperature", 0.1),\n)\n\n# Load and bind tools\nagent_tools = load_tools()\nllm_with_tools = llm.bind_tools(agent_tools)\ntool_map = {t.name: t for t in agent_tools}\n\n\ndef run_agent(messages: list) -> list:\n    """Run the agent loop until completion or max iterations."""\n    max_iter = config["agent"].get("max_iterations", ${maxIterations})\n    completion_token = config["agent"].get("completion_token", "${completionPromise}")\n\n    for _ in range(max_iter):\n        response = llm_with_tools.invoke(messages)\n        messages.append(response)\n\n        # Check for completion signal\n        if isinstance(response, AIMessage) and completion_token in (response.content or ""):\n            break\n\n        # Process tool calls\n        if not response.tool_calls:\n            break\n\n        for tool_call in response.tool_calls:\n            name = tool_call["name"]\n            args = tool_call["args"]\n            call_id = tool_call["id"]\n\n            if name in tool_map:\n                try:\n                    result = tool_map[name].invoke(args)\n                except Exception as exc:\n                    result = f"Tool error: {exc}"\n            else:\n                result = f"Unknown tool: {name}"\n\n            messages.append(ToolMessage(content=str(result), tool_call_id=call_id))\n\n    return messages\n\n\nclass ${agentSlugDbx.replace(/(?:^|_)([a-z])/g, (_: string, c: string) => c.toUpperCase())}Agent(mlflow.pyfunc.PythonModel):\n    """MLflow PythonModel wrapper for AgentBricks deployment."""\n\n    def predict(self, context, model_input, params=None):\n        raw = model_input.get("messages", [])\n        messages = [HumanMessage(content=m["content"]) if m.get("role") == "user" else AIMessage(content=m["content"]) for m in raw]\n        result = run_agent(messages)\n        return {"messages": [{"role": "assistant" if isinstance(m, AIMessage) else "tool", "content": m.content} for m in result if hasattr(m, "content")]}\n\n\nif __name__ == "__main__":\n    experiment_name = config["mlflow"]["experiment_name"]\n    model_name = config["mlflow"]["registered_model_name"]\n\n    mlflow.set_experiment(experiment_name)\n    with mlflow.start_run():\n        mlflow.pyfunc.log_model(\n            artifact_path="agent",\n            python_model=${agentSlugDbx.replace(/(?:^|_)([a-z])/g, (_: string, c: string) => c.toUpperCase())}Agent(),\n            pip_requirements=["-r requirements.txt"],\n            registered_model_name=model_name,\n        )\n        print(f"[AgentBricks] Logged and registered: {model_name}")\n`;
 
-        files["tools/__init__.py"] = `# AgentBricks Tool Registry\n# Generated for: ${agent.name}\n${tools.map(t => `from tools.${t.name} import ${t.name}`).join("\n")}\n\n\ndef load_tools():\n    """Return all tool callables for binding to the LLM."""\n    return [${tools.map(t => t.name).join(", ")}]\n`;
+        // Build Databricks __init__.py: @tool-decorated wrappers so llm.bind_tools()
+        // and t.name / t.invoke() work without AttributeError at agent startup.
+        const dbxInitImportLines = [
+          "from typing import Optional",
+          "from langchain_core.tools import tool",
+          ...tools.map(t => {
+            const cls = t.name.charAt(0).toUpperCase() + t.name.slice(1) + "Args";
+            return `from tools.${t.name} import _execute as _${t.name}_execute, ${cls}`;
+          }),
+        ].join("\n");
+        const dbxToolDefs = tools.map(t => buildDbxToolWrapper(t)).join("\n\n\n");
+        files["tools/__init__.py"] = (
+          `# AgentBricks Tool Registry — LangChain BaseTool wrappers\n` +
+          `# Generated for: ${agent.name}\n` +
+          `# Each @tool-decorated function becomes a LangChain BaseTool with .name and .invoke()\n` +
+          `${dbxInitImportLines}\n\n\n` +
+          `${dbxToolDefs}\n\n\n` +
+          `def load_tools() -> list:\n` +
+          `    """Return BaseTool objects for llm.bind_tools() and tool_map construction."""\n` +
+          `    return [${tools.map(t => t.name).join(", ")}]\n`
+        );
 
         for (const tool of tools) {
           files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType);
