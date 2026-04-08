@@ -4488,7 +4488,16 @@ def list_policies():
           files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType);
         }
 
-        files["databricks.yml"] = `# Databricks Asset Bundle (DAB)\n# Deploy with: databricks bundle deploy\nbundle:\n  name: ${agentSlugDbx}_bundle\n\nworkspace:\n  host: \${DATABRICKS_HOST}\n  root_path: /Shared/.bundle/\${bundle.name}/\${bundle.environment}\n\ntargets:\n  dev:\n    default: true\n    mode: development\n    workspace:\n      host: \${DATABRICKS_HOST}\n\n  staging:\n    mode: development\n    workspace:\n      host: \${DATABRICKS_HOST}\n\n  prod:\n    mode: production\n    workspace:\n      host: \${DATABRICKS_HOST}\n\nresources:\n  jobs:\n    deploy_agent:\n      name: Deploy ${agent.name}\n      tasks:\n        - task_key: log_model\n          python_wheel_task:\n            entry_point: agent.py\n          job_cluster_key: agent_cluster\n      job_clusters:\n        - job_cluster_key: agent_cluster\n          new_cluster:\n            spark_version: 15.4.x-scala2.12\n            node_type_id: Standard_DS3_v2\n            num_workers: 1\n            spark_env_vars:\n              DATABRICKS_HOST: \${DATABRICKS_HOST}\n              DATABRICKS_TOKEN: \${DATABRICKS_TOKEN}\n`;
+        // spark_python_task is correct for plain Python scripts; python_wheel_task
+        // requires a packaged .whl with setuptools entry points which don't exist here.
+        const dbxLibraries = [
+          pin ? "mlflow==2.18.0" : "mlflow>=2.18.0",
+          pin ? "databricks-sdk==0.36.0" : "databricks-sdk>=0.36.0",
+          pin ? "databricks-langchain==0.3.0" : "databricks-langchain>=0.3.0",
+          pin ? "langchain-core==0.3.28" : "langchain-core>=0.3.0",
+          pin ? "pyyaml==6.0.2" : "pyyaml>=6.0",
+        ].map(pkg => `            - pypi:\n                package: ${pkg}`).join("\n");
+        files["databricks.yml"] = `# Databricks Asset Bundle (DAB)\n# Deploy with: databricks bundle deploy\nbundle:\n  name: ${agentSlugDbx}_bundle\n\nworkspace:\n  host: \${DATABRICKS_HOST}\n  root_path: /Shared/.bundle/\${bundle.name}/\${bundle.environment}\n\ntargets:\n  dev:\n    default: true\n    mode: development\n    workspace:\n      host: \${DATABRICKS_HOST}\n\n  staging:\n    mode: development\n    workspace:\n      host: \${DATABRICKS_HOST}\n\n  prod:\n    mode: production\n    workspace:\n      host: \${DATABRICKS_HOST}\n\nresources:\n  jobs:\n    deploy_agent:\n      name: Deploy ${agent.name}\n      tasks:\n        - task_key: log_model\n          spark_python_task:\n            python_file: \${workspace.file_path}/agent.py\n          libraries:\n${dbxLibraries}\n          job_cluster_key: agent_cluster\n      job_clusters:\n        - job_cluster_key: agent_cluster\n          new_cluster:\n            spark_version: 15.4.x-scala2.12\n            node_type_id: Standard_DS3_v2\n            num_workers: 1\n            spark_env_vars:\n              DATABRICKS_HOST: \${DATABRICKS_HOST}\n              DATABRICKS_TOKEN: \${DATABRICKS_TOKEN}\n`;
 
         files["MLproject"] = `name: ${agentSlugDbx}\n\nconda_env: conda.yaml\n\nentry_points:\n  main:\n    parameters:\n      experiment_name:\n        type: str\n        default: /Shared/${agentSlugDbx}_experiment\n    command: "python agent.py --experiment_name {experiment_name}"\n\n  evaluate:\n    command: "python evaluate.py"\n`;
 
