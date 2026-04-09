@@ -1,0 +1,196 @@
+Data Model Changes
+3.1 Pipeline Stages — Add `composite` Type
+Table: `pipeline_stages` (existing, modify)
+-- Existing columns
+id           SERIAL PRIMARY KEY,
+pipeline_id  INTEGER REFERENCES pipelines(id),
+stage_order  INTEGER NOT NULL,
+stage_type   VARCHAR NOT NULL,  -- CHANGE: add 'composite' to allowed values
+agent_id     INTEGER REFERENCES agents(id),  -- for 'agent' type
+config       JSONB,
+ 
+-- NEW columns for 'composite' type
+team_id              INTEGER REFERENCES agent_teams(id),   -- which team's graph to execute
+execution_plan_id    INTEGER REFERENCES dag_execution_plans(id),  -- pre-computed wave plan
+state_schema_id      INTEGER REFERENCES dag_state_schemas(id),    -- typed state definition
+
+3.2 New Table: `dag_execution_plans`
+Pre-computed wave plans for DAG execution. Computed from the team graph topology and cached for performance.
+CREATE TABLE dag_execution_plans (
+  id                SERIAL PRIMARY KEY,
+  team_id           INTEGER NOT NULL REFERENCES agent_teams(id),
+  blueprint_version INTEGER NOT NULL,       -- team blueprint version this plan was computed from
+  waves             JSONB NOT NULL,          -- ordered array of waves, each wave is array of node IDs
+  edge_map          JSONB NOT NULL,          -- adjacency list: { node_id: [downstream_node_ids] }
+  node_config       JSONB NOT NULL,          -- per-node config: { node_id: { agent_id, state_key, ... } }
+  total_nodes       INTEGER NOT NULL,
+  total_waves       INTEGER NOT NULL,
+  max_parallelism   INTEGER NOT NULL,        -- max concurrent agents in any single wave
+  computed_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+  status            VARCHAR NOT NULL DEFAULT 'active',  -- active | stale | invalidated
+  
+  UNIQUE(team_id, blueprint_version)
+);
+
+Example `waves` payload (MCG proposal-drafting subgraph):
+{
+  "waves": [
+    {
+      "wave_number": 1,
+      "nodes": ["template-grounding", "brand-grounding", "guideline-grounding"],
+      "dependencies": []
+    },
+    {
+      "wave_number": 2,
+      "nodes": ["executive-highlights", "pricing-packaging"],
+      "dependencies": ["template-grounding", "brand-grounding", "guideline-grounding"]
+    },
+    {
+      "wave_number": 3,
+      "nodes": ["general-purpose"],
+      "dependencies": ["executive-highlights", "pricing-packaging"]
+    },
+    {
+      "wave_number": 4,
+      "nodes": ["quality-review", "language-policy-enforcer", "brand-compliance-validator"],
+      "dependencies": ["general-purpose"]
+    },
+    {
+      "wave_number": 5,
+      "nodes": ["proposal-finalizer"],
+      "dependencies": ["quality-review", "language-policy-enforcer", "brand-compliance-validator"]
+    }
+  ]
+}
+
+3.3 New Table: `dag_state_schemas`
+Typed state definitions for DAG execution. Maps each node to its output key and defines reducer semantics.
+CREATE TABLE dag_state_schemas (
+  id              SERIAL PRIMARY KEY,
+  team_id         INTEGER NOT NULL REFERENCES agent_teams(id),
+  schema_version  INTEGER NOT NULL DEFAULT 1,
+  fields          JSONB NOT NULL,       -- typed field definitions
+  reducers        JSONB NOT NULL,       -- reducer definitions for accumulator fields
+  created_at      TIMESTAMP NOT NULL DEFAULT NOW(),
+  
+  UNIQUE(team_id, schema_version)
+);
+
+Example `fields` payload:
+{
+  "fields": {
+    "thread_id":            { "type": "string",  "writable_by": ["*"],                     "reducer": "last_wins" },
+    "request":              { "type": "object",  "writable_by": ["*"],                     "reducer": "last_wins" },
+    "approved_context":     { "type": "object",  "writable_by": ["*"],                     "reducer": "last_wins" },
+    "template_grounding":   { "type": "object",  "writable_by": ["template-grounding"],    "reducer": "last_wins" },
+    "brand_grounding":      { "type": "object",  "writable_by": ["brand-grounding"],       "reducer": "last_wins" },
+    "guideline_grounding":  { "type": "object",  "writable_by": ["guideline-grounding"],   "reducer": "last_wins" },
+    "executive_highlights": { "type": "object",  "writable_by": ["executive-highlights"],  "reducer": "last_wins" },
+    "pricing_packaging":    { "type": "object",  "writable_by": ["pricing-packaging"],     "reducer": "last_wins" },
+    "assembled_draft":      { "type": "object",  "writable_by": ["general-purpose"],       "reducer": "last_wins" },
+    "quality_review":       { "type": "object",  "writable_by": ["quality-review"],        "reducer": "last_wins" },
+    "language_policy_output":{ "type": "object", "writable_by": ["language-policy-enforcer"], "reducer": "last_wins" },
+    "validator_output":     { "type": "object",  "writable_by": ["brand-compliance-validator"], "reducer": "last_wins" },
+    "final_structured_draft":{ "type": "object", "writable_by": ["proposal-finalizer"],    "reducer": "last_wins" },
+    "delegated_subagents":  { "type": "array",   "writable_by": ["*"],                     "reducer": "append" },
+    "tool_call_sequence":   { "type": "array",   "writable_by": ["*"],                     "reducer": "append" },
+    "fallback_subagents":   { "type": "array",   "writable_by": ["*"],                     "reducer": "append" }
+  }
+}
+
+Reducer semantics:
+Reducer	Behavior	Use Case
+`last_wins`	Last writer's value overwrites previous	State keys owned by a single agent (safe when each agent writes to a distinct key)
+`append`	All writers' arrays are concatenated	Accumulator fields written by every agent (audit logs, delegation traces)
+`merge_object`	Shallow merge of objects	When multiple agents contribute keys to the same object
+`sum`	Numeric sum of all writes	Token counters, cost accumulators
+
+3.4 New Table: `dag_execution_runs`
+Runtime execution records for DAG runs (the composite stage equivalent of pipeline_runs).
+CREATE TABLE dag_execution_runs (
+  id                  SERIAL PRIMARY KEY,
+  pipeline_run_id     INTEGER REFERENCES pipeline_runs(id),  -- parent pipeline run
+  pipeline_stage_id   INTEGER REFERENCES pipeline_stages(id), -- which composite stage
+  execution_plan_id   INTEGER REFERENCES dag_execution_plans(id),
+  state_schema_id     INTEGER REFERENCES dag_state_schemas(id),
+  
+  -- State management
+  initial_state       JSONB,               -- state snapshot at DAG start (from pipeline context)
+  current_state       JSONB,               -- live state (updated after each wave)
+  final_state         JSONB,               -- state snapshot at DAG end (returned to pipeline)
+  
+  -- Execution tracking
+  status              VARCHAR NOT NULL DEFAULT 'pending',  -- pending | running | completed | failed | paused
+  current_wave        INTEGER DEFAULT 0,
+  total_waves         INTEGER NOT NULL,
+  started_at          TIMESTAMP,
+  completed_at        TIMESTAMP,
+  error               TEXT,
+  
+  -- Per-wave execution records
+  wave_results        JSONB DEFAULT '[]',  -- array of per-wave execution results
+  
+  -- Token tracking
+  total_prompt_tokens     INTEGER DEFAULT 0,
+  total_completion_tokens INTEGER DEFAULT 0
+);
+
+Example `wave_results` payload after execution:
+[
+  {
+    "wave_number": 1,
+    "started_at": "2026-04-02T10:30:00.000Z",
+    "completed_at": "2026-04-02T10:30:04.200Z",
+    "duration_ms": 4200,
+    "nodes": [
+      {
+        "node_id": "template-grounding",
+        "agent_id": 42,
+        "status": "completed",
+        "started_at": "2026-04-02T10:30:00.000Z",
+        "completed_at": "2026-04-02T10:30:03.800Z",
+        "duration_ms": 3800,
+        "state_key": "template_grounding",
+        "output_size_bytes": 4521,
+        "prompt_tokens": 2100,
+        "completion_tokens": 800,
+        "trace_id": "trace-abc123"
+      },
+      {
+        "node_id": "brand-grounding",
+        "agent_id": 43,
+        "status": "completed",
+        "duration_ms": 4200,
+        "state_key": "brand_grounding",
+        "prompt_tokens": 1800,
+        "completion_tokens": 650,
+        "trace_id": "trace-def456"
+      },
+      {
+        "node_id": "guideline-grounding",
+        "agent_id": 44,
+        "status": "completed",
+        "duration_ms": 3100,
+        "state_key": "guideline_grounding",
+        "prompt_tokens": 1500,
+        "completion_tokens": 550,
+        "trace_id": "trace-ghi789"
+      }
+    ]
+  },
+  {
+    "wave_number": 2,
+    "started_at": "2026-04-02T10:30:04.200Z",
+    "nodes": [ ... ]
+  }
+]
+
+3.5 Extend Existing `team_blueprint_nodes` Table
+Add columns:
+ALTER TABLE team_blueprint_nodes ADD COLUMN
+  state_key        VARCHAR,          -- which state field this node writes to
+  output_schema    JSONB,            -- JSON schema of expected output (for validation)
+  fallback_output  JSONB,            -- default output if agent fails (for best_effort mode)
+  timeout_ms       INTEGER DEFAULT 30000,  -- per-node timeout
+  retry_policy     JSONB;            -- { max_attempts: 3, backoff_ms: [1000, 2000, 4000] }
+
