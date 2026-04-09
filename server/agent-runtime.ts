@@ -2064,7 +2064,7 @@ function buildTiersFromExecutionGraph(
   }));
 }
 
-async function executeWorkerAgent(
+export async function executeWorkerAgent(
   workerId: string,
   teamAgent: RuntimeAgent,
   previousContext: string,

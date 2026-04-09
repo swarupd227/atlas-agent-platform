@@ -2,6 +2,8 @@ import { Router } from "express";
 import * as crypto from "crypto";
 import { storage } from "../storage";
 import { db } from "../db";
+import { computeWaves, DAGExecutionEngine, DAGExecutionError } from "../dag-execution-engine";
+import type { StateFieldDef } from "../dag-execution-engine";
 import { desc, eq, and } from "drizzle-orm";
 import { conversations, messages as chatMessages, traceSpans, kpiDefinitions } from "@shared/schema";
 import { z, ZodError } from "zod";
@@ -12588,6 +12590,98 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         return res.json({ output: "Awaiting human approval...", requiresApproval: true });
       }
 
+      if (currentStage.stageType === "composite") {
+        const teamAgentId: string | undefined = currentStage.teamAgentId;
+        if (!teamAgentId) {
+          return res.status(400).json({ error: "composite stage missing teamAgentId" });
+        }
+        const teamAgent = await storage.getAgent(teamAgentId, getOrgId(req));
+        if (!teamAgent) return res.status(404).json({ error: "composite team agent not found" });
+        const bpId: string | undefined = (teamAgent as any).blueprintId;
+        if (!bpId) return res.status(400).json({ error: "composite team agent has no blueprintId" });
+
+        const [bpNodes, bpEdges] = await Promise.all([
+          storage.getTeamBlueprintNodes(bpId),
+          storage.getTeamBlueprintEdges(bpId),
+        ]);
+        const wavePlan = computeWaves(bpNodes, bpEdges);
+
+        const existingSchema = await storage.getDagStateSchemaByTeamAgent(teamAgentId);
+        const stateSchema: Record<string, StateFieldDef> = existingSchema
+          ? (existingSchema.fields as Record<string, StateFieldDef>)
+          : {};
+
+        const previousResults = ((run.stageResults as any[]) || [])
+          .filter((r: any) => r.status === "completed" || r.status === "approved")
+          .reduce((acc: Record<string, any>, r: any) => {
+            acc[r.stageId] = r.output;
+            return acc;
+          }, {});
+        const initialState: Record<string, any> = {
+          request: run.scenarioInput,
+          ...previousResults,
+        };
+
+        const dagRun = await storage.createDagExecutionRun({
+          pipelineRunId: run.id,
+          pipelineStageId: currentStage.id,
+          executionPlanId: null,
+          stateSchemaId: existingSchema?.id || null,
+          initialState,
+          currentState: initialState,
+          finalState: null,
+          status: "running",
+          currentWave: 0,
+          totalWaves: wavePlan.totalWaves,
+          startedAt: new Date(),
+          waveResults: [],
+          totalPromptTokens: 0,
+          totalCompletionTokens: 0,
+        });
+
+        const engine = new DAGExecutionEngine();
+        try {
+          const dagResult = await engine.execute({
+            executionPlan: wavePlan,
+            stateSchema,
+            initialState,
+            errorStrategy: currentStage.config?.errorStrategy || "best_effort",
+            onWaveComplete: async (waveNum: number, state: Record<string, any>) => {
+              await storage.updateDagExecutionRun(dagRun.id, {
+                currentWave: waveNum,
+                currentState: state,
+              });
+            },
+          });
+
+          await storage.updateDagExecutionRun(dagRun.id, {
+            status: dagResult.success ? "completed" : "failed",
+            finalState: dagResult.finalState,
+            currentState: dagResult.finalState,
+            waveResults: dagResult.waveResults as any,
+            totalPromptTokens: dagResult.totalPromptTokens,
+            totalCompletionTokens: dagResult.totalCompletionTokens,
+            completedAt: new Date(),
+          });
+
+          const summaryOutput = `DAG executed ${wavePlan.totalWaves} waves across ${wavePlan.totalNodes} agents. Final state keys: ${Object.keys(dagResult.finalState).join(", ")}.`;
+          return res.json({
+            output: summaryOutput,
+            requiresApproval: false,
+            dagRunId: dagRun.id,
+            finalState: dagResult.finalState,
+            waveResults: dagResult.waveResults,
+          });
+        } catch (dagErr: any) {
+          await storage.updateDagExecutionRun(dagRun.id, {
+            status: "failed",
+            error: dagErr.message,
+            completedAt: new Date(),
+          });
+          return res.status(500).json({ error: `Composite stage DAG failed: ${dagErr.message}` });
+        }
+      }
+
       const agent = currentStage.agentId ? await storage.getAgent(currentStage.agentId, getOrgId(req)) : null;
       const agentName = agent?.name || currentStage.label;
       const previousResults = ((run.stageResults as any[]) || [])
@@ -13880,5 +13974,228 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
   });
 
 
+
+  // ── DAG Execution Plans ──────────────────────────────────────────────────────
+
+  router.post("/api/dag-execution-plans", async (req, res) => {
+    try {
+      const { teamAgentId } = req.body;
+      if (!teamAgentId) return res.status(400).json({ error: "teamAgentId required" });
+
+      const teamAgent = await storage.getAgent(teamAgentId, getOrgId(req));
+      if (!teamAgent) return res.status(404).json({ error: "Team agent not found" });
+
+      const blueprintId: string | undefined = (teamAgent as any).blueprintId;
+      if (!blueprintId) return res.status(400).json({ error: "Agent has no blueprintId" });
+
+      const [nodes, edges] = await Promise.all([
+        storage.getTeamBlueprintNodes(blueprintId),
+        storage.getTeamBlueprintEdges(blueprintId),
+      ]);
+
+      const wavePlan = computeWaves(nodes, edges);
+
+      const existing = await storage.getDagExecutionPlanByTeamAgent(teamAgentId);
+      if (existing) {
+        await storage.updateDagExecutionPlan(existing.id, { status: "stale" });
+      }
+
+      const plan = await storage.createDagExecutionPlan({
+        teamAgentId,
+        blueprintVersion: (existing?.blueprintVersion || 0) + 1,
+        waves: wavePlan.waves as any,
+        edgeMap: wavePlan.edgeMap as any,
+        nodeConfig: wavePlan.nodeConfig as any,
+        totalNodes: wavePlan.totalNodes,
+        totalWaves: wavePlan.totalWaves,
+        maxParallelism: wavePlan.maxParallelism,
+        status: "active",
+      });
+
+      res.status(201).json(plan);
+    } catch (e: any) {
+      console.error("[dag-plans] create error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  router.get("/api/dag-execution-plans/:id", async (req, res) => {
+    try {
+      const plan = await storage.getDagExecutionPlan(req.params.id);
+      if (!plan) return res.status(404).json({ error: "Plan not found" });
+      res.json(plan);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  router.post("/api/dag-execution-plans/:id/recompute", async (req, res) => {
+    try {
+      const plan = await storage.getDagExecutionPlan(req.params.id);
+      if (!plan) return res.status(404).json({ error: "Plan not found" });
+
+      const teamAgent = await storage.getAgent(plan.teamAgentId);
+      if (!teamAgent) return res.status(404).json({ error: "Team agent not found" });
+      const blueprintId: string | undefined = (teamAgent as any).blueprintId;
+      if (!blueprintId) return res.status(400).json({ error: "Agent has no blueprintId" });
+
+      const [nodes, edges] = await Promise.all([
+        storage.getTeamBlueprintNodes(blueprintId),
+        storage.getTeamBlueprintEdges(blueprintId),
+      ]);
+
+      const wavePlan = computeWaves(nodes, edges);
+
+      await storage.updateDagExecutionPlan(plan.id, { status: "stale" });
+
+      const newPlan = await storage.createDagExecutionPlan({
+        teamAgentId: plan.teamAgentId,
+        blueprintVersion: plan.blueprintVersion + 1,
+        waves: wavePlan.waves as any,
+        edgeMap: wavePlan.edgeMap as any,
+        nodeConfig: wavePlan.nodeConfig as any,
+        totalNodes: wavePlan.totalNodes,
+        totalWaves: wavePlan.totalWaves,
+        maxParallelism: wavePlan.maxParallelism,
+        status: "active",
+      });
+
+      res.json(newPlan);
+    } catch (e: any) {
+      console.error("[dag-plans] recompute error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── DAG State Schemas ─────────────────────────────────────────────────────────
+
+  router.post("/api/dag-state-schemas", async (req, res) => {
+    try {
+      const { teamAgentId, fields, reducers } = req.body;
+      if (!teamAgentId || !fields) {
+        return res.status(400).json({ error: "teamAgentId and fields are required" });
+      }
+      const schema = await storage.createDagStateSchema({
+        teamAgentId,
+        fields,
+        reducers: reducers || {},
+        schemaVersion: 1,
+      });
+      res.status(201).json(schema);
+    } catch (e: any) {
+      console.error("[dag-state-schemas] create error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  router.get("/api/dag-state-schemas/:id", async (req, res) => {
+    try {
+      const schema = await storage.getDagStateSchema(req.params.id);
+      if (!schema) return res.status(404).json({ error: "Schema not found" });
+      res.json(schema);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  router.patch("/api/dag-state-schemas/:id", async (req, res) => {
+    try {
+      const updated = await storage.updateDagStateSchema(req.params.id, req.body);
+      if (!updated) return res.status(404).json({ error: "Schema not found" });
+      res.json(updated);
+    } catch (e: any) {
+      console.error("[dag-state-schemas] update error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  router.get("/api/dag-state-schemas/by-team/:teamAgentId", async (req, res) => {
+    try {
+      const schema = await storage.getDagStateSchemaByTeamAgent(req.params.teamAgentId);
+      if (!schema) return res.status(404).json({ error: "No schema found for this team agent" });
+      res.json(schema);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── DAG Execution Runs ────────────────────────────────────────────────────────
+
+  router.get("/api/dag-execution-runs", async (req, res) => {
+    try {
+      const pipelineRunId = req.query.pipelineRunId as string | undefined;
+      const runs = await storage.listDagExecutionRuns(pipelineRunId);
+      res.json(runs);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  router.get("/api/dag-execution-runs/:id", async (req, res) => {
+    try {
+      const run = await storage.getDagExecutionRun(req.params.id);
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      res.json(run);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  router.get("/api/dag-execution-runs/:id/state", async (req, res) => {
+    try {
+      const run = await storage.getDagExecutionRun(req.params.id);
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      res.json({
+        runId: run.id,
+        status: run.status,
+        currentWave: run.currentWave,
+        totalWaves: run.totalWaves,
+        state: run.currentState || run.initialState || {},
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  router.get("/api/dag-execution-runs/:id/waves", async (req, res) => {
+    try {
+      const run = await storage.getDagExecutionRun(req.params.id);
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      res.json({
+        runId: run.id,
+        status: run.status,
+        currentWave: run.currentWave,
+        totalWaves: run.totalWaves,
+        waveResults: run.waveResults || [],
+        totalPromptTokens: run.totalPromptTokens,
+        totalCompletionTokens: run.totalCompletionTokens,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Compute waves from team agent blueprint (utility endpoint) ─────────────
+
+  router.get("/api/team-agents/:teamAgentId/dag-waves", async (req, res) => {
+    try {
+      const { teamAgentId } = req.params;
+      const teamAgent = await storage.getAgent(teamAgentId, getOrgId(req));
+      if (!teamAgent) return res.status(404).json({ error: "Team agent not found" });
+      const blueprintId: string | undefined = (teamAgent as any).blueprintId;
+      if (!blueprintId) return res.status(400).json({ error: "Agent has no blueprintId" });
+
+      const [nodes, edges] = await Promise.all([
+        storage.getTeamBlueprintNodes(blueprintId),
+        storage.getTeamBlueprintEdges(blueprintId),
+      ]);
+
+      const wavePlan = computeWaves(nodes, edges);
+      res.json(wavePlan);
+    } catch (e: any) {
+      console.error("[dag-waves] compute error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
 
 export default router;

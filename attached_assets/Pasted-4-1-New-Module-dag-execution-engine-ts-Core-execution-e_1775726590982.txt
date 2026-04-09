@@ -1,0 +1,474 @@
+4.1 New Module: `dag-execution-engine.ts`
+Core execution engine that runs a team graph as a wave-based parallel DAG.
+// server/src/services/dag-execution-engine.ts
+ 
+interface DAGExecutionConfig {
+  executionPlan: DAGExecutionPlan;      // pre-computed waves
+  stateSchema: DAGStateSchema;          // field definitions + reducers
+  initialState: Record<string, any>;    // state from pipeline context
+  errorStrategy: 'fail_fast' | 'best_effort';
+  onNodeStart?: (nodeId: string, wave: number) => void;
+  onNodeComplete?: (nodeId: string, wave: number, result: any) => void;
+  onWaveComplete?: (wave: number, state: Record<string, any>) => void;
+}
+ 
+interface NodeExecutionResult {
+  nodeId: string;
+  agentId: number;
+  status: 'completed' | 'failed' | 'skipped' | 'timeout';
+  output: Record<string, any>;         // keyed by state_key
+  error?: string;
+  durationMs: number;
+  promptTokens: number;
+  completionTokens: number;
+  traceId: string;
+}
+ 
+interface WaveExecutionResult {
+  waveNumber: number;
+  startedAt: string;
+  completedAt: string;
+  durationMs: number;
+  nodes: NodeExecutionResult[];
+}
+ 
+class DAGExecutionEngine {
+  
+  /**
+   * Execute the full DAG wave by wave.
+   * Returns the merged final state.
+   */
+  async execute(config: DAGExecutionConfig): Promise<{
+    finalState: Record<string, any>;
+    waveResults: WaveExecutionResult[];
+    totalPromptTokens: number;
+    totalCompletionTokens: number;
+  }> {
+    let currentState = { ...config.initialState };
+    const waveResults: WaveExecutionResult[] = [];
+    let totalPromptTokens = 0;
+    let totalCompletionTokens = 0;
+    
+    for (const wave of config.executionPlan.waves) {
+      const waveStart = Date.now();
+      config.onWaveStart?.(wave.wave_number);
+      
+      // Execute all nodes in this wave concurrently
+      const nodePromises = wave.nodes.map(nodeId => 
+        this.executeNode(nodeId, currentState, config)
+      );
+      
+      let nodeResults: NodeExecutionResult[];
+      
+      if (config.errorStrategy === 'fail_fast') {
+        // If any node fails, abort the entire wave
+        nodeResults = await Promise.all(nodePromises);
+        const failed = nodeResults.find(r => r.status === 'failed');
+        if (failed) {
+          throw new DAGExecutionError(
+            `Node ${failed.nodeId} failed in wave ${wave.wave_number}: ${failed.error}`,
+            { waveNumber: wave.wave_number, nodeId: failed.nodeId, waveResults }
+          );
+        }
+      } else {
+        // best_effort: settle all, continue even if some fail
+        const settled = await Promise.allSettled(nodePromises);
+        nodeResults = settled.map((s, i) => 
+          s.status === 'fulfilled' ? s.value : {
+            nodeId: wave.nodes[i],
+            agentId: 0,
+            status: 'failed' as const,
+            output: config.stateSchema.getFallbackOutput(wave.nodes[i]),
+            error: (s as PromiseRejectedResult).reason?.message,
+            durationMs: 0,
+            promptTokens: 0,
+            completionTokens: 0,
+            traceId: '',
+          }
+        );
+      }
+      
+      // Merge all node outputs into current state using reducers
+      currentState = this.mergeWaveOutputs(currentState, nodeResults, config.stateSchema);
+      
+      // Track tokens
+      for (const nr of nodeResults) {
+        totalPromptTokens += nr.promptTokens;
+        totalCompletionTokens += nr.completionTokens;
+      }
+      
+      const waveResult: WaveExecutionResult = {
+        waveNumber: wave.wave_number,
+        startedAt: new Date(waveStart).toISOString(),
+        completedAt: new Date().toISOString(),
+        durationMs: Date.now() - waveStart,
+        nodes: nodeResults,
+      };
+      waveResults.push(waveResult);
+      
+      config.onWaveComplete?.(wave.wave_number, currentState);
+    }
+    
+    return { finalState: currentState, waveResults, totalPromptTokens, totalCompletionTokens };
+  }
+  
+  /**
+   * Execute a single node (agent invocation).
+   * The agent receives the FULL current state as input context.
+   * Its output is keyed by the node's state_key.
+   */
+  private async executeNode(
+    nodeId: string,
+    currentState: Record<string, any>,
+    config: DAGExecutionConfig
+  ): Promise<NodeExecutionResult> {
+    const nodeConfig = config.executionPlan.node_config[nodeId];
+    const agentId = nodeConfig.agent_id;
+    const stateKey = nodeConfig.state_key;
+    const timeoutMs = nodeConfig.timeout_ms || 30000;
+    
+    config.onNodeStart?.(nodeId, 0);
+    const start = Date.now();
+    
+    // Build agent input: full state + node-specific metadata
+    const agentInput = this.buildAgentInput(nodeId, currentState, nodeConfig);
+    
+    // Execute the agent with timeout
+    const result = await Promise.race([
+      this.invokeAgent(agentId, agentInput),
+      this.timeout(timeoutMs, nodeId),
+    ]);
+    
+    const duration = Date.now() - start;
+    
+    // Validate output against schema if defined
+    if (nodeConfig.output_schema) {
+      this.validateOutput(result.output, nodeConfig.output_schema, nodeId);
+    }
+    
+    return {
+      nodeId,
+      agentId,
+      status: 'completed',
+      output: { [stateKey]: result.output },  // keyed by state_key
+      durationMs: duration,
+      promptTokens: result.promptTokens || 0,
+      completionTokens: result.completionTokens || 0,
+      traceId: result.traceId || '',
+    };
+  }
+  
+  /**
+   * Merge outputs from all nodes in a wave into the current state.
+   * Applies reducer semantics per field.
+   */
+  private mergeWaveOutputs(
+    currentState: Record<string, any>,
+    nodeResults: NodeExecutionResult[],
+    schema: DAGStateSchema
+  ): Record<string, any> {
+    const merged = { ...currentState };
+    
+    for (const result of nodeResults) {
+      if (result.status !== 'completed' && result.status !== 'failed') continue;
+      
+      for (const [key, value] of Object.entries(result.output)) {
+        const fieldDef = schema.fields[key];
+        if (!fieldDef) {
+          // Unknown field — store it anyway (permissive mode)
+          merged[key] = value;
+          continue;
+        }
+        
+        const reducer = fieldDef.reducer || 'last_wins';
+        
+        switch (reducer) {
+          case 'last_wins':
+            merged[key] = value;
+            break;
+            
+          case 'append':
+            // Concatenate arrays
+            const existing = Array.isArray(merged[key]) ? merged[key] : [];
+            const incoming = Array.isArray(value) ? value : [value];
+            merged[key] = [...existing, ...incoming];
+            break;
+            
+          case 'merge_object':
+            // Shallow merge objects
+            merged[key] = { ...(merged[key] || {}), ...(value || {}) };
+            break;
+            
+          case 'sum':
+            merged[key] = (merged[key] || 0) + (value || 0);
+            break;
+            
+          default:
+            merged[key] = value;
+        }
+      }
+    }
+    
+    return merged;
+  }
+  
+  /**
+   * Build the input context for a node.
+   * The agent receives the full accumulated state so it can read
+   * outputs from prior waves.
+   */
+  private buildAgentInput(
+    nodeId: string,
+    currentState: Record<string, any>,
+    nodeConfig: any
+  ): string {
+    // Convert state to structured context sections
+    const sections: string[] = [];
+    
+    sections.push(`## DAG EXECUTION CONTEXT`);
+    sections.push(`Node: ${nodeId}`);
+    sections.push(`Agent Role: ${nodeConfig.role || nodeId}`);
+    sections.push(``);
+    
+    // Include all non-null state fields as labeled sections
+    for (const [key, value] of Object.entries(currentState)) {
+      if (value === null || value === undefined) continue;
+      if (typeof value === 'object') {
+        sections.push(`## STATE: ${key}`);
+        sections.push(JSON.stringify(value, null, 2));
+      } else {
+        sections.push(`## STATE: ${key}`);
+        sections.push(String(value));
+      }
+      sections.push(``);
+    }
+    
+    return sections.join('\n');
+  }
+}
+
+4.2 Wave Computation Algorithm
+// server/src/services/dag-wave-computer.ts
+ 
+/**
+ * Computes execution waves from a team graph using topological sort.
+ * A wave is a maximal set of nodes that can execute in parallel —
+ * i.e., all their dependencies are in earlier waves.
+ *
+ * Algorithm: Modified Kahn's algorithm that assigns wave numbers.
+ */
+function computeWaves(
+  nodes: TeamBlueprintNode[],
+  edges: TeamBlueprintEdge[]
+): DAGExecutionPlan {
+  // Build adjacency list and in-degree map
+  const adj: Map<string, string[]> = new Map();
+  const inDegree: Map<string, number> = new Map();
+  const nodeMap: Map<string, TeamBlueprintNode> = new Map();
+  
+  for (const node of nodes) {
+    adj.set(node.id, []);
+    inDegree.set(node.id, 0);
+    nodeMap.set(node.id, node);
+  }
+  
+  for (const edge of edges) {
+    adj.get(edge.source_node_id)!.push(edge.target_node_id);
+    inDegree.set(edge.target_node_id, (inDegree.get(edge.target_node_id) || 0) + 1);
+  }
+  
+  // Kahn's algorithm with wave tracking
+  const waves: Wave[] = [];
+  let remaining = new Set(nodes.map(n => n.id));
+  
+  while (remaining.size > 0) {
+    // Find all nodes with in-degree 0 (among remaining)
+    const readyNodes: string[] = [];
+    for (const nodeId of remaining) {
+      if (inDegree.get(nodeId) === 0) {
+        readyNodes.push(nodeId);
+      }
+    }
+    
+    if (readyNodes.length === 0) {
+      throw new Error('Cycle detected in team graph — cannot compute execution waves');
+    }
+    
+    // These nodes form the next wave
+    const waveNumber = waves.length + 1;
+    const dependencies = waveNumber > 1 
+      ? waves[waveNumber - 2].nodes  // previous wave's nodes
+      : [];
+    
+    waves.push({
+      wave_number: waveNumber,
+      nodes: readyNodes,
+      dependencies,
+    });
+    
+    // Remove these nodes and update in-degrees
+    for (const nodeId of readyNodes) {
+      remaining.delete(nodeId);
+      for (const downstream of adj.get(nodeId) || []) {
+        inDegree.set(downstream, (inDegree.get(downstream) || 0) - 1);
+      }
+    }
+  }
+  
+  // Build node config from team blueprint nodes
+  const nodeConfig: Record<string, any> = {};
+  for (const node of nodes) {
+    nodeConfig[node.id] = {
+      agent_id: node.agent_id,
+      state_key: node.state_key || node.id.replace(/-/g, '_'),
+      output_schema: node.output_schema,
+      fallback_output: node.fallback_output,
+      timeout_ms: node.timeout_ms || 30000,
+      retry_policy: node.retry_policy || { max_attempts: 2, backoff_ms: [1000, 2000] },
+      role: node.role || node.id,
+    };
+  }
+  
+  return {
+    waves,
+    edge_map: Object.fromEntries(adj),
+    node_config: nodeConfig,
+    total_nodes: nodes.length,
+    total_waves: waves.length,
+    max_parallelism: Math.max(...waves.map(w => w.nodes.length)),
+  };
+}
+
+4.3 Integration with Pipeline Execution Runtime
+Modify: `server/src/services/pipeline-execution-runtime.ts`
+Add a case 'composite' to the stage dispatcher:
+// In the existing executeStage() method:
+ 
+async executeStage(pipelineRun, stage, contextFromPrevious) {
+  switch (stage.stage_type) {
+    case 'agent':
+      return this.executeAgentStage(pipelineRun, stage, contextFromPrevious);
+    
+    case 'approval_gate':
+      return this.executeApprovalGate(pipelineRun, stage, contextFromPrevious);
+    
+    case 'parallel_group':
+      return this.executeParallelGroup(pipelineRun, stage, contextFromPrevious);
+    
+    case 'composite':  // ← NEW
+      return this.executeCompositeStage(pipelineRun, stage, contextFromPrevious);
+    
+    default:
+      throw new Error(`Unknown stage type: ${stage.stage_type}`);
+  }
+}
+ 
+// NEW METHOD:
+async executeCompositeStage(pipelineRun, stage, contextFromPrevious) {
+  // 1. Load execution plan and state schema
+  const plan = await db.select().from(dagExecutionPlans)
+    .where(eq(dagExecutionPlans.id, stage.execution_plan_id));
+  const schema = await db.select().from(dagStateSchemas)
+    .where(eq(dagStateSchemas.id, stage.state_schema_id));
+  
+  // 2. Build initial state from pipeline context
+  const initialState = this.buildInitialStateFromContext(contextFromPrevious, schema);
+  
+  // 3. Create DAG execution run record
+  const dagRun = await db.insert(dagExecutionRuns).values({
+    pipeline_run_id: pipelineRun.id,
+    pipeline_stage_id: stage.id,
+    execution_plan_id: plan.id,
+    state_schema_id: schema.id,
+    initial_state: initialState,
+    status: 'running',
+    current_wave: 0,
+    total_waves: plan.total_waves,
+    started_at: new Date(),
+  }).returning();
+  
+  // 4. Execute DAG
+  const engine = new DAGExecutionEngine();
+  const result = await engine.execute({
+    executionPlan: plan,
+    stateSchema: schema,
+    initialState,
+    errorStrategy: stage.config?.error_strategy || 'fail_fast',
+    onWaveComplete: async (waveNum, state) => {
+      // Update run record after each wave (checkpoint)
+      await db.update(dagExecutionRuns)
+        .set({ current_wave: waveNum, current_state: state })
+        .where(eq(dagExecutionRuns.id, dagRun.id));
+      
+      // Emit SSE progress event
+      this.emitProgress(pipelineRun.id, {
+        type: 'dag_wave_complete',
+        stageId: stage.id,
+        waveNumber: waveNum,
+        totalWaves: plan.total_waves,
+        nodesCompleted: result.waveResults[waveNum - 1]?.nodes.length || 0,
+      });
+    },
+  });
+  
+  // 5. Update run record with final state
+  await db.update(dagExecutionRuns).set({
+    status: 'completed',
+    final_state: result.finalState,
+    wave_results: result.waveResults,
+    total_prompt_tokens: result.totalPromptTokens,
+    total_completion_tokens: result.totalCompletionTokens,
+    completed_at: new Date(),
+  }).where(eq(dagExecutionRuns.id, dagRun.id));
+  
+  // 6. Return final state as context for next pipeline stage
+  return this.convertStateToContext(result.finalState);
+}
+
+4.4 Nested Composite Support
+A composite stage's team graph can itself contain nodes that reference other teams (nested subgraphs). The MCG pattern has 3 levels:
+Pipeline stage (composite) → Parent team graph
+  Node "proposal-document-insights" → Child team (document-insights subgraph)
+  Node "proposal-drafting" → Child team (drafting subgraph with 5 waves)
+
+Implementation: When the DAG Execution Engine encounters a node whose node_type is team_reference, it recursively invokes itself:
+// In DAGExecutionEngine.executeNode():
+ 
+if (nodeConfig.node_type === 'team_reference') {
+  // Recursive: this node is itself a composite — execute its team graph as a nested DAG
+  const childPlan = await this.loadExecutionPlan(nodeConfig.child_team_id);
+  const childSchema = await this.loadStateSchema(nodeConfig.child_team_id);
+  
+  const childResult = await this.execute({
+    executionPlan: childPlan,
+    stateSchema: childSchema,
+    initialState: currentState,  // child inherits parent state
+    errorStrategy: config.errorStrategy,
+  });
+  
+  return {
+    nodeId,
+    agentId: 0,  // no single agent — team execution
+    status: 'completed',
+    output: childResult.finalState,  // child's final state merges into parent
+    durationMs: ...,
+    promptTokens: childResult.totalPromptTokens,
+    completionTokens: childResult.totalCompletionTokens,
+    traceId: '',
+  };
+}
+
+4.5 New API Endpoints
+POST   /api/dag-execution-plans           Create/compute execution plan from team graph
+GET    /api/dag-execution-plans/:id        Get execution plan details
+POST   /api/dag-execution-plans/:id/recompute   Recompute waves from updated team graph
+ 
+POST   /api/dag-state-schemas              Create state schema for a team
+GET    /api/dag-state-schemas/:id          Get state schema
+PATCH  /api/dag-state-schemas/:id          Update state schema
+ 
+GET    /api/dag-execution-runs             List DAG execution runs (filter by pipeline_run_id)
+GET    /api/dag-execution-runs/:id         Get DAG execution run detail (includes wave_results)
+GET    /api/dag-execution-runs/:id/state   Get current state snapshot of a running DAG
+GET    /api/dag-execution-runs/:id/waves   Get per-wave execution results
+

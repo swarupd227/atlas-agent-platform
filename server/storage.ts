@@ -167,6 +167,9 @@ import {
   aarConfigs, type AarConfig, type InsertAarConfig,
   aarActionDecisions, type AarActionDecision, type InsertAarActionDecision,
   aarAgentStateReports, type AarAgentStateReport, type InsertAarAgentStateReport,
+  dagExecutionPlans, type DagExecutionPlan, type InsertDagExecutionPlan,
+  dagStateSchemas, type DagStateSchema, type InsertDagStateSchema,
+  dagExecutionRuns, type DagExecutionRun, type InsertDagExecutionRun,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -774,6 +777,22 @@ export interface IStorage {
   listAarActionDecisions(agentId: string, orgId?: string, limit?: number): Promise<AarActionDecision[]>;
   createAarAgentStateReport(report: InsertAarAgentStateReport): Promise<AarAgentStateReport>;
   updateMcpServerToolDriftStatus(toolId: string, driftStatus: string): Promise<void>;
+
+  getDagExecutionPlan(id: string): Promise<DagExecutionPlan | undefined>;
+  getDagExecutionPlanByTeamAgent(teamAgentId: string): Promise<DagExecutionPlan | undefined>;
+  createDagExecutionPlan(plan: InsertDagExecutionPlan): Promise<DagExecutionPlan>;
+  updateDagExecutionPlan(id: string, data: Partial<DagExecutionPlan>): Promise<DagExecutionPlan | undefined>;
+  deleteDagExecutionPlan(id: string): Promise<boolean>;
+
+  getDagStateSchema(id: string): Promise<DagStateSchema | undefined>;
+  getDagStateSchemaByTeamAgent(teamAgentId: string): Promise<DagStateSchema | undefined>;
+  createDagStateSchema(schema: InsertDagStateSchema): Promise<DagStateSchema>;
+  updateDagStateSchema(id: string, data: Partial<DagStateSchema>): Promise<DagStateSchema | undefined>;
+
+  getDagExecutionRun(id: string): Promise<DagExecutionRun | undefined>;
+  listDagExecutionRuns(pipelineRunId?: string): Promise<DagExecutionRun[]>;
+  createDagExecutionRun(run: InsertDagExecutionRun): Promise<DagExecutionRun>;
+  updateDagExecutionRun(id: string, data: Partial<DagExecutionRun>): Promise<DagExecutionRun | undefined>;
 }
 
 function resolveOrgId(providedOrgId: string | null | undefined): string {
@@ -3469,6 +3488,87 @@ export class DatabaseStorage implements IStorage {
       .update(mcpServerTools)
       .set({ driftStatus, lastDriftAt: new Date() })
       .where(eq(mcpServerTools.id, toolId));
+  }
+
+  async getDagExecutionPlan(id: string): Promise<DagExecutionPlan | undefined> {
+    const [row] = await db.select().from(dagExecutionPlans).where(eq(dagExecutionPlans.id, id));
+    return row;
+  }
+
+  async getDagExecutionPlanByTeamAgent(teamAgentId: string): Promise<DagExecutionPlan | undefined> {
+    const [row] = await db
+      .select()
+      .from(dagExecutionPlans)
+      .where(and(eq(dagExecutionPlans.teamAgentId, teamAgentId), eq(dagExecutionPlans.status, "active")))
+      .orderBy(desc(dagExecutionPlans.computedAt))
+      .limit(1);
+    return row;
+  }
+
+  async createDagExecutionPlan(plan: InsertDagExecutionPlan): Promise<DagExecutionPlan> {
+    const [row] = await db.insert(dagExecutionPlans).values(plan).returning();
+    return row;
+  }
+
+  async updateDagExecutionPlan(id: string, data: Partial<DagExecutionPlan>): Promise<DagExecutionPlan | undefined> {
+    const [row] = await db.update(dagExecutionPlans).set(data).where(eq(dagExecutionPlans.id, id)).returning();
+    return row;
+  }
+
+  async deleteDagExecutionPlan(id: string): Promise<boolean> {
+    const result = await db.delete(dagExecutionPlans).where(eq(dagExecutionPlans.id, id)).returning();
+    return result.length > 0;
+  }
+
+  async getDagStateSchema(id: string): Promise<DagStateSchema | undefined> {
+    const [row] = await db.select().from(dagStateSchemas).where(eq(dagStateSchemas.id, id));
+    return row;
+  }
+
+  async getDagStateSchemaByTeamAgent(teamAgentId: string): Promise<DagStateSchema | undefined> {
+    const [row] = await db
+      .select()
+      .from(dagStateSchemas)
+      .where(eq(dagStateSchemas.teamAgentId, teamAgentId))
+      .orderBy(desc(dagStateSchemas.schemaVersion))
+      .limit(1);
+    return row;
+  }
+
+  async createDagStateSchema(schema: InsertDagStateSchema): Promise<DagStateSchema> {
+    const [row] = await db.insert(dagStateSchemas).values(schema).returning();
+    return row;
+  }
+
+  async updateDagStateSchema(id: string, data: Partial<DagStateSchema>): Promise<DagStateSchema | undefined> {
+    const [row] = await db.update(dagStateSchemas).set(data).where(eq(dagStateSchemas.id, id)).returning();
+    return row;
+  }
+
+  async getDagExecutionRun(id: string): Promise<DagExecutionRun | undefined> {
+    const [row] = await db.select().from(dagExecutionRuns).where(eq(dagExecutionRuns.id, id));
+    return row;
+  }
+
+  async listDagExecutionRuns(pipelineRunId?: string): Promise<DagExecutionRun[]> {
+    if (pipelineRunId) {
+      return db
+        .select()
+        .from(dagExecutionRuns)
+        .where(eq(dagExecutionRuns.pipelineRunId, pipelineRunId))
+        .orderBy(desc(dagExecutionRuns.createdAt));
+    }
+    return db.select().from(dagExecutionRuns).orderBy(desc(dagExecutionRuns.createdAt)).limit(100);
+  }
+
+  async createDagExecutionRun(run: InsertDagExecutionRun): Promise<DagExecutionRun> {
+    const [row] = await db.insert(dagExecutionRuns).values(run).returning();
+    return row;
+  }
+
+  async updateDagExecutionRun(id: string, data: Partial<DagExecutionRun>): Promise<DagExecutionRun | undefined> {
+    const [row] = await db.update(dagExecutionRuns).set(data).where(eq(dagExecutionRuns.id, id)).returning();
+    return row;
   }
 }
 

@@ -1043,11 +1043,73 @@ export const teamBlueprintNodes = pgTable("team_blueprint_nodes", {
   gateType: text("gate_type"),
   config: jsonb("config"),
   createdAt: timestamp("created_at").defaultNow(),
+  stateKey: varchar("state_key"),
+  outputSchema: jsonb("output_schema"),
+  fallbackOutput: jsonb("fallback_output"),
+  timeoutMs: integer("timeout_ms").default(30000),
+  retryPolicy: jsonb("retry_policy"),
+  refTeamAgentId: varchar("ref_team_agent_id"),
 });
 
 export const insertTeamBlueprintNodeSchema = createInsertSchema(teamBlueprintNodes).omit({ id: true, createdAt: true });
 export type InsertTeamBlueprintNode = z.infer<typeof insertTeamBlueprintNodeSchema>;
 export type TeamBlueprintNode = typeof teamBlueprintNodes.$inferSelect;
+
+export const dagExecutionPlans = pgTable("dag_execution_plans", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  teamAgentId: varchar("team_agent_id").notNull(),
+  blueprintVersion: integer("blueprint_version").notNull().default(1),
+  waves: jsonb("waves").notNull().default(sql`'[]'::jsonb`),
+  edgeMap: jsonb("edge_map").notNull().default(sql`'{}'::jsonb`),
+  nodeConfig: jsonb("node_config").notNull().default(sql`'{}'::jsonb`),
+  totalNodes: integer("total_nodes").notNull().default(0),
+  totalWaves: integer("total_waves").notNull().default(0),
+  maxParallelism: integer("max_parallelism").notNull().default(1),
+  status: varchar("status").notNull().default("active"),
+  computedAt: timestamp("computed_at").defaultNow(),
+});
+
+export const insertDagExecutionPlanSchema = createInsertSchema(dagExecutionPlans).omit({ id: true, computedAt: true });
+export type InsertDagExecutionPlan = z.infer<typeof insertDagExecutionPlanSchema>;
+export type DagExecutionPlan = typeof dagExecutionPlans.$inferSelect;
+
+export const dagStateSchemas = pgTable("dag_state_schemas", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  teamAgentId: varchar("team_agent_id").notNull(),
+  schemaVersion: integer("schema_version").notNull().default(1),
+  fields: jsonb("fields").notNull().default(sql`'{}'::jsonb`),
+  reducers: jsonb("reducers").notNull().default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertDagStateSchemaSchema = createInsertSchema(dagStateSchemas).omit({ id: true, createdAt: true });
+export type InsertDagStateSchema = z.infer<typeof insertDagStateSchemaSchema>;
+export type DagStateSchema = typeof dagStateSchemas.$inferSelect;
+
+export const dagExecutionRuns = pgTable("dag_execution_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  pipelineRunId: varchar("pipeline_run_id"),
+  pipelineStageId: varchar("pipeline_stage_id"),
+  executionPlanId: varchar("execution_plan_id"),
+  stateSchemaId: varchar("state_schema_id"),
+  initialState: jsonb("initial_state"),
+  currentState: jsonb("current_state"),
+  finalState: jsonb("final_state"),
+  status: varchar("status").notNull().default("pending"),
+  currentWave: integer("current_wave").default(0),
+  totalWaves: integer("total_waves").notNull().default(0),
+  startedAt: timestamp("started_at"),
+  completedAt: timestamp("completed_at"),
+  error: text("error"),
+  waveResults: jsonb("wave_results").notNull().default(sql`'[]'::jsonb`),
+  totalPromptTokens: integer("total_prompt_tokens").default(0),
+  totalCompletionTokens: integer("total_completion_tokens").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertDagExecutionRunSchema = createInsertSchema(dagExecutionRuns).omit({ id: true, createdAt: true });
+export type InsertDagExecutionRun = z.infer<typeof insertDagExecutionRunSchema>;
+export type DagExecutionRun = typeof dagExecutionRuns.$inferSelect;
 
 export const teamBlueprintEdges = pgTable("team_blueprint_edges", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
