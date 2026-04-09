@@ -4471,7 +4471,27 @@ def list_policies():
           "pyarrow>=14.0.0",
         ];
 
-        files["agent.py"] = `# Databricks AgentBricks Agent\n# Generated for: ${agent.name}\n# Framework: Mosaic AI Agent Framework (MLflow + LangChain)\nimport argparse\nimport json\nimport os\nimport sys\nimport pandas as pd\nimport yaml\nimport mlflow\nfrom mlflow.models import ModelSignature\nfrom mlflow.types.schema import Array, ColSpec, DataType, Object, Property, Schema\nfrom databricks_langchain import ChatDatabricks\nfrom langchain_core.messages import AIMessage, HumanMessage, ToolMessage\nfrom langchain_core.tools import tool\nfrom tools import load_tools\n\n# Guard: Databricks serverless spark_python_task runs scripts via exec() inside an\n# IPython kernel and does not inject __file__ into globals.\nif "__file__" not in globals():\n    __file__ = sys._getframe(0).f_code.co_filename\n\n# Enable automatic MLflow tracing for LangChain\nmlflow.langchain.autolog()\n\n# Load agent configuration — use __file__-relative path so this works both when\n# running as a script (CWD = project root) and when served by MLflow (CWD arbitrary).\n_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml")\nwith open(_CONFIG_PATH) as f:\n    config = yaml.safe_load(f)\n\n# Initialize Databricks-hosted LLM\nllm = ChatDatabricks(\n    endpoint=config["model"]["endpoint"],\n    max_tokens=config["model"].get("max_tokens", 4096),\n    temperature=config["model"].get("temperature", 0.1),\n)\n\n# Load and bind tools\nagent_tools = load_tools()\nllm_with_tools = llm.bind_tools(agent_tools)\ntool_map = {t.name: t for t in agent_tools}\n\n\ndef run_agent(messages: list) -> list:\n    """Run the agent loop until completion or max iterations."""\n    max_iter = config["agent"].get("max_iterations", ${maxIterations})\n    completion_token = config["agent"].get("completion_token", "${completionPromise}")\n\n    for _ in range(max_iter):\n        response = llm_with_tools.invoke(messages)\n        messages.append(response)\n\n        # Check for completion signal\n        if isinstance(response, AIMessage) and completion_token in (response.content or ""):\n            break\n\n        # Process tool calls\n        if not response.tool_calls:\n            break\n\n        for tool_call in response.tool_calls:\n            name = tool_call["name"]\n            args = tool_call["args"]\n            call_id = tool_call["id"]\n\n            if name in tool_map:\n                try:\n                    result = tool_map[name].invoke(args)\n                except Exception as exc:\n                    result = f"Tool error: {exc}"\n            else:\n                result = f"Unknown tool: {name}"\n\n            messages.append(ToolMessage(content=str(result), tool_call_id=call_id))\n\n    return messages\n\n\nclass ${dbxClassName}Agent(mlflow.pyfunc.PythonModel):\n    """MLflow PythonModel wrapper for AgentBricks deployment."""\n\n    def predict(self, context, model_input, params=None):\n        # MLflow pyfunc passes pd.DataFrame from a served endpoint; dict from direct .predict() calls\n        if isinstance(model_input, pd.DataFrame):\n            raw = model_input["messages"].iloc[0]\n            if isinstance(raw, str):\n                raw = json.loads(raw)\n        elif isinstance(model_input, dict):\n            raw = model_input.get("messages", [])\n        else:\n            raw = []\n        messages = [HumanMessage(content=m["content"]) if m.get("role") == "user" else AIMessage(content=m["content"]) for m in raw]\n        result = run_agent(messages)\n        return {"messages": [{"role": "assistant" if isinstance(m, AIMessage) else "tool", "content": m.content} for m in result if isinstance(m, (AIMessage, ToolMessage))]}\n\n\n# Register model for code-based MLflow logging.\n# ChatDatabricks holds threading locks that cloudpickle cannot serialize —\n# passing python_model=__file__ instead of an instance avoids this at log time.\nmlflow.models.set_model(${dbxClassName}Agent())\n\n\nif __name__ == "__main__":\n    model_name = config["mlflow"]["registered_model_name"]\n\n    # Build explicit ModelSignature — Unity Catalog requires both input and output schemas.\n    # Never rely on auto-inference: it calls the LLM endpoint at registration time,\n    # which fails if the endpoint does not yet exist in the workspace.\n    _chat_msg = Array(Object([\n        Property("role", DataType.string),\n        Property("content", DataType.string),\n    ]))\n    signature = ModelSignature(\n        inputs=Schema([ColSpec(type=_chat_msg, name="messages")]),\n        outputs=Schema([ColSpec(type=_chat_msg, name="messages")]),\n    )\n\n    parser = argparse.ArgumentParser()\n    parser.add_argument(\n        "--experiment_name",\n        type=str,\n        default=config["mlflow"]["experiment_name"],\n    )\n    cli_args = parser.parse_args()\n    mlflow.set_experiment(cli_args.experiment_name)\n    with mlflow.start_run():\n        mlflow.pyfunc.log_model(\n            artifact_path="agent",\n            python_model=__file__,          # code-based: MLflow re-imports agent.py at serve time\n            code_paths=["tools", "config.yaml"],\n            signature=signature,\n            pip_requirements=[\n${dbxPipReqs.map(p => `                "${p}",`).join("\n")}\n            ],\n            registered_model_name=model_name,\n        )\n        print(f"[AgentBricks] Logged and registered: {model_name}")\n`;
+        // pyproject.toml is the single source of truth for all runtime + dev deps.
+        // requirements.txt, conda.yaml, databricks.yml, and agent.py all delegate to it.
+        files["pyproject.toml"] = (
+          `[project]\n` +
+          `name = "${agentSlugDbx}"\n` +
+          `version = "0.1.0"\n` +
+          `description = "${(agent.description || "AI agent generated by ATLAS.").replace(/"/g, '\\"')}"\n` +
+          `requires-python = ">=3.12"\n` +
+          `dependencies = [\n` +
+          dbxPipReqs.map(p => `    "${p}",`).join("\n") + `\n` +
+          `]\n\n` +
+          `[project.optional-dependencies]\n` +
+          `dev = [\n    "${pin ? "pytest==8.3.4" : "pytest>=7.4.0,<9.0.0"}",\n]\n\n` +
+          `[build-system]\n` +
+          `requires = ["hatchling"]\nbuild-backend = "hatchling.build"\n\n` +
+          `[tool.hatch.build.targets.wheel]\n` +
+          `# tools/ becomes a proper importable package inside the deployed wheel.\npackages = ["tools"]\n\n` +
+          `[tool.pytest.ini_options]\ntestpaths = ["tests"]\naddopts = "-v --tb=short"\n`
+        );
+
+        files["agent.py"] = `# Databricks AgentBricks Agent\n# Generated for: ${agent.name}\n# Framework: Mosaic AI Agent Framework (MLflow + LangChain)\nimport argparse\nimport json\nimport os\nimport sys\nimport tomllib\nimport pandas as pd\nimport yaml\nimport mlflow\nfrom mlflow.models import ModelSignature\nfrom mlflow.types.schema import Array, ColSpec, DataType, Object, Property, Schema\nfrom databricks_langchain import ChatDatabricks\nfrom langchain_core.messages import AIMessage, HumanMessage, ToolMessage\nfrom langchain_core.tools import tool\nfrom tools import load_tools\n\n# Guard: Databricks serverless spark_python_task runs scripts via exec() inside an\n# IPython kernel and does not inject __file__ into globals.\nif "__file__" not in globals():\n    __file__ = sys._getframe(0).f_code.co_filename\n\n# Enable automatic MLflow tracing for LangChain\nmlflow.langchain.autolog()\n\n# Load agent configuration — use __file__-relative path so this works both when\n# running as a script (CWD = project root) and when served by MLflow (CWD arbitrary).\n_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml")\nwith open(_CONFIG_PATH) as f:\n    config = yaml.safe_load(f)\n\n# Initialize Databricks-hosted LLM\nllm = ChatDatabricks(\n    endpoint=config["model"]["endpoint"],\n    max_tokens=config["model"].get("max_tokens", 4096),\n    temperature=config["model"].get("temperature", 0.1),\n)\n\n# Load and bind tools\nagent_tools = load_tools()\nllm_with_tools = llm.bind_tools(agent_tools)\ntool_map = {t.name: t for t in agent_tools}\n\n\ndef run_agent(messages: list) -> list:\n    """Run the agent loop until completion or max iterations."""\n    max_iter = config["agent"].get("max_iterations", ${maxIterations})\n    completion_token = config["agent"].get("completion_token", "${completionPromise}")\n\n    for _ in range(max_iter):\n        response = llm_with_tools.invoke(messages)\n        messages.append(response)\n\n        # Check for completion signal\n        if isinstance(response, AIMessage) and completion_token in (response.content or ""):\n            break\n\n        # Process tool calls\n        if not response.tool_calls:\n            break\n\n        for tool_call in response.tool_calls:\n            name = tool_call["name"]\n            args = tool_call["args"]\n            call_id = tool_call["id"]\n\n            if name in tool_map:\n                try:\n                    result = tool_map[name].invoke(args)\n                except Exception as exc:\n                    result = f"Tool error: {exc}"\n            else:\n                result = f"Unknown tool: {name}"\n\n            messages.append(ToolMessage(content=str(result), tool_call_id=call_id))\n\n    return messages\n\n\nclass ${dbxClassName}Agent(mlflow.pyfunc.PythonModel):\n    """MLflow PythonModel wrapper for AgentBricks deployment."""\n\n    def predict(self, context, model_input, params=None):\n        # MLflow pyfunc passes pd.DataFrame from a served endpoint; dict from direct .predict() calls\n        if isinstance(model_input, pd.DataFrame):\n            raw = model_input["messages"].iloc[0]\n            if isinstance(raw, str):\n                raw = json.loads(raw)\n        elif isinstance(model_input, dict):\n            raw = model_input.get("messages", [])\n        else:\n            raw = []\n        messages = [HumanMessage(content=m["content"]) if m.get("role") == "user" else AIMessage(content=m["content"]) for m in raw]\n        result = run_agent(messages)\n        return {"messages": [{"role": "assistant" if isinstance(m, AIMessage) else "tool", "content": m.content} for m in result if isinstance(m, (AIMessage, ToolMessage))]}\n\n\n# Register model for code-based MLflow logging.\n# ChatDatabricks holds threading locks that cloudpickle cannot serialize —\n# passing python_model=__file__ instead of an instance avoids this at log time.\nmlflow.models.set_model(${dbxClassName}Agent())\n\n\nif __name__ == "__main__":\n    model_name = config["mlflow"]["registered_model_name"]\n\n    # Read runtime deps from pyproject.toml — single source of truth.\n    # tomllib is Python 3.11+ stdlib; no extra install needed.\n    _PYPROJECT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pyproject.toml")\n    with open(_PYPROJECT_PATH, "rb") as _f:\n        _pyproject = tomllib.load(_f)\n    pip_requirements = _pyproject["project"]["dependencies"]\n\n    # Build explicit ModelSignature — Unity Catalog requires both input and output schemas.\n    # Never rely on auto-inference: it calls the LLM endpoint at registration time,\n    # which fails if the endpoint does not yet exist in the workspace.\n    _chat_msg = Array(Object([\n        Property("role", DataType.string),\n        Property("content", DataType.string),\n    ]))\n    signature = ModelSignature(\n        inputs=Schema([ColSpec(type=_chat_msg, name="messages")]),\n        outputs=Schema([ColSpec(type=_chat_msg, name="messages")]),\n    )\n\n    parser = argparse.ArgumentParser()\n    parser.add_argument(\n        "--experiment_name",\n        type=str,\n        default=config["mlflow"]["experiment_name"],\n    )\n    cli_args = parser.parse_args()\n    mlflow.set_experiment(cli_args.experiment_name)\n    with mlflow.start_run():\n        mlflow.pyfunc.log_model(\n            artifact_path="agent",\n            python_model=__file__,          # code-based: MLflow re-imports agent.py at serve time\n            code_paths=["tools", "config.yaml", "pyproject.toml"],\n            signature=signature,\n            pip_requirements=pip_requirements,\n            registered_model_name=model_name,\n        )\n        print(f"[AgentBricks] Logged and registered: {model_name}")\n`;
 
         // Build Databricks __init__.py: @tool-decorated wrappers so llm.bind_tools()
         // and t.name / t.invoke() work without AttributeError at agent startup.
@@ -4501,26 +4521,130 @@ def list_policies():
 
         // spark_python_task is correct for plain Python scripts; python_wheel_task
         // requires a packaged .whl with setuptools entry points which don't exist here.
-        files["databricks.yml"] = `# Databricks Asset Bundle (DAB)\n# Deploy with: databricks bundle deploy\n#\n# Authentication: set DATABRICKS_HOST and DATABRICKS_TOKEN in your environment.\n# DAB reads these env vars automatically — do NOT put them in workspace.host.\n# Using \${DATABRICKS_HOST} in workspace.host causes a parse error on bundle validate.\nbundle:\n  name: ${agentSlugDbx}_bundle\n\nworkspace:\n  # ~/  expands to /Users/<your-username> in Databricks — keeps dev deploys user-scoped\n  root_path: ~/.bundle/\${bundle.name}/\${bundle.target}\n\ntargets:\n  dev:\n    default: true\n    mode: development\n\n  staging:\n    mode: development\n\n  prod:\n    mode: production\n\nresources:\n  jobs:\n    deploy_agent:\n      name: Deploy ${agent.name}\n      tasks:\n        - task_key: log_model\n          spark_python_task:\n            python_file: \${workspace.file_path}/agent.py\n          environment_key: default\n      environments:\n        - environment_key: default\n          spec:\n            client: "2"\n            # Only list packages NOT pre-installed in the Databricks serverless runtime.\n            # mlflow, databricks-sdk, pydantic, pyarrow are pre-installed — omit them\n            # to avoid pip conflicts on serverless compute.\n            dependencies:\n              - databricks-langchain\n              - "langchain-core>=0.3,<0.4"\n              - pyyaml\n`;
+        files["databricks.yml"] = `# Databricks Asset Bundle (DAB)\n# Deploy with: databricks bundle deploy\n#\n# Authentication: set DATABRICKS_HOST and DATABRICKS_TOKEN in your environment.\n# DAB reads these env vars automatically — do NOT put them in workspace.host.\n# Using \${DATABRICKS_HOST} in workspace.host causes a parse error on bundle validate.\nbundle:\n  name: ${agentSlugDbx}_bundle\n\n# Bump wheel_version whenever pyproject.toml version changes.\n# Run: databricks bundle deploy --var "wheel_version=<new-version>"\nvariables:\n  wheel_version:\n    description: Version of the agent wheel (must match pyproject.toml [project].version).\n    default: "0.1.0"\n\nworkspace:\n  # ~/  expands to /Users/<your-username> in Databricks — keeps dev deploys user-scoped\n  root_path: ~/.bundle/\${bundle.name}/\${bundle.target}\n\ntargets:\n  dev:\n    default: true\n    mode: development\n\n  staging:\n    mode: development\n\n  prod:\n    mode: production\n\nresources:\n  jobs:\n    deploy_agent:\n      name: Deploy ${agent.name}\n      tasks:\n        - task_key: log_model\n          spark_python_task:\n            python_file: \${workspace.file_path}/agent.py\n          environment_key: default\n      environments:\n        - environment_key: default\n          spec:\n            client: "2"\n            # Install the agent wheel built by "make build".\n            # All transitive deps (mlflow, databricks-sdk, etc.) are declared in pyproject.toml\n            # and installed automatically — no need to list them individually here.\n            dependencies:\n              - ./dist/${agentSlugDbx}-\${var.wheel_version}-py3-none-any.whl\n`;
 
         files["MLproject"] = `name: ${agentSlugDbx}\n\nconda_env: conda.yaml\n\nentry_points:\n  main:\n    parameters:\n      experiment_name:\n        type: str\n        default: /Shared/${agentSlugDbx}_experiment\n    command: "python agent.py --experiment_name {experiment_name}"\n\n  evaluate:\n    command: "python evaluate.py"\n`;
 
-        files["conda.yaml"] = `name: ${agentSlugDbx}_env\nchannels:\n  - defaults\ndependencies:\n  - python=3.12\n  - pip:\n    - ${pin ? "mlflow==2.18.0" : "mlflow>=2.18.0"}\n    - ${pin ? "databricks-sdk==0.36.0" : "databricks-sdk>=0.36.0"}\n    - ${pin ? "databricks-langchain==0.3.0" : "databricks-langchain>=0.3.0"}\n    - ${pin ? "langchain-core==0.3.28" : "langchain-core>=0.3.0"}\n    - ${pin ? "pyyaml==6.0.2" : "pyyaml>=6.0"}\n    - pydantic>=2.0.0,<3.0.0\n    - pyarrow>=14.0.0\n`;
+        // conda.yaml delegates pip deps to pyproject.toml via editable install.
+        files["conda.yaml"] = `name: ${agentSlugDbx}_env\nchannels:\n  - defaults\ndependencies:\n  - python=3.12\n  - pip:\n    # All runtime deps are declared in pyproject.toml — no duplication here.\n    - -e .\n`;
 
-        const dbxReqs = [
-          pin ? "mlflow==2.18.0" : "mlflow>=2.18.0",
-          pin ? "databricks-sdk==0.36.0" : "databricks-sdk>=0.36.0",
-          pin ? "databricks-langchain==0.3.0" : "databricks-langchain>=0.3.0",
-          pin ? "langchain-core==0.3.28" : "langchain-core>=0.3.0",
-          pin ? "pyyaml==6.0.2" : "pyyaml>=6.0",
-          "pydantic>=2.0.0,<3.0.0",
-          "pyarrow>=14.0.0",
-          pin ? "pytest==8.3.4" : "pytest>=7.4.0,<9.0.0",
-        ];
-        files["requirements.txt"] = dbxReqs.join("\n") + "\n";
+        // requirements.txt delegates entirely to pyproject.toml.
+        // "pytest" appears in the comment so the downstream pytest-append guard skips this file.
+        files["requirements.txt"] = "# Delegates to pyproject.toml (includes pytest as a dev dep).\n# Install with: pip install -e .[dev]\n-e .[dev]\n";
         // Empty __init__.py ensures pytest resolves package-level imports correctly
         // across all environments (avoids rootdir heuristic failures).
         files["tests/__init__.py"] = "";
+        // Databricks CI: 4-stage pipeline (test → build → deploy-staging → deploy-prod).
+        // Required GitHub secrets: DATABRICKS_HOST, DATABRICKS_TOKEN (staging workspace)
+        //                          DATABRICKS_HOST_PROD, DATABRICKS_TOKEN_PROD (prod workspace)
+        // Required GitHub Environment: "production" (configure approval rules under Settings > Environments)
+        files[".github/workflows/ci.yml"] = `name: CI — ${agentSlugDbx}
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  # Manual prod deploy trigger — runs deploy-prod job only
+  workflow_dispatch:
+    inputs:
+      wheel_version:
+        description: "Wheel version to deploy to production (must match a built artifact)"
+        required: true
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: \${{ env.PYTHON_VERSION }}
+          cache: "pip"
+      - name: Install dev dependencies
+        run: pip install -e .[dev]
+      - name: Run tests
+        run: python -m pytest tests/ -v
+
+  build:
+    name: Build wheel
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: \${{ env.PYTHON_VERSION }}
+          cache: "pip"
+      - name: Build wheel
+        run: pip install --quiet build && python -m build
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: dist/
+
+  deploy-staging:
+    name: Deploy to staging
+    needs: build
+    # Only deploy when a commit lands on main (not on PRs)
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: \${{ env.PYTHON_VERSION }}
+          cache: "pip"
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: dist/
+      - name: Install Databricks CLI
+        run: pip install --quiet databricks-sdk
+      - name: Deploy to staging
+        env:
+          DATABRICKS_HOST: \${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: \${{ secrets.DATABRICKS_TOKEN }}
+        run: |
+          pip install --quiet databricks-cli
+          databricks bundle deploy --target staging
+          databricks bundle run deploy_agent --target staging
+
+  deploy-prod:
+    name: Deploy to production
+    needs: build
+    # Runs only on manual workflow_dispatch; the "production" GitHub Environment
+    # enforces approval gates — configure required reviewers under Settings > Environments.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: \${{ env.PYTHON_VERSION }}
+          cache: "pip"
+      - name: Download wheel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: dist/
+      - name: Install Databricks CLI
+        run: pip install --quiet databricks-cli
+      - name: Deploy to production
+        env:
+          DATABRICKS_HOST: \${{ secrets.DATABRICKS_HOST_PROD }}
+          DATABRICKS_TOKEN: \${{ secrets.DATABRICKS_TOKEN_PROD }}
+        run: |
+          databricks bundle deploy --target prod --var "wheel_version=\${{ github.event.inputs.wheel_version }}"
+          databricks bundle run deploy_agent --target prod
+`;
+
         // Databricks-specific .env.example — no local LLM API keys required because
         // the LLM endpoint is served from the Databricks workspace itself.
         files[".env.example"] = [
@@ -4761,14 +4885,28 @@ spec:
           : framework === "databricks"
             ? "pylint tools/ --disable=C,R"
             : "pylint src/ tools/ --disable=C,R";
-        const installCmd = isTs ? "npm ci" : "pip install -r requirements.txt";
+        const installCmd = isTs
+          ? "npm ci"
+          : framework === "databricks"
+            ? "pip install -e .[dev]"
+            : "pip install -r requirements.txt";
         const cleanTargets = isTs ? "rm -rf dist/ node_modules/.cache coverage/" : "find . -type d -name __pycache__ -exec rm -rf {} + && rm -rf .pytest_cache/ .mypy_cache/ dist/";
         const dockerTarget = framework === "databricks"
-          ? "# Databricks serverless jobs run on managed compute — no local Docker target needed.\n# Deploy instead with: databricks bundle deploy --target dev"
+          ? "# Databricks serverless jobs run on managed compute — no local Docker target needed.\n# Deploy instead with: make deploy-dev"
           : `docker:\n\tdocker build -t ${agentSlug} .\n\tdocker run --rm --env-file .env ${agentSlug}`;
         const phonyTargets = framework === "databricks"
-          ? ".PHONY: run test lint clean install"
+          ? ".PHONY: run test lint build deploy-dev clean install"
           : ".PHONY: run test lint docker clean install";
+        const databricksExtras = framework === "databricks" ? `
+build:
+\t# Build the wheel from pyproject.toml — required before deploying to Databricks.
+\tpip install --quiet build && python -m build
+
+deploy-dev: build
+\t# Deploy to the dev target and immediately trigger the job.
+\tdatabricks bundle deploy --target dev && databricks bundle run deploy_agent --target dev
+
+` : "";
         files["Makefile"] = `${phonyTargets}
 
 # ATLAS Agent Makefile — generated by ATLAS export
@@ -4786,7 +4924,7 @@ test:
 lint:
 \t${lintCmd}
 
-${dockerTarget}
+${databricksExtras}${dockerTarget}
 
 clean:
 \t${cleanTargets}
