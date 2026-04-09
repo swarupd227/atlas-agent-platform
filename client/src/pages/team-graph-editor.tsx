@@ -581,28 +581,6 @@ function NodeConfigPanel({
       {node.nodeType === "internal_agent" && (
         <>
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-              State Key
-              {stateKeyConflict && (
-                <Badge variant="outline" className="text-[9px] px-1 py-0 text-amber-600 border-amber-500/40 bg-amber-500/10 flex items-center gap-0.5" data-testid="badge-state-key-conflict">
-                  <AlertTriangle className="w-2.5 h-2.5" /> conflict
-                </Badge>
-              )}
-            </label>
-            <Input
-              value={localStateKey}
-              onChange={e => setLocalStateKey(e.target.value)}
-              onBlur={() => {
-                const val = localStateKey || autoStateKey(localLabel);
-                if (!localStateKey) setLocalStateKey(val);
-                if (val !== (node.stateKey || "")) onUpdate({ stateKey: val || null });
-              }}
-              placeholder={autoStateKey(localLabel) || "e.g. research_output"}
-              data-testid="input-state-key"
-            />
-          </div>
-
-          <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-muted-foreground">Node Kind</label>
             <div className="flex rounded-md border overflow-hidden" data-testid="toggle-node-kind">
               <button
@@ -698,6 +676,28 @@ function NodeConfigPanel({
               )}
             </>
           )}
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              State Key
+              {stateKeyConflict && (
+                <Badge variant="outline" className="text-[9px] px-1 py-0 text-amber-600 border-amber-500/40 bg-amber-500/10 flex items-center gap-0.5" data-testid="badge-state-key-conflict">
+                  <AlertTriangle className="w-2.5 h-2.5" /> conflict
+                </Badge>
+              )}
+            </label>
+            <Input
+              value={localStateKey}
+              onChange={e => setLocalStateKey(e.target.value)}
+              onBlur={() => {
+                const val = localStateKey || autoStateKey(localLabel);
+                if (!localStateKey) setLocalStateKey(val);
+                if (val !== (node.stateKey || "")) onUpdate({ stateKey: val || null });
+              }}
+              placeholder={autoStateKey(localLabel) || "e.g. research_output"}
+              data-testid="input-state-key"
+            />
+          </div>
         </>
       )}
 
@@ -837,8 +837,9 @@ function NodeConfigPanel({
             value={localTimeoutMs}
             onChange={e => setLocalTimeoutMs(e.target.value)}
             onBlur={() => {
-              const val = localTimeoutMs ? parseInt(localTimeoutMs) : 30000;
-              if (val !== (node.timeoutMs ?? 30000)) onUpdate({ timeoutMs: val });
+              const parsed = localTimeoutMs ? parseInt(localTimeoutMs) : 30000;
+              const val = isNaN(parsed) || parsed <= 0 ? 30000 : parsed;
+              if (!isNaN(parsed) && val !== (node.timeoutMs ?? 30000)) onUpdate({ timeoutMs: val });
             }}
             placeholder="30000"
             data-testid="input-timeout-ms"
