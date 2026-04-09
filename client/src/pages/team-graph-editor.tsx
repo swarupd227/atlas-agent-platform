@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import type { TeamBlueprintNode, TeamBlueprintEdge, Agent, RemoteAgent, Policy } from "@shared/schema";
+import type { TeamBlueprintNode, TeamBlueprintEdge, Agent, RemoteAgent, Policy, DagStateSchema } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +13,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Brain, Wrench, ShieldCheck, Globe, Plus, X, Link2, MousePointer,
   FileText, Database, Type, Link as LinkIcon, Network, AlertTriangle, Eye,
+  Trash2, Save,
 } from "lucide-react";
 
 interface McpServerTool {
@@ -29,6 +30,7 @@ interface McpServerTool {
 
 interface TeamGraphEditorProps {
   blueprintId: string;
+  teamAgentId?: string;
 }
 
 const TEAM_NODE_TYPES = [
@@ -66,7 +68,7 @@ const TRUST_TIER_COLORS: Record<string, string> = {
   untrusted: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20",
 };
 
-export default function TeamGraphEditor({ blueprintId }: TeamGraphEditorProps) {
+export default function TeamGraphEditor({ blueprintId, teamAgentId }: TeamGraphEditorProps) {
   const { toast } = useToast();
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
@@ -422,9 +424,20 @@ export default function TeamGraphEditor({ blueprintId }: TeamGraphEditorProps) {
                 isDeletePending={deleteEdgeMutation.isPending}
               />
             ) : (
-              <div className="flex flex-col items-center justify-center py-12 gap-3">
-                <MousePointer className="w-8 h-8 text-muted-foreground/50" />
-                <p className="text-sm text-muted-foreground text-center" data-testid="text-no-selection">Select a node or edge to configure</p>
+              <div className="flex flex-col gap-4">
+                <div className="flex items-center gap-2">
+                  <Database className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">DAG State Schema</span>
+                  <Badge variant="outline" className="text-[10px] text-blue-600 dark:text-blue-400 border-blue-500/30 bg-blue-500/10" data-testid="badge-schema-panel">Schema</Badge>
+                </div>
+                {teamAgentId ? (
+                  <DagStateSchemaEditor teamAgentId={teamAgentId} />
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-8 gap-3">
+                    <MousePointer className="w-8 h-8 text-muted-foreground/50" />
+                    <p className="text-sm text-muted-foreground text-center" data-testid="text-no-selection">Select a node or edge to configure</p>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1028,5 +1041,211 @@ function EdgeConfigPanel({
         </Button>
       </div>
     </>
+  );
+}
+
+type SchemaField = {
+  rowKey: string;
+  fieldName: string;
+  type: "string" | "object" | "array" | "number";
+  writableBy: string;
+  reducer: "last_wins" | "append" | "merge_object" | "sum";
+};
+
+function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
+  const { toast } = useToast();
+  const [localFields, setLocalFields] = useState<SchemaField[]>([]);
+  const [schemaId, setSchemaId] = useState<string | null>(null);
+  const [isDirty, setIsDirty] = useState(false);
+
+  const { data: schema, isLoading } = useQuery<DagStateSchema | null>({
+    queryKey: ["/api/dag-state-schemas/by-team", teamAgentId],
+    queryFn: async () => {
+      const res = await fetch(`/api/dag-state-schemas/by-team/${teamAgentId}`, { credentials: "include" });
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+      return res.json();
+    },
+    enabled: !!teamAgentId,
+  });
+
+  useEffect(() => {
+    if (schema) {
+      setSchemaId(schema.id);
+      const fieldsObj = (schema.fields || {}) as Record<string, { type?: string; writableBy?: string }>;
+      const reducersObj = (schema.reducers || {}) as Record<string, string>;
+      const parsed: SchemaField[] = Object.entries(fieldsObj).map(([fieldName, def]) => ({
+        rowKey: `${fieldName}-${Math.random()}`,
+        fieldName,
+        type: (def?.type || "string") as SchemaField["type"],
+        writableBy: def?.writableBy || "*",
+        reducer: (reducersObj[fieldName] || "last_wins") as SchemaField["reducer"],
+      }));
+      setLocalFields(parsed);
+      setIsDirty(false);
+    } else if (!isLoading) {
+      setLocalFields([]);
+      setSchemaId(null);
+      setIsDirty(false);
+    }
+  }, [schema, isLoading]);
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const fields: Record<string, { type: string; writableBy: string }> = {};
+      const reducers: Record<string, string> = {};
+      for (const f of localFields) {
+        if (!f.fieldName.trim()) continue;
+        fields[f.fieldName] = { type: f.type, writableBy: f.writableBy };
+        reducers[f.fieldName] = f.reducer;
+      }
+      if (schemaId) {
+        const res = await apiRequest("PATCH", `/api/dag-state-schemas/${schemaId}`, { fields, reducers });
+        return res.json();
+      } else {
+        const res = await apiRequest("POST", "/api/dag-state-schemas", { teamAgentId, fields, reducers });
+        return res.json();
+      }
+    },
+    onSuccess: (data: any) => {
+      if (!schemaId && data?.id) setSchemaId(data.id);
+      setIsDirty(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/dag-state-schemas/by-team", teamAgentId] });
+      toast({ title: "Schema saved" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to save schema", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const addField = () => {
+    setLocalFields(prev => [...prev, {
+      rowKey: `new-${Date.now()}`,
+      fieldName: "",
+      type: "object",
+      writableBy: "*",
+      reducer: "last_wins",
+    }]);
+    setIsDirty(true);
+  };
+
+  const removeField = (rowKey: string) => {
+    setLocalFields(prev => prev.filter(f => f.rowKey !== rowKey));
+    setIsDirty(true);
+  };
+
+  const updateField = (rowKey: string, updates: Partial<SchemaField>) => {
+    setLocalFields(prev => prev.map(f => f.rowKey === rowKey ? { ...f, ...updates } : f));
+    setIsDirty(true);
+  };
+
+  const summaryStr = useMemo(() => {
+    if (localFields.length === 0) return "No fields defined";
+    const counts: Record<string, number> = {};
+    for (const f of localFields) counts[f.reducer] = (counts[f.reducer] || 0) + 1;
+    const parts = Object.entries(counts).map(([r, c]) => `${c} ${r}`);
+    return `${localFields.length} field${localFields.length !== 1 ? "s" : ""} — ${parts.join(", ")}`;
+  }, [localFields]);
+
+  if (isLoading) {
+    return (
+      <div className="flex flex-col gap-2 py-2">
+        {[1, 2, 3].map(i => <Skeleton key={i} className="h-10 w-full" />)}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3" data-testid="dag-state-schema-editor">
+      {localFields.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-6 gap-2 border border-dashed rounded-md">
+          <Database className="w-6 h-6 text-muted-foreground/50" />
+          <p className="text-xs text-muted-foreground text-center" data-testid="text-schema-empty">No fields defined yet. Add a field to start.</p>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-2">
+          {localFields.map((field, idx) => (
+            <div key={field.rowKey} className="flex flex-col gap-1.5 p-2 rounded-md border bg-muted/30" data-testid={`schema-field-row-${idx}`}>
+              <div className="flex items-center gap-1.5">
+                <input
+                  className="flex-1 h-7 rounded border bg-background px-2 text-xs font-mono"
+                  placeholder="field_name"
+                  value={field.fieldName}
+                  onChange={e => updateField(field.rowKey, { fieldName: e.target.value })}
+                  data-testid={`input-schema-field-name-${idx}`}
+                />
+                <button
+                  className="w-6 h-6 rounded flex items-center justify-center hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors shrink-0"
+                  onClick={() => removeField(field.rowKey)}
+                  data-testid={`button-delete-schema-field-${idx}`}
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
+              <div className="flex items-center gap-1">
+                <select
+                  className="h-6 flex-1 rounded border bg-background px-1 text-[10px]"
+                  value={field.type}
+                  onChange={e => updateField(field.rowKey, { type: e.target.value as SchemaField["type"] })}
+                  data-testid={`select-schema-field-type-${idx}`}
+                >
+                  <option value="string">string</option>
+                  <option value="object">object</option>
+                  <option value="array">array</option>
+                  <option value="number">number</option>
+                </select>
+                <input
+                  className="h-6 w-[56px] rounded border bg-background px-1 text-[10px] font-mono"
+                  placeholder="*"
+                  value={field.writableBy}
+                  onChange={e => updateField(field.rowKey, { writableBy: e.target.value })}
+                  title="Writable By: * for all, or comma-separated agent IDs"
+                  data-testid={`input-schema-field-writable-by-${idx}`}
+                />
+                <select
+                  className="h-6 flex-1 rounded border bg-background px-1 text-[10px]"
+                  value={field.reducer}
+                  onChange={e => updateField(field.rowKey, { reducer: e.target.value as SchemaField["reducer"] })}
+                  data-testid={`select-schema-field-reducer-${idx}`}
+                >
+                  <option value="last_wins">last_wins</option>
+                  <option value="append">⊕ append</option>
+                  <option value="merge_object">merge_obj</option>
+                  <option value="sum">sum</option>
+                </select>
+              </div>
+              {field.reducer === "append" && (
+                <span className="text-[9px] text-blue-600 dark:text-blue-400 flex items-center gap-0.5" data-testid={`badge-append-indicator-${idx}`}>
+                  ⊕ Append — values collected into array
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <p className="text-[10px] text-muted-foreground" data-testid="text-schema-summary">{summaryStr}</p>
+
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          className="flex-1"
+          onClick={addField}
+          data-testid="button-add-schema-field"
+        >
+          <Plus className="w-3.5 h-3.5 mr-1" /> Add Field
+        </Button>
+        <Button
+          size="sm"
+          className="flex-1"
+          onClick={() => saveMutation.mutate()}
+          disabled={saveMutation.isPending || !isDirty}
+          data-testid="button-save-schema"
+        >
+          <Save className="w-3.5 h-3.5 mr-1" /> {saveMutation.isPending ? "Saving..." : "Save Schema"}
+        </Button>
+      </div>
+    </div>
   );
 }

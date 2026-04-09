@@ -457,7 +457,7 @@ export default function BlueprintDetail() {
       )}
 
       {editorView === "team" && linkedAgent?.agentType === "team" && (
-        <TeamGraphEditor blueprintId={id!} />
+        <TeamGraphEditor blueprintId={id!} teamAgentId={linkedAgent?.id} />
       )}
 
       {!(editorView === "team" && linkedAgent?.agentType === "team") && (
