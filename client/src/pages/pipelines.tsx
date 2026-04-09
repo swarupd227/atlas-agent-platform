@@ -730,7 +730,7 @@ export default function Pipelines() {
     const updatedStages = currentStages.map((s) => {
       if (s.id !== editStageId) return s;
       if (s.stageType === "composite") {
-        return { ...s, label: editStageLabel, teamAgentId: editStageTeamAgentId, config: { ...s.config, errorStrategy: editStageErrorStrategy } };
+        return { ...s, label: editStageLabel, teamAgentId: editStageTeamAgentId, config: { ...s.config, errorStrategy: editStageErrorStrategy, waveCount: editWavePlan?.totalWaves ?? s.config?.waveCount ?? null } };
       }
       return { ...s, label: editStageLabel, agentId: editStageAgentId };
     });
