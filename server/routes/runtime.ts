@@ -4309,7 +4309,7 @@ def list_policies():
           files["tools/__init__.py"] = generatePyToolsInit(tools);
           for (const tool of tools) { files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType); }
           files["langgraph.json"] = JSON.stringify({ graphs: { agent: "./graph.py:app" }, env: llmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY" }, null, 2);
-          const reqs = [...baseReqs, pin ? "langgraph==0.2.60" : "langgraph>=0.2.0", pin ? "langchain-core==0.3.28" : "langchain-core>=0.3.0"];
+          const reqs = [...baseReqs, pin ? "langgraph==0.2.60" : "langgraph>=0.2.0", pin ? "langchain-core==0.3.28" : "langchain-core>=0.3.0", "pydantic>=2.0.0,<3.0.0"];
           if (llmProvider === "openai") reqs.push(pin ? "langchain-openai==0.2.14" : "langchain-openai>=0.2.0", pin ? "openai==1.58.1" : "openai>=1.0"); else reqs.push(pin ? "langchain-anthropic==0.2.8" : "langchain-anthropic>=0.2.0", pin ? "anthropic==0.30.1" : "anthropic>=0.30");
           files["requirements.txt"] = reqs.join("\n") + "\n";
         }
@@ -4506,12 +4506,14 @@ def list_policies():
           pin ? "databricks-langchain==0.3.0" : "databricks-langchain>=0.3.0",
           pin ? "langchain-core==0.3.28" : "langchain-core>=0.3.0",
           pin ? "pyyaml==6.0.2" : "pyyaml>=6.0",
+          "pydantic>=2.0.0,<3.0.0",
+          "pyarrow>=14.0.0",
         ].map(pkg => `            - pypi:\n                package: ${pkg}`).join("\n");
         files["databricks.yml"] = `# Databricks Asset Bundle (DAB)\n# Deploy with: databricks bundle deploy\nbundle:\n  name: ${agentSlugDbx}_bundle\n\nworkspace:\n  host: \${DATABRICKS_HOST}\n  root_path: /Shared/.bundle/\${bundle.name}/\${bundle.target}\n\ntargets:\n  dev:\n    default: true\n    mode: development\n    workspace:\n      host: \${DATABRICKS_HOST}\n\n  staging:\n    mode: development\n    workspace:\n      host: \${DATABRICKS_HOST}\n\n  prod:\n    mode: production\n    workspace:\n      host: \${DATABRICKS_HOST}\n\nresources:\n  jobs:\n    deploy_agent:\n      name: Deploy ${agent.name}\n      tasks:\n        - task_key: log_model\n          spark_python_task:\n            python_file: \${workspace.file_path}/agent.py\n          libraries:\n${dbxLibraries}\n          job_cluster_key: agent_cluster\n      job_clusters:\n        - job_cluster_key: agent_cluster\n          new_cluster:\n            spark_version: 15.4.x-scala2.12\n            node_type_id: Standard_DS3_v2\n            num_workers: 1\n            spark_env_vars:\n              DATABRICKS_HOST: \${DATABRICKS_HOST}\n              DATABRICKS_TOKEN: \${DATABRICKS_TOKEN}\n`;
 
         files["MLproject"] = `name: ${agentSlugDbx}\n\nconda_env: conda.yaml\n\nentry_points:\n  main:\n    parameters:\n      experiment_name:\n        type: str\n        default: /Shared/${agentSlugDbx}_experiment\n    command: "python agent.py --experiment_name {experiment_name}"\n\n  evaluate:\n    command: "python evaluate.py"\n`;
 
-        files["conda.yaml"] = `name: ${agentSlugDbx}_env\nchannels:\n  - defaults\ndependencies:\n  - python=3.11\n  - pip:\n    - mlflow>=2.18.0\n    - databricks-sdk>=0.36.0\n    - databricks-langchain>=0.3.0\n    - langchain-core>=0.3.0\n    - pyyaml>=6.0\n`;
+        files["conda.yaml"] = `name: ${agentSlugDbx}_env\nchannels:\n  - defaults\ndependencies:\n  - python=3.11\n  - pip:\n    - ${pin ? "mlflow==2.18.0" : "mlflow>=2.18.0"}\n    - ${pin ? "databricks-sdk==0.36.0" : "databricks-sdk>=0.36.0"}\n    - ${pin ? "databricks-langchain==0.3.0" : "databricks-langchain>=0.3.0"}\n    - ${pin ? "langchain-core==0.3.28" : "langchain-core>=0.3.0"}\n    - ${pin ? "pyyaml==6.0.2" : "pyyaml>=6.0"}\n    - pydantic>=2.0.0,<3.0.0\n    - pyarrow>=14.0.0\n`;
 
         const dbxReqs = [
           pin ? "mlflow==2.18.0" : "mlflow>=2.18.0",
@@ -4519,6 +4521,9 @@ def list_policies():
           pin ? "databricks-langchain==0.3.0" : "databricks-langchain>=0.3.0",
           pin ? "langchain-core==0.3.28" : "langchain-core>=0.3.0",
           pin ? "pyyaml==6.0.2" : "pyyaml>=6.0",
+          "pydantic>=2.0.0,<3.0.0",
+          "pyarrow>=14.0.0",
+          pin ? "pytest==8.3.4" : "pytest>=7.4.0,<9.0.0",
         ];
         files["requirements.txt"] = dbxReqs.join("\n") + "\n";
       } else if (framework === "autogen") {
@@ -4797,7 +4802,7 @@ clean:
       if (format === "python" && files["requirements.txt"]) {
         const reqContent = files["requirements.txt"];
         if (!reqContent.includes("pytest")) {
-          files["requirements.txt"] = reqContent.trimEnd() + "\npytest>=7.4.0\n";
+          files["requirements.txt"] = reqContent.trimEnd() + `\n${pin ? "pytest==8.3.4" : "pytest>=7.4.0,<9.0.0"}\n`;
         }
       }
 
