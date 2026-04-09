@@ -1052,11 +1052,15 @@ type SchemaField = {
   reducer: "last_wins" | "append" | "merge_object" | "sum";
 };
 
+type SortCol = "fieldName" | "type" | "reducer" | null;
+
 function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
   const { toast } = useToast();
   const [localFields, setLocalFields] = useState<SchemaField[]>([]);
   const [schemaId, setSchemaId] = useState<string | null>(null);
   const [isDirty, setIsDirty] = useState(false);
+  const [sortCol, setSortCol] = useState<SortCol>(null);
+  const [sortAsc, setSortAsc] = useState(true);
 
   const { data: schema, isLoading } = useQuery<DagStateSchema | null>({
     queryKey: ["/api/dag-state-schemas/by-team", teamAgentId],
@@ -1139,6 +1143,24 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
     setIsDirty(true);
   };
 
+  const handleSort = (col: SortCol) => {
+    if (sortCol === col) {
+      setSortAsc(a => !a);
+    } else {
+      setSortCol(col);
+      setSortAsc(true);
+    }
+  };
+
+  const sortedFields = useMemo(() => {
+    if (!sortCol) return localFields;
+    return [...localFields].sort((a, b) => {
+      const av = a[sortCol] ?? "";
+      const bv = b[sortCol] ?? "";
+      return sortAsc ? av.localeCompare(bv) : bv.localeCompare(av);
+    });
+  }, [localFields, sortCol, sortAsc]);
+
   const summaryStr = useMemo(() => {
     if (localFields.length === 0) return "No fields defined";
     const counts: Record<string, number> = {};
@@ -1147,10 +1169,16 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
     return `${localFields.length} field${localFields.length !== 1 ? "s" : ""} — ${parts.join(", ")}`;
   }, [localFields]);
 
+  const SortIcon = ({ col }: { col: SortCol }) => (
+    <span className={`ml-0.5 text-[8px] ${sortCol === col ? "text-foreground" : "text-muted-foreground/50"}`}>
+      {sortCol === col ? (sortAsc ? "▲" : "▼") : "⇅"}
+    </span>
+  );
+
   if (isLoading) {
     return (
       <div className="flex flex-col gap-2 py-2">
-        {[1, 2, 3].map(i => <Skeleton key={i} className="h-10 w-full" />)}
+        {[1, 2, 3].map(i => <Skeleton key={i} className="h-8 w-full" />)}
       </div>
     );
   }
@@ -1163,47 +1191,79 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
           <p className="text-xs text-muted-foreground text-center" data-testid="text-schema-empty">No fields defined yet. Add a field to start.</p>
         </div>
       ) : (
-        <div className="flex flex-col gap-2">
-          {localFields.map((field, idx) => (
-            <div key={field.rowKey} className="flex flex-col gap-1.5 p-2 rounded-md border bg-muted/30" data-testid={`schema-field-row-${idx}`}>
-              <div className="flex items-center gap-1.5">
+        <div className="rounded-md border overflow-hidden">
+          {/* Table header */}
+          <div className="grid bg-muted/50 border-b" style={{ gridTemplateColumns: "1fr 52px 44px 76px 24px" }}>
+            <button
+              className="px-2 py-1.5 text-[10px] font-medium text-muted-foreground text-left flex items-center hover:text-foreground transition-colors"
+              onClick={() => handleSort("fieldName")}
+              data-testid="th-field-name"
+            >
+              Field Name<SortIcon col="fieldName" />
+            </button>
+            <button
+              className="px-1 py-1.5 text-[10px] font-medium text-muted-foreground text-left flex items-center hover:text-foreground transition-colors"
+              onClick={() => handleSort("type")}
+              data-testid="th-type"
+            >
+              Type<SortIcon col="type" />
+            </button>
+            <div className="px-1 py-1.5 text-[10px] font-medium text-muted-foreground" title="Writable By">By</div>
+            <button
+              className="px-1 py-1.5 text-[10px] font-medium text-muted-foreground text-left flex items-center hover:text-foreground transition-colors"
+              onClick={() => handleSort("reducer")}
+              data-testid="th-reducer"
+            >
+              Reducer<SortIcon col="reducer" />
+            </button>
+            <div />
+          </div>
+          {/* Table rows */}
+          {sortedFields.map((field, idx) => (
+            <div
+              key={field.rowKey}
+              className="grid border-b last:border-b-0 hover:bg-muted/20 transition-colors"
+              style={{ gridTemplateColumns: "1fr 52px 44px 76px 24px" }}
+              data-testid={`schema-field-row-${idx}`}
+            >
+              <div className="px-1.5 py-1 flex flex-col justify-center gap-0.5">
                 <input
-                  className="flex-1 h-7 rounded border bg-background px-2 text-xs font-mono"
+                  className="w-full h-6 rounded border bg-background px-1.5 text-[10px] font-mono"
                   placeholder="field_name"
                   value={field.fieldName}
                   onChange={e => updateField(field.rowKey, { fieldName: e.target.value })}
                   data-testid={`input-schema-field-name-${idx}`}
                 />
-                <button
-                  className="w-6 h-6 rounded flex items-center justify-center hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors shrink-0"
-                  onClick={() => removeField(field.rowKey)}
-                  data-testid={`button-delete-schema-field-${idx}`}
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
+                {field.reducer === "append" && (
+                  <span className="text-[8px] text-blue-600 dark:text-blue-400" data-testid={`badge-append-indicator-${idx}`}>⊕ append array</span>
+                )}
               </div>
-              <div className="flex items-center gap-1">
+              <div className="px-1 py-1 flex items-center">
                 <select
-                  className="h-6 flex-1 rounded border bg-background px-1 text-[10px]"
+                  className="w-full h-6 rounded border bg-background px-0.5 text-[9px]"
                   value={field.type}
                   onChange={e => updateField(field.rowKey, { type: e.target.value as SchemaField["type"] })}
                   data-testid={`select-schema-field-type-${idx}`}
                 >
-                  <option value="string">string</option>
-                  <option value="object">object</option>
-                  <option value="array">array</option>
-                  <option value="number">number</option>
+                  <option value="string">str</option>
+                  <option value="object">obj</option>
+                  <option value="array">arr</option>
+                  <option value="number">num</option>
                 </select>
+              </div>
+              <div className="px-1 py-1 flex items-center">
                 <input
-                  className="h-6 w-[56px] rounded border bg-background px-1 text-[10px] font-mono"
+                  className="w-full h-6 rounded border bg-background px-1 text-[9px] font-mono"
                   placeholder="*"
                   value={field.writableBy}
                   onChange={e => updateField(field.rowKey, { writableBy: e.target.value })}
                   title="Writable By: * for all, or comma-separated agent IDs"
                   data-testid={`input-schema-field-writable-by-${idx}`}
                 />
+              </div>
+              <div className="px-1 py-1 flex items-center">
                 <select
-                  className="h-6 flex-1 rounded border bg-background px-1 text-[10px]"
+                  className="w-full h-6 rounded border bg-background px-0.5 text-[9px]"
                   value={field.reducer}
                   onChange={e => updateField(field.rowKey, { reducer: e.target.value as SchemaField["reducer"] })}
                   data-testid={`select-schema-field-reducer-${idx}`}
@@ -1214,11 +1274,15 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
                   <option value="sum">sum</option>
                 </select>
               </div>
-              {field.reducer === "append" && (
-                <span className="text-[9px] text-blue-600 dark:text-blue-400 flex items-center gap-0.5" data-testid={`badge-append-indicator-${idx}`}>
-                  ⊕ Append — values collected into array
-                </span>
-              )}
+              <div className="flex items-center justify-center">
+                <button
+                  className="w-5 h-5 rounded flex items-center justify-center hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                  onClick={() => removeField(field.rowKey)}
+                  data-testid={`button-delete-schema-field-${idx}`}
+                >
+                  <X className="w-2.5 h-2.5" />
+                </button>
+              </div>
             </div>
           ))}
         </div>
