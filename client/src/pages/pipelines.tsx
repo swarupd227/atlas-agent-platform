@@ -56,22 +56,26 @@ import {
   GitFork,
   GitMerge,
   Layers,
+  Network,
+  Activity,
 } from "lucide-react";
 
 interface PipelineStage {
   id: string;
   agentId: string | null;
   label: string;
-  stageType: "agent" | "approval_gate" | "parallel_group";
+  stageType: "agent" | "approval_gate" | "parallel_group" | "composite";
   order: number;
   parentGroupId?: string;
   children?: string[];
+  teamAgentId?: string | null;
   config: {
     inputMapping?: string;
     outputMapping?: string;
     approvalRequired?: boolean;
     approvers?: string[];
     timeout?: number;
+    errorStrategy?: "fail_fast" | "best_effort";
   };
 }
 
@@ -91,6 +95,7 @@ interface StageResult {
   completedAt?: string;
   approvedBy?: string;
   duration?: number;
+  dagRunId?: string | null;
 }
 
 function getStatusVariant(s: string): "default" | "secondary" | "destructive" | "outline" {
@@ -131,6 +136,120 @@ function generateId() {
   return Math.random().toString(36).substring(2, 10);
 }
 
+interface DAGWaveData {
+  runId: string;
+  status: string;
+  currentWave: number | null;
+  totalWaves: number | null;
+  waveResults: Array<{
+    waveNumber: number;
+    startedAt: string;
+    completedAt: string;
+    durationMs: number;
+    nodes: Array<{
+      nodeId: string;
+      agentId: string;
+      status: string;
+      durationMs: number;
+      promptTokens: number;
+      completionTokens: number;
+      error?: string;
+    }>;
+  }>;
+  totalPromptTokens: number | null;
+  totalCompletionTokens: number | null;
+}
+
+function DAGExecutionView({ dagRunId }: { dagRunId: string }) {
+  const { data, isLoading } = useQuery<DAGWaveData>({
+    queryKey: ["/api/dag-execution-runs", dagRunId, "waves"],
+    refetchInterval: (query) => {
+      const d = query.state.data as DAGWaveData | undefined;
+      if (d?.status === "completed" || d?.status === "failed") return false;
+      return 2000;
+    },
+  });
+
+  if (isLoading) return <Skeleton className="h-16 w-full mt-3" />;
+  if (!data) return null;
+
+  const pendingWaves = (data.totalWaves ?? 0) - (data.waveResults?.length ?? 0);
+
+  return (
+    <div className="mt-3 space-y-2 rounded-md border bg-muted/30 p-3" data-testid={`dag-execution-view-${dagRunId}`}>
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium flex items-center gap-1.5 text-muted-foreground">
+          <Network className="w-3.5 h-3.5" />
+          DAG Execution
+        </span>
+        <div className="flex items-center gap-2">
+          <Badge variant="outline" className={`text-[10px] ${getStatusColor(data.status)}`} data-testid={`badge-dag-status-${dagRunId}`}>
+            {data.status}
+          </Badge>
+          {data.totalWaves && (
+            <span className="text-[10px] text-muted-foreground">
+              Wave {data.currentWave ?? 0}/{data.totalWaves}
+            </span>
+          )}
+        </div>
+      </div>
+
+      <div className="space-y-1.5">
+        {(data.waveResults || []).map((wave) => (
+          <div key={wave.waveNumber} className="rounded-md border bg-background px-3 py-2" data-testid={`dag-wave-${dagRunId}-${wave.waveNumber}`}>
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[10px] font-medium text-muted-foreground">Wave {wave.waveNumber}</span>
+              {wave.durationMs > 0 && (
+                <span className="text-[10px] text-muted-foreground">{wave.durationMs}ms</span>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {wave.nodes.map((node) => (
+                <div
+                  key={node.nodeId}
+                  className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] border ${
+                    node.status === "completed"
+                      ? "bg-green-500/10 border-green-500/30 text-green-700 dark:text-green-400"
+                      : node.status === "failed"
+                      ? "bg-red-500/10 border-red-500/30 text-red-700 dark:text-red-400"
+                      : node.status === "running"
+                      ? "bg-blue-500/10 border-blue-500/30 text-blue-700 dark:text-blue-400"
+                      : "bg-muted/50 border-muted text-muted-foreground"
+                  }`}
+                  data-testid={`dag-node-${dagRunId}-${node.nodeId}`}
+                >
+                  {node.status === "running" && <Loader2 className="w-2.5 h-2.5 animate-spin" />}
+                  {node.status === "completed" && <CheckCircle className="w-2.5 h-2.5" />}
+                  {node.status === "failed" && <XCircle className="w-2.5 h-2.5" />}
+                  <span className="font-mono">{node.nodeId.substring(0, 8)}</span>
+                  {node.durationMs > 0 && <span className="opacity-60">{node.durationMs}ms</span>}
+                  {node.promptTokens > 0 && (
+                    <span className="opacity-60">{node.promptTokens + node.completionTokens}t</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        {pendingWaves > 0 && (
+          <div className="rounded-md border border-dashed px-3 py-2 text-[10px] text-muted-foreground" data-testid={`dag-pending-${dagRunId}`}>
+            {pendingWaves} wave{pendingWaves !== 1 ? "s" : ""} pending
+          </div>
+        )}
+      </div>
+
+      {(data.totalPromptTokens != null || data.totalCompletionTokens != null) && (
+        <div className="flex flex-wrap items-center gap-3 text-[10px] text-muted-foreground pt-1 border-t">
+          <Activity className="w-3 h-3" />
+          <span>Prompt: {data.totalPromptTokens ?? 0} tokens</span>
+          <span>Completion: {data.totalCompletionTokens ?? 0} tokens</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Pipelines() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
@@ -143,7 +262,9 @@ export default function Pipelines() {
   const [addStageOpen, setAddStageOpen] = useState(false);
   const [newStageLabel, setNewStageLabel] = useState("");
   const [newStageAgentId, setNewStageAgentId] = useState<string | null>(null);
-  const [newStageType, setNewStageType] = useState<"agent" | "approval_gate">("agent");
+  const [newStageType, setNewStageType] = useState<"agent" | "approval_gate" | "composite">("agent");
+  const [newStageTeamAgentId, setNewStageTeamAgentId] = useState<string | null>(null);
+  const [newStageErrorStrategy, setNewStageErrorStrategy] = useState<"fail_fast" | "best_effort">("fail_fast");
 
   const [addParallelGroupOpen, setAddParallelGroupOpen] = useState(false);
   const [parallelGroupLabel, setParallelGroupLabel] = useState("Parallel Group");
@@ -158,6 +279,10 @@ export default function Pipelines() {
   const [editStageId, setEditStageId] = useState<string | null>(null);
   const [editStageLabel, setEditStageLabel] = useState("");
   const [editStageAgentId, setEditStageAgentId] = useState<string | null>(null);
+  const [editStageTeamAgentId, setEditStageTeamAgentId] = useState<string | null>(null);
+  const [editStageErrorStrategy, setEditStageErrorStrategy] = useState<"fail_fast" | "best_effort">("fail_fast");
+
+  const [dagRunIds, setDagRunIds] = useState<Record<string, string>>({});
 
   const [runDialogOpen, setRunDialogOpen] = useState(false);
   const [scenarioInput, setScenarioInput] = useState("");
@@ -170,6 +295,31 @@ export default function Pipelines() {
 
   const { data: agents = [] } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
+  });
+
+  const teamAgents = useMemo(
+    () => agents.filter((a) => !!(a as any).blueprintId),
+    [agents]
+  );
+
+  const { data: addWavePlan } = useQuery<{
+    waves: Array<{ wave_number: number; nodes: string[] }>;
+    totalWaves: number;
+    maxParallelism: number;
+    nodeConfig: Record<string, { label: string }>;
+  }>({
+    queryKey: ["/api/team-agents", newStageTeamAgentId, "dag-waves"],
+    enabled: !!newStageTeamAgentId && newStageType === "composite",
+  });
+
+  const { data: editWavePlan } = useQuery<{
+    waves: Array<{ wave_number: number; nodes: string[] }>;
+    totalWaves: number;
+    maxParallelism: number;
+    nodeConfig: Record<string, { label: string }>;
+  }>({
+    queryKey: ["/api/team-agents", editStageTeamAgentId, "dag-waves"],
+    enabled: !!editStageTeamAgentId,
   });
 
   const selectedPipeline = useMemo(
@@ -266,11 +416,14 @@ export default function Pipelines() {
   });
 
   const simulateStageMutation = useMutation({
-    mutationFn: async (runId: string) => {
+    mutationFn: async ({ runId }: { runId: string; stageId: string }) => {
       const res = await apiRequest("POST", `/api/pipeline-runs/${runId}/simulate-stage`, {});
       return res.json();
     },
-    onSuccess: async (data: any, runId: string) => {
+    onSuccess: async (data: any, { runId, stageId }) => {
+      if (data.dagRunId) {
+        setDagRunIds((prev) => ({ ...prev, [stageId]: data.dagRunId }));
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/pipelines", selectedPipelineId, "runs"] });
       const output = data.output || data.simulatedOutput || "Stage completed";
       try {
@@ -308,10 +461,12 @@ export default function Pipelines() {
     onError: (e: any) => toast({ title: "Rejection failed", description: e.message, variant: "destructive" }),
   });
 
-  function handleAddStage(type: "agent" | "approval_gate") {
+  function handleAddStage(type: "agent" | "approval_gate" | "composite") {
     setNewStageType(type);
-    setNewStageLabel(type === "agent" ? "Agent Stage" : "Approval Gate");
+    setNewStageLabel(type === "agent" ? "Agent Stage" : type === "composite" ? "Composite Stage" : "Approval Gate");
     setNewStageAgentId(null);
+    setNewStageTeamAgentId(null);
+    setNewStageErrorStrategy("fail_fast");
     setAddStageOpen(true);
   }
 
@@ -485,13 +640,19 @@ export default function Pipelines() {
     if (!selectedPipeline) return;
     const currentStages = (selectedPipeline.stages as PipelineStage[]) || [];
     const topLevel = currentStages.filter((s) => !s.parentGroupId);
+    const defaultLabel = newStageType === "agent" ? "Agent Stage" : newStageType === "composite" ? "Composite Stage" : "Approval Gate";
     const newStage: PipelineStage = {
       id: generateId(),
       agentId: newStageType === "agent" ? newStageAgentId : null,
-      label: newStageLabel || (newStageType === "agent" ? "Agent Stage" : "Approval Gate"),
+      teamAgentId: newStageType === "composite" ? newStageTeamAgentId : null,
+      label: newStageLabel || defaultLabel,
       stageType: newStageType,
       order: topLevel.length,
-      config: newStageType === "approval_gate" ? { approvalRequired: true } : {},
+      config: newStageType === "approval_gate"
+        ? { approvalRequired: true }
+        : newStageType === "composite"
+        ? { errorStrategy: newStageErrorStrategy }
+        : {},
     };
     const updatedStages = [...currentStages, newStage];
 
@@ -551,16 +712,20 @@ export default function Pipelines() {
     setEditStageId(stage.id);
     setEditStageLabel(stage.label);
     setEditStageAgentId(stage.agentId);
+    setEditStageTeamAgentId(stage.teamAgentId || null);
+    setEditStageErrorStrategy(stage.config?.errorStrategy || "fail_fast");
   }
 
   function confirmEditStage() {
     if (!selectedPipeline || !editStageId) return;
     const currentStages = (selectedPipeline.stages as PipelineStage[]) || [];
-    const updatedStages = currentStages.map((s) =>
-      s.id === editStageId
-        ? { ...s, label: editStageLabel, agentId: editStageAgentId }
-        : s
-    );
+    const updatedStages = currentStages.map((s) => {
+      if (s.id !== editStageId) return s;
+      if (s.stageType === "composite") {
+        return { ...s, label: editStageLabel, teamAgentId: editStageTeamAgentId, config: { ...s.config, errorStrategy: editStageErrorStrategy } };
+      }
+      return { ...s, label: editStageLabel, agentId: editStageAgentId };
+    });
     updatePipelineMutation.mutate({
       id: selectedPipeline.id,
       data: { stages: updatedStages },
@@ -887,6 +1052,55 @@ export default function Pipelines() {
                         <span className="text-[10px] text-muted-foreground mt-0.5">Join</span>
                       </div>
                     </div>
+                  ) : stage.stageType === "composite" ? (
+                    <Card data-testid={`pipeline-stage-${stage.id}`} className="border-purple-500/30">
+                      <CardContent className="p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="flex items-start gap-3">
+                            <div className="mt-0.5">
+                              <Network className="w-5 h-5 text-purple-600 dark:text-purple-400" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-muted-foreground">Stage {index + 1}</span>
+                                <Badge variant="outline" className="text-[10px] bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/30">
+                                  Composite
+                                </Badge>
+                                {stage.config?.errorStrategy && (
+                                  <Badge variant="outline" className="text-[10px]">
+                                    {stage.config.errorStrategy === "fail_fast" ? "Fail Fast" : "Best Effort"}
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-sm font-medium mt-0.5" data-testid={`text-stage-label-${stage.id}`}>
+                                {stage.label}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-1" data-testid={`text-stage-team-agent-${stage.id}`}>
+                                {getAgentName(stage.teamAgentId || null) || "Select Team Agent"}
+                              </p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => openEditStage(stage)}
+                              data-testid={`button-edit-stage-${stage.id}`}
+                            >
+                              <Settings2 className="w-4 h-4" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => handleRemoveStage(stage.id)}
+                              data-testid={`button-remove-stage-${stage.id}`}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      </CardContent>
+                    </Card>
                   ) : (
                     <Card data-testid={`pipeline-stage-${stage.id}`}>
                       <CardContent className="p-4">
@@ -974,6 +1188,10 @@ export default function Pipelines() {
                   <DropdownMenuItem onClick={handleOpenAddParallelGroup} data-testid="menu-add-parallel-group">
                     <Layers className="w-4 h-4 mr-2" />
                     Add Parallel Group
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleAddStage("composite")} data-testid="menu-add-composite-stage">
+                    <Network className="w-4 h-4 mr-2" />
+                    Add Composite Stage
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -1065,6 +1283,19 @@ export default function Pipelines() {
                                       {getAgentName(stage.agentId) || "Agent"}
                                     </p>
                                   )}
+                                  {stage.stageType === "composite" && (
+                                    <div className="flex items-center gap-1.5 mt-0.5">
+                                      <Network className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+                                      <span className="text-xs text-muted-foreground">
+                                        {getAgentName(stage.teamAgentId || null) || "Team Agent DAG"}
+                                      </span>
+                                      {stage.config?.errorStrategy && (
+                                        <Badge variant="outline" className="text-[10px]">
+                                          {stage.config.errorStrategy === "fail_fast" ? "Fail Fast" : "Best Effort"}
+                                        </Badge>
+                                      )}
+                                    </div>
+                                  )}
                                   {stage.stageType === "approval_gate" && (
                                     <div className="flex items-center gap-1.5 mt-0.5">
                                       <ShieldCheck className="w-3 h-3 text-amber-600 dark:text-amber-400" />
@@ -1074,11 +1305,11 @@ export default function Pipelines() {
                                 </div>
                               </div>
                               <div className="flex items-center gap-1">
-                                {isCurrent && stage.stageType === "agent" && (status === "running" || status === "pending") && (
+                                {isCurrent && (stage.stageType === "agent" || stage.stageType === "composite") && (status === "running" || status === "pending") && (
                                   <Button
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => simulateStageMutation.mutate(activeRun.id)}
+                                    onClick={() => simulateStageMutation.mutate({ runId: activeRun.id, stageId: stage.id })}
                                     disabled={simulateStageMutation.isPending}
                                     data-testid={`button-simulate-${stage.id}`}
                                   >
@@ -1133,6 +1364,10 @@ export default function Pipelines() {
                                   </div>
                                 )}
                               </div>
+                            )}
+
+                            {stage.stageType === "composite" && (dagRunIds[stage.id] || result?.dagRunId) && (
+                              <DAGExecutionView dagRunId={(dagRunIds[stage.id] || result?.dagRunId)!} />
                             )}
 
                             {result?.duration != null && (
@@ -1225,7 +1460,7 @@ export default function Pipelines() {
         <DialogContent data-testid="dialog-add-stage">
           <DialogHeader>
             <DialogTitle>
-              {newStageType === "agent" ? "Add Agent Stage" : "Add Approval Gate"}
+              {newStageType === "agent" ? "Add Agent Stage" : newStageType === "composite" ? "Add Composite Stage" : "Add Approval Gate"}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
@@ -1258,6 +1493,74 @@ export default function Pipelines() {
                   </SelectContent>
                 </Select>
               </div>
+            )}
+            {newStageType === "composite" && (
+              <>
+                <div className="space-y-2">
+                  <Label>Team Agent</Label>
+                  <Select
+                    value={newStageTeamAgentId || ""}
+                    onValueChange={(v) => setNewStageTeamAgentId(v || null)}
+                  >
+                    <SelectTrigger data-testid="select-stage-team-agent">
+                      <SelectValue placeholder="Select a team agent" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {teamAgents.length === 0 ? (
+                        <SelectItem value="_none" disabled>No team agents found</SelectItem>
+                      ) : (
+                        teamAgents.map((a) => (
+                          <SelectItem key={a.id} value={a.id} data-testid={`option-team-agent-${a.id}`}>
+                            {a.name}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Error Strategy</Label>
+                  <Select
+                    value={newStageErrorStrategy}
+                    onValueChange={(v) => setNewStageErrorStrategy(v as "fail_fast" | "best_effort")}
+                  >
+                    <SelectTrigger data-testid="select-stage-error-strategy">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="fail_fast">Fail Fast</SelectItem>
+                      <SelectItem value="best_effort">Best Effort</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {addWavePlan && (
+                  <div className="rounded-md border bg-muted/40 p-3 space-y-1.5" data-testid="wave-plan-preview">
+                    <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                      <Network className="w-3.5 h-3.5" />
+                      Wave Plan Preview
+                    </p>
+                    <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                      <span>{addWavePlan.totalWaves} wave{addWavePlan.totalWaves !== 1 ? "s" : ""}</span>
+                      <span>{addWavePlan.waves.reduce((acc, w) => acc + w.nodes.length, 0)} agents</span>
+                      <span>max {addWavePlan.maxParallelism} parallel</span>
+                    </div>
+                    <div className="space-y-1 mt-1">
+                      {addWavePlan.waves.map((wave) => (
+                        <div key={wave.wave_number} className="flex items-center gap-2">
+                          <span className="text-[10px] text-muted-foreground w-12 shrink-0">Wave {wave.wave_number}</span>
+                          <div className="flex flex-wrap gap-1">
+                            {wave.nodes.map((nodeId) => (
+                              <Badge key={nodeId} variant="outline" className="text-[10px] py-0">
+                                {addWavePlan.nodeConfig?.[nodeId]?.label || nodeId.substring(0, 8)}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
           <DialogFooter>
@@ -1310,6 +1613,60 @@ export default function Pipelines() {
                   </SelectContent>
                 </Select>
               </div>
+            )}
+            {allStages.find((s) => s.id === editStageId)?.stageType === "composite" && (
+              <>
+                <div className="space-y-2">
+                  <Label>Team Agent</Label>
+                  <Select
+                    value={editStageTeamAgentId || ""}
+                    onValueChange={(v) => setEditStageTeamAgentId(v || null)}
+                  >
+                    <SelectTrigger data-testid="select-edit-stage-team-agent">
+                      <SelectValue placeholder="Select a team agent" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {teamAgents.length === 0 ? (
+                        <SelectItem value="_none" disabled>No team agents found</SelectItem>
+                      ) : (
+                        teamAgents.map((a) => (
+                          <SelectItem key={a.id} value={a.id}>
+                            {a.name}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Error Strategy</Label>
+                  <Select
+                    value={editStageErrorStrategy}
+                    onValueChange={(v) => setEditStageErrorStrategy(v as "fail_fast" | "best_effort")}
+                  >
+                    <SelectTrigger data-testid="select-edit-stage-error-strategy">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="fail_fast">Fail Fast</SelectItem>
+                      <SelectItem value="best_effort">Best Effort</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {editWavePlan && (
+                  <div className="rounded-md border bg-muted/40 p-3 space-y-1.5" data-testid="edit-wave-plan-preview">
+                    <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                      <Network className="w-3.5 h-3.5" />
+                      Wave Plan Preview
+                    </p>
+                    <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                      <span>{editWavePlan.totalWaves} wave{editWavePlan.totalWaves !== 1 ? "s" : ""}</span>
+                      <span>{editWavePlan.waves.reduce((acc, w) => acc + w.nodes.length, 0)} agents</span>
+                      <span>max {editWavePlan.maxParallelism} parallel</span>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
           <DialogFooter>
