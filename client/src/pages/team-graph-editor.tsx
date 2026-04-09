@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import type { TeamBlueprintNode, TeamBlueprintEdge, Agent, RemoteAgent, Policy } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
@@ -89,6 +89,21 @@ export default function TeamGraphEditor({ blueprintId }: TeamGraphEditorProps) {
 
   const singleAgents = useMemo(() => (agents || []).filter(a => a.agentType === "single"), [agents]);
   const teamAgents = useMemo(() => (agents || []).filter(a => !!a.blueprintId), [agents]);
+
+  const stateKeyConflictIds = useMemo(() => {
+    const keyCounts: Record<string, string[]> = {};
+    for (const n of nodes) {
+      if (n.stateKey) {
+        if (!keyCounts[n.stateKey]) keyCounts[n.stateKey] = [];
+        keyCounts[n.stateKey].push(n.id);
+      }
+    }
+    const ids = new Set<string>();
+    for (const nodeIds of Object.values(keyCounts)) {
+      if (nodeIds.length > 1) nodeIds.forEach(id => ids.add(id));
+    }
+    return ids;
+  }, [nodes]);
 
   const invalidateGraph = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: graphQueryKey });
@@ -356,6 +371,11 @@ export default function TeamGraphEditor({ blueprintId }: TeamGraphEditorProps) {
                           {node.nodeType === "edge_gate" && node.gateType && (
                             <Badge variant="outline" className="text-[10px] shrink-0 bg-orange-500/10">{node.gateType}</Badge>
                           )}
+                          {stateKeyConflictIds.has(node.id) && (
+                            <Badge variant="outline" className="text-[9px] shrink-0 text-amber-600 border-amber-500/40 bg-amber-500/10 flex items-center gap-0.5 px-1" data-testid={`badge-canvas-state-key-conflict-${node.id}`}>
+                              <AlertTriangle className="w-2.5 h-2.5" /> key conflict
+                            </Badge>
+                          )}
                           <Button
                             variant="ghost"
                             size="icon"
@@ -486,8 +506,14 @@ function NodeConfigPanel({
   onUpdate: (updates: Partial<TeamBlueprintNode>) => void;
   isPending: boolean;
 }) {
+  const autoStateKey = (label: string) => label.trim().toLowerCase().replace(/[\s-]+/g, "_").replace(/[^a-z0-9_]/g, "");
+
+  const initialStateKey = (node.stateKey && node.stateKey.length > 0)
+    ? node.stateKey
+    : (node.nodeType === "internal_agent" ? autoStateKey(node.label) : "");
+
   const [localLabel, setLocalLabel] = useState(node.label);
-  const [localStateKey, setLocalStateKey] = useState(node.stateKey || "");
+  const [localStateKey, setLocalStateKey] = useState(initialStateKey);
   const [localTimeoutMs, setLocalTimeoutMs] = useState(node.timeoutMs != null ? String(node.timeoutMs) : "30000");
   const [nodeKind, setNodeKind] = useState<"agent" | "team_reference">(node.refTeamAgentId ? "team_reference" : "agent");
   const [wavePlanOpen, setWavePlanOpen] = useState(false);
@@ -496,13 +522,20 @@ function NodeConfigPanel({
   if (trackedNodeId !== node.id) {
     setTrackedNodeId(node.id);
     setLocalLabel(node.label);
-    setLocalStateKey(node.stateKey || "");
+    const nextStateKey = (node.stateKey && node.stateKey.length > 0)
+      ? node.stateKey
+      : (node.nodeType === "internal_agent" ? autoStateKey(node.label) : "");
+    setLocalStateKey(nextStateKey);
     setLocalTimeoutMs(node.timeoutMs != null ? String(node.timeoutMs) : "30000");
     setNodeKind(node.refTeamAgentId ? "team_reference" : "agent");
     setWavePlanOpen(false);
   }
 
-  const autoStateKey = (label: string) => label.trim().toLowerCase().replace(/[\s-]+/g, "_").replace(/[^a-z0-9_]/g, "");
+  useEffect(() => {
+    if (node.nodeType === "internal_agent" && (!node.stateKey || node.stateKey.length === 0) && initialStateKey) {
+      onUpdate({ stateKey: initialStateKey });
+    }
+  }, [node.id]);
 
   const handleLabelBlur = () => {
     if (localLabel !== node.label) {
