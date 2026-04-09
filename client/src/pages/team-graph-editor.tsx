@@ -424,11 +424,17 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId }: TeamGraphE
                 isDeletePending={deleteEdgeMutation.isPending}
               />
             ) : (
-              <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-4" id="dag-state-schema-section">
                 <div className="flex items-center gap-2">
                   <Database className="w-4 h-4 text-muted-foreground" />
                   <span className="text-sm font-medium">DAG State Schema</span>
-                  <Badge variant="outline" className="text-[10px] text-blue-600 dark:text-blue-400 border-blue-500/30 bg-blue-500/10" data-testid="badge-schema-panel">Schema</Badge>
+                  <a
+                    href="#dag-state-schema-section"
+                    className="inline-flex items-center rounded border border-blue-500/30 bg-blue-500/10 px-1.5 py-0.5 text-[10px] font-medium text-blue-600 dark:text-blue-400 hover:bg-blue-500/20 transition-colors no-underline"
+                    data-testid="badge-schema-panel"
+                  >
+                    Schema
+                  </a>
                 </div>
                 {teamAgentId ? (
                   <DagStateSchemaEditor teamAgentId={teamAgentId} />
@@ -1076,15 +1082,21 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
   useEffect(() => {
     if (schema) {
       setSchemaId(schema.id);
-      const fieldsObj = (schema.fields || {}) as Record<string, { type?: string; writableBy?: string }>;
+      const fieldsObj = (schema.fields || {}) as Record<string, any>;
       const reducersObj = (schema.reducers || {}) as Record<string, string>;
-      const parsed: SchemaField[] = Object.entries(fieldsObj).map(([fieldName, def]) => ({
-        rowKey: `${fieldName}-${Math.random()}`,
-        fieldName,
-        type: (def?.type || "string") as SchemaField["type"],
-        writableBy: def?.writableBy || "*",
-        reducer: (reducersObj[fieldName] || "last_wins") as SchemaField["reducer"],
-      }));
+      const parsed: SchemaField[] = Object.entries(fieldsObj).map(([fieldName, def]) => {
+        const writableByRaw = def?.writable_by ?? def?.writableBy;
+        const writableByStr = Array.isArray(writableByRaw)
+          ? writableByRaw.join(",")
+          : (typeof writableByRaw === "string" ? writableByRaw : "*");
+        return {
+          rowKey: `${fieldName}-${Math.random()}`,
+          fieldName,
+          type: (def?.type || "string") as SchemaField["type"],
+          writableBy: writableByStr || "*",
+          reducer: (def?.reducer || reducersObj[fieldName] || "last_wins") as SchemaField["reducer"],
+        };
+      });
       setLocalFields(parsed);
       setIsDirty(false);
     } else if (!isLoading) {
@@ -1096,11 +1108,18 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      const fields: Record<string, { type: string; writableBy: string }> = {};
+      const fields: Record<string, { type: string; writable_by: string[]; reducer: string }> = {};
       const reducers: Record<string, string> = {};
       for (const f of localFields) {
         if (!f.fieldName.trim()) continue;
-        fields[f.fieldName] = { type: f.type, writableBy: f.writableBy };
+        const writableByArr = f.writableBy.trim() === ""
+          ? ["*"]
+          : f.writableBy.split(",").map(s => s.trim()).filter(Boolean);
+        fields[f.fieldName] = {
+          type: f.type,
+          writable_by: writableByArr,
+          reducer: f.reducer,
+        };
         reducers[f.fieldName] = f.reducer;
       }
       if (schemaId) {
