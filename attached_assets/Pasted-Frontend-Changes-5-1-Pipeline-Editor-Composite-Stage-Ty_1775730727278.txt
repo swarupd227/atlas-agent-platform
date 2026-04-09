@@ -1,0 +1,97 @@
+Frontend Changes
+5.1 Pipeline Editor — Composite Stage Type
+File: apps/web/src/components/PipelineEditor.tsx (or equivalent)
+Changes:
+•	Add composite to the stage type picker (alongside agent, approval_gate, parallel_group)
+•	When user selects composite, show a Team Selector dropdown (list of agent teams)
+•	After team selection, auto-compute and display the execution plan (wave visualization)
+New UI Component: CompositeStageConfigurator
+// Inline in the Pipeline Editor when stage_type === 'composite'
+<CompositeStageConfigurator
+  teamId={stage.team_id}
+  onTeamSelect={(teamId) => updateStage({ team_id: teamId })}
+  executionPlan={executionPlan}     // fetched from API
+  stateSchema={stateSchema}         // fetched from API
+  errorStrategy={stage.config?.error_strategy || 'fail_fast'}
+  onErrorStrategyChange={(strategy) => updateStage({ config: { error_strategy: strategy } })}
+/>
+
+5.2 Team Graph Editor — State Key Assignment
+File: apps/web/src/components/TeamGraphEditor.tsx (or equivalent)
+Changes:
+•	Each node in the Team Graph Editor gets a new property panel field: State Key
+•	The State Key determines which field in the shared state this node writes to
+•	Auto-suggest: default state_key = node_id with hyphens replaced by underscores
+•	Show warning if two nodes have the same state_key (conflict)
+New property panel fields per node:
+┌─────────────────────────────────────┐
+│ Node: template-grounding             │
+│                                      │
+│ Agent:      [MCG-TPL-GROUND-001  ▼]  │
+│ State Key:  [template_grounding    ]  │
+│ Timeout:    [30000 ms              ]  │
+│ Output Schema: [{ ... } Edit      ]  │
+│ Fallback:   [{ ... } Edit          ]  │
+│ Retry:      [2 attempts, exp backoff] │
+│ Node Type:  [● Agent  ○ Team Ref   ]  │
+└─────────────────────────────────────┘
+
+New node type option: "Team Reference" — when selected, instead of picking an agent, the user picks another Agent Team. This enables nesting.
+5.3 DAG State Schema Editor
+New Page/Tab: Accessible from the Team detail page or Blueprint Studio.
+┌───────────────────────────────────────────────────────────────────────┐
+│ DAG State Schema — MCG Proposal Generation Team                       │
+│                                                                       │
+│ ┌─────────────────────┬────────┬────────────────────┬──────────────┐  │
+│ │ Field Name          │ Type   │ Writable By         │ Reducer      │  │
+│ ├─────────────────────┼────────┼────────────────────┼──────────────┤  │
+│ │ template_grounding  │ object │ template-grounding  │ last_wins    │  │
+│ │ brand_grounding     │ object │ brand-grounding     │ last_wins    │  │
+│ │ guideline_grounding │ object │ guideline-grounding │ last_wins    │  │
+│ │ executive_highlights│ object │ executive-highlights│ last_wins    │  │
+│ │ pricing_packaging   │ object │ pricing-packaging   │ last_wins    │  │
+│ │ assembled_draft     │ object │ general-purpose     │ last_wins    │  │
+│ │ quality_review      │ object │ quality-review      │ last_wins    │  │
+│ │ delegated_subagents │ array  │ * (all)             │ append ⊕     │  │
+│ │ tool_call_sequence  │ array  │ * (all)             │ append ⊕     │  │
+│ │ fallback_subagents  │ array  │ * (all)             │ append ⊕     │  │
+│ └─────────────────────┴────────┴────────────────────┴──────────────┘  │
+│                                                                       │
+│ [+ Add Field]     Fields: 10     Reducers: 7 last_wins, 3 append      │
+└───────────────────────────────────────────────────────────────────────┘
+
+5.4 DAG Execution Visualization
+New Component: DAGExecutionView
+Shown in the pipeline run detail when a composite stage is running or completed. Visualizes the wave-based execution as a horizontal swim-lane diagram:
+┌───────────────────────────────────────────────────────────────────────┐
+│ DAG Execution: MCG Proposal Generation  [Wave 3/5]  ⏱ 12.4s          │
+│                                                                       │
+│ Wave 1 ██████████████████████████████████ 4.2s  ✅                    │
+│  ├ template-grounding   ████████████████░ 3.8s  ✅  2,100+800 tokens  │
+│  ├ brand-grounding      ██████████████████ 4.2s  ✅  1,800+650 tokens │
+│  └ guideline-grounding  █████████████░░░░ 3.1s  ✅  1,500+550 tokens  │
+│                                                                       │
+│ Wave 2 ██████████████████████████░░░░░░░ 5.1s  ✅                     │
+│  ├ executive-highlights ██████████████████████░░ 5.1s  ✅              │
+│  └ pricing-packaging    █████████████████████░░░ 4.8s  ✅              │
+│                                                                       │
+│ Wave 3 █████████████░░░░░░░░░░░░░░░░░░░ running...                   │
+│  └ general-purpose      █████████████▓▓▓▓ running...  ⏳              │
+│                                                                       │
+│ Wave 4 ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ waiting                     │
+│  ├ quality-review       ░░░░░░░░░ pending                             │
+│  ├ language-enforcer    ░░░░░░░░░ pending                             │
+│  └ brand-validator      ░░░░░░░░░ pending                             │
+│                                                                       │
+│ Wave 5 ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ waiting                     │
+│  └ proposal-finalizer   ░░░░░░░░░ pending                             │
+│                                                                       │
+│ State: 8/16 fields populated  │  Tokens: 8,350+3,200  │  Errors: 0    │
+└───────────────────────────────────────────────────────────────────────┘
+
+Implementation: React component that polls /api/dag-execution-runs/:id every 2 seconds during execution, or subscribes to SSE events for real-time updates.
+5.5 Monitor Integration
+Changes to Monitor Dashboard (Section 24):
+•	Live Runs tab: composite stages show a nested DAG execution view (wave progress)
+•	Run Detail: when clicking into a composite stage, show the full DAGExecutionView with per-node traces
+•	MCP Trace: each node in the DAG has its own trace span, nested under the composite stage span
