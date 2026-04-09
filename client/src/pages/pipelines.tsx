@@ -76,6 +76,7 @@ interface PipelineStage {
     approvers?: string[];
     timeout?: number;
     errorStrategy?: "fail_fast" | "best_effort";
+    waveCount?: number | null;
   };
 }
 
@@ -174,6 +175,10 @@ function DAGExecutionView({ dagRunId }: { dagRunId: string }) {
   if (!data) return null;
 
   const pendingWaves = (data.totalWaves ?? 0) - (data.waveResults?.length ?? 0);
+  const allNodes = (data.waveResults || []).flatMap((w) => w.nodes);
+  const errorCount = allNodes.filter((n) => n.status === "failed").length;
+  const completedCount = allNodes.filter((n) => n.status === "completed").length;
+  const totalTokens = (data.totalPromptTokens ?? 0) + (data.totalCompletionTokens ?? 0);
 
   return (
     <div className="mt-3 space-y-2 rounded-md border bg-muted/30 p-3" data-testid={`dag-execution-view-${dagRunId}`}>
@@ -239,13 +244,16 @@ function DAGExecutionView({ dagRunId }: { dagRunId: string }) {
         )}
       </div>
 
-      {(data.totalPromptTokens != null || data.totalCompletionTokens != null) && (
-        <div className="flex flex-wrap items-center gap-3 text-[10px] text-muted-foreground pt-1 border-t">
-          <Activity className="w-3 h-3" />
-          <span>Prompt: {data.totalPromptTokens ?? 0} tokens</span>
-          <span>Completion: {data.totalCompletionTokens ?? 0} tokens</span>
-        </div>
-      )}
+      <div className="flex flex-wrap items-center gap-3 text-[10px] text-muted-foreground pt-1 border-t" data-testid={`dag-stats-${dagRunId}`}>
+        <Activity className="w-3 h-3" />
+        <span data-testid={`dag-stat-fields-${dagRunId}`}>{completedCount} field{completedCount !== 1 ? "s" : ""} populated</span>
+        <span data-testid={`dag-stat-tokens-${dagRunId}`}>{totalTokens} tokens</span>
+        {errorCount > 0 && (
+          <span className="text-red-600 dark:text-red-400" data-testid={`dag-stat-errors-${dagRunId}`}>
+            {errorCount} error{errorCount !== 1 ? "s" : ""}
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -298,7 +306,7 @@ export default function Pipelines() {
   });
 
   const teamAgents = useMemo(
-    () => agents.filter((a) => !!(a as any).blueprintId),
+    () => agents.filter((a) => !!a.blueprintId),
     [agents]
   );
 
@@ -422,7 +430,7 @@ export default function Pipelines() {
     },
     onSuccess: async (data: any, { runId, stageId }) => {
       if (data.dagRunId) {
-        setDagRunIds((prev) => ({ ...prev, [stageId]: data.dagRunId }));
+        setDagRunIds((prev) => ({ ...prev, [`${runId}_${stageId}`]: data.dagRunId }));
       }
       queryClient.invalidateQueries({ queryKey: ["/api/pipelines", selectedPipelineId, "runs"] });
       const output = data.output || data.simulatedOutput || "Stage completed";
@@ -651,7 +659,7 @@ export default function Pipelines() {
       config: newStageType === "approval_gate"
         ? { approvalRequired: true }
         : newStageType === "composite"
-        ? { errorStrategy: newStageErrorStrategy }
+        ? { errorStrategy: newStageErrorStrategy, waveCount: addWavePlan?.totalWaves ?? null }
         : {},
     };
     const updatedStages = [...currentStages, newStage];
@@ -1061,23 +1069,54 @@ export default function Pipelines() {
                               <Network className="w-5 h-5 text-purple-600 dark:text-purple-400" />
                             </div>
                             <div>
-                              <div className="flex items-center gap-2">
+                              <div className="flex flex-wrap items-center gap-1.5">
                                 <span className="text-xs text-muted-foreground">Stage {index + 1}</span>
                                 <Badge variant="outline" className="text-[10px] bg-purple-500/10 text-purple-700 dark:text-purple-400 border-purple-500/30">
                                   Composite
                                 </Badge>
-                                {stage.config?.errorStrategy && (
-                                  <Badge variant="outline" className="text-[10px]">
-                                    {stage.config.errorStrategy === "fail_fast" ? "Fail Fast" : "Best Effort"}
+                                {stage.config?.waveCount != null && (
+                                  <Badge variant="outline" className="text-[10px]" data-testid={`badge-wave-count-${stage.id}`}>
+                                    {stage.config.waveCount} wave{stage.config.waveCount !== 1 ? "s" : ""}
                                   </Badge>
                                 )}
                               </div>
                               <p className="text-sm font-medium mt-0.5" data-testid={`text-stage-label-${stage.id}`}>
                                 {stage.label}
                               </p>
-                              <p className="text-xs text-muted-foreground mt-1" data-testid={`text-stage-team-agent-${stage.id}`}>
+                              <p className="text-xs text-muted-foreground mt-0.5" data-testid={`text-stage-team-agent-${stage.id}`}>
                                 {getAgentName(stage.teamAgentId || null) || "Select Team Agent"}
                               </p>
+                              <div className="flex items-center gap-1 mt-1.5">
+                                <span className="text-[10px] text-muted-foreground mr-1">Error strategy:</span>
+                                <button
+                                  className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${stage.config?.errorStrategy !== "best_effort" ? "bg-red-500/10 border-red-500/30 text-red-700 dark:text-red-400" : "border-muted text-muted-foreground hover:border-muted-foreground"}`}
+                                  onClick={() => {
+                                    if (!selectedPipeline) return;
+                                    const currentStages = (selectedPipeline.stages as PipelineStage[]) || [];
+                                    const updatedStages = currentStages.map((s) =>
+                                      s.id === stage.id ? { ...s, config: { ...s.config, errorStrategy: "fail_fast" as const } } : s
+                                    );
+                                    updatePipelineMutation.mutate({ id: selectedPipeline.id, data: { stages: updatedStages } });
+                                  }}
+                                  data-testid={`button-fail-fast-${stage.id}`}
+                                >
+                                  Fail Fast
+                                </button>
+                                <button
+                                  className={`text-[10px] px-1.5 py-0.5 rounded border transition-colors ${stage.config?.errorStrategy === "best_effort" ? "bg-green-500/10 border-green-500/30 text-green-700 dark:text-green-400" : "border-muted text-muted-foreground hover:border-muted-foreground"}`}
+                                  onClick={() => {
+                                    if (!selectedPipeline) return;
+                                    const currentStages = (selectedPipeline.stages as PipelineStage[]) || [];
+                                    const updatedStages = currentStages.map((s) =>
+                                      s.id === stage.id ? { ...s, config: { ...s.config, errorStrategy: "best_effort" as const } } : s
+                                    );
+                                    updatePipelineMutation.mutate({ id: selectedPipeline.id, data: { stages: updatedStages } });
+                                  }}
+                                  data-testid={`button-best-effort-${stage.id}`}
+                                >
+                                  Best Effort
+                                </button>
+                              </div>
                             </div>
                           </div>
                           <div className="flex items-center gap-1">
@@ -1366,8 +1405,8 @@ export default function Pipelines() {
                               </div>
                             )}
 
-                            {stage.stageType === "composite" && (dagRunIds[stage.id] || result?.dagRunId) && (
-                              <DAGExecutionView dagRunId={(dagRunIds[stage.id] || result?.dagRunId)!} />
+                            {stage.stageType === "composite" && (dagRunIds[`${activeRun.id}_${stage.id}`] || result?.dagRunId) && (
+                              <DAGExecutionView dagRunId={(dagRunIds[`${activeRun.id}_${stage.id}`] || result?.dagRunId)!} />
                             )}
 
                             {result?.duration != null && (
