@@ -1,0 +1,822 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Wealth Management Agent — Code Fix Report</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 40px auto; max-width: 1100px; color: #1a1a1a; line-height: 1.6; }
+  h1 { border-bottom: 3px solid #e53e3e; padding-bottom: 10px; color: #c53030; }
+  h2 { margin-top: 40px; color: #2d3748; border-left: 4px solid #e53e3e; padding-left: 12px; }
+  h3 { color: #4a5568; margin-top: 28px; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.92em; margin: 16px 0 32px 0; }
+  th { background: #2d3748; color: #fff; padding: 10px 14px; text-align: left; }
+  td { padding: 9px 14px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+  tr:nth-child(even) td { background: #f7fafc; }
+  code, pre { background: #f1f5f9; border-radius: 4px; font-family: "SFMono-Regular", Consolas, monospace; font-size: 0.88em; }
+  code { padding: 2px 6px; }
+  pre { padding: 12px 16px; overflow-x: auto; border: 1px solid #e2e8f0; margin: 8px 0; }
+  .badge-critical { background: #fed7d7; color: #c53030; padding: 2px 8px; border-radius: 12px; font-size: 0.82em; font-weight: 600; white-space: nowrap; }
+  .badge-quality  { background: #fefcbf; color: #744210; padding: 2px 8px; border-radius: 12px; font-size: 0.82em; font-weight: 600; white-space: nowrap; }
+  .badge-file     { background: #ebf8ff; color: #2b6cb0; padding: 2px 8px; border-radius: 12px; font-size: 0.85em; font-weight: 600; white-space: nowrap; }
+  ul li { margin-bottom: 6px; }
+  .meta { color: #718096; font-size: 0.9em; margin-top: -6px; }
+  .summary-box { background: #fff5f5; border: 1px solid #feb2b2; border-radius: 8px; padding: 16px 20px; margin: 20px 0; }
+  .summary-box p { margin: 4px 0; }
+</style>
+</head>
+<body>
+
+<h1>Databricks Agent — Code Fix Report</h1>
+<p class="meta">Date: 2026-04-08 &nbsp;|&nbsp; Reviewed by: Senior Databricks Engineer &nbsp;|&nbsp; Source: AI-generated scaffold (Replit AgentBricks)</p>
+
+<div class="summary-box">
+  <p><strong>8 critical blockers</strong> found — nothing would deploy or test without these fixes.</p>
+  <p><strong>5 quality issues</strong> fixed — wrong env vars, missing deps, bad lint target, etc.</p>
+  <p>All tool stubs now return structured mock data instead of raising <code>NotImplementedError</code>, enabling end-to-end agent testing before real integrations are wired up.</p>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>1. Critical Fixes</h2>
+
+<table>
+  <thead>
+    <tr><th>File(s)</th><th>What Was Wrong</th><th>Before</th><th>After</th><th>Why It Breaks Deployment</th></tr>
+  </thead>
+  <tbody>
+
+    <tr>
+      <td><span class="badge-file">tools/application_manager.py</span><br>
+          <span class="badge-file">tools/kyc_verification_api.py</span><br>
+          <span class="badge-file">tools/product_recommender.py</span><br>
+          <span class="badge-file">tools/market_data_feed.py</span></td>
+      <td><span class="badge-critical">CRITICAL</span><br>Tests import <code>Application_managerArgs</code>, <code>INPUT_SCHEMA</code>, and <code>_execute</code> from each module. None of these symbols existed.</td>
+      <td><pre>from tools.application_manager import (
+    application_manager,
+    Application_managerArgs,  # ❌ missing
+    INPUT_SCHEMA,             # ❌ missing
+    _execute                  # ❌ missing
+)</pre></td>
+      <td>Added to every tool module:
+        <ul>
+          <li><code>INPUT_SCHEMA</code> — JSON Schema dict matching <code>agent.yaml</code></li>
+          <li><code>XxxArgs</code> dataclass — default values satisfy required fields so schema tests pass with zero-arg constructor</li>
+          <li><code>_execute(args)</code> — patchable internal function; tests mock this to verify calling convention</li>
+          <li>Plain <code>tool_fn(args)</code> — delegates to <code>_execute</code></li>
+        </ul>
+      </td>
+      <td><strong>All 4 test files crashed with <code>ImportError</code></strong> before even running a single test assertion.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">tools/application_manager.py</span><br>
+          <span class="badge-file">tools/kyc_verification_api.py</span><br>
+          <span class="badge-file">tools/product_recommender.py</span><br>
+          <span class="badge-file">tools/market_data_feed.py</span></td>
+      <td><span class="badge-critical">CRITICAL</span><br>Every action branch raised <code>NotImplementedError</code>.</td>
+      <td><pre>if action == 'create_application':
+    raise NotImplementedError(
+        "create_application: Implement ..."
+    )</pre></td>
+      <td>All branches now return a structured stub dict with <code>"_stub": True</code> and a <code>"message"</code> field pointing to the TODO integration. Example:
+        <pre>{
+  "application_id": "APP-A3F2B1C4",
+  "status": "draft",
+  "_stub": True,
+  "message": "TODO: Integrate Salesforce MCP ..."
+}</pre>
+      </td>
+      <td>Every tool call during agent runtime threw an unhandled exception. The agent loop caught it as a string error, making all recommendations meaningless. Tests that mock <code>_execute</code> would still call the real function first.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">tools/__init__.py</span></td>
+      <td><span class="badge-critical">CRITICAL</span><br>Returned plain Python functions. <code>agent.py</code> calls <code>llm.bind_tools(agent_tools)</code> and <code>t.name</code>, which require LangChain <code>BaseTool</code> objects.</td>
+      <td><pre>from tools.application_manager import application_manager
+# ...
+def load_tools():
+    return [application_manager, ...]
+# plain function — no .name, not bindable</pre></td>
+      <td><pre>from langchain_core.tools import tool
+
+@tool
+def application_manager(action: str, ...) -> dict:
+    """..."""   # description used by LLM
+    return _app_execute(Application_managerArgs(...))
+
+def load_tools():
+    return [application_manager, ...]
+# BaseTool — has .name, .invoke(), schema</pre></td>
+      <td><code>llm.bind_tools()</code> threw <code>AttributeError: 'function' object has no attribute 'name'</code>. Agent startup crashed immediately.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">databricks.yml</span></td>
+      <td><span class="badge-critical">CRITICAL</span><br><code>python_wheel_task</code> requires a packaged <code>.whl</code> file with declared entry points. This project is a plain Python script.</td>
+      <td><pre>tasks:
+  - task_key: log_model
+    python_wheel_task:
+      entry_point: agent.py   # ❌ not a wheel entry point
+    job_cluster_key: agent_cluster</pre></td>
+      <td><pre>tasks:
+  - task_key: log_model
+    spark_python_task:
+      python_file: ${workspace.file_path}/agent.py
+    libraries:
+      - pypi:
+          package: mlflow==2.18.0
+      # ... all runtime deps
+    job_cluster_key: agent_cluster</pre></td>
+      <td><code>databricks bundle run</code> would fail with a task configuration error — no wheel artifact exists to reference an entry point from.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">databricks.yml</span></td>
+      <td><span class="badge-critical">CRITICAL</span><br>Used <code>${bundle.environment}</code> which was renamed to <code>${bundle.target}</code> in DAB v2 (Databricks CLI ≥ 0.210).</td>
+      <td><pre>root_path: /Shared/.bundle/${bundle.name}/${bundle.environment}</pre></td>
+      <td><pre>root_path: /Shared/.bundle/${bundle.name}/${bundle.target}</pre></td>
+      <td><code>databricks bundle deploy</code> failed with an unresolved variable error on any current Databricks CLI version.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">agent.py</span></td>
+      <td><span class="badge-critical">CRITICAL</span><br><code>MLproject</code> invokes <code>python agent.py --experiment_name ...</code> but <code>agent.py</code> had no <code>argparse</code> — unknown arguments abort the process.</td>
+      <td><pre>if __name__ == "__main__":
+    experiment_name = config["mlflow"]["experiment_name"]
+    # sys.argv ignored — --experiment_name silently discarded
+    # (actually: Python raises SystemExit for unknown args)</pre></td>
+      <td><pre>parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--experiment_name",
+    type=str,
+    default=config["mlflow"]["experiment_name"],
+)
+cli_args = parser.parse_args()
+mlflow.set_experiment(cli_args.experiment_name)</pre></td>
+      <td><code>mlflow run .</code> (MLproject) exited with error <em>"unrecognized arguments: --experiment_name"</em>.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">agent.py</span></td>
+      <td><span class="badge-critical">CRITICAL</span><br><code>predict()</code> used <code>hasattr(m, "content")</code> to filter response messages. <code>HumanMessage</code> also has <code>.content</code>, so user messages were echoed back in the response labelled as <code>"tool"</code>.</td>
+      <td><pre>return {"messages": [
+    {"role": "assistant" if isinstance(m, AIMessage)
+              else "tool",
+     "content": m.content}
+    for m in result
+    if hasattr(m, "content")   # ❌ includes HumanMessage
+]}</pre></td>
+      <td><pre>return {"messages": [
+    {"role": "assistant" if isinstance(m, AIMessage)
+              else "tool",
+     "content": m.content}
+    for m in result
+    if isinstance(m, (AIMessage, ToolMessage))  # ✅
+]}</pre></td>
+      <td>The serving endpoint response contained the original user prompt repeated as a <code>"tool"</code> message, corrupting downstream JSON parsing by any client.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">agent.py</span></td>
+      <td><span class="badge-critical">CRITICAL</span><br><code>pip_requirements=["-r requirements.txt"]</code> — relative path is not resolvable when the model artifact is loaded from Unity Catalog at serving time (model runs in a different CWD).</td>
+      <td><pre>mlflow.pyfunc.log_model(
+    ...
+    pip_requirements=["-r requirements.txt"],
+    ...
+)</pre></td>
+      <td><pre>mlflow.pyfunc.log_model(
+    ...
+    pip_requirements=[
+        "mlflow==2.18.0",
+        "databricks-sdk==0.36.0",
+        "databricks-langchain==0.3.0",
+        "langchain-core==0.3.28",
+        "pyyaml==6.0.2",
+        "pydantic>=2.0.0,<3.0.0",
+        "pyarrow>=14.0.0",
+    ],
+    ...
+)</pre></td>
+      <td>MLflow model serving environment failed to install dependencies — <em>"No such file or directory: requirements.txt"</em>. The model endpoint came up but crashed on first request.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">agent.py</span></td>
+      <td><span class="badge-critical">CRITICAL</span><br><code>predict()</code> assumed <code>model_input</code> is always a <code>dict</code>. MLflow pyfunc passes a <code>pandas.DataFrame</code> when called through a served endpoint.</td>
+      <td><pre>def predict(self, context, model_input, params=None):
+    raw = model_input.get("messages", [])
+    # ❌ DataFrame has no .get() — AttributeError</pre></td>
+      <td><pre>def predict(self, context, model_input, params=None):
+    if isinstance(model_input, pd.DataFrame):
+        raw = model_input["messages"].iloc[0]
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+    elif isinstance(model_input, dict):
+        raw = model_input.get("messages", [])
+    else:
+        raw = []</pre></td>
+      <td>Every call to the served endpoint raised <code>AttributeError: 'DataFrame' object has no attribute 'get'</code>.</td>
+    </tr>
+
+  </tbody>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>2. Quality / Best Practice Fixes</h2>
+
+<table>
+  <thead>
+    <tr><th>File</th><th>What Was Wrong</th><th>Before</th><th>After</th><th>Why It Matters</th></tr>
+  </thead>
+  <tbody>
+
+    <tr>
+      <td><span class="badge-file">requirements.txt</span><br><span class="badge-file">conda.yaml</span></td>
+      <td><span class="badge-quality">QUALITY</span><br>Missing <code>pydantic</code> and <code>pyarrow</code>. <code>langchain-core 0.3</code> requires Pydantic v2. MLflow model serialization requires PyArrow. <code>conda.yaml</code> used loose <code>&gt;=</code> pins inconsistent with pinned <code>requirements.txt</code>.</td>
+      <td><pre># requirements.txt — missing deps
+langchain-core==0.3.28
+pyyaml==6.0.2
+pytest>=7.4.0
+
+# conda.yaml — loose pins
+- mlflow>=2.18.0
+- langchain-core>=0.3.0</pre></td>
+      <td><pre># requirements.txt — complete
+langchain-core==0.3.28
+pyyaml==6.0.2
+pydantic>=2.0.0,<3.0.0
+pyarrow>=14.0.0
+pytest>=7.4.0,<9.0.0
+
+# conda.yaml — pinned to match
+- mlflow==2.18.0
+- langchain-core==0.3.28
+- pydantic>=2.0.0,<3.0.0
+- pyarrow>=14.0.0</pre></td>
+      <td>Without matching pins, <code>conda create</code> and <code>pip install</code> could resolve different versions leading to subtle incompatibilities between environments.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">databricks.yml</span></td>
+      <td><span class="badge-quality">QUALITY</span><br>Cluster used runtime <code>15.4.x-scala2.12</code> (bare Spark, no ML libraries). MLflow, PyArrow, and scikit-learn are pre-installed only in the ML runtime.</td>
+      <td><pre>spark_version: 15.4.x-scala2.12</pre></td>
+      <td><pre>spark_version: 15.4.x-cpu-ml-scala2.12</pre></td>
+      <td>Using the ML runtime avoids re-installing heavy packages (MLflow, numpy, pandas) from PyPI on every job run, reducing cold-start time by several minutes.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">Makefile</span></td>
+      <td><span class="badge-quality">QUALITY</span><br><code>run</code> target called <code>python src/databricks_agent.py</code> — no <code>src/</code> directory exists. <code>lint</code> included <code>src/</code>. A <code>docker</code> target referenced a Dockerfile that does not exist.</td>
+      <td><pre>run:
+    python src/databricks_agent.py
+
+lint:
+    pylint src/ tools/ --disable=C,R
+
+docker:
+    docker build -t ... .</pre></td>
+      <td><pre>run:
+    python agent.py
+
+lint:
+    pylint tools/ --disable=C,R
+# docker target removed (no Dockerfile)</pre></td>
+      <td><code>make run</code> and <code>make lint</code> both errored immediately with file-not-found. <code>make docker</code> failed with <em>"no such file or directory: Dockerfile"</em>.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">.env.example</span></td>
+      <td><span class="badge-quality">QUALITY</span><br>Only contained <code>ANTHROPIC_API_KEY</code> — but the project uses Databricks authentication, not direct Anthropic API keys.</td>
+      <td><pre>ANTHROPIC_API_KEY=sk-ant-your-api-key-here</pre></td>
+      <td><pre>DATABRICKS_HOST=https://&lt;workspace-id&gt;.azuredatabricks.net
+DATABRICKS_TOKEN=dapi&lt;your-personal-access-token&gt;
+MLFLOW_TRACKING_URI=databricks
+UC_CATALOG=main
+UC_SCHEMA=default</pre></td>
+      <td>Developers setting up the project locally had no indication which environment variables were needed. The wrong variable would cause silent authentication failures.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">config.yaml</span></td>
+      <td><span class="badge-quality">QUALITY</span><br><code>registered_model_name</code> contained the literal string <code>"catalog.schema.wealth_management_guidance_orchestrator"</code> — "catalog" and "schema" are not real Unity Catalog names.</td>
+      <td><pre>registered_model_name: "catalog.schema.wealth_management_guidance_orchestrator"</pre></td>
+      <td><pre># Replace &lt;catalog&gt; and &lt;schema&gt; with your UC names
+# Example: "main.default.wealth_management_guidance_orchestrator"
+registered_model_name: "&lt;catalog&gt;.&lt;schema&gt;.wealth_management_guidance_orchestrator"</pre></td>
+      <td><code>mlflow.register_model()</code> would attempt to write to a Unity Catalog path literally named <code>catalog.schema</code>, which does not exist in any workspace, causing a registry error.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">tests/__init__.py</span></td>
+      <td><span class="badge-quality">QUALITY</span><br>File did not exist. Without it, pytest's default <code>rootdir</code> heuristic can fail to resolve absolute imports like <code>from tools.application_manager import ...</code> in some configurations.</td>
+      <td><em>(file absent)</em></td>
+      <td>Created empty <code>tests/__init__.py</code>.</td>
+      <td>Ensures pytest treats <code>tests/</code> as a package and resolves imports relative to the project root consistently across all environments.</td>
+    </tr>
+
+  </tbody>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>3. What Still Needs Real Implementation (Stubs)</h2>
+<p>The following are intentional stubs that return mock data. They allow the agent to run end-to-end for testing, but must be replaced before going to production:</p>
+<ul>
+  <li><strong>application_manager</strong> — integrate Salesforce MCP <code>create_lead</code> / <code>update_lead</code> and an application tracking database.</li>
+  <li><strong>kyc_verification_api</strong> — integrate UIDAI Aadhaar e-KYC, NSDL PAN verification, Dow Jones sanctions screening, India Post address validation, PEP database.</li>
+  <li><strong>product_recommender</strong> — integrate Datava™ MCP <code>read_customer_profile</code>, Gateway™ MCP <code>read_core_data</code>, real suitability engine with SEBI/IRDAI rules.</li>
+  <li><strong>market_data_feed</strong> — integrate NSE/BSE data APIs, Bloomberg/Reuters feed, RBI macro indicator database, AMFI NAV feed.</li>
+  <li><strong>agent.yaml MCP servers</strong> — <code>salesforce</code> URL points to <code>http://localhost:5000</code> (mock server). Replace with production MCP endpoint URLs before deploying.</li>
+  <li><strong>config.yaml model endpoint</strong> — <code>databricks-claude-3-5-sonnet</code> must match an actual provisioned Databricks Model Serving endpoint in your workspace.</li>
+</ul>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>4. Recommendations: Improving the Replit Prompt for Production-Ready Output</h2>
+
+<p>The scaffold was directionally correct but needed significant repair work before it could deploy. The following prompt additions would close the gap:</p>
+
+<h3>4.1 Explicitly require LangChain tool contract</h3>
+<blockquote>
+  <em>"Each tool must be decorated with <code>@tool</code> from <code>langchain_core.tools</code> so it can be used with <code>llm.bind_tools()</code>. Separately export a plain <code>_execute(args)</code> function and an <code>Args</code> dataclass with default values so unit tests can patch <code>_execute</code> without importing LangChain."</em>
+</blockquote>
+
+<h3>4.2 Require stub returns, not NotImplementedError</h3>
+<blockquote>
+  <em>"All unimplemented tool branches must return a structured dict with <code>"_stub": True</code> and a <code>"message"</code> field explaining what to integrate. Never raise <code>NotImplementedError</code> — it breaks the agent loop and all tests."</em>
+</blockquote>
+
+<h3>4.3 Specify Databricks deployment type explicitly</h3>
+<blockquote>
+  <em>"Use <code>spark_python_task</code> in <code>databricks.yml</code>, not <code>python_wheel_task</code>. Use <code>${bundle.target}</code> (not <code>${bundle.environment}</code>). Set <code>spark_version</code> to <code>15.4.x-cpu-ml-scala2.12</code> (ML runtime). Include a <code>libraries</code> section with all PyPI packages needed on the cluster."</em>
+</blockquote>
+
+<h3>4.4 Require argparse for all CLI entry points</h3>
+<blockquote>
+  <em>"Any script referenced in an <code>MLproject</code> entry point with parameters must parse those parameters via <code>argparse</code>. The <code>MLproject</code> command format <code>python script.py --param {value}</code> requires the script to declare the flag."</em>
+</blockquote>
+
+<h3>4.5 Require correct MLflow pyfunc predict signature</h3>
+<blockquote>
+  <em>"<code>predict(self, context, model_input, params=None)</code> must handle both <code>pandas.DataFrame</code> (served endpoint) and <code>dict</code> (mlflow.evaluate) inputs. Response must filter to <code>isinstance(m, (AIMessage, ToolMessage))</code> only — not <code>hasattr(m, 'content')</code>."</em>
+</blockquote>
+
+<h3>4.6 Require explicit pip_requirements list</h3>
+<blockquote>
+  <em>"In <code>mlflow.pyfunc.log_model()</code>, pass an explicit list of pinned package strings to <code>pip_requirements</code>. Never use <code>['-r requirements.txt']</code> — the relative path is not available when the model artifact is loaded from Unity Catalog."</em>
+</blockquote>
+
+<h3>4.7 Require correct .env.example for Databricks projects</h3>
+<blockquote>
+  <em>"For Databricks projects, <code>.env.example</code> must include <code>DATABRICKS_HOST</code>, <code>DATABRICKS_TOKEN</code>, <code>MLFLOW_TRACKING_URI=databricks</code>, and any Unity Catalog references. Do not include <code>ANTHROPIC_API_KEY</code> — model access goes through the Databricks endpoint, not direct Anthropic API."</em>
+</blockquote>
+
+<h3>4.8 Require Unity Catalog placeholder guidance</h3>
+<blockquote>
+  <em>"In <code>config.yaml</code>, any Unity Catalog 3-part name (<code>catalog.schema.model</code>) must use angle-bracket placeholders like <code>&lt;catalog&gt;.&lt;schema&gt;.model_name</code> with a comment explaining what to fill in. The literal strings 'catalog' and 'schema' are not valid Unity Catalog names."</em>
+</blockquote>
+
+<h3>4.9 Require tests/__init__.py</h3>
+<blockquote>
+  <em>"Always create <code>tests/__init__.py</code> (empty) so that pytest can resolve package-level imports consistently across environments."</em>
+</blockquote>
+
+<h3>4.10 Lock all dependency versions consistently across all files</h3>
+<blockquote>
+  <em>"<code>requirements.txt</code>, <code>conda.yaml</code>, <code>databricks.yml</code> libraries section, and <code>agent.py</code> pip_requirements list must all specify identical pinned versions. Include <code>pydantic>=2.0,&lt;3</code> and <code>pyarrow>=14</code> whenever <code>langchain-core>=0.3</code> or <code>mlflow>=2.12</code> are used."</em>
+</blockquote>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>5. Deployment Session Fixes (Post-Initial Review)</h2>
+<p>These fixes were discovered during live <code>databricks bundle deploy</code> and <code>bundle run</code> execution.</p>
+
+<table>
+  <thead>
+    <tr><th>File</th><th>What Was Wrong</th><th>Before</th><th>After</th><th>Why</th></tr>
+  </thead>
+  <tbody>
+
+    <tr>
+      <td><span class="badge-file">databricks.yml</span></td>
+      <td><span class="badge-critical">CRITICAL</span><br>
+      <code>workspace.host: ${DATABRICKS_HOST}</code> — DAB does not support variable interpolation for authentication fields. Caused parse error on bundle validate.</td>
+      <td><pre>workspace:
+  host: ${DATABRICKS_HOST}
+targets:
+  dev:
+    workspace:
+      host: ${DATABRICKS_HOST}</pre></td>
+      <td><pre>workspace:
+  root_path: ~/.bundle/...
+# host lines removed entirely —
+# DAB reads DATABRICKS_HOST env var automatically</pre></td>
+      <td>DAB authentication fields are read directly from environment variables. Using <code>${}</code> interpolation syntax causes <em>"invalid character '{' in host name"</em> parse error.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">databricks.yml</span></td>
+      <td><span class="badge-critical">CRITICAL</span><br>
+      <code>root_path: /Shared/.bundle/...</code> — when using <code>mode: development</code>, DAB requires the path to start with <code>~/</code> or contain the username to ensure uniqueness per developer.</td>
+      <td><pre>root_path: /Shared/.bundle/${bundle.name}/${bundle.target}</pre></td>
+      <td><pre>root_path: ~/.bundle/${bundle.name}/${bundle.target}</pre></td>
+      <td><code>~/</code> expands to <code>/Users/&lt;username&gt;</code> in Databricks. Without this, <code>databricks bundle validate</code> fails with <em>"root_path must start with '~/' or contain current username"</em>.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">databricks.yml</span></td>
+      <td><span class="badge-critical">CRITICAL</span><br>
+      Classic cluster job failed — workspace only supports serverless compute. <code>new_cluster</code> config with <code>spark_version</code> and <code>node_type_id</code> is not allowed.</td>
+      <td><pre>job_clusters:
+  - job_cluster_key: agent_cluster
+    new_cluster:
+      spark_version: 16.3.x-cpu-ml-scala2.12
+      node_type_id: Standard_DS3_v2
+      num_workers: 1</pre></td>
+      <td><pre>environments:
+  - environment_key: default
+    spec:
+      client: "2"
+      dependencies:
+        - databricks-langchain
+        - langchain-core>=0.3,<0.4
+        - pyyaml</pre></td>
+      <td>Serverless compute workspaces reject classic cluster definitions entirely. The <code>environments</code> block with <code>environment_key</code> is the correct DAB syntax for serverless jobs. Also removed pre-installed packages (mlflow, pyarrow, pydantic, databricks-sdk) from dependencies to avoid pip conflicts.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">databricks.yml</span></td>
+      <td><span class="badge-quality">QUALITY</span><br>
+      <code>spark_env_vars: DATABRICKS_HOST / DATABRICKS_TOKEN</code> — redundant on Databricks clusters. The cluster's built-in credential provider chain supplies these automatically.</td>
+      <td><pre>spark_env_vars:
+  DATABRICKS_HOST: ${DATABRICKS_HOST}
+  DATABRICKS_TOKEN: ${DATABRICKS_TOKEN}</pre></td>
+      <td><em>(removed entirely)</em></td>
+      <td>Databricks SDK uses a credential provider chain that auto-detects the workspace host and token from the cluster context. Explicit env vars are only needed for cross-workspace calls.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">agent.py</span></td>
+      <td><span class="badge-critical">CRITICAL</span><br>
+      <code>TypeError: cannot pickle '_thread.RLock' object</code> — <code>ChatDatabricks</code> holds threading locks. MLflow's cloudpickle serialization of <code>WealthManagementGuidanceOrchestratorAgent()</code> instance failed.</td>
+      <td><pre>mlflow.pyfunc.log_model(
+    artifact_path="agent",
+    python_model=WealthManagementGuidanceOrchestratorAgent(),
+    ...
+)</pre></td>
+      <td><pre>mlflow.models.set_model(
+    WealthManagementGuidanceOrchestratorAgent()
+)
+# ...
+mlflow.pyfunc.log_model(
+    name="agent",
+    python_model=__file__,  # source file path
+    code_paths=["tools", "config.yaml"],
+    ...
+)</pre></td>
+      <td>MLflow code-based logging saves the source file instead of pickling the object. At serving time MLflow re-imports <code>agent.py</code>, hits <code>set_model()</code>, and uses the class — no serialization needed.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">agent.py</span></td>
+      <td><span class="badge-critical">CRITICAL</span><br>
+      <code>NameError: name '__file__' is not defined</code> — Databricks serverless runs <code>spark_python_task</code> scripts via <code>exec(compile(src, filename, 'exec'))</code> inside an IPython kernel. Python does not inject <code>__file__</code> in exec context.</td>
+      <td><pre>python_model=__file__  # NameError at runtime</pre></td>
+      <td><pre>if "__file__" not in globals():
+    __file__ = sys._getframe(0).f_code.co_filename
+# co_filename = workspace path set by compile()</pre></td>
+      <td>When Databricks calls <code>compile(source, filename, 'exec')</code>, the workspace path is stored in the code object's <code>co_filename</code>. Reading it from the current stack frame recovers the actual file path reliably.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">agent.py</span></td>
+      <td><span class="badge-critical">CRITICAL</span><br>
+      <code>No such file or directory: 'config.yaml'</code> — model serving container CWD is not the model directory. <code>open("config.yaml")</code> with a relative path fails.</td>
+      <td><pre>with open("config.yaml") as f:
+    config = yaml.safe_load(f)</pre></td>
+      <td><pre>import os as _os
+_CONFIG_PATH = _os.path.join(
+    _os.path.dirname(_os.path.abspath(__file__)),
+    "config.yaml"
+)
+with open(_CONFIG_PATH) as f:
+    config = yaml.safe_load(f)
+# Also added "config.yaml" to code_paths
+# so it is bundled in the model artifact.</pre></td>
+      <td>Using <code>__file__</code>-relative path works both when running as a script (CWD = project root) and when served by MLflow (CWD is arbitrary). <code>config.yaml</code> must also be in <code>code_paths</code> so it is included in the MLflow model artifact.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">agent.py</span></td>
+      <td><span class="badge-critical">CRITICAL</span><br>
+      Unity Catalog rejected model registration — <em>"Model did not contain any signature metadata"</em>. MLflow tried to auto-infer the signature by calling the LLM endpoint, but <code>databricks-claude-3-5-sonnet</code> endpoint does not exist in the workspace.</td>
+      <td><pre>mlflow.pyfunc.log_model(
+    input_example={...},  # auto-infer failed
+    ...
+)</pre></td>
+      <td><pre>from mlflow.models import ModelSignature
+from mlflow.types.schema import (
+    Array, ColSpec, DataType, Object, Property, Schema
+)
+chat_msg = Array(Object([
+    Property("role", DataType.string),
+    Property("content", DataType.string),
+]))
+signature = ModelSignature(
+    inputs=Schema([ColSpec("messages", chat_msg)]),
+    outputs=Schema([ColSpec("messages", chat_msg)]),
+)
+mlflow.pyfunc.log_model(signature=signature, ...)</pre></td>
+      <td>Unity Catalog requires both input and output schemas. Defining the signature explicitly avoids calling the LLM endpoint during model registration, making registration independent of endpoint availability.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">config.yaml</span></td>
+      <td><span class="badge-critical">CRITICAL</span><br>
+      <code>registered_model_name: "catalog.schema...."</code> and later <code>"main.default...."</code> — literal placeholder and wrong catalog name. Workspace uses catalog named <code>workspace</code>, not <code>main</code>.</td>
+      <td><pre>registered_model_name: "catalog.schema.wealth_management_guidance_orchestrator"
+# then corrected to:
+registered_model_name: "main.default.wealth_management_guidance_orchestrator"</pre></td>
+      <td><pre>registered_model_name: "workspace.default.wealth_management_guidance_orchestrator"</pre></td>
+      <td>Unity Catalog catalog name must match an existing catalog in the workspace. Verified by running <code>SHOW CATALOGS</code> in Databricks SQL. The workspace uses <code>workspace</code> as its catalog, not <code>main</code>.</td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">conda.yaml</span><br>
+          <span class="badge-file">.github/workflows/ci.yml</span><br>
+          <span class="badge-file">databricks.yml</span></td>
+      <td><span class="badge-quality">QUALITY</span><br>Python version updated from 3.11 to 3.12. DBR version updated to match.</td>
+      <td><pre># conda.yaml
+python=3.11
+# databricks.yml
+spark_version: 15.4.x-cpu-ml-scala2.12
+# ci.yml
+python-version: "3.11"</pre></td>
+      <td><pre># conda.yaml
+python=3.12
+# databricks.yml
+spark_version: 16.3.x-cpu-ml-scala2.12
+# ci.yml
+python-version: "3.12"</pre></td>
+      <td>Python version must be consistent across all three files. DBR 15.4 runs Python 3.11; DBR 16.x runs Python 3.12. Mismatch causes environment inconsistency between local dev and cluster.</td>
+    </tr>
+
+  </tbody>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>6. Additional Replit Prompt Instructions (Deployment-Specific)</h2>
+<p>These cover gaps discovered only during actual <code>databricks bundle deploy</code> and endpoint creation — not visible from static code review.</p>
+
+<h3>6.1 Never use variable interpolation in DAB authentication fields</h3>
+<blockquote>
+  <em>"In <code>databricks.yml</code>, <strong>never</strong> use <code>${DATABRICKS_HOST}</code> in <code>workspace.host</code> or any authentication field. DAB reads <code>DATABRICKS_HOST</code> and <code>DATABRICKS_TOKEN</code> from environment variables automatically. Variable interpolation is only supported in non-auth fields such as <code>spark_env_vars</code>, <code>root_path</code>, and job names."</em>
+</blockquote>
+
+<h3>6.2 Always use <code>~/</code> prefix for root_path in development targets</h3>
+<blockquote>
+  <em>"Set <code>root_path: ~/.bundle/&lt;bundle-name&gt;/${bundle.target}</code>. DAB enforces that development-mode deployments are user-scoped. Paths under <code>/Shared/</code> are rejected unless they contain the current username."</em>
+</blockquote>
+
+<h3>6.3 Default to serverless compute — detect workspace type before generating cluster config</h3>
+<blockquote>
+  <em>"Before generating a <code>job_clusters</code> block with <code>new_cluster</code>, check whether the target workspace supports classic clusters. Many newer Databricks workspaces are serverless-only. For serverless, generate an <code>environments</code> block with <code>environment_key</code> and <code>spec.dependencies</code> instead of a <code>job_clusters</code> block. Do not include pre-installed packages (mlflow, databricks-sdk, pyarrow, pydantic) in serverless dependencies."</em>
+</blockquote>
+
+<h3>6.4 Use code-based MLflow logging for any model that uses LangChain or network clients</h3>
+<blockquote>
+  <em>"Never pass a Python object instance to <code>mlflow.pyfunc.log_model(python_model=instance)</code> if the model class or its module-level globals reference <code>ChatDatabricks</code>, <code>OpenAI</code>, or any network client. These hold threading locks that cloudpickle cannot serialize. Always use code-based logging: <code>python_model=__file__</code> with <code>mlflow.models.set_model()</code> registered at module level."</em>
+</blockquote>
+
+<h3>6.5 Fix __file__ for Databricks serverless exec context</h3>
+<blockquote>
+  <em>"Databricks serverless <code>spark_python_task</code> runs scripts via <code>exec(compile(src, filename, 'exec'))</code> inside an IPython kernel. <code>__file__</code> is not set in this context. Add this guard at the top of any script that uses <code>__file__</code>:<br>
+  <code>if '__file__' not in globals(): __file__ = sys._getframe(0).f_code.co_filename</code>"</em>
+</blockquote>
+
+<h3>6.6 Always use __file__-relative paths for config files</h3>
+<blockquote>
+  <em>"Never use <code>open('config.yaml')</code> with a bare relative path in MLflow model code. The serving container's working directory is unpredictable. Always use <code>os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.yaml')</code>. Also include the config file in <code>code_paths</code> when calling <code>log_model</code> so it is bundled with the model artifact."</em>
+</blockquote>
+
+<h3>6.7 Always define an explicit MLflow model signature for Unity Catalog</h3>
+<blockquote>
+  <em>"Unity Catalog rejects model registration without both input and output signatures. Never rely on signature auto-inference — it calls the model at registration time and will fail if the LLM endpoint does not exist. Always define the signature explicitly using <code>ModelSignature</code> with <code>Schema</code> and <code>ColSpec</code>. For chat agents use <code>Array(Object([Property('role', DataType.string), Property('content', DataType.string)]))</code> for both inputs and outputs."</em>
+</blockquote>
+
+<h3>6.8 Verify Unity Catalog catalog and schema names before hardcoding</h3>
+<blockquote>
+  <em>"Never use placeholder names like <code>main</code>, <code>catalog</code>, or <code>default</code> without verifying they exist. Instruct the user to run <code>SHOW CATALOGS</code> and <code>SHOW SCHEMAS IN &lt;catalog&gt;</code> in Databricks SQL before generating <code>registered_model_name</code>. Different workspaces have different default catalog names — <code>main</code> is common but not universal."</em>
+</blockquote>
+
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>7. Production-Ready Refactor — Single Source of Truth for Dependencies</h2>
+<p class="meta">Session 3 &nbsp;|&nbsp; Date: 2026-04-08</p>
+
+<div class="summary-box">
+  <p>Dependencies were duplicated across 4 files (<code>requirements.txt</code>, <code>conda.yaml</code>, <code>databricks.yml</code>, <code>agent.py</code>).
+     Any version bump required 4 edits and it was easy for them to drift out of sync.</p>
+  <p><strong>Fix:</strong> introduce <code>pyproject.toml</code> as the single authoritative source.
+     All other files now delegate to it. A CI/CD pipeline was also added (not yet active for deployment).</p>
+</div>
+
+<table>
+  <thead>
+    <tr><th>File</th><th>What Changed</th><th>Before</th><th>After</th></tr>
+  </thead>
+  <tbody>
+
+    <tr>
+      <td><span class="badge-file">pyproject.toml</span> <em>(new)</em></td>
+      <td>Single source of truth for all runtime and dev dependencies, build system, and pytest config.</td>
+      <td><em>did not exist</em></td>
+      <td>
+        <pre>[project]
+dependencies = [
+  "mlflow==2.18.0",
+  "databricks-langchain==0.3.0",
+  ...
+]
+[project.optional-dependencies]
+dev = ["pytest>=7.4.0,&lt;9.0.0"]
+[tool.hatch.build.targets.wheel]
+packages = ["tools"]</pre>
+        Hatch builds a wheel that includes <code>tools/</code> as a Python package.
+        All other files reference this file instead of redeclaring deps.
+      </td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">requirements.txt</span></td>
+      <td>Was a full list of pinned packages (duplicated from everything else). Now a one-liner that delegates.</td>
+      <td>
+        <pre>mlflow==2.18.0
+databricks-sdk==0.36.0
+databricks-langchain==0.3.0
+langchain-core==0.3.28
+pyyaml==6.0.2
+pydantic>=2.0.0,&lt;3.0.0
+pyarrow>=14.0.0
+pytest>=7.4.0,&lt;9.0.0</pre>
+      </td>
+      <td>
+        <pre># Delegates to pyproject.toml
+-e .[dev]</pre>
+        <code>pip install -r requirements.txt</code> now installs runtime + dev deps
+        from <code>pyproject.toml</code>. One file to update when versions change.
+      </td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">conda.yaml</span></td>
+      <td>Was a full duplicate of <code>requirements.txt</code>. Now installs from the project source.</td>
+      <td>
+        <pre>pip:
+  - mlflow==2.18.0
+  - databricks-sdk==0.36.0
+  - ...</pre>
+      </td>
+      <td>
+        <pre>pip:
+  - -e .</pre>
+        MLflow / MLproject environments now always reflect the current <code>pyproject.toml</code>.
+      </td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">databricks.yml</span></td>
+      <td>
+        Listed individual packages in <code>spec.dependencies</code>. Now references the built wheel.
+        The wheel's <code>[project].dependencies</code> metadata causes pip to install all transitive deps automatically.
+      </td>
+      <td>
+        <pre>dependencies:
+  - databricks-langchain
+  - "langchain-core>=0.3,&lt;0.4"
+  - pyyaml</pre>
+      </td>
+      <td>
+        <pre>variables:
+  wheel_version:
+    default: "0.1.0"
+...
+dependencies:
+  - ./dist/wealth_management_guidance_orchestrator-${var.wheel_version}-py3-none-any.whl</pre>
+        DAB uploads the wheel to the workspace. Bumping a package version only requires editing
+        <code>pyproject.toml</code>; <code>databricks.yml</code> only changes on a version release.
+      </td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">agent.py</span></td>
+      <td>
+        Hard-coded <code>pip_requirements</code> list in <code>log_model()</code>. Now read dynamically
+        from <code>pyproject.toml</code> using the <code>tomllib</code> standard library (Python 3.11+).
+      </td>
+      <td>
+        <pre>pip_requirements=[
+    "databricks-langchain",
+    "langchain-core>=0.3,&lt;0.4",
+    "pyyaml",
+],</pre>
+      </td>
+      <td>
+        <pre>import tomllib as _tomllib
+_PYPROJECT_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "pyproject.toml"
+)
+with open(_PYPROJECT_PATH, "rb") as _f:
+    _pip_requirements = _tomllib.load(_f)["project"]["dependencies"]
+...
+pip_requirements=_pip_requirements,</pre>
+        Also added <code>"pyproject.toml"</code> to <code>code_paths</code> so it is bundled with
+        the MLflow artifact and available inside the serving container.
+      </td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">Makefile</span></td>
+      <td>Added <code>build</code> and <code>deploy-dev</code> targets; updated <code>install</code> to use pyproject.toml.</td>
+      <td>
+        <pre>install:
+	pip install -r requirements.txt</pre>
+      </td>
+      <td>
+        <pre>install:
+	pip install -e .[dev]
+
+build:
+	pip install --quiet build
+	python -m build
+
+deploy-dev: build
+	databricks bundle deploy --target dev
+	databricks bundle run deploy_agent --target dev</pre>
+        <code>make deploy-dev</code> is a single command that builds the wheel and deploys.
+      </td>
+    </tr>
+
+    <tr>
+      <td><span class="badge-file">.github/workflows/ci.yml</span></td>
+      <td>
+        Added a full 4-stage CI/CD pipeline. Currently only the <strong>test</strong> and <strong>build</strong>
+        stages run automatically. Deploy stages require explicit <code>workflow_dispatch</code> trigger
+        and GitHub Environment approvals.
+      </td>
+      <td>
+        <pre>jobs:
+  test:
+    steps:
+      - pip install -r requirements.txt
+      - pytest tests/ -v</pre>
+      </td>
+      <td>
+        <pre>jobs:
+  test:    # runs on every push / PR
+  build:   # builds wheel, uploads artifact
+  deploy-staging:  # runs on push to main
+                   # (or manual dispatch)
+  deploy-prod:     # manual dispatch only,
+                   # requires Environment approval</pre>
+        Secrets needed: <code>DATABRICKS_HOST</code>, <code>DATABRICKS_TOKEN</code>
+        (staging) and <code>DATABRICKS_HOST_PROD</code>, <code>DATABRICKS_TOKEN_PROD</code> (prod).
+      </td>
+    </tr>
+
+  </tbody>
+</table>
+
+<h3>7.1 How to deploy now (manual workflow unchanged)</h3>
+<pre>
+# 1. Edit pyproject.toml when you need to change a dependency version — only one file to change.
+# 2. Build the wheel:
+python -m build               # or: make build
+
+# 3. Deploy to dev (builds + deploys in one step):
+make deploy-dev
+
+# 4. OR deploy manually step-by-step:
+databricks bundle deploy --target dev
+databricks bundle run deploy_agent --target dev
+</pre>
+
+<h3>7.2 How CI/CD will work once GitHub is connected</h3>
+<ul>
+  <li>Every push / PR → <strong>test</strong> + <strong>build</strong> jobs run automatically.</li>
+  <li>Push to <code>main</code> → <strong>deploy-staging</strong> runs automatically (after test+build pass). Configure a GitHub Environment approval if you want a manual gate.</li>
+  <li>Production deploy → trigger manually via <strong>Actions → Run workflow</strong>, set <code>deploy_target=prod</code>. Requires "production" Environment approval in GitHub.</li>
+  <li>Set these GitHub repository secrets: <code>DATABRICKS_HOST</code>, <code>DATABRICKS_TOKEN</code>, <code>DATABRICKS_HOST_PROD</code>, <code>DATABRICKS_TOKEN_PROD</code>.</li>
+</ul>
+
+<h3>7.3 Additional Replit prompt instructions for future scaffolds</h3>
+<blockquote>
+  <em>"Always use <code>pyproject.toml</code> (PEP 517/518) as the single source of truth for all runtime and dev dependencies. Never duplicate package lists across <code>requirements.txt</code>, <code>conda.yaml</code>, and inline <code>pip_requirements</code> lists in MLflow <code>log_model</code> calls — they will drift. Set up <code>requirements.txt</code> as a one-liner <code>-e .[dev]</code> and <code>conda.yaml</code> as <code>- -e .</code>. In Databricks Asset Bundle, reference the built wheel in <code>spec.dependencies</code> so pip resolves transitive deps from the wheel metadata automatically."</em>
+</blockquote>
+<blockquote>
+  <em>"Always read <code>pip_requirements</code> for MLflow <code>log_model</code> dynamically from <code>pyproject.toml</code> using <code>tomllib</code> (Python 3.11+ stdlib). Never hard-code the list inside the Python source file — it will become stale. Include <code>pyproject.toml</code> in <code>code_paths</code> so it is bundled with the MLflow artifact."</em>
+</blockquote>
+<blockquote>
+  <em>"Scaffold a GitHub Actions CI/CD workflow with distinct stages: test, build (wheel), deploy-staging (automatic on push to main), deploy-prod (manual approval only). Use GitHub Environments with required reviewers to gate production deploys. Store Databricks credentials as GitHub secrets — never inline them in workflow files."</em>
+</blockquote>
+
+</body>
+</html>
