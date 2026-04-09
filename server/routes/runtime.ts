@@ -4528,9 +4528,8 @@ def list_policies():
         // conda.yaml delegates pip deps to pyproject.toml via editable install.
         files["conda.yaml"] = `name: ${agentSlugDbx}_env\nchannels:\n  - defaults\ndependencies:\n  - python=3.12\n  - pip:\n    # All runtime deps are declared in pyproject.toml — no duplication here.\n    - -e .\n`;
 
-        // requirements.txt delegates entirely to pyproject.toml.
-        // "pytest" appears in the comment so the downstream pytest-append guard skips this file.
-        files["requirements.txt"] = "# Delegates to pyproject.toml (includes pytest as a dev dep).\n# Install with: pip install -e .[dev]\n-e .[dev]\n";
+        // requirements.txt delegates entirely to pyproject.toml — single line as spec requires.
+        files["requirements.txt"] = "-e .[dev]\n";
         // Empty __init__.py ensures pytest resolves package-level imports correctly
         // across all environments (avoids rootdir heuristic failures).
         files["tests/__init__.py"] = "";
@@ -4604,14 +4603,12 @@ jobs:
         with:
           name: wheel
           path: dist/
-      - name: Install Databricks CLI
-        run: pip install --quiet databricks-sdk
+      - uses: databricks/setup-databricks@v3
       - name: Deploy to staging
         env:
           DATABRICKS_HOST: \${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: \${{ secrets.DATABRICKS_TOKEN }}
         run: |
-          pip install --quiet databricks-cli
           databricks bundle deploy --target staging
           databricks bundle run deploy_agent --target staging
 
@@ -4634,8 +4631,7 @@ jobs:
         with:
           name: wheel
           path: dist/
-      - name: Install Databricks CLI
-        run: pip install --quiet databricks-cli
+      - uses: databricks/setup-databricks@v3
       - name: Deploy to production
         env:
           DATABRICKS_HOST: \${{ secrets.DATABRICKS_HOST_PROD }}
@@ -4956,7 +4952,9 @@ clean:
         }
       }
 
-      if (format === "python" && files["requirements.txt"]) {
+      // Skip pytest-append for Databricks: pytest is already in pyproject.toml [project.optional-dependencies].dev
+      // and requirements.txt delegates to pyproject.toml via "-e .[dev]".
+      if (format === "python" && framework !== "databricks" && files["requirements.txt"]) {
         const reqContent = files["requirements.txt"];
         if (!reqContent.includes("pytest")) {
           files["requirements.txt"] = reqContent.trimEnd() + `\n${pin ? "pytest==8.3.4" : "pytest>=7.4.0,<9.0.0"}\n`;
