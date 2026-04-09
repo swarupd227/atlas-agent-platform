@@ -13,7 +13,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Brain, Wrench, ShieldCheck, Globe, Plus, X, Link2, MousePointer,
   FileText, Database, Type, Link as LinkIcon, Network, AlertTriangle, Eye,
-  Trash2, Save,
+  Save,
 } from "lucide-react";
 
 interface McpServerTool {
@@ -1082,7 +1082,8 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
   useEffect(() => {
     if (schema) {
       setSchemaId(schema.id);
-      const fieldsObj = (schema.fields || {}) as Record<string, any>;
+      type StoredFieldDef = { type?: string; writable_by?: string | string[]; writableBy?: string; reducer?: string };
+      const fieldsObj = (schema.fields || {}) as Record<string, StoredFieldDef>;
       const reducersObj = (schema.reducers || {}) as Record<string, string>;
       const parsed: SchemaField[] = Object.entries(fieldsObj).map(([fieldName, def]) => {
         const writableByRaw = def?.writable_by ?? def?.writableBy;
@@ -1130,7 +1131,7 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
         return res.json();
       }
     },
-    onSuccess: (data: any) => {
+    onSuccess: (data: DagStateSchema) => {
       if (!schemaId && data?.id) setSchemaId(data.id);
       setIsDirty(false);
       queryClient.invalidateQueries({ queryKey: ["/api/dag-state-schemas/by-team", teamAgentId] });
@@ -1227,7 +1228,7 @@ function DagStateSchemaEditor({ teamAgentId }: { teamAgentId: string }) {
             >
               Type<SortIcon col="type" />
             </button>
-            <div className="px-1 py-1.5 text-[10px] font-medium text-muted-foreground" title="Writable By">By</div>
+            <div className="px-1 py-1.5 text-[10px] font-medium text-muted-foreground" title="Writable By (comma-separated agent IDs, or * for all)">Writable By</div>
             <button
               className="px-1 py-1.5 text-[10px] font-medium text-muted-foreground text-left flex items-center hover:text-foreground transition-colors"
               onClick={() => handleSort("reducer")}
