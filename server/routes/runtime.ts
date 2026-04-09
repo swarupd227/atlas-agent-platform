@@ -3215,6 +3215,36 @@ ${nodeSetup}
 `;
   }
 
+  // Infer integration type and implementation guidance from tool name + description.
+  function inferToolImplementationHints(name: string, description: string): string {
+    const lower = (name + " " + description).toLowerCase();
+    if (/salesforce|hubspot|crm|contact|lead|opportunity|deal|account/.test(lower))
+      return "CRM REST API. Env vars: SALESFORCE_ACCESS_TOKEN + SALESFORCE_INSTANCE_URL or HUBSPOT_API_KEY. Use fetch/requests to POST/GET /services/data/v60.0/ or /crm/v3/ endpoints. Handle 429 with exponential backoff.";
+    if (/email|smtp|send.?mail|mailgun|sendgrid|postmark/.test(lower))
+      return "Email delivery. Env vars: SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS or SENDGRID_API_KEY. Use nodemailer (TS) or smtplib/sendgrid-python (Py). POST to /v3/mail/send or use SMTP directly.";
+    if (/slack|teams|discord|notify|message|chat|webhook/.test(lower))
+      return "Messaging platform. Env vars: SLACK_BOT_TOKEN or TEAMS_WEBHOOK_URL. POST to https://slack.com/api/chat.postMessage with Bearer token, or HTTP POST to Teams incoming webhook URL.";
+    if (/database|postgres|mysql|sqlite|mongo|sql|query|db_|_db/.test(lower))
+      return "SQL/NoSQL database. Env var: DATABASE_URL. Use pg/psycopg2 for Postgres, mysql2/mysqlclient for MySQL. Always parameterize queries. Return rows as list of dicts.";
+    if (/search|elasticsearch|opensearch|vector|semantic|embedding/.test(lower))
+      return "Search engine. Env vars: ELASTICSEARCH_URL, ELASTICSEARCH_API_KEY. POST to /{index}/_search with JSON query DSL. For vector search: generate embedding first, then kNN query.";
+    if (/s3|storage|upload|download|file|blob|bucket|gcs|azure.?blob/.test(lower))
+      return "Cloud file storage. Env vars: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_BUCKET. Use @aws-sdk/client-s3 (TS) or boto3 (Py). PutObject / GetObject / presigned URLs.";
+    if (/stripe|payment|charge|invoice|billing|subscription/.test(lower))
+      return "Stripe payments. Env var: STRIPE_SECRET_KEY. Use stripe npm/pip library. Create PaymentIntents or Charges. Always handle card_error and rate_limit errors.";
+    if (/github|gitlab|bitbucket|jira|linear|issue|pr|pull.?request|commit/.test(lower))
+      return "Developer tools REST API. Env vars: GITHUB_TOKEN or JIRA_API_TOKEN + JIRA_BASE_URL. Use Authorization: Bearer or Basic. Paginate with Link header or startAt param.";
+    if (/openai|anthropic|llm|gpt|claude|generate|summarize|classify|embed/.test(lower))
+      return "Nested LLM API call. Env var: OPENAI_API_KEY or ANTHROPIC_API_KEY. Use openai/anthropic SDK. Set max_tokens, handle RateLimitError with retry. Return the text content of the response.";
+    if (/calendar|google|drive|sheets|docs|gmail/.test(lower))
+      return "Google Workspace API. Env vars: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN. Use googleapis npm (TS) or google-api-python-client (Py). Exchange refresh token for access token first.";
+    if (/calculate|compute|math|formula|convert|parse|transform/.test(lower))
+      return "Local computation — no external API needed. Implement the math/transform directly. Validate inputs (type, range) and return computed result as a dict with the output value.";
+    if (/http|fetch|api|rest|get|post|request|call|invoke/.test(lower))
+      return "Generic HTTP API. Read endpoint URL and API key from env vars (e.g. API_BASE_URL, API_KEY). Use fetch/axios (TS) or httpx/requests (Py). Set Authorization header. Handle 4xx/5xx with descriptive errors.";
+    return "Implement the business logic. Read credentials from env vars. Return { status: 'ok', result: ... } on success and { status: 'error', error: '...' } on failure.";
+  }
+
   // Uses Claude (Anthropic) via the installed AI Integrations (javascript_anthropic_ai_integrations).
   // Falls back to templates if Claude generation fails.
   async function generateAgentCodeWithAI(ctx: {
@@ -3222,6 +3252,9 @@ ${nodeSetup}
     agentDescription: string;
     systemPrompt: string;
     tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }>;
+    policyStopConditions?: string[];
+    policyForbiddenOutputs?: string[];
+    policyBlockedTools?: string[];
     format: "typescript" | "python";
     llmProvider: "openai" | "anthropic";
     maxIterations: number;
@@ -3245,23 +3278,31 @@ ${nodeSetup}
         ? (ctx.format === "typescript" ? "openai (npm)" : "openai (pip)")
         : (ctx.format === "typescript" ? "@anthropic-ai/sdk (npm)" : "anthropic (pip)");
 
-      const systemMsg = `You are an expert AI agent developer. Generate production-quality ${lang} code for an autonomous AI agent package.
+      const systemMsg = `You are a senior AI agent engineer. Your task is to generate production-ready, fully runnable ${lang} code for an autonomous AI agent.
+
+CRITICAL REQUIREMENTS — these are non-negotiable:
+1. Generate REAL implementations, not placeholder stubs. Every tool adapter must make actual API calls, DB queries, or computations — not return { _stub: true }.
+2. Read ALL credentials from environment variables. Never hard-code secrets. Use descriptive env var names matching the integration (e.g. SALESFORCE_ACCESS_TOKEN, DATABASE_URL).
+3. Include proper error handling in every function: catch HTTP errors by status code, surface meaningful messages, never swallow exceptions silently.
+4. The entrypoint MUST be fully runnable end-to-end: imports, LLM call, tool dispatch loop, completion check, policy enforcement.
+5. Policy enforcement is mandatory: the generated orchestrator MUST call policy hooks (on_before_tool_call / onBeforeToolCall) before every tool dispatch and check response content against stop conditions.
+
 You MUST respond with valid JSON only — no markdown, no explanations, no code fences.
-The JSON must have these keys:
+The JSON must have exactly these keys:
 {
   "entrypoint": "<full entrypoint file content as a string>",
   "toolAdapters": {
-    "<toolName>": "<full adapter file content as a string>",
+    "<toolName>": "<full adapter file content as a string — real implementation with actual API calls>",
     ...
   },
-  "agentYaml": "<optional: enriched agent.yaml content reflecting the agent's actual config>",
-  "dockerfile": "<optional: Dockerfile content tailored to the agent's dependencies>",
+  "agentYaml": "<optional: enriched agent.yaml content>",
+  "dockerfile": "<optional: Dockerfile tailored to the agent's actual dependencies>",
   "frameworkFiles": {
     "<filePath>": "<file content as string>",
     ...
   }
 }
-The "frameworkFiles" field should contain any framework-specific config/manifest files (e.g. for CrewAI: config/agents.yaml and config/tasks.yaml derived from the agent's blueprint, roles, and tool mappings).`;
+The "frameworkFiles" field should contain framework-specific config/manifest files (e.g. for CrewAI: config/agents.yaml and config/tasks.yaml from the agent's blueprint and tool mappings).`;
 
       const blueprintStr = (ctx.blueprintJson && Object.keys(ctx.blueprintJson).length > 0)
         ? JSON.stringify(ctx.blueprintJson, null, 2)
@@ -3354,7 +3395,15 @@ The "frameworkFiles" field should contain any framework-specific config/manifest
           }).join("\n")}\n\nIMPORTANT: This agent uses MCP servers. Use the @modelcontextprotocol/sdk Client to connect to each server and call its tools. Generate the MCP client connection setup and call the specific tools listed above.`
         : "";
 
-      const userMsg = `Generate a complete, runnable autonomous agent in ${lang} using the ${provider} API (${clientLib}).
+      const policiesCtx = ((ctx.policyStopConditions?.length || 0) > 0 || (ctx.policyForbiddenOutputs?.length || 0) > 0 || (ctx.policyBlockedTools?.length || 0) > 0)
+        ? `\nAgent Policies (MUST be enforced in the orchestrator and tool calls):\n${(ctx.policyStopConditions?.length || 0) > 0 ? `- Stop conditions — halt and return immediately if the LLM response contains any of these strings: ${JSON.stringify(ctx.policyStopConditions)}\n` : ""}${(ctx.policyForbiddenOutputs?.length || 0) > 0 ? `- Forbidden output patterns (regex) — redact or block the response if it matches: ${JSON.stringify(ctx.policyForbiddenOutputs)}\n` : ""}${(ctx.policyBlockedTools?.length || 0) > 0 ? `- Blocked tools — NEVER call these tools, return an error immediately: ${JSON.stringify(ctx.policyBlockedTools)}\n` : ""}`
+        : "";
+
+      const toolImplementationHintsCtx = ctx.tools.length > 0
+        ? `\nTool Implementation Hints (use these to write REAL implementations, not stubs):\n${ctx.tools.map(t => `- ${t.name}: ${inferToolImplementationHints(t.name, t.description || "")}`).join("\n")}`
+        : "";
+
+      const userMsg = `Generate a complete, production-ready autonomous agent in ${lang} using the ${provider} API (${clientLib}).
 
 Agent context:
 - Name: ${ctx.agentName}
@@ -3362,10 +3411,11 @@ Agent context:
 - System prompt: ${ctx.systemPrompt}
 - Max iterations: ${ctx.maxIterations}
 - Completion signal phrase: "${ctx.completionPromise}"
-- Framework: ${ctx.framework}${blueprintCtx}${skillsCtx}${mcpCtx}
+- Framework: ${ctx.framework}${blueprintCtx}${skillsCtx}${mcpCtx}${policiesCtx}
 
 Tools (${ctx.tools.length}):
 ${toolsJson}
+${toolImplementationHintsCtx}
 
 ${fwInstr}
 
@@ -3375,20 +3425,24 @@ ${ctx.format === "python" ? `Requirements for each Python TOOL ADAPTER file (MAN
    string → str = "", number/integer → int = 0, boolean → bool = False, array → list = None (field(default_factory=list)),
    object/dict → Optional[dict] = None.
 2. MUST define a module-level dict named INPUT_SCHEMA that is the exact JSON Schema object for this tool's parameters.
-3. MUST define a module-level function: def _execute(args: <ClassName>) -> dict — this is the internal implementation entry point. It MUST always return a dict (never raise). For stub/scaffold adapters return: {"status": "ok", "_stub": True, "tool": "<tool_name>", "message": "TODO: Replace with real implementation for <tool_name>."}. Tests mock/patch this function.
+3. MUST define a module-level function: def _execute(args: <ClassName>) -> dict — this is the internal implementation entry point.
+   CRITICAL: _execute MUST contain a REAL implementation using the Tool Implementation Hints above — actual HTTP calls, DB queries, or logic.
+   It MUST always return a dict (never raise). Return {"status": "error", "error": str(e)} on exceptions.
 4. MUST define a public function def <tool_name>(args: <ClassName>) -> dict that delegates to _execute(args) and returns its result.
 5. Include the tool description as a docstring on the public function.
 6. Log the call: print(f"[<tool_name>] called with: {args}")` : `Requirements for each TypeScript TOOL ADAPTER file:
 1. Each adapter must have a typed function signature derived from the tool's parameter schema
 2. Export the function as the default export and as a named export
 3. Export a const inputSchema object matching the tool's parameter JSON Schema
-4. Export an async _execute function that contains the actual implementation logic; the public function delegates to it
+4. Export an async _execute function that contains the REAL implementation — use the Tool Implementation Hints above.
+   Make actual HTTP calls, DB queries, or API operations. Read all secrets from process.env.
+   Return { status: "ok", result: ... } on success and { status: "error", error: string } on failure. Never throw.
 5. Include the tool's description as a JSDoc comment
-6. Include clear TODO comments showing exactly what API/system to connect to based on the tool's purpose
-7. Log the call with the tool name and args (console.log)
-8. Throw NotImplementedError with a clear message so developers know to implement it`}
+6. Log the call with the tool name and args (console.log)
+7. The public function delegates to _execute and re-exports its return value`}
 
-IMPORTANT: Keep all code concise. Do NOT include a README or lengthy documentation strings in your JSON output.
+CRITICAL: Every tool adapter must contain a REAL implementation based on its Tool Implementation Hint. Do NOT generate stubs, TODO comments, or NotImplementedError — write the actual code.
+Keep all code concise. Do NOT include a README or lengthy documentation strings in your JSON output.
 Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and properly closed.`;
 
       const response = await anthropicClient.messages.create({
@@ -3712,6 +3766,10 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
       let aiResult: Awaited<ReturnType<typeof generateAgentCodeWithAI>> = null;
 
       try {
+        const blockedToolsFromPolicies = linkedPolicies.flatMap(p => {
+          const rules = (p.policyJson || {}) as Record<string, unknown>;
+          return Array.isArray(rules.blockedTools) ? rules.blockedTools as string[] : [];
+        });
         aiResult = await generateAgentCodeWithAI({
           agentName: agent.name,
           agentDescription: agent.description || "",
@@ -3725,6 +3783,9 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
           blueprintJson,
           skills: matchedSkills.map(s => ({ name: s.name, domain: s.domain, description: s.description })),
           mcpServers: mcpServerDetails.map(s => ({ name: s.name, url: s.url, transportType: s.transportType, tools: s.tools })),
+          policyStopConditions: [...policyStopConditions, ...yamlExtras.stopConditions],
+          policyForbiddenOutputs: [...policyForbiddenOutputs, ...yamlExtras.forbiddenOutputs],
+          policyBlockedTools: blockedToolsFromPolicies,
         });
       } catch { /* swallow — templates handle fallback */ }
 
@@ -3861,9 +3922,14 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
         const graphNodes = Array.isArray(blueprintJson.nodes) ? blueprintJson.nodes as Array<{ type?: string }> : [];
         const graphNodeTypes = new Set(graphNodes.map(n => n.type).filter(Boolean));
         const hasMultiNodeGraph = graphNodes.length > 1 && (graphNodeTypes.has("exit") || graphNodeTypes.has("decision") || graphNodeTypes.has("tool") || graphNodeTypes.has("output") || graphNodes.length >= 3);
+        const hasAnyPolicyEnforcement = linkedPolicies.length > 0
+          || policyStopConditions.length > 0
+          || policyForbiddenOutputs.length > 0
+          || yamlExtras.stopConditions.length > 0
+          || yamlExtras.forbiddenOutputs.length > 0;
         const entrypointOpts = {
           hasKnowledge: kbDetails.length > 0,
-          hasPolicies: linkedPolicies.length > 0,
+          hasPolicies: hasAnyPolicyEnforcement,
           hasGraph: hasMultiNodeGraph,
         };
 
@@ -3910,8 +3976,11 @@ export function redactPii(text: string): { redacted: string; found: string[] } {
   return { redacted, found };
 }
 ` : "";
-            const stopConditionsJson = JSON.stringify(policyStopConditions);
-            const forbiddenOutputsJson = JSON.stringify(policyForbiddenOutputs);
+            const allStopConditions = [...new Set([...policyStopConditions, ...yamlExtras.stopConditions])];
+            const allForbiddenOutputs = [...new Set([...policyForbiddenOutputs, ...yamlExtras.forbiddenOutputs])];
+            const stopConditionsJson = JSON.stringify(allStopConditions);
+            const forbiddenOutputsJson = JSON.stringify(allForbiddenOutputs);
+            const usePolicyDataDriven = linkedPolicies.length > 0 || allStopConditions.length > 0 || allForbiddenOutputs.length > 0;
 
             const tsPolicyDataDriven = `// ATLAS-generated: Policy evaluation hooks (data-driven)
 import * as fs from "fs";
@@ -4037,10 +4106,10 @@ export function listPolicies(): Array<{ name: string; domain: string | null }> {
   return policies.map(p => ({ name: p.name, domain: p.domain }));
 }
 `;
-            if (linkedPolicies.length > 0) {
+            if (usePolicyDataDriven) {
               files["src/runtime/policy.ts"] = tsPolicyDataDriven;
             } else {
-              files["src/runtime/policy.ts"] = `// ATLAS-generated: Policy evaluation hooks (stub)\n// Replace with your policy enforcement logic\n\nexport interface PolicyContext {\n  agentName: string;\n  action: string;\n  toolName?: string;\n  input?: Record<string, any>;\n  responseContent?: string;\n}\n\nexport interface PolicyResult {\n  allowed: boolean;\n  reason?: string;\n  event?: string;\n  content?: string;\n}\n\nexport function checkStopConditions(_content: string): PolicyResult {\n  return { allowed: true };\n}\n\nexport function checkForbiddenOutputs(_content: string): PolicyResult {\n  return { allowed: true };\n}\n\nexport async function evaluatePolicy(ctx: PolicyContext): Promise<PolicyResult> {\n  return { allowed: true };\n}\n\nexport async function onBeforeToolCall(toolName: string, args: Record<string, any>): Promise<PolicyResult> {\n  return evaluatePolicy({ agentName: "${agent.name}", action: "tool_call", toolName, input: args });\n}\n\nexport async function onBeforeResponse(response: string): Promise<PolicyResult> {\n  return evaluatePolicy({ agentName: "${agent.name}", action: "respond", responseContent: response });\n}\n`;
+              files["src/runtime/policy.ts"] = `// ATLAS-generated: Policy evaluation hooks (no policies configured)\n// Add stop conditions, forbidden output patterns, or policy bindings in ATLAS to get enforcement code here.\n\nexport interface PolicyContext {\n  agentName: string;\n  action: string;\n  toolName?: string;\n  input?: Record<string, any>;\n  responseContent?: string;\n}\n\nexport interface PolicyResult {\n  allowed: boolean;\n  reason?: string;\n  event?: string;\n  content?: string;\n}\n\nexport function checkStopConditions(_content: string): PolicyResult {\n  return { allowed: true };\n}\n\nexport function checkForbiddenOutputs(_content: string): PolicyResult {\n  return { allowed: true };\n}\n\nexport async function evaluatePolicy(ctx: PolicyContext): Promise<PolicyResult> {\n  return { allowed: true };\n}\n\nexport async function onBeforeToolCall(toolName: string, args: Record<string, any>): Promise<PolicyResult> {\n  return evaluatePolicy({ agentName: "${agent.name}", action: "tool_call", toolName, input: args });\n}\n\nexport async function onBeforeResponse(response: string): Promise<PolicyResult> {\n  return evaluatePolicy({ agentName: "${agent.name}", action: "respond", responseContent: response });\n}\n`;
             }
           }
 
@@ -4135,8 +4204,11 @@ def redact_pii(text: str) -> dict:
             redacted = _re_module.sub(pattern, f"[REDACTED_{name.upper()}]", redacted)
     return {"redacted": redacted, "found": found}
 ` : "";
-            const pyStopConditionsJson = JSON.stringify(policyStopConditions);
-            const pyForbiddenOutputsJson = JSON.stringify(policyForbiddenOutputs);
+            const allPyStopConditions = [...new Set([...policyStopConditions, ...yamlExtras.stopConditions])];
+            const allPyForbiddenOutputs = [...new Set([...policyForbiddenOutputs, ...yamlExtras.forbiddenOutputs])];
+            const pyStopConditionsJson = JSON.stringify(allPyStopConditions);
+            const pyForbiddenOutputsJson = JSON.stringify(allPyForbiddenOutputs);
+            const usePyPolicyDataDriven = linkedPolicies.length > 0 || allPyStopConditions.length > 0 || allPyForbiddenOutputs.length > 0;
 
             const pyPolicyDataDriven = `# ATLAS-generated: Policy evaluation hooks (data-driven)
 import json
@@ -4225,10 +4297,10 @@ ${hasRegulatedPolicy ? `    pii_result = redact_pii(response)
 def list_policies():
     return [{"name": p["name"], "domain": p.get("domain")} for p in POLICIES]
 `;
-            if (linkedPolicies.length > 0) {
+            if (usePyPolicyDataDriven) {
               files["src/runtime/policy.py"] = pyPolicyDataDriven;
             } else {
-              files["src/runtime/policy.py"] = `# ATLAS-generated: Policy evaluation hooks (stub)\n# Replace with your policy enforcement logic\n\nfrom typing import Optional\n\n\ndef check_stop_conditions(content: str) -> dict:\n    return {"allowed": True}\n\n\ndef check_forbidden_outputs(content: str) -> dict:\n    return {"allowed": True}\n\n\ndef evaluate_policy(agent_name: str, action: str, tool_name: Optional[str] = None, input_data: Optional[dict] = None) -> dict:\n    \"\"\"Evaluate whether an action is allowed by policy. Stub: allows all.\"\"\"\n    return {"allowed": True}\n\n\ndef on_before_tool_call(tool_name: str, args: dict) -> dict:\n    return evaluate_policy("${agent.name}", "tool_call", tool_name=tool_name, input_data=args)\n\n\ndef on_before_response(response: str) -> dict:\n    return evaluate_policy("${agent.name}", "respond")\n`;
+              files["src/runtime/policy.py"] = `# ATLAS-generated: Policy evaluation hooks (no policies configured)\n# Add stop conditions, forbidden output patterns, or policy bindings in ATLAS to get enforcement code here.\n\nfrom typing import Optional\n\n\ndef check_stop_conditions(content: str) -> dict:\n    return {"allowed": True}\n\n\ndef check_forbidden_outputs(content: str) -> dict:\n    return {"allowed": True}\n\n\ndef evaluate_policy(agent_name: str, action: str, tool_name: Optional[str] = None, input_data: Optional[dict] = None) -> dict:\n    """Evaluate whether an action is allowed by policy. No policies configured."""\n    return {"allowed": True}\n\n\ndef on_before_tool_call(tool_name: str, args: dict) -> dict:\n    return evaluate_policy("${agent.name}", "tool_call", tool_name=tool_name, input_data=args)\n\n\ndef on_before_response(response: str) -> dict:\n    return evaluate_policy("${agent.name}", "respond")\n`;
             }
           }
 
@@ -4963,6 +5035,115 @@ clean:
 
       if (!files[".github/workflows/ci.yml"]) {
         files[".github/workflows/ci.yml"] = generateCiWorkflow(format, agentSlug);
+      }
+
+      // T003: Generate WHAT_YOU_NEED_TO_IMPLEMENT.md — clear developer handoff guide.
+      {
+        const fileExt = format === "typescript" ? "ts" : "py";
+        const stubLines: string[] = [];
+        const aiAdapterNames = new Set(Object.keys(aiResult?.toolAdapters || {}));
+
+        // Tools needing implementation
+        const toolsNeedingWork = tools.filter(t => {
+          const filePath = framework === "generic"
+            ? `src/tools/${t.name}.${fileExt}`
+            : `tools/${t.name}.${fileExt}`;
+          const content = files[filePath] || "";
+          const isAiGenerated = aiAdapterNames.has(t.name);
+          if (isAiGenerated) return false;
+          return /TODO|_stub|not_implemented|NotImplementedError|Replace with real/i.test(content);
+        });
+
+        if (toolsNeedingWork.length > 0) {
+          stubLines.push("## Tool Adapters\n");
+          stubLines.push("These tool adapters contain stubs that need a real implementation:\n");
+          for (const t of toolsNeedingWork) {
+            const hint = inferToolImplementationHints(t.name, t.description || "");
+            const filePath = framework === "generic" ? `src/tools/${t.name}.${fileExt}` : `tools/${t.name}.${fileExt}`;
+            stubLines.push(`### \`${filePath}\``);
+            stubLines.push(`**Tool:** ${t.name}`);
+            if (t.description) stubLines.push(`**Purpose:** ${t.description}`);
+            stubLines.push(`**Implementation guide:** ${hint}`);
+            stubLines.push(`**Function to implement:** \`_execute\` / \`execute_${t.name.replace(/[^a-zA-Z0-9]/g, "_")}\``);
+            stubLines.push("");
+          }
+        }
+
+        // Skills needing implementation
+        const skillsFile = `src/agent/skills.${fileExt}`;
+        if (files[skillsFile] && /not_implemented/.test(files[skillsFile]) && matchedSkills.length > 0) {
+          stubLines.push("## Skills\n");
+          stubLines.push(`**File:** \`${skillsFile}\`\n`);
+          stubLines.push("Implement each `execute_*` function with real skill logic. Each function receives an `input` dict and must return a result dict.\n");
+          for (const s of matchedSkills) {
+            const safeName = s.name.replace(/[^a-zA-Z0-9_ ]/g, "").replace(/\s+/g, "_").replace(/_+/g, "_");
+            stubLines.push(`- \`execute_${safeName}\` — **${s.name}** (${s.domain}): ${s.description.slice(0, 150)}`);
+          }
+          stubLines.push("");
+        }
+
+        // Knowledge base
+        const kbFile = `src/agent/knowledge.${fileExt}`;
+        if (files[kbFile] && /TODO/.test(files[kbFile])) {
+          stubLines.push("## Knowledge Base\n");
+          stubLines.push(`**File:** \`${kbFile}\`\n`);
+          stubLines.push("Implement `retrieve(query)` to connect to your vector database (Pinecone, pgvector, Weaviate, etc.).\n");
+          stubLines.push("1. Generate an embedding for the query using the configured embedding model");
+          stubLines.push("2. Run a similarity search against your stored chunks");
+          stubLines.push("3. Return top-K results as a list of strings\n");
+        }
+
+        const generatedAt = new Date().toISOString();
+        const totalStubs = toolsNeedingWork.length + (files[skillsFile] && /not_implemented/.test(files[skillsFile] || "") ? matchedSkills.length : 0);
+        const aiToolCount = aiAdapterNames.size;
+
+        const whatToImplementLines = [
+          `# What You Need To Implement`,
+          ``,
+          `**Agent:** ${agent.name}  `,
+          `**Generated:** ${generatedAt}  `,
+          `**AI-generated tool adapters:** ${aiToolCount} of ${tools.length}  `,
+          `**Stubs requiring implementation:** ${totalStubs}`,
+          ``,
+          totalStubs === 0
+            ? `All tool adapters were AI-generated with real implementations. Review each file to verify the generated API calls match your environment before running in production.`
+            : `The following files contain stub functions that require a real implementation before this agent is production-ready.`,
+          ``,
+          ...(totalStubs === 0 ? [] : stubLines),
+          `## Environment Variables`,
+          ``,
+          `Copy \`.env.example\` to \`.env\` and fill in the values for each integration listed above.`,
+          `All credentials must be set as environment variables — never hard-code secrets in source files.`,
+          ``,
+          `## Quick Validation`,
+          ``,
+          format === "typescript"
+            ? "```bash\nnpm install\nnpx tsc --noEmit   # type-check\nnpm test            # run smoke tests\n```"
+            : "```bash\npip install -r requirements.txt\npylint src/ tools/ --disable=C,R   # lint\npython -m pytest tests/ -v          # run smoke tests\n```",
+          ``,
+          `Once all implementations are in place, run \`make run\` to start the agent.`,
+        ];
+
+        files["WHAT_YOU_NEED_TO_IMPLEMENT.md"] = whatToImplementLines.join("\n");
+
+        // T004: Update README with AI generation status
+        if (files["README.md"]) {
+          const statusSection = [
+            ``,
+            `## Implementation Status`,
+            ``,
+            aiToolCount > 0
+              ? `**AI-generated implementations:** ${aiToolCount} of ${tools.length} tool adapters were generated with real code by Claude. Review each before deploying.`
+              : `**Stub implementations:** Tool adapters contain stubs. See [WHAT_YOU_NEED_TO_IMPLEMENT.md](./WHAT_YOU_NEED_TO_IMPLEMENT.md) for a full checklist.`,
+            totalStubs > 0
+              ? `\n**Action required:** ${totalStubs} function(s) need implementation. Open \`WHAT_YOU_NEED_TO_IMPLEMENT.md\` for a step-by-step guide.`
+              : `\n**Review recommended:** Even AI-generated implementations should be reviewed for correctness and tested against your target systems.`,
+            ``,
+          ].join("\n");
+          if (!files["README.md"].includes("## Implementation Status")) {
+            files["README.md"] += statusSection;
+          }
+        }
       }
 
       res.json({
