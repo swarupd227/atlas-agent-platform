@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AgentBricks Scaffolding — Change Log & Replit Instructions</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      padding: 2rem;
+      line-height: 1.6;
+    }
+
+    h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: #f8fafc;
+      margin-bottom: 0.25rem;
+    }
+    .subtitle {
+      color: #94a3b8;
+      font-size: 0.95rem;
+      margin-bottom: 2.5rem;
+    }
+
+    h2 {
+      font-size: 1.2rem;
+      font-weight: 600;
+      color: #7dd3fc;
+      margin: 2.5rem 0 1rem;
+      padding-bottom: 0.4rem;
+      border-bottom: 1px solid #1e293b;
+    }
+
+    /* ── Change table ── */
+    .table-wrap { overflow-x: auto; margin-bottom: 2rem; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.875rem;
+    }
+    thead th {
+      background: #1e293b;
+      color: #7dd3fc;
+      font-weight: 600;
+      text-align: left;
+      padding: 0.75rem 1rem;
+      white-space: nowrap;
+    }
+    tbody tr { border-bottom: 1px solid #1e293b; }
+    tbody tr:hover { background: #131929; }
+    td {
+      padding: 0.75rem 1rem;
+      vertical-align: top;
+    }
+    td:first-child { color: #f1f5f9; font-weight: 500; white-space: nowrap; }
+
+    .file-tag {
+      display: inline-block;
+      background: #0f2740;
+      color: #38bdf8;
+      font-family: monospace;
+      font-size: 0.78rem;
+      padding: 0.1rem 0.45rem;
+      border-radius: 4px;
+      margin-bottom: 0.3rem;
+    }
+
+    .before { color: #f87171; font-family: monospace; font-size: 0.82rem; }
+    .after  { color: #86efac; font-family: monospace; font-size: 0.82rem; }
+    .why    { color: #cbd5e1; font-size: 0.85rem; }
+
+    .badge {
+      display: inline-block;
+      font-size: 0.7rem;
+      font-weight: 600;
+      padding: 0.15rem 0.5rem;
+      border-radius: 9999px;
+      margin-right: 0.3rem;
+      vertical-align: middle;
+    }
+    .badge-bug   { background: #7f1d1d; color: #fca5a5; }
+    .badge-fix   { background: #14532d; color: #86efac; }
+    .badge-arch  { background: #1e1b4b; color: #a5b4fc; }
+    .badge-dep   { background: #292524; color: #d6d3d1; }
+
+    /* ── Instructions ── */
+    .instruction-block {
+      background: #0d1b2a;
+      border: 1px solid #1e3a5f;
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .instruction-block h3 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #38bdf8;
+      margin-bottom: 0.75rem;
+    }
+    .instruction-block p, .instruction-block li {
+      font-size: 0.88rem;
+      color: #cbd5e1;
+      margin-bottom: 0.4rem;
+    }
+    .instruction-block ul, .instruction-block ol {
+      padding-left: 1.25rem;
+      margin-top: 0.4rem;
+    }
+    .instruction-block li { margin-bottom: 0.5rem; }
+
+    code {
+      background: #1e293b;
+      color: #fbbf24;
+      font-family: "Fira Code", "Cascadia Code", monospace;
+      font-size: 0.82rem;
+      padding: 0.1rem 0.35rem;
+      border-radius: 4px;
+    }
+
+    pre {
+      background: #1e293b;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      padding: 1rem 1.25rem;
+      overflow-x: auto;
+      font-family: "Fira Code", "Cascadia Code", monospace;
+      font-size: 0.82rem;
+      color: #e2e8f0;
+      margin: 0.75rem 0;
+      line-height: 1.7;
+    }
+    pre .comment { color: #64748b; }
+    pre .key     { color: #7dd3fc; }
+    pre .val     { color: #86efac; }
+    pre .str     { color: #fbbf24; }
+
+    .pill-row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.5rem; }
+    .pill {
+      background: #1e293b;
+      color: #94a3b8;
+      font-size: 0.78rem;
+      padding: 0.2rem 0.7rem;
+      border-radius: 9999px;
+      border: 1px solid #334155;
+    }
+
+    hr { border: none; border-top: 1px solid #1e293b; margin: 2.5rem 0; }
+  </style>
+</head>
+<body>
+
+<h1>AgentBricks Scaffolding — Change Log</h1>
+<p class="subtitle">Databricks Mosaic AI Agent · Fixes & improvements applied post-generation · April 2026</p>
+
+<h2>Changes Made</h2>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>File</th>
+      <th>Change</th>
+      <th>Before (generated)</th>
+      <th>After (fixed)</th>
+      <th>Why</th>
+    </tr>
+  </thead>
+  <tbody>
+
+    <tr>
+      <td>1</td>
+      <td><span class="file-tag">agent.py</span></td>
+      <td><span class="badge badge-arch">Architecture</span> Remove <code>config.yaml</code> — inline constants</td>
+      <td class="before">import yaml<br>with open("config.yaml") as f:<br>&nbsp;&nbsp;config = yaml.safe_load(f)<br>endpoint = config["model"]["endpoint"]</td>
+      <td class="after">_LLM_ENDPOINT = "databricks-meta-llama-3-3-70b-instruct"<br>_MAX_TOKENS = 4096<br>_TEMPERATURE = 0.1<br>_MAX_ITERATIONS = 20</td>
+      <td class="why">MLflow code-based logging re-imports <code>agent.py</code> at serve time from an arbitrary working directory. <code>config.yaml</code> is not guaranteed to exist on the serving container, causing a <code>FileNotFoundError</code> at runtime. Constants belong in the file that uses them.</td>
+    </tr>
+
+    <tr>
+      <td>2</td>
+      <td><span class="file-tag">agent.py</span></td>
+      <td><span class="badge badge-fix">Fix</span> Correct LLM endpoint name</td>
+      <td class="before">_LLM_ENDPOINT = "databricks-meta-llama-3-1-70b-instruct"</td>
+      <td class="after">_LLM_ENDPOINT = "databricks-meta-llama-3-3-70b-instruct"</td>
+      <td class="why">The <code>3-1</code> endpoint does not exist in this workspace. Calling it produces <code>ENDPOINT_NOT_FOUND 404</code> at inference time. Verify available endpoints with <code>w.serving_endpoints.list()</code> and always confirm the endpoint exists before deploying.</td>
+    </tr>
+
+    <tr>
+      <td>3</td>
+      <td><span class="file-tag">agent.py</span></td>
+      <td><span class="badge badge-arch">Architecture</span> Read credentials from <code>~/.databrickscfg</code> for deploy only</td>
+      <td class="before"><em>No explicit auth — WorkspaceClient() called with no credentials</em></td>
+      <td class="after">import configparser<br>_dbcfg = configparser.ConfigParser()<br>_dbcfg.read(os.path.expanduser("~/.databrickscfg"))<br>_DB_HOST = _dbcfg.get("DEFAULT", "host", fallback=None)<br>_DB_TOKEN = _dbcfg.get("DEFAULT", "token", fallback=None)<br><br><em>Used only for WorkspaceClient in __main__.</em><br><em>ChatDatabricks gets no explicit auth — relies on resources= injection.</em></td>
+      <td class="why">Local deploy uses <code>databricks configure --token</code> which writes to <code>~/.databrickscfg</code>. <code>WorkspaceClient()</code> without credentials fails locally. <code>ChatDatabricks</code> does NOT need explicit credentials — the serving container injects them via the <code>resources=</code> declaration in <code>log_model</code>.</td>
+    </tr>
+
+    <tr>
+      <td>4</td>
+      <td><span class="file-tag">agent.py</span></td>
+      <td><span class="badge badge-arch">Architecture</span> Declare <code>resources=</code> in <code>log_model</code> for serving auth</td>
+      <td class="before">mlflow.pyfunc.log_model(<br>&nbsp;&nbsp;artifact_path="agent",<br>&nbsp;&nbsp;...<br>&nbsp;&nbsp;<em># no resources= argument</em><br>)</td>
+      <td class="after">from mlflow.models.resources import DatabricksServingEndpoint<br><br>mlflow.pyfunc.log_model(<br>&nbsp;&nbsp;name="agent",<br>&nbsp;&nbsp;...<br>&nbsp;&nbsp;resources=[DatabricksServingEndpoint(<br>&nbsp;&nbsp;&nbsp;&nbsp;endpoint_name=_LLM_ENDPOINT<br>&nbsp;&nbsp;)],<br>)</td>
+      <td class="why"><code>resources=</code> tells Databricks Model Serving which LLM endpoints this model needs. The serving infrastructure uses this to automatically inject a scoped token into the container. Without it, <code>ChatDatabricks</code> has no credentials at inference time and raises <code>ValueError: cannot configure default credentials</code>.</td>
+    </tr>
+
+    <tr>
+      <td>5</td>
+      <td><span class="file-tag">agent.py</span></td>
+      <td><span class="badge badge-fix">Fix</span> <code>artifact_path=</code> → <code>name=</code> in <code>log_model</code></td>
+      <td class="before">mlflow.pyfunc.log_model(artifact_path="agent", ...)</td>
+      <td class="after">mlflow.pyfunc.log_model(name="agent", ...)</td>
+      <td class="why"><code>artifact_path</code> is deprecated in MLflow 2.18+. Using it raises a <code>UserWarning</code> on every deploy. The replacement parameter is <code>name</code>.</td>
+    </tr>
+
+    <tr>
+      <td>6</td>
+      <td><span class="file-tag">agent.py</span></td>
+      <td><span class="badge badge-fix">Fix</span> Add <code>input_example</code> to <code>log_model</code></td>
+      <td class="before"><em>No input_example — raises UserWarning on every deploy</em></td>
+      <td class="after">input_example = {"messages": [{"role": "user", "content": "I am a 35-year-old with 500000 INR to invest..."}]}<br>mlflow.pyfunc.log_model(..., input_example=input_example)</td>
+      <td class="why">Without <code>input_example</code>, MLflow warns at registration time and the model registry UI shows no sample request. Including it suppresses the warning and enables one-click testing in the Databricks UI.</td>
+    </tr>
+
+    <tr>
+      <td>7</td>
+      <td><span class="file-tag">agent.py</span></td>
+      <td><span class="badge badge-arch">Architecture</span> Endpoint creation moved into <code>agent.py __main__</code></td>
+      <td class="before"><em>Endpoint creation absent — model logged but no serving endpoint created or updated</em></td>
+      <td class="after">w.serving_endpoints.create_and_wait() /<br>update_config_and_wait() with<br>ServedEntityInput + EndpointCoreConfigInput</td>
+      <td class="why">The deploy job should be fully self-contained: log model → register → create/update endpoint. Without this, a manual step was required in the Databricks UI after every deploy.</td>
+    </tr>
+
+    <tr>
+      <td>8</td>
+      <td><span class="file-tag">agent.py</span></td>
+      <td><span class="badge badge-bug">Bug</span> <code>EndpointCoreConfigInput</code> requires <code>name</code></td>
+      <td class="before">EndpointCoreConfigInput(served_entities=[served_entity])</td>
+      <td class="after">EndpointCoreConfigInput(<br>&nbsp;&nbsp;name=_SERVING_ENDPOINT_NAME,<br>&nbsp;&nbsp;served_entities=[served_entity],<br>)</td>
+      <td class="why">The installed <code>databricks-sdk</code> version makes <code>name</code> a required positional argument. Omitting it raises <code>TypeError</code> at endpoint creation time.</td>
+    </tr>
+
+    <tr>
+      <td>9</td>
+      <td><span class="file-tag">agent.py</span></td>
+      <td><span class="badge badge-fix">Fix</span> Remove <code>config.yaml</code> from <code>code_paths</code></td>
+      <td class="before">code_paths=["tools", "config.yaml", "pyproject.toml"]</td>
+      <td class="after">code_paths=["tools", "pyproject.toml"]</td>
+      <td class="why"><code>config.yaml</code> no longer exists. Including a missing path in <code>code_paths</code> causes MLflow to raise a <code>FileNotFoundError</code> during model logging.</td>
+    </tr>
+
+    <tr>
+      <td>10</td>
+      <td><span class="file-tag">agent.py</span></td>
+      <td><span class="badge badge-arch">Architecture</span> Explicit <code>ModelSignature</code> instead of inference</td>
+      <td class="before">signature = infer_signature(input_example, output_example)</td>
+      <td class="after">signature = ModelSignature(<br>&nbsp;&nbsp;inputs=Schema([ColSpec(type=_chat_msg, name="messages")]),<br>&nbsp;&nbsp;outputs=Schema([ColSpec(type=_chat_msg, name="messages")]),<br>)</td>
+      <td class="why"><code>infer_signature</code> calls the LLM endpoint at registration time. On a first deploy the endpoint does not yet exist, raising a network error. An explicit signature is required by Unity Catalog and avoids this.</td>
+    </tr>
+
+    <tr>
+      <td>11</td>
+      <td><span class="file-tag">agent.py</span></td>
+      <td><span class="badge badge-fix">Fix</span> <code>__file__</code> guard for Databricks serverless</td>
+      <td class="before"><em>Not present in generated scaffold</em></td>
+      <td class="after">if "__file__" not in globals():<br>&nbsp;&nbsp;__file__ = sys._getframe(0).f_code.co_filename</td>
+      <td class="why">Databricks serverless <code>spark_python_task</code> runs scripts via <code>exec(compile(...))</code> in an IPython kernel. <code>__file__</code> is never injected, so any path derived from it raises <code>NameError</code> without this guard.</td>
+    </tr>
+
+    <tr>
+      <td>12</td>
+      <td><span class="file-tag">pyproject.toml</span></td>
+      <td><span class="badge badge-dep">Dependencies</span> Loose pins; pre-installed packages moved to <code>[dev]</code></td>
+      <td class="before">dependencies = [<br>&nbsp;&nbsp;"mlflow==2.18.0",<br>&nbsp;&nbsp;"databricks-sdk==0.36.0",<br>&nbsp;&nbsp;"databricks-langchain==0.3.0",<br>&nbsp;&nbsp;"langchain-core==0.3.28",<br>&nbsp;&nbsp;"pyyaml==6.0.2",<br>&nbsp;&nbsp;"pydantic>=2.0.0,&lt;3.0.0",<br>&nbsp;&nbsp;"pyarrow>=14.0.0",<br>]</td>
+      <td class="after">dependencies = [<br>&nbsp;&nbsp;"databricks-langchain",<br>&nbsp;&nbsp;"langchain-core>=0.3,&lt;0.4",<br>]<br>[dev]<br>&nbsp;&nbsp;"mlflow>=2.18.0", "databricks-sdk>=0.36.0",<br>&nbsp;&nbsp;"pydantic>=2.0.0,&lt;3.0.0", "pyarrow>=14.0.0",<br>&nbsp;&nbsp;"pytest>=7.4.0,&lt;9.0.0"</td>
+      <td class="why">Databricks serverless has <code>mlflow</code>, <code>pydantic</code>, <code>pyarrow</code>, and <code>databricks-sdk</code> pre-installed. Exact <code>==</code> pins in <code>dependencies</code> cause pip version-conflict errors on serverless. <code>pyyaml</code> removed entirely since <code>config.yaml</code> was deleted.</td>
+    </tr>
+
+    <tr>
+      <td>13</td>
+      <td><span class="file-tag">pyproject.toml</span></td>
+      <td><span class="badge badge-dep">Dependencies</span> Added <code>[tool.hatch.build]</code> exclude list</td>
+      <td class="before"><em>No exclude list</em></td>
+      <td class="after">exclude = [".databricks/", ".github/", "dist/", "tests/", "*.egg-info", ".env*"]</td>
+      <td class="why"><code>.databricks/</code> contains a large Terraform provider binary. On Windows, extracting it during <code>sdist</code> build can exceed the MAX_PATH limit and fail the build.</td>
+    </tr>
+
+    <tr>
+      <td>14</td>
+      <td><span class="file-tag">databricks.yml</span></td>
+      <td><span class="badge badge-fix">Fix</span> Remove <code>artifacts:</code> section — use plain local wheel path</td>
+      <td class="before"><em>artifacts: section with type: whl added (caused DAB to look for setup.py)</em></td>
+      <td class="after">dependencies:<br>&nbsp;&nbsp;- ./dist/&lt;name&gt;-${var.wheel_version}-py3-none-any.whl</td>
+      <td class="why">Adding an <code>artifacts:</code> block with <code>type: whl</code> causes DAB to try building the wheel itself, looking for <code>setup.py</code> and failing on <code>pyproject.toml</code>-only projects. The plain local path is the correct pattern — DAB uploads it automatically.</td>
+    </tr>
+
+    <tr>
+      <td>15</td>
+      <td><span class="file-tag">config.yaml</span></td>
+      <td><span class="badge badge-arch">Architecture</span> File deleted entirely</td>
+      <td class="before">Separate config.yaml read by agent.py at runtime via yaml.safe_load()</td>
+      <td class="after"><em>File removed. All values inlined as constants in agent.py.</em></td>
+      <td class="why">File was not bundled into the MLflow model artifact, so it was unavailable at serve time, causing a hard <code>FileNotFoundError</code>. Single-file configuration via constants is safer and simpler for this use case.</td>
+    </tr>
+
+  </tbody>
+</table>
+</div>
+
+<hr />
+
+<h2>Instructions for Replit — Improve AgentBricks Scaffolding</h2>
+<p style="color:#94a3b8; font-size:0.88rem; margin-bottom:1.5rem;">
+  Paste the following as a prompt or system instructions to the Replit scaffolding agent.
+</p>
+
+<div class="instruction-block">
+  <h3>1 · agent.py — No external config file</h3>
+  <p>Do <strong>not</strong> generate a <code>config.yaml</code> (or any YAML/JSON config file) that is read by <code>agent.py</code> at module level. Instead, declare all configuration as module-level Python constants:</p>
+  <pre>
+<span class="comment"># ── Agent configuration ────────────────────────────</span>
+<span class="key">_LLM_ENDPOINT</span>     = <span class="str">"databricks-meta-llama-3-3-70b-instruct"</span>  <span class="comment"># verify endpoint exists in workspace</span>
+<span class="key">_MAX_TOKENS</span>       = <span class="val">4096</span>
+<span class="key">_TEMPERATURE</span>      = <span class="val">0.1</span>
+<span class="key">_MAX_ITERATIONS</span>   = <span class="val">20</span>
+<span class="key">_COMPLETION_TOKEN</span> = <span class="str">"TASK_COMPLETE"</span>
+<span class="key">_EXPERIMENT_NAME</span>       = <span class="str">"/Shared/&lt;agent_name&gt;_experiment"</span>
+<span class="key">_REGISTERED_MODEL_NAME</span> = <span class="str">"&lt;catalog&gt;.&lt;schema&gt;.&lt;agent_name&gt;"</span>
+<span class="key">_SERVING_ENDPOINT_NAME</span> = <span class="str">"&lt;endpoint_name&gt;"</span></pre>
+  <p><strong>LLM endpoint name:</strong> always use <code>databricks-meta-llama-3-3-70b-instruct</code> as the default. The <code>3-1</code> variant does not exist in most workspaces and causes a <code>404 ENDPOINT_NOT_FOUND</code> at inference time.</p>
+  <p><strong>Reason for inlining:</strong> MLflow code-based logging re-imports <code>agent.py</code> inside the serving container where no sidecar files are present. A missing <code>config.yaml</code> raises <code>FileNotFoundError</code> and kills the endpoint.</p>
+</div>
+
+<div class="instruction-block">
+  <h3>2 · agent.py — Serving auth via <code>resources=</code> (critical)</h3>
+  <p>This is the most important fix. Always declare <code>resources=[DatabricksServingEndpoint(...)]</code> in <code>log_model</code>. This is what causes Databricks Model Serving to inject a token for the LLM endpoint into the container. Without it, <code>ChatDatabricks</code> has no credentials and every request fails with <code>ValueError: cannot configure default credentials</code>.</p>
+  <pre>
+<span class="key">from</span> mlflow.models.resources <span class="key">import</span> DatabricksServingEndpoint
+
+mlflow.pyfunc.log_model(
+    name=<span class="str">"agent"</span>,                    <span class="comment"># use name=, not artifact_path= (deprecated)</span>
+    python_model=__file__,
+    code_paths=[<span class="str">"tools"</span>, <span class="str">"pyproject.toml"</span>],
+    signature=signature,
+    input_example=input_example,
+    pip_requirements=pip_requirements,
+    resources=[DatabricksServingEndpoint(endpoint_name=_LLM_ENDPOINT)],
+    registered_model_name=_REGISTERED_MODEL_NAME,
+)</pre>
+  <p><strong>Note:</strong> <code>ChatDatabricks()</code> at module level does NOT need explicit <code>host</code>/<code>api_key</code> arguments. The <code>resources=</code> declaration handles credential injection automatically at serve time.</p>
+</div>
+
+<div class="instruction-block">
+  <h3>3 · agent.py — Databricks credentials for deploy only</h3>
+  <p>Read credentials from <code>~/.databrickscfg</code> for use by <code>WorkspaceClient</code> in <code>__main__</code> (deploy time only). Do <strong>not</strong> pass these to <code>ChatDatabricks</code> — it relies on <code>resources=</code> at serve time.</p>
+  <pre>
+import configparser, os
+
+<span class="comment"># Deploy-time credentials from `databricks configure --token`</span>
+_dbcfg = configparser.ConfigParser()
+_dbcfg.read(os.path.expanduser(<span class="str">"~/.databrickscfg"</span>))
+_DB_HOST  = _dbcfg.get(<span class="str">"DEFAULT"</span>, <span class="str">"host"</span>,  fallback=<span class="val">None</span>)
+_DB_TOKEN = _dbcfg.get(<span class="str">"DEFAULT"</span>, <span class="str">"token"</span>, fallback=<span class="val">None</span>)
+
+<span class="comment"># Module-level LLM — no explicit auth, resources= handles it at serve time</span>
+llm = ChatDatabricks(endpoint=_LLM_ENDPOINT, max_tokens=_MAX_TOKENS, temperature=_TEMPERATURE)
+
+<span class="comment"># In __main__ only:</span>
+w = WorkspaceClient(host=_DB_HOST, token=_DB_TOKEN)</pre>
+</div>
+
+<div class="instruction-block">
+  <h3>4 · agent.py — __file__ guard for serverless</h3>
+  <p>Always add this guard immediately after imports, before any path construction:</p>
+  <pre>
+<span class="key">if</span> <span class="str">"__file__"</span> <span class="key">not in</span> globals():
+    __file__ = sys._getframe(<span class="val">0</span>).f_code.co_filename</pre>
+  <p><strong>Reason:</strong> Databricks serverless <code>spark_python_task</code> executes scripts via <code>exec(compile(...))</code> in an IPython kernel. <code>__file__</code> is never injected, so <code>os.path.dirname(__file__)</code> raises <code>NameError</code> without this guard.</p>
+</div>
+
+<div class="instruction-block">
+  <h3>5 · agent.py — Explicit ModelSignature (never infer_signature)</h3>
+  <p>Always build the signature manually. Never call <code>infer_signature()</code>:</p>
+  <pre>
+<span class="key">from</span> mlflow.models <span class="key">import</span> ModelSignature
+<span class="key">from</span> mlflow.types.schema <span class="key">import</span> Array, ColSpec, DataType, Object, Property, Schema
+
+_chat_msg = Array(Object([
+    Property(<span class="str">"role"</span>,    DataType.string),
+    Property(<span class="str">"content"</span>, DataType.string),
+]))
+signature = ModelSignature(
+    inputs=Schema([ColSpec(type=_chat_msg, name=<span class="str">"messages"</span>)]),
+    outputs=Schema([ColSpec(type=_chat_msg, name=<span class="str">"messages"</span>)]),
+)
+
+input_example = {
+    <span class="str">"messages"</span>: [{<span class="str">"role"</span>: <span class="str">"user"</span>, <span class="str">"content"</span>: <span class="str">"&lt;a realistic example query&gt;"</span>}]
+}</pre>
+  <p><strong>Reason:</strong> <code>infer_signature</code> calls the LLM endpoint at registration time. On a first deploy the endpoint does not yet exist, raising a network error and halting deployment. <code>input_example</code> suppresses a <code>UserWarning</code> and enables one-click testing in the Databricks UI.</p>
+</div>
+
+<div class="instruction-block">
+  <h3>6 · agent.py — Endpoint creation in __main__</h3>
+  <p>Always include create/update logic for the serving endpoint. The <code>EndpointCoreConfigInput</code> constructor requires <code>name</code>:</p>
+  <pre>
+existing_endpoints = {ep.name <span class="key">for</span> ep <span class="key">in</span> w.serving_endpoints.list()}
+<span class="key">if</span> _SERVING_ENDPOINT_NAME <span class="key">in</span> existing_endpoints:
+    w.serving_endpoints.update_config_and_wait(
+        name=_SERVING_ENDPOINT_NAME,
+        served_entities=[served_entity],
+        timeout=timedelta(minutes=<span class="val">30</span>),
+    )
+<span class="key">else</span>:
+    w.serving_endpoints.create_and_wait(
+        name=_SERVING_ENDPOINT_NAME,
+        config=EndpointCoreConfigInput(
+            name=_SERVING_ENDPOINT_NAME,   <span class="comment"># required — do not omit</span>
+            served_entities=[served_entity],
+        ),
+        timeout=timedelta(minutes=<span class="val">30</span>),
+    )</pre>
+</div>
+
+<div class="instruction-block">
+  <h3>7 · pyproject.toml — Dependency rules for Databricks serverless</h3>
+  <ol>
+    <li><strong>Never</strong> pin packages pre-installed on serverless (<code>mlflow</code>, <code>databricks-sdk</code>, <code>pydantic</code>, <code>pyarrow</code>) in <code>[project.dependencies]</code>. Exact <code>==</code> pins cause version-conflict errors during serverless pip install.</li>
+    <li>Put pre-installed packages in <code>[project.optional-dependencies] dev</code> with loose constraints so local development works.</li>
+    <li>Only packages <strong>not</strong> pre-installed on serverless go in <code>[project.dependencies]</code> with loose version ranges.</li>
+    <li>Place <code>[build-system]</code> at the top of the file.</li>
+    <li>Add a <code>[tool.hatch.build] exclude</code> list that at minimum excludes <code>.databricks/</code>, <code>dist/</code>, <code>.github/</code>, and <code>.env*</code>.</li>
+    <li>Do <strong>not</strong> include <code>pyyaml</code> — there is no config.yaml.</li>
+  </ol>
+  <pre>
+[project.dependencies]
+  <span class="str">"databricks-langchain"</span>,
+  <span class="str">"langchain-core>=0.3,&lt;0.4"</span>,
+
+[project.optional-dependencies.dev]
+  <span class="str">"mlflow>=2.18.0"</span>, <span class="str">"databricks-sdk>=0.36.0"</span>,
+  <span class="str">"pydantic>=2.0.0,&lt;3.0.0"</span>, <span class="str">"pyarrow>=14.0.0"</span>,
+  <span class="str">"pytest>=7.4.0,&lt;9.0.0"</span></pre>
+</div>
+
+<div class="instruction-block">
+  <h3>8 · databricks.yml — Do NOT generate an <code>artifacts:</code> section</h3>
+  <p>Reference the pre-built wheel directly as a local path in <code>spec.dependencies</code>. DAB uploads it automatically:</p>
+  <pre>
+environments:
+  - environment_key: default
+    spec:
+      client: <span class="str">"2"</span>
+      dependencies:
+        - ./dist/&lt;package_name&gt;-${var.wheel_version}-py3-none-any.whl</pre>
+  <p><strong>Do not</strong> add an <code>artifacts:</code> block with <code>type: whl</code>. DAB's whl artifact builder looks for <code>setup.py</code> and fails on <code>pyproject.toml</code>-only projects.</p>
+</div>
+
+<div class="instruction-block">
+  <h3>9 · Summary — Files to generate vs. not generate</h3>
+  <div class="pill-row">
+    <span class="pill" style="border-color:#16a34a; color:#86efac;">✓ agent.py</span>
+    <span class="pill" style="border-color:#16a34a; color:#86efac;">✓ pyproject.toml</span>
+    <span class="pill" style="border-color:#16a34a; color:#86efac;">✓ databricks.yml</span>
+    <span class="pill" style="border-color:#16a34a; color:#86efac;">✓ MLproject</span>
+    <span class="pill" style="border-color:#16a34a; color:#86efac;">✓ Makefile</span>
+    <span class="pill" style="border-color:#16a34a; color:#86efac;">✓ conda.yaml</span>
+    <span class="pill" style="border-color:#16a34a; color:#86efac;">✓ tools/</span>
+    <span class="pill" style="border-color:#dc2626; color:#fca5a5;">✗ config.yaml — do not generate</span>
+    <span class="pill" style="border-color:#dc2626; color:#fca5a5;">✗ No pyyaml dependency</span>
+    <span class="pill" style="border-color:#dc2626; color:#fca5a5;">✗ No artifacts: section in databricks.yml</span>
+    <span class="pill" style="border-color:#dc2626; color:#fca5a5;">✗ No infer_signature()</span>
+    <span class="pill" style="border-color:#dc2626; color:#fca5a5;">✗ No artifact_path= in log_model</span>
+    <span class="pill" style="border-color:#dc2626; color:#fca5a5;">✗ No log_model without resources=</span>
+  </div>
+</div>
+
+<hr />
+<p style="color:#475569; font-size:0.8rem; text-align:center;">Generated April 2026 · Databricks Mosaic AI Agent scaffolding audit</p>
+
+</body>
+</html>
