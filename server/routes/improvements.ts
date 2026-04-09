@@ -2066,6 +2066,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
       }
 
       await storage.updateAgent(teamAgent.id, {
+        blueprintId: blueprint.id,
         runtimeConfig: {
           prompt: composeTaskPrompt(orchestrator, true),
           kpiBindings: orchestrator.kpiBindings || [],
