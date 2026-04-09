@@ -7,11 +7,12 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import {
   Brain, Wrench, ShieldCheck, Globe, Plus, X, Link2, MousePointer,
-  FileText, Database, Type, Link as LinkIcon,
+  FileText, Database, Type, Link as LinkIcon, Network, AlertTriangle, Eye,
 } from "lucide-react";
 
 interface McpServerTool {
@@ -87,6 +88,7 @@ export default function TeamGraphEditor({ blueprintId }: TeamGraphEditorProps) {
   const edges = graphData?.edges || [];
 
   const singleAgents = useMemo(() => (agents || []).filter(a => a.agentType === "single"), [agents]);
+  const teamAgents = useMemo(() => (agents || []).filter(a => !!a.blueprintId), [agents]);
 
   const invalidateGraph = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: graphQueryKey });
@@ -283,6 +285,7 @@ export default function TeamGraphEditor({ blueprintId }: TeamGraphEditorProps) {
                   const isEdgeSource = edgeMode === node.id;
                   const incomingEdges = edges.filter(e => e.targetNodeId === node.id);
                   const refAgent = node.refAgentId ? (agents || []).find(a => a.id === node.refAgentId) : null;
+                  const refTeamAgentOnCard = node.refTeamAgentId ? (agents || []).find(a => a.id === node.refTeamAgentId) : null;
                   const refRemoteAgent = node.refRemoteAgentId ? (remoteAgents || []).find(ra => ra.id === node.refRemoteAgentId) : null;
                   const toolCount = (node.refToolIds || []).length;
 
@@ -329,8 +332,13 @@ export default function TeamGraphEditor({ blueprintId }: TeamGraphEditorProps) {
                           <Icon className="w-4 h-4 text-muted-foreground shrink-0" />
                           <span className="text-sm font-medium flex-1 truncate" data-testid={`text-node-label-${node.id}`}>{node.label}</span>
                           <Badge variant="outline" className="text-[10px] shrink-0">{node.nodeType.replace("_", " ")}</Badge>
-                          {node.nodeType === "internal_agent" && refAgent && (
+                          {node.nodeType === "internal_agent" && refAgent && !node.refTeamAgentId && (
                             <Badge variant="outline" className="text-[10px] shrink-0 bg-blue-500/10">{refAgent.name}</Badge>
+                          )}
+                          {node.nodeType === "internal_agent" && node.refTeamAgentId && (
+                            <Badge variant="outline" className="text-[10px] shrink-0 bg-purple-500/10 border-purple-500/30 text-purple-700 dark:text-purple-300 flex items-center gap-1" data-testid={`badge-team-ref-${node.id}`}>
+                              <Network className="w-2.5 h-2.5" />{refTeamAgentOnCard?.name || "Team Ref"}
+                            </Badge>
                           )}
                           {node.nodeType === "remote_agent" && refRemoteAgent && (
                             <>
@@ -375,7 +383,9 @@ export default function TeamGraphEditor({ blueprintId }: TeamGraphEditorProps) {
             {selectedNode ? (
               <NodeConfigPanel
                 node={selectedNode}
+                allNodes={nodes}
                 singleAgents={singleAgents}
+                teamAgentsList={teamAgents}
                 remoteAgents={remoteAgents || []}
                 mcpTools={mcpTools || []}
                 policies={policies || []}
@@ -404,9 +414,62 @@ export default function TeamGraphEditor({ blueprintId }: TeamGraphEditorProps) {
   );
 }
 
+interface ComputedWavePlan {
+  totalWaves: number;
+  maxParallelism: number;
+  waves: Array<{ waveIndex: number; nodes: Array<{ nodeId: string; label: string }> }>;
+}
+
+function WavePlanDialog({ teamAgentId, open, onClose }: { teamAgentId: string; open: boolean; onClose: () => void }) {
+  const { data: wavePlan, isLoading } = useQuery<ComputedWavePlan>({
+    queryKey: ["/api/team-agents", teamAgentId, "dag-waves"],
+    enabled: open && !!teamAgentId,
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-md" data-testid="dialog-wave-plan">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Network className="w-4 h-4 text-purple-500" /> Wave Plan
+          </DialogTitle>
+        </DialogHeader>
+        {isLoading ? (
+          <div className="flex flex-col gap-2 py-2">
+            {[1,2,3].map(i => <Skeleton key={i} className="h-10 w-full" />)}
+          </div>
+        ) : wavePlan ? (
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
+              <span data-testid="text-wave-plan-total-waves"><span className="font-medium text-foreground">{wavePlan.totalWaves}</span> waves</span>
+              <span data-testid="text-wave-plan-max-parallelism">max parallelism <span className="font-medium text-foreground">{wavePlan.maxParallelism}</span></span>
+            </div>
+            <div className="flex flex-col gap-2">
+              {wavePlan.waves.map(wave => (
+                <div key={wave.waveIndex} className="flex flex-col gap-1.5 p-2.5 rounded-md border bg-muted/30" data-testid={`wave-row-${wave.waveIndex}`}>
+                  <span className="text-[10px] font-medium text-muted-foreground uppercase">Wave {wave.waveIndex + 1}</span>
+                  <div className="flex flex-wrap gap-1">
+                    {wave.nodes.map(n => (
+                      <Badge key={n.nodeId} variant="outline" className="text-[10px]">{n.label}</Badge>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground py-2">No wave plan available.</p>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function NodeConfigPanel({
   node,
+  allNodes,
   singleAgents,
+  teamAgentsList,
   remoteAgents,
   mcpTools,
   policies,
@@ -414,7 +477,9 @@ function NodeConfigPanel({
   isPending,
 }: {
   node: TeamBlueprintNode;
+  allNodes: TeamBlueprintNode[];
   singleAgents: Agent[];
+  teamAgentsList: Agent[];
   remoteAgents: RemoteAgent[];
   mcpTools: McpServerTool[];
   policies: Policy[];
@@ -422,19 +487,42 @@ function NodeConfigPanel({
   isPending: boolean;
 }) {
   const [localLabel, setLocalLabel] = useState(node.label);
+  const [localStateKey, setLocalStateKey] = useState(node.stateKey || "");
+  const [localTimeoutMs, setLocalTimeoutMs] = useState(node.timeoutMs != null ? String(node.timeoutMs) : "30000");
+  const [nodeKind, setNodeKind] = useState<"agent" | "team_reference">(node.refTeamAgentId ? "team_reference" : "agent");
+  const [wavePlanOpen, setWavePlanOpen] = useState(false);
 
-  const prevNodeId = useMemo(() => node.id, [node.id]);
-  if (localLabel !== node.label && prevNodeId === node.id) {
-    // label changed from server, don't override
-  }
-  // Reset local label when node changes
   const [trackedNodeId, setTrackedNodeId] = useState(node.id);
   if (trackedNodeId !== node.id) {
     setTrackedNodeId(node.id);
     setLocalLabel(node.label);
+    setLocalStateKey(node.stateKey || "");
+    setLocalTimeoutMs(node.timeoutMs != null ? String(node.timeoutMs) : "30000");
+    setNodeKind(node.refTeamAgentId ? "team_reference" : "agent");
+    setWavePlanOpen(false);
   }
 
+  const autoStateKey = (label: string) => label.trim().toLowerCase().replace(/[\s-]+/g, "_").replace(/[^a-z0-9_]/g, "");
+
+  const handleLabelBlur = () => {
+    if (localLabel !== node.label) {
+      const updates: Partial<TeamBlueprintNode> = { label: localLabel };
+      if (!localStateKey && node.nodeType === "internal_agent") {
+        const auto = autoStateKey(localLabel);
+        setLocalStateKey(auto);
+        updates.stateKey = auto;
+      }
+      onUpdate(updates);
+    }
+  };
+
+  const stateKeyConflict = useMemo(() => {
+    if (!localStateKey) return false;
+    return allNodes.some(n => n.id !== node.id && n.stateKey === localStateKey);
+  }, [allNodes, node.id, localStateKey]);
+
   const selectedAgent = node.refAgentId ? singleAgents.find(a => a.id === node.refAgentId) : null;
+  const selectedTeamAgent = node.refTeamAgentId ? teamAgentsList.find(a => a.id === node.refTeamAgentId) : null;
   const selectedRemoteAgent = node.refRemoteAgentId ? remoteAgents.find(ra => ra.id === node.refRemoteAgentId) : null;
   const selectedPolicy = node.refPolicyId ? policies.find(p => p.id === node.refPolicyId) : null;
   const selectedToolIds = new Set(node.refToolIds || []);
@@ -452,7 +540,7 @@ function NodeConfigPanel({
         <Input
           value={localLabel}
           onChange={e => setLocalLabel(e.target.value)}
-          onBlur={() => { if (localLabel !== node.label) onUpdate({ label: localLabel }); }}
+          onBlur={handleLabelBlur}
           data-testid="input-node-label"
         />
       </div>
@@ -460,27 +548,122 @@ function NodeConfigPanel({
       {node.nodeType === "internal_agent" && (
         <>
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-muted-foreground">Agent</label>
-            <select
-              className="h-8 w-full rounded-md border bg-background px-2 text-xs"
-              value={node.refAgentId || ""}
-              onChange={e => onUpdate({ refAgentId: e.target.value || null })}
-              data-testid="select-ref-agent"
-            >
-              <option value="">-- Select Agent --</option>
-              {singleAgents.map(a => (
-                <option key={a.id} value={a.id}>{a.name}</option>
-              ))}
-            </select>
+            <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              State Key
+              {stateKeyConflict && (
+                <Badge variant="outline" className="text-[9px] px-1 py-0 text-amber-600 border-amber-500/40 bg-amber-500/10 flex items-center gap-0.5" data-testid="badge-state-key-conflict">
+                  <AlertTriangle className="w-2.5 h-2.5" /> conflict
+                </Badge>
+              )}
+            </label>
+            <Input
+              value={localStateKey}
+              onChange={e => setLocalStateKey(e.target.value)}
+              onBlur={() => {
+                const val = localStateKey || autoStateKey(localLabel);
+                if (!localStateKey) setLocalStateKey(val);
+                if (val !== (node.stateKey || "")) onUpdate({ stateKey: val || null });
+              }}
+              placeholder={autoStateKey(localLabel) || "e.g. research_output"}
+              data-testid="input-state-key"
+            />
           </div>
-          {selectedAgent && (
-            <Card>
-              <CardContent className="p-3 flex flex-col gap-1.5">
-                <span className="text-xs font-medium">{selectedAgent.name}</span>
-                {selectedAgent.description && <p className="text-xs text-muted-foreground">{selectedAgent.description}</p>}
-                <Badge variant="outline" className="w-fit text-[10px]">{selectedAgent.status}</Badge>
-              </CardContent>
-            </Card>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Node Kind</label>
+            <div className="flex rounded-md border overflow-hidden" data-testid="toggle-node-kind">
+              <button
+                className={`flex-1 px-2 py-1.5 text-xs flex items-center justify-center gap-1.5 transition-colors ${nodeKind === "agent" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"}`}
+                onClick={() => {
+                  setNodeKind("agent");
+                  if (node.refTeamAgentId) onUpdate({ refTeamAgentId: null });
+                }}
+                data-testid="button-node-kind-agent"
+              >
+                <Brain className="w-3 h-3" /> Agent
+              </button>
+              <button
+                className={`flex-1 px-2 py-1.5 text-xs flex items-center justify-center gap-1.5 transition-colors ${nodeKind === "team_reference" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"}`}
+                onClick={() => {
+                  setNodeKind("team_reference");
+                  if (node.refAgentId) onUpdate({ refAgentId: null });
+                }}
+                data-testid="button-node-kind-team-reference"
+              >
+                <Network className="w-3 h-3" /> Team Reference
+              </button>
+            </div>
+          </div>
+
+          {nodeKind === "agent" ? (
+            <>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-muted-foreground">Agent</label>
+                <select
+                  className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+                  value={node.refAgentId || ""}
+                  onChange={e => onUpdate({ refAgentId: e.target.value || null })}
+                  data-testid="select-ref-agent"
+                >
+                  <option value="">-- Select Agent --</option>
+                  {singleAgents.map(a => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              </div>
+              {selectedAgent && (
+                <Card>
+                  <CardContent className="p-3 flex flex-col gap-1.5">
+                    <span className="text-xs font-medium">{selectedAgent.name}</span>
+                    {selectedAgent.description && <p className="text-xs text-muted-foreground">{selectedAgent.description}</p>}
+                    <Badge variant="outline" className="w-fit text-[10px]">{selectedAgent.status}</Badge>
+                  </CardContent>
+                </Card>
+              )}
+            </>
+          ) : (
+            <>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-muted-foreground flex items-center justify-between">
+                  <span>Team Agent</span>
+                  {node.refTeamAgentId && (
+                    <button
+                      className="flex items-center gap-1 text-[10px] text-purple-600 dark:text-purple-400 hover:underline"
+                      onClick={() => setWavePlanOpen(true)}
+                      data-testid="button-view-waves"
+                    >
+                      <Eye className="w-3 h-3" /> View Waves
+                    </button>
+                  )}
+                </label>
+                <select
+                  className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+                  value={node.refTeamAgentId || ""}
+                  onChange={e => onUpdate({ refTeamAgentId: e.target.value || null, refAgentId: null })}
+                  data-testid="select-ref-team-agent"
+                >
+                  <option value="">-- Select Team Agent --</option>
+                  {teamAgentsList.map(a => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              </div>
+              {selectedTeamAgent && (
+                <Card className="border-purple-500/30">
+                  <CardContent className="p-3 flex flex-col gap-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <Network className="w-3 h-3 text-purple-500 shrink-0" />
+                      <span className="text-xs font-medium">{selectedTeamAgent.name}</span>
+                    </div>
+                    {selectedTeamAgent.description && <p className="text-xs text-muted-foreground">{selectedTeamAgent.description}</p>}
+                    <Badge variant="outline" className="w-fit text-[10px] bg-purple-500/10 border-purple-500/30 text-purple-700 dark:text-purple-300">Team Agent</Badge>
+                  </CardContent>
+                </Card>
+              )}
+              {wavePlanOpen && node.refTeamAgentId && (
+                <WavePlanDialog teamAgentId={node.refTeamAgentId} open={wavePlanOpen} onClose={() => setWavePlanOpen(false)} />
+              )}
+            </>
           )}
         </>
       )}
@@ -611,6 +794,26 @@ function NodeConfigPanel({
             </Card>
           )}
         </>
+      )}
+
+      {(node.nodeType === "internal_agent" || node.nodeType === "remote_agent") && (
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-medium text-muted-foreground">Timeout (ms)</label>
+          <Input
+            type="number"
+            value={localTimeoutMs}
+            onChange={e => setLocalTimeoutMs(e.target.value)}
+            onBlur={() => {
+              const val = localTimeoutMs ? parseInt(localTimeoutMs) : 30000;
+              if (val !== (node.timeoutMs ?? 30000)) onUpdate({ timeoutMs: val });
+            }}
+            placeholder="30000"
+            data-testid="input-timeout-ms"
+          />
+          {localTimeoutMs && parseInt(localTimeoutMs) > 0 && (
+            <span className="text-[10px] text-muted-foreground">{(parseInt(localTimeoutMs) / 1000).toFixed(1)}s</span>
+          )}
+        </div>
       )}
     </>
   );
