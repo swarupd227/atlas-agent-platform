@@ -1,0 +1,44 @@
+Problem Statement
+1.1 What MCG's Manual Code Does
+The MCG Proposal Generation Agent executes a nested, multi-wave parallel DAG inside a single pipeline stage. Specifically:
+Pipeline Stage: "generate_proposal"
+  └── Parent Subgraph (2 sequential nodes):
+        ├── proposal-document-insights (subgraph: 2 sequential nodes)
+        │     ├── document-insights-generator
+        │     └── commercial-alignment
+        └── proposal-drafting (subgraph: 11 nodes in 5-wave DAG)
+              Wave 1 (parallel): template-grounding | brand-grounding | guideline-grounding
+              Wave 2 (parallel): executive-highlights | pricing-packaging  [waits for ALL of wave 1]
+              Wave 3 (serial):   general-purpose                           [waits for ALL of wave 2]
+              Wave 4 (parallel): quality-review | language-policy-enforcer | brand-compliance-validator
+              Wave 5 (serial):   proposal-finalizer                        [waits for ALL of wave 4]
+
+Critical execution semantics:
+1. Wave dependency: Wave N does NOT start until ALL agents in Wave N-1 have completed
+2. Parallel within wave: Agents in the same wave execute concurrently (LangGraph's Promise.all equivalent)
+3. Shared state with distinct keys: Each agent writes to its own state key (e.g., template_grounding, brand_grounding). No two agents write to the same key. LangGraph uses last-writer-wins per key.
+4. Accumulator fields: Three fields (delegated_subagents, tool_call_sequence, fallback_subagents) use operator.add reducers — when parallel agents write to these, their lists are concatenated, not overwritten
+5. Nested subgraphs: A pipeline stage can contain a subgraph that itself contains subgraphs. The MCG system has 3 levels of nesting: pipeline → parent subgraph → drafting subgraph
+1.2 What Atlas Does Today
+Atlas has two orchestration mechanisms:
+Multi-Agent Pipeline Orchestrator (Section 11 of Product Doc):
+•	Stage types: Agent Stage, Approval Gate, Parallel Group
+•	Execution: tier-based via Promise.all — independent agents run concurrently
+•	Context cascading: output from stage N becomes ## INPUT FROM PREVIOUS STAGE for stage N+1
+•	Error strategies: fail_fast and best_effort
+•	No concept of nested stages (a stage cannot itself be a multi-agent DAG)
+•	No concept of wave-based dependency (all parallel agents in a group start simultaneously)
+Agent Team with Team Graph Editor (Section 10):
+•	4 node types: Internal Agent, Tool Set, Edge Gate, Remote A2A Agent
+•	Edge contracts between nodes
+•	Visual canvas for designing flows
+•	No execution runtime — the graph is a design artifact, not an execution engine
+1.3 The Gap
+Capability	MCG Code	Atlas Today	Gap
+Pipeline stage is a multi-agent DAG	✅ Parent subgraph with 2 child subgraphs	❌ Stage is either single agent or flat parallel group	**CRITICAL**
+Wave-based parallel execution	✅ 5 waves, each waits for previous	❌ All parallel agents start simultaneously	**CRITICAL**
+Shared state with distinct keys per agent	✅ ProposalGenerationGraphState with 15+ keyed fields	❌ Context cascading is text-based, not keyed	**HIGH**
+Accumulator reducers for parallel writes	✅ `operator.add` for list fields	❌ No reducer concept	**HIGH**
+Nested subgraph execution	✅ 3 levels: pipeline → parent → child	❌ Maximum 1 level (pipeline → parallel group)	**CRITICAL**
+Each subagent produces typed output	✅ Pydantic BaseModel per subagent	❌ Text/JSON string output only	**MEDIUM**
+
