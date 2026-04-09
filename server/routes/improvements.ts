@@ -3505,12 +3505,25 @@ Enhance this template to be production-ready and comprehensive. For preloadedSki
       const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ message: "Agent not found" });
 
-      const traces = await storage.getTracesByAgent(req.params.id, getOrgId(req));
-      const evals = await storage.getEvalsByAgent(req.params.id);
-      const auditEvents = await storage.getAuditEvents(getOrgId(req));
+      const [traces, evals, auditEvents, deployments, blueprintsList] = await Promise.all([
+        storage.getTracesByAgent(req.params.id, getOrgId(req)),
+        storage.getEvalsByAgent(req.params.id),
+        storage.getAuditEvents(getOrgId(req)),
+        storage.getDeployments(getOrgId(req)),
+        storage.getBlueprintsByAgent(req.params.id),
+      ]);
       const agentAudit = auditEvents.filter(e => e.objectId === req.params.id || (e.details && e.details.includes(req.params.id)));
-      const deployments = await storage.getDeployments(getOrgId(req));
       const agentDeployments = deployments.filter(d => d.agentId === req.params.id);
+      const blueprint = blueprintsList.length > 0 ? blueprintsList[0] : null;
+
+      let teamGraphNodes: any[] = [];
+      let teamGraphEdges: any[] = [];
+      if (agent.agentType === "team" && blueprint) {
+        [teamGraphNodes, teamGraphEdges] = await Promise.all([
+          storage.getTeamBlueprintNodes(blueprint.id),
+          storage.getTeamBlueprintEdges(blueprint.id),
+        ]);
+      }
 
       const archive = {
         exportedAt: new Date().toISOString(),
@@ -3520,6 +3533,7 @@ Enhance this template to be production-ready and comprehensive. For preloadedSki
           description: agent.description,
           owner: agent.owner,
           status: agent.status,
+          agentType: agent.agentType,
           riskTier: agent.riskTier,
           currentVersion: agent.currentVersion,
           modelProvider: agent.modelProvider,
@@ -3540,6 +3554,35 @@ Enhance this template to be production-ready and comprehensive. For preloadedSki
           rollbackPlan: agent.rollbackPlan,
           createdAt: agent.createdAt,
         },
+        blueprint: blueprint ? {
+          id: blueprint.id,
+          name: blueprint.name,
+          description: blueprint.description,
+          blueprintJson: blueprint.blueprintJson,
+          version: blueprint.version,
+          status: blueprint.status,
+          ...(agent.agentType === "team" && teamGraphNodes.length > 0 ? {
+            teamGraph: {
+              nodes: teamGraphNodes.map(n => ({
+                id: n.id,
+                nodeType: n.nodeType,
+                label: n.label,
+                positionX: n.positionX,
+                positionY: n.positionY,
+                refAgentId: n.refAgentId,
+                config: n.config,
+              })),
+              edges: teamGraphEdges.map(e => ({
+                id: e.id,
+                sourceNodeId: e.sourceNodeId,
+                targetNodeId: e.targetNodeId,
+                label: e.label,
+                condition: e.condition,
+                failureMode: e.failureMode,
+              })),
+            },
+          } : {}),
+        } : null,
         traces: traces.map(t => ({ id: t.id, status: t.status, startedAt: t.startedAt, endedAt: t.endedAt, durationMs: (t as any).durationMs, inputTokens: (t as any).inputTokens, outputTokens: (t as any).outputTokens, cost: (t as any).cost })),
         evaluations: evals.map(e => ({ id: e.id, suiteName: (e as any).suiteName || (e as any).name, passRate: (e as any).passRate, status: (e as any).status })),
         deployments: agentDeployments.map(d => ({ id: d.id, environment: d.environment, version: d.version, status: d.status, createdAt: d.createdAt })),

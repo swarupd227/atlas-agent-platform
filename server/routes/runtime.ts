@@ -5450,6 +5450,15 @@ clean:
       const blueprintsList = await storage.getBlueprintsByAgent(agent.id);
       const blueprint = blueprintsList.length > 0 ? blueprintsList[0] : null;
 
+      let teamGraphNodes: any[] = [];
+      let teamGraphEdges: any[] = [];
+      if (agent.agentType === "team" && blueprint) {
+        [teamGraphNodes, teamGraphEdges] = await Promise.all([
+          storage.getTeamBlueprintNodes(blueprint.id),
+          storage.getTeamBlueprintEdges(blueprint.id),
+        ]);
+      }
+
       const allContextProfiles = await storage.getContextProfiles();
       const contextProfile = allContextProfiles.find(cp => cp.agentId === agent.id) || null;
 
@@ -5519,6 +5528,27 @@ clean:
         blueprintJson: blueprint.blueprintJson,
         version: blueprint.version,
         status: blueprint.status,
+        ...(agent.agentType === "team" && teamGraphNodes.length > 0 ? {
+          teamGraph: {
+            nodes: teamGraphNodes.map(n => ({
+              id: n.id,
+              nodeType: n.nodeType,
+              label: n.label,
+              positionX: n.positionX,
+              positionY: n.positionY,
+              refAgentId: n.refAgentId,
+              config: n.config,
+            })),
+            edges: teamGraphEdges.map(e => ({
+              id: e.id,
+              sourceNodeId: e.sourceNodeId,
+              targetNodeId: e.targetNodeId,
+              label: e.label,
+              condition: e.condition,
+              failureMode: e.failureMode,
+            })),
+          },
+        } : {}),
       } : null;
 
       const contextSection = contextProfile ? {
