@@ -534,7 +534,7 @@ export default function Pipelines() {
     refetchInterval: activeRunId ? 3000 : false,
   });
 
-  const { data: workflowSchema, isLoading: schemaLoading } = useQuery<{
+  const { data: workflowSchema, isLoading: schemaLoading, isError: schemaIsError } = useQuery<{
     id: string;
     schemaVersion: number;
     fields: Record<string, { type: string; reducer: string; writable_by?: string[]; ephemeral?: boolean; sanitize?: boolean; required?: boolean }>;
@@ -542,6 +542,17 @@ export default function Pipelines() {
     queryKey: ["/api/pipelines", selectedPipelineId, "workflow-state-schema"],
     enabled: !!selectedPipelineId && detailTab === "schema",
     retry: false,
+    queryFn: async () => {
+      const res = await fetch(`/api/pipelines/${selectedPipelineId}/workflow-state-schema`, {
+        credentials: "include",
+      });
+      if (res.status === 404) return null;
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`${res.status}: ${text}`);
+      }
+      return res.json();
+    },
   });
 
   useEffect(() => {
@@ -1563,7 +1574,7 @@ export default function Pipelines() {
                 <div className="flex items-center gap-2">
                   <Button variant="outline" size="sm" onClick={() => { const errs = validateSchema(); setSchemaErrors(errs); if (errs.length === 0) toast({ title: "Schema is valid", description: `${schemaFields.length} field(s) passed validation.` }); }} data-testid="button-validate-schema">
                     <ShieldAlert className="w-3.5 h-3.5 mr-1" />
-                    Validate
+                    Validate Schema
                   </Button>
                   <Button size="sm" onClick={handleSaveSchema} disabled={saveSchemaM.isPending} data-testid="button-save-schema">
                     {saveSchemaM.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1" />}
@@ -1580,13 +1591,19 @@ export default function Pipelines() {
                 </div>
               )}
 
+              {schemaIsError && (
+                <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3" data-testid="schema-fetch-error">
+                  <p className="text-xs text-destructive">Failed to load the workflow state schema. Check the server logs for details.</p>
+                </div>
+              )}
+
               {schemaLoading ? (
                 <div className="space-y-2">
                   <Skeleton className="h-10 w-full" />
                   <Skeleton className="h-10 w-full" />
                   <Skeleton className="h-10 w-full" />
                 </div>
-              ) : (
+              ) : schemaIsError ? null : (
                 <div className="rounded-md border overflow-hidden" data-testid="schema-field-table">
                   <table className="w-full text-xs">
                     <thead>
@@ -2474,7 +2491,10 @@ export default function Pipelines() {
                 disabled={editingFieldIndex !== null}
                 data-testid="input-field-name"
               />
-              <p className="text-[11px] text-muted-foreground">Must be a valid identifier (letters, numbers, underscores; no spaces).</p>
+              {editingFieldIndex !== null
+                ? <p className="text-[11px] text-muted-foreground">Field name cannot be renamed. To rename, delete this field and add a new one.</p>
+                : <p className="text-[11px] text-muted-foreground">Must be a valid identifier (letters, numbers, underscores; no spaces).</p>
+              }
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-2">
