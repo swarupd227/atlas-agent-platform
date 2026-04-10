@@ -432,13 +432,15 @@ export default function Pipelines() {
     writableBy: string;
     ephemeral: boolean;
     sanitize: boolean;
+    required: boolean;
   }
   const [schemaFields, setSchemaFields] = useState<SchemaFieldRow[]>([]);
   const [schemaVersion, setSchemaVersion] = useState<number | null>(null);
   const [schemaErrors, setSchemaErrors] = useState<string[]>([]);
   const [fieldDialogOpen, setFieldDialogOpen] = useState(false);
   const [editingFieldIndex, setEditingFieldIndex] = useState<number | null>(null);
-  const emptyFieldForm = { name: "", type: "string", reducer: "last_wins", writableBy: "*", ephemeral: false, sanitize: false };
+  const [schemaSort, setSchemaSort] = useState<{ col: "name" | "type" | "reducer" | "writableBy"; dir: "asc" | "desc" } | null>(null);
+  const emptyFieldForm = { name: "", type: "string", reducer: "last_wins", writableBy: "*", ephemeral: false, sanitize: false, required: false };
   const [fieldForm, setFieldForm] = useState(emptyFieldForm);
 
   const { data: pipelines = [], isLoading } = useQuery<AgentPipeline[]>({
@@ -535,7 +537,7 @@ export default function Pipelines() {
   const { data: workflowSchema, isLoading: schemaLoading } = useQuery<{
     id: string;
     schemaVersion: number;
-    fields: Record<string, { type: string; reducer: string; writable_by?: string[]; ephemeral?: boolean; sanitize?: boolean }>;
+    fields: Record<string, { type: string; reducer: string; writable_by?: string[]; ephemeral?: boolean; sanitize?: boolean; required?: boolean }>;
   } | null>({
     queryKey: ["/api/pipelines", selectedPipelineId, "workflow-state-schema"],
     enabled: !!selectedPipelineId && detailTab === "schema",
@@ -551,6 +553,7 @@ export default function Pipelines() {
         writableBy: (def.writable_by || ["*"]).join(", "),
         ephemeral: !!def.ephemeral,
         sanitize: !!def.sanitize,
+        required: !!def.required,
       }));
       setSchemaFields(rows);
       setSchemaVersion(workflowSchema.schemaVersion);
@@ -575,7 +578,7 @@ export default function Pipelines() {
 
   function validateSchema(): string[] {
     const errs: string[] = [];
-    const validReducers = ["last_wins", "append", "merge_object", "sum"];
+    const validReducers = ["last_wins", "append", "max", "min"];
     const validTypes = ["string", "number", "boolean", "array", "object"];
     const names = new Set<string>();
     schemaFields.forEach((f, i) => {
@@ -601,6 +604,7 @@ export default function Pipelines() {
         writable_by: f.writableBy.split(",").map((s) => s.trim()).filter(Boolean),
         ephemeral: f.ephemeral || undefined,
         sanitize: f.sanitize || undefined,
+        required: f.required || undefined,
       };
     });
     saveSchemaM.mutate({ pipelineId: selectedPipelineId, fields });
@@ -615,7 +619,7 @@ export default function Pipelines() {
   function openEditField(index: number) {
     const f = schemaFields[index];
     setEditingFieldIndex(index);
-    setFieldForm({ name: f.name, type: f.type, reducer: f.reducer, writableBy: f.writableBy, ephemeral: f.ephemeral, sanitize: f.sanitize });
+    setFieldForm({ name: f.name, type: f.type, reducer: f.reducer, writableBy: f.writableBy, ephemeral: f.ephemeral, sanitize: f.sanitize, required: f.required });
     setFieldDialogOpen(true);
   }
 
@@ -1536,11 +1540,12 @@ export default function Pipelines() {
                       v{schemaVersion}
                     </Badge>
                   )}
-                  {(selectedPipeline as any)?.stateEnabled && (
-                    <Badge className="text-[10px] bg-green-100 text-green-700 border-green-300 dark:bg-green-900/30 dark:text-green-400 dark:border-green-700">
-                      state tracking on
-                    </Badge>
-                  )}
+                  <Badge
+                    className={`text-[10px] ${(selectedPipeline as any)?.stateEnabled ? "bg-green-100 text-green-700 border-green-300 dark:bg-green-900/30 dark:text-green-400 dark:border-green-700" : "bg-muted text-muted-foreground border-border"}`}
+                    data-testid="badge-state-tracking"
+                  >
+                    {(selectedPipeline as any)?.stateEnabled ? "state tracking on" : "state tracking off"}
+                  </Badge>
                 </div>
                 <div className="flex items-center gap-2">
                   <Button variant="outline" size="sm" onClick={() => { const errs = validateSchema(); setSchemaErrors(errs); if (errs.length === 0) toast({ title: "Schema is valid", description: `${schemaFields.length} field(s) passed validation.` }); }} data-testid="button-validate-schema">
@@ -1573,10 +1578,23 @@ export default function Pipelines() {
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="border-b bg-muted/40 text-muted-foreground">
-                        <th className="px-3 py-2 text-left font-medium">Field</th>
-                        <th className="px-3 py-2 text-left font-medium">Type</th>
-                        <th className="px-3 py-2 text-left font-medium">Reducer</th>
-                        <th className="px-3 py-2 text-left font-medium">Writable By</th>
+                        {(["name", "type", "reducer", "writableBy"] as const).map((col) => {
+                          const labels: Record<string, string> = { name: "Field", type: "Type", reducer: "Reducer", writableBy: "Writable By" };
+                          const active = schemaSort?.col === col;
+                          return (
+                            <th
+                              key={col}
+                              className="px-3 py-2 text-left font-medium cursor-pointer select-none hover:text-foreground transition-colors"
+                              onClick={() => setSchemaSort((s) => s?.col === col ? { col, dir: s.dir === "asc" ? "desc" : "asc" } : { col, dir: "asc" })}
+                              data-testid={`sort-col-${col}`}
+                            >
+                              <span className="inline-flex items-center gap-1">
+                                {labels[col]}
+                                {active ? (schemaSort!.dir === "asc" ? " ↑" : " ↓") : " ↕"}
+                              </span>
+                            </th>
+                          );
+                        })}
                         <th className="px-3 py-2 text-left font-medium">Options</th>
                         <th className="px-3 py-2 w-16"></th>
                       </tr>
@@ -1589,46 +1607,62 @@ export default function Pipelines() {
                           </td>
                         </tr>
                       ) : (
-                        schemaFields.map((field, i) => (
-                          <tr key={i} className="border-b last:border-0 hover:bg-muted/20 transition-colors" data-testid={`schema-field-row-${i}`}>
-                            <td className="px-3 py-2 font-mono font-medium">{field.name}</td>
-                            <td className="px-3 py-2">
-                              <Badge variant="outline" className="text-[10px] font-mono">{field.type}</Badge>
-                            </td>
-                            <td className="px-3 py-2">
-                              <Badge variant="outline" className={`text-[10px] ${field.reducer === "append" ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400" : ""}`}>
-                                {field.reducer}
-                              </Badge>
-                            </td>
-                            <td className="px-3 py-2 text-muted-foreground font-mono text-[11px] max-w-32 truncate" title={field.writableBy}>
-                              {field.writableBy || "*"}
-                            </td>
-                            <td className="px-3 py-2">
-                              <div className="flex flex-wrap gap-1">
-                                {field.ephemeral && <Badge variant="secondary" className="text-[10px]">ephemeral</Badge>}
-                                {field.sanitize && <Badge variant="secondary" className="text-[10px]">sanitize</Badge>}
-                              </div>
-                            </td>
-                            <td className="px-3 py-2">
-                              <div className="flex items-center gap-1">
-                                <button
-                                  className="text-muted-foreground hover:text-foreground p-0.5 rounded"
-                                  onClick={() => openEditField(i)}
-                                  data-testid={`button-edit-field-${i}`}
-                                >
-                                  <Pencil className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  className="text-muted-foreground hover:text-destructive p-0.5 rounded"
-                                  onClick={() => deleteField(i)}
-                                  data-testid={`button-delete-field-${i}`}
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        ))
+                        [...schemaFields]
+                          .sort((a, b) => {
+                            if (!schemaSort) return 0;
+                            const av = a[schemaSort.col] ?? "";
+                            const bv = b[schemaSort.col] ?? "";
+                            return schemaSort.dir === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+                          })
+                          .map((field, i) => {
+                            const origIndex = schemaFields.findIndex((f) => f.name === field.name);
+                            return (
+                              <tr
+                                key={field.name}
+                                className="border-b last:border-0 hover:bg-muted/20 transition-colors cursor-pointer"
+                                onClick={() => openEditField(origIndex)}
+                                data-testid={`schema-field-row-${i}`}
+                              >
+                                <td className="px-3 py-2 font-mono font-medium">{field.name}</td>
+                                <td className="px-3 py-2">
+                                  <Badge variant="outline" className="text-[10px] font-mono">{field.type}</Badge>
+                                </td>
+                                <td className="px-3 py-2">
+                                  <Badge variant="outline" className={`text-[10px] ${field.reducer === "append" ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400" : ""}`}>
+                                    {field.reducer === "append" ? "⊕ append" : field.reducer}
+                                  </Badge>
+                                </td>
+                                <td className="px-3 py-2 text-muted-foreground font-mono text-[11px] max-w-32 truncate" title={field.writableBy}>
+                                  {field.writableBy || "*"}
+                                </td>
+                                <td className="px-3 py-2">
+                                  <div className="flex flex-wrap gap-1">
+                                    {field.required && <Badge variant="secondary" className="text-[10px]">required</Badge>}
+                                    {field.ephemeral && <Badge variant="secondary" className="text-[10px]">ephemeral</Badge>}
+                                    {field.sanitize && <Badge variant="secondary" className="text-[10px]">sanitize</Badge>}
+                                  </div>
+                                </td>
+                                <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                                  <div className="flex items-center gap-1">
+                                    <button
+                                      className="text-muted-foreground hover:text-foreground p-0.5 rounded"
+                                      onClick={(e) => { e.stopPropagation(); openEditField(origIndex); }}
+                                      data-testid={`button-edit-field-${i}`}
+                                    >
+                                      <Pencil className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      className="text-muted-foreground hover:text-destructive p-0.5 rounded"
+                                      onClick={(e) => { e.stopPropagation(); deleteField(origIndex); }}
+                                      data-testid={`button-delete-field-${i}`}
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })
                       )}
                     </tbody>
                   </table>
@@ -1644,6 +1678,14 @@ export default function Pipelines() {
                 <p className="text-xs text-muted-foreground">
                   {schemaFields.length} field{schemaFields.length !== 1 ? "s" : ""} defined
                   {schemaVersion !== null ? ` · schema v${schemaVersion}` : " · unsaved"}
+                  {" · "}
+                  {schemaFields.filter((f) => f.reducer === "last_wins").length} last_wins
+                  {", "}
+                  {schemaFields.filter((f) => f.reducer === "append").length} append
+                  {", "}
+                  {schemaFields.filter((f) => f.reducer === "max").length} max
+                  {", "}
+                  {schemaFields.filter((f) => f.reducer === "min").length} min
                 </p>
               )}
             </div>
@@ -2448,8 +2490,8 @@ export default function Pipelines() {
                   <SelectContent>
                     <SelectItem value="last_wins">last_wins</SelectItem>
                     <SelectItem value="append">append</SelectItem>
-                    <SelectItem value="merge_object">merge_object</SelectItem>
-                    <SelectItem value="sum">sum</SelectItem>
+                    <SelectItem value="max">max</SelectItem>
+                    <SelectItem value="min">min</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -2487,6 +2529,18 @@ export default function Pipelines() {
                 />
                 <span>Sanitize</span>
                 <span className="text-[11px] text-muted-foreground">(strip from checkpoint snapshots)</span>
+              </label>
+            </div>
+            <div className="flex items-center gap-6">
+              <label className="flex items-center gap-2 cursor-pointer text-sm" data-testid="toggle-field-required">
+                <input
+                  type="checkbox"
+                  className="rounded"
+                  checked={fieldForm.required}
+                  onChange={(e) => setFieldForm((f) => ({ ...f, required: e.target.checked }))}
+                />
+                <span>Required</span>
+                <span className="text-[11px] text-muted-foreground">(field must be present when schema is validated)</span>
               </label>
             </div>
           </div>
