@@ -881,10 +881,10 @@ export default function AgentExport() {
                       size="sm"
                       className="w-full justify-start text-xs gap-1.5"
                       onClick={handleGenerate}
-                      disabled={exportCodeMutation.isPending}
+                      disabled={isGenerating}
                       data-testid="button-regenerate"
                     >
-                      {exportCodeMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                      {isGenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
                       Regenerate
                     </Button>
                     <Button
