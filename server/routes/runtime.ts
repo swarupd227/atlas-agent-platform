@@ -3250,6 +3250,30 @@ ${nodeSetup}
 
   // Uses Claude (Anthropic) via the installed AI Integrations (javascript_anthropic_ai_integrations).
   // Falls back to templates if Claude generation fails.
+  // Helper: call Anthropic and return plain text (no JSON wrapping)
+  async function callAnthropicForFile(systemMsg: string, userMsg: string, label: string): Promise<string | null> {
+    try {
+      const response = await anthropicClient.messages.create({
+        model: "claude-sonnet-4-5",
+        max_tokens: 8192,
+        system: systemMsg,
+        messages: [{ role: "user", content: userMsg }],
+      });
+      if (response.stop_reason === "max_tokens") {
+        console.log(`[generateAgentCodeWithAI] ${label}: response truncated at max_tokens`);
+      }
+      const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
+      let raw = textBlocks.map(b => b.text).join("").trim();
+      // Strip any accidental markdown code fences
+      const fenceMatch = raw.match(/^```(?:\w+)?\s*([\s\S]*?)```\s*$/);
+      if (fenceMatch) raw = fenceMatch[1].trim();
+      return raw.length > 10 ? raw : null;
+    } catch (err: any) {
+      console.error(`[generateAgentCodeWithAI] ${label} call failed:`, err?.message || err);
+      return null;
+    }
+  }
+
   async function generateAgentCodeWithAI(ctx: {
     agentName: string;
     agentDescription: string;
@@ -3269,254 +3293,177 @@ ${nodeSetup}
     singleFile?: string;
   }): Promise<{ entrypoint: string; toolAdapters: Record<string, string>; agentYaml?: string; dockerfile?: string; frameworkFiles?: Record<string, string>; aiGenerated: true } | null> {
     try {
-      const toolsJson = JSON.stringify(ctx.tools.map(t => ({
-        name: t.name,
-        description: t.description || "",
-        parameters: t.parameters || {},
-      })), null, 2);
-
       const lang = ctx.format === "typescript" ? "TypeScript" : "Python";
       const provider = ctx.llmProvider === "openai" ? "OpenAI" : "Anthropic";
       const clientLib = ctx.llmProvider === "openai"
         ? (ctx.format === "typescript" ? "openai (npm)" : "openai (pip)")
         : (ctx.format === "typescript" ? "@anthropic-ai/sdk (npm)" : "anthropic (pip)");
 
-      const systemMsg = `You are a senior AI agent engineer. Your task is to generate production-ready, fully runnable ${lang} code for an autonomous AI agent.
-
-CRITICAL REQUIREMENTS — these are non-negotiable:
-1. Generate REAL implementations, not placeholder stubs. Every tool adapter must make actual API calls, DB queries, or computations — not return { _stub: true }.
-2. Read ALL credentials from environment variables. Never hard-code secrets. Use descriptive env var names matching the integration (e.g. SALESFORCE_ACCESS_TOKEN, DATABASE_URL).
-3. Include proper error handling in every function: catch HTTP errors by status code, surface meaningful messages, never swallow exceptions silently.
-4. The entrypoint MUST be fully runnable end-to-end: imports, LLM call, tool dispatch loop, completion check, policy enforcement.
-5. Policy enforcement is mandatory: the generated orchestrator MUST call policy hooks (on_before_tool_call / onBeforeToolCall) before every tool dispatch and check response content against stop conditions.
-
-You MUST respond with valid JSON only — no markdown, no explanations, no code fences.
-The JSON must have exactly these keys:
-{
-  "entrypoint": "<full entrypoint file content as a string>",
-  "toolAdapters": {
-    "<toolName>": "<full adapter file content as a string — real implementation with actual API calls>",
-    ...
-  },
-  "agentYaml": "<optional: enriched agent.yaml content>",
-  "dockerfile": "<optional: Dockerfile tailored to the agent's actual dependencies>",
-  "frameworkFiles": {
-    "<filePath>": "<file content as string>",
-    ...
-  }
-}
-The "frameworkFiles" field should contain framework-specific config/manifest files (e.g. for CrewAI: config/agents.yaml and config/tasks.yaml from the agent's blueprint and tool mappings).`;
-
       const blueprintStr = (ctx.blueprintJson && Object.keys(ctx.blueprintJson).length > 0)
-        ? JSON.stringify(ctx.blueprintJson, null, 2)
+        ? JSON.stringify(ctx.blueprintJson, null, 2) : "";
+      const blueprintCtx = blueprintStr ? `\nBlueprint JSON:\n${blueprintStr}` : "";
+
+      const skillsCtx = (ctx.skills && ctx.skills.length > 0)
+        ? `\nLinked Skills:\n${ctx.skills.map(s => `- ${s.name}${s.domain ? ` [${s.domain}]` : ""}${s.description ? `: ${s.description}` : ""}`).join("\n")}`
         : "";
-      const blueprintCtx = blueprintStr
-        ? `\nBlueprint JSON (agent graph structure):\n${blueprintStr}`
+
+      const mcpCtx = (ctx.mcpServers && ctx.mcpServers.length > 0)
+        ? `\nMCP Servers:\n${ctx.mcpServers.map(s => {
+            const toolList = (s.tools && s.tools.length > 0)
+              ? `\n  Tools:\n${s.tools.map(t => `    - ${t.name}${t.description ? `: ${t.description}` : ""}`).join("\n")}` : "";
+            return `- ${s.name} (${s.transportType}${s.url ? `, ${s.url}` : ""})${toolList}`;
+          }).join("\n")}\nUse the @modelcontextprotocol/sdk Client to connect to each MCP server and call its listed tools.`
+        : "";
+
+      const policiesCtx = ((ctx.policyStopConditions?.length || 0) > 0 || (ctx.policyForbiddenOutputs?.length || 0) > 0 || (ctx.policyBlockedTools?.length || 0) > 0)
+        ? `\nAgent Policies:\n${(ctx.policyStopConditions?.length || 0) > 0 ? `- Stop conditions: ${JSON.stringify(ctx.policyStopConditions)}\n` : ""}${(ctx.policyForbiddenOutputs?.length || 0) > 0 ? `- Forbidden patterns: ${JSON.stringify(ctx.policyForbiddenOutputs)}\n` : ""}${(ctx.policyBlockedTools?.length || 0) > 0 ? `- Blocked tools: ${JSON.stringify(ctx.policyBlockedTools)}\n` : ""}`
+        : "";
+
+      const toolsJson = JSON.stringify(ctx.tools.map(t => ({
+        name: t.name, description: t.description || "", parameters: t.parameters || {},
+      })), null, 2);
+
+      const toolImplementationHints = ctx.tools.length > 0
+        ? `\nTool Implementation Hints:\n${ctx.tools.map(t => `- ${t.name}: ${inferToolImplementationHints(t.name, t.description || "")}`).join("\n")}`
         : "";
 
       const frameworkInstructions: Record<string, string> = {
-        generic: `Requirements for the ENTRYPOINT file (${ctx.format === "typescript" ? "src/runtime/orchestrator.ts" : "src/runtime/orchestrator.py"}):
-1. Import and use the ${provider} SDK with the correct API call pattern
+        generic: `Generate the entrypoint file (${ctx.format === "typescript" ? "src/runtime/orchestrator.ts" : "src/runtime/orchestrator.py"}):
+1. Import and use the ${provider} SDK
 2. Load config from agent.yaml using ${ctx.format === "typescript" ? "js-yaml" : "pyyaml"}
-3. Define TOOL_REGISTRY with each tool's actual description and parameter schema (not generic placeholders)
+3. Define TOOL_REGISTRY with each tool's description and parameter schema
 4. Build toolDefinitions array from TOOL_REGISTRY with full schemas
 5. Implement the agent loop: call LLM → check for completion phrase → dispatch tool calls → collect results → repeat
-6. Include context window trimming when message history exceeds 40 messages
-7. Include clear console logging for each iteration and tool call
+6. Trim context window when message history exceeds 40 messages
+7. Log each iteration and tool call
 8. Accept task input from command line argv`,
-        langgraph: `Requirements for the ENTRYPOINT file (${ctx.format === "typescript" ? "graph.ts" : "graph.py"}):
-1. Use LangGraph's StateGraph to define an agent graph with nodes and edges
-2. Map each tool to a graph node that calls the tool adapter
-3. Create an "agent" reasoning node that calls the LLM and decides which tool to invoke
-4. Add conditional edges: agent → tool nodes, tool nodes → agent, agent → END (on completion)
-5. Use the blueprint JSON (if provided) to derive node names, edges, and execution order
-6. Include proper TypedDict/interface for the graph state (messages, tool_results, iterations)
-7. Export the compiled graph as "app"
-8. Include max iteration guard in the should_continue conditional`,
-        crewai: `Requirements for the ENTRYPOINT file (${ctx.format === "typescript" ? "crew.ts" : "crew.py"}):
-1. Define agent roles derived from the blueprint structure and system prompt
-2. Map tools to the appropriate agent roles based on their descriptions
-3. Define CrewAI tasks that reflect the agent's actual objectives
-4. Wire up the crew orchestration with proper delegation and task assignment
-5. Use the blueprint JSON (if provided) to derive roles, goals, and task sequences
-6. Include verbose logging for each task execution step`,
-        bedrock: `Requirements for the ENTRYPOINT file (${ctx.format === "typescript" ? "lambda/handler.ts" : "lambda/handler.py"}):
-1. Implement an AWS Lambda handler compatible with Bedrock Agent action groups
-2. Route incoming apiPath to the correct tool adapter
-3. Parse parameters from the Bedrock event format
-4. Return responses in Bedrock's expected responseBody format
-5. Include error handling for unknown tools and malformed parameters`,
-        foundry: `Requirements for the ENTRYPOINT file (src/agent_flow.py) — Azure AI Foundry / Promptflow style (Python only; always generate Python regardless of format selection):
-1. Use the Azure AI Foundry SDK (azure-ai-projects) to create an AgentClient using AZURE_AI_PROJECT connection string
-2. Define each tool as an Azure FunctionTool with name, description, and JSON Schema parameters derived from TOOL_REGISTRY
-3. Create the agent via client.agents.create_agent() with the system prompt, model deployment name, and tool list
-4. Implement the run loop: create_thread() → create_run() → poll run status → on requires_action, dispatch tool_calls to adapters and submit_tool_outputs → on completed, extract final message
-5. Include a flow.dag.yaml frameworkFile defining the Promptflow DAG: inputs, outputs, nodes mapping to each tool adapter, and the orchestrator node
-6. Accept task input as a Promptflow input variable and return the agent's final answer as output
-7. Log each tool call and iteration with Azure Application Insights trace format (operation_id, span_id)`,
-        "semantic-kernel": `Requirements for the ENTRYPOINT file (src/kernel_agent.py) — Microsoft Semantic Kernel style (Python only; always generate Python regardless of format selection):
-1. Import semantic_kernel and the correct AI service connector: AzureChatCompletion if AZURE_OPENAI_ENDPOINT is set, otherwise OpenAIChatCompletion
-2. Create a Kernel instance and add the AI service using SK_SERVICE_ID
-3. Define each tool as a @kernel_function decorated method inside a dedicated Plugin class; use annotations for parameter types derived from the tool's parameter schema
-4. Register all plugin classes on the kernel with kernel.add_plugin()
-5. Implement the agent loop using kernel.invoke() with a FunctionChoiceBehavior.Auto() prompt execution setting so the kernel auto-invokes tools
-6. Build the chat history with the system prompt, then stream the user task through kernel.invoke_stream() and collect the final response
-7. Handle max_iterations by checking the chat history length and injecting a stop instruction if exceeded
-8. Include clear logging of each plugin function invocation with input arguments`,
-        autogen: `Requirements for the ENTRYPOINT file (src/autogen_agent.py) — Microsoft AutoGen style (Python only; always generate Python regardless of format selection):
-1. Import autogen and build the llm_config dict from OAI_CONFIG_LIST or from OPENAI_API_KEY / AZURE_OPENAI_ENDPOINT env vars
-2. Create an AssistantAgent named after the agent (from agent.yaml) with the system_message set to the agent's system prompt
-3. Create a UserProxyAgent with human_input_mode="NEVER", max_consecutive_auto_reply equal to max_iterations, and code_execution_config=False
-4. Register each tool as a function on both agents using @assistant.register_for_llm and @user_proxy.register_for_execution decorators; derive function signatures from the tool's parameter schema
-5. Each registered function body should call the corresponding tool adapter and return its result
-6. Initiate the conversation via user_proxy.initiate_chat(assistant, message=task_input) where task_input comes from command line argv
-7. Print the final reply from the conversation
-8. Include clear logging of each function call with tool name and arguments`,
-        "openai-assistants": `Requirements for the ENTRYPOINT file (${ctx.format === "typescript" ? "src/assistants_agent.ts" : "src/assistants_agent.py"}):
-1. Import the OpenAI SDK and initialize the client with OPENAI_API_KEY
-2. Define TOOL_DEFINITIONS as an array of function-type tools; derive name, description, and parameters JSON Schema from TOOL_REGISTRY
-3. On startup, check OPENAI_ASSISTANT_ID env var; if set load the existing assistant, otherwise create a new one with the agent's name, system prompt (instructions), model, and TOOL_DEFINITIONS — then log the new assistant ID so the user can persist it
-4. Create a new Thread for each task run
-5. Add the task input as a user Message to the thread, then create a Run with the assistant
-6. Poll the run status in a loop: on requires_action, extract tool_calls, dispatch each to the matching tool adapter, collect outputs, and call submit_tool_outputs; on completed, retrieve the latest assistant message and return it
-7. Enforce max_iterations by counting polling cycles and cancelling the run if exceeded
-8. Include clear logging of run status transitions, tool calls, and final message`,
+        langgraph: `Generate the entrypoint file (${ctx.format === "typescript" ? "graph.ts" : "graph.py"}):
+1. Use LangGraph StateGraph with nodes and edges
+2. Map each tool to a graph node calling the tool adapter
+3. Create an "agent" reasoning node that calls the LLM
+4. Add conditional edges: agent → tool nodes → agent → END
+5. Use blueprint JSON to derive node names and execution order
+6. TypedDict/interface for graph state; export compiled graph as "app"
+7. Max iteration guard in the should_continue conditional`,
+        crewai: `Generate the entrypoint file (${ctx.format === "typescript" ? "crew.ts" : "crew.py"}):
+1. Define agent roles from blueprint and system prompt
+2. Map tools to agent roles based on descriptions
+3. Define CrewAI tasks reflecting actual objectives
+4. Wire crew orchestration with delegation and task assignment
+5. Include verbose logging`,
+        bedrock: `Generate the entrypoint file (${ctx.format === "typescript" ? "lambda/handler.ts" : "lambda/handler.py"}):
+1. AWS Lambda handler compatible with Bedrock Agent action groups
+2. Route apiPath to the correct tool adapter
+3. Parse parameters from Bedrock event format
+4. Return Bedrock-formatted responseBody
+5. Error handling for unknown tools`,
+        foundry: `Generate the entrypoint file (src/agent_flow.py) — Azure AI Foundry / Promptflow (Python):
+1. Use azure-ai-projects AgentClient with AZURE_AI_PROJECT env var
+2. Define each tool as Azure FunctionTool with JSON Schema params
+3. Create agent via create_agent() with system prompt and tool list
+4. Run loop: create_thread → create_run → poll → dispatch tool_calls → submit outputs
+5. Include flow.dag.yaml as a framework file
+6. Log with Azure App Insights trace format`,
+        "semantic-kernel": `Generate the entrypoint file (src/kernel_agent.py) — Semantic Kernel (Python):
+1. AzureChatCompletion if AZURE_OPENAI_ENDPOINT set, else OpenAIChatCompletion
+2. Create Kernel, add AI service using SK_SERVICE_ID
+3. Define tools as @kernel_function methods in a Plugin class
+4. Register plugins with kernel.add_plugin()
+5. Agent loop with FunctionChoiceBehavior.Auto()
+6. Log each plugin invocation`,
+        autogen: `Generate the entrypoint file (src/autogen_agent.py) — AutoGen (Python):
+1. Build llm_config from OAI_CONFIG_LIST or env vars
+2. AssistantAgent with system prompt; UserProxyAgent with human_input_mode="NEVER"
+3. Register each tool with @register_for_llm and @register_for_execution
+4. initiate_chat with task from argv
+5. Log each function call`,
+        "openai-assistants": `Generate the entrypoint file (${ctx.format === "typescript" ? "src/assistants_agent.ts" : "src/assistants_agent.py"}):
+1. Initialize OpenAI client with OPENAI_API_KEY
+2. TOOL_DEFINITIONS from TOOL_REGISTRY
+3. Check OPENAI_ASSISTANT_ID; create or load assistant
+4. Thread per task run; poll run status
+5. On requires_action: dispatch tool_calls, submit outputs
+6. Max iteration guard; log status transitions`,
       };
 
       const fwInstr = frameworkInstructions[ctx.framework] || frameworkInstructions.generic;
 
-      const skillsCtx = (ctx.skills && ctx.skills.length > 0)
-        ? `\nLinked Skills (${ctx.skills.length}):\n${ctx.skills.map(s => `- ${s.name}${s.domain ? ` [${s.domain}]` : ""}${s.description ? `: ${s.description}` : ""}`).join("\n")}`
-        : "";
+      // ── STEP 1: Generate entrypoint (focused single call) ──────────────────
+      const entrypointSystemMsg = `You are a senior AI agent engineer. Generate ONLY the source file content — no explanations, no markdown, no code fences, no JSON.
+Return the raw ${lang} source file only. It must be production-ready and fully runnable.
+CRITICAL: Read ALL credentials from environment variables. Include real error handling. Enforce policy hooks before every tool call.`;
 
-      const mcpCtx = (ctx.mcpServers && ctx.mcpServers.length > 0)
-        ? `\nMCP Servers (${ctx.mcpServers.length}):\n${ctx.mcpServers.map(s => {
-            const toolList = (s.tools && s.tools.length > 0)
-              ? `\n  Tools:\n${s.tools.map(t => `    - ${t.name}${t.description ? `: ${t.description}` : ""}`).join("\n")}`
-              : "";
-            return `- ${s.name} (${s.transportType}${s.url ? `, ${s.url}` : ""})${toolList}`;
-          }).join("\n")}\n\nIMPORTANT: This agent uses MCP servers. Use the @modelcontextprotocol/sdk Client to connect to each server and call its tools. Generate the MCP client connection setup and call the specific tools listed above.`
-        : "";
+      const entrypointUserMsg = `Generate the ${lang} entrypoint file for this autonomous agent using the ${provider} API (${clientLib}).
 
-      const policiesCtx = ((ctx.policyStopConditions?.length || 0) > 0 || (ctx.policyForbiddenOutputs?.length || 0) > 0 || (ctx.policyBlockedTools?.length || 0) > 0)
-        ? `\nAgent Policies (MUST be enforced in the orchestrator and tool calls):\n${(ctx.policyStopConditions?.length || 0) > 0 ? `- Stop conditions — halt and return immediately if the LLM response contains any of these strings: ${JSON.stringify(ctx.policyStopConditions)}\n` : ""}${(ctx.policyForbiddenOutputs?.length || 0) > 0 ? `- Forbidden output patterns (regex) — redact or block the response if it matches: ${JSON.stringify(ctx.policyForbiddenOutputs)}\n` : ""}${(ctx.policyBlockedTools?.length || 0) > 0 ? `- Blocked tools — NEVER call these tools, return an error immediately: ${JSON.stringify(ctx.policyBlockedTools)}\n` : ""}`
-        : "";
-
-      const toolImplementationHintsCtx = ctx.tools.length > 0
-        ? `\nTool Implementation Hints (use these to write REAL implementations, not stubs):\n${ctx.tools.map(t => `- ${t.name}: ${inferToolImplementationHints(t.name, t.description || "")}`).join("\n")}`
-        : "";
-
-      const userMsg = `Generate a complete, production-ready autonomous agent in ${lang} using the ${provider} API (${clientLib}).
-
-Agent context:
+Agent:
 - Name: ${ctx.agentName}
 - Description: ${ctx.agentDescription}
 - System prompt: ${ctx.systemPrompt}
 - Max iterations: ${ctx.maxIterations}
-- Completion signal phrase: "${ctx.completionPromise}"
+- Completion signal: "${ctx.completionPromise}"
 - Framework: ${ctx.framework}${blueprintCtx}${skillsCtx}${mcpCtx}${policiesCtx}
 
-Tools (${ctx.tools.length}):
+Tools available (${ctx.tools.length}):
 ${toolsJson}
-${toolImplementationHintsCtx}
 
-${fwInstr}
+${fwInstr}`;
 
-${ctx.format === "python" ? `Requirements for each Python TOOL ADAPTER file (MANDATORY contract — test files import these symbols):
-1. MUST define a @dataclass named <ToolNamePascalCase>Args (e.g. for "application_manager" → "Application_managerArgs").
-   Add one field per parameter in the tool's schema with a matching Python type and a safe default value:
-   string → str = "", number/integer → int = 0, boolean → bool = False, array → list = None (field(default_factory=list)),
-   object/dict → Optional[dict] = None.
-2. MUST define a module-level dict named INPUT_SCHEMA that is the exact JSON Schema object for this tool's parameters.
-3. MUST define a module-level function: def _execute(args: <ClassName>) -> dict — this is the internal implementation entry point.
-   CRITICAL: _execute MUST contain a REAL implementation using the Tool Implementation Hints above — actual HTTP calls, DB queries, or logic.
-   It MUST always return a dict (never raise). Return {"status": "error", "error": str(e)} on exceptions.
-4. MUST define a public function def <tool_name>(args: <ClassName>) -> dict that delegates to _execute(args) and returns its result.
-5. Include the tool description as a docstring on the public function.
-6. Log the call: print(f"[<tool_name>] called with: {args}")` : `Requirements for each TypeScript TOOL ADAPTER file:
-1. Each adapter must have a typed function signature derived from the tool's parameter schema
-2. Export the function as the default export and as a named export
-3. Export a const inputSchema object matching the tool's parameter JSON Schema
-4. Export an async _execute function that contains the REAL implementation — use the Tool Implementation Hints above.
-   Make actual HTTP calls, DB queries, or API operations. Read all secrets from process.env.
-   Return { status: "ok", result: ... } on success and { status: "error", error: string } on failure. Never throw.
-5. Include the tool's description as a JSDoc comment
-6. Log the call with the tool name and args (console.log)
-7. The public function delegates to _execute and re-exports its return value`}
-
-CRITICAL: Every tool adapter must contain a REAL implementation based on its Tool Implementation Hint. Do NOT generate stubs, TODO comments, or NotImplementedError — write the actual code.
-Keep all code concise. Do NOT include a README or lengthy documentation strings in your JSON output.
-Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and properly closed.`;
-
-      const response = await anthropicClient.messages.create({
-        model: "claude-sonnet-4-5",
-        max_tokens: 16384,
-        system: systemMsg,
-        messages: [
-          { role: "user", content: userMsg },
-        ],
-      });
-
-      if (response.stop_reason === "max_tokens") {
-        console.log(`[generateAgentCodeWithAI] Response truncated (hit max_tokens limit). Output may be incomplete.`);
+      const entrypoint = await callAnthropicForFile(entrypointSystemMsg, entrypointUserMsg, "entrypoint");
+      if (!entrypoint) {
+        console.error("[generateAgentCodeWithAI] Entrypoint generation failed, falling back to template");
+        return null;
       }
 
-      const textBlocks = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text");
-      let raw = textBlocks.map(b => b.text).join("");
-      const jsonMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (jsonMatch) raw = jsonMatch[1].trim();
-      raw = raw.trim();
-      let parsed: any;
-      try {
-        parsed = JSON.parse(raw);
-      } catch (firstErr: any) {
-        console.log(`[generateAgentCodeWithAI] JSON parse failed: ${firstErr.message}. Attempting repair...`);
-        let fixed = "";
-        let inString = false;
-        let escaped = false;
-        for (let i = 0; i < raw.length; i++) {
-          const ch = raw[i];
-          if (escaped) { fixed += ch; escaped = false; continue; }
-          if (ch === "\\" && inString) { fixed += ch; escaped = true; continue; }
-          if (ch === '"') { inString = !inString; fixed += ch; continue; }
-          if (inString) {
-            if (ch === "\n") { fixed += "\\n"; continue; }
-            if (ch === "\r") { fixed += "\\r"; continue; }
-            if (ch === "\t") { fixed += "\\t"; continue; }
-          }
-          fixed += ch;
-        }
-        try {
-          parsed = JSON.parse(fixed);
-        } catch (secondErr: any) {
-          console.log(`[generateAgentCodeWithAI] JSON repair also failed: ${secondErr.message}`);
-          throw secondErr;
-        }
-      }
+      // ── STEP 2: Generate each tool adapter in parallel (one call each) ──────
+      const toolAdapterSystemMsg = ctx.format === "python"
+        ? `You are a senior AI agent engineer. Generate ONLY the Python tool adapter file content — no explanations, no markdown, no code fences, no JSON. Raw Python only.
+Contract (mandatory):
+1. @dataclass named <ToolNamePascalCase>Args with one typed field per parameter (str="", int=0, bool=False, list=field(default_factory=list), Optional[dict]=None)
+2. Module-level dict INPUT_SCHEMA = exact JSON Schema for this tool's parameters
+3. def _execute(args: <ClassName>) -> dict — REAL implementation, always returns dict, never raises
+4. def <tool_name>(args: <ClassName>) -> dict — delegates to _execute, has docstring
+5. print(f"[<tool_name>] called with: {args}") at start`
+        : `You are a senior AI agent engineer. Generate ONLY the TypeScript tool adapter file content — no explanations, no markdown, no code fences, no JSON. Raw TypeScript only.
+Contract (mandatory):
+1. Typed function signature from the tool's parameter schema
+2. Default export and named export of the function
+3. export const inputSchema = <JSON Schema object>
+4. export async function _execute(...) — REAL implementation, reads secrets from process.env, returns { status: "ok"|"error", result?:..., error?:string }, never throws
+5. JSDoc comment with tool description
+6. console.log(tool name and args) at start
+7. Public function delegates to _execute`;
 
-      if (!parsed.entrypoint || typeof parsed.entrypoint !== "string") return null;
       const toolAdapters: Record<string, string> = {};
-      if (parsed.toolAdapters && typeof parsed.toolAdapters === "object") {
-        for (const [name, content] of Object.entries(parsed.toolAdapters)) {
-          if (typeof content === "string" && content.length > 10) toolAdapters[name] = content;
+      if (ctx.tools.length > 0) {
+        const adapterPromises = ctx.tools.map(async (tool) => {
+          const hint = inferToolImplementationHints(tool.name, tool.description || "");
+          const adapterUserMsg = `Generate the ${lang} tool adapter for this tool:
+
+Tool name: ${tool.name}
+Description: ${tool.description || ""}
+Parameters schema: ${JSON.stringify(tool.parameters || {}, null, 2)}
+Implementation hint: ${hint}
+
+Agent context:
+- Agent: ${ctx.agentName}
+- Provider: ${provider} (${clientLib})
+
+Write a REAL implementation using the hint above. Make actual HTTP calls, DB queries, or API operations. Do NOT write stubs or TODO comments.`;
+          const content = await callAnthropicForFile(toolAdapterSystemMsg, adapterUserMsg, `tool:${tool.name}`);
+          return { name: tool.name, content };
+        });
+
+        const results = await Promise.all(adapterPromises);
+        for (const { name, content } of results) {
+          if (content) toolAdapters[name] = content;
         }
       }
 
-      const result: { entrypoint: string; toolAdapters: Record<string, string>; agentYaml?: string; dockerfile?: string; frameworkFiles?: Record<string, string>; aiGenerated: true } = {
-        entrypoint: parsed.entrypoint,
+      return {
+        entrypoint,
         toolAdapters,
         aiGenerated: true,
       };
-      if (typeof parsed.agentYaml === "string" && parsed.agentYaml.length > 10) result.agentYaml = parsed.agentYaml;
-      if (typeof parsed.dockerfile === "string" && parsed.dockerfile.length > 10) result.dockerfile = parsed.dockerfile;
-      if (parsed.frameworkFiles && typeof parsed.frameworkFiles === "object") {
-        const ff: Record<string, string> = {};
-        for (const [path, content] of Object.entries(parsed.frameworkFiles)) {
-          if (typeof content === "string" && content.length > 5) ff[path] = content;
-        }
-        if (Object.keys(ff).length > 0) result.frameworkFiles = ff;
-      }
-      return result;
     } catch (err: any) {
       console.error("[generateAgentCodeWithAI] Failed:", err?.message || err);
       return null;
