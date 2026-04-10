@@ -295,8 +295,15 @@ export default function AgentExport() {
   async function streamExport(url: string, body: object, preferredFile?: (files: string[]) => string | undefined) {
     setIsGenerating(true);
     setExportLogs([]);
+    const TICK_PREFIX = "AI generation in progress";
     const addLog = (entry: { event: string; phase: string; message: string; detail?: string }) =>
-      setExportLogs(prev => [...prev, { ...entry, ts: Date.now() }]);
+      setExportLogs(prev => {
+        // Coalesce repeated tick messages — update the last entry instead of appending
+        if (entry.message.startsWith(TICK_PREFIX) && prev.length > 0 && prev[prev.length - 1].message.startsWith(TICK_PREFIX)) {
+          return [...prev.slice(0, -1), { ...entry, ts: Date.now() }];
+        }
+        return [...prev, { ...entry, ts: Date.now() }];
+      });
 
     try {
       const res = await fetch(url, {

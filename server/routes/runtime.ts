@@ -3528,6 +3528,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no"); // disable nginx proxy buffering so events stream through immediately
     res.flushHeaders();
 
     const emit = (event: string, data: Record<string, unknown>) => {
@@ -3782,12 +3783,17 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
       let aiResult: Awaited<ReturnType<typeof generateAgentCodeWithAI>> = null;
 
       emit("progress", { phase: "ai", message: `Starting AI-assisted code generation (30–60s)...`, detail: `Framework: ${framework} · Language: ${format} · Provider: ${llmProvider}` });
-      // Heartbeat: emit a keepalive comment every 20s during AI generation to prevent proxy timeouts
+      // Heartbeat: emit a visible progress event every 15s during AI generation.
+      // This prevents proxy timeout AND gives the user feedback that work is in progress.
       let heartbeatCount = 0;
       const heartbeatInterval = setInterval(() => {
         heartbeatCount++;
-        res.write(`: keepalive ${heartbeatCount}\n\n`);
-      }, 20000);
+        emit("progress", {
+          phase: "ai",
+          message: `AI generation in progress... (${heartbeatCount * 15}s elapsed)`,
+          detail: `Building ${format} code with ${llmProvider}`,
+        });
+      }, 15000);
       try {
         const blockedToolsFromPolicies = linkedPolicies.flatMap(p => {
           const rules = (p.policyJson || {}) as Record<string, unknown>;
@@ -5239,6 +5245,7 @@ clean:
     res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
+    res.setHeader("X-Accel-Buffering", "no"); // disable nginx proxy buffering so events stream through immediately
     res.flushHeaders();
 
     const emit = (event: string, data: Record<string, unknown>) => {
@@ -5331,7 +5338,14 @@ clean:
 
         localFiles[`${dirPrefix}/agent.yaml`] = generateAgentYaml(agentRec, tools, systemPrompt, agentRec.maxToolIterations || maxIterations, completionPromise, yamlExtras);
 
-        // AI-enhanced generation — falls back to deterministic templates on failure/truncation
+        // AI-enhanced generation — falls back to deterministic templates on failure/truncation.
+        // Emits start + completion events so the user sees per-agent live progress.
+        const toolCount = tools.length;
+        emit("progress", {
+          phase: "ai",
+          message: `Generating AI code for ${agentRec.name}...`,
+          detail: `${toolCount} tool${toolCount !== 1 ? "s" : ""} · ${format} · ${llmProvider}`,
+        });
         let aiResult: Awaited<ReturnType<typeof generateAgentCodeWithAI>> = null;
         try {
           aiResult = await generateAgentCodeWithAI({
@@ -5348,6 +5362,20 @@ clean:
             mcpServers: mcpServerDetails,
           });
         } catch { /* AI unavailable, fall through to deterministic templates */ }
+        const aiAdapterCount = Object.keys(aiResult?.toolAdapters || {}).length;
+        if (aiResult) {
+          emit("progress", {
+            phase: "agent",
+            message: `✓ ${agentRec.name} — AI generation done`,
+            detail: `${aiAdapterCount} tool adapter${aiAdapterCount !== 1 ? "s" : ""} generated`,
+          });
+        } else {
+          emit("progress", {
+            phase: "agent",
+            message: `✓ ${agentRec.name} — using template scaffolding`,
+            detail: "AI unavailable or response truncated — stubs generated",
+          });
+        }
 
         const entrypointPath = format === "typescript" ? `${dirPrefix}/src/runtime/orchestrator.ts` : `${dirPrefix}/src/runtime/orchestrator.py`;
         if (aiResult?.entrypoint && aiResult.entrypoint.length > 200) {
@@ -5410,11 +5438,17 @@ clean:
         message: `Starting AI generation for ${allSlots.length} agent${allSlots.length !== 1 ? "s" : ""} in parallel...`,
         detail: allSlots.map(s => s.agent.name).join(", "),
       });
+      // Heartbeat: emit a visible progress tick every 15s so the log panel stays active
+      // and the production proxy keeps the connection alive during AI generation.
       let bundleHeartbeat = 0;
       const bundleHeartbeatInterval = setInterval(() => {
         bundleHeartbeat++;
-        res.write(`: keepalive ${bundleHeartbeat}\n\n`);
-      }, 20000);
+        emit("progress", {
+          phase: "ai",
+          message: `AI generation in progress... (${bundleHeartbeat * 15}s elapsed)`,
+          detail: `${allSlots.length} agent${allSlots.length !== 1 ? "s" : ""} running in parallel`,
+        });
+      }, 15000);
       try {
         const agentFileMaps = await Promise.all(
           allSlots.map(slot => buildAgentFiles(slot.agent, slot.prefix)),
