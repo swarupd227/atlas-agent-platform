@@ -64,6 +64,10 @@ import {
   ShieldAlert,
   RefreshCcw,
   FileEdit,
+  Download,
+  RotateCcw,
+  ChevronRight,
+  GitCompare,
 } from "lucide-react";
 
 interface PipelineStage {
@@ -262,6 +266,40 @@ function DAGExecutionView({ dagRunId }: { dagRunId: string }) {
       </div>
     </div>
   );
+}
+
+function triggerTypeStyle(trigger: string): { dot: string; label: string } {
+  switch (trigger) {
+    case "stage_complete": return { dot: "bg-green-500", label: "Stage" };
+    case "interrupt": return { dot: "bg-amber-500", label: "Gate" };
+    case "resume": return { dot: "bg-blue-500", label: "Resume" };
+    case "manual": return { dot: "bg-gray-400", label: "Manual" };
+    default: return { dot: "bg-gray-400", label: trigger.replace(/_/g, " ") };
+  }
+}
+
+function computeStateDiff(
+  prev: Record<string, unknown>,
+  curr: Record<string, unknown>,
+): { added: string[]; removed: string[]; changed: string[] } {
+  const added = Object.keys(curr).filter((k) => !(k in prev));
+  const removed = Object.keys(prev).filter((k) => !(k in curr));
+  const changed = Object.keys(curr).filter(
+    (k) => k in prev && JSON.stringify(prev[k]) !== JSON.stringify(curr[k]),
+  );
+  return { added, removed, changed };
+}
+
+function exportCheckpointJson(stateJson: Record<string, unknown>, num: number) {
+  const blob = new Blob([JSON.stringify(stateJson, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `checkpoint-${num}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function CheckpointRow({ cp, stages }: {
@@ -466,6 +504,10 @@ export default function Pipelines() {
   const [approvalNotes, setApprovalNotes] = useState("");
   const [approvalPatchKeys, setApprovalPatchKeys] = useState<Set<string>>(new Set());
   const [approvalSnapshotExpanded, setApprovalSnapshotExpanded] = useState<Record<string, boolean>>({});
+
+  const [selectedCpId, setSelectedCpId] = useState<string | null>(null);
+  const [showCpDiff, setShowCpDiff] = useState(false);
+  const [cpFieldExpanded, setCpFieldExpanded] = useState<Record<string, boolean>>({});
 
   const { data: pipelines = [], isLoading } = useQuery<AgentPipeline[]>({
     queryKey: ["/api/pipelines"],
@@ -835,7 +877,20 @@ export default function Pipelines() {
       queryClient.invalidateQueries({ queryKey: ["/api/pipelines", selectedPipelineId, "runs"] });
       toast({ title: "Stage rejected" });
     },
-    onError: (e: any) => toast({ title: "Rejection failed", description: e.message, variant: "destructive" }),
+    onError: (e: unknown) => toast({ title: "Rejection failed", description: e instanceof Error ? e.message : "Unknown error", variant: "destructive" }),
+  });
+
+  const restoreCheckpointMutation = useMutation({
+    mutationFn: async ({ runId, num }: { runId: string; num: number }) => {
+      const res = await apiRequest("POST", `/api/pipeline-runs/${runId}/restore/${num}`, {});
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pipeline-runs", activeRunId, "workflow-state"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/pipelines", selectedPipelineId, "runs"] });
+      toast({ title: "Checkpoint restored", description: "Run state has been rolled back to the selected checkpoint." });
+    },
+    onError: (e: unknown) => toast({ title: "Restore failed", description: e instanceof Error ? e.message : "Unknown error", variant: "destructive" }),
   });
 
   function handleAddStage(type: "agent" | "approval_gate" | "composite") {
@@ -2122,7 +2177,7 @@ export default function Pipelines() {
                             Current
                           </TabsTrigger>
                           <TabsTrigger value="history" className="rounded-none text-xs h-9 flex-1" data-testid="tab-wf-history">
-                            History ({workflowState.history.length})
+                            Timeline ({workflowState.history.length})
                           </TabsTrigger>
                           <TabsTrigger value="interrupts" className="rounded-none text-xs h-9 flex-1" data-testid="tab-wf-interrupts">
                             Interrupts ({workflowState.interrupts.length})
@@ -2139,18 +2194,220 @@ export default function Pipelines() {
                             </ScrollArea>
                           )}
                         </TabsContent>
-                        <TabsContent value="history" className="p-3 m-0">
+                        <TabsContent value="history" className="m-0">
                           {workflowState.history.length === 0 ? (
                             <p className="text-xs text-muted-foreground text-center py-4">No checkpoints yet</p>
-                          ) : (
-                            <ScrollArea className="max-h-72">
-                              <div className="space-y-2">
-                                {workflowState.history.map((cp) => (
-                                  <CheckpointRow key={cp.id} cp={cp} stages={stages} />
-                                ))}
+                          ) : (() => {
+                            const histCheckpoints = workflowState.history;
+                            const selectedCp = histCheckpoints.find((c) => c.id === selectedCpId) ?? null;
+                            const selectedIdx = selectedCp ? histCheckpoints.indexOf(selectedCp) : -1;
+                            const prevCp = selectedIdx > 0 ? histCheckpoints[selectedIdx - 1] : null;
+                            const diff = showCpDiff && prevCp && selectedCp
+                              ? computeStateDiff(prevCp.stateJson as Record<string, unknown>, selectedCp.stateJson as Record<string, unknown>)
+                              : null;
+                            const canRestore = activeRun?.status === "completed" || activeRun?.status === "failed";
+                            return (
+                              <div>
+                                {/* ── Timeline Rail ── */}
+                                <div className="border-b overflow-x-auto">
+                                  <div className="flex items-center px-3 py-2 gap-0 min-w-max">
+                                    {histCheckpoints.map((cp, idx) => {
+                                      const ts = triggerTypeStyle(cp.trigger);
+                                      const isSelected = cp.id === selectedCpId;
+                                      return (
+                                        <div key={cp.id} className="flex items-center">
+                                          {idx > 0 && <div className="w-5 h-px bg-border flex-shrink-0" />}
+                                          <button
+                                            onClick={() => { setSelectedCpId(cp.id); setShowCpDiff(false); setCpFieldExpanded({}); }}
+                                            className={`flex flex-col items-center gap-1 px-2 py-1 rounded transition-colors ${isSelected ? "bg-muted" : "hover:bg-muted/50"}`}
+                                            data-testid={`cp-node-${cp.id}`}
+                                            title={`#${cp.checkpointNumber} ${cp.trigger}${cp.createdAt ? " · " + new Date(cp.createdAt).toLocaleTimeString() : ""}`}
+                                          >
+                                            <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${ts.dot} ${isSelected ? "ring-2 ring-offset-1 ring-primary" : ""}`} />
+                                            <span className="text-[10px] font-mono text-muted-foreground">#{cp.checkpointNumber}</span>
+                                          </button>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                  <div className="flex items-center px-4 pb-1.5 gap-3">
+                                    {[
+                                      { dot: "bg-green-500", label: "Stage" },
+                                      { dot: "bg-amber-500", label: "Gate" },
+                                      { dot: "bg-blue-500", label: "Resume" },
+                                      { dot: "bg-gray-400", label: "Manual" },
+                                    ].map((item) => (
+                                      <div key={item.label} className="flex items-center gap-1">
+                                        <div className={`w-2 h-2 rounded-full ${item.dot}`} />
+                                        <span className="text-[10px] text-muted-foreground">{item.label}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {/* ── Detail pane ── */}
+                                {selectedCp ? (
+                                  <ScrollArea className="max-h-64">
+                                    <div className="p-3 space-y-3">
+                                      {/* Header */}
+                                      <div className="flex items-center justify-between flex-wrap gap-2">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <div className={`w-2 h-2 rounded-full flex-shrink-0 ${triggerTypeStyle(selectedCp.trigger).dot}`} />
+                                          <span className="text-xs font-medium">#{selectedCp.checkpointNumber}</span>
+                                          <Badge variant="outline" className="text-[10px] py-0">{triggerTypeStyle(selectedCp.trigger).label}</Badge>
+                                          {selectedCp.triggerStageId && (
+                                            <span className="text-[10px] text-muted-foreground">
+                                              {stages.find((s) => s.id === selectedCp.triggerStageId)?.label || selectedCp.triggerStageId.substring(0, 8)}
+                                            </span>
+                                          )}
+                                          {selectedCp.createdAt && (
+                                            <span className="text-[10px] text-muted-foreground">{new Date(selectedCp.createdAt).toLocaleTimeString()}</span>
+                                          )}
+                                        </div>
+                                        <div className="flex items-center gap-1 flex-wrap">
+                                          {prevCp && (
+                                            <Button
+                                              variant="ghost" size="sm"
+                                              className="h-6 text-[10px] px-2"
+                                              onClick={() => setShowCpDiff((v) => !v)}
+                                              data-testid={`button-diff-cp-${selectedCp.id}`}
+                                            >
+                                              <GitCompare className="w-3 h-3 mr-1" />
+                                              {showCpDiff ? "Hide Diff" : "Diff"}
+                                            </Button>
+                                          )}
+                                          <Button
+                                            variant="ghost" size="sm"
+                                            className="h-6 text-[10px] px-2"
+                                            onClick={() => exportCheckpointJson(selectedCp.stateJson as Record<string, unknown>, selectedCp.checkpointNumber)}
+                                            data-testid={`button-export-cp-${selectedCp.id}`}
+                                          >
+                                            <Download className="w-3 h-3 mr-1" />
+                                            Export
+                                          </Button>
+                                          {canRestore && activeRun && (
+                                            <Button
+                                              variant="ghost" size="sm"
+                                              className="h-6 text-[10px] px-2 text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                                              onClick={() => restoreCheckpointMutation.mutate({ runId: activeRun.id, num: selectedCp.checkpointNumber })}
+                                              disabled={restoreCheckpointMutation.isPending}
+                                              data-testid={`button-restore-cp-${selectedCp.id}`}
+                                            >
+                                              {restoreCheckpointMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RotateCcw className="w-3 h-3 mr-1" />}
+                                              Restore
+                                            </Button>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      {/* Diff view */}
+                                      {diff && (
+                                        <div className="rounded border bg-muted/20 p-2 space-y-1.5" data-testid={`panel-diff-${selectedCp.id}`}>
+                                          <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Diff with #{prevCp!.checkpointNumber}</p>
+                                          {diff.added.length === 0 && diff.removed.length === 0 && diff.changed.length === 0 && (
+                                            <p className="text-[10px] text-muted-foreground">No changes between checkpoints</p>
+                                          )}
+                                          {diff.added.map((k) => (
+                                            <div key={k} className="flex items-center gap-1.5">
+                                              <Badge className="text-[9px] py-0 px-1 bg-green-100 text-green-700 border-green-200 dark:bg-green-900/30 dark:text-green-400 dark:border-green-700">+ added</Badge>
+                                              <span className="font-mono text-[10px]">{k}</span>
+                                            </div>
+                                          ))}
+                                          {diff.changed.map((k) => (
+                                            <div key={k} className="flex items-center gap-1.5">
+                                              <Badge className="text-[9px] py-0 px-1 bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:border-amber-700">~ changed</Badge>
+                                              <span className="font-mono text-[10px]">{k}</span>
+                                            </div>
+                                          ))}
+                                          {diff.removed.map((k) => (
+                                            <div key={k} className="flex items-center gap-1.5">
+                                              <Badge className="text-[9px] py-0 px-1 bg-red-100 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-400 dark:border-red-700">- removed</Badge>
+                                              <span className="font-mono text-[10px]">{k}</span>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      )}
+
+                                      {/* Structured state display */}
+                                      <div className="space-y-0.5" data-testid={`panel-state-${selectedCp.id}`}>
+                                        {/* Schema-defined fields absent from this snapshot */}
+                                        {schemaFields
+                                          .filter((f) => !(f.name in (selectedCp.stateJson as Record<string, unknown>)))
+                                          .map((f) => (
+                                            <div key={f.name} className="flex items-center gap-2 px-1 py-0.5 rounded text-xs text-muted-foreground">
+                                              <span className="font-mono text-[11px] min-w-[80px] truncate">{f.name}</span>
+                                              <span className="italic text-[10px]">(not yet populated)</span>
+                                            </div>
+                                          ))}
+                                        {/* State entries */}
+                                        {Object.entries(selectedCp.stateJson as Record<string, unknown>).map(([key, val]) => {
+                                          const isComplex = val !== null && typeof val === "object";
+                                          const isExpanded = !!cpFieldExpanded[key];
+                                          const diffHighlight = diff
+                                            ? diff.added.includes(key)
+                                              ? "bg-green-50 dark:bg-green-900/10"
+                                              : diff.changed.includes(key)
+                                              ? "bg-amber-50 dark:bg-amber-900/10"
+                                              : ""
+                                            : "";
+                                          return (
+                                            <div key={key} className={`rounded px-1 py-0.5 ${diffHighlight}`}>
+                                              <div className="flex items-center gap-2 text-xs">
+                                                <span className="font-mono text-[11px] text-muted-foreground min-w-[80px] truncate">{key}</span>
+                                                {isComplex ? (
+                                                  <>
+                                                    <Badge variant="outline" className="text-[9px] py-0 px-1 font-mono">
+                                                      {Array.isArray(val) ? `[${(val as unknown[]).length}]` : `{${Object.keys(val as object).length}}`}
+                                                    </Badge>
+                                                    <button
+                                                      className="flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+                                                      onClick={() => setCpFieldExpanded((prev) => ({ ...prev, [key]: !prev[key] }))}
+                                                      data-testid={`button-expand-field-${key}`}
+                                                    >
+                                                      {isExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                                                      {isExpanded ? "collapse" : "expand"}
+                                                    </button>
+                                                  </>
+                                                ) : (
+                                                  <span
+                                                    className="text-[11px] truncate max-w-[200px]"
+                                                    title={String(val)}
+                                                    data-testid={`text-field-${key}`}
+                                                  >
+                                                    {val === null ? "null" : val === "" ? '""' : String(val)}
+                                                  </span>
+                                                )}
+                                              </div>
+                                              {isComplex && isExpanded && (
+                                                <pre className="mt-1 ml-4 text-[10px] font-mono whitespace-pre-wrap text-muted-foreground bg-muted/30 rounded p-1.5">
+                                                  {JSON.stringify(val, null, 2)}
+                                                </pre>
+                                              )}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+
+                                      {/* Footer: field count + hash */}
+                                      <div className="flex items-center gap-2 pt-1 border-t">
+                                        <span className="text-[10px] text-muted-foreground" data-testid={`text-field-count-${selectedCp.id}`}>
+                                          Fields: {Object.keys(selectedCp.stateJson as Record<string, unknown>).length}
+                                          {schemaFields.length > 0 ? `/${schemaFields.length}` : ""} populated
+                                        </span>
+                                        <Badge variant="outline" className="text-[9px] font-mono py-0 px-1">
+                                          sha:{selectedCp.stateHash.substring(0, 12)}
+                                        </Badge>
+                                      </div>
+                                    </div>
+                                  </ScrollArea>
+                                ) : (
+                                  <div className="py-4 text-center">
+                                    <p className="text-xs text-muted-foreground">Select a checkpoint on the timeline above</p>
+                                  </div>
+                                )}
                               </div>
-                            </ScrollArea>
-                          )}
+                            );
+                          })()}
                         </TabsContent>
                         <TabsContent value="interrupts" className="p-3 m-0">
                           {workflowState.interrupts.length === 0 ? (
