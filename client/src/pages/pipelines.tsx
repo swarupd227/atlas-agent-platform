@@ -564,8 +564,17 @@ export default function Pipelines() {
     }
   }, [workflowSchema, schemaLoading, detailTab]);
 
+  interface WorkflowSchemaFieldPayload {
+    type: string;
+    reducer: string;
+    writable_by: string[];
+    ephemeral?: boolean;
+    sanitize?: boolean;
+    required?: boolean;
+  }
+
   const saveSchemaM = useMutation({
-    mutationFn: async ({ pipelineId, fields }: { pipelineId: string; fields: Record<string, any> }) => {
+    mutationFn: async ({ pipelineId, fields }: { pipelineId: string; fields: Record<string, WorkflowSchemaFieldPayload> }) => {
       const res = await apiRequest("POST", `/api/pipelines/${pipelineId}/workflow-state-schema`, { fields });
       return res.json();
     },
@@ -573,7 +582,10 @@ export default function Pipelines() {
       queryClient.invalidateQueries({ queryKey: ["/api/pipelines", selectedPipelineId, "workflow-state-schema"] });
       toast({ title: "Schema saved", description: "Workflow state schema updated successfully." });
     },
-    onError: (e: any) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
+    onError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : "An unknown error occurred.";
+      toast({ title: "Save failed", description: message, variant: "destructive" });
+    },
   });
 
   function validateSchema(): string[] {
@@ -596,16 +608,17 @@ export default function Pipelines() {
     const errs = validateSchema();
     setSchemaErrors(errs);
     if (errs.length > 0 || !selectedPipelineId) return;
-    const fields: Record<string, any> = {};
+    const fields: Record<string, WorkflowSchemaFieldPayload> = {};
     schemaFields.forEach((f) => {
-      fields[f.name.trim()] = {
+      const payload: WorkflowSchemaFieldPayload = {
         type: f.type,
         reducer: f.reducer,
         writable_by: f.writableBy.split(",").map((s) => s.trim()).filter(Boolean),
-        ephemeral: f.ephemeral || undefined,
-        sanitize: f.sanitize || undefined,
-        required: f.required || undefined,
       };
+      if (f.ephemeral) payload.ephemeral = true;
+      if (f.sanitize) payload.sanitize = true;
+      if (f.required) payload.required = true;
+      fields[f.name.trim()] = payload;
     });
     saveSchemaM.mutate({ pipelineId: selectedPipelineId, fields });
   }
@@ -1541,10 +1554,10 @@ export default function Pipelines() {
                     </Badge>
                   )}
                   <Badge
-                    className={`text-[10px] ${(selectedPipeline as any)?.stateEnabled ? "bg-green-100 text-green-700 border-green-300 dark:bg-green-900/30 dark:text-green-400 dark:border-green-700" : "bg-muted text-muted-foreground border-border"}`}
+                    className={`text-[10px] ${selectedPipeline?.stateEnabled ? "bg-green-100 text-green-700 border-green-300 dark:bg-green-900/30 dark:text-green-400 dark:border-green-700" : "bg-muted text-muted-foreground border-border"}`}
                     data-testid="badge-state-tracking"
                   >
-                    {(selectedPipeline as any)?.stateEnabled ? "state tracking on" : "state tracking off"}
+                    {selectedPipeline?.stateEnabled ? "state tracking on" : "state tracking off"}
                   </Badge>
                 </div>
                 <div className="flex items-center gap-2">
@@ -1607,18 +1620,17 @@ export default function Pipelines() {
                           </td>
                         </tr>
                       ) : (
-                        [...schemaFields]
+                        schemaFields
+                          .map((field, origIndex) => ({ field, origIndex }))
                           .sort((a, b) => {
                             if (!schemaSort) return 0;
-                            const av = a[schemaSort.col] ?? "";
-                            const bv = b[schemaSort.col] ?? "";
+                            const av = a.field[schemaSort.col] ?? "";
+                            const bv = b.field[schemaSort.col] ?? "";
                             return schemaSort.dir === "asc" ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
                           })
-                          .map((field, i) => {
-                            const origIndex = schemaFields.findIndex((f) => f.name === field.name);
-                            return (
+                          .map(({ field, origIndex }, i) => (
                               <tr
-                                key={field.name}
+                                key={origIndex}
                                 className="border-b last:border-0 hover:bg-muted/20 transition-colors cursor-pointer"
                                 onClick={() => openEditField(origIndex)}
                                 data-testid={`schema-field-row-${i}`}
@@ -1661,8 +1673,7 @@ export default function Pipelines() {
                                   </div>
                                 </td>
                               </tr>
-                            );
-                          })
+                          ))
                       )}
                     </tbody>
                   </table>
