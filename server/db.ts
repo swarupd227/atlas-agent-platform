@@ -101,7 +101,7 @@ export async function runStartupMigrations() {
 
       CREATE TABLE IF NOT EXISTS workflow_state_schemas (
         id              VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-        pipeline_id     VARCHAR NOT NULL,
+        pipeline_id     VARCHAR NOT NULL REFERENCES agent_pipelines(id) ON DELETE CASCADE,
         schema_version  INTEGER NOT NULL DEFAULT 1,
         fields          JSONB NOT NULL DEFAULT '{}',
         reducers        JSONB NOT NULL DEFAULT '{}',
@@ -113,7 +113,7 @@ export async function runStartupMigrations() {
 
       CREATE TABLE IF NOT EXISTS workflow_state_checkpoints (
         id                    VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-        pipeline_run_id       VARCHAR NOT NULL,
+        pipeline_run_id       VARCHAR NOT NULL REFERENCES pipeline_runs(id) ON DELETE CASCADE,
         checkpoint_number     INTEGER NOT NULL,
         trigger               VARCHAR NOT NULL,
         trigger_stage_id      VARCHAR,
@@ -141,6 +141,26 @@ export async function runStartupMigrations() {
       ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS current_state JSONB DEFAULT '{}';
       ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS active_interrupt_id VARCHAR;
       ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS state_version INTEGER NOT NULL DEFAULT 0;
+
+      DO $$ BEGIN
+        ALTER TABLE workflow_state_schemas ADD CONSTRAINT fk_wss_pipeline_id
+          FOREIGN KEY (pipeline_id) REFERENCES agent_pipelines(id) ON DELETE CASCADE;
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      DO $$ BEGIN
+        ALTER TABLE workflow_state_checkpoints ADD CONSTRAINT fk_wsc_pipeline_run_id
+          FOREIGN KEY (pipeline_run_id) REFERENCES pipeline_runs(id) ON DELETE CASCADE;
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      DO $$ BEGIN
+        ALTER TABLE agent_pipelines ADD CONSTRAINT fk_ap_state_schema_id
+          FOREIGN KEY (state_schema_id) REFERENCES workflow_state_schemas(id) ON DELETE SET NULL;
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      DO $$ BEGIN
+        ALTER TABLE pipeline_runs ADD CONSTRAINT fk_pr_state_schema_id
+          FOREIGN KEY (state_schema_id) REFERENCES workflow_state_schemas(id) ON DELETE SET NULL;
+      EXCEPTION WHEN duplicate_object THEN NULL; END $$;
     `);
     console.log("[db] Startup migrations complete");
   } catch (err: any) {

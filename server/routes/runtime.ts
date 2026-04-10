@@ -2,8 +2,9 @@ import { Router } from "express";
 import * as crypto from "crypto";
 import { storage } from "../storage";
 import { db } from "../db";
-import { computeWaves, DAGExecutionEngine, DAGExecutionError, applyReducer } from "../dag-execution-engine";
+import { computeWaves, DAGExecutionEngine, DAGExecutionError } from "../dag-execution-engine";
 import type { StateFieldDef } from "../dag-execution-engine";
+import { mergeIntoWorkflowState, sanitizeForCheckpoint, writeStageCompleteCheckpoint } from "../workflow-state-helpers";
 import { desc, eq, and } from "drizzle-orm";
 import { conversations, messages as chatMessages, traceSpans, kpiDefinitions } from "@shared/schema";
 import { z, ZodError } from "zod";
@@ -12493,57 +12494,6 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     res.json(updated);
   });
 
-  function mergeIntoWorkflowState(
-    current: Record<string, any>,
-    updates: Record<string, any>,
-    schemaFields: Record<string, StateFieldDef>,
-    ephemeralKeysWritten?: string[],
-  ): Record<string, any> {
-    const result = { ...current };
-    for (const [key, value] of Object.entries(updates)) {
-      const fieldDef = schemaFields[key];
-      const reducer = fieldDef?.reducer ?? "last_wins";
-      result[key] = applyReducer(result[key], value, reducer);
-      if (fieldDef?.ephemeral && ephemeralKeysWritten) ephemeralKeysWritten.push(key);
-    }
-    return result;
-  }
-
-  function sanitizeForCheckpoint(
-    state: Record<string, any>,
-    schemaFields: Record<string, StateFieldDef>,
-  ): Record<string, any> {
-    const sanitized = { ...state };
-    for (const [key, fieldDef] of Object.entries(schemaFields)) {
-      if (fieldDef.sanitize) delete sanitized[key];
-    }
-    return sanitized;
-  }
-
-  async function writeStageCompleteCheckpoint(
-    pipelineRunId: string,
-    stageId: string,
-    stageLabel: string,
-    stageType: string,
-    currentState: Record<string, any>,
-    schemaFields: Record<string, StateFieldDef>,
-  ): Promise<void> {
-    const existing = await storage.listWorkflowCheckpoints(pipelineRunId);
-    const checkpointNumber = existing.length + 1;
-    const sanitized = sanitizeForCheckpoint(currentState, schemaFields);
-    const stateJsonStr = JSON.stringify(sanitized);
-    const stateHash = crypto.createHash("sha256").update(stateJsonStr).digest("hex");
-    await storage.createWorkflowCheckpoint({
-      pipelineRunId,
-      checkpointNumber,
-      trigger: "stage_complete",
-      triggerStageId: stageId,
-      stateJson: sanitized,
-      stateHash,
-      interruptResponded: false,
-    });
-  }
-
   router.post("/api/pipeline-runs/:id/advance", async (req, res) => {
     const run = await storage.getPipelineRun(req.params.id);
     if (!run) return res.status(404).json({ error: "Pipeline run not found" });
@@ -12578,9 +12528,9 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
 
     if (stateEnabled) {
       if (req.body.stateUpdates && typeof req.body.stateUpdates === "object") {
-        const ephemeralKeys: string[] = [];
-        currentStateObj = mergeIntoWorkflowState(currentStateObj, req.body.stateUpdates, wfSchemaFields, ephemeralKeys);
-        for (const key of ephemeralKeys) delete currentStateObj[key];
+        const { merged, ephemeralKeys } = mergeIntoWorkflowState(currentStateObj, req.body.stateUpdates, wfSchemaFields);
+        for (const key of ephemeralKeys) delete merged[key];
+        currentStateObj = merged;
         newStateVersion += 1;
       }
       await writeStageCompleteCheckpoint(
@@ -12717,7 +12667,9 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       }
 
       if (req.body.stateUpdates && typeof req.body.stateUpdates === "object") {
-        currentStateObj = mergeIntoWorkflowState(currentStateObj, req.body.stateUpdates, wfSchemaFields);
+        const { merged, ephemeralKeys } = mergeIntoWorkflowState(currentStateObj, req.body.stateUpdates, wfSchemaFields);
+        for (const key of ephemeralKeys) delete merged[key];
+        currentStateObj = merged;
         newStateVersion += 1;
       }
 
@@ -12943,9 +12895,9 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
           if (stateEnabled) {
             const dagFinalExcludingWf = { ...dagResult.finalState };
             delete dagFinalExcludingWf._workflow_state;
-            const ephemeralKeys: string[] = [];
-            currentStateObj = mergeIntoWorkflowState(currentStateObj, dagFinalExcludingWf, wfSchemaFields, ephemeralKeys);
-            for (const key of ephemeralKeys) delete currentStateObj[key];
+            const { merged, ephemeralKeys } = mergeIntoWorkflowState(currentStateObj, dagFinalExcludingWf, wfSchemaFields);
+            for (const key of ephemeralKeys) delete merged[key];
+            currentStateObj = merged;
             newStateVersion += 1;
             await writeStageCompleteCheckpoint(
               run.id,
@@ -12991,7 +12943,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
 
       const uwsContextBlock =
         stateEnabled && Object.keys(currentStateObj).length > 0
-          ? `\n\nCURRENT WORKFLOW STATE (v${newStateVersion}):\n${JSON.stringify(currentStateObj, null, 2)}\n\nYou may propose state updates as a JSON block at the end of your output, like:\n<state_updates>\n{"key": "value"}\n</state_updates>`
+          ? `\n\n## WORKFLOW STATE (v${newStateVersion})\n\`\`\`json\n${JSON.stringify(currentStateObj, null, 2)}\n\`\`\`\n\nYou may propose state updates by appending a JSON block at the end of your output:\n<state_updates>\n{"key": "value"}\n</state_updates>`
           : "";
 
       const systemPrompt = `You are simulating an AI agent named "${agentName}" in a multi-agent pipeline. Your stage is: "${currentStage.label}". ${agent?.description || ""}\n\nYou are part of a pipeline that processes the following scenario. Produce a realistic, concise output for your stage (2-4 paragraphs). Include specific details, metrics, or findings that would be realistic for this agent's role. Format your output clearly.${uwsContextBlock}`;
@@ -13023,9 +12975,9 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         }
 
         if (stateUpdatesFromAgent && typeof stateUpdatesFromAgent === "object") {
-          const ephemeralKeys: string[] = [];
-          currentStateObj = mergeIntoWorkflowState(currentStateObj, stateUpdatesFromAgent, wfSchemaFields, ephemeralKeys);
-          for (const key of ephemeralKeys) delete currentStateObj[key];
+          const { merged, ephemeralKeys } = mergeIntoWorkflowState(currentStateObj, stateUpdatesFromAgent, wfSchemaFields);
+          for (const key of ephemeralKeys) delete merged[key];
+          currentStateObj = merged;
           newStateVersion += 1;
         }
 
