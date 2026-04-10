@@ -12477,6 +12477,18 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       completedAt: null,
     }));
     const firstStage = stages[0];
+    let runStateSchemaId: string | null = null;
+    let runInitialState: Record<string, any> = {};
+    if ((pipeline as any).stateEnabled === true) {
+      const pipelineSchemaId = (pipeline as any).stateSchemaId as string | null | undefined;
+      if (pipelineSchemaId) {
+        runStateSchemaId = pipelineSchemaId;
+        const wfSchema = await storage.getWorkflowStateSchema(pipelineSchemaId);
+        if (wfSchema?.initialValues && typeof wfSchema.initialValues === "object") {
+          runInitialState = wfSchema.initialValues as Record<string, any>;
+        }
+      }
+    }
     const run = await storage.createPipelineRun({
       pipelineId: req.params.id,
       status: firstStage.stageType === "approval_gate" ? "paused_at_gate" : "running",
@@ -12484,7 +12496,9 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       stageResults,
       currentStageId: firstStage.id,
       startedAt: new Date(),
-    });
+      stateSchemaId: runStateSchemaId || undefined,
+      currentState: runInitialState,
+    } as any);
     res.status(201).json(run);
   });
 
@@ -12516,9 +12530,10 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     const stateEnabled = (pipeline as any).stateEnabled === true;
     let wfSchemaFields: Record<string, StateFieldDef> = {};
     if (stateEnabled) {
-      const pipelineStateSchemaId = (pipeline as any).stateSchemaId as string | null | undefined;
-      if (pipelineStateSchemaId) {
-        const wfSchema = await storage.getWorkflowStateSchema(pipelineStateSchemaId);
+      const resolvedSchemaId = ((run as any).stateSchemaId as string | null | undefined)
+        || ((pipeline as any).stateSchemaId as string | null | undefined);
+      if (resolvedSchemaId) {
+        const wfSchema = await storage.getWorkflowStateSchema(resolvedSchemaId);
         if (wfSchema) wfSchemaFields = (wfSchema.fields as Record<string, StateFieldDef>) || {};
       }
     }
@@ -12644,9 +12659,10 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     let newStateVersion = ((run as any).stateVersion as number) || 0;
 
     if (stateEnabled) {
-      const pipelineStateSchemaId = (pipeline as any).stateSchemaId as string | null | undefined;
-      if (pipelineStateSchemaId) {
-        const wfSchema = await storage.getWorkflowStateSchema(pipelineStateSchemaId);
+      const resolvedSchemaId = ((run as any).stateSchemaId as string | null | undefined)
+        || ((pipeline as any).stateSchemaId as string | null | undefined);
+      if (resolvedSchemaId) {
+        const wfSchema = await storage.getWorkflowStateSchema(resolvedSchemaId);
         if (wfSchema) wfSchemaFields = (wfSchema.fields as Record<string, StateFieldDef>) || {};
       }
 
@@ -12671,22 +12687,22 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         for (const key of ephemeralKeys) delete merged[key];
         currentStateObj = merged;
         newStateVersion += 1;
-      }
 
-      const existingCheckpoints = await storage.listWorkflowCheckpoints(run.id);
-      const checkpointNumber = existingCheckpoints.length + 1;
-      const sanitized = sanitizeForCheckpoint(currentStateObj, wfSchemaFields);
-      const stateHash = crypto.createHash("sha256").update(JSON.stringify(sanitized)).digest("hex");
-      await storage.createWorkflowCheckpoint({
-        pipelineRunId: run.id,
-        checkpointNumber,
-        trigger: "resume",
-        triggerStageId: run.currentStageId || undefined,
-        stateJson: sanitized,
-        stateHash,
-        interruptResponded: false,
-        createdBy: req.body.approvedBy || "operator",
-      });
+        const existingCheckpoints = await storage.listWorkflowCheckpoints(run.id);
+        const checkpointNumber = existingCheckpoints.length + 1;
+        const sanitized = sanitizeForCheckpoint(currentStateObj, wfSchemaFields);
+        const stateHash = crypto.createHash("sha256").update(JSON.stringify(sanitized)).digest("hex");
+        await storage.createWorkflowCheckpoint({
+          pipelineRunId: run.id,
+          checkpointNumber,
+          trigger: "resume",
+          triggerStageId: run.currentStageId || undefined,
+          stateJson: sanitized,
+          stateHash,
+          interruptResponded: false,
+          createdBy: req.body.approvedBy || "operator",
+        });
+      }
     }
 
     const nextIdx = currentIdx + 1;
@@ -12740,10 +12756,11 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     const currentStateObj = ((run as any).currentState as Record<string, any>) || {};
 
     if (stateEnabled) {
-      const pipelineStateSchemaId = (pipeline as any).stateSchemaId as string | null | undefined;
       let wfSchemaFields: Record<string, StateFieldDef> = {};
-      if (pipelineStateSchemaId) {
-        const wfSchema = await storage.getWorkflowStateSchema(pipelineStateSchemaId);
+      const resolvedSchemaId = ((run as any).stateSchemaId as string | null | undefined)
+        || ((pipeline as any).stateSchemaId as string | null | undefined);
+      if (resolvedSchemaId) {
+        const wfSchema = await storage.getWorkflowStateSchema(resolvedSchemaId);
         if (wfSchema) wfSchemaFields = (wfSchema.fields as Record<string, StateFieldDef>) || {};
       }
 
@@ -12810,9 +12827,10 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       let currentStateObj = ((run as any).currentState as Record<string, any>) || {};
       let newStateVersion = ((run as any).stateVersion as number) || 0;
       if (stateEnabled) {
-        const pipelineStateSchemaId = (pipeline as any).stateSchemaId as string | null | undefined;
-        if (pipelineStateSchemaId) {
-          const wfSchema = await storage.getWorkflowStateSchema(pipelineStateSchemaId);
+        const resolvedSchemaId = ((run as any).stateSchemaId as string | null | undefined)
+          || ((pipeline as any).stateSchemaId as string | null | undefined);
+        if (resolvedSchemaId) {
+          const wfSchema = await storage.getWorkflowStateSchema(resolvedSchemaId);
           if (wfSchema) wfSchemaFields = (wfSchema.fields as Record<string, StateFieldDef>) || {};
         }
       }
