@@ -43,6 +43,8 @@ import {
   Square,
   CheckSquare,
   Bookmark,
+  Layers,
+  Network,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -112,6 +114,16 @@ export default function AgentExport() {
     queryKey: ["/api/tool-connectors"],
   });
 
+  const { data: teamMembers = [] } = useQuery<Array<{ id: string; teamAgentId: string; memberAgentId: string; role: string }>>({
+    queryKey: ["/api/agent-teams", agentId, "members"],
+    queryFn: async () => {
+      if (!agentId) return [];
+      const res = await fetch(`/api/agent-teams/${agentId}/members`);
+      return res.ok ? res.json() : [];
+    },
+    enabled: !!agentId,
+  });
+
   const [exportFormat, setExportFormat] = useState<"typescript" | "python">("typescript");
   const [exportLlmProvider, setExportLlmProvider] = useState<"openai" | "anthropic">("openai");
   const [exportMaxIterations, setExportMaxIterations] = useState(20);
@@ -142,6 +154,7 @@ export default function AgentExport() {
   const [originalFiles, setOriginalFiles] = useState<Record<string, string>>({});
   const [regeneratingFile, setRegeneratingFile] = useState<string | null>(null);
   const [checklistState, setChecklistState] = useState<Record<string, boolean>>({});
+  const [bundleExport, setBundleExport] = useState(false);
   const fileSearchInputRef = useRef<HTMLInputElement>(null);
   const resizingRef = useRef(false);
   const startXRef = useRef(0);
@@ -301,6 +314,29 @@ export default function AgentExport() {
     },
   });
 
+  const bundleExportMutation = useMutation({
+    mutationFn: async (params: { format: string; llmProvider: string; maxIterations: number; completionPromise: string; pinVersions?: boolean }) => {
+      const res = await apiRequest("POST", `/api/agents/${agentId}/export-code/bundle`, params);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setExportPreview(data);
+      const newFiles = data.files || {};
+      setEditedFiles({ ...newFiles });
+      setOriginalFiles({ ...newFiles });
+      setEditedFilePaths(Object.keys(newFiles));
+      const fileNames = Object.keys(newFiles);
+      if (fileNames.length > 0) {
+        setExportPreviewFile(fileNames.find((f: string) => f === "README.md") || fileNames[0]);
+      }
+      setExportStep("preview");
+      setShowDiffView(false);
+    },
+    onError: () => {
+      toast({ title: "Bundle export failed", description: "Could not generate bundle package", variant: "destructive" });
+    },
+  });
+
   async function downloadExportPackage() {
     if (!exportPreview) return;
     const files = Object.keys(editedFiles).length > 0 ? editedFiles : exportPreview.files;
@@ -318,6 +354,16 @@ export default function AgentExport() {
   }
 
   function handleGenerate() {
+    if (bundleExport && agent?.agentType === "team") {
+      bundleExportMutation.mutate({
+        format: exportFormat,
+        llmProvider: exportLlmProvider,
+        maxIterations: exportMaxIterations,
+        completionPromise: exportCompletionPromise,
+        pinVersions,
+      });
+      return;
+    }
     const agentTools = Array.isArray(agent?.toolsConfig) ? agent.toolsConfig as any[] : [];
     const connectors = allToolConnectors || [];
     const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -459,10 +505,14 @@ export default function AgentExport() {
             <Button
               size="sm"
               onClick={handleGenerate}
-              disabled={exportCodeMutation.isPending}
+              disabled={exportCodeMutation.isPending || bundleExportMutation.isPending}
               data-testid="button-export-generate"
             >
-              {exportCodeMutation.isPending ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Generating...</> : <><Sparkles className="w-3.5 h-3.5 mr-1.5" />Generate</>}
+              {(exportCodeMutation.isPending || bundleExportMutation.isPending)
+                ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Generating...</>
+                : bundleExport && agent?.agentType === "team"
+                  ? <><Layers className="w-3.5 h-3.5 mr-1.5" />Generate Bundle</>
+                  : <><Sparkles className="w-3.5 h-3.5 mr-1.5" />Generate</>}
             </Button>
           )}
           {exportStep === "preview" && (
@@ -531,6 +581,9 @@ export default function AgentExport() {
             exportApprovalId={exportApprovalId}
             setExportApprovalId={setExportApprovalId}
             exportPreview={exportPreview}
+            bundleExport={bundleExport}
+            setBundleExport={setBundleExport}
+            teamMemberCount={teamMembers.length}
           />
         )}
 
@@ -581,7 +634,14 @@ export default function AgentExport() {
             {!fileTreeCollapsed && (
               <div className="shrink-0 border-r bg-muted/20 flex flex-col" style={{ width: fileTreeWidth }} data-testid="preview-file-tree-panel">
                 <div className="flex items-center justify-between px-3 py-2 border-b">
-                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Files</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Files</span>
+                    {exportPreview?.metadata?.bundled && (
+                      <Badge className="text-[9px] h-3.5 px-1 gap-0.5 bg-primary/10 text-primary border-primary/20" variant="outline" data-testid="badge-bundle-preview">
+                        <Network className="w-2 h-2" />Bundle
+                      </Badge>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1">
                     <Badge variant="outline" className="text-[10px]">{editedFilePaths.length}</Badge>
                     <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setFileTreeCollapsed(true)} data-testid="button-collapse-file-tree">
@@ -953,6 +1013,8 @@ function ConfigureStep({
   exportApprovalSubmitted, setExportApprovalSubmitted,
   exportApprovalId, setExportApprovalId,
   exportPreview,
+  bundleExport, setBundleExport,
+  teamMemberCount,
 }: {
   agent: Agent;
   agentId: string;
@@ -972,6 +1034,8 @@ function ConfigureStep({
   exportApprovalSubmitted: boolean; setExportApprovalSubmitted: (v: boolean) => void;
   exportApprovalId: string | null; setExportApprovalId: (v: string | null) => void;
   exportPreview: any;
+  bundleExport: boolean; setBundleExport: (v: boolean) => void;
+  teamMemberCount: number;
 }) {
   const { toast } = useToast();
   const agentTools = Array.isArray(agent?.toolsConfig) ? agent.toolsConfig as any[] : [];
@@ -1129,6 +1193,67 @@ function ConfigureStep({
           />
         </div>
 
+        {(agent.agentType === "team" || teamMemberCount > 0) && (
+          <div
+            className={`flex items-start gap-3 rounded-lg border p-4 cursor-pointer transition-colors ${bundleExport ? "border-primary bg-primary/5" : "border-border hover:border-primary/40"}`}
+            onClick={() => setBundleExport(!bundleExport)}
+            data-testid="bundle-export-toggle"
+          >
+            <div className={`shrink-0 mt-0.5 flex items-center justify-center w-8 h-8 rounded-md ${bundleExport ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+              <Network className="w-4 h-4" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-sm font-semibold">Bundle Export</span>
+                {bundleExport && <Badge className="text-[10px] h-4 px-1.5">Active</Badge>}
+                {!bundleExport && <Badge variant="outline" className="text-[10px] h-4 px-1.5">Off</Badge>}
+                {teamMemberCount > 0 && (
+                  <Badge variant="secondary" className="text-[10px] h-4 px-1.5 gap-1">
+                    <Layers className="w-2.5 h-2.5" />
+                    {teamMemberCount} agent{teamMemberCount !== 1 ? "s" : ""}
+                  </Badge>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                {bundleExport
+                  ? `Generates a unified package with the orchestrator and all ${teamMemberCount} member agent${teamMemberCount !== 1 ? "s" : ""} under separate sub-directories, plus a shared docker-compose.yml and bundle manifest.`
+                  : "Export only this orchestrator agent. Enable to bundle all member agents into a single deployable package with docker-compose."}
+              </p>
+            </div>
+            <div className={`shrink-0 w-8 h-5 rounded-full transition-colors flex items-center ${bundleExport ? "bg-primary" : "bg-muted"}`}>
+              <div className={`w-3.5 h-3.5 rounded-full bg-white shadow transition-transform mx-0.5 ${bundleExport ? "translate-x-3" : "translate-x-0"}`} />
+            </div>
+          </div>
+        )}
+
+        {bundleExport && agent.agentType === "team" ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="flex flex-col gap-2">
+              <Label className="text-xs font-medium">Language</Label>
+              <Select value={exportFormat} onValueChange={setExportFormat}>
+                <SelectTrigger data-testid="select-format-bundle">
+                  <SelectValue placeholder="Select language" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="typescript">TypeScript</SelectItem>
+                  <SelectItem value="python">Python</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label className="text-xs font-medium">LLM Provider</Label>
+              <Select value={exportLlmProvider} onValueChange={setExportLlmProvider}>
+                <SelectTrigger data-testid="select-llm-provider-bundle">
+                  <SelectValue placeholder="Select provider" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="openai">OpenAI</SelectItem>
+                  <SelectItem value="anthropic">Anthropic (Claude)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+        ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="flex flex-col gap-2">
             <Label className="text-xs font-medium">Framework / Pattern</Label>
@@ -1193,6 +1318,7 @@ function ConfigureStep({
             />
           </div>
         </div>
+        )}
 
         <Separator />
 

@@ -5187,6 +5187,231 @@ clean:
     }
   });
 
+  // POST /api/agents/:id/export-code/bundle
+  // Generates a dependency-aware bundled export for a team (orchestrator) agent.
+  // Returns a structured archive containing the orchestrator and all member agents.
+  router.post("/api/agents/:id/export-code/bundle", async (req, res) => {
+    try {
+      const orchestrator = await storage.getAgent(req.params.id, getOrgId(req));
+      if (!orchestrator) return res.status(404).json({ message: "Agent not found" });
+      if (orchestrator.agentType !== "team") {
+        return res.status(400).json({ message: "Bundle export is only available for team (orchestrator) agents. Use the standard export for individual agents." });
+      }
+
+      const bundleSchema = z.object({
+        format: z.enum(["typescript", "python"]).default("typescript"),
+        llmProvider: z.enum(["openai", "anthropic"]).default("openai"),
+        maxIterations: z.number().int().positive().default(10),
+        completionPromise: z.string().default("TASK_COMPLETE"),
+        pinVersions: z.boolean().default(true),
+      });
+      const { format, llmProvider, maxIterations, completionPromise, pinVersions } = bundleSchema.parse(req.body || {});
+
+      // Fetch all member agents
+      const teamMemberLinks = await storage.getAgentTeamMembers(orchestrator.id);
+      const memberAgents: typeof orchestrator[] = [];
+      for (const link of teamMemberLinks) {
+        const ma = await storage.getAgent(link.memberAgentId);
+        if (ma) memberAgents.push(ma);
+      }
+
+      const allSlots: Array<{ agent: typeof orchestrator; role: string; prefix: string }> = [
+        { agent: orchestrator, role: "orchestrator", prefix: "orchestrator" },
+        ...memberAgents.map(a => ({
+          agent: a,
+          role: teamMemberLinks.find(l => l.memberAgentId === a.id)?.role || "member",
+          prefix: `agents/${a.name.toLowerCase().replace(/[^a-z0-9-]/g, "-")}`,
+        })),
+      ];
+
+      const files: Record<string, string> = {};
+
+      // Helper: generate core export files for a single agent
+      async function buildAgentFiles(
+        agentRec: typeof orchestrator,
+        dirPrefix: string,
+      ): Promise<void> {
+        const bp = (agentRec.blueprintJson && typeof agentRec.blueprintJson === "object") ? agentRec.blueprintJson as Record<string, unknown> : {};
+        const systemPrompt = (agentRec.systemPrompt as string | null | undefined)
+          || (bp.systemPrompt as string) || (bp.system_prompt as string)
+          || `You are ${agentRec.name}. ${agentRec.description || ""}`;
+
+        const rawTools = Array.isArray(agentRec.toolsConfig) ? agentRec.toolsConfig : [];
+        const tools: Array<{ name: string; description?: string; parameters?: Record<string, unknown> }> = rawTools.map((t: Record<string, unknown>) => ({
+          name: (String(t.name || "unnamed_tool")).replace(/[^a-zA-Z0-9_]/g, "_"),
+          description: String(t.description || ""),
+          parameters: (t.parameters || {}) as Record<string, unknown>,
+        }));
+
+        const mcpLinks = await storage.getAgentMcpServers(agentRec.id);
+        const mcpServerDetails: Array<{ name: string; url: string | null; transportType: string; tools?: Array<{ name: string; description: string }> }> = [];
+        for (const link of mcpLinks) {
+          const srv = await storage.getMcpServer(link.serverId);
+          if (srv) {
+            const srvTools = await storage.getMcpServerTools(link.serverId);
+            mcpServerDetails.push({ name: srv.name, url: srv.url, transportType: srv.transportType, tools: srvTools.map(t => ({ name: t.name, description: t.description || "" })) });
+          }
+        }
+
+        const yamlExtras: AgentYamlExtras = {
+          industry: (agentRec as any).industry || null,
+          autonomyMode: agentRec.autonomyMode,
+          riskTier: agentRec.riskTier,
+          skills: [],
+          knowledgeBases: [],
+          outcomeContract: null,
+          ontologyTags: (agentRec.ontologyTags || []) as Array<{ conceptId: string; conceptLabel: string }>,
+          permissions: agentRec.permissionsConfig || {},
+          contextProfileName: null,
+          memoryProfileName: null,
+          mcpServers: mcpServerDetails,
+          stopConditions: [],
+          forbiddenOutputs: [],
+        };
+
+        files[`${dirPrefix}/agent.yaml`] = generateAgentYaml(agentRec, tools, systemPrompt, agentRec.maxToolIterations || maxIterations, completionPromise, yamlExtras);
+
+        // Try AI-enhanced generation (swallow errors)
+        let aiResult: Awaited<ReturnType<typeof generateAgentCodeWithAI>> = null;
+        try {
+          aiResult = await generateAgentCodeWithAI({
+            agentName: agentRec.name,
+            agentDescription: agentRec.description || "",
+            systemPrompt,
+            tools,
+            format,
+            llmProvider,
+            maxIterations: agentRec.maxToolIterations || maxIterations,
+            completionPromise,
+            framework: "generic",
+            blueprintJson: bp,
+            mcpServers: mcpServerDetails,
+          });
+        } catch { /* AI unavailable, fall through to deterministic templates */ }
+
+        const entrypointPath = format === "typescript" ? `${dirPrefix}/src/runtime/orchestrator.ts` : `${dirPrefix}/src/runtime/orchestrator.py`;
+        if (aiResult?.entrypoint && aiResult.entrypoint.length > 200) {
+          files[entrypointPath] = aiResult.entrypoint;
+        } else {
+          files[entrypointPath] = format === "typescript"
+            ? (llmProvider === "openai"
+              ? generateTsEntrypointOpenAI(tools, agentRec.maxToolIterations || maxIterations, completionPromise, mcpServerDetails, { hasKnowledge: false, hasPolicies: false, hasGraph: false })
+              : generateTsEntrypointAnthropic(tools, agentRec.maxToolIterations || maxIterations, completionPromise, mcpServerDetails, { hasKnowledge: false, hasPolicies: false, hasGraph: false }))
+            : (llmProvider === "openai"
+              ? generatePyEntrypointOpenAI(tools, agentRec.maxToolIterations || maxIterations, completionPromise, mcpServerDetails, { hasKnowledge: false, hasPolicies: false, hasGraph: false })
+              : generatePyEntrypointAnthropic(tools, agentRec.maxToolIterations || maxIterations, completionPromise, mcpServerDetails, { hasKnowledge: false, hasPolicies: false, hasGraph: false }));
+        }
+
+        const systemPromptPath = `${dirPrefix}/src/agent/prompts/system.txt`;
+        files[systemPromptPath] = systemPrompt;
+
+        if (format === "typescript") {
+          files[`${dirPrefix}/src/tools/index.ts`] = generateTsToolsIndex(tools);
+          for (const tool of tools) {
+            const adapter = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, "builtin");
+            files[`${dirPrefix}/src/tools/${tool.name}.ts`] = adapter;
+          }
+        } else {
+          files[`${dirPrefix}/src/tools/__init__.py`] = generatePyToolsInit(tools);
+          for (const tool of tools) {
+            const adapter = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, "builtin");
+            files[`${dirPrefix}/src/tools/${tool.name}.py`] = adapter;
+          }
+        }
+
+        const pin = pinVersions;
+        if (format === "typescript") {
+          const openaiDep = llmProvider === "openai" ? `"openai": "${pin ? "4.77.0" : "^4.0.0"}"` : `"@anthropic-ai/sdk": "${pin ? "0.30.1" : "^0.30.0"}"`;
+          const mcpDep = mcpServerDetails.length > 0 ? `,\n    "@modelcontextprotocol/sdk": "${pin ? "1.12.1" : "^1.0.0"}"` : "";
+          files[`${dirPrefix}/package.json`] = `{\n  "name": "${agentRec.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}",\n  "version": "1.0.0",\n  "scripts": { "start": "ts-node src/runtime/orchestrator.ts", "build": "tsc" },\n  "dependencies": {\n    ${openaiDep},\n    "js-yaml": "${pin ? "4.1.0" : "^4.1.0"}"${mcpDep}\n  },\n  "devDependencies": {\n    "typescript": "${pin ? "5.6.3" : "^5.0.0"}",\n    "ts-node": "${pin ? "10.9.2" : "^10.9.0"}",\n    "@types/node": "${pin ? "20.17.12" : "^20.0.0"}"\n  }\n}\n`;
+          files[`${dirPrefix}/tsconfig.json`] = `{\n  "compilerOptions": {\n    "target": "ES2022",\n    "module": "commonjs",\n    "strict": true,\n    "esModuleInterop": true,\n    "outDir": "dist",\n    "rootDir": "src"\n  },\n  "include": ["src/**/*"]\n}\n`;
+        } else {
+          const pkgLine = llmProvider === "openai" ? (pin ? "openai==1.58.1" : "openai>=1.0") : (pin ? "anthropic==0.30.1" : "anthropic>=0.30");
+          const mcpLine = mcpServerDetails.length > 0 ? `\n${pin ? "mcp==1.9.3" : "mcp>=1.0"}` : "";
+          files[`${dirPrefix}/requirements.txt`] = `${pkgLine}\n${pin ? "pyyaml==6.0.2" : "pyyaml>=6.0"}${mcpLine}\n`;
+        }
+
+        const llmKey = llmProvider === "openai" ? "OPENAI_API_KEY=sk-your-api-key-here" : "ANTHROPIC_API_KEY=sk-ant-your-api-key-here";
+        files[`${dirPrefix}/.env.example`] = `${llmKey}\nAGENT_NAME=${agentRec.name}\n`;
+
+        const toolList = tools.map(t => `\`${t.name}\``).join(", ");
+        const allMcpToolNames = mcpServerDetails.flatMap(s => (s.tools || []).map(t => `${t.name} (via ${s.name})`));
+        const allToolNames = [...tools.map(t => t.name), ...allMcpToolNames];
+        const installCmd = format === "typescript" ? "npm install" : "pip install -r requirements.txt";
+        const runCmd = format === "typescript" ? "npm start" : "python src/runtime/orchestrator.py";
+        files[`${dirPrefix}/README.md`] = `# ${agentRec.name}\n\n${agentRec.description || ""}\n\n## Setup\n\n\`\`\`bash\n${installCmd}\n\`\`\`\n\n## Run\n\n\`\`\`bash\n${runCmd}\n\`\`\`\n\n## Tools\n\n${allToolNames.length > 0 ? allToolNames.map(n => `- \`${n}\``).join("\n") : "_No tools configured._"}\n`;
+      }
+
+      // Generate files for orchestrator and each member
+      for (const slot of allSlots) {
+        await buildAgentFiles(slot.agent, slot.prefix);
+      }
+
+      // Bundle-level docker-compose.yml
+      const serviceEntries = allSlots.map(slot => {
+        const slug = slot.prefix.split("/").pop()!;
+        const buildCtx = `./${slot.prefix}`;
+        const startCmd = format === "typescript" ? `["npm", "start"]` : `["python", "src/runtime/orchestrator.py"]`;
+        const llmKey = llmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY";
+        return `  ${slug}:\n    build: ${buildCtx}\n    command: ${startCmd}\n    environment:\n      - ${llmKey}=\${${llmKey}}\n      - AGENT_NAME=${slot.agent.name}\n    restart: unless-stopped`;
+      });
+      files["docker-compose.yml"] = `version: "3.9"\nservices:\n${serviceEntries.join("\n")}\n`;
+
+      // Bundle-level almp-bundle.manifest.json
+      const crypto = await import("crypto");
+      const bundleManifest = {
+        bundleVersion: "1.0",
+        generatedAt: new Date().toISOString(),
+        orchestrator: {
+          name: orchestrator.name,
+          id: orchestrator.id,
+          directory: "orchestrator",
+          riskTier: orchestrator.riskTier,
+          autonomyMode: orchestrator.autonomyMode,
+        },
+        members: memberAgents.map(a => {
+          const link = teamMemberLinks.find(l => l.memberAgentId === a.id);
+          return {
+            name: a.name,
+            id: a.id,
+            role: link?.role || "member",
+            directory: `agents/${a.name.toLowerCase().replace(/[^a-z0-9-]/g, "-")}`,
+            riskTier: a.riskTier,
+            autonomyMode: a.autonomyMode,
+          };
+        }),
+        format,
+        llmProvider,
+        totalAgents: allSlots.length,
+        bundleHash: crypto.createHash("sha256").update(JSON.stringify(allSlots.map(s => s.agent.id))).digest("hex"),
+      };
+      files["almp-bundle.manifest.json"] = JSON.stringify(bundleManifest, null, 2) + "\n";
+
+      // Bundle-level README.md
+      const memberRows = memberAgents.map(a => `| \`agents/${a.name.toLowerCase().replace(/[^a-z0-9-]/g, "-")}/\` | ${a.name} | ${teamMemberLinks.find(l => l.memberAgentId === a.id)?.role || "member"} |`).join("\n");
+      const installCmd = format === "typescript" ? "npm install" : "pip install -r requirements.txt";
+      files["README.md"] = `# ${orchestrator.name} — Multi-Agent Bundle\n\n${orchestrator.description || ""}\n\nThis bundle contains **${allSlots.length} agent${allSlots.length !== 1 ? "s" : ""}**: the orchestrator and ${memberAgents.length} member agent${memberAgents.length !== 1 ? "s" : ""}.\n\n## Bundle Structure\n\n\`\`\`\norchestrator/   # ${orchestrator.name} (orchestrator)\nagents/\n${memberAgents.map(a => `  ${a.name.toLowerCase().replace(/[^a-z0-9-]/g, "-")}/   # ${a.name}`).join("\n")}\nalmp-bundle.manifest.json\ndocker-compose.yml\n\`\`\`\n\n## Agents\n\n| Directory | Agent | Role |\n|-----------|-------|------|\n| \`orchestrator/\` | ${orchestrator.name} | orchestrator |\n${memberRows}\n\n## Quick Start\n\n### Individual Setup\n\nNavigate into each agent directory and run:\n\n\`\`\`bash\n${installCmd}\n${format === "typescript" ? "npm start" : "python src/runtime/orchestrator.py"}\n\`\`\`\n\n### Docker Compose (all agents)\n\n\`\`\`bash\ncp .env.example .env   # fill in your API key\ndocker-compose up --build\n\`\`\`\n\n## Configuration\n\nEach agent directory has its own \`.env.example\`. Copy it to \`.env\` and configure your ${llmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"}.\n`;
+
+      res.json({
+        files,
+        metadata: {
+          bundled: true,
+          orchestratorName: orchestrator.name,
+          orchestratorId: orchestrator.id,
+          memberCount: memberAgents.length,
+          totalAgents: allSlots.length,
+          format,
+          llmProvider,
+          generatedAt: new Date().toISOString(),
+        },
+      });
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
+      console.error("[export-code/bundle] Error:", e);
+      res.status(500).json({ message: "Failed to generate bundle export" });
+    }
+  });
+
   function generateDeterministicFile(filePath: string, format: string, llmProvider: string, framework: string, agentName: string): string | null {
     const base = filePath.split("/").pop()?.toLowerCase() || "";
     const ext = base.split(".").pop() || "";
