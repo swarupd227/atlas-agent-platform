@@ -4,7 +4,7 @@ import * as schema from "@shared/schema";
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL,
-  connectionTimeoutMillis: 2000,
+  connectionTimeoutMillis: 10000,
   idleTimeoutMillis: 30000,
   max: 10,
 });
@@ -19,6 +19,10 @@ export const db = drizzle(pool, { schema });
 export async function runStartupMigrations() {
   const client = await pool.connect();
   try {
+    // Set conservative timeouts so DDL that blocks on a lock fails fast
+    // rather than hanging the deployment health-check indefinitely.
+    await client.query("SET lock_timeout = '15s'");
+    await client.query("SET statement_timeout = '90s'");
     await client.query(`
       CREATE TABLE IF NOT EXISTS audit_chain_health_checks (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
