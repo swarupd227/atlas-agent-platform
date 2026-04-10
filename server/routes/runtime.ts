@@ -5284,12 +5284,13 @@ clean:
 
       const files: Record<string, string> = {};
 
-      // Helper: generate core export files for a single agent
+      // Helper: generate AI-enhanced code files for a single agent.
+      // Returns a file map (does not mutate outer `files`) so callers can run in parallel safely.
       async function buildAgentFiles(
         agentRec: typeof orchestrator,
         dirPrefix: string,
-        { skipAI = false }: { skipAI?: boolean } = {},
-      ): Promise<void> {
+      ): Promise<Record<string, string>> {
+        const localFiles: Record<string, string> = {};
         const bp = (agentRec.blueprintJson && typeof agentRec.blueprintJson === "object") ? agentRec.blueprintJson as Record<string, unknown> : {};
         const systemPrompt = (agentRec.systemPrompt as string | null | undefined)
           || (bp.systemPrompt as string) || (bp.system_prompt as string)
@@ -5328,34 +5329,31 @@ clean:
           forbiddenOutputs: [],
         };
 
-        files[`${dirPrefix}/agent.yaml`] = generateAgentYaml(agentRec, tools, systemPrompt, agentRec.maxToolIterations || maxIterations, completionPromise, yamlExtras);
+        localFiles[`${dirPrefix}/agent.yaml`] = generateAgentYaml(agentRec, tools, systemPrompt, agentRec.maxToolIterations || maxIterations, completionPromise, yamlExtras);
 
-        // Try AI-enhanced generation (only when not skipped — bundle exports skip AI to avoid
-        // sequential long-running AI calls that can hit token limits and SSE proxy timeouts)
+        // AI-enhanced generation — falls back to deterministic templates on failure/truncation
         let aiResult: Awaited<ReturnType<typeof generateAgentCodeWithAI>> = null;
-        if (!skipAI) {
-          try {
-            aiResult = await generateAgentCodeWithAI({
-              agentName: agentRec.name,
-              agentDescription: agentRec.description || "",
-              systemPrompt,
-              tools,
-              format,
-              llmProvider,
-              maxIterations: agentRec.maxToolIterations || maxIterations,
-              completionPromise,
-              framework: "generic",
-              blueprintJson: bp,
-              mcpServers: mcpServerDetails,
-            });
-          } catch { /* AI unavailable, fall through to deterministic templates */ }
-        }
+        try {
+          aiResult = await generateAgentCodeWithAI({
+            agentName: agentRec.name,
+            agentDescription: agentRec.description || "",
+            systemPrompt,
+            tools,
+            format,
+            llmProvider,
+            maxIterations: agentRec.maxToolIterations || maxIterations,
+            completionPromise,
+            framework: "generic",
+            blueprintJson: bp,
+            mcpServers: mcpServerDetails,
+          });
+        } catch { /* AI unavailable, fall through to deterministic templates */ }
 
         const entrypointPath = format === "typescript" ? `${dirPrefix}/src/runtime/orchestrator.ts` : `${dirPrefix}/src/runtime/orchestrator.py`;
         if (aiResult?.entrypoint && aiResult.entrypoint.length > 200) {
-          files[entrypointPath] = aiResult.entrypoint;
+          localFiles[entrypointPath] = aiResult.entrypoint;
         } else {
-          files[entrypointPath] = format === "typescript"
+          localFiles[entrypointPath] = format === "typescript"
             ? (llmProvider === "openai"
               ? generateTsEntrypointOpenAI(tools, agentRec.maxToolIterations || maxIterations, completionPromise, mcpServerDetails, { hasKnowledge: false, hasPolicies: false, hasGraph: false })
               : generateTsEntrypointAnthropic(tools, agentRec.maxToolIterations || maxIterations, completionPromise, mcpServerDetails, { hasKnowledge: false, hasPolicies: false, hasGraph: false }))
@@ -5364,20 +5362,19 @@ clean:
               : generatePyEntrypointAnthropic(tools, agentRec.maxToolIterations || maxIterations, completionPromise, mcpServerDetails, { hasKnowledge: false, hasPolicies: false, hasGraph: false }));
         }
 
-        const systemPromptPath = `${dirPrefix}/src/agent/prompts/system.txt`;
-        files[systemPromptPath] = systemPrompt;
+        localFiles[`${dirPrefix}/src/agent/prompts/system.txt`] = systemPrompt;
 
         if (format === "typescript") {
-          files[`${dirPrefix}/src/tools/index.ts`] = generateTsToolsIndex(tools);
+          localFiles[`${dirPrefix}/src/tools/index.ts`] = generateTsToolsIndex(tools);
           for (const tool of tools) {
             const adapter = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, "builtin");
-            files[`${dirPrefix}/src/tools/${tool.name}.ts`] = adapter;
+            localFiles[`${dirPrefix}/src/tools/${tool.name}.ts`] = adapter;
           }
         } else {
-          files[`${dirPrefix}/src/tools/__init__.py`] = generatePyToolsInit(tools);
+          localFiles[`${dirPrefix}/src/tools/__init__.py`] = generatePyToolsInit(tools);
           for (const tool of tools) {
             const adapter = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, "builtin");
-            files[`${dirPrefix}/src/tools/${tool.name}.py`] = adapter;
+            localFiles[`${dirPrefix}/src/tools/${tool.name}.py`] = adapter;
           }
         }
 
@@ -5385,34 +5382,50 @@ clean:
         if (format === "typescript") {
           const openaiDep = llmProvider === "openai" ? `"openai": "${pin ? "4.77.0" : "^4.0.0"}"` : `"@anthropic-ai/sdk": "${pin ? "0.30.1" : "^0.30.0"}"`;
           const mcpDep = mcpServerDetails.length > 0 ? `,\n    "@modelcontextprotocol/sdk": "${pin ? "1.12.1" : "^1.0.0"}"` : "";
-          files[`${dirPrefix}/package.json`] = `{\n  "name": "${agentRec.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}",\n  "version": "1.0.0",\n  "scripts": { "start": "ts-node src/runtime/orchestrator.ts", "build": "tsc" },\n  "dependencies": {\n    ${openaiDep},\n    "js-yaml": "${pin ? "4.1.0" : "^4.1.0"}"${mcpDep}\n  },\n  "devDependencies": {\n    "typescript": "${pin ? "5.6.3" : "^5.0.0"}",\n    "ts-node": "${pin ? "10.9.2" : "^10.9.0"}",\n    "@types/node": "${pin ? "20.17.12" : "^20.0.0"}"\n  }\n}\n`;
-          files[`${dirPrefix}/tsconfig.json`] = `{\n  "compilerOptions": {\n    "target": "ES2022",\n    "module": "commonjs",\n    "strict": true,\n    "esModuleInterop": true,\n    "outDir": "dist",\n    "rootDir": "src"\n  },\n  "include": ["src/**/*"]\n}\n`;
+          localFiles[`${dirPrefix}/package.json`] = `{\n  "name": "${agentRec.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}",\n  "version": "1.0.0",\n  "scripts": { "start": "ts-node src/runtime/orchestrator.ts", "build": "tsc" },\n  "dependencies": {\n    ${openaiDep},\n    "js-yaml": "${pin ? "4.1.0" : "^4.1.0"}"${mcpDep}\n  },\n  "devDependencies": {\n    "typescript": "${pin ? "5.6.3" : "^5.0.0"}",\n    "ts-node": "${pin ? "10.9.2" : "^10.9.0"}",\n    "@types/node": "${pin ? "20.17.12" : "^20.0.0"}"\n  }\n}\n`;
+          localFiles[`${dirPrefix}/tsconfig.json`] = `{\n  "compilerOptions": {\n    "target": "ES2022",\n    "module": "commonjs",\n    "strict": true,\n    "esModuleInterop": true,\n    "outDir": "dist",\n    "rootDir": "src"\n  },\n  "include": ["src/**/*"]\n}\n`;
         } else {
           const pkgLine = llmProvider === "openai" ? (pin ? "openai==1.58.1" : "openai>=1.0") : (pin ? "anthropic==0.30.1" : "anthropic>=0.30");
           const mcpLine = mcpServerDetails.length > 0 ? `\n${pin ? "mcp==1.9.3" : "mcp>=1.0"}` : "";
-          files[`${dirPrefix}/requirements.txt`] = `${pkgLine}\n${pin ? "pyyaml==6.0.2" : "pyyaml>=6.0"}${mcpLine}\n`;
+          localFiles[`${dirPrefix}/requirements.txt`] = `${pkgLine}\n${pin ? "pyyaml==6.0.2" : "pyyaml>=6.0"}${mcpLine}\n`;
         }
 
         const llmKey = llmProvider === "openai" ? "OPENAI_API_KEY=sk-your-api-key-here" : "ANTHROPIC_API_KEY=sk-ant-your-api-key-here";
-        files[`${dirPrefix}/.env.example`] = `${llmKey}\nAGENT_NAME=${agentRec.name}\n`;
+        localFiles[`${dirPrefix}/.env.example`] = `${llmKey}\nAGENT_NAME=${agentRec.name}\n`;
 
-        const toolList = tools.map(t => `\`${t.name}\``).join(", ");
         const allMcpToolNames = mcpServerDetails.flatMap(s => (s.tools || []).map(t => `${t.name} (via ${s.name})`));
         const allToolNames = [...tools.map(t => t.name), ...allMcpToolNames];
         const installCmd = format === "typescript" ? "npm install" : "pip install -r requirements.txt";
         const runCmd = format === "typescript" ? "npm start" : "python src/runtime/orchestrator.py";
-        files[`${dirPrefix}/README.md`] = `# ${agentRec.name}\n\n${agentRec.description || ""}\n\n## Setup\n\n\`\`\`bash\n${installCmd}\n\`\`\`\n\n## Run\n\n\`\`\`bash\n${runCmd}\n\`\`\`\n\n## Tools\n\n${allToolNames.length > 0 ? allToolNames.map(n => `- \`${n}\``).join("\n") : "_No tools configured._"}\n`;
+        localFiles[`${dirPrefix}/README.md`] = `# ${agentRec.name}\n\n${agentRec.description || ""}\n\n## Setup\n\n\`\`\`bash\n${installCmd}\n\`\`\`\n\n## Run\n\n\`\`\`bash\n${runCmd}\n\`\`\`\n\n## Tools\n\n${allToolNames.length > 0 ? allToolNames.map(n => `- \`${n}\``).join("\n") : "_No tools configured._"}\n`;
+
+        return localFiles;
       }
 
-      // Generate files for orchestrator and each member
-      // skipAI=true: bundle exports use deterministic templates only — sequential AI calls per
-      // agent are too slow (2-4 min each) and hit token limits, causing SSE proxy timeouts.
-      for (let si = 0; si < allSlots.length; si++) {
-        const slot = allSlots[si];
-        emit("progress", { phase: "agent", message: `Generating files for ${slot.agent.name} (${slot.role})`, detail: `${si + 1} / ${allSlots.length}` });
-        await buildAgentFiles(slot.agent, slot.prefix, { skipAI: true });
-        emit("progress", { phase: "agent", message: `✓ ${slot.agent.name} — done`, detail: `${Object.keys(files).length} file(s) so far` });
+      // Generate files for all agents in PARALLEL using AI — each agent's AI call runs
+      // concurrently, so total time ≈ slowest single call (~60s) instead of N×60s.
+      // Heartbeat keeps the SSE stream alive during the parallel AI generation window.
+      emit("progress", {
+        phase: "ai",
+        message: `Starting AI generation for ${allSlots.length} agent${allSlots.length !== 1 ? "s" : ""} in parallel...`,
+        detail: allSlots.map(s => s.agent.name).join(", "),
+      });
+      let bundleHeartbeat = 0;
+      const bundleHeartbeatInterval = setInterval(() => {
+        bundleHeartbeat++;
+        res.write(`: keepalive ${bundleHeartbeat}\n\n`);
+      }, 20000);
+      try {
+        const agentFileMaps = await Promise.all(
+          allSlots.map(slot => buildAgentFiles(slot.agent, slot.prefix)),
+        );
+        for (const fileMap of agentFileMaps) {
+          Object.assign(files, fileMap);
+        }
+      } finally {
+        clearInterval(bundleHeartbeatInterval);
       }
+      emit("progress", { phase: "agent", message: `✓ All ${allSlots.length} agents generated`, detail: `${Object.keys(files).length} file(s) total` });
 
       emit("progress", { phase: "bundle", message: "Generating docker-compose.yml..." });
       // Bundle-level docker-compose.yml

@@ -572,7 +572,7 @@ export default function AgentExport() {
 
       <div className="flex-1 min-h-0 overflow-hidden">
         {exportStep === "configure" && isGenerating && (
-          <ExportLogPanel logs={exportLogs} agentName={agent?.name || "Agent"} isBundling={bundleExport && agent?.agentType === "team"} />
+          <ExportLogPanel logs={exportLogs} agentName={agent?.name || "Agent"} isBundling={bundleExport && agent?.agentType === "team"} memberCount={teamMembers.length} />
         )}
         {exportStep === "configure" && !isGenerating && (
           <ConfigureStep
@@ -1040,10 +1040,11 @@ const PHASE_META: Record<string, { icon: React.ReactNode; color: string }> = {
   info:      { icon: <Info className="w-3.5 h-3.5" />,       color: "text-slate-400" },
 };
 
-function ExportLogPanel({ logs, agentName, isBundling }: {
+function ExportLogPanel({ logs, agentName, isBundling, memberCount = 0 }: {
   logs: Array<{ event: string; phase: string; message: string; detail?: string; ts: number }>;
   agentName: string;
   isBundling: boolean;
+  memberCount?: number;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -1092,13 +1093,21 @@ function ExportLogPanel({ logs, agentName, isBundling }: {
       </div>
 
       <div className="shrink-0 px-5 py-2 border-t border-white/10 flex items-center gap-2">
-        <div className="h-1 flex-1 bg-white/10 rounded-full overflow-hidden">
-          <div
-            className="h-full bg-gradient-to-r from-violet-500 to-indigo-500 rounded-full transition-all duration-500"
-            style={{ width: `${Math.min(100, (logs.length / 20) * 100)}%` }}
-          />
-        </div>
-        <span className="text-[10px] text-white/30 shrink-0">{logs.length} / ~20 steps</span>
+        {(() => {
+          const totalSteps = isBundling ? (8 + memberCount) : 20;
+          const pct = Math.min(100, (logs.length / totalSteps) * 100);
+          return (
+            <>
+              <div className="h-1 flex-1 bg-white/10 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-violet-500 to-indigo-500 rounded-full transition-all duration-500"
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              <span className="text-[10px] text-white/30 shrink-0">{logs.length} / ~{totalSteps} steps</span>
+            </>
+          );
+        })()}
       </div>
     </div>
   );
