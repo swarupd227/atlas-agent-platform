@@ -1,0 +1,520 @@
+Backend Implementation
+4.1 New Module: `workflow-state-manager.ts`
+Central state management service that all stage executors use.
+// server/src/services/workflow-state-manager.ts
+ 
+interface StateManagerConfig {
+  pipelineRunId: number;
+  schemaId: number;
+}
+ 
+class WorkflowStateManager {
+  private schema: WorkflowStateSchema;
+  private currentState: Record<string, any>;
+  private checkpointNumber: number;
+  private pipelineRunId: number;
+ 
+  /**
+   * Initialize state manager for a pipeline run.
+   * If this is a new run, applies initial_values from schema.
+   * If this is a resumed run, loads latest checkpoint.
+   */
+  static async create(config: StateManagerConfig): Promise<WorkflowStateManager> {
+    const schema = await db.select().from(workflowStateSchemas)
+      .where(eq(workflowStateSchemas.id, config.schemaId))
+      .limit(1);
+ 
+    const run = await db.select().from(pipelineRuns)
+      .where(eq(pipelineRuns.id, config.pipelineRunId))
+      .limit(1);
+ 
+    const manager = new WorkflowStateManager();
+    manager.schema = schema[0];
+    manager.pipelineRunId = config.pipelineRunId;
+ 
+    if (run[0].current_state) {
+      // Resuming: load existing state
+      manager.currentState = run[0].current_state;
+      manager.checkpointNumber = run[0].current_checkpoint || 0;
+    } else {
+      // New run: apply initial values
+      manager.currentState = { ...schema[0].initial_values };
+      manager.checkpointNumber = 0;
+    }
+ 
+    return manager;
+  }
+ 
+  /**
+   * Read the full current state.
+   * Used by stages/nodes to get their input context.
+   */
+  getState(): Record<string, any> {
+    return { ...this.currentState };
+  }
+ 
+  /**
+   * Read a specific field from state.
+   */
+  getField(fieldName: string): any {
+    return this.currentState[fieldName];
+  }
+ 
+  /**
+   * Apply a state patch from a stage/node execution.
+   * Uses reducer semantics defined in the schema.
+   */
+  applyPatch(
+    patch: Record<string, any>,
+    source: string,  // which stage/node is writing
+  ): void {
+    const fields = this.schema.fields;
+ 
+    for (const [key, value] of Object.entries(patch)) {
+      const fieldDef = fields[key];
+ 
+      // Validate writable_by
+      if (fieldDef && fieldDef.writable_by) {
+        const allowedWriters = fieldDef.writable_by;
+        if (!allowedWriters.includes('*') && !allowedWriters.includes(source)) {
+          console.warn(
+            `Stage "${source}" attempted to write field "${key}" ` +
+            `but is not in writable_by: [${allowedWriters.join(', ')}]. Ignoring.`
+          );
+          continue;
+        }
+      }
+ 
+      // Apply reducer
+      const reducer = fieldDef?.reducer || 'last_wins';
+      this.currentState[key] = this.applyReducer(
+        this.currentState[key],
+        value,
+        reducer,
+      );
+    }
+  }
+ 
+  /**
+   * Apply reducer logic.
+   */
+  private applyReducer(existing: any, incoming: any, reducer: string): any {
+    switch (reducer) {
+      case 'last_wins':
+        return incoming;
+ 
+      case 'append':
+        const existArr = Array.isArray(existing) ? existing : [];
+        const incomArr = Array.isArray(incoming) ? incoming : [incoming];
+        return [...existArr, ...incomArr];
+ 
+      case 'merge_object':
+        return { ...(existing || {}), ...(incoming || {}) };
+ 
+      case 'sum':
+        return (existing || 0) + (incoming || 0);
+ 
+      default:
+        return incoming;
+    }
+  }
+ 
+  /**
+   * Persist a checkpoint.
+   * Called after every stage completion and at every interrupt.
+   */
+  async checkpoint(
+    trigger: 'stage_complete' | 'interrupt' | 'resume' | 'error' | 'manual',
+    options: {
+      stageId?: number;
+      nodeId?: string;
+      interruptId?: string;
+      interruptPayload?: any;
+      interruptNode?: string;
+      createdBy?: string;
+    } = {},
+  ): Promise<number> {
+    this.checkpointNumber++;
+ 
+    // Sanitize state before persistence
+    const sanitizedState = this.sanitizeForStorage(this.currentState);
+    const stateJson = JSON.stringify(sanitizedState);
+    const stateHash = await this.computeHash(stateJson);
+ 
+    // Insert checkpoint
+    await db.insert(workflowStateCheckpoints).values({
+      pipeline_run_id: this.pipelineRunId,
+      checkpoint_number: this.checkpointNumber,
+      trigger,
+      trigger_stage_id: options.stageId,
+      trigger_node_id: options.nodeId,
+      state_json: sanitizedState,
+      state_hash: stateHash,
+      interrupt_id: options.interruptId,
+      interrupt_payload: options.interruptPayload,
+      interrupt_node: options.interruptNode,
+      created_by: options.createdBy,
+    });
+ 
+    // Update pipeline run with current state
+    await db.update(pipelineRuns).set({
+      current_state: sanitizedState,
+      current_checkpoint: this.checkpointNumber,
+      state_version: sql`state_version + 1`,
+      active_interrupt_id: trigger === 'interrupt' ? options.interruptId : null,
+    }).where(eq(pipelineRuns.id, this.pipelineRunId));
+ 
+    return this.checkpointNumber;
+  }
+ 
+  /**
+   * Record an interrupt response.
+   * Called when the human responds to an approval gate.
+   */
+  async recordInterruptResponse(
+    interruptId: string,
+    response: any,
+    respondedBy: string,
+  ): Promise<void> {
+    await db.update(workflowStateCheckpoints).set({
+      interrupt_responded: true,
+      interrupt_response: response,
+      created_by: respondedBy,
+    }).where(
+      and(
+        eq(workflowStateCheckpoints.pipeline_run_id, this.pipelineRunId),
+        eq(workflowStateCheckpoints.interrupt_id, interruptId),
+      )
+    );
+ 
+    // Inject response into state (e.g., approval decision, feedback)
+    // The response schema is defined per approval gate
+    if (response) {
+      this.applyPatch(response, `interrupt:${interruptId}`);
+    }
+  }
+ 
+  /**
+   * Clear ephemeral fields after their owning stage completes.
+   */
+  clearEphemeralFields(): void {
+    for (const [key, def] of Object.entries(this.schema.fields)) {
+      if (def.ephemeral) {
+        this.currentState[key] = def.type === 'array' ? [] :
+                                  def.type === 'object' ? {} :
+                                  def.type === 'string' ? '' : null;
+      }
+    }
+  }
+ 
+  /**
+   * Restore state from a specific checkpoint (time travel).
+   */
+  async restoreFromCheckpoint(checkpointNumber: number): Promise<void> {
+    const checkpoint = await db.select().from(workflowStateCheckpoints)
+      .where(
+        and(
+          eq(workflowStateCheckpoints.pipeline_run_id, this.pipelineRunId),
+          eq(workflowStateCheckpoints.checkpoint_number, checkpointNumber),
+        )
+      ).limit(1);
+ 
+    if (!checkpoint.length) {
+      throw new Error(`Checkpoint ${checkpointNumber} not found for run ${this.pipelineRunId}`);
+    }
+ 
+    this.currentState = checkpoint[0].state_json;
+    this.checkpointNumber = checkpointNumber;
+  }
+ 
+  /**
+   * Get checkpoint history (for UI time-travel).
+   */
+  async getCheckpointHistory(): Promise<any[]> {
+    return db.select({
+      checkpoint_number: workflowStateCheckpoints.checkpoint_number,
+      trigger: workflowStateCheckpoints.trigger,
+      trigger_node_id: workflowStateCheckpoints.trigger_node_id,
+      interrupt_id: workflowStateCheckpoints.interrupt_id,
+      interrupt_responded: workflowStateCheckpoints.interrupt_responded,
+      state_hash: workflowStateCheckpoints.state_hash,
+      created_at: workflowStateCheckpoints.created_at,
+    })
+    .from(workflowStateCheckpoints)
+    .where(eq(workflowStateCheckpoints.pipeline_run_id, this.pipelineRunId))
+    .orderBy(workflowStateCheckpoints.checkpoint_number);
+  }
+ 
+  /**
+   * Sanitize state before persistence.
+   * Strips fields marked with sanitize: true (e.g., PII token maps).
+   */
+  private sanitizeForStorage(state: Record<string, any>): Record<string, any> {
+    const sanitized = { ...state };
+    for (const [key, def] of Object.entries(this.schema.fields)) {
+      if (def.sanitize && sanitized[key]) {
+        if (Array.isArray(sanitized[key])) {
+          sanitized[key] = sanitized[key].map((item: any) => {
+            if (typeof item === 'object' && item !== null) {
+              const { token_map, ...rest } = item;
+              return rest;
+            }
+            return item;
+          });
+        }
+      }
+    }
+    return sanitized;
+  }
+ 
+  /**
+   * Compute SHA-256 hash of state for tamper detection.
+   */
+  private async computeHash(stateJson: string): Promise<string> {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(stateJson);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(hashBuffer))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+  }
+}
+
+4.2 Integration with Pipeline Execution Runtime
+Modify: `pipeline-execution-runtime.ts`
+Every stage executor now receives and writes through the state manager:
+// Modified executePipeline() method:
+ 
+async executePipeline(pipelineRun) {
+  // Initialize state manager if pipeline has a state schema
+  let stateManager: WorkflowStateManager | null = null;
+  if (pipelineRun.state_schema_id) {
+    stateManager = await WorkflowStateManager.create({
+      pipelineRunId: pipelineRun.id,
+      schemaId: pipelineRun.state_schema_id,
+    });
+  }
+ 
+  for (const stage of pipelineRun.stages) {
+    // Build context: use state manager if available, else legacy text cascading
+    const context = stateManager
+      ? stateManager.getState()
+      : this.getContextFromPreviousStage(stage);
+ 
+    let result;
+    switch (stage.stage_type) {
+      case 'agent':
+        result = await this.executeAgentStage(pipelineRun, stage, context);
+        break;
+ 
+      case 'approval_gate':
+        result = await this.executeApprovalGateWithState(
+          pipelineRun, stage, context, stateManager
+        );
+        break;
+ 
+      case 'composite':
+        result = await this.executeCompositeStage(
+          pipelineRun, stage, context, stateManager
+        );
+        break;
+ 
+      case 'parallel_group':
+        result = await this.executeParallelGroup(pipelineRun, stage, context);
+        break;
+    }
+ 
+    // Apply result to state
+    if (stateManager && result) {
+      stateManager.applyPatch(result, stage.name || `stage-${stage.id}`);
+      stateManager.clearEphemeralFields();
+      await stateManager.checkpoint('stage_complete', { stageId: stage.id });
+    }
+  }
+}
+
+4.3 Approval Gate with State — Interrupt/Resume Protocol
+// New method: executeApprovalGateWithState()
+ 
+async executeApprovalGateWithState(
+  pipelineRun,
+  stage,
+  currentState: Record<string, any>,
+  stateManager: WorkflowStateManager,
+): Promise<Record<string, any> | null> {
+ 
+  // 1. Build interrupt payload from state + gate config
+  const interruptId = crypto.randomUUID().replace(/-/g, '');
+  const gateConfig = stage.config || {};
+  const interruptPayload = {
+    type: gateConfig.interrupt_type || 'review',
+    step: currentState.current_step || stage.name,
+    title: gateConfig.title || `Review: ${stage.name}`,
+    description: gateConfig.description || '',
+    // Include relevant state fields for the reviewer
+    context_fields: (gateConfig.context_fields || []).reduce((acc, field) => {
+      acc[field] = currentState[field];
+      return acc;
+    }, {}),
+    // Define allowed response actions
+    allowed_actions: gateConfig.allowed_actions || ['approve', 'reject'],
+    // Define response schema (for structured responses)
+    response_schema: gateConfig.response_schema || null,
+  };
+ 
+  // 2. Checkpoint with interrupt
+  await stateManager.checkpoint('interrupt', {
+    stageId: stage.id,
+    interruptId,
+    interruptPayload,
+    interruptNode: stage.name,
+  });
+ 
+  // 3. Update pipeline run status to "paused"
+  await db.update(pipelineRuns).set({
+    status: 'paused',
+    active_interrupt_id: interruptId,
+  }).where(eq(pipelineRuns.id, pipelineRun.id));
+ 
+  // 4. Emit SSE event to UI
+  this.emitProgress(pipelineRun.id, {
+    type: 'interrupt',
+    interruptId,
+    payload: interruptPayload,
+    stageId: stage.id,
+  });
+ 
+  // 5. Return null — pipeline execution is paused
+  //    The resume will be handled by resumePipelineRun()
+  return null;
+}
+ 
+// New method: resumePipelineRun()
+async resumePipelineRun(
+  pipelineRunId: number,
+  interruptId: string,
+  response: Record<string, any>,
+  respondedBy: string,
+): Promise<void> {
+ 
+  // 1. Load state manager
+  const run = await db.select().from(pipelineRuns)
+    .where(eq(pipelineRuns.id, pipelineRunId)).limit(1);
+  const stateManager = await WorkflowStateManager.create({
+    pipelineRunId,
+    schemaId: run[0].state_schema_id,
+  });
+ 
+  // 2. Record the response
+  await stateManager.recordInterruptResponse(interruptId, response, respondedBy);
+ 
+  // 3. Checkpoint the resume
+  await stateManager.checkpoint('resume', {
+    interruptId,
+    createdBy: respondedBy,
+  });
+ 
+  // 4. Determine routing from the response
+  const checkpoint = await db.select().from(workflowStateCheckpoints)
+    .where(eq(workflowStateCheckpoints.interrupt_id, interruptId)).limit(1);
+ 
+  const gateStageId = checkpoint[0].trigger_stage_id;
+  const gateStage = await db.select().from(pipelineStages)
+    .where(eq(pipelineStages.id, gateStageId)).limit(1);
+ 
+  const routingRules = gateStage[0].config?.routing_rules || {};
+  const action = response.decision || response.action || 'approve';
+  const nextStageOverride = routingRules[action]; // e.g., "patch_discovery" for patch_fields
+ 
+  // 5. Resume pipeline execution from the appropriate stage
+  await db.update(pipelineRuns).set({
+    status: 'running',
+    active_interrupt_id: null,
+  }).where(eq(pipelineRuns.id, pipelineRunId));
+ 
+  // Continue pipeline from the stage after the approval gate
+  // (or from a different stage if routing_rules specify)
+  await this.continueFromStage(pipelineRunId, nextStageOverride || null, stateManager);
+}
+
+4.4 State-Aware Agent Invocation
+When a pipeline stage agent runs, it receives the full state as structured context (not just the previous stage's text output):
+// Modified executeAgentStage() for state-aware pipelines:
+ 
+async executeAgentStage(pipelineRun, stage, context) {
+  if (typeof context === 'object' && context !== null && !Array.isArray(context)) {
+    // State-aware mode: build structured agent input from state
+    const agentInput = this.buildStructuredAgentInput(stage, context);
+    const result = await this.invokeAgent(stage.agent_id, agentInput);
+ 
+    // Parse agent output into state patch
+    return this.parseAgentOutputToStatePatch(stage, result);
+  } else {
+    // Legacy mode: text cascading (backward compatible)
+    return this.invokeAgent(stage.agent_id, context);
+  }
+}
+ 
+private buildStructuredAgentInput(
+  stage: any,
+  state: Record<string, any>,
+): string {
+  const sections: string[] = [];
+ 
+  // Include only the state fields this stage needs (from config)
+  const inputFields = stage.config?.input_fields || Object.keys(state);
+ 
+  for (const field of inputFields) {
+    if (state[field] === undefined || state[field] === null) continue;
+    sections.push(`## ${field.toUpperCase()}`);
+    if (typeof state[field] === 'object') {
+      sections.push(JSON.stringify(state[field], null, 2));
+    } else {
+      sections.push(String(state[field]));
+    }
+    sections.push('');
+  }
+ 
+  return sections.join('\n');
+}
+ 
+private parseAgentOutputToStatePatch(
+  stage: any,
+  result: any,
+): Record<string, any> {
+  const outputField = stage.config?.output_field || stage.name.replace(/-/g, '_');
+ 
+  // If the agent returns JSON, parse it
+  if (typeof result === 'string') {
+    try {
+      return { [outputField]: JSON.parse(result) };
+    } catch {
+      return { [outputField]: result };
+    }
+  }
+  return { [outputField]: result };
+}
+
+4.5 New API Endpoints
+# Workflow State Schema CRUD
+POST   /api/workflow-state-schemas               Create state schema for a pipeline
+GET    /api/workflow-state-schemas/:id            Get state schema with sub-schemas
+PATCH  /api/workflow-state-schemas/:id            Update state schema
+GET    /api/workflow-state-schemas/:id/sub-schemas  List sub-schemas
+ 
+# Sub-Schema CRUD
+POST   /api/workflow-sub-schemas                  Create sub-schema
+GET    /api/workflow-sub-schemas/:id              Get sub-schema
+PATCH  /api/workflow-sub-schemas/:id              Update sub-schema
+ 
+# State & Checkpoints (per pipeline run)
+GET    /api/pipeline-runs/:id/state               Get current live state
+GET    /api/pipeline-runs/:id/state/:field        Get a specific state field
+GET    /api/pipeline-runs/:id/checkpoints         List all checkpoints (time travel history)
+GET    /api/pipeline-runs/:id/checkpoints/:num    Get state at specific checkpoint
+POST   /api/pipeline-runs/:id/restore/:num        Restore state to a specific checkpoint
+ 
+# Interrupt/Resume
+POST   /api/pipeline-runs/:id/resume              Resume from interrupt with structured response
+GET    /api/pipeline-runs/:id/interrupt            Get current active interrupt details
+
