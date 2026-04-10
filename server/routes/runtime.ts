@@ -3843,6 +3843,17 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
         if (contextProfile) manifestData.contextProfile = { name: contextProfile.name, version: contextProfile.version };
         if (memoryProfile) manifestData.memoryProfile = { name: memoryProfile.name, version: memoryProfile.version };
 
+        const allExportedTools: Array<{ name: string; description: string; source: string; mcpServer?: string }> = [
+          ...tools.map(t => ({ name: t.name, description: t.description || "", source: "toolsConfig" })),
+          ...mcpServerDetails.flatMap(s =>
+            (s.tools || []).map(t => ({ name: t.name, description: t.description || "", source: "mcp", mcpServer: s.name }))
+          ),
+        ];
+        if (allExportedTools.length > 0) manifestData.tools = allExportedTools;
+        manifestData.toolsHash = crypto.createHash("sha256")
+          .update(JSON.stringify(allExportedTools.map(t => t.name).sort()))
+          .digest("hex");
+
         const manifestJson = JSON.stringify(manifestData, null, 2);
 
         files["almp.manifest.json"] = `${manifestJson}\n`;
@@ -3909,7 +3920,14 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
         }
         files[".env.example"] = envLines.join("\n") + "\n";
 
-        const toolList = tools.map(t => `\`${t.name}\``).join(", ");
+        const mcpToolNames = mcpServerDetails.flatMap(s =>
+          (s.tools || []).map(t => `${t.name} (via ${s.name})`)
+        );
+        const allToolNames = [
+          ...tools.map(t => t.name),
+          ...mcpToolNames,
+        ];
+        const toolList = allToolNames.length > 0 ? allToolNames.map(n => `\`${n}\``).join(", ") : "";
         const fileExt = format === "typescript" ? "ts" : "py";
         const depCmd = format === "typescript" ? "npm install" : "pip install -r requirements.txt";
         const runCmd = format === "typescript" ? "npm start" : "python src/runtime/orchestrator.py";
@@ -3920,7 +3938,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
 
         const skillsFileEntry = matchedSkills.length > 0 ? `\n    skills.${fileExt}          # Skills catalog and stubs` : "";
 
-        files["README.md"] = `<!-- ATLAS-generated README -->\n# ${agent.name}\n\n${agent.description || ""}\n\n## Setup\n\n1. Install dependencies:\n   \`\`\`bash\n   ${depCmd}\n   \`\`\`\n2. Copy \`.env.example\` to \`.env\` and fill in your API keys.\n3. Run the agent:\n   \`\`\`bash\n   ${runCmd}\n   \`\`\`\n\n## File Structure\n\n\`\`\`\n${format === "typescript" ? `src/\n  runtime/\n    orchestrator.ts    # Main agent loop\n    policy.ts          # Policy evaluation hooks\n    tracing.ts         # OpenTelemetry tracing setup\n  agent/\n    graph.ts           # Graph construction from blueprint\n    prompts/\n      system.txt       # System prompt\n    schemas/\n      input.json       # Input JSON schema\n      output.json      # Output JSON schema${skillsFileEntry}\n  tools/\n    index.ts           # Tool registry\n    {tool}.ts          # Individual tool adapters\ntests/\n  eval_smoke.test.ts   # Smoke evaluation test\npackage.json\nagent.yaml\nalmp.manifest.json\n.env.example` : `src/\n  runtime/\n    orchestrator.py    # Main agent loop\n    policy.py          # Policy evaluation hooks\n    tracing.py         # OpenTelemetry tracing setup\n  agent/\n    graph.py           # Graph construction from blueprint\n    prompts/\n      system.txt       # System prompt\n    schemas/\n      input.json       # Input JSON schema\n      output.json      # Output JSON schema${skillsFileEntry}\n  tools/\n    __init__.py        # Tool registry\n    {tool}.py          # Individual tool adapters\ntests/\n  eval_smoke_test.py   # Smoke evaluation test\nrequirements.txt\nagent.yaml\nalmp.manifest.json\n.env.example`}\n\`\`\`\n\n## Tools\n\n${tools.length > 0 ? toolList : "No tools configured."}\n${skillsReadmeSection}`;
+        files["README.md"] = `<!-- ATLAS-generated README -->\n# ${agent.name}\n\n${agent.description || ""}\n\n## Setup\n\n1. Install dependencies:\n   \`\`\`bash\n   ${depCmd}\n   \`\`\`\n2. Copy \`.env.example\` to \`.env\` and fill in your API keys.\n3. Run the agent:\n   \`\`\`bash\n   ${runCmd}\n   \`\`\`\n\n## File Structure\n\n\`\`\`\n${format === "typescript" ? `src/\n  runtime/\n    orchestrator.ts    # Main agent loop\n    policy.ts          # Policy evaluation hooks\n    tracing.ts         # OpenTelemetry tracing setup\n  agent/\n    graph.ts           # Graph construction from blueprint\n    prompts/\n      system.txt       # System prompt\n    schemas/\n      input.json       # Input JSON schema\n      output.json      # Output JSON schema${skillsFileEntry}\n  tools/\n    index.ts           # Tool registry\n    {tool}.ts          # Individual tool adapters\ntests/\n  eval_smoke.test.ts   # Smoke evaluation test\npackage.json\nagent.yaml\nalmp.manifest.json\n.env.example` : `src/\n  runtime/\n    orchestrator.py    # Main agent loop\n    policy.py          # Policy evaluation hooks\n    tracing.py         # OpenTelemetry tracing setup\n  agent/\n    graph.py           # Graph construction from blueprint\n    prompts/\n      system.txt       # System prompt\n    schemas/\n      input.json       # Input JSON schema\n      output.json      # Output JSON schema${skillsFileEntry}\n  tools/\n    __init__.py        # Tool registry\n    {tool}.py          # Individual tool adapters\ntests/\n  eval_smoke_test.py   # Smoke evaluation test\nrequirements.txt\nagent.yaml\nalmp.manifest.json\n.env.example`}\n\`\`\`\n\n## Tools\n\n${allToolNames.length > 0 ? toolList : "No tools configured."}\n${skillsReadmeSection}`;
 
         const graphNodes = Array.isArray(blueprintJson.nodes) ? blueprintJson.nodes as Array<{ type?: string }> : [];
         const graphNodeTypes = new Set(graphNodes.map(n => n.type).filter(Boolean));
