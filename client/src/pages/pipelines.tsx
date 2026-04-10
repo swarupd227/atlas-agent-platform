@@ -697,6 +697,13 @@ export default function Pipelines() {
     [activeRun]
   );
 
+  useEffect(() => {
+    setApprovalDecision("approve");
+    setApprovalNotes("");
+    setApprovalPatchKeys(new Set());
+    setApprovalSnapshotExpanded({});
+  }, [activeRunId, activeRun?.currentStageId]);
+
   const createMutation = useMutation({
     mutationFn: async (data: { name: string; description: string }) => {
       const res = await apiRequest("POST", "/api/pipelines", {
