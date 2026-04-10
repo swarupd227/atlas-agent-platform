@@ -12576,12 +12576,13 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     let currentStateObj = ((run as any).currentState as Record<string, any>) || {};
     let newStateVersion = ((run as any).stateVersion as number) || 0;
 
-    if (stateEnabled && req.body.stateUpdates && typeof req.body.stateUpdates === "object") {
-      const ephemeralKeys: string[] = [];
-      currentStateObj = mergeIntoWorkflowState(currentStateObj, req.body.stateUpdates, wfSchemaFields, ephemeralKeys);
-      for (const key of ephemeralKeys) delete currentStateObj[key];
-      newStateVersion += 1;
-
+    if (stateEnabled) {
+      if (req.body.stateUpdates && typeof req.body.stateUpdates === "object") {
+        const ephemeralKeys: string[] = [];
+        currentStateObj = mergeIntoWorkflowState(currentStateObj, req.body.stateUpdates, wfSchemaFields, ephemeralKeys);
+        for (const key of ephemeralKeys) delete currentStateObj[key];
+        newStateVersion += 1;
+      }
       await writeStageCompleteCheckpoint(
         run.id,
         currentStage?.id || run.currentStageId || "",
@@ -12812,13 +12813,14 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       const existingCheckpoints = await storage.listWorkflowCheckpoints(run.id);
       const checkpointNumber = existingCheckpoints.length + 1;
       const sanitized = sanitizeForCheckpoint(currentStateObj, wfSchemaFields);
-      const stateHash = crypto.createHash("sha256").update(JSON.stringify(sanitized)).digest("hex");
+      const rejectStateJson = { ...sanitized, _rejection_reason: req.body.reason || "Rejected" };
+      const stateHash = crypto.createHash("sha256").update(JSON.stringify(rejectStateJson)).digest("hex");
       await storage.createWorkflowCheckpoint({
         pipelineRunId: run.id,
         checkpointNumber,
         trigger: "error",
         triggerStageId: run.currentStageId || undefined,
-        stateJson: { ...sanitized, _rejection_reason: req.body.reason || "Rejected" },
+        stateJson: rejectStateJson,
         stateHash,
         interruptResponded: false,
         createdBy: req.body.rejectedBy || "operator",
@@ -12892,8 +12894,8 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
           }, {});
         const initialState: Record<string, any> = {
           request: run.scenarioInput,
+          ...(stateEnabled ? currentStateObj : {}),
           ...previousResults,
-          ...(stateEnabled ? { _workflow_state: currentStateObj } : {}),
         };
 
         const dagRun = await storage.createDagExecutionRun({
@@ -13076,7 +13078,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
   // ── Workflow State Schema: Create/upsert for a pipeline ──
   router.post("/api/pipelines/:id/workflow-state-schema", async (req, res) => {
     try {
-      const { fields, description } = req.body;
+      const { fields, reducers, initialValues, sanitization } = req.body;
       if (!fields || typeof fields !== "object") {
         return res.status(400).json({ error: "fields is required and must be an object" });
       }
@@ -13087,7 +13089,9 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       const created = await storage.createWorkflowStateSchema({
         pipelineId: req.params.id,
         fields,
-        description: description || null,
+        reducers: reducers || {},
+        initialValues: initialValues || {},
+        sanitization: sanitization || {},
         schemaVersion: newVersion,
       });
       await storage.updateAgentPipeline(req.params.id, {

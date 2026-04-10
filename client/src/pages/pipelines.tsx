@@ -258,6 +258,129 @@ function DAGExecutionView({ dagRunId }: { dagRunId: string }) {
   );
 }
 
+function CheckpointRow({ cp, stages }: {
+  cp: {
+    id: string;
+    checkpointNumber: number;
+    trigger: string;
+    triggerStageId: string | null;
+    stateJson: Record<string, any>;
+    stateHash: string;
+    createdAt: string | null;
+  };
+  stages: Array<{ id: string; label: string }>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="border rounded p-2 text-xs" data-testid={`checkpoint-${cp.id}`}>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5">
+          <Badge variant="outline" className="text-[10px]">#{cp.checkpointNumber}</Badge>
+          <span className="font-medium capitalize">{cp.trigger.replace(/_/g, " ")}</span>
+          {cp.triggerStageId && (
+            <span className="text-muted-foreground">
+              — {stages.find((s) => s.id === cp.triggerStageId)?.label || cp.triggerStageId.substring(0, 8)}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {cp.createdAt && (
+            <span className="text-muted-foreground text-[10px]">{new Date(cp.createdAt).toLocaleTimeString()}</span>
+          )}
+          <button
+            className="text-muted-foreground hover:text-foreground"
+            onClick={() => setExpanded((v) => !v)}
+            data-testid={`button-expand-checkpoint-${cp.id}`}
+          >
+            <ChevronDown className={`w-3 h-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
+          </button>
+        </div>
+      </div>
+      <div className="font-mono text-[10px] text-muted-foreground mt-0.5 truncate">
+        sha: {cp.stateHash.substring(0, 16)}…
+      </div>
+      {expanded && (
+        <div className="mt-2 bg-muted/30 rounded p-2">
+          <pre className="text-[10px] font-mono whitespace-pre-wrap" data-testid={`text-checkpoint-state-${cp.id}`}>
+            {JSON.stringify(cp.stateJson, null, 2)}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InterruptRow({ intr, stages }: {
+  intr: {
+    id: string;
+    checkpointNumber: number;
+    interruptId: string | null;
+    interruptPayload: any;
+    interruptResponded: boolean;
+    interruptResponse: any;
+    triggerStageId: string | null;
+    createdAt: string | null;
+  };
+  stages: Array<{ id: string; label: string }>;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="border rounded p-2 text-xs" data-testid={`interrupt-${intr.id}`}>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5">
+          <ShieldCheck className="w-3 h-3 text-amber-600" />
+          <span className="font-medium">
+            {(intr.interruptPayload as any)?.gateName || "Approval Gate"}
+          </span>
+          <Badge
+            variant="outline"
+            className={`text-[10px] ${intr.interruptResponded ? "text-green-600 border-green-300" : "text-amber-600 border-amber-300"}`}
+          >
+            {intr.interruptResponded ? (intr.interruptResponse as any)?.decision || "responded" : "open"}
+          </Badge>
+        </div>
+        <div className="flex items-center gap-2">
+          {intr.createdAt && (
+            <span className="text-muted-foreground text-[10px]">{new Date(intr.createdAt).toLocaleTimeString()}</span>
+          )}
+          <button
+            className="text-muted-foreground hover:text-foreground"
+            onClick={() => setExpanded((v) => !v)}
+            data-testid={`button-expand-interrupt-${intr.id}`}
+          >
+            <ChevronDown className={`w-3 h-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
+          </button>
+        </div>
+      </div>
+      {(intr.interruptPayload as any)?.context && (
+        <div className="mt-0.5 text-muted-foreground text-[10px] truncate">
+          {(intr.interruptPayload as any).context}
+        </div>
+      )}
+      {expanded && (
+        <div className="mt-2 space-y-2">
+          {intr.interruptPayload && (
+            <div className="bg-muted/30 rounded p-2">
+              <div className="text-[10px] font-medium text-muted-foreground mb-1">Payload</div>
+              <pre className="text-[10px] font-mono whitespace-pre-wrap" data-testid={`text-interrupt-payload-${intr.id}`}>
+                {JSON.stringify(intr.interruptPayload, null, 2)}
+              </pre>
+            </div>
+          )}
+          {intr.interruptResponded && intr.interruptResponse && (
+            <div className="bg-muted/30 rounded p-2">
+              <div className="text-[10px] font-medium text-muted-foreground mb-1">Response</div>
+              <pre className="text-[10px] font-mono whitespace-pre-wrap" data-testid={`text-interrupt-response-${intr.id}`}>
+                {JSON.stringify(intr.interruptResponse, null, 2)}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Pipelines() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
@@ -1511,30 +1634,10 @@ export default function Pipelines() {
                           {workflowState.history.length === 0 ? (
                             <p className="text-xs text-muted-foreground text-center py-4">No checkpoints yet</p>
                           ) : (
-                            <ScrollArea className="max-h-64">
+                            <ScrollArea className="max-h-72">
                               <div className="space-y-2">
                                 {workflowState.history.map((cp) => (
-                                  <div key={cp.id} className="border rounded p-2 text-xs" data-testid={`checkpoint-${cp.id}`}>
-                                    <div className="flex items-center justify-between mb-1">
-                                      <div className="flex items-center gap-1.5">
-                                        <Badge variant="outline" className="text-[10px]">#{cp.checkpointNumber}</Badge>
-                                        <span className="font-medium capitalize">{cp.trigger.replace(/_/g, " ")}</span>
-                                        {cp.triggerStageId && (
-                                          <span className="text-muted-foreground">
-                                            — {stages.find((s) => s.id === cp.triggerStageId)?.label || cp.triggerStageId.substring(0, 8)}
-                                          </span>
-                                        )}
-                                      </div>
-                                      {cp.createdAt && (
-                                        <span className="text-muted-foreground text-[10px]">
-                                          {new Date(cp.createdAt).toLocaleTimeString()}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="font-mono text-[10px] text-muted-foreground truncate">
-                                      sha: {cp.stateHash.substring(0, 16)}…
-                                    </div>
-                                  </div>
+                                  <CheckpointRow key={cp.id} cp={cp} stages={stages} />
                                 ))}
                               </div>
                             </ScrollArea>
@@ -1544,35 +1647,10 @@ export default function Pipelines() {
                           {workflowState.interrupts.length === 0 ? (
                             <p className="text-xs text-muted-foreground text-center py-4">No interrupt gates recorded</p>
                           ) : (
-                            <ScrollArea className="max-h-64">
+                            <ScrollArea className="max-h-72">
                               <div className="space-y-2">
                                 {workflowState.interrupts.map((intr) => (
-                                  <div key={intr.id} className="border rounded p-2 text-xs" data-testid={`interrupt-${intr.id}`}>
-                                    <div className="flex items-center justify-between">
-                                      <div className="flex items-center gap-1.5">
-                                        <ShieldCheck className="w-3 h-3 text-amber-600" />
-                                        <span className="font-medium">
-                                          {(intr.interruptPayload as any)?.gateName || "Approval Gate"}
-                                        </span>
-                                        <Badge
-                                          variant="outline"
-                                          className={`text-[10px] ${intr.interruptResponded ? "text-green-600 border-green-300" : "text-amber-600 border-amber-300"}`}
-                                        >
-                                          {intr.interruptResponded ? (intr.interruptResponse as any)?.decision || "responded" : "open"}
-                                        </Badge>
-                                      </div>
-                                      {intr.createdAt && (
-                                        <span className="text-muted-foreground text-[10px]">
-                                          {new Date(intr.createdAt).toLocaleTimeString()}
-                                        </span>
-                                      )}
-                                    </div>
-                                    {intr.interruptPayload && (
-                                      <div className="mt-1 text-muted-foreground truncate text-[10px]">
-                                        {(intr.interruptPayload as any)?.context || ""}
-                                      </div>
-                                    )}
-                                  </div>
+                                  <InterruptRow key={intr.id} intr={intr} stages={stages} />
                                 ))}
                               </div>
                             </ScrollArea>
