@@ -606,7 +606,7 @@ export default function Pipelines() {
     fields: Record<string, { type: string; reducer: string; writable_by?: string[]; ephemeral?: boolean; sanitize?: boolean; required?: boolean }>;
   } | null>({
     queryKey: ["/api/pipelines", selectedPipelineId, "workflow-state-schema"],
-    enabled: !!selectedPipelineId && detailTab === "schema",
+    enabled: !!selectedPipelineId,
     retry: false,
     queryFn: async () => {
       const res = await fetch(`/api/pipelines/${selectedPipelineId}/workflow-state-schema`, {
@@ -635,11 +635,11 @@ export default function Pipelines() {
       setSchemaFields(rows);
       setSchemaVersion(workflowSchema.schemaVersion);
       setSchemaErrors([]);
-    } else if (!schemaLoading && detailTab === "schema") {
+    } else if (!schemaLoading) {
       setSchemaFields([]);
       setSchemaVersion(null);
     }
-  }, [workflowSchema, schemaLoading, detailTab]);
+  }, [workflowSchema, schemaLoading]);
 
   interface WorkflowSchemaFieldPayload {
     type: string;
@@ -2219,12 +2219,26 @@ export default function Pipelines() {
                                           {idx > 0 && <div className="w-5 h-px bg-border flex-shrink-0" />}
                                           <button
                                             onClick={() => { setSelectedCpId(cp.id); setShowCpDiff(false); setCpFieldExpanded({}); }}
-                                            className={`flex flex-col items-center gap-1 px-2 py-1 rounded transition-colors ${isSelected ? "bg-muted" : "hover:bg-muted/50"}`}
+                                            className={`flex flex-col items-center gap-0.5 px-2 py-1 rounded transition-colors max-w-[72px] ${isSelected ? "bg-muted" : "hover:bg-muted/50"}`}
                                             data-testid={`cp-node-${cp.id}`}
-                                            title={`#${cp.checkpointNumber} ${cp.trigger}${cp.createdAt ? " · " + new Date(cp.createdAt).toLocaleTimeString() : ""}`}
                                           >
                                             <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${ts.dot} ${isSelected ? "ring-2 ring-offset-1 ring-primary" : ""}`} />
                                             <span className="text-[10px] font-mono text-muted-foreground">#{cp.checkpointNumber}</span>
+                                            {cp.createdAt && (
+                                              <span className="text-[9px] text-muted-foreground/70 leading-tight">
+                                                {new Date(cp.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                                              </span>
+                                            )}
+                                            {cp.triggerStageId && (
+                                              <span className="text-[9px] text-muted-foreground/70 leading-tight max-w-[68px] truncate text-center">
+                                                {stages.find((s) => s.id === cp.triggerStageId)?.label?.substring(0, 10) || cp.triggerStageId.substring(0, 6)}
+                                              </span>
+                                            )}
+                                            {!cp.triggerStageId && cp.trigger === "interrupt" && (cp.interruptPayload as { gateName?: string; gateId?: string } | null)?.gateName && (
+                                              <span className="text-[9px] text-amber-600/70 dark:text-amber-400/70 leading-tight max-w-[68px] truncate text-center">
+                                                {(cp.interruptPayload as { gateName: string }).gateName.substring(0, 10)}
+                                              </span>
+                                            )}
                                           </button>
                                         </div>
                                       );
