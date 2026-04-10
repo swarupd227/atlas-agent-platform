@@ -12935,7 +12935,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
               currentStateObj,
               dagFinalExcludingWf,
               wfSchemaFields,
-              `composite:${currentStage.label}`,
+              currentStage.label,
             );
             currentStateObj = merged;
             stateDidChange = true;
