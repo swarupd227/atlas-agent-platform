@@ -802,6 +802,7 @@ export interface IStorage {
 
   createWorkflowCheckpoint(data: InsertWorkflowStateCheckpoint): Promise<WorkflowStateCheckpoint>;
   getWorkflowCheckpoint(id: string): Promise<WorkflowStateCheckpoint | undefined>;
+  getWorkflowCheckpointByNumber(pipelineRunId: string, checkpointNumber: number): Promise<WorkflowStateCheckpoint | undefined>;
   listWorkflowCheckpoints(pipelineRunId: string, trigger?: string): Promise<WorkflowStateCheckpoint[]>;
   updateWorkflowCheckpoint(id: string, data: Partial<WorkflowStateCheckpoint>): Promise<WorkflowStateCheckpoint | undefined>;
   getOpenInterrupt(pipelineRunId: string, interruptId: string): Promise<WorkflowStateCheckpoint | undefined>;
@@ -3624,6 +3625,17 @@ export class DatabaseStorage implements IStorage {
 
   async getWorkflowCheckpoint(id: string): Promise<WorkflowStateCheckpoint | undefined> {
     const [row] = await db.select().from(workflowStateCheckpoints).where(eq(workflowStateCheckpoints.id, id));
+    return row;
+  }
+
+  async getWorkflowCheckpointByNumber(pipelineRunId: string, checkpointNumber: number): Promise<WorkflowStateCheckpoint | undefined> {
+    const [row] = await db
+      .select()
+      .from(workflowStateCheckpoints)
+      .where(and(
+        eq(workflowStateCheckpoints.pipelineRunId, pipelineRunId),
+        eq(workflowStateCheckpoints.checkpointNumber, checkpointNumber),
+      ));
     return row;
   }
 

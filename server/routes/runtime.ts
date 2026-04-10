@@ -13050,6 +13050,95 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     }
   });
 
+  // ── Workflow State: GET checkpoint list ──
+  router.get("/api/pipeline-runs/:id/checkpoints", async (req, res) => {
+    try {
+      const run = await storage.getPipelineRun(req.params.id);
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      const checkpoints = await storage.listWorkflowCheckpoints(req.params.id);
+      res.json(checkpoints);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Workflow State: GET single checkpoint by number ──
+  router.get("/api/pipeline-runs/:id/checkpoints/:num", async (req, res) => {
+    try {
+      const num = parseInt(req.params.num, 10);
+      if (isNaN(num) || num < 1) return res.status(400).json({ error: "Invalid checkpoint number" });
+      const run = await storage.getPipelineRun(req.params.id);
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      const cp = await storage.getWorkflowCheckpointByNumber(req.params.id, num);
+      if (!cp) return res.status(404).json({ error: `Checkpoint #${num} not found` });
+      res.json(cp);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Workflow State: POST restore run to a checkpoint ──
+  router.post("/api/pipeline-runs/:id/restore/:num", async (req, res) => {
+    try {
+      const num = parseInt(req.params.num, 10);
+      if (isNaN(num) || num < 1) return res.status(400).json({ error: "Invalid checkpoint number" });
+      const run = await storage.getPipelineRun(req.params.id);
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      if (run.status !== "completed" && run.status !== "failed") {
+        return res.status(400).json({ error: "Restore is only allowed on completed or failed runs" });
+      }
+      const cp = await storage.getWorkflowCheckpointByNumber(req.params.id, num);
+      if (!cp) return res.status(404).json({ error: `Checkpoint #${num} not found` });
+      const restoredState = cp.stateJson as Record<string, any>;
+      const restoredHash = crypto.createHash("sha256").update(JSON.stringify(restoredState)).digest("hex");
+      const updated = await storage.updatePipelineRun(
+        req.params.id,
+        { currentState: restoredState } as any,
+        { atomicIncrementStateVersion: true },
+      );
+      await storage.createWorkflowCheckpoint({
+        pipelineRunId: req.params.id,
+        trigger: "manual",
+        stateJson: restoredState,
+        stateHash: restoredHash,
+        interruptResponded: false,
+        createdBy: (req.body.restoredBy as string | undefined) || "operator",
+      });
+      res.json(updated);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Workflow State: GET single field value ──
+  router.get("/api/pipeline-runs/:id/state/:field", async (req, res) => {
+    try {
+      const run = await storage.getPipelineRun(req.params.id);
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      const state = ((run as any).currentState as Record<string, any>) || {};
+      const field = req.params.field;
+      if (!(field in state)) return res.status(404).json({ error: `Field "${field}" not found in current state` });
+      res.json({ field, value: state[field] });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Workflow State: GET active interrupt ──
+  router.get("/api/pipeline-runs/:id/interrupt", async (req, res) => {
+    try {
+      const run = await storage.getPipelineRun(req.params.id);
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      const activeInterruptId = (run as any).activeInterruptId as string | null | undefined;
+      if (!activeInterruptId) return res.json({ active: false });
+      const cp = await storage.getOpenInterrupt(req.params.id, activeInterruptId);
+      if (!cp) return res.json({ active: false });
+      res.json({ active: true, ...cp });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   // ── Workflow State Schema: Create/upsert for a pipeline ──
   router.post("/api/pipelines/:id/workflow-state-schema", async (req, res) => {
     try {
