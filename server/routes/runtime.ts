@@ -12567,15 +12567,11 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
 
         let activeInterruptId: string | null = null;
         if (stateEnabled) {
-          const existingCheckpoints = await storage.listWorkflowCheckpoints(run.id);
-          const checkpointNumber = existingCheckpoints.length + 1;
           const sanitized = sanitizeForCheckpoint(currentStateObj, wfSchemaFields);
-          const stateJsonStr = JSON.stringify(sanitized);
-          const stateHash = crypto.createHash("sha256").update(stateJsonStr).digest("hex");
+          const stateHash = crypto.createHash("sha256").update(JSON.stringify(sanitized)).digest("hex");
           const interruptId = crypto.randomUUID();
           const interruptCheckpoint = await storage.createWorkflowCheckpoint({
             pipelineRunId: run.id,
-            checkpointNumber,
             trigger: "interrupt",
             triggerStageId: nextStage.id,
             stateJson: sanitized,
@@ -12688,13 +12684,10 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         currentStateObj = merged;
         newStateVersion += 1;
 
-        const existingCheckpoints = await storage.listWorkflowCheckpoints(run.id);
-        const checkpointNumber = existingCheckpoints.length + 1;
         const sanitized = sanitizeForCheckpoint(currentStateObj, wfSchemaFields);
         const stateHash = crypto.createHash("sha256").update(JSON.stringify(sanitized)).digest("hex");
         await storage.createWorkflowCheckpoint({
           pipelineRunId: run.id,
-          checkpointNumber,
           trigger: "resume",
           triggerStageId: run.currentStageId || undefined,
           stateJson: sanitized,
@@ -12779,14 +12772,11 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         }
       }
 
-      const existingCheckpoints = await storage.listWorkflowCheckpoints(run.id);
-      const checkpointNumber = existingCheckpoints.length + 1;
       const sanitized = sanitizeForCheckpoint(currentStateObj, wfSchemaFields);
       const rejectStateJson = { ...sanitized, _rejection_reason: req.body.reason || "Rejected" };
       const stateHash = crypto.createHash("sha256").update(JSON.stringify(rejectStateJson)).digest("hex");
       await storage.createWorkflowCheckpoint({
         pipelineRunId: run.id,
-        checkpointNumber,
         trigger: "error",
         triggerStageId: run.currentStageId || undefined,
         stateJson: rejectStateJson,
@@ -12864,8 +12854,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
           }, {});
         const initialState: Record<string, any> = {
           request: run.scenarioInput,
-          ...(stateEnabled ? currentStateObj : {}),
-          ...previousResults,
+          ...(stateEnabled ? currentStateObj : previousResults),
         };
 
         const dagRun = await storage.createDagExecutionRun({
@@ -12992,31 +12981,12 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
           }
         }
 
-        if (stateUpdatesFromAgent && typeof stateUpdatesFromAgent === "object") {
-          const { merged, ephemeralKeys } = mergeIntoWorkflowState(currentStateObj, stateUpdatesFromAgent, wfSchemaFields);
-          for (const key of ephemeralKeys) delete merged[key];
-          currentStateObj = merged;
-          newStateVersion += 1;
-        }
-
-        await writeStageCompleteCheckpoint(
-          run.id,
-          currentStage.id,
-          currentStage.label,
-          currentStage.stageType || "agent_node",
-          currentStateObj,
-          wfSchemaFields,
-        );
-        await storage.updatePipelineRun(run.id, {
-          currentState: currentStateObj,
-          stateVersion: newStateVersion,
-        } as any);
       }
 
       res.json({
         output: rawOutput,
         requiresApproval: false,
-        ...(stateEnabled ? { workflowState: currentStateObj, stateVersion: newStateVersion, stateUpdatesApplied: stateUpdatesFromAgent } : {}),
+        ...(stateEnabled ? { workflowState: currentStateObj, stateVersion: newStateVersion, stateUpdatesFromAgent } : {}),
       });
     } catch (e: any) {
       console.error("Pipeline stage simulation error:", e);

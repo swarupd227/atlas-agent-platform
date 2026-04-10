@@ -38,14 +38,10 @@ export async function writeStageCompleteCheckpoint(
   currentState: Record<string, any>,
   schemaFields: Record<string, StateFieldDef>,
 ): Promise<void> {
-  const existing = await storage.listWorkflowCheckpoints(pipelineRunId);
-  const checkpointNumber = existing.length + 1;
   const sanitized = sanitizeForCheckpoint(currentState, schemaFields);
-  const stateJsonStr = JSON.stringify(sanitized);
-  const stateHash = crypto.createHash("sha256").update(stateJsonStr).digest("hex");
+  const stateHash = crypto.createHash("sha256").update(JSON.stringify(sanitized)).digest("hex");
   await storage.createWorkflowCheckpoint({
     pipelineRunId,
-    checkpointNumber,
     trigger: "stage_complete",
     triggerStageId: stageId || undefined,
     stateJson: sanitized,

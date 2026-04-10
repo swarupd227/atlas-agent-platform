@@ -2032,7 +2032,9 @@ export const workflowStateCheckpoints = pgTable("workflow_state_checkpoints", {
   createdBy: varchar("created_by"),
 });
 
-export const insertWorkflowStateCheckpointSchema = createInsertSchema(workflowStateCheckpoints).omit({ id: true, createdAt: true });
+export const insertWorkflowStateCheckpointSchema = createInsertSchema(workflowStateCheckpoints)
+  .omit({ id: true, createdAt: true })
+  .extend({ checkpointNumber: z.number().optional() });
 export type InsertWorkflowStateCheckpoint = z.infer<typeof insertWorkflowStateCheckpointSchema>;
 export type WorkflowStateCheckpoint = typeof workflowStateCheckpoints.$inferSelect;
 

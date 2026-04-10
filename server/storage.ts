@@ -3604,8 +3604,18 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createWorkflowCheckpoint(data: InsertWorkflowStateCheckpoint): Promise<WorkflowStateCheckpoint> {
-    const [row] = await db.insert(workflowStateCheckpoints).values(data).returning();
-    return row;
+    return db.transaction(async (tx) => {
+      const [maxRow] = await tx
+        .select({ maxNum: sql<number>`COALESCE(MAX(${workflowStateCheckpoints.checkpointNumber}), 0)` })
+        .from(workflowStateCheckpoints)
+        .where(eq(workflowStateCheckpoints.pipelineRunId, data.pipelineRunId));
+      const nextNum = (maxRow?.maxNum ?? 0) + 1;
+      const [row] = await tx
+        .insert(workflowStateCheckpoints)
+        .values({ ...data, checkpointNumber: nextNum })
+        .returning();
+      return row;
+    });
   }
 
   async getWorkflowCheckpoint(id: string): Promise<WorkflowStateCheckpoint | undefined> {
