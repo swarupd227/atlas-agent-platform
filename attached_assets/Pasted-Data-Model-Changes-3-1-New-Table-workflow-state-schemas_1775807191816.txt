@@ -1,0 +1,125 @@
+Data Model Changes
+3.1 New Table: `workflow_state_schemas`
+Defines the typed state schema for a pipeline. Reuses and extends the dag_state_schemas concept from Gap 1 to the pipeline level.
+CREATE TABLE workflow_state_schemas (
+  id               SERIAL PRIMARY KEY,
+  pipeline_id      INTEGER NOT NULL REFERENCES pipelines(id),
+  schema_version   INTEGER NOT NULL DEFAULT 1,
+  fields           JSONB NOT NULL,          -- typed field definitions (same format as Gap 1)
+  reducers         JSONB NOT NULL,          -- reducer definitions (append, last_wins, merge_object, sum)
+  initial_values   JSONB NOT NULL DEFAULT '{}',  -- default initial state values
+  sanitization     JSONB DEFAULT '{}',      -- fields to strip before persistence (e.g., PII token maps)
+  created_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+  updated_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+ 
+  UNIQUE(pipeline_id, schema_version)
+);
+
+Example `fields` payload (MCG Proposal Workflow):
+{
+  "workflow_id":          { "type": "string",   "required": true,  "reducer": "last_wins",  "writable_by": ["*"] },
+  "thread_id":            { "type": "string",   "required": true,  "reducer": "last_wins",  "writable_by": ["*"] },
+  "status":               { "type": "string",   "required": true,  "reducer": "last_wins",  "writable_by": ["*"],  "enum": ["running","paused","completed","failed","needs_attention"] },
+  "current_step":         { "type": "string",   "required": true,  "reducer": "last_wins",  "writable_by": ["*"] },
+  "requested_by":         { "type": "string",   "required": false, "reducer": "last_wins",  "writable_by": ["*"] },
+  "tenant_id":            { "type": "string",   "required": true,  "reducer": "last_wins",  "writable_by": ["*"] },
+  "opportunity_id":       { "type": "string",   "required": true,  "reducer": "last_wins",  "writable_by": ["*"] },
+  "opportunity":          { "type": "object",   "required": false, "reducer": "last_wins",  "writable_by": ["prepare_opportunity"],  "schema_ref": "OpportunitySnapshot" },
+  "crm_context_summary":  { "type": "object",   "required": false, "reducer": "last_wins",  "writable_by": ["prepare_opportunity"],  "schema_ref": "CRMContextSummary" },
+  "artifacts":            { "type": "array",    "required": false, "reducer": "last_wins",  "writable_by": ["collect_artifacts","upload_artifacts"] },
+  "discovery_summary":    { "type": "object",   "required": false, "reducer": "last_wins",  "writable_by": ["extract_discovery","patch_discovery","review_discovery"],  "schema_ref": "DiscoverySummary" },
+  "pricing_summary":      { "type": "object",   "required": false, "reducer": "last_wins",  "writable_by": ["analyze_pricing"],  "schema_ref": "PricingSummary" },
+  "assembly_config":      { "type": "object",   "required": false, "reducer": "last_wins",  "writable_by": ["configure_proposal"],  "schema_ref": "AssemblyConfig" },
+  "proposal_draft":       { "type": "object",   "required": false, "reducer": "last_wins",  "writable_by": ["generate_proposal"],  "schema_ref": "ProposalDraft" },
+  "export_artifacts":     { "type": "array",    "required": false, "reducer": "last_wins",  "writable_by": ["export_bundle"] },
+  "pending_feedback":     { "type": "string",   "required": false, "reducer": "last_wins",  "writable_by": ["review_discovery"] },
+  "pending_patch_fields": { "type": "array",    "required": false, "reducer": "last_wins",  "writable_by": ["review_discovery"] },
+  "pii_masking_reports":  { "type": "array",    "required": false, "reducer": "last_wins",  "writable_by": ["mask_pii"],  "sanitize": true },
+  "masked_artifact_texts":{ "type": "array",    "required": false, "reducer": "last_wins",  "writable_by": ["mask_pii"],  "ephemeral": true },
+  "audit_log":            { "type": "array",    "required": false, "reducer": "append",     "writable_by": ["*"],  "item_schema_ref": "AuditEvent" },
+  "approvals":            { "type": "array",    "required": false, "reducer": "append",     "writable_by": ["*"],  "item_schema_ref": "ApprovalRecord" },
+  "errors":               { "type": "array",    "required": false, "reducer": "append",     "writable_by": ["*"] }
+}
+
+Field metadata extensions:
+Property	Type	Description
+`schema_ref`	string	Reference to a named sub-schema for complex nested types. Enables UI rendering and validation.
+`sanitize`	boolean	If true, this field's value is stripped/redacted before persistence (PII protection).
+`ephemeral`	boolean	If true, this field is cleared after the stage that writes it completes (e.g., `masked_artifact_texts` is cleared after extraction).
+`enum`	string[]	Allowed values for string fields. Used for validation and UI dropdowns.
+`item_schema_ref`	string	For array fields, reference to the item-level sub-schema.
+
+3.2 New Table: `workflow_state_checkpoints`
+Stores the full state after every stage execution and at every interrupt point. Enables time-travel, audit, and exact-point resume.
+CREATE TABLE workflow_state_checkpoints (
+  id                SERIAL PRIMARY KEY,
+  pipeline_run_id   INTEGER NOT NULL REFERENCES pipeline_runs(id),
+  checkpoint_number INTEGER NOT NULL,         -- monotonically increasing per run
+  trigger           VARCHAR NOT NULL,          -- "stage_complete" | "interrupt" | "resume" | "error" | "manual"
+  trigger_stage_id  INTEGER REFERENCES pipeline_stages(id),  -- which stage triggered this checkpoint
+  trigger_node_id   VARCHAR,                   -- for DAG nodes within a composite stage
+ 
+  -- State snapshot
+  state_json        JSONB NOT NULL,            -- full state at this point (sanitized)
+  state_hash        VARCHAR NOT NULL,          -- SHA-256 of state_json for tamper detection
+ 
+  -- Interrupt metadata (only when trigger = "interrupt")
+  interrupt_id      VARCHAR,                   -- stable ID for this interrupt (UUID)
+  interrupt_payload JSONB,                     -- the structured payload returned to the UI
+  interrupt_node    VARCHAR,                   -- which node/stage raised the interrupt
+  interrupt_responded BOOLEAN DEFAULT FALSE,   -- has the human responded?
+  interrupt_response JSONB,                    -- the human's structured response
+ 
+  -- Metadata
+  created_at        TIMESTAMP NOT NULL DEFAULT NOW(),
+  created_by        VARCHAR,                   -- user who triggered resume (if applicable)
+ 
+  UNIQUE(pipeline_run_id, checkpoint_number)
+);
+ 
+CREATE INDEX idx_checkpoints_run ON workflow_state_checkpoints(pipeline_run_id);
+CREATE INDEX idx_checkpoints_interrupt ON workflow_state_checkpoints(interrupt_id) WHERE interrupt_id IS NOT NULL;
+
+3.3 New Table: `workflow_sub_schemas`
+Named sub-schemas for complex nested types. Referenced by schema_ref in the main schema.
+CREATE TABLE workflow_sub_schemas (
+  id              SERIAL PRIMARY KEY,
+  schema_id       INTEGER NOT NULL REFERENCES workflow_state_schemas(id),
+  name            VARCHAR NOT NULL,            -- e.g., "OpportunitySnapshot", "DiscoverySummary"
+  fields          JSONB NOT NULL,              -- field definitions for the nested type
+  description     VARCHAR,
+ 
+  UNIQUE(schema_id, name)
+);
+
+Example: OpportunitySnapshot sub-schema
+{
+  "name": "OpportunitySnapshot",
+  "fields": {
+    "opportunity_id":      { "type": "string" },
+    "opportunity_name":    { "type": "string" },
+    "customer_name":       { "type": "string" },
+    "sales_owner":         { "type": "string" },
+    "stage":               { "type": "string" },
+    "approved_quote_amount": { "type": "string" },
+    "currency":            { "type": "string" },
+    "products":            { "type": "array", "items": "string" },
+    "quote_line_items":    { "type": "array", "items": "object" },
+    "proposal_ready":      { "type": "boolean" },
+    "readiness_issues":    { "type": "array", "items": "string" }
+  }
+}
+
+3.4 Extend Existing `pipeline_runs` Table
+ALTER TABLE pipeline_runs ADD COLUMN
+  state_schema_id       INTEGER REFERENCES workflow_state_schemas(id),
+  current_state         JSONB,                -- live state (updated after every stage)
+  current_checkpoint    INTEGER DEFAULT 0,    -- latest checkpoint number
+  active_interrupt_id   VARCHAR,              -- currently active interrupt ID (if paused)
+  state_version         INTEGER DEFAULT 0;    -- incremented on every state change
+
+3.5 Extend Existing `pipelines` Table
+ALTER TABLE pipelines ADD COLUMN
+  state_schema_id       INTEGER REFERENCES workflow_state_schemas(id),
+  state_enabled         BOOLEAN DEFAULT FALSE;  -- opt-in: not all pipelines need typed state
+

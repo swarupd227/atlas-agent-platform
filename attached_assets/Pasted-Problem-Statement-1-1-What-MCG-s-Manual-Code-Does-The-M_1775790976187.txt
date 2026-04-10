@@ -1,0 +1,85 @@
+Problem Statement
+1.1 What MCG's Manual Code Does
+The MCG system manages workflow state at two layers:
+Layer 1 — LangGraph Checkpointer (Graph-Level Persistence)
+LangGraph's checkpointer automatically persists the full graph state after every node execution. When the graph hits an interrupt(), the checkpointer saves the complete state (all 25+ typed fields) to SQLite or Postgres. When graph.invoke(Command(resume=payload)) is called, the checkpointer restores the exact state from the interrupt point and the graph continues from exactly where it paused.
+Key characteristics:
+•	State is a Python TypedDict with 25+ fields including complex nested types
+•	Fields use Annotated types with custom reducers (operator.add for lists, _last_wins for strings)
+•	State survives process restarts — the checkpointer writes to persistent storage (SQLite/Postgres)
+•	Each thread_id has its own isolated state history
+•	State is versioned — you can time-travel to any previous checkpoint
+Layer 2 — WorkflowRepository (Business-Level Persistence)
+After every graph.invoke() or graph.invoke(Command(resume=...)) call, the WorkflowService:
+1. Extracts the state dict from the LangGraph result
+2. Serializes interrupt metadata (interrupt ID, interrupt value/payload)
+3. Upserts into workflow_runs table: thread_id, status, current_step, state_json, interrupts_json
+4. Sanitizes state before storage (strips PII token maps from masking reports)
+This means: the full business state (opportunity, discovery summary, pricing, proposal draft, audit log, approvals) is available to the API layer and UI without re-invoking the graph.
+Layer 3 — Interrupt/Resume Protocol
+When the graph hits an interrupt():
+1. The interrupt() call returns a structured payload describing what needs review
+2. LangGraph pauses the graph and stores the __interrupt__ metadata
+3. WorkflowService serializes the interrupt (ID + value) into the interrupts_json column
+4. The API returns the interrupt payload to the UI (along with the current state)
+5. The UI renders the appropriate review screen
+6. When the human responds, the API calls graph.invoke(Command(resume={interrupt_id: decision_payload}))
+7. LangGraph restores state from the checkpoint and passes the decision_payload to the interrupted node
+8. The node reads the decision and uses Command(goto=...) to route the workflow
+Critical: The interrupt ID is a stable identifier. The human can take hours or days to respond. The state survives because the checkpointer persisted it. The resume payload is injected at exactly the right point because LangGraph tracks which node was interrupted and which interrupt ID corresponds to which interrupt() call.
+1.2 MCG ProposalWorkflowState — Full Schema
+class ProposalWorkflowState(TypedDict, total=False):
+    # ── Identity ──────────────────────────────────────────
+    workflow_id: str
+    thread_id: str
+    status: Annotated[str, _last_wins]           # "running" | "paused" | "completed" | "failed"
+    current_step: Annotated[str, _last_wins]      # "opportunity" | "discovery" | "pricing" | ...
+    requested_by: str
+    tenant_id: str
+    opportunity_id: str
+    selected_quote_id: str
+ 
+    # ── Business Content ──────────────────────────────────
+    opportunity: OpportunitySnapshot               # 30+ field nested TypedDict
+    crm_context_summary: CRMContextSummary         # 5 field nested TypedDict
+    artifacts: list[ArtifactRecord]                # 20+ field nested TypedDict per artifact
+    discovery_summary: DiscoverySummary             # 12+ fields with nested confidence + evidence
+    pricing_summary: Annotated[PricingSummary, _last_wins]  # 8 field nested TypedDict
+    template_context: dict[str, Any]               # Loaded template package
+    assembly_config: AssemblyConfig                # 4 field nested TypedDict
+    proposal_draft: ProposalDraft                  # Nested: sections[], validation_findings[], metadata
+ 
+    # ── Export ────────────────────────────────────────────
+    export_formats_requested: list[str]
+    export_artifacts: list[ExportArtifact]
+ 
+    # ── Flow Control ──────────────────────────────────────
+    pending_feedback: str                          # Feedback from reviewer during regeneration
+    pending_patch_fields: list[str]                # Targeted fields for patch_discovery
+    pii_masking_reports: list[PIIMaskingReport]
+    masked_artifact_texts: list[str]               # Cleared after extraction
+ 
+    # ── Accumulator Fields (reducer: operator.add) ────────
+    audit_log: Annotated[list[AuditEvent], operator.add]    # 7-field nested TypedDict per event
+    approvals: Annotated[list[ApprovalRecord], operator.add]  # 5-field nested TypedDict per record
+    errors: Annotated[list[str], operator.add]
+
+1.3 What Atlas Does Today
+Atlas pipeline runs have:
+Capability	Atlas Today	MCG Code
+State per pipeline run	`pipeline_runs` table with `config` JSONB	`workflow_runs` table with `state_json` TEXT containing full typed state
+State per stage	Output stored as text context, passed to next stage via `## INPUT FROM PREVIOUS STAGE`	Full typed state carried through all nodes, updated in-place
+State across interrupts	Approval gates create approval records. No state persistence at the approval point. Pipeline restarts from the stage after approval.	LangGraph checkpointer persists exact state at interrupt. Resume restores exact state. Graph continues from the exact node, not the stage.
+Typed state schema	No schema — stages output free-form text/JSON	Python `TypedDict` with 25+ fields, nested types, `Annotated` reducers
+Accumulator fields	Not supported	`operator.add` reducer — parallel writes to same field are concatenated
+State history / time travel	Not supported	LangGraph checkpointer stores every state version. Agent cockpit Timeline tab can diff versions.
+State sanitization	Not applicable	`_sanitise_state_for_storage()` strips PII token maps before persisting
+
+1.4 The Gap
+The core gap is: Atlas has no concept of a unified, typed, persistent workflow state that survives across pipeline stages, approval gates, and DAG executions.
+Each pipeline stage produces output text that's cascaded to the next stage. But:
+•	There's no typed schema for what the pipeline carries
+•	There's no persistence across approval gates (the approval record is separate from the pipeline state)
+•	There's no way for approval gate #3 to access output from stage #1 (only the immediately preceding stage's output is cascaded)
+•	There's no accumulator semantics (audit log entries from stage 1 and stage 3 would overwrite each other, not concatenate)
+•	There's no checkpointing that allows exact-point resume after process restart

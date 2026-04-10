@@ -1,0 +1,46 @@
+Architectural Design
+2.1 Design Principle: Workflow State as a First-Class Entity
+Introduce Workflow State as a new first-class entity in Atlas, managed alongside the pipeline run. Every pipeline run can optionally have a state schema and a persistent state object.
+┌────────────────────────────────────────────────────────┐
+│                   Pipeline Run                          │
+│                                                         │
+│  ┌───────────────────────────────────────────────────┐  │
+│  │           Workflow State (NEW)                      │  │
+│  │                                                     │  │
+│  │  Schema:    { field definitions + types + reducers } │  │
+│  │  Current:   { live state values }                   │  │
+│  │  History:   [ checkpoint_1, checkpoint_2, ... ]     │  │
+│  │  Interrupts: [ { id, node, payload, responded } ]   │  │
+│  └───────────────────────────────────────────────────┘  │
+│                                                         │
+│  Stage 1 (agent) ──────► reads/writes state             │
+│       ↓                                                 │
+│  Stage 2 (approval_gate) ──► pauses, persists state     │
+│       ↓                      interrupt payload from state│
+│  Stage 3 (composite DAG) ──► reads/writes state         │
+│       ↓                      (GAP-1 engine uses state)  │
+│  Stage 4 (approval_gate) ──► resume injects into state  │
+│       ↓                                                 │
+│  Stage 5 (agent) ──────► reads full accumulated state   │
+└────────────────────────────────────────────────────────┘
+
+2.2 Four Core Capabilities
+#	Capability	What It Enables
+1	**Typed Workflow State Schema**	Define the exact shape of state (fields, types, nested structures, reducers) per pipeline
+2	**State Persistence & Checkpointing**	Persist full state after every stage/node. Restore exact state on resume. Survive process restarts.
+3	**Reducer-Based State Merging**	When parallel agents write to the same field, merge using defined reducer (append, last_wins, merge_object, sum)
+4	**Interrupt/Resume with State Injection**	Approval gates pause with state context. Resume injects the human's structured response into state. Conditional routing from approval response.
+
+2.3 Relationship to Gap 1
+Gap 1 (DAG Execution Engine) introduced dag_state_schemas and dag_execution_runs with state management for DAG execution. Gap 2 extends this upward to the pipeline level:
+Pipeline Workflow State (Gap 2)        ← Unified state across all stages
+  ├── Stage 1 reads/writes state
+  ├── Approval Gate 1 pauses state
+  ├── Stage 2 reads/writes state
+  ├── Composite Stage (Gap 1)
+  │     └── DAG State (Gap 1)          ← DAG-internal state (subset of pipeline state)
+  │           merged back into pipeline state on completion
+  ├── Approval Gate 2 pauses state
+  └── Stage 3 reads/writes state
+
+The DAG state schema from Gap 1 becomes a subset of the pipeline workflow state. When a composite stage starts, it receives the pipeline state. When it finishes, its output state merges back into the pipeline state using the pipeline-level reducers.
