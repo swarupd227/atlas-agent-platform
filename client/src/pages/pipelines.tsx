@@ -744,7 +744,16 @@ export default function Pipelines() {
     setApprovalNotes("");
     setApprovalPatchKeys(new Set());
     setApprovalSnapshotExpanded({});
+    setSelectedCpId(null);
+    setShowCpDiff(false);
+    setCpFieldExpanded({});
   }, [activeRunId, activeRun?.currentStageId]);
+
+  useEffect(() => {
+    if (workflowState?.history && workflowState.history.length > 0 && !selectedCpId) {
+      setSelectedCpId(workflowState.history[workflowState.history.length - 1].id);
+    }
+  }, [workflowState?.history, selectedCpId]);
 
   const createMutation = useMutation({
     mutationFn: async (data: { name: string; description: string }) => {
@@ -2287,7 +2296,7 @@ export default function Pipelines() {
                                               data-testid={`button-diff-cp-${selectedCp.id}`}
                                             >
                                               <GitCompare className="w-3 h-3 mr-1" />
-                                              {showCpDiff ? "Hide Diff" : "Diff"}
+                                              {showCpDiff ? "Hide Diff" : "Diff with Previous"}
                                             </Button>
                                           )}
                                           <Button
