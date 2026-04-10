@@ -678,7 +678,7 @@ export interface IStorage {
   getPipelineRuns(pipelineId: string): Promise<PipelineRun[]>;
   getPipelineRun(id: string): Promise<PipelineRun | undefined>;
   createPipelineRun(run: InsertPipelineRun): Promise<PipelineRun>;
-  updatePipelineRun(id: string, data: Partial<PipelineRun>): Promise<PipelineRun | undefined>;
+  updatePipelineRun(id: string, data: Partial<PipelineRun>, options?: { atomicIncrementStateVersion?: boolean }): Promise<PipelineRun | undefined>;
 
   getMcpParameterMatches(serverId: string): Promise<McpParameterMatch[]>;
   createMcpParameterMatch(match: InsertMcpParameterMatch): Promise<McpParameterMatch>;
@@ -2998,8 +2998,12 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async updatePipelineRun(id: string, data: Partial<PipelineRun>): Promise<PipelineRun | undefined> {
-    const [updated] = await db.update(pipelineRuns).set(data).where(eq(pipelineRuns.id, id)).returning();
+  async updatePipelineRun(id: string, data: Partial<PipelineRun>, options?: { atomicIncrementStateVersion?: boolean }): Promise<PipelineRun | undefined> {
+    const setData: Record<string, any> = { ...data };
+    if (options?.atomicIncrementStateVersion) {
+      setData.stateVersion = sql`${pipelineRuns.stateVersion} + 1`;
+    }
+    const [updated] = await db.update(pipelineRuns).set(setData).where(eq(pipelineRuns.id, id)).returning();
     return updated;
   }
 

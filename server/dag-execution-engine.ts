@@ -241,6 +241,17 @@ function mergeWaveOutputs(
   for (const result of nodeResults) {
     for (const [key, value] of Object.entries(result.output)) {
       const fieldDef = stateSchema[key];
+
+      if (fieldDef?.writable_by && fieldDef.writable_by.length > 0) {
+        const allowed = fieldDef.writable_by;
+        if (!allowed.includes("*") && !allowed.includes(result.nodeId)) {
+          console.warn(
+            `[UWS] Node "${result.nodeId}" cannot write field "${key}" (writable_by: [${allowed.join(", ")}]). Skipping.`,
+          );
+          continue;
+        }
+      }
+
       const reducer: StateFieldDef["reducer"] = fieldDef?.reducer || "last_wins";
       merged[key] = applyReducer(merged[key], value, reducer);
     }

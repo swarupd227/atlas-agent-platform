@@ -12539,14 +12539,18 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     }
 
     let currentStateObj = ((run as any).currentState as Record<string, any>) || {};
-    let newStateVersion = ((run as any).stateVersion as number) || 0;
+    let stateDidChange = false;
 
     if (stateEnabled) {
       if (req.body.stateUpdates && typeof req.body.stateUpdates === "object") {
-        const { merged, ephemeralKeys } = mergeIntoWorkflowState(currentStateObj, req.body.stateUpdates, wfSchemaFields);
-        for (const key of ephemeralKeys) delete merged[key];
+        const { merged } = mergeIntoWorkflowState(
+          currentStateObj,
+          req.body.stateUpdates,
+          wfSchemaFields,
+          currentStage?.label || "advance",
+        );
         currentStateObj = merged;
-        newStateVersion += 1;
+        stateDidChange = true;
       }
       await writeStageCompleteCheckpoint(
         run.id,
@@ -12597,10 +12601,13 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         };
         if (stateEnabled) {
           updatePayload.currentState = currentStateObj;
-          updatePayload.stateVersion = newStateVersion;
           if (activeInterruptId) updatePayload.activeInterruptId = activeInterruptId;
         }
-        const updated = await storage.updatePipelineRun(req.params.id, updatePayload as any);
+        const updated = await storage.updatePipelineRun(
+          req.params.id,
+          updatePayload as any,
+          stateEnabled && stateDidChange ? { atomicIncrementStateVersion: true } : undefined,
+        );
         return res.json(updated);
       }
       stageResults[nextIdx].status = "running";
@@ -12612,9 +12619,12 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       };
       if (stateEnabled) {
         updatePayload.currentState = currentStateObj;
-        updatePayload.stateVersion = newStateVersion;
       }
-      const updated = await storage.updatePipelineRun(req.params.id, updatePayload as any);
+      const updated = await storage.updatePipelineRun(
+        req.params.id,
+        updatePayload as any,
+        stateEnabled && stateDidChange ? { atomicIncrementStateVersion: true } : undefined,
+      );
       return res.json(updated);
     }
 
@@ -12626,9 +12636,12 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     };
     if (stateEnabled) {
       updatePayload.currentState = currentStateObj;
-      updatePayload.stateVersion = newStateVersion;
     }
-    const updated = await storage.updatePipelineRun(req.params.id, updatePayload as any);
+    const updated = await storage.updatePipelineRun(
+      req.params.id,
+      updatePayload as any,
+      stateEnabled && stateDidChange ? { atomicIncrementStateVersion: true } : undefined,
+    );
     res.json(updated);
   });
 
@@ -12652,7 +12665,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     const stateEnabled = (pipeline as any).stateEnabled === true;
     let wfSchemaFields: Record<string, StateFieldDef> = {};
     let currentStateObj = ((run as any).currentState as Record<string, any>) || {};
-    let newStateVersion = ((run as any).stateVersion as number) || 0;
+    let stateDidChange = false;
 
     if (stateEnabled) {
       const resolvedSchemaId = ((run as any).stateSchemaId as string | null | undefined)
@@ -12666,35 +12679,45 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       if (activeInterruptId) {
         const openInterrupt = await storage.getOpenInterrupt(run.id, activeInterruptId);
         if (openInterrupt) {
+          const interruptResponse = {
+            approvedBy: req.body.approvedBy || "operator",
+            notes: req.body.notes || null,
+            decision: req.body.decision || "approved",
+            stateUpdates: req.body.stateUpdates || null,
+          };
           await storage.updateWorkflowCheckpoint(openInterrupt.id, {
             interruptResponded: true,
-            interruptResponse: {
-              approvedBy: req.body.approvedBy || "operator",
-              notes: req.body.notes || null,
-              decision: req.body.decision || "approved",
-              stateUpdates: req.body.stateUpdates || null,
-            },
+            interruptResponse,
+          });
+
+          const responseToInject: Record<string, any> = {
+            _gate_decision: interruptResponse.decision,
+            ...(interruptResponse.notes ? { _gate_notes: interruptResponse.notes } : {}),
+            ...(req.body.stateUpdates && typeof req.body.stateUpdates === "object"
+              ? req.body.stateUpdates
+              : {}),
+          };
+          const { merged } = mergeIntoWorkflowState(
+            currentStateObj,
+            responseToInject,
+            wfSchemaFields,
+            `interrupt:${activeInterruptId}`,
+          );
+          currentStateObj = merged;
+          stateDidChange = true;
+
+          const sanitized = sanitizeForCheckpoint(currentStateObj, wfSchemaFields);
+          const stateHash = crypto.createHash("sha256").update(JSON.stringify(sanitized)).digest("hex");
+          await storage.createWorkflowCheckpoint({
+            pipelineRunId: run.id,
+            trigger: "resume",
+            triggerStageId: run.currentStageId || undefined,
+            stateJson: sanitized,
+            stateHash,
+            interruptResponded: false,
+            createdBy: req.body.approvedBy || "operator",
           });
         }
-      }
-
-      if (req.body.stateUpdates && typeof req.body.stateUpdates === "object") {
-        const { merged, ephemeralKeys } = mergeIntoWorkflowState(currentStateObj, req.body.stateUpdates, wfSchemaFields);
-        for (const key of ephemeralKeys) delete merged[key];
-        currentStateObj = merged;
-        newStateVersion += 1;
-
-        const sanitized = sanitizeForCheckpoint(currentStateObj, wfSchemaFields);
-        const stateHash = crypto.createHash("sha256").update(JSON.stringify(sanitized)).digest("hex");
-        await storage.createWorkflowCheckpoint({
-          pipelineRunId: run.id,
-          trigger: "resume",
-          triggerStageId: run.currentStageId || undefined,
-          stateJson: sanitized,
-          stateHash,
-          interruptResponded: false,
-          createdBy: req.body.approvedBy || "operator",
-        });
       }
     }
 
@@ -12710,9 +12733,12 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       };
       if (stateEnabled) {
         updatePayload.currentState = currentStateObj;
-        updatePayload.stateVersion = newStateVersion;
       }
-      const updated = await storage.updatePipelineRun(req.params.id, updatePayload as any);
+      const updated = await storage.updatePipelineRun(
+        req.params.id,
+        updatePayload as any,
+        stateEnabled && stateDidChange ? { atomicIncrementStateVersion: true } : undefined,
+      );
       return res.json(updated);
     }
 
@@ -12725,9 +12751,12 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     };
     if (stateEnabled) {
       updatePayload.currentState = currentStateObj;
-      updatePayload.stateVersion = newStateVersion;
     }
-    const updated = await storage.updatePipelineRun(req.params.id, updatePayload as any);
+    const updated = await storage.updatePipelineRun(
+      req.params.id,
+      updatePayload as any,
+      stateEnabled && stateDidChange ? { atomicIncrementStateVersion: true } : undefined,
+    );
     res.json(updated);
   });
 
@@ -12815,7 +12844,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       const stateEnabled = (pipeline as any).stateEnabled === true;
       let wfSchemaFields: Record<string, StateFieldDef> = {};
       let currentStateObj = ((run as any).currentState as Record<string, any>) || {};
-      let newStateVersion = ((run as any).stateVersion as number) || 0;
+      let stateDidChange = false;
       if (stateEnabled) {
         const resolvedSchemaId = ((run as any).stateSchemaId as string | null | undefined)
           || ((pipeline as any).stateSchemaId as string | null | undefined);
@@ -12902,10 +12931,14 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
           if (stateEnabled) {
             const dagFinalExcludingWf = { ...dagResult.finalState };
             delete dagFinalExcludingWf._workflow_state;
-            const { merged, ephemeralKeys } = mergeIntoWorkflowState(currentStateObj, dagFinalExcludingWf, wfSchemaFields);
-            for (const key of ephemeralKeys) delete merged[key];
+            const { merged } = mergeIntoWorkflowState(
+              currentStateObj,
+              dagFinalExcludingWf,
+              wfSchemaFields,
+              `composite:${currentStage.label}`,
+            );
             currentStateObj = merged;
-            newStateVersion += 1;
+            stateDidChange = true;
             await writeStageCompleteCheckpoint(
               run.id,
               currentStage.id,
@@ -12914,10 +12947,11 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
               currentStateObj,
               wfSchemaFields,
             );
-            await storage.updatePipelineRun(run.id, {
-              currentState: currentStateObj,
-              stateVersion: newStateVersion,
-            } as any);
+            await storage.updatePipelineRun(
+              run.id,
+              { currentState: currentStateObj } as any,
+              { atomicIncrementStateVersion: true },
+            );
           }
 
           const summaryOutput = `DAG executed ${wavePlan.totalWaves} waves across ${wavePlan.totalNodes} agents. Final state keys: ${Object.keys(dagResult.finalState).join(", ")}.`;
@@ -12927,7 +12961,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
             dagRunId: dagRun.id,
             finalState: dagResult.finalState,
             waveResults: dagResult.waveResults,
-            ...(stateEnabled ? { workflowState: currentStateObj, stateVersion: newStateVersion } : {}),
+            ...(stateEnabled ? { workflowState: currentStateObj } : {}),
           });
         } catch (dagErr: any) {
           await storage.updateDagExecutionRun(dagRun.id, {
@@ -12948,9 +12982,10 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
           return `${stage?.label || r.stageId}: ${r.output || "completed"}`;
         });
 
+      const currentStateVersion = ((run as any).stateVersion as number) || 0;
       const uwsContextBlock =
         stateEnabled && Object.keys(currentStateObj).length > 0
-          ? `\n\n## WORKFLOW STATE (v${newStateVersion})\n\`\`\`json\n${JSON.stringify(currentStateObj, null, 2)}\n\`\`\`\n\nYou may propose state updates by appending a JSON block at the end of your output:\n<state_updates>\n{"key": "value"}\n</state_updates>`
+          ? `\n\n## WORKFLOW STATE (v${currentStateVersion})\n\`\`\`json\n${JSON.stringify(currentStateObj, null, 2)}\n\`\`\`\n\nYou may propose state updates by appending a JSON block at the end of your output:\n<state_updates>\n{"key": "value"}\n</state_updates>`
           : "";
 
       const systemPrompt = `You are simulating an AI agent named "${agentName}" in a multi-agent pipeline. Your stage is: "${currentStage.label}". ${agent?.description || ""}\n\nYou are part of a pipeline that processes the following scenario. Produce a realistic, concise output for your stage (2-4 paragraphs). Include specific details, metrics, or findings that would be realistic for this agent's role. Format your output clearly.${uwsContextBlock}`;
@@ -12986,7 +13021,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       res.json({
         output: rawOutput,
         requiresApproval: false,
-        ...(stateEnabled ? { workflowState: currentStateObj, stateVersion: newStateVersion, stateUpdatesFromAgent } : {}),
+        ...(stateEnabled ? { workflowState: currentStateObj, stateVersion: currentStateVersion, stateUpdatesFromAgent } : {}),
       });
     } catch (e: any) {
       console.error("Pipeline stage simulation error:", e);
