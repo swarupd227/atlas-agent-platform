@@ -336,9 +336,24 @@ export default function AgentExport() {
             if (eventName === "progress") {
               addLog({ event: "progress", phase: data.phase || "info", message: data.message || "", detail: data.detail });
             } else if (eventName === "done") {
-              addLog({ event: "done", phase: "packaging", message: "Generation complete — loading preview..." });
-              setExportPreview(data);
-              const newFiles = data.files || {};
+              addLog({ event: "done", phase: "packaging", message: "Generation complete — fetching files..." });
+              // Files are stored server-side (not in the SSE payload) to avoid oversized
+              // SSE responses that fail silently through nginx in production.
+              let newFiles: Record<string, string> = {};
+              if (data.jobId) {
+                try {
+                  const fileRes = await fetch(`/api/export-result/${data.jobId}`);
+                  if (fileRes.ok) {
+                    const fileData = await fileRes.json();
+                    newFiles = fileData.files || {};
+                  } else {
+                    addLog({ event: "error", phase: "error", message: "Could not retrieve generated files from server." });
+                  }
+                } catch (fetchErr) {
+                  addLog({ event: "error", phase: "error", message: "Network error while fetching generated files." });
+                }
+              }
+              setExportPreview({ files: newFiles, metadata: data.metadata || {} });
               setEditedFiles({ ...newFiles });
               setOriginalFiles({ ...newFiles });
               const fileNames = Object.keys(newFiles);
