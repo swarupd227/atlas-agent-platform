@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Link, useLocation } from "wouter";
@@ -58,6 +58,10 @@ import {
   Layers,
   Network,
   Activity,
+  Database,
+  Pencil,
+  Save,
+  ShieldAlert,
 } from "lucide-react";
 
 interface PipelineStage {
@@ -421,6 +425,22 @@ export default function Pipelines() {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [expandedStages, setExpandedStages] = useState<Set<string>>(new Set());
 
+  interface SchemaFieldRow {
+    name: string;
+    type: string;
+    reducer: string;
+    writableBy: string;
+    ephemeral: boolean;
+    sanitize: boolean;
+  }
+  const [schemaFields, setSchemaFields] = useState<SchemaFieldRow[]>([]);
+  const [schemaVersion, setSchemaVersion] = useState<number | null>(null);
+  const [schemaErrors, setSchemaErrors] = useState<string[]>([]);
+  const [fieldDialogOpen, setFieldDialogOpen] = useState(false);
+  const [editingFieldIndex, setEditingFieldIndex] = useState<number | null>(null);
+  const emptyFieldForm = { name: "", type: "string", reducer: "last_wins", writableBy: "*", ephemeral: false, sanitize: false };
+  const [fieldForm, setFieldForm] = useState(emptyFieldForm);
+
   const { data: pipelines = [], isLoading } = useQuery<AgentPipeline[]>({
     queryKey: ["/api/pipelines"],
   });
@@ -511,6 +531,109 @@ export default function Pipelines() {
     enabled: !!activeRunId,
     refetchInterval: activeRunId ? 3000 : false,
   });
+
+  const { data: workflowSchema, isLoading: schemaLoading } = useQuery<{
+    id: string;
+    schemaVersion: number;
+    fields: Record<string, { type: string; reducer: string; writable_by?: string[]; ephemeral?: boolean; sanitize?: boolean }>;
+  } | null>({
+    queryKey: ["/api/pipelines", selectedPipelineId, "workflow-state-schema"],
+    enabled: !!selectedPipelineId && detailTab === "schema",
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (workflowSchema) {
+      const rows = Object.entries(workflowSchema.fields).map(([name, def]) => ({
+        name,
+        type: def.type || "string",
+        reducer: def.reducer || "last_wins",
+        writableBy: (def.writable_by || ["*"]).join(", "),
+        ephemeral: !!def.ephemeral,
+        sanitize: !!def.sanitize,
+      }));
+      setSchemaFields(rows);
+      setSchemaVersion(workflowSchema.schemaVersion);
+      setSchemaErrors([]);
+    } else if (!schemaLoading && detailTab === "schema") {
+      setSchemaFields([]);
+      setSchemaVersion(null);
+    }
+  }, [workflowSchema, schemaLoading, detailTab]);
+
+  const saveSchemaM = useMutation({
+    mutationFn: async ({ pipelineId, fields }: { pipelineId: string; fields: Record<string, any> }) => {
+      const res = await apiRequest("POST", `/api/pipelines/${pipelineId}/workflow-state-schema`, { fields });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/pipelines", selectedPipelineId, "workflow-state-schema"] });
+      toast({ title: "Schema saved", description: "Workflow state schema updated successfully." });
+    },
+    onError: (e: any) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
+  });
+
+  function validateSchema(): string[] {
+    const errs: string[] = [];
+    const validReducers = ["last_wins", "append", "merge_object", "sum"];
+    const validTypes = ["string", "number", "boolean", "array", "object"];
+    const names = new Set<string>();
+    schemaFields.forEach((f, i) => {
+      if (!f.name.trim()) errs.push(`Row ${i + 1}: field name is required.`);
+      else if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(f.name.trim())) errs.push(`Row ${i + 1}: field name "${f.name}" must be a valid identifier.`);
+      else if (names.has(f.name.trim())) errs.push(`Row ${i + 1}: duplicate field name "${f.name}".`);
+      else names.add(f.name.trim());
+      if (!validReducers.includes(f.reducer)) errs.push(`Row ${i + 1} (${f.name}): invalid reducer "${f.reducer}".`);
+      if (!validTypes.includes(f.type)) errs.push(`Row ${i + 1} (${f.name}): invalid type "${f.type}".`);
+    });
+    return errs;
+  }
+
+  function handleSaveSchema() {
+    const errs = validateSchema();
+    setSchemaErrors(errs);
+    if (errs.length > 0 || !selectedPipelineId) return;
+    const fields: Record<string, any> = {};
+    schemaFields.forEach((f) => {
+      fields[f.name.trim()] = {
+        type: f.type,
+        reducer: f.reducer,
+        writable_by: f.writableBy.split(",").map((s) => s.trim()).filter(Boolean),
+        ephemeral: f.ephemeral || undefined,
+        sanitize: f.sanitize || undefined,
+      };
+    });
+    saveSchemaM.mutate({ pipelineId: selectedPipelineId, fields });
+  }
+
+  function openAddField() {
+    setEditingFieldIndex(null);
+    setFieldForm(emptyFieldForm);
+    setFieldDialogOpen(true);
+  }
+
+  function openEditField(index: number) {
+    const f = schemaFields[index];
+    setEditingFieldIndex(index);
+    setFieldForm({ name: f.name, type: f.type, reducer: f.reducer, writableBy: f.writableBy, ephemeral: f.ephemeral, sanitize: f.sanitize });
+    setFieldDialogOpen(true);
+  }
+
+  function confirmFieldDialog() {
+    const trimmedName = fieldForm.name.trim();
+    if (!trimmedName) return;
+    const row = { ...fieldForm, name: trimmedName };
+    if (editingFieldIndex !== null) {
+      setSchemaFields((prev) => prev.map((f, i) => (i === editingFieldIndex ? row : f)));
+    } else {
+      setSchemaFields((prev) => [...prev, row]);
+    }
+    setFieldDialogOpen(false);
+  }
+
+  function deleteField(index: number) {
+    setSchemaFields((prev) => prev.filter((_, i) => i !== index));
+  }
 
   const activeRun = useMemo(
     () => runs.find((r) => r.id === activeRunId) || null,
@@ -1119,6 +1242,10 @@ export default function Pipelines() {
             <Settings2 className="w-3.5 h-3.5 mr-1.5" />
             Designer
           </TabsTrigger>
+          <TabsTrigger value="schema" data-testid="tab-schema">
+            <Database className="w-3.5 h-3.5 mr-1.5" />
+            State Schema
+          </TabsTrigger>
           <TabsTrigger value="runs" data-testid="tab-runs">
             <Play className="w-3.5 h-3.5 mr-1.5" />
             Runs
@@ -1393,6 +1520,132 @@ export default function Pipelines() {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
+            </div>
+          </ScrollArea>
+        </TabsContent>
+
+        <TabsContent value="schema" className="mt-4">
+          <ScrollArea className="h-[calc(100vh-240px)]">
+            <div className="space-y-4 pb-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Database className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                  <span className="text-sm font-medium">Workflow State Schema</span>
+                  {schemaVersion !== null && (
+                    <Badge variant="outline" className="text-[10px] text-purple-600 border-purple-300">
+                      v{schemaVersion}
+                    </Badge>
+                  )}
+                  {(selectedPipeline as any)?.stateEnabled && (
+                    <Badge className="text-[10px] bg-green-100 text-green-700 border-green-300 dark:bg-green-900/30 dark:text-green-400 dark:border-green-700">
+                      state tracking on
+                    </Badge>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="sm" onClick={() => { const errs = validateSchema(); setSchemaErrors(errs); if (errs.length === 0) toast({ title: "Schema is valid", description: `${schemaFields.length} field(s) passed validation.` }); }} data-testid="button-validate-schema">
+                    <ShieldAlert className="w-3.5 h-3.5 mr-1" />
+                    Validate
+                  </Button>
+                  <Button size="sm" onClick={handleSaveSchema} disabled={saveSchemaM.isPending} data-testid="button-save-schema">
+                    {saveSchemaM.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1" />}
+                    Save Schema
+                  </Button>
+                </div>
+              </div>
+
+              {schemaErrors.length > 0 && (
+                <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 space-y-1" data-testid="schema-validation-errors">
+                  {schemaErrors.map((err, i) => (
+                    <p key={i} className="text-xs text-destructive">{err}</p>
+                  ))}
+                </div>
+              )}
+
+              {schemaLoading ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-full" />
+                </div>
+              ) : (
+                <div className="rounded-md border overflow-hidden" data-testid="schema-field-table">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b bg-muted/40 text-muted-foreground">
+                        <th className="px-3 py-2 text-left font-medium">Field</th>
+                        <th className="px-3 py-2 text-left font-medium">Type</th>
+                        <th className="px-3 py-2 text-left font-medium">Reducer</th>
+                        <th className="px-3 py-2 text-left font-medium">Writable By</th>
+                        <th className="px-3 py-2 text-left font-medium">Options</th>
+                        <th className="px-3 py-2 w-16"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {schemaFields.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
+                            No fields defined yet. Click "Add Field" to get started.
+                          </td>
+                        </tr>
+                      ) : (
+                        schemaFields.map((field, i) => (
+                          <tr key={i} className="border-b last:border-0 hover:bg-muted/20 transition-colors" data-testid={`schema-field-row-${i}`}>
+                            <td className="px-3 py-2 font-mono font-medium">{field.name}</td>
+                            <td className="px-3 py-2">
+                              <Badge variant="outline" className="text-[10px] font-mono">{field.type}</Badge>
+                            </td>
+                            <td className="px-3 py-2">
+                              <Badge variant="outline" className={`text-[10px] ${field.reducer === "append" ? "bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400" : ""}`}>
+                                {field.reducer}
+                              </Badge>
+                            </td>
+                            <td className="px-3 py-2 text-muted-foreground font-mono text-[11px] max-w-32 truncate" title={field.writableBy}>
+                              {field.writableBy || "*"}
+                            </td>
+                            <td className="px-3 py-2">
+                              <div className="flex flex-wrap gap-1">
+                                {field.ephemeral && <Badge variant="secondary" className="text-[10px]">ephemeral</Badge>}
+                                {field.sanitize && <Badge variant="secondary" className="text-[10px]">sanitize</Badge>}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">
+                              <div className="flex items-center gap-1">
+                                <button
+                                  className="text-muted-foreground hover:text-foreground p-0.5 rounded"
+                                  onClick={() => openEditField(i)}
+                                  data-testid={`button-edit-field-${i}`}
+                                >
+                                  <Pencil className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  className="text-muted-foreground hover:text-destructive p-0.5 rounded"
+                                  onClick={() => deleteField(i)}
+                                  data-testid={`button-delete-field-${i}`}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              <Button variant="outline" size="sm" onClick={openAddField} data-testid="button-add-field">
+                <Plus className="w-3.5 h-3.5 mr-1" />
+                Add Field
+              </Button>
+
+              {schemaFields.length > 0 && (
+                <p className="text-xs text-muted-foreground">
+                  {schemaFields.length} field{schemaFields.length !== 1 ? "s" : ""} defined
+                  {schemaVersion !== null ? ` · schema v${schemaVersion}` : " · unsaved"}
+                </p>
+              )}
             </div>
           </ScrollArea>
         </TabsContent>
@@ -2147,6 +2400,102 @@ export default function Pipelines() {
             >
               {updatePipelineMutation.isPending && <Loader2 className="w-4 h-4 mr-1 animate-spin" />}
               Add Agent
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={fieldDialogOpen} onOpenChange={(open) => { if (!open) setFieldDialogOpen(false); }}>
+        <DialogContent data-testid="dialog-field-editor">
+          <DialogHeader>
+            <DialogTitle>{editingFieldIndex !== null ? "Edit Field" : "Add Field"}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="field-name">Field Name</Label>
+              <Input
+                id="field-name"
+                placeholder="e.g. discovery_summary"
+                value={fieldForm.name}
+                onChange={(e) => setFieldForm((f) => ({ ...f, name: e.target.value }))}
+                disabled={editingFieldIndex !== null}
+                data-testid="input-field-name"
+              />
+              <p className="text-[11px] text-muted-foreground">Must be a valid identifier (letters, numbers, underscores; no spaces).</p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-2">
+                <Label>Type</Label>
+                <Select value={fieldForm.type} onValueChange={(v) => setFieldForm((f) => ({ ...f, type: v }))}>
+                  <SelectTrigger data-testid="select-field-type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="string">string</SelectItem>
+                    <SelectItem value="number">number</SelectItem>
+                    <SelectItem value="boolean">boolean</SelectItem>
+                    <SelectItem value="array">array</SelectItem>
+                    <SelectItem value="object">object</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Reducer</Label>
+                <Select value={fieldForm.reducer} onValueChange={(v) => setFieldForm((f) => ({ ...f, reducer: v }))}>
+                  <SelectTrigger data-testid="select-field-reducer">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="last_wins">last_wins</SelectItem>
+                    <SelectItem value="append">append</SelectItem>
+                    <SelectItem value="merge_object">merge_object</SelectItem>
+                    <SelectItem value="sum">sum</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="field-writable-by">Writable By</Label>
+              <Input
+                id="field-writable-by"
+                placeholder="* or stage-label, another-stage"
+                value={fieldForm.writableBy}
+                onChange={(e) => setFieldForm((f) => ({ ...f, writableBy: e.target.value }))}
+                data-testid="input-field-writable-by"
+              />
+              <p className="text-[11px] text-muted-foreground">Use "*" for all stages, or comma-separated stage labels.</p>
+            </div>
+            <div className="flex items-center gap-6">
+              <label className="flex items-center gap-2 cursor-pointer text-sm" data-testid="toggle-field-ephemeral">
+                <input
+                  type="checkbox"
+                  className="rounded"
+                  checked={fieldForm.ephemeral}
+                  onChange={(e) => setFieldForm((f) => ({ ...f, ephemeral: e.target.checked }))}
+                />
+                <span>Ephemeral</span>
+                <span className="text-[11px] text-muted-foreground">(reset to default after each stage)</span>
+              </label>
+            </div>
+            <div className="flex items-center gap-6">
+              <label className="flex items-center gap-2 cursor-pointer text-sm" data-testid="toggle-field-sanitize">
+                <input
+                  type="checkbox"
+                  className="rounded"
+                  checked={fieldForm.sanitize}
+                  onChange={(e) => setFieldForm((f) => ({ ...f, sanitize: e.target.checked }))}
+                />
+                <span>Sanitize</span>
+                <span className="text-[11px] text-muted-foreground">(strip from checkpoint snapshots)</span>
+              </label>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFieldDialogOpen(false)} data-testid="button-cancel-field">
+              Cancel
+            </Button>
+            <Button onClick={confirmFieldDialog} disabled={!fieldForm.name.trim()} data-testid="button-confirm-field">
+              {editingFieldIndex !== null ? "Update Field" : "Add Field"}
             </Button>
           </DialogFooter>
         </DialogContent>
