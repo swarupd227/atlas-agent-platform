@@ -155,6 +155,8 @@ export default function AgentExport() {
   const [regeneratingFile, setRegeneratingFile] = useState<string | null>(null);
   const [checklistState, setChecklistState] = useState<Record<string, boolean>>({});
   const [bundleExport, setBundleExport] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [exportLogs, setExportLogs] = useState<Array<{ event: string; phase: string; message: string; detail?: string; ts: number }>>([]);
   const fileSearchInputRef = useRef<HTMLInputElement>(null);
   const resizingRef = useRef(false);
   const startXRef = useRef(0);
@@ -290,52 +292,72 @@ export default function AgentExport() {
     return items;
   }, [exportFormat, exportLlmProvider, exportFramework, otelEnabled, toolAdapterOverrides]);
 
-  const exportCodeMutation = useMutation({
-    mutationFn: async (params: { format: string; llmProvider: string; maxIterations: number; completionPromise: string; framework?: string; toolAdapters?: Record<string, string>; pinVersions?: boolean; otelEnabled?: boolean; spanGranularity?: string }) => {
-      const res = await apiRequest("POST", `/api/agents/${agentId}/export-code`, params);
-      return res.json();
-    },
-    onSuccess: (data) => {
-      setExportPreview(data);
-      const newFiles = data.files || {};
-      setEditedFiles({ ...newFiles });
-      setOriginalFiles({ ...newFiles });
-      setEditedFilePaths(Object.keys(newFiles));
-      const fileNames = Object.keys(newFiles);
-      if (fileNames.length > 0) setExportPreviewFile(fileNames.find((f: string) => f.includes("entrypoint") || f.includes("orchestrator")) || fileNames[0]);
-      setExportStep("preview");
-      setShowDiffView(false);
-      if (data.metadata && !data.metadata.aiGenerated) {
-        toast({ title: "AI generation unavailable", description: "Code was generated using templates. AI-powered generation was not available or failed.", variant: "default" });
-      }
-    },
-    onError: () => {
-      toast({ title: "Export failed", description: "Could not generate code package", variant: "destructive" });
-    },
-  });
+  async function streamExport(url: string, body: object, preferredFile?: (files: string[]) => string | undefined) {
+    setIsGenerating(true);
+    setExportLogs([]);
+    const addLog = (entry: { event: string; phase: string; message: string; detail?: string }) =>
+      setExportLogs(prev => [...prev, { ...entry, ts: Date.now() }]);
 
-  const bundleExportMutation = useMutation({
-    mutationFn: async (params: { format: string; llmProvider: string; maxIterations: number; completionPromise: string; pinVersions?: boolean }) => {
-      const res = await apiRequest("POST", `/api/agents/${agentId}/export-code/bundle`, params);
-      return res.json();
-    },
-    onSuccess: (data) => {
-      setExportPreview(data);
-      const newFiles = data.files || {};
-      setEditedFiles({ ...newFiles });
-      setOriginalFiles({ ...newFiles });
-      setEditedFilePaths(Object.keys(newFiles));
-      const fileNames = Object.keys(newFiles);
-      if (fileNames.length > 0) {
-        setExportPreviewFile(fileNames.find((f: string) => f === "README.md") || fileNames[0]);
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.body) throw new Error("No response body from server");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop() || "";
+        for (const block of blocks) {
+          let eventName = "message";
+          let dataStr = "";
+          for (const line of block.split("\n")) {
+            if (line.startsWith("event: ")) eventName = line.slice(7).trim();
+            else if (line.startsWith("data: ")) dataStr = line.slice(6);
+          }
+          if (!dataStr) continue;
+          try {
+            const data = JSON.parse(dataStr);
+            if (eventName === "progress") {
+              addLog({ event: "progress", phase: data.phase || "info", message: data.message || "", detail: data.detail });
+            } else if (eventName === "done") {
+              addLog({ event: "done", phase: "packaging", message: "Generation complete — loading preview..." });
+              setExportPreview(data);
+              const newFiles = data.files || {};
+              setEditedFiles({ ...newFiles });
+              setOriginalFiles({ ...newFiles });
+              const fileNames = Object.keys(newFiles);
+              setEditedFilePaths(fileNames);
+              const preferred = preferredFile ? preferredFile(fileNames) : undefined;
+              setExportPreviewFile(preferred || fileNames.find((f: string) => f.includes("entrypoint") || f.includes("orchestrator") || f === "README.md") || fileNames[0] || "");
+              setExportStep("preview");
+              setShowDiffView(false);
+              if (data.metadata && !data.metadata.aiGenerated && !data.metadata.bundled) {
+                toast({ title: "Template-based generation", description: "AI was unavailable — tool adapters contain stubs.", variant: "default" });
+              }
+            } else if (eventName === "error") {
+              addLog({ event: "error", phase: "error", message: data.message || "Unknown error" });
+              toast({ title: "Export failed", description: data.message || "Could not generate code package", variant: "destructive" });
+            }
+          } catch { /* ignore JSON parse errors */ }
+        }
       }
-      setExportStep("preview");
-      setShowDiffView(false);
-    },
-    onError: () => {
-      toast({ title: "Bundle export failed", description: "Could not generate bundle package", variant: "destructive" });
-    },
-  });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Network error during export";
+      addLog({ event: "error", phase: "error", message: msg });
+      toast({ title: "Export failed", description: msg, variant: "destructive" });
+    } finally {
+      setIsGenerating(false);
+    }
+  }
 
   async function downloadExportPackage() {
     if (!exportPreview) return;
@@ -355,13 +377,11 @@ export default function AgentExport() {
 
   function handleGenerate() {
     if (bundleExport && agent?.agentType === "team") {
-      bundleExportMutation.mutate({
-        format: exportFormat,
-        llmProvider: exportLlmProvider,
-        maxIterations: exportMaxIterations,
-        completionPromise: exportCompletionPromise,
-        pinVersions,
-      });
+      streamExport(
+        `/api/agents/${agentId}/export-code/bundle`,
+        { format: exportFormat, llmProvider: exportLlmProvider, maxIterations: exportMaxIterations, completionPromise: exportCompletionPromise, pinVersions },
+        (files) => files.find(f => f === "README.md"),
+      );
       return;
     }
     const agentTools = Array.isArray(agent?.toolsConfig) ? agent.toolsConfig as any[] : [];
@@ -383,7 +403,11 @@ export default function AgentExport() {
       }
     });
     setToolAdapterOverrides(resolvedOverrides);
-    exportCodeMutation.mutate({ format: exportFormat, llmProvider: exportLlmProvider, maxIterations: exportMaxIterations, completionPromise: exportCompletionPromise, framework: exportFramework, toolAdapters: resolvedOverrides, pinVersions, otelEnabled, spanGranularity });
+    streamExport(
+      `/api/agents/${agentId}/export-code`,
+      { format: exportFormat, llmProvider: exportLlmProvider, maxIterations: exportMaxIterations, completionPromise: exportCompletionPromise, framework: exportFramework, toolAdapters: resolvedOverrides, pinVersions, otelEnabled, spanGranularity },
+      (files) => files.find(f => f.includes("entrypoint") || f.includes("orchestrator")),
+    );
   }
 
   async function handleDeliver() {
@@ -505,10 +529,10 @@ export default function AgentExport() {
             <Button
               size="sm"
               onClick={handleGenerate}
-              disabled={exportCodeMutation.isPending || bundleExportMutation.isPending}
+              disabled={isGenerating}
               data-testid="button-export-generate"
             >
-              {(exportCodeMutation.isPending || bundleExportMutation.isPending)
+              {isGenerating
                 ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />Generating...</>
                 : bundleExport && agent?.agentType === "team"
                   ? <><Layers className="w-3.5 h-3.5 mr-1.5" />Generate Bundle</>
@@ -547,7 +571,10 @@ export default function AgentExport() {
       </header>
 
       <div className="flex-1 min-h-0 overflow-hidden">
-        {exportStep === "configure" && (
+        {exportStep === "configure" && isGenerating && (
+          <ExportLogPanel logs={exportLogs} agentName={agent?.name || "Agent"} isBundling={bundleExport && agent?.agentType === "team"} />
+        )}
+        {exportStep === "configure" && !isGenerating && (
           <ConfigureStep
             agent={agent}
             agentId={agentId!}
@@ -989,6 +1016,89 @@ export default function AgentExport() {
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+const PHASE_META: Record<string, { icon: React.ReactNode; color: string }> = {
+  init:      { icon: <Globe className="w-3.5 h-3.5" />,      color: "text-blue-400" },
+  data:      { icon: <Globe className="w-3.5 h-3.5" />,      color: "text-blue-400" },
+  yaml:      { icon: <Code className="w-3.5 h-3.5" />,       color: "text-cyan-400" },
+  ai:        { icon: <Sparkles className="w-3.5 h-3.5" />,   color: "text-violet-400" },
+  scaffold:  { icon: <Wrench className="w-3.5 h-3.5" />,     color: "text-amber-400" },
+  tools:     { icon: <Wrench className="w-3.5 h-3.5" />,     color: "text-amber-400" },
+  tool:      { icon: <Wrench className="w-3.5 h-3.5" />,     color: "text-amber-400" },
+  tests:     { icon: <FlaskConical className="w-3.5 h-3.5" />, color: "text-green-400" },
+  ci:        { icon: <GitBranch className="w-3.5 h-3.5" />,  color: "text-pink-400" },
+  docs:      { icon: <Terminal className="w-3.5 h-3.5" />,   color: "text-slate-400" },
+  packaging: { icon: <Package className="w-3.5 h-3.5" />,    color: "text-orange-400" },
+  agent:     { icon: <Network className="w-3.5 h-3.5" />,    color: "text-teal-400" },
+  bundle:    { icon: <Layers className="w-3.5 h-3.5" />,     color: "text-indigo-400" },
+  done:      { icon: <CheckCircle className="w-3.5 h-3.5" />, color: "text-emerald-400" },
+  error:     { icon: <AlertCircle className="w-3.5 h-3.5" />, color: "text-red-400" },
+  info:      { icon: <Info className="w-3.5 h-3.5" />,       color: "text-slate-400" },
+};
+
+function ExportLogPanel({ logs, agentName, isBundling }: {
+  logs: Array<{ event: string; phase: string; message: string; detail?: string; ts: number }>;
+  agentName: string;
+  isBundling: boolean;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [logs]);
+
+  return (
+    <div className="h-full flex flex-col bg-[#0d1117] text-white font-mono overflow-hidden" data-testid="export-log-panel">
+      <div className="flex items-center gap-3 px-5 py-3 border-b border-white/10 shrink-0">
+        <Loader2 className="w-4 h-4 animate-spin text-violet-400" />
+        <span className="text-sm font-medium text-white/90">
+          {isBundling ? "Generating multi-agent bundle" : "Generating agent code"} — {agentName}
+        </span>
+        <span className="ml-auto text-xs text-white/40">{logs.length} event{logs.length !== 1 ? "s" : ""}</span>
+      </div>
+
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-5 py-4 space-y-1.5" data-testid="export-log-list">
+        {logs.length === 0 && (
+          <div className="flex items-center gap-2 text-white/30 text-xs py-2">
+            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            <span>Initializing...</span>
+          </div>
+        )}
+        {logs.map((log, i) => {
+          const meta = PHASE_META[log.phase] || PHASE_META.info;
+          const isLast = i === logs.length - 1;
+          return (
+            <div key={i} className={`flex items-start gap-2.5 text-xs ${isLast ? "opacity-100" : "opacity-70"}`} data-testid={`log-entry-${i}`}>
+              <span className={`mt-0.5 shrink-0 ${meta.color}`}>{meta.icon}</span>
+              <div className="flex-1 min-w-0">
+                <span className={`font-medium ${log.event === "error" ? "text-red-300" : log.event === "done" ? "text-emerald-300" : "text-white/90"}`}>
+                  {log.message}
+                </span>
+                {log.detail && (
+                  <span className="ml-2 text-white/40 truncate">{log.detail}</span>
+                )}
+              </div>
+              {isLast && log.event !== "done" && log.event !== "error" && (
+                <span className="shrink-0 w-1.5 h-3.5 bg-violet-400 animate-pulse rounded-sm mt-0.5" />
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="shrink-0 px-5 py-2 border-t border-white/10 flex items-center gap-2">
+        <div className="h-1 flex-1 bg-white/10 rounded-full overflow-hidden">
+          <div
+            className="h-full bg-gradient-to-r from-violet-500 to-indigo-500 rounded-full transition-all duration-500"
+            style={{ width: `${Math.min(100, (logs.length / 20) * 100)}%` }}
+          />
+        </div>
+        <span className="text-[10px] text-white/30 shrink-0">{logs.length} / ~20 steps</span>
       </div>
     </div>
   );

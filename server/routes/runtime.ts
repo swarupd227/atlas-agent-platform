@@ -3525,9 +3525,19 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
 
   // POST /api/agents/:id/export-code
   router.post("/api/agents/:id/export-code", async (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    const emit = (event: string, data: Record<string, unknown>) => {
+      try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* ignore */ }
+    };
+
     try {
+      emit("progress", { phase: "init", message: "Fetching agent configuration..." });
       const agent = await storage.getAgent(req.params.id, getOrgId(req));
-      if (!agent) return res.status(404).json({ message: "Agent not found" });
+      if (!agent) { emit("error", { message: "Agent not found" }); return res.end(); }
 
       const agentMaxIter = agent.maxToolIterations || 5;
       const exportSchema = z.object({
@@ -3689,6 +3699,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
       const allMemoryProfiles = await storage.getMemoryProfiles();
       const memoryProfile = allMemoryProfiles.find(mp => mp.agentId === agent.id) || null;
 
+      emit("progress", { phase: "data", message: `Resolving MCP servers and linked resources...` });
       const mcpLinks = await storage.getAgentMcpServers(agent.id);
       const mcpServerDetails: Array<{ name: string; url: string | null; transportType: string; description?: string | null; tools?: Array<{ name: string; description: string }> }> = [];
       for (const link of mcpLinks) {
@@ -3702,6 +3713,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
             description: srv.description,
             tools: srvTools.map(t => ({ name: t.name, description: t.description || "" })),
           });
+          emit("progress", { phase: "data", message: `Loaded MCP server: ${srv.name} (${srvTools.length} tool${srvTools.length !== 1 ? "s" : ""})` });
         }
       }
 
@@ -3721,6 +3733,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
         forbiddenOutputs: Array.isArray(rtConfig.forbiddenOutputs) ? rtConfig.forbiddenOutputs as string[] : (Array.isArray((blueprintJson as Record<string, unknown>).forbiddenOutputs) ? (blueprintJson as Record<string, unknown>).forbiddenOutputs as string[] : []),
       };
 
+      emit("progress", { phase: "yaml", message: `Generating YAML manifest for "${agent.name}"...`, detail: `${tools.length} tool(s), ${mcpServerDetails.length} MCP server(s)` });
       const agentYaml = generateAgentYaml(agent, tools, systemPrompt, maxIterations, completionPromise, yamlExtras);
       const agentSlug = agent.name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
 
@@ -3768,6 +3781,7 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
 
       let aiResult: Awaited<ReturnType<typeof generateAgentCodeWithAI>> = null;
 
+      emit("progress", { phase: "ai", message: `Starting AI-assisted code generation (30–60s)...`, detail: `Framework: ${framework} · Language: ${format} · Provider: ${llmProvider}` });
       try {
         const blockedToolsFromPolicies = linkedPolicies.flatMap(p => {
           const rules = (p.policyJson || {}) as Record<string, unknown>;
@@ -3792,6 +3806,13 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
         });
       } catch { /* swallow — templates handle fallback */ }
 
+      if (aiResult) {
+        const aiToolCount = Object.keys(aiResult.toolAdapters || {}).length;
+        emit("progress", { phase: "ai", message: `AI generation complete — ${aiToolCount} tool adapter${aiToolCount !== 1 ? "s" : ""} generated`, detail: `Merging AI output into source files...` });
+      } else {
+        emit("progress", { phase: "ai", message: `AI generation unavailable — using template scaffolding`, detail: `Tool adapters will contain stubs to implement` });
+      }
+
       if (aiResult?.agentYaml) {
         let mergedYaml = aiResult.agentYaml;
         if (matchedSkills.length > 0 && !mergedYaml.includes("skills:")) {
@@ -3814,6 +3835,8 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
           }
         }
       }
+
+      emit("progress", { phase: "scaffold", message: `Building ${framework === "generic" ? "generic ReAct agent" : framework} runtime scaffold...`, detail: `${format} · ${tools.length} tool(s)` });
 
       if (framework === "generic") {
         const crypto = await import("crypto");
@@ -3971,8 +3994,12 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
             : generateTsEntrypointAnthropic(tools, maxIterations, completionPromise, mcpServerDetails, entrypointOpts));
 
           files["src/tools/index.ts"] = generateTsToolsIndex(tools);
-          for (const tool of tools) {
-            files[`src/tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name));
+          if (tools.length > 0) emit("progress", { phase: "tools", message: `Generating ${tools.length} tool adapter${tools.length !== 1 ? "s" : ""}...` });
+          for (let ti = 0; ti < tools.length; ti++) {
+            const tool = tools[ti];
+            const adapterType = getAdapterType(tool.name);
+            emit("progress", { phase: "tool", message: `Tool adapter: ${tool.name} (${adapterType})`, detail: `${ti + 1} / ${tools.length}` });
+            files[`src/tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, adapterType);
           }
 
           {
@@ -4199,7 +4226,10 @@ export function listPolicies(): Array<{ name: string; domain: string | null }> {
             : generatePyEntrypointAnthropic(tools, maxIterations, completionPromise, mcpServerDetails, entrypointOpts));
 
           files["src/tools/__init__.py"] = generatePyToolsInit(tools);
-          for (const tool of tools) {
+          if (tools.length > 0) emit("progress", { phase: "tools", message: `Generating ${tools.length} tool adapter${tools.length !== 1 ? "s" : ""}...` });
+          for (let ti = 0; ti < tools.length; ti++) {
+            const tool = tools[ti];
+            emit("progress", { phase: "tool", message: `Tool adapter: ${tool.name} (${getAdapterType(tool.name)})`, detail: `${ti + 1} / ${tools.length}` });
             files[`src/tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType);
           }
 
@@ -5018,6 +5048,7 @@ clean:
 `;
       }
 
+      if (tools.length > 0) emit("progress", { phase: "tests", message: `Scaffolding test suite for ${tools.length} tool${tools.length !== 1 ? "s" : ""}...` });
       const toolsDir = framework === "generic" ? "src/tools" : "tools";
       const toolsModule = framework === "generic" ? "src.tools" : "tools";
       for (const tool of tools) {
@@ -5052,10 +5083,12 @@ clean:
         }
       }
 
+      emit("progress", { phase: "ci", message: "Generating CI/CD pipeline configuration..." });
       if (!files[".github/workflows/ci.yml"]) {
         files[".github/workflows/ci.yml"] = generateCiWorkflow(format, agentSlug);
       }
 
+      emit("progress", { phase: "docs", message: "Writing developer documentation and implementation guide..." });
       // T003: Generate WHAT_YOU_NEED_TO_IMPLEMENT.md — clear developer handoff guide.
       {
         const fileExt = format === "typescript" ? "ts" : "py";
@@ -5165,7 +5198,9 @@ clean:
         }
       }
 
-      res.json({
+      const totalFiles = Object.keys(files).length;
+      emit("progress", { phase: "packaging", message: `Packaging ${totalFiles} file${totalFiles !== 1 ? "s" : ""}...` });
+      emit("done", {
         files,
         metadata: {
           agentName: agent.name,
@@ -5180,10 +5215,12 @@ clean:
           aiGenerated: !!aiResult,
         },
       });
+      res.end();
     } catch (e) {
-      if (e instanceof ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
+      if (e instanceof ZodError) { emit("error", { message: "Validation error", errors: (e as ZodError).errors }); return res.end(); }
       console.error("[export-code] Error:", e);
-      res.status(500).json({ message: "Failed to generate code package" });
+      emit("error", { message: e instanceof Error ? e.message : "Failed to generate code package" });
+      res.end();
     }
   });
 
@@ -5191,11 +5228,22 @@ clean:
   // Generates a dependency-aware bundled export for a team (orchestrator) agent.
   // Returns a structured archive containing the orchestrator and all member agents.
   router.post("/api/agents/:id/export-code/bundle", async (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+    res.flushHeaders();
+
+    const emit = (event: string, data: Record<string, unknown>) => {
+      try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* ignore */ }
+    };
+
     try {
+      emit("progress", { phase: "init", message: "Fetching orchestrator configuration..." });
       const orchestrator = await storage.getAgent(req.params.id, getOrgId(req));
-      if (!orchestrator) return res.status(404).json({ message: "Agent not found" });
+      if (!orchestrator) { emit("error", { message: "Agent not found" }); return res.end(); }
       if (orchestrator.agentType !== "team") {
-        return res.status(400).json({ message: "Bundle export is only available for team (orchestrator) agents. Use the standard export for individual agents." });
+        emit("error", { message: "Bundle export is only available for team (orchestrator) agents." });
+        return res.end();
       }
 
       const bundleSchema = z.object({
@@ -5207,6 +5255,7 @@ clean:
       });
       const { format, llmProvider, maxIterations, completionPromise, pinVersions } = bundleSchema.parse(req.body || {});
 
+      emit("progress", { phase: "data", message: "Fetching team member agents..." });
       // Fetch all member agents
       const teamMemberLinks = await storage.getAgentTeamMembers(orchestrator.id);
       const memberAgents: typeof orchestrator[] = [];
@@ -5214,6 +5263,7 @@ clean:
         const ma = await storage.getAgent(link.memberAgentId);
         if (ma) memberAgents.push(ma);
       }
+      emit("progress", { phase: "data", message: `Bundle: ${orchestrator.name} (orchestrator) + ${memberAgents.length} member agent${memberAgents.length !== 1 ? "s" : ""}`, detail: memberAgents.map(a => a.name).join(", ") || "no members" });
 
       const allSlots: Array<{ agent: typeof orchestrator; role: string; prefix: string }> = [
         { agent: orchestrator, role: "orchestrator", prefix: "orchestrator" },
@@ -5343,10 +5393,14 @@ clean:
       }
 
       // Generate files for orchestrator and each member
-      for (const slot of allSlots) {
+      for (let si = 0; si < allSlots.length; si++) {
+        const slot = allSlots[si];
+        emit("progress", { phase: "agent", message: `Generating files for ${slot.agent.name} (${slot.role})`, detail: `${si + 1} / ${allSlots.length}` });
         await buildAgentFiles(slot.agent, slot.prefix);
+        emit("progress", { phase: "agent", message: `✓ ${slot.agent.name} — done`, detail: `${Object.keys(files).length} file(s) so far` });
       }
 
+      emit("progress", { phase: "bundle", message: "Generating docker-compose.yml..." });
       // Bundle-level docker-compose.yml
       const serviceEntries = allSlots.map(slot => {
         const slug = slot.prefix.split("/").pop()!;
@@ -5357,6 +5411,7 @@ clean:
       });
       files["docker-compose.yml"] = `version: "3.9"\nservices:\n${serviceEntries.join("\n")}\n`;
 
+      emit("progress", { phase: "bundle", message: "Generating bundle manifest (almp-bundle.manifest.json)..." });
       // Bundle-level almp-bundle.manifest.json
       const crypto = await import("crypto");
       const bundleManifest = {
@@ -5392,7 +5447,9 @@ clean:
       const installCmd = format === "typescript" ? "npm install" : "pip install -r requirements.txt";
       files["README.md"] = `# ${orchestrator.name} — Multi-Agent Bundle\n\n${orchestrator.description || ""}\n\nThis bundle contains **${allSlots.length} agent${allSlots.length !== 1 ? "s" : ""}**: the orchestrator and ${memberAgents.length} member agent${memberAgents.length !== 1 ? "s" : ""}.\n\n## Bundle Structure\n\n\`\`\`\norchestrator/   # ${orchestrator.name} (orchestrator)\nagents/\n${memberAgents.map(a => `  ${a.name.toLowerCase().replace(/[^a-z0-9-]/g, "-")}/   # ${a.name}`).join("\n")}\nalmp-bundle.manifest.json\ndocker-compose.yml\n\`\`\`\n\n## Agents\n\n| Directory | Agent | Role |\n|-----------|-------|------|\n| \`orchestrator/\` | ${orchestrator.name} | orchestrator |\n${memberRows}\n\n## Quick Start\n\n### Individual Setup\n\nNavigate into each agent directory and run:\n\n\`\`\`bash\n${installCmd}\n${format === "typescript" ? "npm start" : "python src/runtime/orchestrator.py"}\n\`\`\`\n\n### Docker Compose (all agents)\n\n\`\`\`bash\ncp .env.example .env   # fill in your API key\ndocker-compose up --build\n\`\`\`\n\n## Configuration\n\nEach agent directory has its own \`.env.example\`. Copy it to \`.env\` and configure your ${llmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"}.\n`;
 
-      res.json({
+      const totalBundleFiles = Object.keys(files).length;
+      emit("progress", { phase: "packaging", message: `Packaging ${totalBundleFiles} file${totalBundleFiles !== 1 ? "s" : ""} across ${allSlots.length} agent${allSlots.length !== 1 ? "s" : ""}...` });
+      emit("done", {
         files,
         metadata: {
           bundled: true,
@@ -5405,10 +5462,12 @@ clean:
           generatedAt: new Date().toISOString(),
         },
       });
+      res.end();
     } catch (e) {
-      if (e instanceof ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
+      if (e instanceof ZodError) { emit("error", { message: "Validation error", errors: (e as ZodError).errors }); return res.end(); }
       console.error("[export-code/bundle] Error:", e);
-      res.status(500).json({ message: "Failed to generate bundle export" });
+      emit("error", { message: e instanceof Error ? e.message : "Failed to generate bundle export" });
+      res.end();
     }
   });
 
