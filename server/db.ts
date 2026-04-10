@@ -98,6 +98,49 @@ export async function runStartupMigrations() {
         created_at TIMESTAMP DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_aar_agent_state_reports_agent_id ON aar_agent_state_reports(agent_id);
+
+      CREATE TABLE IF NOT EXISTS workflow_state_schemas (
+        id              VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        pipeline_id     VARCHAR NOT NULL,
+        schema_version  INTEGER NOT NULL DEFAULT 1,
+        fields          JSONB NOT NULL DEFAULT '{}',
+        reducers        JSONB NOT NULL DEFAULT '{}',
+        initial_values  JSONB NOT NULL DEFAULT '{}',
+        sanitization    JSONB DEFAULT '{}',
+        created_at      TIMESTAMP DEFAULT NOW(),
+        UNIQUE(pipeline_id, schema_version)
+      );
+
+      CREATE TABLE IF NOT EXISTS workflow_state_checkpoints (
+        id                    VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        pipeline_run_id       VARCHAR NOT NULL,
+        checkpoint_number     INTEGER NOT NULL,
+        trigger               VARCHAR NOT NULL,
+        trigger_stage_id      VARCHAR,
+        trigger_node_id       VARCHAR,
+        state_json            JSONB NOT NULL,
+        state_hash            VARCHAR NOT NULL,
+        interrupt_id          VARCHAR,
+        interrupt_payload     JSONB,
+        interrupt_node        VARCHAR,
+        interrupt_responded   BOOLEAN NOT NULL DEFAULT FALSE,
+        interrupt_response    JSONB,
+        created_at            TIMESTAMP DEFAULT NOW(),
+        created_by            VARCHAR,
+        UNIQUE(pipeline_run_id, checkpoint_number)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_wsc_run ON workflow_state_checkpoints(pipeline_run_id);
+      CREATE INDEX IF NOT EXISTS idx_wsc_interrupt ON workflow_state_checkpoints(interrupt_id)
+        WHERE interrupt_id IS NOT NULL;
+
+      ALTER TABLE agent_pipelines ADD COLUMN IF NOT EXISTS state_schema_id VARCHAR;
+      ALTER TABLE agent_pipelines ADD COLUMN IF NOT EXISTS state_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+
+      ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS state_schema_id VARCHAR;
+      ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS current_state JSONB DEFAULT '{}';
+      ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS active_interrupt_id VARCHAR;
+      ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS state_version INTEGER NOT NULL DEFAULT 0;
     `);
     console.log("[db] Startup migrations complete");
   } catch (err: any) {

@@ -41,6 +41,7 @@ The Nous Agent Orchestrator uses a modern web stack: React, Vite, Tailwind CSS, 
 - **SSE Streaming for Agent Runtime**: Real-time progress streaming of agent execution via Server-Sent Events.
 - **Agentic Chat Widget**: Embeddable chat widget with SSE streaming, real-time status indicators, markdown rendering, AI-generated suggested actions, and configurable greetings.
 - **Multi-Tenancy**: Organization-level data isolation implemented across schema and storage, with `organization_id` added to core tables and filtering applied to storage methods.
+- **Unified Workflow State (UWS)**: Typed, persistent, reducer-based workflow state across pipeline stages. `workflow_state_schemas` and `workflow_state_checkpoints` tables store per-pipeline state schemas and per-run state snapshots. `/advance`, `/approve`, `/reject`, and `/simulate-stage` merge state updates using field-level reducers. Approval gate interrupts create interrupt checkpoints with `interrupt_id`, `interrupt_payload`, and `interrupt_responded` fields. A Workflow State panel in the pipeline run view shows current state (JSON), checkpoint history, and interrupt gate records.
 
 ## External Dependencies
 - **OpenAI**: Primary LLM provider for agent runtime, evaluations, AI enhancements, and embeddings.

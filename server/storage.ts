@@ -170,6 +170,8 @@ import {
   dagExecutionPlans, type DagExecutionPlan, type InsertDagExecutionPlan,
   dagStateSchemas, type DagStateSchema, type InsertDagStateSchema,
   dagExecutionRuns, type DagExecutionRun, type InsertDagExecutionRun,
+  workflowStateSchemas, type WorkflowStateSchema, type InsertWorkflowStateSchema,
+  workflowStateCheckpoints, type WorkflowStateCheckpoint, type InsertWorkflowStateCheckpoint,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -793,6 +795,16 @@ export interface IStorage {
   listDagExecutionRuns(pipelineRunId?: string): Promise<DagExecutionRun[]>;
   createDagExecutionRun(run: InsertDagExecutionRun): Promise<DagExecutionRun>;
   updateDagExecutionRun(id: string, data: Partial<DagExecutionRun>): Promise<DagExecutionRun | undefined>;
+
+  getWorkflowStateSchema(id: string): Promise<WorkflowStateSchema | undefined>;
+  getWorkflowStateSchemaByPipeline(pipelineId: string): Promise<WorkflowStateSchema | undefined>;
+  createWorkflowStateSchema(data: InsertWorkflowStateSchema): Promise<WorkflowStateSchema>;
+
+  createWorkflowCheckpoint(data: InsertWorkflowStateCheckpoint): Promise<WorkflowStateCheckpoint>;
+  getWorkflowCheckpoint(id: string): Promise<WorkflowStateCheckpoint | undefined>;
+  listWorkflowCheckpoints(pipelineRunId: string, trigger?: string): Promise<WorkflowStateCheckpoint[]>;
+  updateWorkflowCheckpoint(id: string, data: Partial<WorkflowStateCheckpoint>): Promise<WorkflowStateCheckpoint | undefined>;
+  getOpenInterrupt(pipelineRunId: string, interruptId: string): Promise<WorkflowStateCheckpoint | undefined>;
 }
 
 function resolveOrgId(providedOrgId: string | null | undefined): string {
@@ -3568,6 +3580,66 @@ export class DatabaseStorage implements IStorage {
 
   async updateDagExecutionRun(id: string, data: Partial<DagExecutionRun>): Promise<DagExecutionRun | undefined> {
     const [row] = await db.update(dagExecutionRuns).set(data).where(eq(dagExecutionRuns.id, id)).returning();
+    return row;
+  }
+
+  async getWorkflowStateSchema(id: string): Promise<WorkflowStateSchema | undefined> {
+    const [row] = await db.select().from(workflowStateSchemas).where(eq(workflowStateSchemas.id, id));
+    return row;
+  }
+
+  async getWorkflowStateSchemaByPipeline(pipelineId: string): Promise<WorkflowStateSchema | undefined> {
+    const [row] = await db
+      .select()
+      .from(workflowStateSchemas)
+      .where(eq(workflowStateSchemas.pipelineId, pipelineId))
+      .orderBy(desc(workflowStateSchemas.schemaVersion))
+      .limit(1);
+    return row;
+  }
+
+  async createWorkflowStateSchema(data: InsertWorkflowStateSchema): Promise<WorkflowStateSchema> {
+    const [row] = await db.insert(workflowStateSchemas).values(data).returning();
+    return row;
+  }
+
+  async createWorkflowCheckpoint(data: InsertWorkflowStateCheckpoint): Promise<WorkflowStateCheckpoint> {
+    const [row] = await db.insert(workflowStateCheckpoints).values(data).returning();
+    return row;
+  }
+
+  async getWorkflowCheckpoint(id: string): Promise<WorkflowStateCheckpoint | undefined> {
+    const [row] = await db.select().from(workflowStateCheckpoints).where(eq(workflowStateCheckpoints.id, id));
+    return row;
+  }
+
+  async listWorkflowCheckpoints(pipelineRunId: string, trigger?: string): Promise<WorkflowStateCheckpoint[]> {
+    const conditions = [eq(workflowStateCheckpoints.pipelineRunId, pipelineRunId)];
+    if (trigger) conditions.push(eq(workflowStateCheckpoints.trigger, trigger));
+    return db
+      .select()
+      .from(workflowStateCheckpoints)
+      .where(and(...conditions))
+      .orderBy(asc(workflowStateCheckpoints.checkpointNumber));
+  }
+
+  async updateWorkflowCheckpoint(id: string, data: Partial<WorkflowStateCheckpoint>): Promise<WorkflowStateCheckpoint | undefined> {
+    const [row] = await db.update(workflowStateCheckpoints).set(data).where(eq(workflowStateCheckpoints.id, id)).returning();
+    return row;
+  }
+
+  async getOpenInterrupt(pipelineRunId: string, interruptId: string): Promise<WorkflowStateCheckpoint | undefined> {
+    const [row] = await db
+      .select()
+      .from(workflowStateCheckpoints)
+      .where(
+        and(
+          eq(workflowStateCheckpoints.pipelineRunId, pipelineRunId),
+          eq(workflowStateCheckpoints.interruptId, interruptId),
+          eq(workflowStateCheckpoints.interruptResponded, false),
+        ),
+      )
+      .limit(1);
     return row;
   }
 }

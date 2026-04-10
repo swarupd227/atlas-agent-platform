@@ -33,6 +33,11 @@ export interface StateFieldDef {
   type: string;
   writable_by: string[];
   reducer: "last_wins" | "append" | "merge_object" | "sum";
+  sanitize?: boolean;
+  ephemeral?: boolean;
+  enum?: string[];
+  schema_ref?: string;
+  item_schema_ref?: string;
 }
 
 export interface DAGExecutionConfig {
@@ -202,7 +207,7 @@ function buildAgentInput(
 /**
  * Apply reducer semantics when merging a node's output into shared state.
  */
-function applyReducer(
+export function applyReducer(
   current: any,
   incoming: any,
   reducer: StateFieldDef["reducer"],

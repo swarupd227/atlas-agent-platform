@@ -2,7 +2,7 @@ import { Router } from "express";
 import * as crypto from "crypto";
 import { storage } from "../storage";
 import { db } from "../db";
-import { computeWaves, DAGExecutionEngine, DAGExecutionError } from "../dag-execution-engine";
+import { computeWaves, DAGExecutionEngine, DAGExecutionError, applyReducer } from "../dag-execution-engine";
 import type { StateFieldDef } from "../dag-execution-engine";
 import { desc, eq, and } from "drizzle-orm";
 import { conversations, messages as chatMessages, traceSpans, kpiDefinitions } from "@shared/schema";
@@ -12493,6 +12493,57 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     res.json(updated);
   });
 
+  function mergeIntoWorkflowState(
+    current: Record<string, any>,
+    updates: Record<string, any>,
+    schemaFields: Record<string, StateFieldDef>,
+    ephemeralKeysWritten?: string[],
+  ): Record<string, any> {
+    const result = { ...current };
+    for (const [key, value] of Object.entries(updates)) {
+      const fieldDef = schemaFields[key];
+      const reducer = fieldDef?.reducer ?? "last_wins";
+      result[key] = applyReducer(result[key], value, reducer);
+      if (fieldDef?.ephemeral && ephemeralKeysWritten) ephemeralKeysWritten.push(key);
+    }
+    return result;
+  }
+
+  function sanitizeForCheckpoint(
+    state: Record<string, any>,
+    schemaFields: Record<string, StateFieldDef>,
+  ): Record<string, any> {
+    const sanitized = { ...state };
+    for (const [key, fieldDef] of Object.entries(schemaFields)) {
+      if (fieldDef.sanitize) delete sanitized[key];
+    }
+    return sanitized;
+  }
+
+  async function writeStageCompleteCheckpoint(
+    pipelineRunId: string,
+    stageId: string,
+    stageLabel: string,
+    stageType: string,
+    currentState: Record<string, any>,
+    schemaFields: Record<string, StateFieldDef>,
+  ): Promise<void> {
+    const existing = await storage.listWorkflowCheckpoints(pipelineRunId);
+    const checkpointNumber = existing.length + 1;
+    const sanitized = sanitizeForCheckpoint(currentState, schemaFields);
+    const stateJsonStr = JSON.stringify(sanitized);
+    const stateHash = crypto.createHash("sha256").update(stateJsonStr).digest("hex");
+    await storage.createWorkflowCheckpoint({
+      pipelineRunId,
+      checkpointNumber,
+      trigger: "stage_complete",
+      triggerStageId: stageId,
+      stateJson: sanitized,
+      stateHash,
+      interruptResponded: false,
+    });
+  }
+
   router.post("/api/pipeline-runs/:id/advance", async (req, res) => {
     const run = await storage.getPipelineRun(req.params.id);
     if (!run) return res.status(404).json({ error: "Pipeline run not found" });
@@ -12503,6 +12554,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     const stages = (pipeline.stages as any[]) || [];
     const stageResults = ((run.stageResults as any[]) || []).map(s => ({ ...s }));
     const currentIdx = stages.findIndex((s: any) => s.id === run.currentStageId);
+    const currentStage = currentIdx >= 0 ? stages[currentIdx] : null;
 
     if (currentIdx >= 0 && currentIdx < stageResults.length) {
       stageResults[currentIdx].status = "completed";
@@ -12511,35 +12563,110 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       if (req.body.duration) stageResults[currentIdx].duration = req.body.duration;
     }
 
+    const stateEnabled = (pipeline as any).stateEnabled === true;
+    let wfSchemaFields: Record<string, StateFieldDef> = {};
+    if (stateEnabled) {
+      const pipelineStateSchemaId = (pipeline as any).stateSchemaId as string | null | undefined;
+      if (pipelineStateSchemaId) {
+        const wfSchema = await storage.getWorkflowStateSchema(pipelineStateSchemaId);
+        if (wfSchema) wfSchemaFields = (wfSchema.fields as Record<string, StateFieldDef>) || {};
+      }
+    }
+
+    let currentStateObj = ((run as any).currentState as Record<string, any>) || {};
+    let newStateVersion = ((run as any).stateVersion as number) || 0;
+
+    if (stateEnabled && req.body.stateUpdates && typeof req.body.stateUpdates === "object") {
+      const ephemeralKeys: string[] = [];
+      currentStateObj = mergeIntoWorkflowState(currentStateObj, req.body.stateUpdates, wfSchemaFields, ephemeralKeys);
+      for (const key of ephemeralKeys) delete currentStateObj[key];
+      newStateVersion += 1;
+
+      await writeStageCompleteCheckpoint(
+        run.id,
+        currentStage?.id || run.currentStageId || "",
+        currentStage?.label || "",
+        currentStage?.stageType || "agent_node",
+        currentStateObj,
+        wfSchemaFields,
+      );
+    }
+
     const nextIdx = currentIdx + 1;
     if (nextIdx < stages.length) {
       const nextStage = stages[nextIdx];
       if (nextStage.stageType === "approval_gate") {
         stageResults[nextIdx].status = "awaiting_approval";
         stageResults[nextIdx].startedAt = new Date().toISOString();
-        const updated = await storage.updatePipelineRun(req.params.id, {
+
+        let activeInterruptId: string | null = null;
+        if (stateEnabled) {
+          const existingCheckpoints = await storage.listWorkflowCheckpoints(run.id);
+          const checkpointNumber = existingCheckpoints.length + 1;
+          const sanitized = sanitizeForCheckpoint(currentStateObj, wfSchemaFields);
+          const stateJsonStr = JSON.stringify(sanitized);
+          const stateHash = crypto.createHash("sha256").update(stateJsonStr).digest("hex");
+          const interruptId = crypto.randomUUID();
+          const interruptCheckpoint = await storage.createWorkflowCheckpoint({
+            pipelineRunId: run.id,
+            checkpointNumber,
+            trigger: "interrupt",
+            triggerStageId: nextStage.id,
+            stateJson: sanitized,
+            stateHash,
+            interruptId,
+            interruptNode: nextStage.id,
+            interruptPayload: {
+              gateId: nextStage.id,
+              gateName: nextStage.label,
+              stateSnapshot: sanitized,
+              stageOutput: req.body.output || "",
+              context: `Pipeline paused at approval gate: ${nextStage.label}`,
+            },
+            interruptResponded: false,
+          });
+          activeInterruptId = interruptCheckpoint.interruptId;
+        }
+
+        const updatePayload: Record<string, any> = {
           stageResults,
           currentStageId: nextStage.id,
           status: "paused_at_gate",
-        });
+        };
+        if (stateEnabled) {
+          updatePayload.currentState = currentStateObj;
+          updatePayload.stateVersion = newStateVersion;
+          if (activeInterruptId) updatePayload.activeInterruptId = activeInterruptId;
+        }
+        const updated = await storage.updatePipelineRun(req.params.id, updatePayload as any);
         return res.json(updated);
       }
       stageResults[nextIdx].status = "running";
       stageResults[nextIdx].startedAt = new Date().toISOString();
-      const updated = await storage.updatePipelineRun(req.params.id, {
+      const updatePayload: Record<string, any> = {
         stageResults,
         currentStageId: nextStage.id,
         status: "running",
-      });
+      };
+      if (stateEnabled) {
+        updatePayload.currentState = currentStateObj;
+        updatePayload.stateVersion = newStateVersion;
+      }
+      const updated = await storage.updatePipelineRun(req.params.id, updatePayload as any);
       return res.json(updated);
     }
 
-    const updated = await storage.updatePipelineRun(req.params.id, {
+    const updatePayload: Record<string, any> = {
       stageResults,
       currentStageId: null,
       status: "completed",
       completedAt: new Date(),
-    });
+    };
+    if (stateEnabled) {
+      updatePayload.currentState = currentStateObj;
+      updatePayload.stateVersion = newStateVersion;
+    }
+    const updated = await storage.updatePipelineRun(req.params.id, updatePayload as any);
     res.json(updated);
   });
 
@@ -12560,24 +12687,85 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       stageResults[currentIdx].approvedBy = req.body.approvedBy || "operator";
     }
 
+    const stateEnabled = (pipeline as any).stateEnabled === true;
+    let wfSchemaFields: Record<string, StateFieldDef> = {};
+    let currentStateObj = ((run as any).currentState as Record<string, any>) || {};
+    let newStateVersion = ((run as any).stateVersion as number) || 0;
+
+    if (stateEnabled) {
+      const pipelineStateSchemaId = (pipeline as any).stateSchemaId as string | null | undefined;
+      if (pipelineStateSchemaId) {
+        const wfSchema = await storage.getWorkflowStateSchema(pipelineStateSchemaId);
+        if (wfSchema) wfSchemaFields = (wfSchema.fields as Record<string, StateFieldDef>) || {};
+      }
+
+      const activeInterruptId = (run as any).activeInterruptId as string | null | undefined;
+      if (activeInterruptId) {
+        const openInterrupt = await storage.getOpenInterrupt(run.id, activeInterruptId);
+        if (openInterrupt) {
+          await storage.updateWorkflowCheckpoint(openInterrupt.id, {
+            interruptResponded: true,
+            interruptResponse: {
+              approvedBy: req.body.approvedBy || "operator",
+              notes: req.body.notes || null,
+              decision: req.body.decision || "approved",
+              stateUpdates: req.body.stateUpdates || null,
+            },
+          });
+        }
+      }
+
+      if (req.body.stateUpdates && typeof req.body.stateUpdates === "object") {
+        currentStateObj = mergeIntoWorkflowState(currentStateObj, req.body.stateUpdates, wfSchemaFields);
+        newStateVersion += 1;
+      }
+
+      const existingCheckpoints = await storage.listWorkflowCheckpoints(run.id);
+      const checkpointNumber = existingCheckpoints.length + 1;
+      const sanitized = sanitizeForCheckpoint(currentStateObj, wfSchemaFields);
+      const stateHash = crypto.createHash("sha256").update(JSON.stringify(sanitized)).digest("hex");
+      await storage.createWorkflowCheckpoint({
+        pipelineRunId: run.id,
+        checkpointNumber,
+        trigger: "resume",
+        triggerStageId: run.currentStageId || undefined,
+        stateJson: sanitized,
+        stateHash,
+        interruptResponded: false,
+        createdBy: req.body.approvedBy || "operator",
+      });
+    }
+
     const nextIdx = currentIdx + 1;
     if (nextIdx < stages.length) {
       stageResults[nextIdx].status = "running";
       stageResults[nextIdx].startedAt = new Date().toISOString();
-      const updated = await storage.updatePipelineRun(req.params.id, {
+      const updatePayload: Record<string, any> = {
         stageResults,
         currentStageId: stages[nextIdx].id,
         status: "running",
-      });
+        activeInterruptId: null,
+      };
+      if (stateEnabled) {
+        updatePayload.currentState = currentStateObj;
+        updatePayload.stateVersion = newStateVersion;
+      }
+      const updated = await storage.updatePipelineRun(req.params.id, updatePayload as any);
       return res.json(updated);
     }
 
-    const updated = await storage.updatePipelineRun(req.params.id, {
+    const updatePayload: Record<string, any> = {
       stageResults,
       currentStageId: null,
       status: "completed",
       completedAt: new Date(),
-    });
+      activeInterruptId: null,
+    };
+    if (stateEnabled) {
+      updatePayload.currentState = currentStateObj;
+      updatePayload.stateVersion = newStateVersion;
+    }
+    const updated = await storage.updatePipelineRun(req.params.id, updatePayload as any);
     res.json(updated);
   });
 
@@ -12585,6 +12773,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     const run = await storage.getPipelineRun(req.params.id);
     if (!run) return res.status(404).json({ error: "Pipeline run not found" });
     if (run.status !== "paused_at_gate") return res.status(400).json({ error: "Run is not paused at an approval gate" });
+    const pipeline = await storage.getAgentPipeline(run.pipelineId);
 
     const stageResults = ((run.stageResults as any[]) || []).map(s => ({ ...s }));
     const currentIdx = stageResults.findIndex((s: any) => s.stageId === run.currentStageId);
@@ -12594,11 +12783,55 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       stageResults[currentIdx].completedAt = new Date().toISOString();
     }
 
-    const updated = await storage.updatePipelineRun(req.params.id, {
+    const stateEnabled = pipeline && (pipeline as any).stateEnabled === true;
+    const currentStateObj = ((run as any).currentState as Record<string, any>) || {};
+
+    if (stateEnabled) {
+      const pipelineStateSchemaId = (pipeline as any).stateSchemaId as string | null | undefined;
+      let wfSchemaFields: Record<string, StateFieldDef> = {};
+      if (pipelineStateSchemaId) {
+        const wfSchema = await storage.getWorkflowStateSchema(pipelineStateSchemaId);
+        if (wfSchema) wfSchemaFields = (wfSchema.fields as Record<string, StateFieldDef>) || {};
+      }
+
+      const activeInterruptId = (run as any).activeInterruptId as string | null | undefined;
+      if (activeInterruptId) {
+        const openInterrupt = await storage.getOpenInterrupt(run.id, activeInterruptId);
+        if (openInterrupt) {
+          await storage.updateWorkflowCheckpoint(openInterrupt.id, {
+            interruptResponded: true,
+            interruptResponse: {
+              rejectedBy: req.body.rejectedBy || "operator",
+              reason: req.body.reason || "Rejected",
+              decision: "rejected",
+            },
+          });
+        }
+      }
+
+      const existingCheckpoints = await storage.listWorkflowCheckpoints(run.id);
+      const checkpointNumber = existingCheckpoints.length + 1;
+      const sanitized = sanitizeForCheckpoint(currentStateObj, wfSchemaFields);
+      const stateHash = crypto.createHash("sha256").update(JSON.stringify(sanitized)).digest("hex");
+      await storage.createWorkflowCheckpoint({
+        pipelineRunId: run.id,
+        checkpointNumber,
+        trigger: "error",
+        triggerStageId: run.currentStageId || undefined,
+        stateJson: { ...sanitized, _rejection_reason: req.body.reason || "Rejected" },
+        stateHash,
+        interruptResponded: false,
+        createdBy: req.body.rejectedBy || "operator",
+      });
+    }
+
+    const updatePayload: Record<string, any> = {
       stageResults,
       status: "failed",
       completedAt: new Date(),
-    });
+      activeInterruptId: null,
+    };
+    const updated = await storage.updatePipelineRun(req.params.id, updatePayload as any);
     res.json(updated);
   });
 
@@ -12616,6 +12849,18 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
 
       if (currentStage.stageType === "approval_gate") {
         return res.json({ output: "Awaiting human approval...", requiresApproval: true });
+      }
+
+      const stateEnabled = (pipeline as any).stateEnabled === true;
+      let wfSchemaFields: Record<string, StateFieldDef> = {};
+      let currentStateObj = ((run as any).currentState as Record<string, any>) || {};
+      let newStateVersion = ((run as any).stateVersion as number) || 0;
+      if (stateEnabled) {
+        const pipelineStateSchemaId = (pipeline as any).stateSchemaId as string | null | undefined;
+        if (pipelineStateSchemaId) {
+          const wfSchema = await storage.getWorkflowStateSchema(pipelineStateSchemaId);
+          if (wfSchema) wfSchemaFields = (wfSchema.fields as Record<string, StateFieldDef>) || {};
+        }
       }
 
       if (currentStage.stageType === "composite") {
@@ -12648,6 +12893,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         const initialState: Record<string, any> = {
           request: run.scenarioInput,
           ...previousResults,
+          ...(stateEnabled ? { _workflow_state: currentStateObj } : {}),
         };
 
         const dagRun = await storage.createDagExecutionRun({
@@ -12692,6 +12938,27 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
             completedAt: new Date(),
           });
 
+          if (stateEnabled) {
+            const dagFinalExcludingWf = { ...dagResult.finalState };
+            delete dagFinalExcludingWf._workflow_state;
+            const ephemeralKeys: string[] = [];
+            currentStateObj = mergeIntoWorkflowState(currentStateObj, dagFinalExcludingWf, wfSchemaFields, ephemeralKeys);
+            for (const key of ephemeralKeys) delete currentStateObj[key];
+            newStateVersion += 1;
+            await writeStageCompleteCheckpoint(
+              run.id,
+              currentStage.id,
+              currentStage.label,
+              "composite",
+              currentStateObj,
+              wfSchemaFields,
+            );
+            await storage.updatePipelineRun(run.id, {
+              currentState: currentStateObj,
+              stateVersion: newStateVersion,
+            } as any);
+          }
+
           const summaryOutput = `DAG executed ${wavePlan.totalWaves} waves across ${wavePlan.totalNodes} agents. Final state keys: ${Object.keys(dagResult.finalState).join(", ")}.`;
           return res.json({
             output: summaryOutput,
@@ -12699,6 +12966,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
             dagRunId: dagRun.id,
             finalState: dagResult.finalState,
             waveResults: dagResult.waveResults,
+            ...(stateEnabled ? { workflowState: currentStateObj, stateVersion: newStateVersion } : {}),
           });
         } catch (dagErr: any) {
           await storage.updateDagExecutionRun(dagRun.id, {
@@ -12719,7 +12987,12 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
           return `${stage?.label || r.stageId}: ${r.output || "completed"}`;
         });
 
-      const systemPrompt = `You are simulating an AI agent named "${agentName}" in a multi-agent pipeline. Your stage is: "${currentStage.label}". ${agent?.description || ""}\n\nYou are part of a pipeline that processes the following scenario. Produce a realistic, concise output for your stage (2-4 paragraphs). Include specific details, metrics, or findings that would be realistic for this agent's role. Format your output clearly.`;
+      const uwsContextBlock =
+        stateEnabled && Object.keys(currentStateObj).length > 0
+          ? `\n\nCURRENT WORKFLOW STATE (v${newStateVersion}):\n${JSON.stringify(currentStateObj, null, 2)}\n\nYou may propose state updates as a JSON block at the end of your output, like:\n<state_updates>\n{"key": "value"}\n</state_updates>`
+          : "";
+
+      const systemPrompt = `You are simulating an AI agent named "${agentName}" in a multi-agent pipeline. Your stage is: "${currentStage.label}". ${agent?.description || ""}\n\nYou are part of a pipeline that processes the following scenario. Produce a realistic, concise output for your stage (2-4 paragraphs). Include specific details, metrics, or findings that would be realistic for this agent's role. Format your output clearly.${uwsContextBlock}`;
 
       const userPrompt = `Scenario: ${run.scenarioInput}\n\n${previousResults.length > 0 ? `Previous stage outputs:\n${previousResults.join("\n")}\n\n` : ""}Execute your stage and produce output.`;
 
@@ -12733,10 +13006,107 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         temperature: 0.7,
       });
 
-      const output = completion.choices[0]?.message?.content || "Stage completed successfully.";
-      res.json({ output, requiresApproval: false });
+      let rawOutput = completion.choices[0]?.message?.content || "Stage completed successfully.";
+      let stateUpdatesFromAgent: Record<string, any> | null = null;
+
+      if (stateEnabled) {
+        const stateUpdateMatch = rawOutput.match(/<state_updates>([\s\S]*?)<\/state_updates>/);
+        if (stateUpdateMatch) {
+          try {
+            stateUpdatesFromAgent = JSON.parse(stateUpdateMatch[1].trim());
+            rawOutput = rawOutput.replace(/<state_updates>[\s\S]*?<\/state_updates>/, "").trim();
+          } catch {
+            // ignore parse error, treat as no updates
+          }
+        }
+
+        if (stateUpdatesFromAgent && typeof stateUpdatesFromAgent === "object") {
+          const ephemeralKeys: string[] = [];
+          currentStateObj = mergeIntoWorkflowState(currentStateObj, stateUpdatesFromAgent, wfSchemaFields, ephemeralKeys);
+          for (const key of ephemeralKeys) delete currentStateObj[key];
+          newStateVersion += 1;
+        }
+
+        await writeStageCompleteCheckpoint(
+          run.id,
+          currentStage.id,
+          currentStage.label,
+          currentStage.stageType || "agent_node",
+          currentStateObj,
+          wfSchemaFields,
+        );
+        await storage.updatePipelineRun(run.id, {
+          currentState: currentStateObj,
+          stateVersion: newStateVersion,
+        } as any);
+      }
+
+      res.json({
+        output: rawOutput,
+        requiresApproval: false,
+        ...(stateEnabled ? { workflowState: currentStateObj, stateVersion: newStateVersion, stateUpdatesApplied: stateUpdatesFromAgent } : {}),
+      });
     } catch (e: any) {
       console.error("Pipeline stage simulation error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Workflow State: GET current state + history + interrupts ──
+  router.get("/api/pipeline-runs/:id/workflow-state", async (req, res) => {
+    try {
+      const run = await storage.getPipelineRun(req.params.id);
+      if (!run) return res.status(404).json({ error: "Run not found" });
+      const checkpoints = await storage.listWorkflowCheckpoints(req.params.id);
+      const interrupts = checkpoints.filter((c) => c.trigger === "interrupt");
+      res.json({
+        runId: req.params.id,
+        status: run.status,
+        currentState: (run as any).currentState || {},
+        stateVersion: (run as any).stateVersion || 0,
+        activeInterruptId: (run as any).activeInterruptId || null,
+        history: checkpoints,
+        interrupts,
+      });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Workflow State Schema: Create/upsert for a pipeline ──
+  router.post("/api/pipelines/:id/workflow-state-schema", async (req, res) => {
+    try {
+      const { fields, description } = req.body;
+      if (!fields || typeof fields !== "object") {
+        return res.status(400).json({ error: "fields is required and must be an object" });
+      }
+      const pipeline = await storage.getAgentPipeline(req.params.id);
+      if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
+      const existing = await storage.getWorkflowStateSchemaByPipeline(req.params.id);
+      const newVersion = existing ? existing.schemaVersion + 1 : 1;
+      const created = await storage.createWorkflowStateSchema({
+        pipelineId: req.params.id,
+        fields,
+        description: description || null,
+        schemaVersion: newVersion,
+      });
+      await storage.updateAgentPipeline(req.params.id, {
+        stateSchemaId: created.id,
+        stateEnabled: true,
+      } as any);
+      res.json(created);
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Workflow State Schema: GET for a pipeline ──
+  router.get("/api/pipelines/:id/workflow-state-schema", async (req, res) => {
+    try {
+      const schema = await storage.getWorkflowStateSchemaByPipeline(req.params.id);
+      if (!schema) return res.status(404).json({ error: "No workflow state schema found" });
+      res.json(schema);
+    } catch (e: any) {
       res.status(500).json({ error: e.message });
     }
   });

@@ -291,6 +291,7 @@ export default function Pipelines() {
   const [editStageErrorStrategy, setEditStageErrorStrategy] = useState<"fail_fast" | "best_effort">("fail_fast");
 
   const [dagRunIds, setDagRunIds] = useState<Record<string, string>>({});
+  const [wfStateOpen, setWfStateOpen] = useState(false);
 
   const [runDialogOpen, setRunDialogOpen] = useState(false);
   const [scenarioInput, setScenarioInput] = useState("");
@@ -351,6 +352,41 @@ export default function Pipelines() {
   const { data: runs = [], isLoading: runsLoading } = useQuery<PipelineRun[]>({
     queryKey: ["/api/pipelines", selectedPipelineId, "runs"],
     enabled: !!selectedPipelineId,
+  });
+
+  const { data: workflowState } = useQuery<{
+    runId: string;
+    status: string;
+    currentState: Record<string, any>;
+    stateVersion: number;
+    activeInterruptId: string | null;
+    history: Array<{
+      id: string;
+      checkpointNumber: number;
+      trigger: string;
+      triggerStageId: string | null;
+      stateJson: Record<string, any>;
+      stateHash: string;
+      interruptId: string | null;
+      interruptPayload: any;
+      interruptResponded: boolean;
+      interruptResponse: any;
+      createdAt: string | null;
+    }>;
+    interrupts: Array<{
+      id: string;
+      checkpointNumber: number;
+      interruptId: string | null;
+      interruptPayload: any;
+      interruptResponded: boolean;
+      interruptResponse: any;
+      triggerStageId: string | null;
+      createdAt: string | null;
+    }>;
+  }>({
+    queryKey: ["/api/pipeline-runs", activeRunId, "workflow-state"],
+    enabled: !!activeRunId,
+    refetchInterval: activeRunId ? 3000 : false,
   });
 
   const activeRun = useMemo(
@@ -1422,6 +1458,131 @@ export default function Pipelines() {
                   })}
                 </div>
               </ScrollArea>
+
+              {workflowState && (workflowState.stateVersion > 0 || workflowState.history.length > 0) && (
+                <div className="mt-4 border rounded-lg" data-testid="panel-workflow-state">
+                  <button
+                    className="w-full flex items-center justify-between px-4 py-2.5 text-sm font-medium hover:bg-muted/50 transition-colors"
+                    onClick={() => setWfStateOpen((v) => !v)}
+                    data-testid="button-toggle-workflow-state"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Layers className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                      <span>Workflow State</span>
+                      {workflowState.stateVersion > 0 && (
+                        <Badge variant="outline" className="text-[10px] text-purple-600 border-purple-300">
+                          v{workflowState.stateVersion}
+                        </Badge>
+                      )}
+                      {workflowState.activeInterruptId && (
+                        <Badge className="text-[10px] bg-amber-100 text-amber-700 border-amber-300">
+                          gate open
+                        </Badge>
+                      )}
+                    </div>
+                    <ChevronDown className={`w-4 h-4 text-muted-foreground transition-transform ${wfStateOpen ? "rotate-180" : ""}`} />
+                  </button>
+                  {wfStateOpen && (
+                    <div className="border-t">
+                      <Tabs defaultValue="current" className="w-full">
+                        <TabsList className="w-full rounded-none border-b bg-transparent h-9 p-0">
+                          <TabsTrigger value="current" className="rounded-none text-xs h-9 flex-1" data-testid="tab-wf-current">
+                            Current
+                          </TabsTrigger>
+                          <TabsTrigger value="history" className="rounded-none text-xs h-9 flex-1" data-testid="tab-wf-history">
+                            History ({workflowState.history.length})
+                          </TabsTrigger>
+                          <TabsTrigger value="interrupts" className="rounded-none text-xs h-9 flex-1" data-testid="tab-wf-interrupts">
+                            Interrupts ({workflowState.interrupts.length})
+                          </TabsTrigger>
+                        </TabsList>
+                        <TabsContent value="current" className="p-3 m-0">
+                          {Object.keys(workflowState.currentState).length === 0 ? (
+                            <p className="text-xs text-muted-foreground text-center py-4">No workflow state yet</p>
+                          ) : (
+                            <ScrollArea className="max-h-48">
+                              <pre className="text-xs font-mono whitespace-pre-wrap bg-muted/30 rounded p-3" data-testid="text-wf-current-state">
+                                {JSON.stringify(workflowState.currentState, null, 2)}
+                              </pre>
+                            </ScrollArea>
+                          )}
+                        </TabsContent>
+                        <TabsContent value="history" className="p-3 m-0">
+                          {workflowState.history.length === 0 ? (
+                            <p className="text-xs text-muted-foreground text-center py-4">No checkpoints yet</p>
+                          ) : (
+                            <ScrollArea className="max-h-64">
+                              <div className="space-y-2">
+                                {workflowState.history.map((cp) => (
+                                  <div key={cp.id} className="border rounded p-2 text-xs" data-testid={`checkpoint-${cp.id}`}>
+                                    <div className="flex items-center justify-between mb-1">
+                                      <div className="flex items-center gap-1.5">
+                                        <Badge variant="outline" className="text-[10px]">#{cp.checkpointNumber}</Badge>
+                                        <span className="font-medium capitalize">{cp.trigger.replace(/_/g, " ")}</span>
+                                        {cp.triggerStageId && (
+                                          <span className="text-muted-foreground">
+                                            — {stages.find((s) => s.id === cp.triggerStageId)?.label || cp.triggerStageId.substring(0, 8)}
+                                          </span>
+                                        )}
+                                      </div>
+                                      {cp.createdAt && (
+                                        <span className="text-muted-foreground text-[10px]">
+                                          {new Date(cp.createdAt).toLocaleTimeString()}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="font-mono text-[10px] text-muted-foreground truncate">
+                                      sha: {cp.stateHash.substring(0, 16)}…
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </ScrollArea>
+                          )}
+                        </TabsContent>
+                        <TabsContent value="interrupts" className="p-3 m-0">
+                          {workflowState.interrupts.length === 0 ? (
+                            <p className="text-xs text-muted-foreground text-center py-4">No interrupt gates recorded</p>
+                          ) : (
+                            <ScrollArea className="max-h-64">
+                              <div className="space-y-2">
+                                {workflowState.interrupts.map((intr) => (
+                                  <div key={intr.id} className="border rounded p-2 text-xs" data-testid={`interrupt-${intr.id}`}>
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-1.5">
+                                        <ShieldCheck className="w-3 h-3 text-amber-600" />
+                                        <span className="font-medium">
+                                          {(intr.interruptPayload as any)?.gateName || "Approval Gate"}
+                                        </span>
+                                        <Badge
+                                          variant="outline"
+                                          className={`text-[10px] ${intr.interruptResponded ? "text-green-600 border-green-300" : "text-amber-600 border-amber-300"}`}
+                                        >
+                                          {intr.interruptResponded ? (intr.interruptResponse as any)?.decision || "responded" : "open"}
+                                        </Badge>
+                                      </div>
+                                      {intr.createdAt && (
+                                        <span className="text-muted-foreground text-[10px]">
+                                          {new Date(intr.createdAt).toLocaleTimeString()}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {intr.interruptPayload && (
+                                      <div className="mt-1 text-muted-foreground truncate text-[10px]">
+                                        {(intr.interruptPayload as any)?.context || ""}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </ScrollArea>
+                          )}
+                        </TabsContent>
+                      </Tabs>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
             <div className="space-y-4">

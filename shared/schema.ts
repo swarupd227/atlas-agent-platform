@@ -1970,6 +1970,8 @@ export const agentPipelines = pgTable("agent_pipelines", {
   stages: jsonb("stages").notNull().default(sql`'[]'::jsonb`),
   connections: jsonb("connections").notNull().default(sql`'[]'::jsonb`),
   triggerConfig: jsonb("trigger_config"),
+  stateSchemaId: varchar("state_schema_id"),
+  stateEnabled: boolean("state_enabled").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1986,12 +1988,53 @@ export const pipelineRuns = pgTable("pipeline_runs", {
   currentStageId: varchar("current_stage_id"),
   startedAt: timestamp("started_at"),
   completedAt: timestamp("completed_at"),
+  stateSchemaId: varchar("state_schema_id"),
+  currentState: jsonb("current_state").default(sql`'{}'::jsonb`),
+  activeInterruptId: varchar("active_interrupt_id"),
+  stateVersion: integer("state_version").notNull().default(0),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
 export const insertPipelineRunSchema = createInsertSchema(pipelineRuns).omit({ id: true, createdAt: true });
 export type InsertPipelineRun = z.infer<typeof insertPipelineRunSchema>;
 export type PipelineRun = typeof pipelineRuns.$inferSelect;
+
+export const workflowStateSchemas = pgTable("workflow_state_schemas", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  pipelineId: varchar("pipeline_id").notNull(),
+  schemaVersion: integer("schema_version").notNull().default(1),
+  fields: jsonb("fields").notNull().default(sql`'{}'::jsonb`),
+  reducers: jsonb("reducers").notNull().default(sql`'{}'::jsonb`),
+  initialValues: jsonb("initial_values").notNull().default(sql`'{}'::jsonb`),
+  sanitization: jsonb("sanitization").default(sql`'{}'::jsonb`),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertWorkflowStateSchemaSchema = createInsertSchema(workflowStateSchemas).omit({ id: true, createdAt: true });
+export type InsertWorkflowStateSchema = z.infer<typeof insertWorkflowStateSchemaSchema>;
+export type WorkflowStateSchema = typeof workflowStateSchemas.$inferSelect;
+
+export const workflowStateCheckpoints = pgTable("workflow_state_checkpoints", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  pipelineRunId: varchar("pipeline_run_id").notNull(),
+  checkpointNumber: integer("checkpoint_number").notNull(),
+  trigger: varchar("trigger").notNull(),
+  triggerStageId: varchar("trigger_stage_id"),
+  triggerNodeId: varchar("trigger_node_id"),
+  stateJson: jsonb("state_json").notNull(),
+  stateHash: varchar("state_hash").notNull(),
+  interruptId: varchar("interrupt_id"),
+  interruptPayload: jsonb("interrupt_payload"),
+  interruptNode: varchar("interrupt_node"),
+  interruptResponded: boolean("interrupt_responded").notNull().default(false),
+  interruptResponse: jsonb("interrupt_response"),
+  createdAt: timestamp("created_at").defaultNow(),
+  createdBy: varchar("created_by"),
+});
+
+export const insertWorkflowStateCheckpointSchema = createInsertSchema(workflowStateCheckpoints).omit({ id: true, createdAt: true });
+export type InsertWorkflowStateCheckpoint = z.infer<typeof insertWorkflowStateCheckpointSchema>;
+export type WorkflowStateCheckpoint = typeof workflowStateCheckpoints.$inferSelect;
 
 export const mcpParameterMatches = pgTable("mcp_parameter_matches", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
