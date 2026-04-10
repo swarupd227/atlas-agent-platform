@@ -1,0 +1,120 @@
+Frontend Changes
+5.1 Workflow State Schema Editor
+New page/tab accessible from Pipeline detail or Blueprint Studio.
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Workflow State Schema — MCG Proposal Pipeline                                │
+│                                                                              │
+│ [Fields (22)]  [Sub-Schemas (6)]  [Reducers]  [Sanitization]  [Initial Val] │
+│                                                                              │
+│ ┌─────────────────────┬──────────┬──────────┬──────────────────┬──────────┐  │
+│ │ Field               │ Type     │ Reducer  │ Writable By       │ Options  │  │
+│ ├─────────────────────┼──────────┼──────────┼──────────────────┼──────────┤  │
+│ │ workflow_id          │ string   │ last_wins│ *                 │ required │  │
+│ │ status               │ string   │ last_wins│ *                 │ req,enum │  │
+│ │ opportunity          │ object ↗ │ last_wins│ prepare_opportunity│ ref:Opp  │  │
+│ │ discovery_summary    │ object ↗ │ last_wins│ extract,patch,rev │ ref:Disc │  │
+│ │ proposal_draft       │ object ↗ │ last_wins│ generate_proposal │ ref:Prop │  │
+│ │ audit_log            │ array  ⊕ │ append   │ * (all)           │ ref:Audit│  │
+│ │ approvals            │ array  ⊕ │ append   │ * (all)           │ ref:Appr │  │
+│ │ errors               │ array  ⊕ │ append   │ * (all)           │          │  │
+│ │ pii_masking_reports  │ array    │ last_wins│ mask_pii          │ sanitize │  │
+│ │ masked_artifact_texts│ array    │ last_wins│ mask_pii          │ ephemeral│  │
+│ └─────────────────────┴──────────┴──────────┴──────────────────┴──────────┘  │
+│                                                                              │
+│ ↗ = click to view sub-schema    ⊕ = append reducer (parallel-safe)           │
+│                                                                              │
+│ [+ Add Field]    [Import from TypedDict]    [Validate Schema]                │
+└──────────────────────────────────────────────────────────────────────────────┘
+
+5.2 State Inspector Panel
+New component in Pipeline Run Detail — shows live state during execution or historical state at checkpoints.
+┌──────────────────────────────────────────────────────────────────┐
+│ Workflow State Inspector    Run: wf-a1b2c3d4    Checkpoint: 7/12 │
+│                                                                  │
+│ ◄ ── ── ── ── ── ── ── ── ── ── ── ── ── ► Timeline             │
+│ 1  2  3  4  5  6  [7]  8  9  10  11  12                         │
+│ ●  ●  ●  ▲  ●  ●  [▲]  ○  ○   ○   ○   ○                       │
+│ s  s  s  i  r  s   i   (pending)                                 │
+│                                                                  │
+│ s = stage_complete  ▲ = interrupt  r = resume  ○ = future        │
+│                                                                  │
+│ ┌─ State at Checkpoint 7 ──────────────────────────────────────┐ │
+│ │                                                               │ │
+│ │ status: "paused"               ▼ current_step: "pricing"     │ │
+│ │                                                               │ │
+│ │ ▶ opportunity          { OpportunitySnapshot }     [Expand]   │ │
+│ │ ▶ discovery_summary    { DiscoverySummary }        [Expand]   │ │
+│ │ ▶ pricing_summary      { PricingSummary }          [Expand]   │ │
+│ │ ○ proposal_draft       (not yet populated)                    │ │
+│ │                                                               │ │
+│ │ ▶ audit_log            [ 14 events ]               [Expand]   │ │
+│ │ ▶ approvals            [ 3 records ]               [Expand]   │ │
+│ │ ▶ errors               [ 0 ]                                  │ │
+│ │                                                               │ │
+│ │ Fields: 15/22 populated  │  Hash: a3f2e1...  │  Size: 48KB    │ │
+│ └───────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│ [Diff with Previous]  [Diff with Checkpoint #N]  [Export JSON]   │
+└──────────────────────────────────────────────────────────────────┘
+
+5.3 Enhanced Approval Gate UI
+When an approval gate fires with state context, the UI renders a structured review screen instead of a simple approve/reject form:
+┌──────────────────────────────────────────────────────────────────┐
+│ Review: AI Discovery Summary                    Interrupt #5     │
+│                                                                  │
+│ ┌─ Context ────────────────────────────────────────────────────┐ │
+│ │ discovery_summary:                                            │ │
+│ │   client_goals: "Automate claims processing..."               │ │
+│ │   business_problem: "Manual review takes 4-6 hours..."        │ │
+│ │   confidence_score: 0.82                                      │ │
+│ │   field_confidence: { client_goals: "high", ... }             │ │
+│ │   additional_insights: [ 5 insights ]             [Expand]    │ │
+│ └───────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│ Decision:                                                        │
+│                                                                  │
+│  [✅ Approve]   [🔄 Regenerate]   [✏️ Patch Fields]              │
+│                                                                  │
+│  ┌─ If Patch Fields ────────────────────────────────────────────┐│
+│  │ Select fields to patch:                                       ││
+│  │ ☐ client_goals  ☑ business_problem  ☐ solution_scope          ││
+│  │ ☐ risks         ☐ timeline          ☑ open_questions          ││
+│  │                                                               ││
+│  │ Feedback: ________________________________________________    ││
+│  │ |Please focus on the security concerns mentioned at 14:30|    ││
+│  └───────────────────────────────────────────────────────────────┘│
+│                                                                  │
+│                                              [Submit Decision]   │
+└──────────────────────────────────────────────────────────────────┘
+
+5.4 Checkpoint Timeline in Agent Cockpit
+Extend: Agent Cockpit Timeline Tab to show state checkpoints with diff visualization:
+┌──────────────────────────────────────────────────────────────────┐
+│ Timeline — MCG Proposal Pipeline Run wf-a1b2c3d4                 │
+│                                                                  │
+│  10:30 ● Checkpoint 1 [stage_complete: prepare_opportunity]      │
+│         + opportunity: { customer: "NorthStar Biologics" ... }   │
+│         + crm_context_summary: { profile: "Enterprise..." }      │
+│                                                                  │
+│  10:31 ▲ Checkpoint 2 [interrupt: review_crm_context]            │
+│         → Waiting for seller review                              │
+│                                                                  │
+│  10:45 ● Checkpoint 3 [resume: review_crm_context]               │
+│         Actor: jane.doe@mcg.com                                  │
+│         Decision: approve                                        │
+│                                                                  │
+│  10:45 ● Checkpoint 4 [stage_complete: document_processing]      │
+│         + discovery_summary: { confidence: 0.87, ... }           │
+│         + pii_masking_reports: [ 3 reports ]                     │
+│         + audit_log: [ +4 events ]                               │
+│                                                                  │
+│  10:46 ▲ Checkpoint 5 [interrupt: review_discovery]              │
+│         → Waiting for discovery approval                         │
+│         Decision: patch_fields [business_problem, timeline]      │
+│                                                                  │
+│  10:52 ● Checkpoint 6 [resume + stage_complete: patch_discovery] │
+│         Δ discovery_summary.business_problem: "..." → "..."      │
+│         Δ discovery_summary.timeline: "..." → "..."              │
+│                                                                  │
+│  [Show Diff]  [Compare Checkpoints]  [Restore to Checkpoint]    │
+└──────────────────────────────────────────────────────────────────┘
