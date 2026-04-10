@@ -62,6 +62,8 @@ import {
   Pencil,
   Save,
   ShieldAlert,
+  RefreshCcw,
+  FileEdit,
 } from "lucide-react";
 
 interface PipelineStage {
@@ -334,13 +336,17 @@ function InterruptRow({ intr, stages }: {
         <div className="flex items-center gap-1.5">
           <ShieldCheck className="w-3 h-3 text-amber-600" />
           <span className="font-medium">
-            {(intr.interruptPayload as any)?.gateName || "Approval Gate"}
+            {(intr.interruptPayload as { gateName?: string } | null)?.gateName || "Approval Gate"}
           </span>
           <Badge
             variant="outline"
             className={`text-[10px] ${intr.interruptResponded ? "text-green-600 border-green-300" : "text-amber-600 border-amber-300"}`}
           >
-            {intr.interruptResponded ? (intr.interruptResponse as any)?.decision || "responded" : "open"}
+            {intr.interruptResponded
+              ? (intr.interruptResponse as { _gate_decision?: string; decision?: string } | null)?._gate_decision
+                || (intr.interruptResponse as { _gate_decision?: string; decision?: string } | null)?.decision
+                || "responded"
+              : "open"}
           </Badge>
         </div>
         <div className="flex items-center gap-2">
@@ -356,9 +362,14 @@ function InterruptRow({ intr, stages }: {
           </button>
         </div>
       </div>
-      {(intr.interruptPayload as any)?.context && (
+      {(intr.interruptPayload as { context?: string } | null)?.context && (
         <div className="mt-0.5 text-muted-foreground text-[10px] truncate">
-          {(intr.interruptPayload as any).context}
+          {(intr.interruptPayload as { context?: string }).context}
+        </div>
+      )}
+      {intr.interruptResponded && (intr.interruptResponse as { _gate_notes?: string } | null)?._gate_notes && (
+        <div className="mt-0.5 text-[10px] text-muted-foreground italic truncate" data-testid={`text-gate-notes-${intr.id}`}>
+          Notes: {(intr.interruptResponse as { _gate_notes?: string })._gate_notes}
         </div>
       )}
       {expanded && (
@@ -374,6 +385,14 @@ function InterruptRow({ intr, stages }: {
           {intr.interruptResponded && intr.interruptResponse && (
             <div className="bg-muted/30 rounded p-2">
               <div className="text-[10px] font-medium text-muted-foreground mb-1">Response</div>
+              {(intr.interruptResponse as { _gate_decision?: string } | null)?._gate_decision && (
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[10px] text-muted-foreground">Decision:</span>
+                  <Badge variant="outline" className="text-[10px] text-green-600 border-green-300" data-testid={`badge-gate-decision-${intr.id}`}>
+                    {(intr.interruptResponse as { _gate_decision: string })._gate_decision}
+                  </Badge>
+                </div>
+              )}
               <pre className="text-[10px] font-mono whitespace-pre-wrap" data-testid={`text-interrupt-response-${intr.id}`}>
                 {JSON.stringify(intr.interruptResponse, null, 2)}
               </pre>
@@ -442,6 +461,11 @@ export default function Pipelines() {
   const [schemaSort, setSchemaSort] = useState<{ col: "name" | "type" | "reducer" | "writableBy"; dir: "asc" | "desc" } | null>(null);
   const emptyFieldForm = { name: "", type: "string", reducer: "last_wins", writableBy: "*", ephemeral: false, sanitize: false, required: false };
   const [fieldForm, setFieldForm] = useState(emptyFieldForm);
+
+  const [approvalDecision, setApprovalDecision] = useState<"approve" | "regenerate" | "patch">("approve");
+  const [approvalNotes, setApprovalNotes] = useState("");
+  const [approvalPatchKeys, setApprovalPatchKeys] = useState<Set<string>>(new Set());
+  const [approvalSnapshotExpanded, setApprovalSnapshotExpanded] = useState<Record<string, boolean>>({});
 
   const { data: pipelines = [], isLoading } = useQuery<AgentPipeline[]>({
     queryKey: ["/api/pipelines"],
@@ -755,17 +779,45 @@ export default function Pipelines() {
     onError: (e: any) => toast({ title: "Simulation failed", description: e.message, variant: "destructive" }),
   });
 
+  interface ApprovePayload {
+    runId: string;
+    decision: "approved" | "regenerate" | "patch";
+    notes?: string;
+    stateUpdates?: Record<string, unknown> | null;
+  }
+
   const approveMutation = useMutation({
-    mutationFn: async (runId: string) => {
-      const res = await apiRequest("POST", `/api/pipeline-runs/${runId}/approve`, { approvedBy: "admin" });
+    mutationFn: async ({ runId, decision, notes, stateUpdates }: ApprovePayload) => {
+      const body: Record<string, unknown> = { approvedBy: "admin", decision };
+      if (notes) body.notes = notes;
+      if (stateUpdates) body.stateUpdates = stateUpdates;
+      const res = await apiRequest("POST", `/api/pipeline-runs/${runId}/approve`, body);
       return res.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/pipelines", selectedPipelineId, "runs"] });
-      toast({ title: "Stage approved" });
+      setApprovalDecision("approve");
+      setApprovalNotes("");
+      setApprovalPatchKeys(new Set());
+      toast({ title: "Decision submitted" });
     },
-    onError: (e: any) => toast({ title: "Approval failed", description: e.message, variant: "destructive" }),
+    onError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : "An unknown error occurred.";
+      toast({ title: "Approval failed", description: message, variant: "destructive" });
+    },
   });
+
+  function handleSubmitDecision(runId: string, snapshot: Record<string, unknown> | null) {
+    const decision: "approved" | "regenerate" | "patch" =
+      approvalDecision === "approve" ? "approved" : approvalDecision === "regenerate" ? "regenerate" : "patch";
+    const stateUpdates =
+      approvalDecision === "patch" && snapshot
+        ? Object.fromEntries(
+            [...approvalPatchKeys].filter((k) => k in snapshot).map((k) => [k, snapshot[k]])
+          )
+        : null;
+    approveMutation.mutate({ runId, decision, notes: approvalNotes.trim() || undefined, stateUpdates });
+  }
 
   const rejectMutation = useMutation({
     mutationFn: async (runId: string) => {
@@ -1842,30 +1894,157 @@ export default function Pipelines() {
                                     Simulate
                                   </Button>
                                 )}
-                                {isCurrent && status === "awaiting_approval" && (
-                                  <div className="flex items-center gap-1">
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() => approveMutation.mutate(activeRun.id)}
-                                      disabled={approveMutation.isPending}
-                                      data-testid={`button-approve-${stage.id}`}
-                                    >
-                                      <CheckCircle className="w-4 h-4 mr-1" />
-                                      Approve
-                                    </Button>
-                                    <Button
-                                      variant="outline"
-                                      size="sm"
-                                      onClick={() => rejectMutation.mutate(activeRun.id)}
-                                      disabled={rejectMutation.isPending}
-                                      data-testid={`button-reject-${stage.id}`}
-                                    >
-                                      <XCircle className="w-4 h-4 mr-1" />
-                                      Reject
-                                    </Button>
-                                  </div>
-                                )}
+                                {isCurrent && status === "awaiting_approval" && (() => {
+                                  const activeInterrupt = workflowState?.interrupts.find((i) => !i.interruptResponded);
+                                  const snapshot: Record<string, unknown> | null =
+                                    (activeInterrupt?.interruptPayload?.stateSnapshot as Record<string, unknown>) || null;
+                                  const snapshotKeys = snapshot ? Object.keys(snapshot) : [];
+                                  const gateName: string =
+                                    (activeInterrupt?.interruptPayload?.gateName as string) || stage.label;
+                                  const stageOutput: string =
+                                    (activeInterrupt?.interruptPayload?.stageOutput as string) || "";
+                                  return (
+                                    <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-700/40 p-3 space-y-3" data-testid={`approval-panel-${stage.id}`}>
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2">
+                                          <ShieldCheck className="w-4 h-4 text-amber-600" />
+                                          <span className="text-sm font-medium">{gateName}</span>
+                                        </div>
+                                        <Badge variant="outline" className="text-[10px] text-amber-600 border-amber-300">
+                                          awaiting approval
+                                        </Badge>
+                                      </div>
+
+                                      {stageOutput && (
+                                        <div className="text-xs text-muted-foreground italic">{stageOutput.substring(0, 200)}{stageOutput.length > 200 ? "…" : ""}</div>
+                                      )}
+
+                                      {snapshot && snapshotKeys.length > 0 && (
+                                        <div className="space-y-1">
+                                          <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">State Snapshot</div>
+                                          <div className="bg-background/60 rounded border text-xs divide-y" data-testid={`snapshot-table-${stage.id}`}>
+                                            {snapshotKeys.map((key) => {
+                                              const val = snapshot[key];
+                                              const isObj = val !== null && typeof val === "object";
+                                              const isExpanded = !!approvalSnapshotExpanded[key];
+                                              return (
+                                                <div key={key} className="px-2 py-1">
+                                                  <div className="flex items-center justify-between gap-2">
+                                                    <span className="font-mono text-[11px] text-muted-foreground shrink-0">{key}</span>
+                                                    {isObj ? (
+                                                      <button
+                                                        className="flex items-center gap-1 text-[11px] text-blue-600 hover:text-blue-800"
+                                                        onClick={() => setApprovalSnapshotExpanded((s) => ({ ...s, [key]: !s[key] }))}
+                                                        data-testid={`toggle-snapshot-${key}`}
+                                                      >
+                                                        {isExpanded ? "collapse" : "expand"}
+                                                        <ChevronDown className={`w-3 h-3 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                                                      </button>
+                                                    ) : (
+                                                      <span className="font-mono text-[11px] truncate max-w-[180px]" title={String(val)}>
+                                                        {val === null ? <span className="text-muted-foreground italic">null</span> : String(val)}
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                  {isObj && isExpanded && (
+                                                    <pre className="mt-1 text-[10px] font-mono whitespace-pre-wrap text-muted-foreground bg-muted/30 rounded p-1 overflow-x-auto">
+                                                      {JSON.stringify(val, null, 2)}
+                                                    </pre>
+                                                  )}
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      <div className="space-y-2">
+                                        <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide">Decision</div>
+                                        <div className="flex items-center gap-1 rounded-md border bg-background/60 p-1 w-fit">
+                                          <button
+                                            className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${approvalDecision === "approve" ? "bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400" : "text-muted-foreground hover:text-foreground"}`}
+                                            onClick={() => setApprovalDecision("approve")}
+                                            data-testid={`decision-approve-${stage.id}`}
+                                          >
+                                            <CheckCircle className="w-3.5 h-3.5" /> Approve
+                                          </button>
+                                          <button
+                                            className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${approvalDecision === "regenerate" ? "bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-400" : "text-muted-foreground hover:text-foreground"}`}
+                                            onClick={() => setApprovalDecision("regenerate")}
+                                            data-testid={`decision-regenerate-${stage.id}`}
+                                          >
+                                            <RefreshCcw className="w-3.5 h-3.5" /> Regenerate
+                                          </button>
+                                          <button
+                                            className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${approvalDecision === "patch" ? "bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-400" : "text-muted-foreground hover:text-foreground"}`}
+                                            onClick={() => setApprovalDecision("patch")}
+                                            data-testid={`decision-patch-${stage.id}`}
+                                          >
+                                            <FileEdit className="w-3.5 h-3.5" /> Patch Fields
+                                          </button>
+                                        </div>
+                                      </div>
+
+                                      {approvalDecision === "patch" && snapshotKeys.length > 0 && (
+                                        <div className="space-y-1">
+                                          <div className="text-[11px] font-medium text-muted-foreground">Fields to patch (mark for regeneration)</div>
+                                          <div className="space-y-1 rounded border bg-background/60 p-2" data-testid={`patch-key-list-${stage.id}`}>
+                                            {snapshotKeys.map((key) => (
+                                              <label key={key} className="flex items-center gap-2 text-xs cursor-pointer" data-testid={`patch-key-${key}`}>
+                                                <input
+                                                  type="checkbox"
+                                                  checked={approvalPatchKeys.has(key)}
+                                                  onChange={(e) => {
+                                                    setApprovalPatchKeys((prev) => {
+                                                      const next = new Set(prev);
+                                                      if (e.target.checked) next.add(key);
+                                                      else next.delete(key);
+                                                      return next;
+                                                    });
+                                                  }}
+                                                />
+                                                <span className="font-mono">{key}</span>
+                                              </label>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      <div className="space-y-1">
+                                        <div className="text-[11px] font-medium text-muted-foreground">Notes / Feedback (optional)</div>
+                                        <Textarea
+                                          placeholder="Add context for this decision…"
+                                          value={approvalNotes}
+                                          onChange={(e) => setApprovalNotes(e.target.value)}
+                                          className="text-xs min-h-[60px]"
+                                          data-testid={`input-approval-notes-${stage.id}`}
+                                        />
+                                      </div>
+
+                                      <div className="flex items-center justify-between">
+                                        <Button
+                                          size="sm"
+                                          onClick={() => handleSubmitDecision(activeRun.id, snapshot)}
+                                          disabled={approveMutation.isPending || (approvalDecision === "patch" && approvalPatchKeys.size === 0)}
+                                          className={approvalDecision === "approve" ? "bg-green-600 hover:bg-green-700 text-white" : approvalDecision === "regenerate" ? "bg-blue-600 hover:bg-blue-700 text-white" : "bg-purple-600 hover:bg-purple-700 text-white"}
+                                          data-testid={`button-submit-decision-${stage.id}`}
+                                        >
+                                          {approveMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : null}
+                                          Submit Decision
+                                        </Button>
+                                        <button
+                                          className="text-xs text-muted-foreground hover:text-destructive flex items-center gap-1 transition-colors"
+                                          onClick={() => rejectMutation.mutate(activeRun.id)}
+                                          disabled={rejectMutation.isPending}
+                                          data-testid={`button-reject-${stage.id}`}
+                                        >
+                                          <XCircle className="w-3 h-3" />
+                                          {rejectMutation.isPending ? "Rejecting…" : "Reject pipeline"}
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
                               </div>
                             </div>
 
