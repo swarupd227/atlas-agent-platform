@@ -103,6 +103,8 @@ export async function runStartupMigrations() {
       );
       CREATE INDEX IF NOT EXISTS idx_aar_agent_state_reports_agent_id ON aar_agent_state_reports(agent_id);
 
+      ALTER TABLE run_traces ADD COLUMN IF NOT EXISTS soft_policy_violations JSONB;
+
       CREATE TABLE IF NOT EXISTS workflow_state_schemas (
         id              VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         pipeline_id     VARCHAR NOT NULL REFERENCES agent_pipelines(id) ON DELETE CASCADE,
