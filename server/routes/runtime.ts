@@ -3782,6 +3782,12 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
       let aiResult: Awaited<ReturnType<typeof generateAgentCodeWithAI>> = null;
 
       emit("progress", { phase: "ai", message: `Starting AI-assisted code generation (30–60s)...`, detail: `Framework: ${framework} · Language: ${format} · Provider: ${llmProvider}` });
+      // Heartbeat: emit a keepalive comment every 20s during AI generation to prevent proxy timeouts
+      let heartbeatCount = 0;
+      const heartbeatInterval = setInterval(() => {
+        heartbeatCount++;
+        res.write(`: keepalive ${heartbeatCount}\n\n`);
+      }, 20000);
       try {
         const blockedToolsFromPolicies = linkedPolicies.flatMap(p => {
           const rules = (p.policyJson || {}) as Record<string, unknown>;
@@ -3804,7 +3810,9 @@ Return valid JSON only. No markdown. No code fences. Ensure JSON is complete and
           policyForbiddenOutputs: [...policyForbiddenOutputs, ...yamlExtras.forbiddenOutputs],
           policyBlockedTools: blockedToolsFromPolicies,
         });
-      } catch { /* swallow — templates handle fallback */ }
+      } catch { /* swallow — templates handle fallback */ } finally {
+        clearInterval(heartbeatInterval);
+      }
 
       if (aiResult) {
         const aiToolCount = Object.keys(aiResult.toolAdapters || {}).length;
@@ -5280,6 +5288,7 @@ clean:
       async function buildAgentFiles(
         agentRec: typeof orchestrator,
         dirPrefix: string,
+        { skipAI = false }: { skipAI?: boolean } = {},
       ): Promise<void> {
         const bp = (agentRec.blueprintJson && typeof agentRec.blueprintJson === "object") ? agentRec.blueprintJson as Record<string, unknown> : {};
         const systemPrompt = (agentRec.systemPrompt as string | null | undefined)
@@ -5321,23 +5330,26 @@ clean:
 
         files[`${dirPrefix}/agent.yaml`] = generateAgentYaml(agentRec, tools, systemPrompt, agentRec.maxToolIterations || maxIterations, completionPromise, yamlExtras);
 
-        // Try AI-enhanced generation (swallow errors)
+        // Try AI-enhanced generation (only when not skipped — bundle exports skip AI to avoid
+        // sequential long-running AI calls that can hit token limits and SSE proxy timeouts)
         let aiResult: Awaited<ReturnType<typeof generateAgentCodeWithAI>> = null;
-        try {
-          aiResult = await generateAgentCodeWithAI({
-            agentName: agentRec.name,
-            agentDescription: agentRec.description || "",
-            systemPrompt,
-            tools,
-            format,
-            llmProvider,
-            maxIterations: agentRec.maxToolIterations || maxIterations,
-            completionPromise,
-            framework: "generic",
-            blueprintJson: bp,
-            mcpServers: mcpServerDetails,
-          });
-        } catch { /* AI unavailable, fall through to deterministic templates */ }
+        if (!skipAI) {
+          try {
+            aiResult = await generateAgentCodeWithAI({
+              agentName: agentRec.name,
+              agentDescription: agentRec.description || "",
+              systemPrompt,
+              tools,
+              format,
+              llmProvider,
+              maxIterations: agentRec.maxToolIterations || maxIterations,
+              completionPromise,
+              framework: "generic",
+              blueprintJson: bp,
+              mcpServers: mcpServerDetails,
+            });
+          } catch { /* AI unavailable, fall through to deterministic templates */ }
+        }
 
         const entrypointPath = format === "typescript" ? `${dirPrefix}/src/runtime/orchestrator.ts` : `${dirPrefix}/src/runtime/orchestrator.py`;
         if (aiResult?.entrypoint && aiResult.entrypoint.length > 200) {
@@ -5393,10 +5405,12 @@ clean:
       }
 
       // Generate files for orchestrator and each member
+      // skipAI=true: bundle exports use deterministic templates only — sequential AI calls per
+      // agent are too slow (2-4 min each) and hit token limits, causing SSE proxy timeouts.
       for (let si = 0; si < allSlots.length; si++) {
         const slot = allSlots[si];
         emit("progress", { phase: "agent", message: `Generating files for ${slot.agent.name} (${slot.role})`, detail: `${si + 1} / ${allSlots.length}` });
-        await buildAgentFiles(slot.agent, slot.prefix);
+        await buildAgentFiles(slot.agent, slot.prefix, { skipAI: true });
         emit("progress", { phase: "agent", message: `✓ ${slot.agent.name} — done`, detail: `${Object.keys(files).length} file(s) so far` });
       }
 
