@@ -13621,42 +13621,74 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       }
 
       if (isNonLinearRouting) {
-        // Auto-advance deterministically: complete non-gate stages and re-fire the interrupt
-        // at the first approval_gate encountered, implementing the full loop-back cycle.
-        let advIdx = targetNextIdx;
-        while (advIdx < stages.length) {
-          const advStage = stages[advIdx] as Record<string, unknown>;
-          if (advStage.stageType === "approval_gate") {
-            const gatePayload = await routeToGate(advStage, advIdx);
-            const updated = await storage.updatePipelineRun(
-              req.params.id, gatePayload as any,
-              stateDidChange ? { atomicIncrementStateVersion: true } : undefined,
-            );
-            return res.json({
-              run: updated, routingOutcome: resumeResult.routingOutcome,
-              targetStageId: advStage.id, refiredGate: true,
-            });
-          }
-          // Non-gate: auto-complete (deterministic — no AI call during loop-back cycle)
-          stageResults[advIdx].status = "completed";
-          stageResults[advIdx].completedAt = new Date().toISOString();
-          stageResults[advIdx].startedAt = stageResults[advIdx].startedAt || new Date().toISOString();
-          if (!stageResults[advIdx].output) {
-            stageResults[advIdx].output = `[Auto-executed in loop-back cycle — action: ${action}]`;
-          }
-          advIdx++;
+        const targetStage = stages[targetNextIdx] as Record<string, unknown> | undefined;
+        if (!targetStage) {
+          // Target index out of bounds — complete the pipeline
+          const donePayload: Record<string, any> = {
+            stageResults, currentStageId: null, status: "completed",
+            completedAt: new Date(), activeInterruptId: null,
+          };
+          if (stateEnabled) donePayload.currentState = currentStateObj;
+          const updated = await storage.updatePipelineRun(
+            req.params.id, donePayload as any,
+            stateDidChange ? { atomicIncrementStateVersion: true } : undefined,
+          );
+          return res.json({ run: updated, routingOutcome: resumeResult.routingOutcome, targetStageId: null });
         }
-        // All stages consumed after loop-back — pipeline complete
-        const loopDonePayload: Record<string, any> = {
-          stageResults, currentStageId: null, status: "completed",
-          completedAt: new Date(), activeInterruptId: null,
+
+        if (targetStage.stageType === "approval_gate") {
+          // Target is a gate: re-fire interrupt immediately
+          const gatePayload = await routeToGate(targetStage, targetNextIdx);
+          const updated = await storage.updatePipelineRun(
+            req.params.id, gatePayload as any,
+            stateDidChange ? { atomicIncrementStateVersion: true } : undefined,
+          );
+          return res.json({
+            run: updated, routingOutcome: resumeResult.routingOutcome,
+            targetStageId: targetStage.id, refiredGate: true,
+          });
+        }
+
+        // Target is a non-gate stage: route run to "running" at that stage and
+        // return. The external advance mechanism (agent/orchestrator calling POST
+        // /advance when the stage completes) will then move the run forward through
+        // subsequent stages naturally, preserving real execution semantics.
+        stageResults[targetNextIdx].status = "running";
+        stageResults[targetNextIdx].startedAt = new Date().toISOString();
+        // Reset all stages after targetNextIdx that were previously marked so they
+        // are re-evaluated by the advance path (clear stale completed/approved status).
+        for (let i = targetNextIdx + 1; i < stageResults.length; i++) {
+          if (stageResults[i].status === "completed" || stageResults[i].status === "approved") {
+            stageResults[i] = { ...stageResults[i], status: "pending", completedAt: undefined, approvedBy: undefined };
+          }
+        }
+        const loopPayload: Record<string, any> = {
+          stageResults, currentStageId: targetStage.id, status: "running", activeInterruptId: null,
         };
-        if (stateEnabled) loopDonePayload.currentState = currentStateObj;
+        if (stateEnabled) loopPayload.currentState = currentStateObj;
         const updated = await storage.updatePipelineRun(
-          req.params.id, loopDonePayload as any,
+          req.params.id, loopPayload as any,
           stateDidChange ? { atomicIncrementStateVersion: true } : undefined,
         );
-        return res.json({ run: updated, routingOutcome: resumeResult.routingOutcome, targetStageId: null });
+        return res.json({
+          run: updated, routingOutcome: resumeResult.routingOutcome,
+          targetStageId: targetStage.id, refiredGate: false,
+        });
+      }
+
+      // Loop-capped: max loop iterations reached — terminate run with failed status
+      if (resumeResult.routingOutcome === "loop_capped") {
+        const cappedPayload: Record<string, any> = {
+          stageResults, currentStageId: run.currentStageId, status: "failed",
+          completedAt: new Date(), activeInterruptId: null,
+          failureReason: `Loop cap reached (${(run as any).currentStageId}): max iterations exceeded`,
+        };
+        if (stateEnabled) cappedPayload.currentState = currentStateObj;
+        const updated = await storage.updatePipelineRun(
+          req.params.id, cappedPayload as any,
+          stateDidChange ? { atomicIncrementStateVersion: true } : undefined,
+        );
+        return res.json({ run: updated, routingOutcome: "loop_capped", targetStageId: null, loopCapped: true });
       }
 
       // Linear routing (next_stage): advance one step, re-firing gate if needed
