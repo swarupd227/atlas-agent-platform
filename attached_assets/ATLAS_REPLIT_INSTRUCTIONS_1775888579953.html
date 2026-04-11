@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Atlas Agent Creator — Replit Implementation Guide</title>
+  <style>
+    :root {
+      --brand:  #1e3a5f;
+      --accent: #2d7dd2;
+      --green:  #1a7a4a;
+      --red:    #b03a00;
+      --yellow: #c17a00;
+      --purple: #5c2d91;
+      --bg:     #f4f6f9;
+      --card:   #ffffff;
+      --border: #dce3ed;
+      --text:   #1c2a3a;
+      --muted:  #5a6a7e;
+      --radius: 8px;
+      --shadow: 0 2px 10px rgba(0,0,0,0.07);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg); color: var(--text);
+      line-height: 1.75; font-size: 15px;
+    }
+
+    header {
+      background: var(--brand); color: #fff;
+      padding: 34px 52px 28px;
+    }
+    header .tag { font-size: 11px; letter-spacing: 2px; text-transform: uppercase; opacity: .6; margin-bottom: 8px; }
+    header h1 { font-size: 26px; font-weight: 700; }
+    header .sub { margin-top: 10px; font-size: 13px; opacity: .7; display: flex; gap: 22px; flex-wrap: wrap; }
+    header .sub span::before { content: "● "; opacity: .45; }
+
+    .wrapper { max-width: 980px; margin: 0 auto; padding: 40px 52px; }
+
+    section { margin-bottom: 52px; }
+    section > h2 {
+      font-size: 19px; font-weight: 700; color: var(--brand);
+      border-bottom: 2px solid var(--border);
+      padding-bottom: 9px; margin-bottom: 20px;
+      display: flex; align-items: center; gap: 10px;
+    }
+    .num {
+      background: var(--brand); color: #fff; border-radius: 50%;
+      width: 28px; height: 28px; display: inline-flex;
+      align-items: center; justify-content: center;
+      font-size: 13px; font-weight: 700; flex-shrink: 0;
+    }
+    h3 { font-size: 15px; font-weight: 600; color: var(--brand); margin: 24px 0 9px; }
+    h4 { font-size: 14px; font-weight: 600; margin: 16px 0 7px; color: var(--text); }
+    p  { margin-bottom: 11px; }
+    ul, ol { padding-left: 22px; margin-bottom: 12px; }
+    li { margin-bottom: 6px; }
+
+    /* Callouts */
+    .note {
+      border-left: 4px solid var(--accent); background: #eaf3fc;
+      border-radius: 0 var(--radius) var(--radius) 0;
+      padding: 13px 17px; margin: 16px 0; font-size: 14px;
+    }
+    .note.warn   { border-color: var(--yellow); background: #fdf6e3; }
+    .note.err    { border-color: var(--red);    background: #fdf0ee; }
+    .note.ok     { border-color: var(--green);  background: #eafaf1; }
+    .note.purple { border-color: var(--purple); background: #f5eeff; }
+    .note strong { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px; font-weight: 700; }
+
+    /* Table */
+    table {
+      width: 100%; border-collapse: collapse; font-size: 14px;
+      background: var(--card); border-radius: var(--radius);
+      overflow: hidden; box-shadow: var(--shadow); margin: 14px 0 22px;
+    }
+    th { background: var(--brand); color: #fff; text-align: left; padding: 10px 15px; font-size: 12px; font-weight: 600; }
+    td { padding: 9px 15px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    tr:last-child td { border-bottom: none; }
+    tr:nth-child(even) td { background: #f8fafc; }
+
+    /* Badges */
+    .badge {
+      display: inline-block; border-radius: 10px;
+      padding: 2px 9px; font-size: 11px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .4px;
+    }
+    .b-required { background: #fde8d8; color: #7a2500; }
+    .b-optional { background: #ddeeff; color: #1a4a8a; }
+    .b-never    { background: #fdf0ee; color: #7a2500; border: 1px solid #f5c0b0; }
+    .b-always   { background: #d4efdf; color: #1a7a4a; }
+
+    /* Step list */
+    .steps { counter-reset: step; list-style: none; padding: 0; }
+    .steps li {
+      counter-increment: step;
+      display: flex; gap: 14px; align-items: flex-start;
+      margin-bottom: 14px;
+    }
+    .steps li::before {
+      content: counter(step);
+      background: var(--accent); color: #fff;
+      border-radius: 50%; min-width: 26px; height: 26px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700; flex-shrink: 0; margin-top: 2px;
+    }
+
+    /* Resource type cards */
+    .resource-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 14px; margin: 16px 0;
+    }
+    .resource-card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 16px 18px;
+      box-shadow: var(--shadow);
+    }
+    .resource-card .icon { font-size: 22px; margin-bottom: 6px; }
+    .resource-card h4 { margin: 0 0 6px; font-size: 14px; color: var(--brand); }
+    .resource-card p { font-size: 13px; color: var(--muted); margin: 0; }
+
+    footer {
+      background: var(--brand); color: rgba(255,255,255,.5);
+      text-align: center; padding: 18px; font-size: 12px; margin-top: 40px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="tag">Atlas Agent Creator · Replit Implementation Guide</div>
+  <h1>How to Build a Correct, Production-Ready Agent</h1>
+  <div class="sub">
+    <span>Platform: Databricks Serverless + MLflow</span>
+    <span>Audience: Replit Developer</span>
+    <span>Applies to: Every agent created by Atlas</span>
+    <span>Updated: April 2026</span>
+  </div>
+</header>
+
+<div class="wrapper">
+
+  <!-- ══════════════════════════════════════ -->
+  <section>
+    <h2><span class="num">0</span> Purpose of This Document</h2>
+    <p>
+      Atlas generates agent scaffolding — folder structure, config files, and starter code.
+      That scaffolding is a <strong>starting point, not a finished product</strong>.
+      Before any agent is deployable, Replit must complete the implementation.
+      This document defines exactly what "complete" means, regardless of what the agent does
+      or what backends it connects to.
+    </p>
+    <p>
+      These instructions apply to <em>every</em> agent Atlas creates — whether it connects to
+      MCP servers, REST APIs, knowledge bases, databases, third-party SaaS tools, or any
+      combination. The patterns are the same; only the backend details differ.
+    </p>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section>
+    <h2><span class="num">1</span> The Two Things Atlas Gets Wrong (Always Fix These)</h2>
+
+    <h3>1a. The agent framework</h3>
+    <p>
+      Atlas may generate agents using older frameworks like LangChain <code>PythonModel</code>.
+      The correct framework for all Databricks agents is <strong>MLflow <code>ResponsesAgent</code></strong>.
+      If the generated <code>agent.py</code> does not extend <code>ResponsesAgent</code>, replace it.
+    </p>
+
+    <table>
+      <tr><th>Wrong (replace this)</th><th>Correct (use this)</th></tr>
+      <tr>
+        <td>Extends <code>mlflow.pyfunc.PythonModel</code></td>
+        <td>Extends <code>mlflow.pyfunc.ResponsesAgent</code></td>
+      </tr>
+      <tr>
+        <td>Uses LangChain <code>ChatDatabricks</code> or <code>bind_tools()</code></td>
+        <td>Uses <code>WorkspaceClient.serving_endpoints.get_open_ai_client()</code></td>
+      </tr>
+      <tr>
+        <td>Autolog: <code>mlflow.langchain.autolog()</code></td>
+        <td>Autolog: <code>mlflow.openai.autolog()</code></td>
+      </tr>
+      <tr>
+        <td>Only implements <code>predict()</code> — blocking, no streaming</td>
+        <td>Implements both <code>predict()</code> and <code>predict_stream()</code></td>
+      </tr>
+      <tr>
+        <td>Dependencies: <code>databricks-langchain</code>, <code>langchain-core</code></td>
+        <td>Dependencies: <code>openai&gt;=1.30.0</code>, <code>requests&gt;=2.31.0</code></td>
+      </tr>
+    </table>
+
+    <h3>1b. The tool stubs</h3>
+    <p>
+      Atlas generates stub implementations for every tool. They look like this:
+    </p>
+    <div class="note err">
+      <strong>Stub pattern — never acceptable in a deployed agent</strong>
+      <code>return {"status": "ok", "_stub": True, "message": "TODO: Replace this stub..."}</code>
+      <br><br>
+      A stub returns fabricated data. The LLM will respond as if the tool worked, but nothing
+      real happened. KYC was not checked. No record was created. No data was fetched.
+      Stubs must be replaced with real implementations before the agent is useful.
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section>
+    <h2><span class="num">2</span> Understanding What Each Agent Needs</h2>
+    <p>
+      Every agent is defined by an <code>agent.yaml</code> file. Before writing any code,
+      read it carefully to understand:
+    </p>
+    <ul>
+      <li><strong>What tools are declared</strong> — these are the capabilities the agent has</li>
+      <li><strong>What external resources are listed</strong> — MCP servers, knowledge bases, APIs</li>
+      <li><strong>What the system prompt says</strong> — the agent's domain, rules, and workflow</li>
+      <li><strong>What KPIs are defined</strong> — the business outcomes the agent must achieve</li>
+    </ul>
+    <p>
+      Each tool in <code>agent.yaml</code> corresponds to a file in <code>tools/</code>.
+      Each tool must connect to the resource(s) listed for it. The resource type determines
+      how the implementation is written.
+    </p>
+
+    <h3>Possible resource types</h3>
+    <div class="resource-grid">
+      <div class="resource-card">
+        <div class="icon">🔌</div>
+        <h4>MCP Server</h4>
+        <p>JSON-RPC 2.0 over HTTP. Declared in <code>mcp_servers</code> in agent.yaml. Each server exposes named tools.</p>
+      </div>
+      <div class="resource-card">
+        <div class="icon">🌐</div>
+        <h4>REST API</h4>
+        <p>Standard HTTP endpoints. May be internal services, third-party APIs, or SaaS platforms with REST interfaces.</p>
+      </div>
+      <div class="resource-card">
+        <div class="icon">📚</div>
+        <h4>Knowledge Base</h4>
+        <p>Vector search index. Declared in <code>knowledge_bases</code> in agent.yaml. Used for semantic retrieval — policy docs, product catalogs, FAQs.</p>
+      </div>
+      <div class="resource-card">
+        <div class="icon">🗄️</div>
+        <h4>Database / Data Warehouse</h4>
+        <p>SQL queries against Databricks Unity Catalog, Delta tables, or external databases via JDBC.</p>
+      </div>
+      <div class="resource-card">
+        <div class="icon">⚙️</div>
+        <h4>Unity Catalog UDF</h4>
+        <p>Python functions registered in UC. Called via <code>uc_function_client.execute_function()</code>. Native Databricks governance and audit.</p>
+      </div>
+      <div class="resource-card">
+        <div class="icon">📊</div>
+        <h4>Local / Computed Data</h4>
+        <p>No external call needed. Tool computes or transforms data internally — e.g. risk scoring, formatting, calculations.</p>
+      </div>
+    </div>
+    <div class="note">
+      <strong>A single tool may use multiple resource types</strong>
+      For example, a recommendation tool might query a knowledge base for eligible products,
+      then call a REST API for current pricing, then apply local business rules.
+      Implement all of them — do not stub any step.
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section>
+    <h2><span class="num">3</span> How to Implement a Tool — Step by Step</h2>
+    <p>Follow these steps for every tool file in the <code>tools/</code> directory.</p>
+
+    <ol class="steps">
+      <li>
+        <div>
+          <strong>Read agent.yaml first.</strong> Find the tool's entry. Note which MCP server,
+          knowledge base, or API it should call. Note what actions or operations it supports.
+          Do not guess — the yaml is the source of truth.
+        </div>
+      </li>
+      <li>
+        <div>
+          <strong>Define the input parameters.</strong> What information does the tool need from
+          the LLM to do its job? Create a typed dataclass with one field per parameter.
+          Every field should have a type annotation and a sensible default.
+          Do not use a bare <code>pass</code> or empty dataclass.
+        </div>
+      </li>
+      <li>
+        <div>
+          <strong>Write the INPUT_SCHEMA.</strong> This is the OpenAI function parameters schema.
+          Every parameter from the dataclass must appear here with a description.
+          Use <code>enum</code> for fields with a fixed set of values.
+          This is what the LLM reads to understand what arguments to pass.
+        </div>
+      </li>
+      <li>
+        <div>
+          <strong>Write the TOOL_SPEC.</strong> Wrap INPUT_SCHEMA in the full OpenAI tool format:
+          <code>{"type": "function", "function": {"name": ..., "description": ..., "parameters": INPUT_SCHEMA}}</code>.
+          The description must explain what the tool does and when the LLM should call it.
+        </div>
+      </li>
+      <li>
+        <div>
+          <strong>Implement the backend call in <code>_execute()</code>.</strong>
+          This is the only place where the real work happens. Match the resource type to the
+          correct calling pattern (see Section 4). If the tool supports multiple actions,
+          use if/elif branching on the action field — one branch per backend operation.
+        </div>
+      </li>
+      <li>
+        <div>
+          <strong>Add the <code>execute(**kwargs)</code> entrypoint.</strong>
+          The agent calls tools by passing keyword arguments parsed from the LLM's JSON output.
+          This function constructs the typed args object and calls <code>_execute()</code>.
+        </div>
+      </li>
+      <li>
+        <div>
+          <strong>Register the tool in <code>tools/__init__.py</code>.</strong>
+          Add a <code>ToolInfo</code> entry with the tool name, its TOOL_SPEC, and its
+          <code>execute</code> function. It will not be available to the agent until this is done.
+        </div>
+      </li>
+      <li>
+        <div>
+          <strong>Write tests.</strong> Mock the backend layer (HTTP client, vector search client,
+          database client). Assert that the correct backend operation is called with the correct
+          arguments. Assert that errors propagate correctly. Do not assert stub values.
+        </div>
+      </li>
+    </ol>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section>
+    <h2><span class="num">4</span> Backend Calling Patterns by Resource Type</h2>
+
+    <h3>MCP Server</h3>
+    <p>
+      Create a shared HTTP client module (e.g. <code>tools/mcp_client.py</code>) that handles
+      the JSON-RPC 2.0 transport. Store all server URLs as constants in that module.
+      Tool files import the client function and their server URL — they never import
+      <code>requests</code> directly.
+    </p>
+    <p>
+      MCP protocol specifics: method is always <code>"tools/call"</code>, arguments go under
+      <code>params.arguments</code>, response comes back in a <code>result.content[]</code>
+      array of typed text/json blocks. The shared client must unwrap this automatically.
+    </p>
+    <p>
+      Strip <code>None</code> values before sending — MCP servers often reject unknown
+      optional fields.
+    </p>
+
+    <h3>REST API</h3>
+    <p>
+      Similarly, create a shared HTTP client or base class for the API. Store base URLs and
+      auth header logic in one place. Tool files call helper functions, not raw
+      <code>requests.get()</code>. Handle authentication (API key, OAuth token, bearer token)
+      in the shared layer, not per-tool.
+    </p>
+    <p>
+      Always set a timeout. Always call <code>raise_for_status()</code> before reading the
+      response. Return a plain dict — not the raw response object.
+    </p>
+
+    <h3>Knowledge Base / Vector Search</h3>
+    <p>
+      Use the Databricks <code>VectorSearchClient</code> or <code>VectorSearchRetrieverTool</code>
+      from <code>databricks_openai</code>. The index name comes from <code>agent.yaml</code>
+      under <code>knowledge_bases</code>. The embedding model is also declared there — use it.
+    </p>
+    <p>
+      A knowledge base tool typically takes a natural language query as input and returns a
+      list of relevant document chunks with their sources. The LLM uses these chunks to ground
+      its response. Always include the source/document reference in the return value so the
+      agent can cite it.
+    </p>
+
+    <h3>Unity Catalog UDF</h3>
+    <p>
+      Use <code>UCFunctionToolkit</code> from <code>databricks_openai</code> and
+      <code>get_uc_function_client()</code> from <code>unitycatalog.ai.core.base</code>.
+      The UDF name follows the pattern <code>catalog.schema.function_name</code>.
+      Arguments are passed as a dict to <code>execute_function()</code>.
+      Check <code>function_result.error</code> before reading <code>function_result.value</code>.
+    </p>
+
+    <h3>Database / Delta Table</h3>
+    <p>
+      Use the Databricks SQL connector or Spark SQL via <code>DatabricksSession</code>.
+      Parameterize all queries — never format user input directly into a SQL string.
+      Return results as a list of dicts or a summary dict — not a DataFrame object,
+      which cannot be serialized to JSON for the LLM.
+    </p>
+
+    <h3>Local / Computed</h3>
+    <p>
+      If no external call is needed, implement the logic directly in <code>_execute()</code>.
+      Still define a proper dataclass, INPUT_SCHEMA, and TOOL_SPEC — the LLM needs to know
+      the parameters even if the implementation is local.
+    </p>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section>
+    <h2><span class="num">5</span> The Agent Framework — Rules for agent.py</h2>
+
+    <h3>Class structure</h3>
+    <p>
+      The agent class must extend <code>mlflow.pyfunc.ResponsesAgent</code> and implement:
+    </p>
+    <ul>
+      <li><code>predict(request)</code> — collects all streamed events and returns a <code>ResponsesAgentResponse</code></li>
+      <li><code>predict_stream(request)</code> — yields <code>ResponsesAgentStreamEvent</code> objects as they are produced</li>
+    </ul>
+
+    <h3>LLM client initialization</h3>
+    <p>
+      Initialize the OpenAI-compatible client lazily inside a method, not in <code>__init__</code>.
+      <code>WorkspaceClient</code> holds threading locks that cloudpickle cannot serialize.
+      If the client is created at instantiation time, MLflow will fail to serialize the model.
+    </p>
+
+    <h3>Tool execution</h3>
+    <p>
+      The agent receives tool calls from the LLM as JSON. Parse the arguments with
+      <code>json.loads()</code> inside a try/except — the LLM occasionally produces malformed
+      JSON. Catch all exceptions from tool execution and return an error string rather than
+      crashing the agent loop.
+    </p>
+
+    <h3>Agent loop pattern</h3>
+    <p>
+      The loop should be event-driven: check the type/role of the last message to decide
+      what to do next. If the last message is an assistant response with no tool calls,
+      stop. If it is a function_call, execute the tool. Otherwise, call the LLM.
+      Cap iterations with a max_iter guard and emit a clear message if reached.
+    </p>
+
+    <h3>System prompt</h3>
+    <p>
+      Insert the system prompt as the first message in every <code>predict_stream()</code>
+      call. Do not rely on the caller to include it. The system prompt must describe the
+      agent's workflow, its tools, and any compliance or business rules it must follow.
+    </p>
+
+    <h3>MLflow tracing</h3>
+    <p>
+      Decorate tool execution methods with <code>@mlflow.trace(span_type=SpanType.TOOL)</code>.
+      Call <code>mlflow.openai.autolog()</code> at module level. This enables the Databricks
+      AI observability features and is required for production debugging.
+    </p>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section>
+    <h2><span class="num">6</span> Deploying to Databricks — Rules and Known Pitfalls</h2>
+
+    <h3>Before you deploy</h3>
+    <ul>
+      <li>All tests must pass — run <code>make test</code></li>
+      <li><code>DATABRICKS_HOST</code> and <code>DATABRICKS_TOKEN</code> must be set in your environment</li>
+      <li>The wheel must be built — run <code>make build</code> (or <code>make deploy-dev</code> which builds first)</li>
+    </ul>
+
+    <h3>Three rules for log_model()</h3>
+
+    <table>
+      <tr><th>Rule</th><th>Why</th></tr>
+      <tr>
+        <td>Do <strong>not</strong> pass a <code>signature=</code> parameter</td>
+        <td><code>ResponsesAgent</code> sets its signature automatically. Passing one raises <code>MlflowException</code>.</td>
+      </tr>
+      <tr>
+        <td><code>input_example</code> must use the key <code>"input"</code>, not <code>"messages"</code></td>
+        <td><code>ResponsesAgentRequest</code> uses the Responses API schema (<code>input</code>), not the Chat Completions schema (<code>messages</code>). Using the wrong key fails Pydantic validation.</td>
+      </tr>
+      <tr>
+        <td>Always pass <code>resources=[DatabricksServingEndpoint(endpoint_name=...)]</code></td>
+        <td>Without this, the serving container cannot authenticate to the LLM endpoint at serve time.</td>
+      </tr>
+    </table>
+
+    <h3>Serving endpoint naming</h3>
+    <p>
+      Databricks does not allow updating an existing <em>non-agent</em> serving endpoint to
+      serve a <code>ResponsesAgent</code> model. If the endpoint was previously created for a
+      plain model, you must use a new name. The convention is <code>{project_name}_agent</code>.
+    </p>
+    <p>
+      Similarly, if you change the agent framework (e.g. LangChain → ResponsesAgent), always
+      create a new endpoint. You cannot update the existing one in place.
+    </p>
+
+    <h3>Dependency management</h3>
+    <p>
+      Runtime dependencies go in <code>pyproject.toml</code> under <code>[project] dependencies</code>.
+      Do not pin exact versions — use loose constraints (<code>&gt;=</code>, not <code>==</code>).
+      Packages already pre-installed on Databricks serverless (mlflow, pydantic, pyarrow,
+      databricks-sdk) should go in <code>[project.optional-dependencies] dev</code> only,
+      not in runtime dependencies.
+    </p>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section>
+    <h2><span class="num">7</span> Testing Requirements</h2>
+
+    <h3>What every tool test suite must cover</h3>
+    <table>
+      <tr><th>Test</th><th>What to assert</th><th>Mocking needed?</th></tr>
+      <tr>
+        <td>Tool is callable</td>
+        <td><code>callable(tool_function)</code> is True</td>
+        <td>No</td>
+      </tr>
+      <tr>
+        <td>Schema is valid</td>
+        <td><code>INPUT_SCHEMA</code> is a dict with a <code>properties</code> key</td>
+        <td>No</td>
+      </tr>
+      <tr>
+        <td>Default args are correct</td>
+        <td>Dataclass defaults match the expected behavior</td>
+        <td>No</td>
+      </tr>
+      <tr>
+        <td>Each action routes to the correct backend operation</td>
+        <td>The right function/method/endpoint was called with the right arguments</td>
+        <td>Yes — mock the backend client</td>
+      </tr>
+      <tr>
+        <td>The <code>execute(**kwargs)</code> entrypoint works</td>
+        <td>Keyword arguments are correctly passed through to <code>_execute()</code></td>
+        <td>Yes — mock the backend client</td>
+      </tr>
+      <tr>
+        <td>Errors propagate</td>
+        <td>Exceptions from the backend are not swallowed silently</td>
+        <td>Yes — mock raises an exception</td>
+      </tr>
+    </table>
+
+    <h3>What to mock</h3>
+    <p>
+      Mock at the <strong>backend client boundary</strong> — not at the tool function level.
+      For MCP tools, mock <code>call_mcp_tool</code>. For REST tools, mock the HTTP client.
+      For vector search tools, mock the search client. Never mock <code>_execute()</code> itself
+      — that is the function being tested.
+    </p>
+
+    <div class="note err">
+      <strong>Banned patterns</strong>
+      <ul style="margin-top:6px;">
+        <li>Do not assert <code>result.get("_stub") is True</code> — that validates broken behavior</li>
+        <li>Do not skip the error propagation test — silent failures are worse than crashes</li>
+        <li>Do not use <code>@patch("agent.tool_map")</code> — test tools in isolation, not through the agent loop</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section>
+    <h2><span class="num">8</span> Quick Reference — Do and Don't</h2>
+
+    <table>
+      <tr><th>Do</th><th>Don't</th></tr>
+      <tr>
+        <td>Extend <code>ResponsesAgent</code></td>
+        <td>Extend <code>mlflow.pyfunc.PythonModel</code></td>
+      </tr>
+      <tr>
+        <td>Initialize LLM client lazily (inside a method)</td>
+        <td>Initialize <code>WorkspaceClient</code> in <code>__init__</code></td>
+      </tr>
+      <tr>
+        <td>Use <code>mlflow.openai.autolog()</code></td>
+        <td>Use <code>mlflow.langchain.autolog()</code></td>
+      </tr>
+      <tr>
+        <td>Use <code>"input"</code> key in <code>input_example</code></td>
+        <td>Use <code>"messages"</code> key in <code>input_example</code></td>
+      </tr>
+      <tr>
+        <td>Omit <code>signature=</code> from <code>log_model()</code></td>
+        <td>Pass a custom <code>signature=</code> to <code>log_model()</code></td>
+      </tr>
+      <tr>
+        <td>Use a new endpoint name when changing frameworks</td>
+        <td>Reuse an existing non-agent endpoint name</td>
+      </tr>
+      <tr>
+        <td>Make real backend calls from every tool</td>
+        <td>Return <code>{"_stub": True}</code> from any tool</td>
+      </tr>
+      <tr>
+        <td>Implement action-based routing per tool</td>
+        <td>Write a single tool that does everything with no branching</td>
+      </tr>
+      <tr>
+        <td>Use typed dataclasses with Optional fields</td>
+        <td>Use bare <code>**kwargs</code> or empty dataclasses</td>
+      </tr>
+      <tr>
+        <td>Mock at the backend client boundary in tests</td>
+        <td>Assert <code>_stub=True</code> in test results</td>
+      </tr>
+      <tr>
+        <td>Use loose version constraints in <code>pyproject.toml</code></td>
+        <td>Pin exact versions (<code>==</code>) in runtime dependencies</td>
+      </tr>
+      <tr>
+        <td>Keep all HTTP client logic in one shared module</td>
+        <td>Import <code>requests</code> directly in individual tool files</td>
+      </tr>
+    </table>
+  </section>
+
+  <!-- ══════════════════════════════════════ -->
+  <section>
+    <h2><span class="num">9</span> What to Encode in Atlas for Future Agents</h2>
+    <p>
+      Future agents generated by Atlas should be concrete and working from the start —
+      not a set of stubs requiring a second implementation pass. The following must be encoded
+      into Atlas as reusable Blueprints.
+    </p>
+
+    <h3>Agent Framework Blueprint</h3>
+    <p>
+      A reusable template for <code>agent.py</code> that extends <code>ResponsesAgent</code>,
+      uses lazy client initialization, implements streaming, and follows the event-driven loop.
+      This blueprint should replace the current Atlas-generated <code>PythonModel</code> template.
+      Include the known <code>log_model()</code> constraints as comments in the generated code.
+    </p>
+
+    <h3>System Prompt Blueprint</h3>
+    <p>
+      Each domain (wealth management, insurance, lending, HR, etc.) should have a System Prompt
+      Blueprint that encodes the agent's pipeline stages, compliance rules, tool descriptions,
+      and decision gates. When an agent is created for a domain, the matching blueprint is
+      injected — not a generic placeholder.
+    </p>
+
+    <h3>Tool Adapter Blueprints — one per resource type</h3>
+    <p>
+      Atlas should have a separate blueprint for each resource type (MCP, REST API, knowledge base,
+      UC UDF, database). When a tool is added to an agent, Atlas selects the correct blueprint
+      based on the declared resource type and generates:
+    </p>
+    <ul>
+      <li>A typed dataclass with fields derived from the tool's declared parameters</li>
+      <li>A populated <code>INPUT_SCHEMA</code> and <code>TOOL_SPEC</code></li>
+      <li>A real <code>_execute()</code> with the correct calling pattern for that resource type</li>
+      <li>An <code>execute(**kwargs)</code> entrypoint</li>
+      <li>A test file that mocks the backend client and covers routing, args, and errors</li>
+    </ul>
+    <p>
+      The result: zero stubs. An agent generated by Atlas should be deployable and functional
+      immediately after generation, with tests that pass.
+    </p>
+
+    <div class="note ok">
+      <strong>Success criterion</strong>
+      An Atlas-generated agent is complete when: all tests pass, <code>make deploy-dev</code>
+      succeeds on the first try, and a real end-to-end query returns a meaningful response
+      from the actual backends — not fabricated data.
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  Atlas Agent Creator · Replit Implementation Guide · April 2026 · Nousinfo
+</footer>
+
+</body>
+</html>
