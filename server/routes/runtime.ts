@@ -2874,9 +2874,11 @@ ${executeEntrypoint}`;
   function pyAdapterHasRequiredSymbols(code: string, toolName: string, className: string): boolean {
     return (
       code.includes("INPUT_SCHEMA") &&
+      code.includes("TOOL_SPEC") &&
       code.includes(className) &&
       code.includes("def _execute(") &&
-      code.includes(`def ${toolName}(`)
+      code.includes(`def ${toolName}(`) &&
+      code.includes("def execute(")
     );
   }
 
@@ -2896,44 +2898,12 @@ ${executeEntrypoint}`;
   }
 
   /**
-   * Generates a @tool-decorated Python wrapper function for a single tool that
-   * can be consumed by LangChain's llm.bind_tools() / tool_map[name].invoke().
-   * Each parameter is expanded from the JSON schema so LangChain can infer the
-   * input schema; the body delegates to the tool module's _execute + XxxArgs.
+   * Returns a single ToolInfo(...) instantiation line for tools/__init__.py.
+   * The Databricks ResponsesAgent reads TOOLS to build the tool_specs list it
+   * passes to the OpenAI Responses API and the tool_map it uses to dispatch calls.
    */
-  function buildDbxToolWrapper(tool: { name: string; description?: string; parameters?: Record<string, unknown> }): string {
-    const className = tool.name.charAt(0).toUpperCase() + tool.name.slice(1) + "Args";
-    const props = (tool.parameters?.properties || {}) as Record<string, Record<string, unknown>>;
-    const required = new Set(Array.isArray(tool.parameters?.required) ? tool.parameters!.required as string[] : []);
-
-    const paramParts: string[] = [];
-    const argParts: string[] = [];
-
-    for (const [key, v] of Object.entries(props)) {
-      let pyType = "str";
-      if (v.type === "integer") pyType = "int";
-      else if (v.type === "number") pyType = "float";
-      else if (v.type === "boolean") pyType = "bool";
-      else if (v.type === "array") pyType = "list";
-      else if (v.type === "object") pyType = "dict";
-
-      const isReq = required.has(key);
-      // Optional parameters are always Optional[T] = None (not a type-specific default)
-      // so callers can safely omit them; LangChain sees None as "not supplied".
-      paramParts.push(`${key}: ${isReq ? pyType : `Optional[${pyType}]`}${isReq ? "" : " = None"}`);
-      argParts.push(`${key}=${key}`);
-    }
-
-    const paramStr = paramParts.join(", ");
-    const argsStr = argParts.join(", ");
-    const funcDesc = (tool.description || `Tool: ${tool.name}`).replace(/"""/g, "'''");
-
-    return [
-      `@tool`,
-      `def ${tool.name}(${paramStr}) -> dict:`,
-      `    """${funcDesc}"""`,
-      `    return _${tool.name}_execute(${className}(${argsStr}))`,
-    ].join("\n");
+  function buildDbxToolInfoEntry(tool: { name: string }): string {
+    return `    ToolInfo(name="${tool.name}", spec=${tool.name}_spec, execute=${tool.name}_execute),`;
   }
 
   function generateTsToolsIndex(tools: Array<{ name: string }>): string {
@@ -3126,7 +3096,7 @@ ${requiredKeys.length > 0 ? `  test("schema — missing required fields detected
     }
     const validArgsConstruction = validKwargs.length > 0 ? `${className}(${validKwargs.join(", ")})` : `${className}()`;
     const invalidArgsConstruction = invalidKwargs.length > 0 ? `${className}(${invalidKwargs.join(", ")})` : `${className}()`;
-    const isStub = adapterType === "stub" || adapterType === "builtin";
+    const executeKwargs = validKwargs.join(", ");
 
     const schemaChecks = Object.entries(props).map(([k, v]) => {
       const pyType = v.type === "string" ? "str" : v.type === "number" || v.type === "integer" ? "(int, float)" : v.type === "boolean" ? "bool" : v.type === "array" ? "list" : v.type === "object" ? "dict" : "object";
@@ -3146,7 +3116,7 @@ ${requiredKeys.length > 0 ? `  test("schema — missing required fields detected
     return `# ATLAS-generated: Unit tests for tool "${fnName}"
 import pytest
 from unittest.mock import patch, MagicMock
-from ${toolsModule}.${fnName} import ${fnName}, ${className}, INPUT_SCHEMA, _execute
+from ${toolsModule}.${fnName} import ${fnName}, ${className}, INPUT_SCHEMA, TOOL_SPEC, _execute, execute
 
 
 def validate_against_input_schema(schema: dict, args: dict) -> list:
@@ -3175,6 +3145,14 @@ class TestTool${className.replace("Args", "")}:
     def test_exports_input_schema(self):
         """Adapter exports INPUT_SCHEMA for runtime validation."""
         assert isinstance(INPUT_SCHEMA, dict)
+
+    def test_exports_tool_spec(self):
+        """Adapter exports TOOL_SPEC in OpenAI function-call format."""
+        assert isinstance(TOOL_SPEC, dict), "TOOL_SPEC must be a dict"
+        assert TOOL_SPEC.get("type") == "function", "TOOL_SPEC type must be 'function'"
+        fn = TOOL_SPEC.get("function", {})
+        assert fn.get("name") == "${fnName}", "TOOL_SPEC function.name must match tool name"
+        assert isinstance(fn.get("parameters"), dict), "TOOL_SPEC function.parameters must be a dict"
 
     def test_schema_valid_args_accepted(self):
         """Schema validation: valid args pass INPUT_SCHEMA validation."""
@@ -3206,6 +3184,14 @@ ${missingRequiredTest}
         mock_exec.assert_called_once_with(args)
 
     @patch("${toolsModule}.${fnName}._execute")
+    def test_execute_kwargs_entrypoint(self, mock_exec: MagicMock):
+        """execute(**kwargs) constructs args object and delegates to _execute."""
+        mock_exec.return_value = {"status": "ok", "tool": "${fnName}"}
+        result = execute(${executeKwargs})
+        assert result == {"status": "ok", "tool": "${fnName}"}
+        mock_exec.assert_called_once()
+
+    @patch("${toolsModule}.${fnName}._execute")
     def test_adapter_error_propagation_through_execute(self, mock_exec: MagicMock):
         """Adapter: errors from _execute propagate through ${fnName}."""
         mock_exec.side_effect = RuntimeError("connection refused")
@@ -3213,20 +3199,13 @@ ${missingRequiredTest}
         with pytest.raises(RuntimeError, match="connection refused"):
             ${fnName}(args)
 
-${isStub ? `    def test_adapter_real_call_returns_stub_dict(self):
-        """Stub adapters must return a dict with _stub=True (never raise)."""
-        args = ${validArgsConstruction}
-        result = ${fnName}(args)
-        assert isinstance(result, dict), f"Expected dict from stub, got {type(result)}"
-        assert result.get("_stub") is True, f"Expected _stub=True in stub result: {result}"
-        assert "status" in result, "Stub result should contain 'status' key"
-        assert "message" in result, "Stub result should contain 'message' key"
-` : `    def test_adapter_real_call_returns_valid_result(self):
-        """Adapter real call returns a dict or raises (if customer-implemented)."""
-        args = ${validArgsConstruction}
-        result = ${fnName}(args)
-        assert isinstance(result, dict), f"Expected dict from adapter, got {type(result)}"
-`}
+    @patch("${toolsModule}.${fnName}._execute")
+    def test_execute_kwargs_error_propagation(self, mock_exec: MagicMock):
+        """execute(**kwargs): errors from _execute propagate correctly."""
+        mock_exec.side_effect = RuntimeError("backend unavailable")
+        with pytest.raises(RuntimeError, match="backend unavailable"):
+            execute(${executeKwargs})
+
 `;
   }
 
@@ -3434,6 +3413,31 @@ ${nodeSetup}
 4. Thread per task run; poll run status
 5. On requires_action: dispatch tool_calls, submit outputs
 6. Max iteration guard; log status transitions`,
+        databricks: `Generate agent.py — Databricks Mosaic AI (mlflow.pyfunc.ResponsesAgent):
+CRITICAL RULES (deployment will fail if violated):
+- Extend mlflow.pyfunc.ResponsesAgent, NOT mlflow.pyfunc.PythonModel
+- Call mlflow.openai.autolog() at module level (NOT mlflow.langchain.autolog)
+- Initialize WorkspaceClient and LLM client LAZILY inside predict_stream() (NOT at module level):
+    w = WorkspaceClient()
+    client = w.serving_endpoints.get_open_ai_client()
+- log_model() must have: NO signature= param; input_example={"input": [...]}; resources=[DatabricksServingEndpoint(endpoint_name=_SERVING_ENDPOINT_NAME)]
+- Import TOOLS from tools; build tool_specs = [t.spec for t in TOOLS] and tool_map = {t.name: t.execute for t in TOOLS}
+
+IMPLEMENT:
+1. predict_stream(context, model_input) → Iterator[ResponsesAgentStreamEvent]:
+   - Extract messages from model_input["messages"] (DataFrame or dict)
+   - Prepend system prompt as first message on every call
+   - Initialize WorkspaceClient and openai client lazily inside this method
+   - Pass tool_specs to client.responses.create(model=_LLM_ENDPOINT, input=messages, tools=tool_specs, stream=True)
+   - Dispatch tool calls: json.loads() inside try/except (handle malformed JSON); catch all tool exceptions and return error string
+   - Cap at _MAX_ITERATIONS with a clear message if reached
+   - Yield ResponsesAgentStreamEvent objects throughout
+2. predict(context, model_input) → ResponsesAgentResponse:
+   - Collect all streamed events from predict_stream() and return as ResponsesAgentResponse
+3. log_model() block: set experiment, call mlflow.pyfunc.log_model with python_model=agent instance,
+   artifact_path="agent", pip_requirements=["openai>=1.30.0","requests>=2.31.0"],
+   input_example={"input": [{"role":"user","content":"Hello"}]},
+   resources=[DatabricksServingEndpoint(endpoint_name=_SERVING_ENDPOINT_NAME)]`,
       };
 
       const fwInstr = frameworkInstructions[ctx.framework] || frameworkInstructions.generic;
@@ -3467,12 +3471,19 @@ ${fwInstr}`;
       // ── STEP 2: Generate each tool adapter in parallel (one call each) ──────
       const toolAdapterSystemMsg = ctx.format === "python"
         ? `You are a senior AI agent engineer. Generate ONLY the Python tool adapter file content — no explanations, no markdown, no code fences, no JSON. Raw Python only.
-Contract (mandatory):
+Contract (ALL SIX items mandatory — file will be rejected if any is missing):
 1. @dataclass named <ToolNamePascalCase>Args with one typed field per parameter (str="", int=0, bool=False, list=field(default_factory=list), Optional[dict]=None)
-2. Module-level dict INPUT_SCHEMA = exact JSON Schema for this tool's parameters
-3. def _execute(args: <ClassName>) -> dict — REAL implementation, always returns dict, never raises
-4. def <tool_name>(args: <ClassName>) -> dict — delegates to _execute, has docstring
-5. print(f"[<tool_name>] called with: {args}") at start`
+2. Module-level INPUT_SCHEMA = exact JSON Schema dict for this tool's parameters
+3. Module-level TOOL_SPEC = {"type":"function","function":{"name":"<tool_name>","description":"...","parameters": INPUT_SCHEMA}}
+4. def _execute(args: <ClassName>) -> dict — REAL implementation that makes actual HTTP/DB/API calls. NEVER return stub/fake/fabricated data. NEVER return {"_stub":True}. Make real backend calls using the implementation hint. Catch exceptions and return {"status":"error","error":str(e)}.
+5. def <tool_name>(args: <ClassName>) -> dict — delegates to _execute, has docstring, print at start
+6. def execute(**kwargs) -> dict — entrypoint for the agent loop; constructs <ClassName> from kwargs (skip None values) and calls _execute
+Resource-type calling patterns:
+- MCP tool: import call_mcp_tool from tools.mcp_client; call call_mcp_tool(server_url, tool_name, kwargs)
+- VectorSearch: use DatabricksVectorSearch client from databricks-langchain
+- UC UDF: use WorkspaceClient().statement_execution.execute_statement(...)
+- External HTTP API: use requests.get/post with credentials from os.environ
+- SQL: use pyodbc or sqlalchemy with connection string from os.environ`
         : `You are a senior AI agent engineer. Generate ONLY the TypeScript tool adapter file content — no explanations, no markdown, no code fences, no JSON. Raw TypeScript only.
 Contract (mandatory):
 1. Typed function signature from the tool's parameter schema
@@ -4593,9 +4604,9 @@ def list_policies():
         const agentSlugDbx = (agent.name || "agent").toLowerCase().replace(/[^a-z0-9]+/g, "_");
         const dbxClassName = agentSlugDbx.replace(/(?:^|_)([a-z])/g, (_: string, c: string) => c.toUpperCase());
 
-        // pyproject.toml: [project.dependencies] = runtime-only (langchain stack).
+        // pyproject.toml: [project.dependencies] = runtime-only (openai + requests for ResponsesAgent).
         // Pre-installed Databricks serverless packages (mlflow, databricks-sdk, pydantic, pyarrow)
-        // belong in [dev] only — listing them in main deps causes version-conflict errors.
+        // belong in [dev] only — listing them in main deps causes version-conflict errors on serverless.
         files["pyproject.toml"] = (
           `[project]\n` +
           `name = "${agentSlugDbx}"\n` +
@@ -4603,8 +4614,8 @@ def list_policies():
           `description = "${(agent.description || "AI agent generated by ATLAS.").replace(/"/g, '\\"')}"\n` +
           `requires-python = ">=3.12"\n` +
           `dependencies = [\n` +
-          `    "databricks-langchain",\n` +
-          `    "langchain-core>=0.3,<0.4",\n` +
+          `    "${pin ? "openai==1.30.0" : "openai>=1.30.0"}",\n` +
+          `    "${pin ? "requests==2.31.0" : "requests>=2.31.0"}",\n` +
           `]\n\n` +
           `[project.optional-dependencies]\n` +
           `dev = [\n` +
@@ -4623,32 +4634,187 @@ def list_policies():
           `[tool.pytest.ini_options]\ntestpaths = ["tests"]\naddopts = "-v --tb=short"\n`
         );
 
-        files["agent.py"] = `# Databricks AgentBricks Agent\n# Generated for: ${agent.name}\n# Framework: Mosaic AI Agent Framework (MLflow + LangChain)\nimport argparse\nimport configparser\nimport json\nimport os\nimport sys\nimport pandas as pd\nfrom datetime import timedelta\nimport mlflow\nfrom mlflow.models import ModelSignature\nfrom mlflow.models.resources import DatabricksServingEndpoint\nfrom mlflow.types.schema import Array, ColSpec, DataType, Object, Property, Schema\nfrom databricks.sdk import WorkspaceClient\nfrom databricks.sdk.service.serving import EndpointCoreConfigInput, ServedEntityInput\nfrom databricks_langchain import ChatDatabricks\nfrom langchain_core.messages import AIMessage, HumanMessage, ToolMessage\nfrom langchain_core.tools import tool\nfrom tools import load_tools\n\n# Guard: Databricks serverless spark_python_task runs scripts via exec() inside an\n# IPython kernel and does not inject __file__ into globals.\nif "__file__" not in globals():\n    __file__ = sys._getframe(0).f_code.co_filename\n\n# ── Agent configuration ──────────────────────────────────────────────────────\n_LLM_ENDPOINT          = "${dbxEndpoint}"  # verify this endpoint exists in your workspace\n_MAX_TOKENS            = 4096\n_TEMPERATURE           = 0.1\n_MAX_ITERATIONS        = ${maxIterations}\n_COMPLETION_TOKEN      = "${completionPromise}"\n_EXPERIMENT_NAME       = "/Shared/${agentSlugDbx}_experiment"\n_REGISTERED_MODEL_NAME = "<catalog>.<schema>.${agentSlugDbx}"  # replace with real Unity Catalog path\n_SERVING_ENDPOINT_NAME = "${agentSlugDbx}_endpoint"\n\n# Enable automatic MLflow tracing for LangChain\nmlflow.langchain.autolog()\n\n# Initialize Databricks-hosted LLM.\n# ChatDatabricks requires no explicit host/token — resources= handles auth at serve time.\nllm = ChatDatabricks(\n    endpoint=_LLM_ENDPOINT,\n    max_tokens=_MAX_TOKENS,\n    temperature=_TEMPERATURE,\n)\n\n# Load and bind tools\nagent_tools = load_tools()\nllm_with_tools = llm.bind_tools(agent_tools)\ntool_map = {t.name: t for t in agent_tools}\n\n\ndef run_agent(messages: list) -> list:\n    """Run the agent loop until completion or max iterations."""\n    for _ in range(_MAX_ITERATIONS):\n        response = llm_with_tools.invoke(messages)\n        messages.append(response)\n\n        # Check for completion signal\n        if isinstance(response, AIMessage) and _COMPLETION_TOKEN in (response.content or ""):\n            break\n\n        # Process tool calls\n        if not response.tool_calls:\n            break\n\n        for tool_call in response.tool_calls:\n            name = tool_call["name"]\n            args = tool_call["args"]\n            call_id = tool_call["id"]\n\n            if name in tool_map:\n                try:\n                    result = tool_map[name].invoke(args)\n                except Exception as exc:\n                    result = f"Tool error: {exc}"\n            else:\n                result = f"Unknown tool: {name}"\n\n            messages.append(ToolMessage(content=str(result), tool_call_id=call_id))\n\n    return messages\n\n\nclass ${dbxClassName}Agent(mlflow.pyfunc.PythonModel):\n    """MLflow PythonModel wrapper for AgentBricks deployment."""\n\n    def predict(self, context, model_input, params=None):\n        # MLflow pyfunc passes pd.DataFrame from a served endpoint; dict from direct .predict() calls\n        if isinstance(model_input, pd.DataFrame):\n            raw = model_input["messages"].iloc[0]\n            if isinstance(raw, str):\n                raw = json.loads(raw)\n        elif isinstance(model_input, dict):\n            raw = model_input.get("messages", [])\n        else:\n            raw = []\n        messages = [HumanMessage(content=m["content"]) if m.get("role") == "user" else AIMessage(content=m["content"]) for m in raw]\n        result = run_agent(messages)\n        return {"messages": [{"role": "assistant" if isinstance(m, AIMessage) else "tool", "content": m.content} for m in result if isinstance(m, (AIMessage, ToolMessage))]}\n\n\n# Register model for code-based MLflow logging.\n# ChatDatabricks holds threading locks that cloudpickle cannot serialize —\n# passing python_model=__file__ instead of an instance avoids this at log time.\nmlflow.models.set_model(${dbxClassName}Agent())\n\n\nif __name__ == "__main__":\n    # ── Build explicit ModelSignature ──────────────────────────────────────────\n    # Unity Catalog requires both input and output schemas to be explicitly declared.\n    # Never use infer_signature() — it calls the LLM endpoint at registration time,\n    # which fails on a first deploy when the endpoint does not yet exist.\n    _chat_msg = Array(Object([\n        Property("role",    DataType.string),\n        Property("content", DataType.string),\n    ]))\n    signature = ModelSignature(\n        inputs=Schema([ColSpec(type=_chat_msg, name="messages")]),\n        outputs=Schema([ColSpec(type=_chat_msg, name="messages")]),\n    )\n\n    input_example = {\n        "messages": [{"role": "user", "content": "What can you help me with?"}]\n    }\n\n    # Runtime deps — only packages NOT pre-installed on Databricks serverless.\n    # mlflow, databricks-sdk, pydantic, and pyarrow are pre-installed; pinning them\n    # causes version-conflict errors during serverless pip install.\n    pip_requirements = [\n        "databricks-langchain",\n        "langchain-core>=0.3,<0.4",\n    ]\n\n    parser = argparse.ArgumentParser()\n    parser.add_argument("--experiment_name", type=str, default=_EXPERIMENT_NAME)\n    cli_args = parser.parse_args()\n    mlflow.set_experiment(cli_args.experiment_name)\n\n    with mlflow.start_run():\n        model_info = mlflow.pyfunc.log_model(\n            name="agent",                            # name= replaces deprecated artifact_path=\n            python_model=__file__,                   # code-based: MLflow re-imports agent.py at serve time\n            code_paths=["tools", "pyproject.toml"],  # config.yaml removed — all config is inlined above\n            signature=signature,\n            input_example=input_example,\n            pip_requirements=pip_requirements,\n            resources=[DatabricksServingEndpoint(endpoint_name=_LLM_ENDPOINT)],\n            registered_model_name=_REGISTERED_MODEL_NAME,\n        )\n        print(f"[AgentBricks] Logged and registered: {_REGISTERED_MODEL_NAME}")\n        print(f"[AgentBricks] Model URI: {model_info.model_uri}")\n\n    # ── Deploy-time credentials ────────────────────────────────────────────────\n    # Read from ~/.databrickscfg (written by "databricks configure --token").\n    # Kept inside __main__ so the filesystem read does not run at serve time\n    # when MLflow imports this module inside the model server.\n    _dbcfg = configparser.ConfigParser()\n    _dbcfg.read(os.path.expanduser("~/.databrickscfg"))\n    _db_host  = _dbcfg.get("DEFAULT", "host",  fallback=None)\n    _db_token = _dbcfg.get("DEFAULT", "token", fallback=None)\n\n    # ── Create or update the serving endpoint ─────────────────────────────────\n    w = WorkspaceClient(host=_db_host, token=_db_token)\n\n    served_entity = ServedEntityInput(\n        entity_name=_REGISTERED_MODEL_NAME,\n        scale_to_zero_enabled=True,\n        workload_size="Small",\n    )\n\n    existing_endpoints = {ep.name for ep in w.serving_endpoints.list()}\n    if _SERVING_ENDPOINT_NAME in existing_endpoints:\n        print(f"[AgentBricks] Updating endpoint: {_SERVING_ENDPOINT_NAME}")\n        w.serving_endpoints.update_config_and_wait(\n            name=_SERVING_ENDPOINT_NAME,\n            served_entities=[served_entity],\n            timeout=timedelta(minutes=30),\n        )\n    else:\n        print(f"[AgentBricks] Creating endpoint: {_SERVING_ENDPOINT_NAME}")\n        w.serving_endpoints.create_and_wait(\n            name=_SERVING_ENDPOINT_NAME,\n            config=EndpointCoreConfigInput(\n                name=_SERVING_ENDPOINT_NAME,  # required — do not omit\n                served_entities=[served_entity],\n            ),\n            timeout=timedelta(minutes=30),\n        )\n    print(f"[AgentBricks] Endpoint ready: {_SERVING_ENDPOINT_NAME}")\n`;
-
-        // Build Databricks __init__.py: @tool-decorated wrappers so llm.bind_tools()
-        // and t.name / t.invoke() work without AttributeError at agent startup.
-        const dbxInitImportLines = [
-          "from typing import Optional",
-          "from langchain_core.tools import tool",
-          ...tools.map(t => {
-            const cls = t.name.charAt(0).toUpperCase() + t.name.slice(1) + "Args";
-            return `from tools.${t.name} import _execute as _${t.name}_execute, ${cls}`;
-          }),
-        ].join("\n");
-        const dbxToolDefs = tools.map(t => buildDbxToolWrapper(t)).join("\n\n\n");
-        files["tools/__init__.py"] = (
-          `# AgentBricks Tool Registry — LangChain BaseTool wrappers\n` +
+        const systemPromptShort = (systemPrompt || "").substring(0, 500).replace(/`/g, "'").replace(/\\/g, "\\\\");
+        files["agent.py"] = aiResult?.entrypoint || (
+          `# Databricks Mosaic AI Agent — ResponsesAgent\n` +
           `# Generated for: ${agent.name}\n` +
-          `# Each @tool-decorated function becomes a LangChain BaseTool with .name and .invoke()\n` +
+          `# Framework: mlflow.pyfunc.ResponsesAgent (OpenAI Responses API via WorkspaceClient)\n` +
+          `import json\nimport sys\nimport pandas as pd\n` +
+          `import mlflow\n` +
+          `from mlflow.models.resources import DatabricksServingEndpoint\n` +
+          `from mlflow.pyfunc import ResponsesAgent\n` +
+          `from tools import TOOLS\n\n` +
+          `if "__file__" not in globals():\n` +
+          `    __file__ = __import__("sys")._getframe(0).f_code.co_filename\n\n` +
+          `# ── Agent configuration ──────────────────────────────────────────────────────\n` +
+          `_LLM_ENDPOINT          = "${dbxEndpoint}"  # verify this endpoint exists in your workspace\n` +
+          `_MAX_TOKENS            = 4096\n` +
+          `_TEMPERATURE           = 0.1\n` +
+          `_MAX_ITERATIONS        = ${maxIterations}\n` +
+          `_COMPLETION_TOKEN      = "${completionPromise}"\n` +
+          `_SYSTEM_PROMPT         = """${systemPromptShort}"""\n` +
+          `_EXPERIMENT_NAME       = "/Shared/${agentSlugDbx}_experiment"\n` +
+          `_REGISTERED_MODEL_NAME = "<catalog>.<schema>.${agentSlugDbx}"  # replace with real Unity Catalog path\n` +
+          `_SERVING_ENDPOINT_NAME = "${agentSlugDbx}_endpoint"\n\n` +
+          `# Enable automatic MLflow tracing for OpenAI (ResponsesAgent uses the OpenAI Responses API)\n` +
+          `mlflow.openai.autolog()\n\n` +
+          `# Build tool registry from ToolInfo objects in tools/__init__.py\n` +
+          `tool_specs = [t.spec for t in TOOLS]\n` +
+          `tool_map   = {t.name: t.execute for t in TOOLS}\n\n\n` +
+          `class ${dbxClassName}Agent(ResponsesAgent):\n` +
+          `    """${agent.name}\n\n    ${(agent.description || "AI agent generated by ATLAS.").replace(/\n/g, "\\n").substring(0, 200)}\n    """\n\n` +
+          `    def predict_stream(self, context, model_input):\n` +
+          `        """Stream responses, dispatching tool calls until completion or max iterations."""\n` +
+          `        from databricks.sdk import WorkspaceClient  # lazy — must not init at module load in serverless\n\n` +
+          `        if isinstance(model_input, __import__("pandas").DataFrame):\n` +
+          `            messages = list(model_input["input"].iloc[0])\n` +
+          `        else:\n` +
+          `            messages = list(model_input.get("input") or model_input.get("messages", []))\n\n` +
+          `        messages = [{"role": "system", "content": _SYSTEM_PROMPT}] + messages\n\n` +
+          `        w = WorkspaceClient()\n` +
+          `        client = w.serving_endpoints.get_open_ai_client()\n\n` +
+          `        for iteration in range(_MAX_ITERATIONS):\n` +
+          `            response = client.responses.create(\n` +
+          `                model=_LLM_ENDPOINT, input=messages,\n` +
+          `                tools=tool_specs if tool_specs else None,\n` +
+          `                max_output_tokens=_MAX_TOKENS, temperature=_TEMPERATURE, stream=True,\n` +
+          `            )\n` +
+          `            tool_calls = []\n` +
+          `            assistant_parts = []\n` +
+          `            for event in response:\n` +
+          `                yield event\n` +
+          `                if not hasattr(event, "type"):\n` +
+          `                    continue\n` +
+          `                if event.type == "response.output_item.added":\n` +
+          `                    item = getattr(event, "item", None)\n` +
+          `                    if item and getattr(item, "type", None) == "function_call":\n` +
+          `                        tool_calls.append(item)\n` +
+          `                elif event.type == "response.output_text.delta":\n` +
+          `                    assistant_parts.append(getattr(event, "delta", ""))\n` +
+          `            if not tool_calls:\n` +
+          `                return\n` +
+          `            assistant_text = "".join(assistant_parts)\n` +
+          `            messages.append({"role": "assistant", "content": assistant_text or None,\n` +
+          `                "tool_calls": [{"id": tc.call_id, "type": "function", "function": {"name": tc.name, "arguments": tc.arguments}} for tc in tool_calls]})\n` +
+          `            for tc in tool_calls:\n` +
+          `                try:\n` +
+          `                    kwargs = json.loads(tc.arguments) if tc.arguments else {}\n` +
+          `                except (json.JSONDecodeError, TypeError):\n` +
+          `                    kwargs = {}\n` +
+          `                tool_fn = tool_map.get(tc.name)\n` +
+          `                try:\n` +
+          `                    result = tool_fn(**kwargs) if tool_fn else {"error": f"Unknown tool: {tc.name}"}\n` +
+          `                except Exception as exc:\n` +
+          `                    result = {"error": str(exc)}\n` +
+          `                messages.append({"role": "tool", "tool_call_id": tc.call_id, "content": json.dumps(result)})\n` +
+          `        yield {"type": "response.output_text.delta", "delta": f"[Max iterations (${maxIterations}) reached]"}\n\n` +
+          `    def predict(self, context, model_input):\n` +
+          `        """Non-streaming prediction — collects all streamed events and returns."""\n` +
+          `        events = list(self.predict_stream(context, model_input))\n` +
+          `        return {"output": events}\n\n\n` +
+          `agent = ${dbxClassName}Agent()\n` +
+          `mlflow.models.set_model(agent)\n\n\n` +
+          `if __name__ == "__main__":\n` +
+          `    import argparse\n` +
+          `    parser = argparse.ArgumentParser()\n` +
+          `    parser.add_argument("--experiment_name", default=_EXPERIMENT_NAME)\n` +
+          `    args = parser.parse_args()\n` +
+          `    mlflow.set_experiment(args.experiment_name)\n` +
+          `    with mlflow.start_run():\n` +
+          `        model_info = mlflow.pyfunc.log_model(\n` +
+          `            python_model=agent, artifact_path="agent",\n` +
+          `            pip_requirements=["openai>=1.30.0", "requests>=2.31.0"],\n` +
+          `            input_example={"input": [{"role": "user", "content": "Hello, what can you help me with?"}]},\n` +
+          `            resources=[DatabricksServingEndpoint(endpoint_name=_SERVING_ENDPOINT_NAME)],\n` +
+          `            registered_model_name=_REGISTERED_MODEL_NAME,\n` +
+          `        )\n` +
+          `    print(f"Model logged: {model_info.model_uri}")\n`
+        );
+
+        // Build Databricks tools/__init__.py: ToolInfo registry for ResponsesAgent.
+        // agent.py reads TOOLS to build tool_specs (for LLM) and tool_map (for dispatch).
+        const dbxInitImportLines = [
+          "from collections import namedtuple",
+          ...tools.map(t => 
+            `from tools.${t.name} import TOOL_SPEC as ${t.name}_spec, execute as ${t.name}_execute`
+          ),
+        ].join("\n");
+        const dbxToolInfoEntries = tools.map(t => buildDbxToolInfoEntry(t)).join("\n");
+        files["tools/__init__.py"] = (
+          `# AgentBricks Tool Registry — ToolInfo pattern for ResponsesAgent\n` +
+          `# Generated for: ${agent.name}\n` +
+          `# TOOLS is read by agent.py to build tool_specs (LLM) and tool_map (dispatch).\n` +
           `${dbxInitImportLines}\n\n\n` +
-          `${dbxToolDefs}\n\n\n` +
-          `def load_tools() -> list:\n` +
-          `    """Return BaseTool objects for llm.bind_tools() and tool_map construction."""\n` +
-          `    return [${tools.map(t => t.name).join(", ")}]\n`
+          `ToolInfo = namedtuple("ToolInfo", ["name", "spec", "execute"])\n\n` +
+          `TOOLS = [\n${dbxToolInfoEntries}\n]\n`
         );
 
         for (const tool of tools) {
           files[`tools/${tool.name}.py`] = selectPyToolAdapter(aiResult, tool, getAdapterType);
+        }
+
+        // Generate shared MCP JSON-RPC 2.0 client when the agent has ≥1 MCP server.
+        // Tool adapters for MCP-backed tools import call_mcp_tool from here — they never
+        // import requests directly, keeping the transport abstracted and testable.
+        if (mcpServerDetails.length > 0) {
+          files["tools/mcp_client.py"] = (
+            `# Shared MCP (Model Context Protocol) JSON-RPC 2.0 client\n` +
+            `# Generated for: ${agent.name}\n` +
+            `# Tool adapters for MCP-backed tools import call_mcp_tool from here.\n` +
+            `# They never import requests directly — transport is abstracted here.\n` +
+            `import json\n` +
+            `import uuid\n` +
+            `import requests\n\n\n` +
+            `def call_mcp_tool(\n` +
+            `    server_url: str,\n` +
+            `    tool_name: str,\n` +
+            `    arguments: dict,\n` +
+            `    timeout: int = 30,\n` +
+            `) -> dict:\n` +
+            `    """\n` +
+            `    Send a JSON-RPC 2.0 tools/call request to an MCP server.\n\n` +
+            `    Args:\n` +
+            `        server_url: The HTTP(S) URL of the MCP server endpoint.\n` +
+            `        tool_name:  The MCP tool name to invoke.\n` +
+            `        arguments:  Keyword arguments parsed from the LLM's JSON output.\n` +
+            `        timeout:    Request timeout in seconds (default 30).\n\n` +
+            `    Returns:\n` +
+            `        The unwrapped tool result as a Python dict.\n` +
+            `    """\n` +
+            `    payload = {\n` +
+            `        "jsonrpc": "2.0",\n` +
+            `        "id": str(uuid.uuid4()),\n` +
+            `        "method": "tools/call",\n` +
+            `        "params": {\n` +
+            `            "name": tool_name,\n` +
+            `            # Strip None values — MCP servers reject null for optional params\n` +
+            `            "arguments": {k: v for k, v in arguments.items() if v is not None},\n` +
+            `        },\n` +
+            `    }\n` +
+            `    resp = requests.post(\n` +
+            `        server_url,\n` +
+            `        json=payload,\n` +
+            `        headers={"Content-Type": "application/json"},\n` +
+            `        timeout=timeout,\n` +
+            `    )\n` +
+            `    resp.raise_for_status()\n` +
+            `    rpc = resp.json()\n\n` +
+            `    if "error" in rpc:\n` +
+            `        err = rpc["error"]\n` +
+            `        raise RuntimeError(f"MCP error {err.get('code')}: {err.get('message')}")\n\n` +
+            `    result = rpc.get("result", {})\n\n` +
+            `    # Unwrap MCP content array — most tools return {"content": [{"type":"text","text":"..."}]}\n` +
+            `    content = result.get("content")\n` +
+            `    if isinstance(content, list):\n` +
+            `        texts = [c.get("text", "") for c in content if c.get("type") == "text"]\n` +
+            `        if len(texts) == 1:\n` +
+            `            try:\n` +
+            `                return json.loads(texts[0])\n` +
+            `            except (json.JSONDecodeError, ValueError):\n` +
+            `                return {"result": texts[0]}\n` +
+            `        return {"result": "\\n".join(texts)}\n\n` +
+            `    return result\n`
+          );
         }
 
         // spark_python_task is correct for plain Python scripts; python_wheel_task
