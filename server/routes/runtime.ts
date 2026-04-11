@@ -13416,14 +13416,18 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
 
   // ── Structured Interrupt: Resume with typed response payload ──────────────
   // ── Interrupts: list all instances for a run ─────────────────────────────
+  async function listInterruptInstancesWithDefs(runId: string) {
+    const instances = await storage.listInterruptInstances(runId);
+    return Promise.all(instances.map(async (inst) => {
+      const raw = await storage.getInterruptDefinition(inst.definitionId).catch(() => null);
+      const definition = raw ? enrichInterruptDefinition(raw as unknown as Record<string, unknown>) : null;
+      return { ...inst, definition };
+    }));
+  }
+
   router.get("/api/pipeline-runs/:id/interrupts", async (req, res) => {
     try {
-      const instances = await storage.listInterruptInstances(req.params.id);
-      const withDefs = await Promise.all(instances.map(async (inst) => {
-        const def = await storage.getInterruptDefinition(inst.definitionId).catch(() => null);
-        return { ...inst, definition: def ?? null };
-      }));
-      res.json(withDefs);
+      res.json(await listInterruptInstancesWithDefs(req.params.id));
     } catch (e) {
       res.status(500).json({ error: "Failed to fetch interrupt instances" });
     }
@@ -13432,12 +13436,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
   // Alias: /interrupt-history returns the same payload as /interrupts
   router.get("/api/pipeline-runs/:id/interrupt-history", async (req, res) => {
     try {
-      const instances = await storage.listInterruptInstances(req.params.id);
-      const withDefs = await Promise.all(instances.map(async (inst) => {
-        const def = await storage.getInterruptDefinition(inst.definitionId).catch(() => null);
-        return { ...inst, definition: def ?? null };
-      }));
-      res.json(withDefs);
+      res.json(await listInterruptInstancesWithDefs(req.params.id));
     } catch (e) {
       res.status(500).json({ error: "Failed to fetch interrupt history" });
     }
@@ -13448,7 +13447,8 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     try {
       const instance = await storage.getOpenInterruptInstance(req.params.id);
       if (!instance) return res.json({ instance: null, definition: null });
-      const definition = await storage.getInterruptDefinition(instance.definitionId).catch(() => null);
+      const rawDef = await storage.getInterruptDefinition(instance.definitionId).catch(() => null);
+      const definition = rawDef ? enrichInterruptDefinition(rawDef as unknown as Record<string, unknown>) : null;
       res.json({ instance, definition });
     } catch (e) {
       res.status(500).json({ error: "Failed to fetch active interrupt" });
@@ -13546,9 +13546,25 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         stageResults[currentIdx].interruptResponse = data;
       }
 
-      let targetNextIdx = currentIdx + 1;
+      // "complete" routing: mark pipeline done immediately, no further stage execution
+      if (resumeResult.routingOutcome === "complete") {
+        const completePayload: Record<string, any> = {
+          stageResults, currentStageId: null, status: "completed",
+          completedAt: new Date(), activeInterruptId: null,
+        };
+        if (stateEnabled) completePayload.currentState = currentStateObj;
+        const updated = await storage.updatePipelineRun(
+          req.params.id, completePayload as any,
+          stateDidChange ? { atomicIncrementStateVersion: true } : undefined,
+        );
+        return res.json({ run: updated, routingOutcome: "complete", targetStageId: null });
+      }
 
-      if (resumeResult.routingOutcome === "loop_back" || resumeResult.routingOutcome === "goto_stage") {
+      let targetNextIdx = currentIdx + 1;
+      const isNonLinearRouting =
+        resumeResult.routingOutcome === "loop_back" || resumeResult.routingOutcome === "goto_stage";
+
+      if (isNonLinearRouting) {
         const targetId = resumeResult.targetStageId;
         if (targetId) {
           const targetIdx = stages.findIndex((s) => s.id === targetId);
@@ -13556,38 +13572,118 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         }
       }
 
+      // Shared helper: fire or legacy-checkpoint an approval gate during routing.
+      // Returns the updatePayload ready to persist.
+      async function routeToGate(gateStage: Record<string, unknown>, gateIdx: number): Promise<Record<string, any>> {
+        stageResults[gateIdx].status = "awaiting_approval";
+        stageResults[gateIdx].startedAt = stageResults[gateIdx].startedAt || new Date().toISOString();
+        let activeInterruptId: string | null = null;
+        const interruptDef = await storage.getInterruptDefinitionByStage(run.pipelineId, gateStage.id as string);
+        const sanitizedForGate = sanitizeForCheckpoint(currentStateObj, wfSchemaFields);
+        if (interruptDef) {
+          const fireResult = await fireInterrupt({
+            pipelineRunId: run.id,
+            stageId: gateStage.id as string,
+            stageName: (gateStage.label as string) || (gateStage.name as string) || "Gate",
+            definition: interruptDef,
+            currentStateJson: sanitizedForGate,
+            stageOutput: `[Re-fired after routing — action: ${action}]`,
+          });
+          activeInterruptId = fireResult.interruptId;
+        } else {
+          const gateIntId = crypto.randomUUID();
+          const gateHash = crypto.createHash("sha256").update(JSON.stringify(sanitizedForGate)).digest("hex");
+          const cp = await storage.createWorkflowCheckpoint({
+            pipelineRunId: run.id, trigger: "interrupt",
+            triggerStageId: gateStage.id as string,
+            stateJson: sanitizedForGate, stateHash: gateHash,
+            interruptId: gateIntId, interruptNode: gateStage.id as string,
+            interruptPayload: {
+              gateId: gateStage.id, gateName: gateStage.label,
+              stateSnapshot: sanitizedForGate,
+              stageOutput: `[Re-fired after routing — action: ${action}]`,
+              context: `Gate re-fired after routing (action: ${action})`,
+            }, interruptResponded: false,
+          });
+          activeInterruptId = cp.interruptId;
+        }
+        const gatePayload: Record<string, any> = {
+          stageResults, currentStageId: gateStage.id, status: "paused_at_gate", activeInterruptId,
+        };
+        if (stateEnabled) gatePayload.currentState = currentStateObj;
+        return gatePayload;
+      }
+
+      if (isNonLinearRouting) {
+        // Auto-advance deterministically: complete non-gate stages and re-fire the interrupt
+        // at the first approval_gate encountered, implementing the full loop-back cycle.
+        let advIdx = targetNextIdx;
+        while (advIdx < stages.length) {
+          const advStage = stages[advIdx] as Record<string, unknown>;
+          if (advStage.stageType === "approval_gate") {
+            const gatePayload = await routeToGate(advStage, advIdx);
+            const updated = await storage.updatePipelineRun(
+              req.params.id, gatePayload as any,
+              stateDidChange ? { atomicIncrementStateVersion: true } : undefined,
+            );
+            return res.json({
+              run: updated, routingOutcome: resumeResult.routingOutcome,
+              targetStageId: advStage.id, refiredGate: true,
+            });
+          }
+          // Non-gate: auto-complete (deterministic — no AI call during loop-back cycle)
+          stageResults[advIdx].status = "completed";
+          stageResults[advIdx].completedAt = new Date().toISOString();
+          stageResults[advIdx].startedAt = stageResults[advIdx].startedAt || new Date().toISOString();
+          if (!stageResults[advIdx].output) {
+            stageResults[advIdx].output = `[Auto-executed in loop-back cycle — action: ${action}]`;
+          }
+          advIdx++;
+        }
+        // All stages consumed after loop-back — pipeline complete
+        const loopDonePayload: Record<string, any> = {
+          stageResults, currentStageId: null, status: "completed",
+          completedAt: new Date(), activeInterruptId: null,
+        };
+        if (stateEnabled) loopDonePayload.currentState = currentStateObj;
+        const updated = await storage.updatePipelineRun(
+          req.params.id, loopDonePayload as any,
+          stateDidChange ? { atomicIncrementStateVersion: true } : undefined,
+        );
+        return res.json({ run: updated, routingOutcome: resumeResult.routingOutcome, targetStageId: null });
+      }
+
+      // Linear routing (next_stage): advance one step, re-firing gate if needed
       if (targetNextIdx < stages.length) {
-        const nextStage = stages[targetNextIdx];
+        const nextStage = stages[targetNextIdx] as Record<string, unknown>;
+        if (nextStage.stageType === "approval_gate") {
+          const gatePayload = await routeToGate(nextStage, targetNextIdx);
+          const updated = await storage.updatePipelineRun(
+            req.params.id, gatePayload as any,
+            stateDidChange ? { atomicIncrementStateVersion: true } : undefined,
+          );
+          return res.json({ run: updated, routingOutcome: resumeResult.routingOutcome, targetStageId: nextStage.id });
+        }
         stageResults[targetNextIdx].status = "running";
         stageResults[targetNextIdx].startedAt = new Date().toISOString();
-
         const updatePayload: Record<string, any> = {
-          stageResults,
-          currentStageId: nextStage.id,
-          status: "running",
-          activeInterruptId: null,
+          stageResults, currentStageId: nextStage.id, status: "running", activeInterruptId: null,
         };
         if (stateEnabled) updatePayload.currentState = currentStateObj;
-
         const updated = await storage.updatePipelineRun(
-          req.params.id,
-          updatePayload as any,
+          req.params.id, updatePayload as any,
           stateDidChange ? { atomicIncrementStateVersion: true } : undefined,
         );
         return res.json({ run: updated, routingOutcome: resumeResult.routingOutcome, targetStageId: nextStage.id });
       }
 
       const finalPayload: Record<string, any> = {
-        stageResults,
-        currentStageId: null,
-        status: "completed",
-        completedAt: new Date(),
-        activeInterruptId: null,
+        stageResults, currentStageId: null, status: "completed",
+        completedAt: new Date(), activeInterruptId: null,
       };
       if (stateEnabled) finalPayload.currentState = currentStateObj;
       const updated = await storage.updatePipelineRun(
-        req.params.id,
-        finalPayload as any,
+        req.params.id, finalPayload as any,
         stateDidChange ? { atomicIncrementStateVersion: true } : undefined,
       );
       res.json({ run: updated, routingOutcome: resumeResult.routingOutcome, targetStageId: null });
@@ -13609,12 +13705,36 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
   });
 
   // ── Interrupt Definitions: CRUD ────────────────────────────────────────────
+  // Enrich an interrupt definition with computed top-level routing_rules and
+  // state_injection views extracted from the action-centric allowedActions array.
+  // This provides a flat contract for consumers that expect explicit columns.
+  function enrichInterruptDefinition(def: Record<string, unknown>): Record<string, unknown> {
+    const actions = Array.isArray(def.allowedActions) ? (def.allowedActions as Array<Record<string, unknown>>) : [];
+    const routingRules = actions.map((a) => {
+      const routing = a.routing as Record<string, unknown> | undefined;
+      return {
+        actionId: a.id,
+        actionLabel: a.label,
+        routingType: routing?.type ?? "next_stage",
+        targetStageId: routing?.targetStageId ?? null,
+      };
+    });
+    const stateInjection = actions
+      .filter((a) => Array.isArray(a.stateInjection) && (a.stateInjection as unknown[]).length > 0)
+      .map((a) => ({
+        actionId: a.id,
+        actionLabel: a.label,
+        injections: a.stateInjection,
+      }));
+    return { ...def, routingRules, stateInjection };
+  }
+
   router.get("/api/interrupt-definitions", async (req, res) => {
     try {
       const pipelineId = req.query.pipelineId as string;
       if (!pipelineId) return res.status(400).json({ error: "pipelineId query parameter required" });
       const defs = await storage.listInterruptDefinitions(pipelineId);
-      res.json(defs);
+      res.json((defs as Array<Record<string, unknown>>).map(enrichInterruptDefinition));
     } catch (e) {
       res.status(500).json({ error: "Failed to fetch interrupt definitions" });
     }
@@ -13648,7 +13768,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     try {
       const def = await storage.getInterruptDefinition(req.params.id);
       if (!def) return res.status(404).json({ error: "Interrupt definition not found" });
-      res.json(def);
+      res.json(enrichInterruptDefinition(def as unknown as Record<string, unknown>));
     } catch (e) {
       res.status(500).json({ error: "Failed to fetch interrupt definition" });
     }

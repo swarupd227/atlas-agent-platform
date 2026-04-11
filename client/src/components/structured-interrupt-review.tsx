@@ -4,7 +4,7 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { ScrollArea } from "@/components/ui/scroll-area";
+
 import { Separator } from "@/components/ui/separator";
 import {
   ShieldCheck,
@@ -261,15 +261,20 @@ export function StructuredInterruptReview({
           )}
 
           {actionFields.length > 0 && (
-            <ScrollArea className="max-h-[280px]">
+            <div className="overflow-y-auto max-h-72" data-testid="response-fields-container">
               <ResponseFieldForm
                 fields={actionFields}
                 values={responseValues}
                 onChange={handleFieldChange}
                 errors={fieldErrors}
                 disabled={resumeMutation.isPending}
+                stateContext={
+                  ((instance?.payload as Record<string, unknown> | null)?.stateSnapshot as Record<string, unknown> | null)
+                  ?? stateSnapshot
+                  ?? null
+                }
               />
-            </ScrollArea>
+            </div>
           )}
 
           {/* Routing preview for this action */}

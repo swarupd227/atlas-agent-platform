@@ -19,9 +19,20 @@ interface ResponseFieldFormProps {
   onChange: (key: string, value: unknown) => void;
   errors?: Record<string, string>;
   disabled?: boolean;
+  stateContext?: Record<string, unknown> | null;
 }
 
-export function ResponseFieldForm({ fields, values, onChange, errors = {}, disabled = false }: ResponseFieldFormProps) {
+function resolveOptions(field: InterruptResponseField, stateContext: Record<string, unknown> | null | undefined): string[] {
+  if (field.options && field.options.length > 0) return field.options;
+  if (field.optionsSource && stateContext) {
+    const key = field.optionsSource.replace(/^state\./, "");
+    const val = stateContext[key];
+    if (Array.isArray(val)) return val.map(String);
+  }
+  return [];
+}
+
+export function ResponseFieldForm({ fields, values, onChange, errors = {}, disabled = false, stateContext }: ResponseFieldFormProps) {
   const [multiSelectOpen, setMultiSelectOpen] = useState<Record<string, boolean>>({});
 
   if (fields.length === 0) {
@@ -97,52 +108,61 @@ export function ResponseFieldForm({ fields, values, onChange, errors = {}, disab
               </div>
             )}
 
-            {field.type === "select" && (field.options || field.optionsSource) && (
-              <Select
-                value={val !== undefined && val !== null ? String(val) : ""}
-                onValueChange={(v) => onChange(field.key, v)}
-                disabled={disabled}
-              >
-                <SelectTrigger className="h-8 text-sm" data-testid={`select-field-${field.key}`}>
-                  <SelectValue placeholder="Select an option…" />
-                </SelectTrigger>
-                <SelectContent>
-                  {(field.options ?? []).map((opt) => (
-                    <SelectItem key={opt} value={opt}>{opt}</SelectItem>
-                  ))}
-                  {field.optionsSource && (field.options ?? []).length === 0 && (
-                    <SelectItem value="_no_options_yet" disabled className="text-muted-foreground text-xs">
-                      Options loaded from {field.optionsSource}
-                    </SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
-            )}
+            {field.type === "select" && (field.options || field.optionsSource) && (() => {
+              const opts = resolveOptions(field, stateContext);
+              return (
+                <Select
+                  value={val !== undefined && val !== null ? String(val) : ""}
+                  onValueChange={(v) => onChange(field.key, v)}
+                  disabled={disabled}
+                >
+                  <SelectTrigger className="h-8 text-sm" data-testid={`select-field-${field.key}`}>
+                    <SelectValue placeholder="Select an option…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {opts.map((opt) => (
+                      <SelectItem key={opt} value={opt}>{opt}</SelectItem>
+                    ))}
+                    {opts.length === 0 && field.optionsSource && (
+                      <SelectItem value="_no_options_yet" disabled className="text-muted-foreground text-xs">
+                        Options sourced from {field.optionsSource}
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              );
+            })()}
 
-            {field.type === "multi_select" && field.options && (
-              <div className="space-y-1" data-testid={`multi-select-field-${field.key}`}>
-                {field.options.map((opt) => {
-                  const selected = Array.isArray(val) ? (val as string[]).includes(opt) : false;
-                  return (
-                    <label key={opt} className="flex items-center gap-2 text-sm cursor-pointer">
-                      <Checkbox
-                        checked={selected}
-                        onCheckedChange={(chk) => {
-                          const current = Array.isArray(val) ? [...(val as string[])] : [];
-                          if (chk) {
-                            onChange(field.key, [...current, opt]);
-                          } else {
-                            onChange(field.key, current.filter((v) => v !== opt));
-                          }
-                        }}
-                        disabled={disabled}
-                      />
-                      <span>{opt}</span>
-                    </label>
-                  );
-                })}
-              </div>
-            )}
+            {field.type === "multi_select" && (field.options || field.optionsSource) && (() => {
+              const opts = resolveOptions(field, stateContext);
+              if (opts.length === 0 && field.optionsSource) {
+                return (
+                  <p className="text-xs text-muted-foreground italic" data-testid={`multi-select-field-${field.key}`}>
+                    Options sourced from {field.optionsSource} (no values in state)
+                  </p>
+                );
+              }
+              return (
+                <div className="space-y-1" data-testid={`multi-select-field-${field.key}`}>
+                  {opts.map((opt) => {
+                    const selected = Array.isArray(val) ? (val as string[]).includes(opt) : false;
+                    return (
+                      <label key={opt} className="flex items-center gap-2 text-sm cursor-pointer">
+                        <Checkbox
+                          checked={selected}
+                          onCheckedChange={(chk) => {
+                            const current = Array.isArray(val) ? [...(val as string[])] : [];
+                            onChange(field.key, chk ? [...current, opt] : current.filter((v) => v !== opt));
+                          }}
+                          disabled={disabled}
+                        />
+                        <span>{opt}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              );
+            })()}
 
             {error && (
               <p className="text-xs text-red-500" data-testid={`error-field-${field.key}`}>{error}</p>
