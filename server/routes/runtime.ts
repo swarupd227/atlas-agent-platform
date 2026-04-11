@@ -3480,7 +3480,7 @@ Contract (ALL SIX items mandatory — file will be rejected if any is missing):
 6. def execute(**kwargs) -> dict — entrypoint for the agent loop; constructs <ClassName> from kwargs (skip None values) and calls _execute
 Resource-type calling patterns:
 - MCP tool: import call_mcp_tool from tools.mcp_client; call call_mcp_tool(server_url, tool_name, kwargs)
-- VectorSearch: use DatabricksVectorSearch client from databricks-langchain
+- VectorSearch: use WorkspaceClient().vector_search.query_index(index_name=..., query_text=...) from databricks-sdk (pre-installed on serverless; no extra pip dep required)
 - UC UDF: use WorkspaceClient().statement_execution.execute_statement(...)
 - External HTTP API: use requests.get/post with credentials from os.environ
 - SQL: use pyodbc or sqlalchemy with connection string from os.environ`
@@ -4643,6 +4643,12 @@ def list_policies():
           `import mlflow\n` +
           `from mlflow.models.resources import DatabricksServingEndpoint\n` +
           `from mlflow.pyfunc import ResponsesAgent\n` +
+          `# ResponsesAgentStreamEvent / ResponsesAgentResponse: available from mlflow >= 2.18.\n` +
+          `# The outer try/except handles the rare case where an older MLflow is pre-installed.\n` +
+          `try:\n` +
+          `    from mlflow.pyfunc import ResponsesAgentStreamEvent, ResponsesAgentResponse\n` +
+          `except ImportError:\n` +
+          `    from mlflow.pyfunc.model import ResponsesAgentStreamEvent, ResponsesAgentResponse  # type: ignore\n` +
           `from tools import TOOLS\n\n` +
           `if "__file__" not in globals():\n` +
           `    __file__ = __import__("sys")._getframe(0).f_code.co_filename\n\n` +
@@ -4682,7 +4688,9 @@ def list_policies():
           `            tool_calls = []\n` +
           `            assistant_parts = []\n` +
           `            for event in response:\n` +
-          `                yield event\n` +
+          `                # Wrap each streaming chunk in the native MLflow response-event\n` +
+          `                # type so predict_stream honours the ResponsesAgent contract.\n` +
+          `                yield ResponsesAgentStreamEvent(data=event)\n` +
           `                if not hasattr(event, "type"):\n` +
           `                    continue\n` +
           `                if event.type == "response.output_item.added":\n` +
@@ -4707,11 +4715,15 @@ def list_policies():
           `                except Exception as exc:\n` +
           `                    result = {"error": str(exc)}\n` +
           `                messages.append({"role": "tool", "tool_call_id": tc.call_id, "content": json.dumps(result)})\n` +
-          `        yield {"type": "response.output_text.delta", "delta": f"[Max iterations (${maxIterations}) reached]"}\n\n` +
+          `        # Max-iteration sentinel: wrap in the same native event type as normal stream events.\n` +
+          `        yield ResponsesAgentStreamEvent(data={"type": "response.output_text.delta", "delta": f"[Max iterations (${maxIterations}) reached]"})\n\n` +
           `    def predict(self, context, model_input):\n` +
-          `        """Non-streaming prediction — collects all streamed events and returns."""\n` +
+          `        """Non-streaming prediction — collects the full stream and returns a ResponsesAgentResponse."""\n` +
           `        events = list(self.predict_stream(context, model_input))\n` +
-          `        return {"output": events}\n\n\n` +
+          `        # Unwrap the .data payload from each ResponsesAgentStreamEvent before packing\n` +
+          `        # into ResponsesAgentResponse so the output list contains plain event objects.\n` +
+          `        output = [e.data if hasattr(e, "data") else e for e in events]\n` +
+          `        return ResponsesAgentResponse(output=output)\n\n\n` +
           `agent = ${dbxClassName}Agent()\n` +
           `mlflow.models.set_model(agent)\n\n\n` +
           `if __name__ == "__main__":\n` +
