@@ -172,6 +172,8 @@ import {
   dagExecutionRuns, type DagExecutionRun, type InsertDagExecutionRun,
   workflowStateSchemas, type WorkflowStateSchema, type InsertWorkflowStateSchema,
   workflowStateCheckpoints, type WorkflowStateCheckpoint, type InsertWorkflowStateCheckpoint,
+  interruptDefinitions, type InterruptDefinition, type InsertInterruptDefinition,
+  interruptInstances, type InterruptInstance, type InsertInterruptInstance,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -806,6 +808,19 @@ export interface IStorage {
   listWorkflowCheckpoints(pipelineRunId: string, trigger?: string): Promise<WorkflowStateCheckpoint[]>;
   updateWorkflowCheckpoint(id: string, data: Partial<WorkflowStateCheckpoint>): Promise<WorkflowStateCheckpoint | undefined>;
   getOpenInterrupt(pipelineRunId: string, interruptId: string): Promise<WorkflowStateCheckpoint | undefined>;
+
+  listInterruptDefinitions(pipelineId: string): Promise<InterruptDefinition[]>;
+  getInterruptDefinition(id: string): Promise<InterruptDefinition | undefined>;
+  getInterruptDefinitionByStage(pipelineId: string, stageId: string): Promise<InterruptDefinition | undefined>;
+  createInterruptDefinition(data: InsertInterruptDefinition): Promise<InterruptDefinition>;
+  updateInterruptDefinition(id: string, data: Partial<InterruptDefinition>): Promise<InterruptDefinition | undefined>;
+  deleteInterruptDefinition(id: string): Promise<boolean>;
+
+  createInterruptInstance(data: InsertInterruptInstance): Promise<InterruptInstance>;
+  getInterruptInstance(id: string): Promise<InterruptInstance | undefined>;
+  listInterruptInstances(pipelineRunId: string): Promise<InterruptInstance[]>;
+  getOpenInterruptInstance(pipelineRunId: string): Promise<InterruptInstance | undefined>;
+  updateInterruptInstance(id: string, data: Partial<InterruptInstance>): Promise<InterruptInstance | undefined>;
 }
 
 function resolveOrgId(providedOrgId: string | null | undefined): string {
@@ -3666,6 +3681,78 @@ export class DatabaseStorage implements IStorage {
         ),
       )
       .limit(1);
+    return row;
+  }
+
+  async listInterruptDefinitions(pipelineId: string): Promise<InterruptDefinition[]> {
+    return db.select().from(interruptDefinitions)
+      .where(eq(interruptDefinitions.pipelineId, pipelineId))
+      .orderBy(asc(interruptDefinitions.createdAt));
+  }
+
+  async getInterruptDefinition(id: string): Promise<InterruptDefinition | undefined> {
+    const [row] = await db.select().from(interruptDefinitions).where(eq(interruptDefinitions.id, id));
+    return row;
+  }
+
+  async getInterruptDefinitionByStage(pipelineId: string, stageId: string): Promise<InterruptDefinition | undefined> {
+    const [row] = await db.select().from(interruptDefinitions)
+      .where(and(
+        eq(interruptDefinitions.pipelineId, pipelineId),
+        eq(interruptDefinitions.stageId, stageId),
+        eq(interruptDefinitions.enabled, true),
+      ))
+      .limit(1);
+    return row;
+  }
+
+  async createInterruptDefinition(data: InsertInterruptDefinition): Promise<InterruptDefinition> {
+    const [row] = await db.insert(interruptDefinitions).values(data).returning();
+    return row;
+  }
+
+  async updateInterruptDefinition(id: string, data: Partial<InterruptDefinition>): Promise<InterruptDefinition | undefined> {
+    const [row] = await db.update(interruptDefinitions)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(interruptDefinitions.id, id))
+      .returning();
+    return row;
+  }
+
+  async deleteInterruptDefinition(id: string): Promise<boolean> {
+    const result = await db.delete(interruptDefinitions).where(eq(interruptDefinitions.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async createInterruptInstance(data: InsertInterruptInstance): Promise<InterruptInstance> {
+    const [row] = await db.insert(interruptInstances).values(data).returning();
+    return row;
+  }
+
+  async getInterruptInstance(id: string): Promise<InterruptInstance | undefined> {
+    const [row] = await db.select().from(interruptInstances).where(eq(interruptInstances.id, id));
+    return row;
+  }
+
+  async listInterruptInstances(pipelineRunId: string): Promise<InterruptInstance[]> {
+    return db.select().from(interruptInstances)
+      .where(eq(interruptInstances.pipelineRunId, pipelineRunId))
+      .orderBy(desc(interruptInstances.firedAt));
+  }
+
+  async getOpenInterruptInstance(pipelineRunId: string): Promise<InterruptInstance | undefined> {
+    const [row] = await db.select().from(interruptInstances)
+      .where(and(
+        eq(interruptInstances.pipelineRunId, pipelineRunId),
+        eq(interruptInstances.status, "pending"),
+      ))
+      .orderBy(desc(interruptInstances.firedAt))
+      .limit(1);
+    return row;
+  }
+
+  async updateInterruptInstance(id: string, data: Partial<InterruptInstance>): Promise<InterruptInstance | undefined> {
+    const [row] = await db.update(interruptInstances).set(data).where(eq(interruptInstances.id, id)).returning();
     return row;
   }
 }

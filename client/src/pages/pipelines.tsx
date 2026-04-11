@@ -4,6 +4,9 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Link, useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import type { AgentPipeline, PipelineRun, Agent } from "@shared/schema";
+import { StructuredInterruptReview } from "@/components/structured-interrupt-review";
+import { InterruptDefConfigurator } from "@/components/interrupt-def-configurator";
+import { InterruptHistoryTimeline } from "@/components/interrupt-history-timeline";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1974,6 +1977,26 @@ export default function Pipelines() {
                                     (activeInterrupt?.interruptPayload?.gateName as string) || stage.label;
                                   const stageOutput: string =
                                     (activeInterrupt?.interruptPayload?.stageOutput as string) || "";
+                                  const isStructuredInterrupt = !!(activeInterrupt?.interruptPayload?.interruptDefinitionId);
+
+                                  if (isStructuredInterrupt && selectedPipelineId) {
+                                    return (
+                                      <div className="mt-3" data-testid={`approval-panel-${stage.id}`}>
+                                        <StructuredInterruptReview
+                                          runId={activeRun.id}
+                                          pipelineId={selectedPipelineId}
+                                          stageId={stage.id}
+                                          stageName={gateName}
+                                          stageOutput={stageOutput}
+                                          stateSnapshot={snapshot}
+                                          onResolved={() => queryClient.invalidateQueries({ queryKey: ["/api/pipelines", selectedPipelineId, "runs"] })}
+                                          onReject={() => rejectMutation.mutate(activeRun.id)}
+                                          isRejecting={rejectMutation.isPending}
+                                        />
+                                      </div>
+                                    );
+                                  }
+
                                   return (
                                     <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 dark:bg-amber-950/20 dark:border-amber-700/40 p-3 space-y-3" data-testid={`approval-panel-${stage.id}`}>
                                       <div className="flex items-center justify-between">
@@ -2432,17 +2455,21 @@ export default function Pipelines() {
                             );
                           })()}
                         </TabsContent>
-                        <TabsContent value="interrupts" className="p-3 m-0">
-                          {workflowState.interrupts.length === 0 ? (
-                            <p className="text-xs text-muted-foreground text-center py-4">No interrupt gates recorded</p>
-                          ) : (
-                            <ScrollArea className="max-h-72">
+                        <TabsContent value="interrupts" className="p-0 m-0">
+                          {selectedPipelineId && (
+                            <InterruptHistoryTimeline runId={activeRun.id} pipelineId={selectedPipelineId} />
+                          )}
+                          {workflowState.interrupts.filter((i) => !(i.interruptPayload as any)?.interruptDefinitionId).length > 0 && (
+                            <div className="border-t px-3 pb-2">
+                              <p className="text-[10px] text-muted-foreground uppercase tracking-wide pt-2 pb-1">Legacy Gates</p>
                               <div className="space-y-2">
-                                {workflowState.interrupts.map((intr) => (
-                                  <InterruptRow key={intr.id} intr={intr} stages={stages} />
-                                ))}
+                                {workflowState.interrupts
+                                  .filter((i) => !(i.interruptPayload as any)?.interruptDefinitionId)
+                                  .map((intr) => (
+                                    <InterruptRow key={intr.id} intr={intr} stages={stages} />
+                                  ))}
                               </div>
-                            </ScrollArea>
+                            </div>
                           )}
                         </TabsContent>
                       </Tabs>
@@ -2647,7 +2674,7 @@ export default function Pipelines() {
       </Dialog>
 
       <Dialog open={!!editStageId} onOpenChange={(open) => { if (!open) setEditStageId(null); }}>
-        <DialogContent data-testid="dialog-edit-stage">
+        <DialogContent className="max-h-[90vh] overflow-y-auto" data-testid="dialog-edit-stage">
           <DialogHeader>
             <DialogTitle>Edit Stage</DialogTitle>
           </DialogHeader>
@@ -2661,6 +2688,17 @@ export default function Pipelines() {
                 data-testid="input-edit-stage-label"
               />
             </div>
+            {allStages.find((s) => s.id === editStageId)?.stageType === "approval_gate" && selectedPipelineId && (
+              <div className="space-y-2 pt-1">
+                <InterruptDefConfigurator
+                  pipelineId={selectedPipelineId}
+                  stageId={editStageId!}
+                  stageName={editStageLabel || "Approval Gate"}
+                  allStages={allStages.map((s) => ({ id: s.id, label: s.label, stageType: s.stageType }))}
+                  onSaved={() => {}}
+                />
+              </div>
+            )}
             {allStages.find((s) => s.id === editStageId)?.stageType === "agent" && (
               <div className="space-y-2">
                 <Label>Agent</Label>

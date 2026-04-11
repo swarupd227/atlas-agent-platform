@@ -2438,4 +2438,83 @@ export const insertAgentAlertSchema = createInsertSchema(agentAlerts).omit({ id:
 export type InsertAgentAlert = z.infer<typeof insertAgentAlertSchema>;
 export type AgentAlert = typeof agentAlerts.$inferSelect;
 
+// ─── GAP3: Structured Interrupt & Resume Payloads ────────────────────────────
+
+export const INTERRUPT_RESPONSE_FIELD_TYPES = ["text", "textarea", "number", "boolean", "select", "multi_select"] as const;
+export type InterruptResponseFieldType = typeof INTERRUPT_RESPONSE_FIELD_TYPES[number];
+
+export const INTERRUPT_ROUTING_OPERATORS = ["eq", "neq", "contains", "gte", "lte", "in"] as const;
+export type InterruptRoutingOperator = typeof INTERRUPT_ROUTING_OPERATORS[number];
+
+export interface InterruptResponseField {
+  key: string;
+  type: InterruptResponseFieldType;
+  label: string;
+  required?: boolean;
+  options?: string[];
+  defaultValue?: string | number | boolean;
+  helpText?: string;
+}
+
+export interface InterruptRoutingRule {
+  fieldKey: string;
+  operator: InterruptRoutingOperator;
+  value: unknown;
+  targetStageId: string;
+  label?: string;
+}
+
+export interface InterruptStateInjectionEntry {
+  responseKey: string;
+  stateKey: string;
+  transform?: "passthrough" | "stringify" | "parse_number" | "parse_bool";
+}
+
+export const interruptDefinitions = pgTable("interrupt_definitions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  pipelineId: varchar("pipeline_id").notNull(),
+  stageId: varchar("stage_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  responseSchema: jsonb("response_schema").notNull().default(sql`'[]'::jsonb`),
+  routingRules: jsonb("routing_rules").notNull().default(sql`'[]'::jsonb`),
+  stateInjectionMap: jsonb("state_injection_map").notNull().default(sql`'[]'::jsonb`),
+  loopBackStageId: varchar("loop_back_stage_id"),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_interrupt_defs_pipeline").on(table.pipelineId),
+  index("idx_interrupt_defs_stage").on(table.pipelineId, table.stageId),
+]);
+
+export const insertInterruptDefinitionSchema = createInsertSchema(interruptDefinitions).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertInterruptDefinition = z.infer<typeof insertInterruptDefinitionSchema>;
+export type InterruptDefinition = typeof interruptDefinitions.$inferSelect;
+
+export const INTERRUPT_INSTANCE_STATUSES = ["pending", "responded", "timed_out", "loop_back"] as const;
+export type InterruptInstanceStatus = typeof INTERRUPT_INSTANCE_STATUSES[number];
+
+export const interruptInstances = pgTable("interrupt_instances", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  definitionId: varchar("definition_id").notNull(),
+  pipelineRunId: varchar("pipeline_run_id").notNull(),
+  checkpointId: varchar("checkpoint_id"),
+  status: text("status").notNull().default("pending"),
+  loopIteration: integer("loop_iteration").notNull().default(0),
+  firedAt: timestamp("fired_at").defaultNow(),
+  respondedAt: timestamp("responded_at"),
+  responsePayload: jsonb("response_payload"),
+  routingOutcome: text("routing_outcome"),
+  respondedBy: text("responded_by"),
+  validationErrors: jsonb("validation_errors"),
+}, (table) => [
+  index("idx_interrupt_instances_run").on(table.pipelineRunId),
+  index("idx_interrupt_instances_def").on(table.definitionId),
+]);
+
+export const insertInterruptInstanceSchema = createInsertSchema(interruptInstances).omit({ id: true, firedAt: true });
+export type InsertInterruptInstance = z.infer<typeof insertInterruptInstanceSchema>;
+export type InterruptInstance = typeof interruptInstances.$inferSelect;
+
 export * from "./models/chat";

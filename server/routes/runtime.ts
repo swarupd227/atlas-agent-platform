@@ -2,6 +2,7 @@ import { Router } from "express";
 import * as crypto from "crypto";
 import { storage } from "../storage";
 import { db } from "../db";
+import { fireInterrupt, resumeInterrupt } from "../services/interrupt-manager";
 import { computeWaves, DAGExecutionEngine, DAGExecutionError } from "../dag-execution-engine";
 import type { StateFieldDef } from "../dag-execution-engine";
 import { mergeIntoWorkflowState, sanitizeForCheckpoint, writeStageCompleteCheckpoint } from "../workflow-state-helpers";
@@ -13144,7 +13145,21 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         stageResults[nextIdx].startedAt = new Date().toISOString();
 
         let activeInterruptId: string | null = null;
-        if (stateEnabled) {
+
+        const interruptDef = await storage.getInterruptDefinitionByStage(run.pipelineId, nextStage.id);
+
+        if (interruptDef) {
+          const sanitized = sanitizeForCheckpoint(currentStateObj, wfSchemaFields);
+          const fireResult = await fireInterrupt({
+            pipelineRunId: run.id,
+            stageId: nextStage.id,
+            stageName: nextStage.label,
+            definition: interruptDef,
+            currentStateJson: sanitized,
+            stageOutput: req.body.output || "",
+          });
+          activeInterruptId = fireResult.interruptId;
+        } else if (stateEnabled) {
           const sanitized = sanitizeForCheckpoint(currentStateObj, wfSchemaFields);
           const stateHash = crypto.createHash("sha256").update(JSON.stringify(sanitized)).digest("hex");
           const interruptId = crypto.randomUUID();
@@ -13173,7 +13188,7 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
           currentStageId: nextStage.id,
           status: "paused_at_gate",
         };
-        if (stateEnabled) {
+        if (stateEnabled || interruptDef) {
           updatePayload.currentState = currentStateObj;
           if (activeInterruptId) updatePayload.activeInterruptId = activeInterruptId;
         }
@@ -13397,6 +13412,227 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     };
     const updated = await storage.updatePipelineRun(req.params.id, updatePayload as any);
     res.json(updated);
+  });
+
+  // ── Structured Interrupt: Resume with typed response payload ──────────────
+  router.post("/api/pipeline-runs/:id/resume", async (req, res) => {
+    try {
+      const run = await storage.getPipelineRun(req.params.id);
+      if (!run) return res.status(404).json({ error: "Pipeline run not found" });
+      if (run.status !== "paused_at_gate") {
+        return res.status(400).json({ error: "Run is not paused at an approval gate" });
+      }
+      const pipeline = await storage.getAgentPipeline(run.pipelineId);
+      if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
+
+      const resumeSchema = z.object({
+        instanceId: z.string().min(1),
+        responsePayload: z.record(z.unknown()).default({}),
+        respondedBy: z.string().optional(),
+      });
+      const { instanceId, responsePayload, respondedBy } = resumeSchema.parse(req.body);
+
+      const resumeResult = await resumeInterrupt({ instanceId, responsePayload, respondedBy });
+
+      if (resumeResult.validationErrors.length > 0) {
+        return res.status(422).json({ error: "Validation failed", validationErrors: resumeResult.validationErrors });
+      }
+
+      const stateEnabled = (pipeline as any).stateEnabled === true;
+      let wfSchemaFields: Record<string, StateFieldDef> = {};
+      let currentStateObj = ((run as any).currentState as Record<string, any>) || {};
+      let stateDidChange = false;
+
+      if (stateEnabled) {
+        const resolvedSchemaId = ((run as any).stateSchemaId as string | null | undefined)
+          || ((pipeline as any).stateSchemaId as string | null | undefined);
+        if (resolvedSchemaId) {
+          const wfSchema = await storage.getWorkflowStateSchema(resolvedSchemaId);
+          if (wfSchema) wfSchemaFields = (wfSchema.fields as Record<string, StateFieldDef>) || {};
+        }
+      }
+
+      if (Object.keys(resumeResult.stateUpdates).length > 0) {
+        const { merged } = mergeIntoWorkflowState(
+          currentStateObj,
+          {
+            ...resumeResult.stateUpdates,
+            _gate_decision: resumeResult.routingOutcome,
+            _interrupt_response: responsePayload,
+          },
+          wfSchemaFields,
+          `interrupt:${instanceId}`,
+        );
+        currentStateObj = merged;
+        stateDidChange = true;
+      } else {
+        const { merged } = mergeIntoWorkflowState(
+          currentStateObj,
+          { _gate_decision: resumeResult.routingOutcome, _interrupt_response: responsePayload },
+          wfSchemaFields,
+          `interrupt:${instanceId}`,
+        );
+        currentStateObj = merged;
+        stateDidChange = true;
+      }
+
+      const sanitized = sanitizeForCheckpoint(currentStateObj, wfSchemaFields);
+      const resumeHash = crypto.createHash("sha256").update(JSON.stringify(sanitized)).digest("hex");
+      await storage.createWorkflowCheckpoint({
+        pipelineRunId: run.id,
+        trigger: "resume",
+        triggerStageId: run.currentStageId || undefined,
+        stateJson: sanitized,
+        stateHash: resumeHash,
+        interruptResponded: false,
+        createdBy: respondedBy || "operator",
+      });
+
+      const stages = (pipeline.stages as any[]) || [];
+      const stageResults = ((run.stageResults as any[]) || []).map((s: any) => ({ ...s }));
+      const currentIdx = stages.findIndex((s: any) => s.id === run.currentStageId);
+      if (currentIdx >= 0) {
+        stageResults[currentIdx].status = "approved";
+        stageResults[currentIdx].completedAt = new Date().toISOString();
+        stageResults[currentIdx].approvedBy = respondedBy || "operator";
+        stageResults[currentIdx].interruptResponse = responsePayload;
+      }
+
+      let targetNextIdx = currentIdx + 1;
+
+      if (resumeResult.routingOutcome === "loop_back" || resumeResult.routingOutcome === "conditional_route") {
+        const targetId = resumeResult.targetStageId;
+        if (targetId) {
+          const targetIdx = stages.findIndex((s: any) => s.id === targetId);
+          if (targetIdx >= 0) targetNextIdx = targetIdx;
+        }
+      }
+
+      if (targetNextIdx < stages.length) {
+        const nextStage = stages[targetNextIdx];
+        stageResults[targetNextIdx].status = "running";
+        stageResults[targetNextIdx].startedAt = new Date().toISOString();
+
+        const updatePayload: Record<string, any> = {
+          stageResults,
+          currentStageId: nextStage.id,
+          status: "running",
+          activeInterruptId: null,
+        };
+        if (stateEnabled) updatePayload.currentState = currentStateObj;
+
+        const updated = await storage.updatePipelineRun(
+          req.params.id,
+          updatePayload as any,
+          stateDidChange ? { atomicIncrementStateVersion: true } : undefined,
+        );
+        return res.json({ run: updated, routingOutcome: resumeResult.routingOutcome, targetStageId: nextStage.id });
+      }
+
+      const finalPayload: Record<string, any> = {
+        stageResults,
+        currentStageId: null,
+        status: "completed",
+        completedAt: new Date(),
+        activeInterruptId: null,
+      };
+      if (stateEnabled) finalPayload.currentState = currentStateObj;
+      const updated = await storage.updatePipelineRun(
+        req.params.id,
+        finalPayload as any,
+        stateDidChange ? { atomicIncrementStateVersion: true } : undefined,
+      );
+      res.json({ run: updated, routingOutcome: resumeResult.routingOutcome, targetStageId: null });
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ error: "Validation error", errors: (e as ZodError).errors });
+      console.error("[pipeline-runs/resume] Error:", e);
+      res.status(500).json({ error: e instanceof Error ? e.message : "Resume failed" });
+    }
+  });
+
+  // ── Interrupt Instances: list for a run ───────────────────────────────────
+  router.get("/api/pipeline-runs/:id/interrupt-instances", async (req, res) => {
+    try {
+      const instances = await storage.listInterruptInstances(req.params.id);
+      res.json(instances);
+    } catch (e) {
+      res.status(500).json({ error: "Failed to fetch interrupt instances" });
+    }
+  });
+
+  // ── Interrupt Definitions: CRUD ────────────────────────────────────────────
+  router.get("/api/interrupt-definitions", async (req, res) => {
+    try {
+      const pipelineId = req.query.pipelineId as string;
+      if (!pipelineId) return res.status(400).json({ error: "pipelineId query parameter required" });
+      const defs = await storage.listInterruptDefinitions(pipelineId);
+      res.json(defs);
+    } catch (e) {
+      res.status(500).json({ error: "Failed to fetch interrupt definitions" });
+    }
+  });
+
+  router.post("/api/interrupt-definitions", async (req, res) => {
+    try {
+      const defSchema = z.object({
+        pipelineId: z.string().min(1),
+        stageId: z.string().min(1),
+        name: z.string().min(1),
+        description: z.string().optional(),
+        responseSchema: z.array(z.any()).default([]),
+        routingRules: z.array(z.any()).default([]),
+        stateInjectionMap: z.array(z.any()).default([]),
+        loopBackStageId: z.string().optional(),
+        enabled: z.boolean().default(true),
+      });
+      const data = defSchema.parse(req.body);
+      const def = await storage.createInterruptDefinition(data);
+      res.status(201).json(def);
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ error: "Validation error", errors: (e as ZodError).errors });
+      res.status(500).json({ error: "Failed to create interrupt definition" });
+    }
+  });
+
+  router.get("/api/interrupt-definitions/:id", async (req, res) => {
+    try {
+      const def = await storage.getInterruptDefinition(req.params.id);
+      if (!def) return res.status(404).json({ error: "Interrupt definition not found" });
+      res.json(def);
+    } catch (e) {
+      res.status(500).json({ error: "Failed to fetch interrupt definition" });
+    }
+  });
+
+  router.put("/api/interrupt-definitions/:id", async (req, res) => {
+    try {
+      const defSchema = z.object({
+        name: z.string().min(1).optional(),
+        description: z.string().optional(),
+        responseSchema: z.array(z.any()).optional(),
+        routingRules: z.array(z.any()).optional(),
+        stateInjectionMap: z.array(z.any()).optional(),
+        loopBackStageId: z.string().nullable().optional(),
+        enabled: z.boolean().optional(),
+      });
+      const data = defSchema.parse(req.body);
+      const def = await storage.updateInterruptDefinition(req.params.id, data as any);
+      if (!def) return res.status(404).json({ error: "Interrupt definition not found" });
+      res.json(def);
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ error: "Validation error", errors: (e as ZodError).errors });
+      res.status(500).json({ error: "Failed to update interrupt definition" });
+    }
+  });
+
+  router.delete("/api/interrupt-definitions/:id", async (req, res) => {
+    try {
+      const ok = await storage.deleteInterruptDefinition(req.params.id);
+      if (!ok) return res.status(404).json({ error: "Interrupt definition not found" });
+      res.json({ success: true });
+    } catch (e) {
+      res.status(500).json({ error: "Failed to delete interrupt definition" });
+    }
   });
 
   // ── Pipeline AI: Simulate stage execution ──
