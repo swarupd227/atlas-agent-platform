@@ -401,7 +401,7 @@ export default function AgentExport() {
     if (bundleExport && agent?.agentType === "team") {
       streamExport(
         `/api/agents/${agentId}/export-code/bundle`,
-        { format: exportFormat, llmProvider: exportLlmProvider, maxIterations: exportMaxIterations, completionPromise: exportCompletionPromise, pinVersions },
+        { format: exportFormat, llmProvider: exportLlmProvider, maxIterations: exportMaxIterations, completionPromise: exportCompletionPromise, framework: exportFramework, pinVersions },
         (files) => files.find(f => f === "README.md"),
       );
       return;
@@ -1368,7 +1368,28 @@ function ConfigureStep({
         )}
 
         {bundleExport && agent.agentType === "team" ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="flex flex-col gap-2">
+              <Label className="text-xs font-medium">Framework / Pattern</Label>
+              <Select value={exportFramework} onValueChange={setExportFramework}>
+                <SelectTrigger data-testid="select-framework-bundle">
+                  <SelectValue placeholder="Select framework" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="generic">Generic (ReAct Agent Loop)</SelectItem>
+                  <SelectItem value="langgraph">LangGraph</SelectItem>
+                  <SelectItem value="crewai">CrewAI</SelectItem>
+                  <SelectItem value="autogen">AutoGen (Microsoft)</SelectItem>
+                  <SelectItem value="semantic-kernel">Semantic Kernel</SelectItem>
+                  <SelectItem value="foundry">Azure AI Foundry</SelectItem>
+                  <SelectItem value="openai-assistants">OpenAI Assistants API</SelectItem>
+                  <SelectItem value="bedrock">AWS Bedrock Agents</SelectItem>
+                  <SelectItem value="vertex">Vertex AI Agent Builder</SelectItem>
+                  <SelectItem value="n8n">n8n Workflow</SelectItem>
+                  <SelectItem value="databricks">Databricks AgentBricks</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <div className="flex flex-col gap-2">
               <Label className="text-xs font-medium">Language</Label>
               <Select value={exportFormat} onValueChange={setExportFormat}>

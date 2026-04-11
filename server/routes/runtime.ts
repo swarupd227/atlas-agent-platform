@@ -5446,9 +5446,12 @@ clean:
         llmProvider: z.enum(["openai", "anthropic"]).default("openai"),
         maxIterations: z.number().int().positive().default(10),
         completionPromise: z.string().default("TASK_COMPLETE"),
+        framework: z.enum(["generic", "langgraph", "crewai", "foundry", "autogen", "semantic-kernel", "openai-assistants", "bedrock", "n8n", "vertex", "databricks"]).default("generic"),
         pinVersions: z.boolean().default(true),
       });
-      const { format, llmProvider, maxIterations, completionPromise, pinVersions } = bundleSchema.parse(req.body || {});
+      const { format: rawFormat, llmProvider, maxIterations, completionPromise, framework, pinVersions } = bundleSchema.parse(req.body || {});
+      const BUNDLE_PYTHON_ONLY = ["foundry", "autogen", "semantic-kernel"];
+      const format = BUNDLE_PYTHON_ONLY.includes(framework) ? "python" : rawFormat;
 
       emit("progress", { phase: "data", message: "Fetching team member agents..." });
       // Fetch all member agents
@@ -5537,7 +5540,7 @@ clean:
             llmProvider,
             maxIterations: agentRec.maxToolIterations || maxIterations,
             completionPromise,
-            framework: "generic",
+            framework,
             blueprintJson: bp,
             mcpServers: mcpServerDetails,
           });
