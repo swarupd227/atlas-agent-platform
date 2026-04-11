@@ -13465,27 +13465,33 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       const pipeline = await storage.getAgentPipeline(run.pipelineId);
       if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
 
-      // Accept both camelCase field name variants for compatibility
+      // interruptInstanceId = row primary key (id column)
+      // interrupt_id        = the interruptId UUID generated at fire time (interrupt_instances.interrupt_id column)
+      // Both are supported; they resolve via different storage lookups.
       const resumeSchema = z.object({
         interruptInstanceId: z.string().min(1).optional(),
         interrupt_id: z.string().min(1).optional(),
         action: z.string().min(1),
         data: z.record(z.unknown()).default({}),
       }).refine((d) => !!(d.interruptInstanceId ?? d.interrupt_id), {
-        message: "interruptInstanceId or interrupt_id is required",
+        message: "interruptInstanceId (row primary key) or interrupt_id (fire-time UUID) is required",
       });
       const parsed = resumeSchema.parse(req.body);
-      const instanceId = (parsed.interruptInstanceId ?? parsed.interrupt_id) as string;
       const { action, data } = parsed;
 
-      // IDOR guard: ensure the interrupt instance belongs to this run
-      const interruptInstance = await storage.getInterruptInstance(instanceId);
+      // IDOR guard: resolve instance and verify it belongs to this run
+      const interruptInstance = parsed.interruptInstanceId
+        ? await storage.getInterruptInstance(parsed.interruptInstanceId)
+        : await storage.getInterruptInstanceByInterruptId(parsed.interrupt_id as string, req.params.id);
+
       if (!interruptInstance) {
         return res.status(404).json({ error: "Interrupt instance not found" });
       }
       if (interruptInstance.pipelineRunId !== req.params.id) {
         return res.status(403).json({ error: "Interrupt instance does not belong to this pipeline run" });
       }
+
+      const instanceId = interruptInstance.id;
 
       const respondedBy = "operator";
       const resumeResult = await resumeInterrupt({ instanceId, action, data, respondedBy });

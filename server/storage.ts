@@ -818,6 +818,7 @@ export interface IStorage {
 
   createInterruptInstance(data: InsertInterruptInstance): Promise<InterruptInstance>;
   getInterruptInstance(id: string): Promise<InterruptInstance | undefined>;
+  getInterruptInstanceByInterruptId(interruptId: string, pipelineRunId: string): Promise<InterruptInstance | undefined>;
   listInterruptInstances(pipelineRunId: string): Promise<InterruptInstance[]>;
   getOpenInterruptInstance(pipelineRunId: string): Promise<InterruptInstance | undefined>;
   updateInterruptInstance(id: string, data: Partial<InterruptInstance>): Promise<InterruptInstance | undefined>;
@@ -3732,6 +3733,14 @@ export class DatabaseStorage implements IStorage {
 
   async getInterruptInstance(id: string): Promise<InterruptInstance | undefined> {
     const [row] = await db.select().from(interruptInstances).where(eq(interruptInstances.id, id));
+    return row;
+  }
+
+  async getInterruptInstanceByInterruptId(interruptId: string, pipelineRunId: string): Promise<InterruptInstance | undefined> {
+    const [row] = await db.select().from(interruptInstances).where(and(
+      eq(interruptInstances.interruptId, interruptId),
+      eq(interruptInstances.pipelineRunId, pipelineRunId),
+    ));
     return row;
   }
 
