@@ -111,8 +111,23 @@ export async function fireInterrupt(params: {
 }): Promise<FireInterruptResult> {
   const {
     pipelineRunId, stageId, stageName, definition,
-    currentStateJson, stageOutput, previousLoopIteration,
+    currentStateJson, stageOutput,
   } = params;
+
+  // Auto-detect loop iteration: if the caller did not pass an explicit value,
+  // look up the highest completed iteration for this definition in this run.
+  // This ensures loop-cap enforcement is accurate even across stage re-entries.
+  let loopIteration: number;
+  if (params.previousLoopIteration !== undefined) {
+    loopIteration = params.previousLoopIteration;
+  } else {
+    const prevMax = await storage.getMaxLoopIterationForDef(pipelineRunId, definition.id);
+    // If there are prior responded instances, next iteration is prevMax + 1;
+    // if none exist yet (first fire), prevMax is 0 and loopIteration stays 0.
+    const priorCount = await storage.listInterruptInstances(pipelineRunId)
+      .then((list) => list.filter((i) => i.definitionId === definition.id && i.status !== "pending").length);
+    loopIteration = priorCount > 0 ? prevMax + 1 : 0;
+  }
 
   const interruptId = crypto.randomUUID();
   const stateHash = crypto.createHash("sha256")
@@ -137,11 +152,11 @@ export async function fireInterrupt(params: {
       stageOutput: stageOutput ?? "",
       context: `Structured interrupt at ${stageName}: ${definition.name}`,
       allowedActions,
+      loopIteration,
     },
     interruptResponded: false,
   });
 
-  const loopIteration = previousLoopIteration ?? 0;
   const instance = await storage.createInterruptInstance({
     definitionId: definition.id,
     pipelineRunId,

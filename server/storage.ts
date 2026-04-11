@@ -821,6 +821,7 @@ export interface IStorage {
   listInterruptInstances(pipelineRunId: string): Promise<InterruptInstance[]>;
   getOpenInterruptInstance(pipelineRunId: string): Promise<InterruptInstance | undefined>;
   updateInterruptInstance(id: string, data: Partial<InterruptInstance>): Promise<InterruptInstance | undefined>;
+  getMaxLoopIterationForDef(pipelineRunId: string, definitionId: string): Promise<number>;
 }
 
 function resolveOrgId(providedOrgId: string | null | undefined): string {
@@ -3754,6 +3755,19 @@ export class DatabaseStorage implements IStorage {
   async updateInterruptInstance(id: string, data: Partial<InterruptInstance>): Promise<InterruptInstance | undefined> {
     const [row] = await db.update(interruptInstances).set(data).where(eq(interruptInstances.id, id)).returning();
     return row;
+  }
+
+  async getMaxLoopIterationForDef(pipelineRunId: string, definitionId: string): Promise<number> {
+    const rows = await db.select({ loopIteration: interruptInstances.loopIteration })
+      .from(interruptInstances)
+      .where(and(
+        eq(interruptInstances.pipelineRunId, pipelineRunId),
+        eq(interruptInstances.definitionId, definitionId),
+        sql`${interruptInstances.status} != 'pending'`,
+      ))
+      .orderBy(desc(interruptInstances.loopIteration))
+      .limit(1);
+    return rows.length > 0 ? (rows[0].loopIteration ?? 0) : 0;
   }
 }
 

@@ -13429,6 +13429,20 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     }
   });
 
+  // Alias: /interrupt-history returns the same payload as /interrupts
+  router.get("/api/pipeline-runs/:id/interrupt-history", async (req, res) => {
+    try {
+      const instances = await storage.listInterruptInstances(req.params.id);
+      const withDefs = await Promise.all(instances.map(async (inst) => {
+        const def = await storage.getInterruptDefinition(inst.definitionId).catch(() => null);
+        return { ...inst, definition: def ?? null };
+      }));
+      res.json(withDefs);
+    } catch (e) {
+      res.status(500).json({ error: "Failed to fetch interrupt history" });
+    }
+  });
+
   // ── Interrupts: active (pending) instance for a run ───────────────────────
   router.get("/api/pipeline-runs/:id/interrupt/active", async (req, res) => {
     try {
@@ -13457,6 +13471,15 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         data: z.record(z.unknown()).default({}),
       });
       const { interruptInstanceId: instanceId, action, data } = resumeSchema.parse(req.body);
+
+      // IDOR guard: ensure the interrupt instance belongs to this run
+      const interruptInstance = await storage.getInterruptInstance(instanceId);
+      if (!interruptInstance) {
+        return res.status(404).json({ error: "Interrupt instance not found" });
+      }
+      if (interruptInstance.pipelineRunId !== req.params.id) {
+        return res.status(403).json({ error: "Interrupt instance does not belong to this pipeline run" });
+      }
 
       const respondedBy = "operator";
       const resumeResult = await resumeInterrupt({ instanceId, action, data, respondedBy });
