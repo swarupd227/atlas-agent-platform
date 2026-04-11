@@ -1,0 +1,164 @@
+{
+  "SH-HEALTH-001": {
+    "agentId": "5db8101f-4ea0-4c10-ae54-2038081a5e0a",
+    "agentName": "Clinical Data Integrity Monitor",
+    "skillIds": [
+      "a667945e-9ba2-45a9-bc1e-84305aad6554",
+      "0d6ed347-88fa-4518-9e15-0fa78efafb58",
+      "9a4bb013-5700-44e2-819e-2ed4a1bec61e",
+      "aa3ff121-eca5-4e47-82c6-bfeadb03398d",
+      "0e904cfa-c86f-4860-a280-c6c00b614b64"
+    ],
+    "runbookIds": [
+      "58adbc2e-76d7-43e1-9dee-1d5f28769127",
+      "bde96600-454c-4848-b84d-3a8e061e4c4e",
+      "09ae8e83-90e1-4a10-a07a-c3003fd81a2f",
+      "a381323d-c9b1-4e31-b07b-59402c154c5c",
+      "2dcd0e01-936b-4983-b585-55aa0b35a232"
+    ],
+    "policyIds": [
+      "d02ee742-6c4d-451d-a8fb-9175c063306a",
+      "153c03b4-835a-4508-a1c4-98bc805b4a37",
+      "4ff96a5c-525f-4829-93d7-9aa44c0d93fb",
+      "20babe07-acee-4a62-a257-d200fa280845"
+    ],
+    "datasetId": "967a0043-c741-45be-9053-005a47790392",
+    "evalSuiteId": "4eae86f8-881a-495a-b5c5-553efa5dfb36",
+    "healingPipelineId": "1ee20f24-1242-4434-af37-b52c5b2d2f4e"
+  },
+  "SH-FIN-001": {
+    "agentId": "461e8ef7-5fb1-4ad3-8db1-215a1e59cfc3",
+    "agentName": "Fraud Detection Model Recovery Agent",
+    "skillIds": [
+      "12507696-8996-43ce-94c1-c919d43bca8b",
+      "ddae3805-43d8-4f6b-b43e-c406346ddda9",
+      "7e0c94cb-07d8-49fc-8fd4-dd864b0b369e",
+      "8ff9022a-ed59-40b0-b7a0-dc5bb1d7bce6",
+      "1d09954b-19c9-499d-bc0f-942fd9b8fd7c"
+    ],
+    "runbookIds": [
+      "74c58933-9565-43e7-9053-b63cdb82d0e7",
+      "82ea7733-31a1-4189-82b6-7227ed1aec0f",
+      "cbf00bad-95a0-4f2d-ba16-35083ec7331a",
+      "ec37efba-7b8d-43a3-9bcf-c5ea30840982",
+      "c3f2b8c1-085a-4c5a-8632-ba0714c84610"
+    ],
+    "policyIds": [
+      "53e05c92-f055-4cd5-bb29-3af885e76e24",
+      "14fb7711-d805-4af7-afa4-22af921d0df6",
+      "06f925ea-d131-4fd7-974d-35de44656177",
+      "3372ce3a-b9ca-4cb3-9957-67ffb273217a"
+    ],
+    "datasetId": "33d63f27-957a-48c3-bc59-1702158bcf79",
+    "evalSuiteId": "c42c4d5d-6a11-48ef-9cb7-0b8c93cd67cc",
+    "healingPipelineId": "49e8484f-4cd9-4b05-a66c-06c2d9cc3255"
+  },
+  "SH-MFG-001": {
+    "agentId": "d7617be4-d35b-453e-86a8-04de00ebd8fe",
+    "agentName": "Factory Floor Anomaly Recovery Agent",
+    "skillIds": [
+      "dcc9f187-0fc6-407b-ace3-5eba451befee",
+      "d21d7248-9285-4984-9888-44488ff28e8e",
+      "ed51e1b3-2597-437e-8417-e5b47be5626b",
+      "aa8e08da-6ebf-4d39-b64d-7ebf2167b226",
+      "197250f3-08d8-4b08-87d3-67e1346479f7"
+    ],
+    "runbookIds": [
+      "2e4e5eb2-264e-4b44-a40a-37bff56150e7",
+      "8198e379-3dcd-4371-8e54-1c315db72499",
+      "1e4c6ccf-f003-4804-a825-bed477d809f5",
+      "3a9bd10b-f714-4cae-96f6-e0c8b5f23923",
+      "7f6b5013-c0d9-4509-85d7-36f660f325e6"
+    ],
+    "policyIds": [
+      "425caa84-3bac-452b-83c4-e7e5b5aff627",
+      "8e08dc5e-21b4-45b5-a29e-c65984027c92",
+      "4a5e886e-bc9a-4f6d-84ac-9f63c31b3e30",
+      "a87b0e5a-ff8a-452c-8d75-ab028ca47eb9"
+    ],
+    "datasetId": "674bb8b4-210d-44d0-9b17-8ee547be17bb",
+    "evalSuiteId": "4e1fd1f6-bd12-4106-bcf0-b5118b56349a",
+    "healingPipelineId": "2b4f6e7f-ee1a-4f2b-8f87-a675e0681d69"
+  },
+  "SH-RETAIL-001": {
+    "agentId": "56ef232d-8d91-428d-8e81-d8ef03c6ecfa",
+    "agentName": "Order Fulfillment Recovery Agent",
+    "skillIds": [
+      "fe103794-e395-4184-b600-a3e26bf0d684",
+      "74046d8f-b0ed-42de-b27a-5774027a35b9",
+      "f8254d44-8087-47e1-9538-9a7effc28660",
+      "6d6aba89-3457-4e07-a68a-176d59a98d86",
+      "24aac364-e720-4f9a-9849-1908b681f4d1"
+    ],
+    "runbookIds": [
+      "d2bde7ac-1d03-4138-abd2-83974d2ea015",
+      "d9b0b57f-1143-4593-bfd9-61b9a6b56ac0",
+      "47f1a20f-91de-4569-a7f1-3675d9932e10",
+      "a830351b-adff-4ebe-8c17-6dcc7c627869",
+      "cbe42b94-cec0-47b9-91ea-62a3cf5ddf79"
+    ],
+    "policyIds": [
+      "bc8d76af-4018-42d7-8605-cfc4a0b8e8fe",
+      "2cc7450a-e5aa-4266-b778-c0a02f256b3f",
+      "38b7d3a2-9d49-4c3a-bc2b-8e515648bd75",
+      "b61cf9e4-4375-4f87-b524-c803e2477513"
+    ],
+    "datasetId": "61062716-364b-4de7-b54b-217a479a30c3",
+    "evalSuiteId": "c4735b4f-c528-4534-9540-1615f5427095",
+    "healingPipelineId": "9ac7e395-4f4f-4ad3-8076-0b0ad66975bb"
+  },
+  "SH-ENERGY-001": {
+    "agentId": "88069f50-e374-4a16-ba9f-76a044fceca3",
+    "agentName": "Grid Operations Stability Agent",
+    "skillIds": [
+      "f7839662-ee99-4742-9f61-6726ed720d0f",
+      "7d954d74-a266-4b83-9cfb-9b2186567098",
+      "4dc94c4b-103e-46df-a030-713532324402",
+      "9932e0ab-6f94-4f6f-a025-86761e3cb784",
+      "3670e2a2-300a-4703-9a50-d6a9e67f58f7"
+    ],
+    "runbookIds": [
+      "e2a7bd3e-83ec-4c19-918f-353266e80cff",
+      "5ccefb33-7fcb-4b53-9b59-34625c948eb8",
+      "a9c735ab-de05-438d-a876-a8b5ba38522e",
+      "10f5082b-2b91-4880-8747-78d87be91032",
+      "d909257c-62d9-433d-a3da-62c4556165c8"
+    ],
+    "policyIds": [
+      "e5b54ada-6320-44f8-b207-000fca89f273",
+      "5b36034f-c3a9-4c02-acb8-661a117f81d7",
+      "5513c9f9-66ff-4151-b6a5-d03879530306",
+      "7b2ee622-a3f2-49a9-baf0-76cd9b9c61fe"
+    ],
+    "datasetId": "aedd18a6-045c-4a31-b51e-284ac4c0da0e",
+    "evalSuiteId": "d1c19d0d-8d5c-48ab-b2a9-c656a1bfe788",
+    "healingPipelineId": "5409183e-3be8-4021-82a4-41aa49cd25b2"
+  },
+  "SH-INS-001": {
+    "agentId": "d7d45853-f644-4a4a-b134-d114413a7780",
+    "agentName": "Claims Workflow Recovery Agent",
+    "skillIds": [
+      "40192321-bcb9-4a7e-a7ac-5c334e326d04",
+      "3664b754-8f49-4bfa-a79c-8303fd997de4",
+      "7ad26297-304a-4335-b16d-3a93816c7d51",
+      "377f3381-5b8a-4cc0-a43c-c1426d8e33d3",
+      "3970cf6c-9b8b-4802-a813-7d073551d784"
+    ],
+    "runbookIds": [
+      "2e798dbf-cea3-4a4c-bb35-b4961768ad0d",
+      "6118e948-6700-41d9-96c6-e7c0376e6b4e",
+      "27ce9f27-c61a-43f2-b37b-5e25b4a017ee",
+      "845a5776-04cf-4e52-a967-30034859f445",
+      "cd07e72e-c254-4152-9474-a3a5762bdd50"
+    ],
+    "policyIds": [
+      "e36599c1-0314-4f60-9534-e12dd57255e8",
+      "4b0fe27e-82c2-4da2-bd23-e874fedfbeb6",
+      "185d1373-70c5-4769-9359-0c9316e0f56f",
+      "569e2e9f-569f-4ec0-9ee0-7e09860607ca"
+    ],
+    "datasetId": "be95b445-440f-48b6-8579-0ab4653762a0",
+    "evalSuiteId": "0c161c29-8ed3-416f-87e2-59bfc1903181",
+    "healingPipelineId": "b1e1acc7-620d-4d9b-9c76-f3d7138ae0ec"
+  }
+}

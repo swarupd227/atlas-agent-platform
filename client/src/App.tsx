@@ -98,6 +98,12 @@ import FitchDemo from "@/pages/demo/fitch-demo";
 import BlackBookDemo from "@/pages/demo/blackbook-demo";
 import LittlerDemo from "@/pages/demo/littler-demo";
 import OtcQuoteDemo from "@/pages/demo/otc-quote-demo";
+import SHHealthcareDemo from "@/pages/demo/sh-healthcare-demo";
+import SHFinancialDemo from "@/pages/demo/sh-financial-demo";
+import SHManufacturingDemo from "@/pages/demo/sh-manufacturing-demo";
+import SHRetailDemo from "@/pages/demo/sh-retail-demo";
+import SHEnergyDemo from "@/pages/demo/sh-energy-demo";
+import SHInsuranceDemo from "@/pages/demo/sh-insurance-demo";
 import DemoCenter from "@/pages/demo/demo-center";
 import ObservabilityPage from "@/pages/observability";
 import { Shield, LogOut } from "lucide-react";
@@ -227,6 +233,12 @@ function DashboardRouter() {
       <Route path="/demo/blackbook" component={BlackBookDemo} />
       <Route path="/demo/littler" component={LittlerDemo} />
       <Route path="/demo/otc-quote" component={OtcQuoteDemo} />
+      <Route path="/demo/sh-healthcare" component={SHHealthcareDemo} />
+      <Route path="/demo/sh-financial" component={SHFinancialDemo} />
+      <Route path="/demo/sh-manufacturing" component={SHManufacturingDemo} />
+      <Route path="/demo/sh-retail" component={SHRetailDemo} />
+      <Route path="/demo/sh-energy" component={SHEnergyDemo} />
+      <Route path="/demo/sh-insurance" component={SHInsuranceDemo} />
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>

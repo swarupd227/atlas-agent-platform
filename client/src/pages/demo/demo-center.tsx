@@ -20,6 +20,11 @@ import {
   Tag,
   BarChart2,
   Factory,
+  HeartPulse,
+  CreditCard,
+  ShoppingCart,
+  Zap,
+  Umbrella,
 } from "lucide-react";
 
 interface Demo {
@@ -36,6 +41,7 @@ interface Demo {
   duration: string;
   screens: number;
   tags: string[];
+  badge?: string;
 }
 
 const DEMOS: Demo[] = [
@@ -175,10 +181,107 @@ const DEMOS: Demo[] = [
     screens: 4,
     tags: ["Order-to-Cash", "Pre-Order", "CPQ", "B2B Manufacturing"],
   },
+  {
+    id: "sh-healthcare",
+    title: "Clinical Data Integrity Self-Healing",
+    client: "SH-HEALTH-001",
+    description:
+      "FHIR R4 EHR feed drops the MedicationStatement resource type, silently breaking drug-interaction validation for 847 inpatient records. Atlas detects the schema drift, re-routes flagged records, and restores HIPAA-compliant validation — all before a single pharmacist is notified.",
+    industry: "Healthcare",
+    industryId: "self_healing",
+    route: "/demo/sh-healthcare",
+    icon: HeartPulse,
+    iconColor: "hsl(199 89% 42%)",
+    duration: "6 min",
+    screens: 3,
+    tags: ["Self-Healing", "FHIR R4", "HIPAA", "Drug Safety"],
+    badge: "Self-Healing",
+  },
+  {
+    id: "sh-financial",
+    title: "Fraud Model Recovery Agent",
+    client: "SH-FIN-001",
+    description:
+      "BNPL merchant-category population shift causes fraud model precision to collapse from 94.2% to 71.8%, generating 340 false positives in 6 hours. Atlas detects the drift, activates a shadow challenger model, validates with 30-day hold-out data, and executes a zero-downtime model swap — all within SR 11-7 guardrails.",
+    industry: "Financial Services",
+    industryId: "self_healing",
+    route: "/demo/sh-financial",
+    icon: CreditCard,
+    iconColor: "hsl(220 70% 50%)",
+    duration: "7 min",
+    screens: 3,
+    tags: ["Self-Healing", "Model Drift", "SR 11-7", "FCRA"],
+    badge: "Self-Healing",
+  },
+  {
+    id: "sh-manufacturing",
+    title: "Factory Floor Anomaly Recovery",
+    client: "SH-MFG-001",
+    description:
+      "CNC Mill #7 bearing vibration crosses ISO 10816-3 Zone C at 14.7 mm/s RMS — a 340% surge from baseline — indicating imminent bearing failure. Atlas predicts 4-hour MTBF window, pre-stages spare parts, schedules an emergency 90-minute maintenance window, and reroutes production orders to preserve $2.1M weekly output.",
+    industry: "Manufacturing",
+    industryId: "self_healing",
+    route: "/demo/sh-manufacturing",
+    icon: Factory,
+    iconColor: "hsl(25 95% 53%)",
+    duration: "6 min",
+    screens: 3,
+    tags: ["Self-Healing", "Predictive Maintenance", "ISO 55001", "OSHA"],
+    badge: "Self-Healing",
+  },
+  {
+    id: "sh-retail",
+    title: "Order Fulfillment Recovery Agent",
+    client: "SH-RETAIL-001",
+    description:
+      "Primary WMS API goes down during peak shopping, error rate hitting 87% with 1,847 orders queued including 312 same-day delivery commitments — $340K SLA exposure. Atlas detects in 4 minutes, preserves every order, reroutes to 3 alternates, and notifies 312 customers in 22 minutes.",
+    industry: "Retail / E-Commerce",
+    industryId: "self_healing",
+    route: "/demo/sh-retail",
+    icon: ShoppingCart,
+    iconColor: "hsl(142 71% 45%)",
+    duration: "6 min",
+    screens: 3,
+    tags: ["Self-Healing", "WMS", "Order Routing", "PCI-DSS"],
+    badge: "Self-Healing",
+  },
+  {
+    id: "sh-energy",
+    title: "Grid Operations Stability Agent",
+    client: "SH-ENERGY-001",
+    description:
+      "Offshore-Alpha wind farm trips offline — 847 MW generation shortfall creates grid frequency deviation of −0.38 Hz against a NERC CIP-014 limit of ±0.5 Hz. Atlas redispatches 892 MW across 4 gas peakers in 8 minutes, preventing cascading failure across 3 balancing areas.",
+    industry: "Energy / Utilities",
+    industryId: "self_healing",
+    route: "/demo/sh-energy",
+    icon: Zap,
+    iconColor: "hsl(262 80% 58%)",
+    duration: "6 min",
+    screens: 3,
+    tags: ["Self-Healing", "NERC CIP", "Grid Stability", "FERC"],
+    badge: "Self-Healing",
+  },
+  {
+    id: "sh-insurance",
+    title: "Claims Workflow Recovery Agent",
+    client: "SH-INS-001",
+    description:
+      "Claims fraud triage model FPR spikes from 3.2% to 22.7% after biased retrain — 620 claims misclassified, 47 vulnerable claimants with delayed payouts, 12 state regulators triggered. Atlas isolates the model, routes claims to human review, and prepares state filings in 5 hours.",
+    industry: "Insurance",
+    industryId: "self_healing",
+    route: "/demo/sh-insurance",
+    icon: Umbrella,
+    iconColor: "hsl(330 80% 50%)",
+    duration: "7 min",
+    screens: 3,
+    tags: ["Self-Healing", "Model Bias", "NAIC", "GDPR Art. 22"],
+    badge: "Self-Healing",
+  },
 ];
 
 const INDUSTRY_FILTERS = [
   { id: "all", label: "All Industries" },
+  { id: "self_healing", label: "Self-Healing" },
   { id: "financial_services", label: "Financial Services" },
   { id: "media_entertainment", label: "Media & Entertainment" },
   { id: "automotive", label: "Automotive Data" },
@@ -197,6 +300,8 @@ const industryBadgeStyle: Record<string, string> = {
     "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950 dark:text-orange-300 dark:border-orange-800",
   manufacturing:
     "bg-orange-50 text-orange-800 border-orange-300 dark:bg-orange-950/50 dark:text-orange-300 dark:border-orange-800/50",
+  self_healing:
+    "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950 dark:text-violet-300 dark:border-violet-800",
 };
 
 export default function DemoCenter() {
@@ -304,13 +409,24 @@ export default function DemoCenter() {
                         >
                           <Icon className="w-4.5 h-4.5" style={{ color: demo.iconColor }} />
                         </div>
-                        <Badge
-                          variant="outline"
-                          className={`text-[10px] shrink-0 ${industryBadgeStyle[demo.industryId] || ""}`}
-                          data-testid={`badge-demo-industry-${demo.id}`}
-                        >
-                          {demo.industry}
-                        </Badge>
+                        <div className="flex flex-col items-end gap-1">
+                          {demo.badge && (
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] shrink-0 bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950 dark:text-violet-300 dark:border-violet-800"
+                              data-testid={`badge-demo-type-${demo.id}`}
+                            >
+                              ⚡ {demo.badge}
+                            </Badge>
+                          )}
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] shrink-0 ${industryBadgeStyle[demo.industryId] || ""}`}
+                            data-testid={`badge-demo-industry-${demo.id}`}
+                          >
+                            {demo.industry}
+                          </Badge>
+                        </div>
                       </div>
                       <div className="mt-2">
                         <p className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
