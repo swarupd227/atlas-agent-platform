@@ -55,7 +55,8 @@ interface Guardrail {
 
 interface DiagnosisDetails {
   rootCause: string;
-  atlasSkillsInvoked: SkillInvoked[];
+  skillsInvoked?: SkillInvoked[];
+  atlasSkillsInvoked?: SkillInvoked[];
   [key: string]: unknown;
 }
 
@@ -253,7 +254,7 @@ export default function SHDemoLayout({ config }: { config: SHScenarioConfig }) {
     );
   }
 
-  const skills = pipeline.diagnosisDetails?.atlasSkillsInvoked ?? [];
+  const skills = pipeline.diagnosisDetails?.skillsInvoked ?? pipeline.diagnosisDetails?.atlasSkillsInvoked ?? [];
   const runbooksTriggered = pipeline.remediation?.runbooksTriggered ?? [];
   const runbookCandidates = pipeline.hypothesis?.runbookCandidates ?? [];
   const policiesEnforced = pipeline.remediation?.policiesEnforced ?? [];
