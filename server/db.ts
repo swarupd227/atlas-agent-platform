@@ -167,6 +167,13 @@ export async function runStartupMigrations() {
         ALTER TABLE pipeline_runs ADD CONSTRAINT fk_pr_state_schema_id
           FOREIGN KEY (state_schema_id) REFERENCES workflow_state_schemas(id) ON DELETE SET NULL;
       EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+      CREATE TABLE IF NOT EXISTS export_jobs (
+        id          VARCHAR(36)  PRIMARY KEY,
+        files_json  TEXT         NOT NULL,
+        expires_at  TIMESTAMPTZ  NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_export_jobs_expires_at ON export_jobs(expires_at);
     `);
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
