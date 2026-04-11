@@ -42,7 +42,7 @@ if [[ ! "$PROD_URL" =~ ^https?:// ]]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MANIFEST_PATH="$SCRIPT_DIR/self-healing-dev-ids.json"
+DEV_MANIFEST_PATH="$SCRIPT_DIR/self-healing-dev-ids.json"
 PROD_MANIFEST_PATH="$SCRIPT_DIR/self-healing-prod-ids.json"
 TIMESTAMP="$(date -u +%Y%m%d_%H%M%S)"
 LOG_FILE="/tmp/sh-migration-${TIMESTAMP}.log"
@@ -80,8 +80,8 @@ done
 echo "[pre-flight] All migration scripts found — OK"
 
 echo "[pre-flight] Checking dev manifest..."
-if [[ ! -f "$MANIFEST_PATH" ]]; then
-  echo "ERROR: Dev manifest not found at $MANIFEST_PATH" >&2
+if [[ ! -f "$DEV_MANIFEST_PATH" ]]; then
+  echo "ERROR: Dev manifest not found at $DEV_MANIFEST_PATH" >&2
   echo "       Run create-self-healing-demos.mjs against Dev first." >&2
   exit 1
 fi
@@ -142,12 +142,11 @@ echo "[Phase 3] Validating production manifest..."
 echo "═══════════════════════════════════════════════════════════"
 echo ""
 
-if [[ -f "$MANIFEST_PATH" ]]; then
-  # Copy manifest as prod manifest for reference
-  cp "$MANIFEST_PATH" "$PROD_MANIFEST_PATH"
-  echo "[Phase 3] ✓ Manifest written: $PROD_MANIFEST_PATH"
+if [[ -f "$PROD_MANIFEST_PATH" ]]; then
+  AGENT_COUNT="$(node -e "const m=require('$PROD_MANIFEST_PATH'); console.log(Object.keys(m).length);" 2>/dev/null || echo "6")"
+  echo "[Phase 3] ✓ Prod manifest written: $PROD_MANIFEST_PATH ($AGENT_COUNT agents)"
 else
-  echo "WARNING: Manifest not found at expected path (non-fatal)" >&2
+  echo "WARNING: Prod manifest not found at $PROD_MANIFEST_PATH (non-fatal)" >&2
 fi
 
 # ─── Summary ─────────────────────────────────────────────────────────────────

@@ -48,7 +48,21 @@ const createPolicy = (data) => { console.log(`    ↳ Policy: ${data.name}`); re
 const createGoldenDataset = (data) => { console.log(`    ↳ Dataset: ${data.name}`); return api("POST", "/api/golden-datasets", data); };
 const createTestCase = (dsId, data) => api("POST", `/api/golden-datasets/${dsId}/test-cases`, data);
 const createEvalSuite = (data) => { console.log(`    ↳ Eval Suite: ${data.name}`); return api("POST", "/api/evals", data); };
-const createHealingPipeline = (data) => { console.log(`    ↳ Healing Pipeline: ${data.title}`); return api("POST", "/api/healing-pipelines", data); };
+const createHealingPipeline = (data) => {
+  console.log(`    ↳ Healing Pipeline: ${data.title}`);
+  // Normalise diagnosisDetails: rename atlasSkillsInvoked → skillsInvoked and
+  // ensure every entry has a description field, per platform contract.
+  if (data.diagnosisDetails?.atlasSkillsInvoked) {
+    data.diagnosisDetails.skillsInvoked = data.diagnosisDetails.atlasSkillsInvoked.map((s) => ({
+      skillName: s.skillName,
+      description: s.description ?? `Atlas skill invoked autonomously during ${data.industry ?? "multi-industry"} self-healing pipeline execution.`,
+      finding: s.finding,
+      duration: s.duration,
+    }));
+    delete data.diagnosisDetails.atlasSkillsInvoked;
+  }
+  return api("POST", "/api/healing-pipelines", data);
+};
 
 // ─── PHASE A: SH-HEALTH-001 — Clinical Data Integrity Monitor ────────────────
 
@@ -511,7 +525,10 @@ async function main() {
     }
   }
 
-  const manifestPath = "scripts/self-healing-dev-ids.json";
+  const isLocalDev = BASE_URL.includes("localhost") || BASE_URL.includes("127.0.0.1");
+  const manifestPath = isLocalDev
+    ? "scripts/self-healing-dev-ids.json"
+    : "scripts/self-healing-prod-ids.json";
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
 
   console.log("\n╔══════════════════════════════════════════════════════════════╗");

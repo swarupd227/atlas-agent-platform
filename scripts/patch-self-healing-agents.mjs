@@ -1,15 +1,27 @@
 /**
- * Patch script: Adds blueprintJson to the 5 self-healing agents that were
- * created without one, and normalises healing pipeline diagnosisDetails
- * to use skillsInvoked (with description field) instead of atlasSkillsInvoked.
+ * Patch script: Adds blueprintJson to all 6 self-healing agents and normalises
+ * healing pipeline diagnosisDetails to use skillsInvoked (with description field)
+ * instead of atlasSkillsInvoked.
+ *
+ * Reads from the environment-appropriate manifest:
+ *   - localhost/127.0.0.1  → scripts/self-healing-dev-ids.json
+ *   - any other host       → scripts/self-healing-prod-ids.json
  *
  * Usage: node scripts/patch-self-healing-agents.mjs [BASE_URL]
  *   BASE_URL defaults to http://localhost:5000
  */
 
-const BASE_URL = process.argv[2] ?? "http://localhost:5000";
+import { readFileSync } from "fs";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
 
-const manifest = (await import("./self-healing-dev-ids.json", { assert: { type: "json" } })).default;
+const BASE_URL = process.argv[2] ?? "http://localhost:5000";
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+const isLocalDev = BASE_URL.includes("localhost") || BASE_URL.includes("127.0.0.1");
+const manifestFile = isLocalDev ? "self-healing-dev-ids.json" : "self-healing-prod-ids.json";
+const manifestPath = resolve(__dirname, manifestFile);
+const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 
 async function api(method, path, body) {
   const res = await fetch(`${BASE_URL}${path}`, {
