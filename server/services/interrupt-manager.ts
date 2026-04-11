@@ -161,6 +161,17 @@ export async function fireInterrupt(params: {
     definitionId: definition.id,
     pipelineRunId,
     checkpointId: checkpoint.id,
+    stageId,
+    interruptId,
+    payload: {
+      gateId: stageId,
+      gateName: stageName,
+      interruptDefinitionId: definition.id,
+      stateSnapshot: currentStateJson,
+      stageOutput: stageOutput ?? "",
+      allowedActions,
+      loopIteration,
+    },
     status: "pending",
     loopIteration,
   });
@@ -230,12 +241,17 @@ export async function resumeInterrupt(params: {
     routingOutcome === "loop_capped" ? "loop_capped" :
     "responded";
 
+  const statePatchApplied = Object.keys(stateUpdates).length > 0;
+
   await storage.updateInterruptInstance(instanceId, {
     status: finalStatus,
     respondedAt: new Date(),
     respondedAction: actionId,
+    respondedBy: respondedBy ?? "operator",
     responseData: data,
     routingOutcome,
+    routedTo: targetStageId ?? null,
+    statePatchApplied,
     validationErrors: [],
   });
 

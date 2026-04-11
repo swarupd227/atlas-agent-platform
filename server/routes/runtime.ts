@@ -13465,12 +13465,18 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       const pipeline = await storage.getAgentPipeline(run.pipelineId);
       if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
 
+      // Accept both camelCase field name variants for compatibility
       const resumeSchema = z.object({
-        interruptInstanceId: z.string().min(1),
+        interruptInstanceId: z.string().min(1).optional(),
+        interrupt_id: z.string().min(1).optional(),
         action: z.string().min(1),
         data: z.record(z.unknown()).default({}),
+      }).refine((d) => !!(d.interruptInstanceId ?? d.interrupt_id), {
+        message: "interruptInstanceId or interrupt_id is required",
       });
-      const { interruptInstanceId: instanceId, action, data } = resumeSchema.parse(req.body);
+      const parsed = resumeSchema.parse(req.body);
+      const instanceId = (parsed.interruptInstanceId ?? parsed.interrupt_id) as string;
+      const { action, data } = parsed;
 
       // IDOR guard: ensure the interrupt instance belongs to this run
       const interruptInstance = await storage.getInterruptInstance(instanceId);
@@ -13661,6 +13667,33 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         maxLoops: z.number().int().min(1).optional(),
         enabled: z.boolean().optional(),
         // Legacy compatibility — accepted but ignored
+        pipelineId: z.string().optional(),
+        stageId: z.string().optional(),
+      });
+      const data = defSchema.parse(req.body);
+      const { pipelineId: _p, stageId: _s, ...cleanData } = data;
+      const def = await storage.updateInterruptDefinition(req.params.id, cleanData as Record<string, unknown>);
+      if (!def) return res.status(404).json({ error: "Interrupt definition not found" });
+      res.json(def);
+    } catch (e) {
+      if (e instanceof ZodError) return res.status(400).json({ error: "Validation error", errors: (e as ZodError).errors });
+      res.status(500).json({ error: "Failed to update interrupt definition" });
+    }
+  });
+
+  // PATCH is an alias for PUT (partial update)
+  router.patch("/api/interrupt-definitions/:id", async (req, res) => {
+    try {
+      const defSchema = z.object({
+        name: z.string().min(1).optional(),
+        title: z.string().optional(),
+        description: z.string().optional(),
+        interruptType: z.string().optional(),
+        contextFields: z.array(z.record(z.unknown())).optional(),
+        allowedActions: z.array(z.record(z.unknown())).optional(),
+        loopBackEnabled: z.boolean().optional(),
+        maxLoops: z.number().int().min(1).optional(),
+        enabled: z.boolean().optional(),
         pipelineId: z.string().optional(),
         stageId: z.string().optional(),
       });

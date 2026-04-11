@@ -176,30 +176,14 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_export_jobs_expires_at ON export_jobs(expires_at);
 
       -- GAP3 schema v2: action-centric interrupt definitions.
-      -- Drop old tables if they have the old flat response_schema layout.
-      DO $$
-      BEGIN
-        IF EXISTS (
-          SELECT 1 FROM information_schema.columns
-          WHERE table_name = 'interrupt_definitions' AND column_name = 'response_schema'
-        ) THEN
-          DROP TABLE IF EXISTS interrupt_instances;
-          DROP TABLE IF EXISTS interrupt_definitions;
-        END IF;
-      END $$;
+      -- Additive-only migrations: CREATE TABLE IF NOT EXISTS + ALTER TABLE ADD COLUMN IF NOT EXISTS.
+      -- No DROP TABLE — preserves any existing data across schema evolutions.
 
       CREATE TABLE IF NOT EXISTS interrupt_definitions (
         id               VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         pipeline_id      VARCHAR NOT NULL,
         stage_id         VARCHAR NOT NULL,
-        name             TEXT NOT NULL,
-        title            TEXT,
-        description      TEXT,
-        interrupt_type   TEXT NOT NULL DEFAULT 'approval',
-        context_fields   JSONB NOT NULL DEFAULT '[]',
-        allowed_actions  JSONB NOT NULL DEFAULT '[]',
-        loop_back_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-        max_loops        INTEGER NOT NULL DEFAULT 3,
+        name             TEXT NOT NULL DEFAULT 'Interrupt Gate',
         enabled          BOOLEAN NOT NULL DEFAULT TRUE,
         created_at       TIMESTAMP DEFAULT NOW(),
         updated_at       TIMESTAMP DEFAULT NOW()
@@ -207,22 +191,39 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_interrupt_defs_pipeline ON interrupt_definitions(pipeline_id);
       CREATE INDEX IF NOT EXISTS idx_interrupt_defs_stage    ON interrupt_definitions(pipeline_id, stage_id);
 
+      -- Additive columns for interrupt_definitions (idempotent)
+      ALTER TABLE interrupt_definitions ADD COLUMN IF NOT EXISTS title            TEXT;
+      ALTER TABLE interrupt_definitions ADD COLUMN IF NOT EXISTS description      TEXT;
+      ALTER TABLE interrupt_definitions ADD COLUMN IF NOT EXISTS interrupt_type   TEXT NOT NULL DEFAULT 'approval';
+      ALTER TABLE interrupt_definitions ADD COLUMN IF NOT EXISTS context_fields   JSONB NOT NULL DEFAULT '[]';
+      ALTER TABLE interrupt_definitions ADD COLUMN IF NOT EXISTS allowed_actions  JSONB NOT NULL DEFAULT '[]';
+      ALTER TABLE interrupt_definitions ADD COLUMN IF NOT EXISTS loop_back_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE interrupt_definitions ADD COLUMN IF NOT EXISTS max_loops        INTEGER NOT NULL DEFAULT 3;
+
       CREATE TABLE IF NOT EXISTS interrupt_instances (
         id                VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         definition_id     VARCHAR NOT NULL,
         pipeline_run_id   VARCHAR NOT NULL,
-        checkpoint_id     VARCHAR,
         status            TEXT NOT NULL DEFAULT 'pending',
-        loop_iteration    INTEGER NOT NULL DEFAULT 0,
-        fired_at          TIMESTAMP DEFAULT NOW(),
-        responded_at      TIMESTAMP,
-        responded_action  TEXT,
-        response_data     JSONB,
-        routing_outcome   TEXT,
-        validation_errors JSONB
+        fired_at          TIMESTAMP DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_interrupt_instances_run ON interrupt_instances(pipeline_run_id);
       CREATE INDEX IF NOT EXISTS idx_interrupt_instances_def ON interrupt_instances(definition_id);
+
+      -- Additive columns for interrupt_instances (idempotent)
+      ALTER TABLE interrupt_instances ADD COLUMN IF NOT EXISTS checkpoint_id     VARCHAR;
+      ALTER TABLE interrupt_instances ADD COLUMN IF NOT EXISTS stage_id          VARCHAR;
+      ALTER TABLE interrupt_instances ADD COLUMN IF NOT EXISTS interrupt_id      VARCHAR;
+      ALTER TABLE interrupt_instances ADD COLUMN IF NOT EXISTS payload           JSONB;
+      ALTER TABLE interrupt_instances ADD COLUMN IF NOT EXISTS loop_iteration    INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE interrupt_instances ADD COLUMN IF NOT EXISTS responded_at      TIMESTAMP;
+      ALTER TABLE interrupt_instances ADD COLUMN IF NOT EXISTS responded_action  TEXT;
+      ALTER TABLE interrupt_instances ADD COLUMN IF NOT EXISTS responded_by      VARCHAR;
+      ALTER TABLE interrupt_instances ADD COLUMN IF NOT EXISTS response_data     JSONB;
+      ALTER TABLE interrupt_instances ADD COLUMN IF NOT EXISTS routing_outcome   TEXT;
+      ALTER TABLE interrupt_instances ADD COLUMN IF NOT EXISTS routed_to         VARCHAR;
+      ALTER TABLE interrupt_instances ADD COLUMN IF NOT EXISTS state_patch_applied BOOLEAN DEFAULT FALSE;
+      ALTER TABLE interrupt_instances ADD COLUMN IF NOT EXISTS validation_errors JSONB;
     `);
     console.log("[db] Startup migrations complete");
   } catch (err: any) {

@@ -2459,8 +2459,12 @@ export interface InterruptResponseField {
   label: string;
   required?: boolean;
   options?: string[];
+  /** Runtime state key for dynamic options, e.g. "state.rejectionReasons" */
+  optionsSource?: string;
   defaultValue?: string | number | boolean;
   helpText?: string;
+  /** Override rendering component, e.g. "multiline", "json_editor" */
+  uiComponent?: "multiline" | "json_editor" | "code" | "rich_text";
 }
 
 /** Routing directive attached to an action */
@@ -2526,13 +2530,20 @@ export const interruptInstances = pgTable("interrupt_instances", {
   definitionId: varchar("definition_id").notNull(),
   pipelineRunId: varchar("pipeline_run_id").notNull(),
   checkpointId: varchar("checkpoint_id"),
+  // Denormalised for query efficiency and full audit trail
+  stageId: varchar("stage_id"),
+  interruptId: varchar("interrupt_id"),
+  payload: jsonb("payload"),
   status: text("status").notNull().default("pending"),
   loopIteration: integer("loop_iteration").notNull().default(0),
   firedAt: timestamp("fired_at").defaultNow(),
   respondedAt: timestamp("responded_at"),
   respondedAction: text("responded_action"),
+  respondedBy: varchar("responded_by"),
   responseData: jsonb("response_data"),
   routingOutcome: text("routing_outcome"),
+  routedTo: varchar("routed_to"),
+  statePatchApplied: boolean("state_patch_applied").default(false),
   validationErrors: jsonb("validation_errors"),
 }, (table) => [
   index("idx_interrupt_instances_run").on(table.pipelineRunId),

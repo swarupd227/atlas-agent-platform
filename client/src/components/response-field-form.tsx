@@ -49,15 +49,26 @@ export function ResponseFieldForm({ fields, values, onChange, errors = {}, disab
             )}
 
             {(field.type === "text" || field.type === "number") && (
-              <Input
-                type={field.type === "number" ? "number" : "text"}
-                value={val !== undefined && val !== null ? String(val) : ""}
-                onChange={(e) => onChange(field.key, field.type === "number" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value)}
-                disabled={disabled}
-                className="h-8 text-sm"
-                placeholder={field.defaultValue !== undefined ? String(field.defaultValue) : undefined}
-                data-testid={`input-field-${field.key}`}
-              />
+              field.uiComponent === "multiline" || field.uiComponent === "json_editor" || field.uiComponent === "code" ? (
+                <Textarea
+                  value={val !== undefined && val !== null ? String(val) : ""}
+                  onChange={(e) => onChange(field.key, e.target.value)}
+                  disabled={disabled}
+                  className={`text-sm min-h-[72px] ${field.uiComponent === "json_editor" || field.uiComponent === "code" ? "font-mono text-xs" : ""}`}
+                  placeholder={field.defaultValue !== undefined ? String(field.defaultValue) : undefined}
+                  data-testid={`textarea-field-${field.key}`}
+                />
+              ) : (
+                <Input
+                  type={field.type === "number" ? "number" : "text"}
+                  value={val !== undefined && val !== null ? String(val) : ""}
+                  onChange={(e) => onChange(field.key, field.type === "number" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value)}
+                  disabled={disabled}
+                  className="h-8 text-sm"
+                  placeholder={field.defaultValue !== undefined ? String(field.defaultValue) : undefined}
+                  data-testid={`input-field-${field.key}`}
+                />
+              )
             )}
 
             {field.type === "textarea" && (
@@ -65,7 +76,7 @@ export function ResponseFieldForm({ fields, values, onChange, errors = {}, disab
                 value={val !== undefined && val !== null ? String(val) : ""}
                 onChange={(e) => onChange(field.key, e.target.value)}
                 disabled={disabled}
-                className="text-sm min-h-[72px]"
+                className={`text-sm min-h-[72px] ${field.uiComponent === "json_editor" || field.uiComponent === "code" ? "font-mono text-xs" : ""}`}
                 placeholder={field.defaultValue !== undefined ? String(field.defaultValue) : undefined}
                 data-testid={`textarea-field-${field.key}`}
               />
@@ -86,7 +97,7 @@ export function ResponseFieldForm({ fields, values, onChange, errors = {}, disab
               </div>
             )}
 
-            {field.type === "select" && field.options && (
+            {field.type === "select" && (field.options || field.optionsSource) && (
               <Select
                 value={val !== undefined && val !== null ? String(val) : ""}
                 onValueChange={(v) => onChange(field.key, v)}
@@ -96,9 +107,14 @@ export function ResponseFieldForm({ fields, values, onChange, errors = {}, disab
                   <SelectValue placeholder="Select an option…" />
                 </SelectTrigger>
                 <SelectContent>
-                  {field.options.map((opt) => (
+                  {(field.options ?? []).map((opt) => (
                     <SelectItem key={opt} value={opt}>{opt}</SelectItem>
                   ))}
+                  {field.optionsSource && (field.options ?? []).length === 0 && (
+                    <SelectItem value="_no_options_yet" disabled className="text-muted-foreground text-xs">
+                      Options loaded from {field.optionsSource}
+                    </SelectItem>
+                  )}
                 </SelectContent>
               </Select>
             )}

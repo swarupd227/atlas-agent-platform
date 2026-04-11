@@ -2459,12 +2459,18 @@ export default function Pipelines() {
                           {selectedPipelineId && (
                             <InterruptHistoryTimeline runId={activeRun.id} pipelineId={selectedPipelineId} />
                           )}
-                          {workflowState.interrupts.filter((i) => !(i.interruptPayload as any)?.interruptDefinitionId).length > 0 && (
+                          {workflowState.interrupts.filter((i) => {
+                              const p = i.interruptPayload as { interruptDefinitionId?: string } | null;
+                              return !p?.interruptDefinitionId;
+                            }).length > 0 && (
                             <div className="border-t px-3 pb-2">
                               <p className="text-[10px] text-muted-foreground uppercase tracking-wide pt-2 pb-1">Legacy Gates</p>
                               <div className="space-y-2">
                                 {workflowState.interrupts
-                                  .filter((i) => !(i.interruptPayload as any)?.interruptDefinitionId)
+                                  .filter((i) => {
+                                    const p = i.interruptPayload as { interruptDefinitionId?: string } | null;
+                                    return !p?.interruptDefinitionId;
+                                  })
                                   .map((intr) => (
                                     <InterruptRow key={intr.id} intr={intr} stages={stages} />
                                   ))}
