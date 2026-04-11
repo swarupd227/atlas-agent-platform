@@ -13415,6 +13415,32 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
   });
 
   // ── Structured Interrupt: Resume with typed response payload ──────────────
+  // ── Interrupts: list all instances for a run ─────────────────────────────
+  router.get("/api/pipeline-runs/:id/interrupts", async (req, res) => {
+    try {
+      const instances = await storage.listInterruptInstances(req.params.id);
+      const withDefs = await Promise.all(instances.map(async (inst) => {
+        const def = await storage.getInterruptDefinition(inst.definitionId).catch(() => null);
+        return { ...inst, definition: def ?? null };
+      }));
+      res.json(withDefs);
+    } catch (e) {
+      res.status(500).json({ error: "Failed to fetch interrupt instances" });
+    }
+  });
+
+  // ── Interrupts: active (pending) instance for a run ───────────────────────
+  router.get("/api/pipeline-runs/:id/interrupt/active", async (req, res) => {
+    try {
+      const instance = await storage.getOpenInterruptInstance(req.params.id);
+      if (!instance) return res.json({ instance: null, definition: null });
+      const definition = await storage.getInterruptDefinition(instance.definitionId).catch(() => null);
+      res.json({ instance, definition });
+    } catch (e) {
+      res.status(500).json({ error: "Failed to fetch active interrupt" });
+    }
+  });
+
   router.post("/api/pipeline-runs/:id/resume", async (req, res) => {
     try {
       const run = await storage.getPipelineRun(req.params.id);
@@ -13426,13 +13452,14 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       if (!pipeline) return res.status(404).json({ error: "Pipeline not found" });
 
       const resumeSchema = z.object({
-        instanceId: z.string().min(1),
-        responsePayload: z.record(z.unknown()).default({}),
-        respondedBy: z.string().optional(),
+        interruptInstanceId: z.string().min(1),
+        action: z.string().min(1),
+        data: z.record(z.unknown()).default({}),
       });
-      const { instanceId, responsePayload, respondedBy } = resumeSchema.parse(req.body);
+      const { interruptInstanceId: instanceId, action, data } = resumeSchema.parse(req.body);
 
-      const resumeResult = await resumeInterrupt({ instanceId, responsePayload, respondedBy });
+      const respondedBy = "operator";
+      const resumeResult = await resumeInterrupt({ instanceId, action, data, respondedBy });
 
       if (resumeResult.validationErrors.length > 0) {
         return res.status(422).json({ error: "Validation failed", validationErrors: resumeResult.validationErrors });
@@ -13452,29 +13479,20 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         }
       }
 
-      if (Object.keys(resumeResult.stateUpdates).length > 0) {
-        const { merged } = mergeIntoWorkflowState(
-          currentStateObj,
-          {
-            ...resumeResult.stateUpdates,
-            _gate_decision: resumeResult.routingOutcome,
-            _interrupt_response: responsePayload,
-          },
-          wfSchemaFields,
-          `interrupt:${instanceId}`,
-        );
-        currentStateObj = merged;
-        stateDidChange = true;
-      } else {
-        const { merged } = mergeIntoWorkflowState(
-          currentStateObj,
-          { _gate_decision: resumeResult.routingOutcome, _interrupt_response: responsePayload },
-          wfSchemaFields,
-          `interrupt:${instanceId}`,
-        );
-        currentStateObj = merged;
-        stateDidChange = true;
-      }
+      const mergeExtra: Record<string, unknown> = {
+        ...resumeResult.stateUpdates,
+        _gate_decision: resumeResult.routingOutcome,
+        _gate_action: action,
+        _interrupt_response: data,
+      };
+      const { merged } = mergeIntoWorkflowState(
+        currentStateObj,
+        mergeExtra,
+        wfSchemaFields,
+        `interrupt:${instanceId}`,
+      );
+      currentStateObj = merged;
+      stateDidChange = true;
 
       const sanitized = sanitizeForCheckpoint(currentStateObj, wfSchemaFields);
       const resumeHash = crypto.createHash("sha256").update(JSON.stringify(sanitized)).digest("hex");
@@ -13485,25 +13503,26 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         stateJson: sanitized,
         stateHash: resumeHash,
         interruptResponded: false,
-        createdBy: respondedBy || "operator",
+        createdBy: respondedBy,
       });
 
-      const stages = (pipeline.stages as any[]) || [];
-      const stageResults = ((run.stageResults as any[]) || []).map((s: any) => ({ ...s }));
-      const currentIdx = stages.findIndex((s: any) => s.id === run.currentStageId);
+      const stages = (pipeline.stages as Array<Record<string, unknown>>) || [];
+      const stageResults = ((run.stageResults as Array<Record<string, unknown>>) || []).map((s) => ({ ...s }));
+      const currentIdx = stages.findIndex((s) => s.id === run.currentStageId);
       if (currentIdx >= 0) {
         stageResults[currentIdx].status = "approved";
         stageResults[currentIdx].completedAt = new Date().toISOString();
-        stageResults[currentIdx].approvedBy = respondedBy || "operator";
-        stageResults[currentIdx].interruptResponse = responsePayload;
+        stageResults[currentIdx].approvedBy = respondedBy;
+        stageResults[currentIdx].interruptAction = action;
+        stageResults[currentIdx].interruptResponse = data;
       }
 
       let targetNextIdx = currentIdx + 1;
 
-      if (resumeResult.routingOutcome === "loop_back" || resumeResult.routingOutcome === "conditional_route") {
+      if (resumeResult.routingOutcome === "loop_back" || resumeResult.routingOutcome === "goto_stage") {
         const targetId = resumeResult.targetStageId;
         if (targetId) {
-          const targetIdx = stages.findIndex((s: any) => s.id === targetId);
+          const targetIdx = stages.findIndex((s) => s.id === targetId);
           if (targetIdx >= 0) targetNextIdx = targetIdx;
         }
       }
@@ -13578,11 +13597,13 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
         pipelineId: z.string().min(1),
         stageId: z.string().min(1),
         name: z.string().min(1),
+        title: z.string().optional(),
         description: z.string().optional(),
-        responseSchema: z.array(z.any()).default([]),
-        routingRules: z.array(z.any()).default([]),
-        stateInjectionMap: z.array(z.any()).default([]),
-        loopBackStageId: z.string().optional(),
+        interruptType: z.string().default("approval"),
+        contextFields: z.array(z.record(z.unknown())).default([]),
+        allowedActions: z.array(z.record(z.unknown())).default([]),
+        loopBackEnabled: z.boolean().default(false),
+        maxLoops: z.number().int().min(1).default(3),
         enabled: z.boolean().default(true),
       });
       const data = defSchema.parse(req.body);
@@ -13608,15 +13629,21 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
     try {
       const defSchema = z.object({
         name: z.string().min(1).optional(),
+        title: z.string().optional(),
         description: z.string().optional(),
-        responseSchema: z.array(z.any()).optional(),
-        routingRules: z.array(z.any()).optional(),
-        stateInjectionMap: z.array(z.any()).optional(),
-        loopBackStageId: z.string().nullable().optional(),
+        interruptType: z.string().optional(),
+        contextFields: z.array(z.record(z.unknown())).optional(),
+        allowedActions: z.array(z.record(z.unknown())).optional(),
+        loopBackEnabled: z.boolean().optional(),
+        maxLoops: z.number().int().min(1).optional(),
         enabled: z.boolean().optional(),
+        // Legacy compatibility — accepted but ignored
+        pipelineId: z.string().optional(),
+        stageId: z.string().optional(),
       });
       const data = defSchema.parse(req.body);
-      const def = await storage.updateInterruptDefinition(req.params.id, data as any);
+      const { pipelineId: _p, stageId: _s, ...cleanData } = data;
+      const def = await storage.updateInterruptDefinition(req.params.id, cleanData as Record<string, unknown>);
       if (!def) return res.status(404).json({ error: "Interrupt definition not found" });
       res.json(def);
     } catch (e) {

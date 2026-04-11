@@ -9,25 +9,26 @@ import {
   RotateCcw,
   GitBranch,
   ChevronDown,
+  Ban,
 } from "lucide-react";
 import { useState } from "react";
 
-interface InterruptInstance {
+interface InterruptInstanceWithDef {
   id: string;
   definitionId: string;
   status: string;
   loopIteration: number;
   firedAt: string | null;
   respondedAt: string | null;
-  responsePayload: Record<string, unknown> | null;
+  respondedAction: string | null;
+  responseData: Record<string, unknown> | null;
   routingOutcome: string | null;
-  respondedBy: string | null;
-}
-
-interface InterruptDefinition {
-  id: string;
-  name: string;
-  stageId: string;
+  definition: {
+    id: string;
+    name: string;
+    title?: string | null;
+    stageId: string;
+  } | null;
 }
 
 interface InterruptHistoryTimelineProps {
@@ -35,33 +36,32 @@ interface InterruptHistoryTimelineProps {
   pipelineId: string;
 }
 
-const statusStyle = (status: string) => {
+function statusStyle(status: string) {
   switch (status) {
-    case "responded": return { icon: <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />, badge: "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-700/40" };
-    case "loop_back": return { icon: <RotateCcw className="w-3.5 h-3.5 text-orange-500" />, badge: "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-900/20 dark:text-orange-400 dark:border-orange-700/40" };
-    case "timed_out": return { icon: <XCircle className="w-3.5 h-3.5 text-red-500" />, badge: "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-700/40" };
-    default: return { icon: <Clock className="w-3.5 h-3.5 text-amber-500" />, badge: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700/40" };
+    case "responded":
+      return { icon: <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />, badge: "bg-green-50 text-green-700 border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-700/40" };
+    case "loop_back":
+      return { icon: <RotateCcw className="w-3.5 h-3.5 text-orange-500" />, badge: "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-900/20 dark:text-orange-400 dark:border-orange-700/40" };
+    case "loop_capped":
+      return { icon: <Ban className="w-3.5 h-3.5 text-red-400" />, badge: "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-700/40" };
+    case "timed_out":
+      return { icon: <XCircle className="w-3.5 h-3.5 text-red-500" />, badge: "bg-red-50 text-red-700 border-red-200 dark:bg-red-900/20 dark:text-red-400 dark:border-red-700/40" };
+    default:
+      return { icon: <Clock className="w-3.5 h-3.5 text-amber-500" />, badge: "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-700/40" };
   }
-};
+}
 
-export function InterruptHistoryTimeline({ runId, pipelineId }: InterruptHistoryTimelineProps) {
+export function InterruptHistoryTimeline({ runId, pipelineId: _pipelineId }: InterruptHistoryTimelineProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
-  const { data: instances = [], isLoading: instancesLoading } = useQuery<InterruptInstance[]>({
-    queryKey: ["/api/pipeline-runs", runId, "interrupt-instances"],
-    queryFn: () => fetch(`/api/pipeline-runs/${runId}/interrupt-instances`).then((r) => r.json()),
+  const { data: instances = [], isLoading } = useQuery<InterruptInstanceWithDef[]>({
+    queryKey: ["/api/pipeline-runs", runId, "interrupts"],
+    queryFn: () => fetch(`/api/pipeline-runs/${runId}/interrupts`).then((r) => r.json()),
     enabled: !!runId,
+    refetchInterval: 8000,
   });
 
-  const { data: definitions = [] } = useQuery<InterruptDefinition[]>({
-    queryKey: ["/api/interrupt-definitions", pipelineId],
-    queryFn: () => fetch(`/api/interrupt-definitions?pipelineId=${pipelineId}`).then((r) => r.json()),
-    enabled: !!pipelineId,
-  });
-
-  const defMap = Object.fromEntries(definitions.map((d) => [d.id, d]));
-
-  if (instancesLoading) {
+  if (isLoading) {
     return (
       <div className="space-y-2 p-3">
         <Skeleton className="h-8 w-full" />
@@ -83,9 +83,9 @@ export function InterruptHistoryTimeline({ runId, pipelineId }: InterruptHistory
       <div className="space-y-2 p-2">
         {instances.map((instance, idx) => {
           const style = statusStyle(instance.status);
-          const def = defMap[instance.definitionId];
+          const def = instance.definition;
           const isExpanded = expandedId === instance.id;
-          const hasPayload = instance.responsePayload && Object.keys(instance.responsePayload).length > 0;
+          const hasResponseData = instance.responseData && Object.keys(instance.responseData).length > 0;
 
           return (
             <div
@@ -100,24 +100,24 @@ export function InterruptHistoryTimeline({ runId, pipelineId }: InterruptHistory
               >
                 {style.icon}
                 <span className="text-xs font-medium flex-1 truncate">
-                  {def?.name || `Interrupt #${idx + 1}`}
+                  {def?.title || def?.name || `Interrupt #${idx + 1}`}
                 </span>
                 {instance.loopIteration > 0 && (
-                  <Badge variant="outline" className="text-[9px] h-4 px-1 text-orange-600 border-orange-300 flex-shrink-0">
+                  <Badge variant="outline" className="text-[9px] h-4 px-1 text-orange-600 border-orange-300 shrink-0">
                     <RotateCcw className="w-2.5 h-2.5 mr-0.5" />
                     {instance.loopIteration}
                   </Badge>
                 )}
-                <Badge variant="outline" className={`text-[9px] h-4 px-1 flex-shrink-0 ${style.badge}`}>
+                <Badge variant="outline" className={`text-[9px] h-4 px-1 shrink-0 ${style.badge}`}>
                   {instance.status}
                 </Badge>
                 {instance.routingOutcome && instance.routingOutcome !== "next_stage" && (
-                  <Badge variant="outline" className="text-[9px] h-4 px-1 flex-shrink-0 bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-700/40">
+                  <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0 bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/20 dark:text-blue-400 dark:border-blue-700/40">
                     <GitBranch className="w-2.5 h-2.5 mr-0.5" />
                     {instance.routingOutcome.replace("_", " ")}
                   </Badge>
                 )}
-                <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform flex-shrink-0 ${isExpanded ? "rotate-180" : ""}`} />
+                <ChevronDown className={`w-3 h-3 text-muted-foreground transition-transform shrink-0 ${isExpanded ? "rotate-180" : ""}`} />
               </button>
 
               {isExpanded && (
@@ -135,10 +135,10 @@ export function InterruptHistoryTimeline({ runId, pipelineId }: InterruptHistory
                         <span className="font-mono">{new Date(instance.respondedAt).toLocaleTimeString()}</span>
                       </>
                     )}
-                    {instance.respondedBy && (
+                    {instance.respondedAction && (
                       <>
-                        <span className="text-muted-foreground">By</span>
-                        <span className="font-mono">{instance.respondedBy}</span>
+                        <span className="text-muted-foreground">Action</span>
+                        <span className="font-mono font-medium">{instance.respondedAction}</span>
                       </>
                     )}
                     {instance.routingOutcome && (
@@ -149,11 +149,11 @@ export function InterruptHistoryTimeline({ runId, pipelineId }: InterruptHistory
                     )}
                   </div>
 
-                  {hasPayload && (
+                  {hasResponseData && (
                     <div>
-                      <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Response Payload</p>
+                      <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Response Data</p>
                       <pre className="text-[10px] font-mono bg-muted/30 rounded p-2 whitespace-pre-wrap overflow-x-auto max-h-32">
-                        {JSON.stringify(instance.responsePayload, null, 2)}
+                        {JSON.stringify(instance.responseData, null, 2)}
                       </pre>
                     </div>
                   )}

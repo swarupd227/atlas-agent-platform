@@ -2443,9 +2443,16 @@ export type AgentAlert = typeof agentAlerts.$inferSelect;
 export const INTERRUPT_RESPONSE_FIELD_TYPES = ["text", "textarea", "number", "boolean", "select", "multi_select"] as const;
 export type InterruptResponseFieldType = typeof INTERRUPT_RESPONSE_FIELD_TYPES[number];
 
-export const INTERRUPT_ROUTING_OPERATORS = ["eq", "neq", "contains", "gte", "lte", "in"] as const;
-export type InterruptRoutingOperator = typeof INTERRUPT_ROUTING_OPERATORS[number];
+export const INTERRUPT_STATE_TRANSFORMS = ["passthrough", "stringify", "parse_number", "parse_bool"] as const;
+export type InterruptStateTransform = typeof INTERRUPT_STATE_TRANSFORMS[number];
 
+export const INTERRUPT_ACTION_STYLES = ["default", "destructive", "outline", "secondary"] as const;
+export type InterruptActionStyle = typeof INTERRUPT_ACTION_STYLES[number];
+
+export const INTERRUPT_ROUTING_TYPES = ["next_stage", "loop_back", "goto_stage", "complete"] as const;
+export type InterruptRoutingType = typeof INTERRUPT_ROUTING_TYPES[number];
+
+/** A single field in a structured interrupt response form */
 export interface InterruptResponseField {
   key: string;
   type: InterruptResponseFieldType;
@@ -2456,18 +2463,35 @@ export interface InterruptResponseField {
   helpText?: string;
 }
 
-export interface InterruptRoutingRule {
-  fieldKey: string;
-  operator: InterruptRoutingOperator;
-  value: unknown;
-  targetStageId: string;
-  label?: string;
+/** Routing directive attached to an action */
+export interface InterruptActionRouting {
+  type: InterruptRoutingType;
+  targetStageId?: string;
 }
 
+/** State injection entry: maps a response field value into the pipeline state */
 export interface InterruptStateInjectionEntry {
   responseKey: string;
   stateKey: string;
-  transform?: "passthrough" | "stringify" | "parse_number" | "parse_bool";
+  transform?: InterruptStateTransform;
+}
+
+/** A single allowed operator action on a structured interrupt */
+export interface InterruptAction {
+  id: string;
+  label: string;
+  style: InterruptActionStyle;
+  description?: string;
+  responseFields: InterruptResponseField[];
+  routing: InterruptActionRouting | null;
+  stateInjection: InterruptStateInjectionEntry[];
+}
+
+/** A context field: readonly display of a pipeline-state value in the review panel */
+export interface InterruptContextField {
+  key: string;
+  label: string;
+  format?: "text" | "json" | "number";
 }
 
 export const interruptDefinitions = pgTable("interrupt_definitions", {
@@ -2475,11 +2499,13 @@ export const interruptDefinitions = pgTable("interrupt_definitions", {
   pipelineId: varchar("pipeline_id").notNull(),
   stageId: varchar("stage_id").notNull(),
   name: text("name").notNull(),
+  title: text("title"),
   description: text("description"),
-  responseSchema: jsonb("response_schema").notNull().default(sql`'[]'::jsonb`),
-  routingRules: jsonb("routing_rules").notNull().default(sql`'[]'::jsonb`),
-  stateInjectionMap: jsonb("state_injection_map").notNull().default(sql`'[]'::jsonb`),
-  loopBackStageId: varchar("loop_back_stage_id"),
+  interruptType: text("interrupt_type").notNull().default("approval"),
+  contextFields: jsonb("context_fields").notNull().default(sql`'[]'::jsonb`),
+  allowedActions: jsonb("allowed_actions").notNull().default(sql`'[]'::jsonb`),
+  loopBackEnabled: boolean("loop_back_enabled").notNull().default(false),
+  maxLoops: integer("max_loops").notNull().default(3),
   enabled: boolean("enabled").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -2492,7 +2518,7 @@ export const insertInterruptDefinitionSchema = createInsertSchema(interruptDefin
 export type InsertInterruptDefinition = z.infer<typeof insertInterruptDefinitionSchema>;
 export type InterruptDefinition = typeof interruptDefinitions.$inferSelect;
 
-export const INTERRUPT_INSTANCE_STATUSES = ["pending", "responded", "timed_out", "loop_back"] as const;
+export const INTERRUPT_INSTANCE_STATUSES = ["pending", "responded", "timed_out", "loop_back", "loop_capped"] as const;
 export type InterruptInstanceStatus = typeof INTERRUPT_INSTANCE_STATUSES[number];
 
 export const interruptInstances = pgTable("interrupt_instances", {
@@ -2504,9 +2530,9 @@ export const interruptInstances = pgTable("interrupt_instances", {
   loopIteration: integer("loop_iteration").notNull().default(0),
   firedAt: timestamp("fired_at").defaultNow(),
   respondedAt: timestamp("responded_at"),
-  responsePayload: jsonb("response_payload"),
+  respondedAction: text("responded_action"),
+  responseData: jsonb("response_data"),
   routingOutcome: text("routing_outcome"),
-  respondedBy: text("responded_by"),
   validationErrors: jsonb("validation_errors"),
 }, (table) => [
   index("idx_interrupt_instances_run").on(table.pipelineRunId),

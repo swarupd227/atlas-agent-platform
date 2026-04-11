@@ -175,35 +175,50 @@ export async function runStartupMigrations() {
       );
       CREATE INDEX IF NOT EXISTS idx_export_jobs_expires_at ON export_jobs(expires_at);
 
+      -- GAP3 schema v2: action-centric interrupt definitions.
+      -- Drop old tables if they have the old flat response_schema layout.
+      DO $$
+      BEGIN
+        IF EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'interrupt_definitions' AND column_name = 'response_schema'
+        ) THEN
+          DROP TABLE IF EXISTS interrupt_instances;
+          DROP TABLE IF EXISTS interrupt_definitions;
+        END IF;
+      END $$;
+
       CREATE TABLE IF NOT EXISTS interrupt_definitions (
-        id                  VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-        pipeline_id         VARCHAR NOT NULL,
-        stage_id            VARCHAR NOT NULL,
-        name                TEXT NOT NULL,
-        description         TEXT,
-        response_schema     JSONB NOT NULL DEFAULT '[]',
-        routing_rules       JSONB NOT NULL DEFAULT '[]',
-        state_injection_map JSONB NOT NULL DEFAULT '[]',
-        loop_back_stage_id  VARCHAR,
-        enabled             BOOLEAN NOT NULL DEFAULT TRUE,
-        created_at          TIMESTAMP DEFAULT NOW(),
-        updated_at          TIMESTAMP DEFAULT NOW()
+        id               VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        pipeline_id      VARCHAR NOT NULL,
+        stage_id         VARCHAR NOT NULL,
+        name             TEXT NOT NULL,
+        title            TEXT,
+        description      TEXT,
+        interrupt_type   TEXT NOT NULL DEFAULT 'approval',
+        context_fields   JSONB NOT NULL DEFAULT '[]',
+        allowed_actions  JSONB NOT NULL DEFAULT '[]',
+        loop_back_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+        max_loops        INTEGER NOT NULL DEFAULT 3,
+        enabled          BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at       TIMESTAMP DEFAULT NOW(),
+        updated_at       TIMESTAMP DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_interrupt_defs_pipeline ON interrupt_definitions(pipeline_id);
       CREATE INDEX IF NOT EXISTS idx_interrupt_defs_stage    ON interrupt_definitions(pipeline_id, stage_id);
 
       CREATE TABLE IF NOT EXISTS interrupt_instances (
-        id               VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-        definition_id    VARCHAR NOT NULL,
-        pipeline_run_id  VARCHAR NOT NULL,
-        checkpoint_id    VARCHAR,
-        status           TEXT NOT NULL DEFAULT 'pending',
-        loop_iteration   INTEGER NOT NULL DEFAULT 0,
-        fired_at         TIMESTAMP DEFAULT NOW(),
-        responded_at     TIMESTAMP,
-        response_payload JSONB,
-        routing_outcome  TEXT,
-        responded_by     TEXT,
+        id                VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        definition_id     VARCHAR NOT NULL,
+        pipeline_run_id   VARCHAR NOT NULL,
+        checkpoint_id     VARCHAR,
+        status            TEXT NOT NULL DEFAULT 'pending',
+        loop_iteration    INTEGER NOT NULL DEFAULT 0,
+        fired_at          TIMESTAMP DEFAULT NOW(),
+        responded_at      TIMESTAMP,
+        responded_action  TEXT,
+        response_data     JSONB,
+        routing_outcome   TEXT,
         validation_errors JSONB
       );
       CREATE INDEX IF NOT EXISTS idx_interrupt_instances_run ON interrupt_instances(pipeline_run_id);
