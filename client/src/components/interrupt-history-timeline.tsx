@@ -20,14 +20,17 @@ interface InterruptInstanceWithDef {
   loopIteration: number;
   firedAt: string | null;
   respondedAt: string | null;
+  respondedBy: string | null;
   respondedAction: string | null;
   responseData: Record<string, unknown> | null;
   routingOutcome: string | null;
+  statePatchApplied: boolean | null;
   definition: {
     id: string;
     name: string;
     title?: string | null;
     stageId: string;
+    routingRules?: Array<{ actionId: string; actionLabel: string; routingType: string; targetStageId: string | null }>;
   } | null;
 }
 
@@ -135,24 +138,36 @@ export function InterruptHistoryTimeline({ runId, pipelineId: _pipelineId }: Int
                         <span className="font-mono">{new Date(instance.respondedAt).toLocaleTimeString()}</span>
                       </>
                     )}
+                    {instance.respondedBy && (
+                      <>
+                        <span className="text-muted-foreground">Actor</span>
+                        <span className="font-mono font-medium" data-testid={`actor-${instance.id}`}>{instance.respondedBy}</span>
+                      </>
+                    )}
                     {instance.respondedAction && (
                       <>
                         <span className="text-muted-foreground">Action</span>
-                        <span className="font-mono font-medium">{instance.respondedAction}</span>
+                        <span className="font-mono font-medium" data-testid={`action-${instance.id}`}>{instance.respondedAction}</span>
                       </>
                     )}
                     {instance.routingOutcome && (
                       <>
                         <span className="text-muted-foreground">Routing</span>
-                        <span className="font-mono">{instance.routingOutcome}</span>
+                        <span className="font-mono">{instance.routingOutcome.replace(/_/g, " ")}</span>
+                      </>
+                    )}
+                    {instance.statePatchApplied != null && (
+                      <>
+                        <span className="text-muted-foreground">State patched</span>
+                        <span className="font-mono">{instance.statePatchApplied ? "yes" : "no"}</span>
                       </>
                     )}
                   </div>
 
                   {hasResponseData && (
                     <div>
-                      <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Response Data</p>
-                      <pre className="text-[10px] font-mono bg-muted/30 rounded p-2 whitespace-pre-wrap overflow-x-auto max-h-32">
+                      <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Response Payload</p>
+                      <pre className="text-[10px] font-mono bg-muted/30 rounded p-2 whitespace-pre-wrap overflow-x-auto max-h-32" data-testid={`payload-${instance.id}`}>
                         {JSON.stringify(instance.responseData, null, 2)}
                       </pre>
                     </div>
