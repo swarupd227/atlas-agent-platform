@@ -2766,74 +2766,104 @@ export default ${tool.name};
     const className = tool.name.charAt(0).toUpperCase() + tool.name.slice(1) + "Args";
     const hasParams = tool.parameters && typeof tool.parameters === "object" && Object.keys(tool.parameters).length > 0;
     const dataclassBlock = hasParams ? jsonSchemaToDataclass(className, tool.parameters!) + "\n\n" : `@dataclass\nclass ${className}:\n    pass\n\n`;
-    const dataclassImport = `from dataclasses import dataclass\nfrom typing import Any, Optional\n\n`;
+    const dataclassImport = `from dataclasses import dataclass, field\nfrom typing import Any, Optional\n\n`;
     const schemaDict = JSON.stringify(tool.parameters || {}, null, 2);
+    const toolDesc = (tool.description || `Execute the ${tool.name} tool`).replace(/"/g, "'");
+
+    // TOOL_SPEC is the full OpenAI function-call descriptor that the agent loop passes to the LLM.
+    const toolSpecStr = JSON.stringify({
+      type: "function",
+      function: {
+        name: tool.name,
+        description: tool.description || `Execute the ${tool.name} tool`,
+        parameters: tool.parameters || {},
+      },
+    }, null, 2);
+
+    // Shared execute(**kwargs) entrypoint — the agent loop calls this with keyword arguments
+    // parsed from the LLM's JSON output.  Never patch this; mock _execute in tests instead.
+    const executeEntrypoint = `
+def execute(**kwargs) -> dict:
+    """Entrypoint called by the agent loop with keyword arguments from LLM output."""
+    args = ${className}(**{k: v for k, v in kwargs.items() if v is not None})
+    return _execute(args)
+`;
 
     if (adapterType === "stub") {
-      return `# STUB: Auto-generated placeholder for "${tool.name}"
-# Status: Stub — replace with actual implementation before deployment
+      return `# TODO: Implement backend for "${tool.name}"
 # Description: ${tool.description || "No description provided"}
+# Replace _execute() with a real backend call before deploying.
 ${dataclassImport}${dataclassBlock}
 INPUT_SCHEMA = ${schemaDict}
 
+TOOL_SPEC = ${toolSpecStr}
+
 
 def _execute(args: ${className}) -> dict:
-    """Internal execution — mock this in tests."""
+    """TODO: Replace with the actual backend implementation for ${tool.name}.
+    Make real HTTP calls, DB queries, or API operations — never return fabricated data.
+    """
     print(f"[${tool.name}] called with: {args}")
-    return {
-        "status": "ok",
-        "_stub": True,
-        "tool": "${tool.name}",
-        "message": "TODO: Replace this stub with the actual implementation for ${tool.name}.",
-    }
+    raise NotImplementedError(
+        "${tool.name} is not yet implemented. "
+        "Replace this body with the real backend call."
+    )
 
 
 def ${tool.name}(args: ${className}) -> dict:
-    """STUB: ${tool.description || "No description provided"}"""
+    """${toolDesc}"""
     return _execute(args)
-`;
+${executeEntrypoint}`;
     }
     if (adapterType === "customer") {
-      return `# CUSTOMER ADAPTER REQUIRED: "${tool.name}"
-# Status: Customer adapter required — provide your own implementation
+      return `# CUSTOMER ADAPTER: "${tool.name}"
+# Provide your own implementation in _execute() before deploying.
 # Description: ${tool.description || "No description provided"}
 ${dataclassImport}${dataclassBlock}
 INPUT_SCHEMA = ${schemaDict}
 
+TOOL_SPEC = ${toolSpecStr}
+
 
 def _execute(args: ${className}) -> dict:
-    """Internal execution — mock this in tests."""
+    """TODO: Implement the backend call for ${tool.name}.
+    This tool requires a customer-provided implementation.
+    Make real HTTP calls, DB queries, or API operations — never return fabricated data.
+    """
     print(f"[${tool.name}] called with: {args}")
-    return {"status": "needs_implementation", "tool": "${tool.name}"}
+    raise NotImplementedError(
+        "${tool.name} requires a customer-provided implementation."
+    )
 
 
 def ${tool.name}(args: ${className}) -> dict:
-    """Customer adapter: ${tool.description || "No description provided"}"""
+    """${toolDesc}"""
     return _execute(args)
-`;
+${executeEntrypoint}`;
     }
-    return `# REQUIRES IMPLEMENTATION: "${tool.name}"
-# Status: Scaffold generated — replace the body with your actual implementation
+    return `# TODO: Implement backend for "${tool.name}"
 # Description: ${tool.description || "No description provided"}
 ${dataclassImport}${dataclassBlock}
 INPUT_SCHEMA = ${schemaDict}
 
+TOOL_SPEC = ${toolSpecStr}
+
 
 def _execute(args: ${className}) -> dict:
-    """Internal execution — mock this in tests."""
+    """TODO: Replace with the actual backend implementation for ${tool.name}.
+    Make real HTTP calls, DB queries, or API operations — never return fabricated data.
+    """
     print(f"[${tool.name}] called with: {args}")
-    return {
-        "status": "ok",
-        "_stub": True,
-        "tool": "${tool.name}",
-        "message": "TODO: Implement ${tool.name} — replace this stub with your adapter logic.",
-    }
+    raise NotImplementedError(
+        "${tool.name} is not yet implemented. "
+        "Replace this body with the real backend call."
+    )
 
 
 def ${tool.name}(args: ${className}) -> dict:
-    """TODO: Implement this tool adapter. ${tool.description || ""}"""
+    """${toolDesc}"""
     return _execute(args)
-`;
+${executeEntrypoint}`;
   }
 
   /**
