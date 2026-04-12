@@ -1879,5 +1879,263 @@ Log every action.`;
     }
   });
 
+  // ─── Self-Healing Manufacturing / Factory Demo Live Session ──────────────────
+
+  type SHMfgLiveDemoState = {
+    status: "idle" | "running" | "complete";
+    pipelineId: string | null;
+    triggeredAt: Date | null;
+    completedAt: Date | null;
+    agentId: string | null;
+  };
+
+  let shMfgDemo: SHMfgLiveDemoState = {
+    status: "idle",
+    pipelineId: null,
+    triggeredAt: null,
+    completedAt: null,
+    agentId: null,
+  };
+
+  const SH_MFG_STAGE_SEQUENCE: Array<{ stage: string; delayMs: number }> = [
+    { stage: "diagnosed",   delayMs: 25_000 },
+    { stage: "hypothesis",  delayMs: 20_000 },
+    { stage: "remediation", delayMs: 20_000 },
+    { stage: "resolved",    delayMs: 30_000 },
+  ];
+
+  async function buildMfgStagePatch(stage: string): Promise<Record<string, unknown>> {
+    const patch: Record<string, unknown> = { stage };
+
+    if (stage === "diagnosed") {
+      patch.diagnosisDetails = {
+        rootCause: "CNC-Line-7 main spindle bearing exhibiting Stage 3 wear pattern: harmonic distortion at 3× bearing pass frequency outer race (BPFO). Remaining useful life 8–12 days at current production load.",
+        vibrationAmplitude: { current: 12.3, baseline: 4.7, threshold: 14.1, unit: "mm/s²" },
+        bearingStage: 3,
+        predictedDaysToFailure: 10,
+        skillsInvoked: [
+          {
+            skillName: "IoT Vibration Signal Analysis Skill",
+            description: "Continuous FFT analysis of 1,024-point vibration waveforms from spindle bearing accelerometers at 25.6 kHz sampling rate.",
+            finding: "BPFO harmonic at 3× (187.5 Hz) amplitude: 12.3 mm/s². 162% increase over 14-day rolling baseline. ISO 10816 Zone C/D boundary crossed.",
+            duration: "Continuous — alert at 15-minute rolling window breach",
+          },
+          {
+            skillName: "Bearing Wear Classification Skill",
+            description: "ML classifier trained on 2,400 historical bearing failure signatures across 18 CNC machine types. Maps FFT features to ISO 13373 wear stages.",
+            finding: "Stage 3 classification (confidence 94%). Predicted failure window: 8–12 days. Immediate maintenance window scheduling recommended.",
+            duration: "22 minutes",
+          },
+          {
+            skillName: "Production Impact Analysis Skill",
+            description: "Evaluates active production orders on affected equipment and calculates rerouting feasibility to alternate machines.",
+            finding: "3 active orders (OD-4417, OD-4421, OD-4433) on CNC-Line-7. CNC-Line-5 has 34% spare capacity — certified for all 3 part families.",
+            duration: "8 minutes",
+          },
+        ],
+        activeOrders: [
+          { orderId: "OD-4417", partFamily: "Turbine Housing Bracket", quantity: 240, dueDate: "2026-04-18" },
+          { orderId: "OD-4421", partFamily: "Hydraulic Manifold Block", quantity: 96,  dueDate: "2026-04-20" },
+          { orderId: "OD-4433", partFamily: "Drive Shaft Collar",      quantity: 180, dueDate: "2026-04-22" },
+        ],
+        estimatedFailureCost: 340000,
+        scheduledMaintenanceCost: 12000,
+      };
+    } else if (stage === "hypothesis") {
+      patch.hypothesis = {
+        confidence: 0.94,
+        primaryHypothesis: "Schedule bearing replacement during Saturday 02:00–06:00 maintenance window (lowest production demand). Immediately reroute 3 active orders to CNC-Line-5. Apply OSHA-mandated 40% speed reduction on CNC-Line-7 in the interim.",
+        runbookCandidates: [
+          {
+            runbookName: "OSHA Speed Reduction Protocol",
+            triggerCondition: "Stage 3 bearing wear — immediate safety action",
+            expectedOutcome: "CNC-Line-7 spindle speed reduced to 60% rated RPM. Extends safe operating window by 6 days.",
+            estimatedDuration: "3 minutes automated parameter push via MTConnect",
+          },
+          {
+            runbookName: "Optimal Maintenance Window Scheduler",
+            triggerCondition: "Bearing replacement required within 10-day window",
+            expectedOutcome: "Maintenance slot reserved: Saturday 02:00–06:00. Technician and parts (SKF 6210-2RS/C3) confirmed in CMMS.",
+            estimatedDuration: "12 minutes (CMMS + parts availability check)",
+          },
+          {
+            runbookName: "Production Order Rerouting Protocol",
+            triggerCondition: "Active orders on affected machine",
+            expectedOutcome: "OD-4417, OD-4421, OD-4433 rerouted to CNC-Line-5. ISO 9001 quality cert cross-verified. No schedule slip.",
+            estimatedDuration: "18 minutes (ERP update + quality cert verification)",
+          },
+        ],
+      };
+    } else if (stage === "remediation") {
+      patch.remediation = {
+        status: "in_progress",
+        runbooksTriggered: [
+          {
+            runbookName: "OSHA Speed Reduction Protocol",
+            status: "completed",
+            result: "CNC-Line-7 spindle speed reduced to 60% rated RPM via MTConnect parameter push. Operator notified. Safe operating window extended to T+16 days.",
+          },
+          {
+            runbookName: "Optimal Maintenance Window Scheduler",
+            status: "completed",
+            result: "Maintenance slot confirmed: Saturday 02:00–06:00. Technician assigned. SKF 6210-2RS/C3 bearing in local inventory (bin A-14). CMMS work order WO-28834 raised.",
+          },
+          {
+            runbookName: "Production Order Rerouting Protocol",
+            status: "completed",
+            result: "OD-4417, OD-4421, OD-4433 rerouted to CNC-Line-5. ISO 9001 quality certification cross-verified for all 3 part families. ERP updated. No delivery schedule impact.",
+          },
+        ],
+        policiesEnforced: [
+          {
+            policyName: "OSHA CFR 1910.217 Machine Safety Policy",
+            rule: "Stage 3 Bearing Wear Speed Restriction",
+            decision: "Autonomous 40% spindle speed reduction applied immediately — OSHA non-negotiable safety guardrail",
+            outcome: "CNC-Line-7 operating at safe speed. Extended safe window: T+16 days",
+          },
+          {
+            policyName: "ISO 9001 Quality Assurance Policy",
+            rule: "Alternate Machine Quality Certification Check",
+            decision: "CNC-Line-5 verified against quality certs for Turbine Housing Bracket, Hydraulic Manifold Block, Drive Shaft Collar",
+            outcome: "All 3 part families certified on Line-5 — rerouting approved",
+          },
+          {
+            policyName: "IEC 62443 OT Network Security Policy",
+            rule: "MTConnect parameter changes require authenticated session",
+            decision: "Automated MTConnect push executed under service account MFG-SVC-07 with MFA",
+            outcome: "Full audit trail maintained in OT network log",
+          },
+        ],
+      };
+      patch.businessImpact = {
+        withAtlas: "Stage 3 wear detected 10 days pre-failure. OSHA speed reduction applied in 3 min. Maintenance scheduled Saturday. 3 orders rerouted with zero schedule slip. Zero unplanned downtime.",
+        withoutAtlas: "Failure at T+8–12 days. 23-hour emergency shutdown. SKF bearing emergency sourcing (3-day lead). $340K damage + lost production + quality escapes on in-process parts.",
+        maintenanceCost: "$12K planned vs $340K unplanned failure",
+        downtimeAvoided: "23 hours (est. $14,700/hr production loss)",
+        ordersProtected: "3 production orders — no delivery impact",
+      };
+      patch.industryGuardrails = [
+        { framework: "OSHA CFR 1910.217", constraint: "Mandatory speed restriction at Stage 3 bearing wear — no override", status: "enforced" },
+        { framework: "ISO 9001",          constraint: "Quality cert verification before alternate machine rerouting",        status: "enforced" },
+        { framework: "ISO 55001",         constraint: "Asset lifecycle event logged in CMMS with predicted vs actual RUL",   status: "enforced" },
+        { framework: "IEC 62443",         constraint: "All OT network parameter changes via authenticated MTConnect session", status: "enforced" },
+      ];
+    } else if (stage === "resolved") {
+      patch.resolution = {
+        atlasAutonomousActions: [
+          "Stage 3 bearing wear detected via FFT analysis — 10 days to predicted failure",
+          "OSHA-mandated 40% spindle speed reduction applied via MTConnect in 3 minutes",
+          "Maintenance window optimized: Saturday 02:00–06:00 (lowest demand slot)",
+          "SKF 6210-2RS/C3 bearing availability confirmed in local inventory",
+          "CMMS work order WO-28834 raised with full diagnostic payload",
+          "3 production orders rerouted to CNC-Line-5 — ISO 9001 quality certs cross-verified",
+          "ERP delivery schedule updated — zero customer-facing impact",
+        ],
+        requiresHumanAction: [
+          "Physical bearing replacement execution by qualified technician (Saturday window)",
+          "Post-maintenance vibration baseline re-measurement and sign-off",
+        ],
+        withoutAtlas: "Bearing failure at T+8–12 days → 23-hour emergency shutdown → $340K damage + emergency parts + quality escapes.",
+      };
+      patch.resolvedAt = new Date();
+      patch.status = "resolved";
+    }
+
+    return patch;
+  }
+
+  function scheduleNextMfgStage(pipelineId: string, seqIdx: number) {
+    if (seqIdx >= SH_MFG_STAGE_SEQUENCE.length) {
+      shMfgDemo.status = "complete";
+      shMfgDemo.completedAt = new Date();
+      return;
+    }
+    const { stage, delayMs } = SH_MFG_STAGE_SEQUENCE[seqIdx];
+    setTimeout(async () => {
+      if (shMfgDemo.pipelineId !== pipelineId) return;
+      try {
+        const patch = await buildMfgStagePatch(stage);
+        await storage.updateHealingPipeline(pipelineId, patch as any);
+        scheduleNextMfgStage(pipelineId, seqIdx + 1);
+      } catch (err: any) {
+        console.error("[demo/sh-mfg] stage advance error:", err.message);
+      }
+    }, delayMs);
+  }
+
+  router.post("/api/demo/sh-mfg/trigger", async (req, res) => {
+    try {
+      const orgId = getOrgId(req);
+      const allAgents = await storage.getAgents(orgId);
+      const agent = allAgents.find(a => a.name === "Factory Floor Anomaly Recovery Agent");
+      if (!agent) return res.status(404).json({ message: "Factory Floor Anomaly Recovery Agent not found" });
+
+      if (shMfgDemo.pipelineId) {
+        await storage.deleteHealingPipeline(shMfgDemo.pipelineId).catch(() => {});
+      }
+
+      const newPipeline = await storage.createHealingPipeline({
+        title: "CNC-Line-7 Bearing Wear Stage 3 — 10 Days to Predicted Failure",
+        agentId: agent.id,
+        agentName: agent.name,
+        industry: "manufacturing",
+        severity: "high",
+        priority: "high",
+        stage: "detected",
+        issueType: "equipment_anomaly",
+        issueDescription: "CNC-Line-7 spindle bearing vibration at 12.3 mm/s² (baseline 4.7). BPFO harmonic 162% above 14-day average. ISO 13373 Stage 3 wear classification — 10 days to predicted failure. 3 active production orders at risk.",
+        triggerSource: "atlas_monitoring",
+      } as any);
+
+      shMfgDemo = {
+        status: "running",
+        pipelineId: newPipeline.id,
+        triggeredAt: new Date(),
+        completedAt: null,
+        agentId: agent.id,
+      };
+
+      scheduleNextMfgStage(newPipeline.id, 0);
+
+      res.json({ pipelineId: newPipeline.id, agentId: agent.id, message: "Demo incident triggered" });
+    } catch (err: any) {
+      console.error("[demo/sh-mfg/trigger]", err.message);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  router.get("/api/demo/sh-mfg/status", async (_req, res) => {
+    try {
+      let pipeline = null;
+      if (shMfgDemo.pipelineId) {
+        pipeline = await storage.getHealingPipeline(shMfgDemo.pipelineId) ?? null;
+      }
+      const elapsedSeconds = shMfgDemo.triggeredAt
+        ? Math.floor((Date.now() - shMfgDemo.triggeredAt.getTime()) / 1000)
+        : 0;
+      res.json({
+        status: shMfgDemo.status,
+        triggeredAt: shMfgDemo.triggeredAt,
+        completedAt: shMfgDemo.completedAt,
+        elapsedSeconds,
+        pipeline,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  router.post("/api/demo/sh-mfg/reset", async (_req, res) => {
+    try {
+      if (shMfgDemo.pipelineId) {
+        await storage.deleteHealingPipeline(shMfgDemo.pipelineId).catch(() => {});
+      }
+      shMfgDemo = { status: "idle", pipelineId: null, triggeredAt: null, completedAt: null, agentId: null };
+      res.json({ message: "Demo reset to idle" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
 export { ensureHearstAgents, ensureFitchAgents };
 export default router;

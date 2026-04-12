@@ -493,7 +493,7 @@ function RunningView({ state }: { state: DemoState }) {
               </div>
             </CardHeader>
             <CardContent className="px-4 pb-4 pt-3">
-              <div className="space-y-2 max-h-80 overflow-y-auto">
+              <div className="space-y-2">
                 {visibleActions.map((action, i) => (
                   <div key={i} data-testid={`action-log-item-${i}`} className="flex items-start gap-2 text-[11px]">
                     <div className={`w-1.5 h-1.5 rounded-full shrink-0 mt-1.5 ${
