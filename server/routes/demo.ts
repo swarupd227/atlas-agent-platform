@@ -1395,6 +1395,87 @@ Log every action.`;
 
   // ── BlackRock Use Case 2: Partner Portal Registry MCP Server ────────────────
 
+  // ─── Shared trace writer for all 6 SH demos ──────────────────────────────────
+  // Creates one run_trace record per stage so the agent's Runs & Traces tab
+  // shows the autonomous self-healing sequence as it executes in real-time.
+
+  async function createSHDemoStageTrace(
+    agentId: string,
+    orgId: string,
+    modelName: string,
+    stage: string,
+    patch: Record<string, unknown>,
+    issueDescription: string,
+  ): Promise<void> {
+    try {
+      const stageMeta: Record<string, { input: string; output: string; latencyMs: number }> = {
+        detected: {
+          input: issueDescription,
+          output: "Anomaly classified and incident opened. Autonomous investigation initiated.",
+          latencyMs: 240,
+        },
+        diagnosed: {
+          input: "Investigate root cause of detected anomaly using domain-specific diagnostic skills.",
+          output: ((patch.diagnosisDetails as any)?.rootCause) || "Root cause identified.",
+          latencyMs: 42000,
+        },
+        hypothesis: {
+          input: "Formulate remediation hypothesis from diagnosis findings.",
+          output: ((patch.hypothesis as any)?.primaryHypothesis) || "Hypothesis formulated.",
+          latencyMs: 18000,
+        },
+        remediation: {
+          input: "Execute approved remediation runbooks within compliance guardrails.",
+          output: `Runbooks triggered: ${(((patch.remediation as any)?.runbooksTriggered) || []).map((r: any) => r.runbookName).join(", ")}`,
+          latencyMs: 28000,
+        },
+        resolved: {
+          input: "Validate outcomes and compile autonomous resolution report.",
+          output: "Incident resolved. All autonomous actions complete. Human review items flagged.",
+          latencyMs: 12000,
+        },
+      };
+
+      const meta = stageMeta[stage] || { input: stage, output: stage, latencyMs: 5000 };
+
+      const skillsInvoked: any[] = (patch.diagnosisDetails as any)?.skillsInvoked || [];
+      const runbooksTriggered: any[] = (patch.remediation as any)?.runbooksTriggered || [];
+      const toolCallSources = skillsInvoked.length ? skillsInvoked : runbooksTriggered;
+      const toolCalls = toolCallSources.map((s: any) => ({
+        toolName: s.skillName || s.runbookName || "tool",
+        input: { task: s.description || s.result || "" },
+        output: s.finding || s.result || "Completed",
+        durationMs: 5000,
+      }));
+
+      const policiesEnforced: any[] = (patch.remediation as any)?.policiesEnforced || [];
+      const guardrails: any[] = (patch.industryGuardrails as any) || [];
+      const policyCheckSources = policiesEnforced.length ? policiesEnforced : guardrails;
+      const policyChecks = policyCheckSources.map((p: any) => ({
+        policyName: p.policyName || p.framework || "",
+        rule: p.rule || p.constraint || "",
+        decision: p.decision || p.status || "enforced",
+        outcome: p.outcome || "compliance maintained",
+      }));
+
+      await (storage as any).createTrace({
+        agentId,
+        organizationId: orgId,
+        status: "completed",
+        inputSummary: meta.input,
+        outputSummary: meta.output,
+        latencyMs: meta.latencyMs,
+        modelId: modelName,
+        toolCalls: toolCalls.length ? toolCalls : undefined,
+        policyChecks: policyChecks.length ? policyChecks : undefined,
+        environment: "prod",
+        endedAt: new Date(),
+      });
+    } catch (err: any) {
+      console.error(`[sh-demo] createSHDemoStageTrace(${stage}) error:`, err.message);
+    }
+  }
+
   // ─── Self-Healing Healthcare Live Demo ────────────────────────────────────────
   // Server-side state machine: one active demo session at a time.
   // Incident auto-advances through stages with realistic delays so the prospect
@@ -1407,6 +1488,9 @@ Log every action.`;
     triggeredAt: Date | null;
     completedAt: Date | null;
     agentId: string | null;
+    orgId: string | null;
+    modelName: string | null;
+    issueDescription: string | null;
   };
 
   let shHealthDemo: SHLiveDemoState = {
@@ -1415,6 +1499,9 @@ Log every action.`;
     triggeredAt: null,
     completedAt: null,
     agentId: null,
+    orgId: null,
+    modelName: null,
+    issueDescription: null,
   };
 
   const SH_STAGE_SEQUENCE: Array<{ stage: string; delayMs: number }> = [
