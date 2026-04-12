@@ -2413,5 +2413,288 @@ Log every action.`;
     }
   });
 
+  // ─── Self-Healing Energy / Grid Operations Demo Live Session ─────────────────
+
+  type SHEnergyLiveDemoState = {
+    status: "idle" | "running" | "complete";
+    pipelineId: string | null;
+    triggeredAt: Date | null;
+    completedAt: Date | null;
+    agentId: string | null;
+  };
+
+  let shEnergyDemo: SHEnergyLiveDemoState = {
+    status: "idle",
+    pipelineId: null,
+    triggeredAt: null,
+    completedAt: null,
+    agentId: null,
+  };
+
+  const SH_ENERGY_STAGE_SEQUENCE: Array<{ stage: string; delayMs: number }> = [
+    { stage: "diagnosed",   delayMs: 25_000 },
+    { stage: "hypothesis",  delayMs: 20_000 },
+    { stage: "remediation", delayMs: 20_000 },
+    { stage: "resolved",    delayMs: 30_000 },
+  ];
+
+  async function buildEnergyStagePatch(stage: string): Promise<Record<string, unknown>> {
+    const patch: Record<string, unknown> = { stage };
+
+    if (stage === "diagnosed") {
+      patch.diagnosisDetails = {
+        rootCause: "Unplanned offshore wind farm outage: Circuit breaker trip on Offshore Wind Array W-12 (847 MW). 40% of regional wind generation capacity lost simultaneously. Grid frequency falling at 0.08 Hz/second toward under-frequency load shedding threshold.",
+        frequencyHz: { current: 59.63, nominal: 60.00, nercLimit: 59.95, projectedMinimum: 59.40 },
+        shortfallMW: 847,
+        householdsAtRisk: 680000,
+        nercPenaltyExposure: { min: 1000000, max: 25000000 },
+        nercWindowMinutes: 10,
+        elapsedMinutes: 1.2,
+        skillsInvoked: [
+          {
+            skillName: "Generation Shortfall Detection Skill",
+            description: "High-frequency SCADA telemetry analysis (50,000 points at 4-second intervals) to detect generation-load imbalances and forecast frequency trajectory.",
+            finding: "847 MW shortfall detected. W-12 circuit breaker trip confirmed via SCADA. Frequency falling at 0.08 Hz/s. Projected minimum: 59.40 Hz in 3 minutes (UFLS threshold: 59.50 Hz).",
+            duration: "< 4 seconds — real-time SCADA event processing",
+          },
+          {
+            skillName: "Demand Response Activation Skill",
+            description: "Evaluates DR participant availability, contract status, and curtailment feasibility across industrial and commercial load zones.",
+            finding: "12 industrial DR participants available. Combined curtailment: 350 MW. Average activation time: 90 seconds. All participants within contracted curtailment windows.",
+            duration: "18 seconds",
+          },
+          {
+            skillName: "Peaker Unit Dispatch Skill",
+            description: "Coordinates quick-start combustion turbine dispatch, FERC market notifications, and ramp scheduling to restore generation balance.",
+            finding: "CT-3 (120 MW), CT-7 (130 MW), CT-11 (110 MW) available — 360 MW combined. EPA permit hours confirmed: 847 hrs remaining. Full output in 8 minutes.",
+            duration: "24 seconds",
+          },
+          {
+            skillName: "Load Zone Rebalancing Skill",
+            description: "Calculates transmission switching and interchange adjustments to minimize power flow disruption across load zones.",
+            finding: "137 MW interchange adjustment available from Zone 4B. Transmission path N-1 secure. Power flow recalculation complete.",
+            duration: "12 seconds",
+          },
+        ],
+        recoveryPlan: [
+          { source: "Demand Response (12 industrial participants)", mw: 350, timeMin: 1.5 },
+          { source: "Peaker CT-3 / CT-7 / CT-11",                  mw: 360, timeMin: 8.0 },
+          { source: "Zone 4B Interchange Adjustment",               mw: 137, timeMin: 3.5 },
+        ],
+      };
+    } else if (stage === "hypothesis") {
+      patch.hypothesis = {
+        confidence: 0.98,
+        primaryHypothesis: "Three-pronged frequency recovery: (1) immediate 350 MW DR curtailment to arrest frequency decline, (2) dispatch CT-3/CT-7/CT-11 for 360 MW generation recovery by T+8min, (3) 137 MW Zone 4B interchange adjustment. Total: 847 MW — full shortfall covered within NERC BAL-003 10-minute window.",
+        runbookCandidates: [
+          {
+            runbookName: "Demand Response Program Activation",
+            triggerCondition: "Frequency below 59.95 Hz with ≥200 MW shortfall — autonomous",
+            expectedOutcome: "350 MW curtailed across 12 industrial participants in 90 seconds",
+            estimatedDuration: "90 seconds automated activation",
+          },
+          {
+            runbookName: "Peaker Unit Dispatch Protocol",
+            triggerCondition: "Generation shortfall ≥500 MW — confirm-before action",
+            expectedOutcome: "CT-3/CT-7/CT-11 committed. 360 MW at full output by T+8min. FERC market notified within 5 minutes.",
+            estimatedDuration: "8 minutes ramp to full output",
+          },
+          {
+            runbookName: "Load Zone Rebalancing Protocol",
+            triggerCondition: "N-1 transmission path available with headroom",
+            expectedOutcome: "137 MW Zone 4B interchange. Power flow recalculated. N-1 reliability maintained.",
+            estimatedDuration: "3.5 minutes",
+          },
+          {
+            runbookName: "NERC Reliability Event Reporting",
+            triggerCondition: "Generation loss ≥300 MW — confirm-before regulatory filing",
+            expectedOutcome: "NERC event report generated and submitted. Mandatory for losses ≥300 MW.",
+            estimatedDuration: "Automated report generation — human sign-off required",
+          },
+        ],
+      };
+    } else if (stage === "remediation") {
+      patch.remediation = {
+        status: "in_progress",
+        runbooksTriggered: [
+          {
+            runbookName: "Demand Response Program Activation",
+            status: "completed",
+            result: "350 MW curtailed. 12 industrial participants activated in 90 seconds. ArcelorMittal Steel (85 MW), Dow Chemical (62 MW), 10 commercial participants (203 MW). Frequency decline arrested.",
+          },
+          {
+            runbookName: "Peaker Unit Dispatch Protocol",
+            status: "completed",
+            result: "CT-3 (120 MW) + CT-7 (130 MW) + CT-11 (110 MW) committed. FERC market notification sent at T+4min (5-minute window met). EPA permit hours confirmed: 847 hrs remaining. Units at full output T+8.1min.",
+          },
+          {
+            runbookName: "Load Zone Rebalancing Protocol",
+            status: "completed",
+            result: "137 MW Zone 4B interchange adjustment applied. Transmission switching completed. N-1 reliability maintained across all monitored paths.",
+          },
+          {
+            runbookName: "NERC Reliability Event Reporting",
+            status: "in_progress",
+            result: "847 MW event report auto-generated (exceeds 300 MW mandatory threshold). Submitted to NERC via E-Tag system. Human sign-off required for final regulatory certification.",
+          },
+        ],
+        policiesEnforced: [
+          {
+            policyName: "NERC BAL-003 Reliability Standards Policy",
+            rule: "Frequency restoration to 59.95–60.05 Hz within 10-minute window",
+            decision: "All three recovery vectors activated immediately — NERC BAL-003 compliance is non-negotiable",
+            outcome: "Frequency trajectory restored. On track for recovery within 9.2 minutes.",
+          },
+          {
+            policyName: "FERC Order 881 Market Rules Policy",
+            rule: "Market notification within 5 minutes of peaker unit commitment",
+            decision: "FERC notification transmitted at T+4 minutes — within 5-minute window",
+            outcome: "FERC Order 881 compliant. Market integrity maintained.",
+          },
+          {
+            policyName: "EPA Clean Air Act Emissions Cap Policy",
+            rule: "Peaker dispatch requires verification of remaining EPA permit hours",
+            decision: "CT-3/CT-7/CT-11 permit check: 847 operating hours remaining — dispatch authorized",
+            outcome: "Emissions compliance maintained. No cap violation.",
+          },
+          {
+            policyName: "ERCOT Emergency Dispatch Protocol",
+            rule: "Emergency notification to ERCOT when frequency falls below 59.70 Hz",
+            decision: "ERCOT emergency notification sent at T+0 (frequency: 59.63 Hz — below 59.70 Hz trigger)",
+            outcome: "ERCOT notified and coordinating. Regulatory obligation met.",
+          },
+        ],
+      };
+      patch.businessImpact = {
+        withAtlas: "847 MW shortfall detected in <4 seconds. DR activated in 90 seconds. Peakers online T+8min. Frequency restored at 9.2 minutes — within NERC 10-minute window. Zero blackouts. $0 NERC penalties.",
+        withoutAtlas: "Detection 45+ minutes via operator monitoring. Manual DR activation 15–30 min. Peaker dispatch 45+ min. Frequency collapses to UFLS threshold → rolling blackouts → 8–18 hour restoration. $25M NERC penalties.",
+        householdsProtected: "680,000 households — zero blackout",
+        nercCompliance: "9.2 min (NERC window: 10 min)",
+        penaltyAvoided: "$1M–$25M NERC penalty avoided",
+      };
+      patch.industryGuardrails = [
+        { framework: "NERC BAL-003",      constraint: "Frequency restoration to 59.95–60.05 Hz within 10 minutes — mandatory",            status: "enforced" },
+        { framework: "FERC Order 881",    constraint: "Peaker commitment market notification within 5 minutes",                             status: "enforced" },
+        { framework: "EPA Clean Air Act", constraint: "Peaker dispatch only within permitted operating hours — auto-verified pre-dispatch",  status: "enforced" },
+        { framework: "IEC 62351",         constraint: "All SCADA OT network commands authenticated and encrypted",                          status: "enforced" },
+        { framework: "ERCOT Protocol",    constraint: "Emergency notification when frequency < 59.70 Hz",                                   status: "enforced" },
+      ];
+    } else if (stage === "resolved") {
+      patch.resolution = {
+        atlasAutonomousActions: [
+          "847 MW generation shortfall detected in <4 seconds via SCADA telemetry",
+          "Demand Response activated: 350 MW curtailed across 12 industrial participants in 90 seconds",
+          "EPA permit hours pre-verified for CT-3/CT-7/CT-11 before dispatch commitment",
+          "FERC Order 881 market notification sent at T+4 minutes (5-minute window met)",
+          "137 MW Zone 4B interchange adjustment applied — N-1 reliability maintained",
+          "ERCOT emergency notification transmitted at T+0 (frequency 59.63 Hz < 59.70 Hz trigger)",
+          "NERC BAL-003 event report auto-generated and submitted via E-Tag system",
+        ],
+        requiresHumanAction: [
+          "Final NERC Reliability Event Report regulatory certification (mandatory human sign-off for ≥300 MW events)",
+          "Post-event grid stability review and W-12 wind farm restoration approval",
+        ],
+        withoutAtlas: "45+ min detection → frequency collapse → rolling blackouts affecting 680K households → 8–18 hr restoration → $25M NERC penalties.",
+      };
+      patch.resolvedAt = new Date();
+      patch.status = "resolved";
+    }
+
+    return patch;
+  }
+
+  function scheduleNextEnergyStage(pipelineId: string, seqIdx: number) {
+    if (seqIdx >= SH_ENERGY_STAGE_SEQUENCE.length) {
+      shEnergyDemo.status = "complete";
+      shEnergyDemo.completedAt = new Date();
+      return;
+    }
+    const { stage, delayMs } = SH_ENERGY_STAGE_SEQUENCE[seqIdx];
+    setTimeout(async () => {
+      if (shEnergyDemo.pipelineId !== pipelineId) return;
+      try {
+        const patch = await buildEnergyStagePatch(stage);
+        await storage.updateHealingPipeline(pipelineId, patch as any);
+        scheduleNextEnergyStage(pipelineId, seqIdx + 1);
+      } catch (err: any) {
+        console.error("[demo/sh-energy] stage advance error:", err.message);
+      }
+    }, delayMs);
+  }
+
+  router.post("/api/demo/sh-energy/trigger", async (req, res) => {
+    try {
+      const orgId = getOrgId(req);
+      const allAgents = await storage.getAgents(orgId);
+      const agent = allAgents.find(a => a.name === "Grid Operations Stability Agent");
+      if (!agent) return res.status(404).json({ message: "Grid Operations Stability Agent not found" });
+
+      if (shEnergyDemo.pipelineId) {
+        await storage.deleteHealingPipeline(shEnergyDemo.pipelineId).catch(() => {});
+      }
+
+      const newPipeline = await storage.createHealingPipeline({
+        title: "Offshore Wind Farm W-12 Outage — 847 MW Generation Shortfall",
+        agentId: agent.id,
+        agentName: agent.name,
+        industry: "energy",
+        severity: "critical",
+        priority: "critical",
+        stage: "detected",
+        issueType: "generation_shortfall",
+        issueDescription: "Circuit breaker trip on Offshore Wind Array W-12. 847 MW generation shortfall (40% of regional wind capacity). Grid frequency falling: 59.63 Hz (nominal 60.00 Hz, NERC lower limit 59.95 Hz). 680,000 households at risk. NERC BAL-003 10-minute recovery window starts now.",
+        triggerSource: "atlas_monitoring",
+      } as any);
+
+      shEnergyDemo = {
+        status: "running",
+        pipelineId: newPipeline.id,
+        triggeredAt: new Date(),
+        completedAt: null,
+        agentId: agent.id,
+      };
+
+      scheduleNextEnergyStage(newPipeline.id, 0);
+
+      res.json({ pipelineId: newPipeline.id, agentId: agent.id, message: "Demo incident triggered" });
+    } catch (err: any) {
+      console.error("[demo/sh-energy/trigger]", err.message);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  router.get("/api/demo/sh-energy/status", async (_req, res) => {
+    try {
+      let pipeline = null;
+      if (shEnergyDemo.pipelineId) {
+        pipeline = await storage.getHealingPipeline(shEnergyDemo.pipelineId) ?? null;
+      }
+      const elapsedSeconds = shEnergyDemo.triggeredAt
+        ? Math.floor((Date.now() - shEnergyDemo.triggeredAt.getTime()) / 1000)
+        : 0;
+      res.json({
+        status: shEnergyDemo.status,
+        triggeredAt: shEnergyDemo.triggeredAt,
+        completedAt: shEnergyDemo.completedAt,
+        elapsedSeconds,
+        pipeline,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  router.post("/api/demo/sh-energy/reset", async (_req, res) => {
+    try {
+      if (shEnergyDemo.pipelineId) {
+        await storage.deleteHealingPipeline(shEnergyDemo.pipelineId).catch(() => {});
+      }
+      shEnergyDemo = { status: "idle", pipelineId: null, triggeredAt: null, completedAt: null, agentId: null };
+      res.json({ message: "Demo reset to idle" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
 export { ensureHearstAgents, ensureFitchAgents };
 export default router;
