@@ -1,0 +1,162 @@
+{
+  "Clinical_Data_Integrity_Monitor": {
+    "skills": {
+      "a667945e-9ba2-45a9-bc1e-84305aad6554": "59824813-c6c6-49a2-9263-d409065da742",
+      "0d6ed347-88fa-4518-9e15-0fa78efafb58": "d8e80048-6a9e-4bd2-92eb-483131ee194c",
+      "9a4bb013-5700-44e2-819e-2ed4a1bec61e": "cca7028b-0201-45a1-8d4a-d7006b9d7cdf",
+      "aa3ff121-eca5-4e47-82c6-bfeadb03398d": "68ed16fb-2f7e-4b6a-b73b-ab54803d5774",
+      "0e904cfa-c86f-4860-a280-c6c00b614b64": "899cd207-ec37-4329-9383-218683bb71aa"
+    },
+    "runbooks": {
+      "2dcd0e01-936b-4983-b585-55aa0b35a232": "087718e1-0c08-4748-bfd1-05302fc10d9f",
+      "a381323d-c9b1-4e31-b07b-59402c154c5c": "aa8cd23b-221d-416c-abbd-2bd887c42ec8",
+      "09ae8e83-90e1-4a10-a07a-c3003fd81a2f": "b66c8903-54be-4185-aeb9-cf9cda4d84c5",
+      "bde96600-454c-4848-b84d-3a8e061e4c4e": "d0b871e3-405c-4688-b30c-a44525ea18b4",
+      "58adbc2e-76d7-43e1-9dee-1d5f28769127": "53f250cf-956c-4d97-a6e9-f00e59b9eb9e",
+      "a1ce97f7-0d62-45b1-940e-db120eb0be82": "087718e1-0c08-4748-bfd1-05302fc10d9f"
+    },
+    "agentId": "040e9911-2682-4b40-902c-b8a02d7540b5",
+    "policies": {
+      "d02ee742-6c4d-451d-a8fb-9175c063306a": "6fe070ed-c8be-436a-8e87-db30fd157e33",
+      "153c03b4-835a-4508-a1c4-98bc805b4a37": "5eeb016a-3652-4755-b002-42e61baf86da",
+      "4ff96a5c-525f-4829-93d7-9aa44c0d93fb": "1efc1e86-def4-458a-9bcb-fdf9688298fe",
+      "20babe07-acee-4a62-a257-d200fa280845": "d86c8f82-c635-467f-bc00-6ec748bbed68"
+    },
+    "goldenDatasetId": "269cf5f5-384d-4336-bcf1-f9daa17014cc",
+    "evalSuiteId": "3118bb08-ca3e-49a1-971f-ab35ef977c32",
+    "pipelineId": "728df147-66cc-4ebb-9a62-fb983e9bd31a"
+  },
+  "Fraud_Detection_Model_Recovery_Agent": {
+    "skills": {
+      "12507696-8996-43ce-94c1-c919d43bca8b": "b2fe5805-7a68-4ca2-b237-0b52c4a2858e",
+      "ddae3805-43d8-4f6b-b43e-c406346ddda9": "abdf3f3f-0e01-43dc-ba22-621b1bbf9660",
+      "7e0c94cb-07d8-49fc-8fd4-dd864b0b369e": "34088558-132e-4d91-998d-8a1fd317fd14",
+      "8ff9022a-ed59-40b0-b7a0-dc5bb1d7bce6": "baf82f3a-42ca-46d9-b5ca-35a8892c0d2f",
+      "1d09954b-19c9-499d-bc0f-942fd9b8fd7c": "97ad3027-632e-43af-aa7f-0be248d7ec8e"
+    },
+    "runbooks": {
+      "c3f2b8c1-085a-4c5a-8632-ba0714c84610": "4898c264-699f-4a1d-aec3-f39613c6835e",
+      "ec37efba-7b8d-43a3-9bcf-c5ea30840982": "2ad5b2c1-e7b4-4d0a-be30-263fecb181e8",
+      "cbf00bad-95a0-4f2d-ba16-35083ec7331a": "9788fab1-7845-4da2-9646-637262fe3c6b",
+      "82ea7733-31a1-4189-82b6-7227ed1aec0f": "040479d3-1453-4abe-bf51-af4575b14201",
+      "74c58933-9565-43e7-9053-b63cdb82d0e7": "9f82a07b-30ab-487f-8063-eed3183e4be3",
+      "1566bc80-1d73-4f4d-a4a2-3ced2ccd3f8f": "4898c264-699f-4a1d-aec3-f39613c6835e"
+    },
+    "agentId": "cd1d611d-38b5-4977-9f0b-38ff9b05c43e",
+    "policies": {
+      "53e05c92-f055-4cd5-bb29-3af885e76e24": "e97a37a1-860f-49e7-b35a-39348d60de43",
+      "14fb7711-d805-4af7-afa4-22af921d0df6": "ac275604-a219-4812-9b12-8f7d992399b2",
+      "06f925ea-d131-4fd7-974d-35de44656177": "a5c3cadc-ba85-4248-9b53-19e9732dabf1",
+      "3372ce3a-b9ca-4cb3-9957-67ffb273217a": "ce4594b1-142f-4e6b-9d89-cb235bc0ec00"
+    },
+    "goldenDatasetId": "8913610b-a606-4fbc-a90f-9c546374a3e7",
+    "evalSuiteId": "20bf9ab1-0ea5-4ba2-838b-04fd5b90f711"
+  },
+  "Factory_Floor_Anomaly_Recovery_Agent": {
+    "skills": {
+      "dcc9f187-0fc6-407b-ace3-5eba451befee": "723cb7e4-8254-4088-81c2-a373a5cf0644",
+      "d21d7248-9285-4984-9888-44488ff28e8e": "0dcd8396-c4cf-4267-8c6c-73c1b765428f",
+      "ed51e1b3-2597-437e-8417-e5b47be5626b": "a13a17a7-9a79-4196-9bb9-e697f65e1e12",
+      "aa8e08da-6ebf-4d39-b64d-7ebf2167b226": "a7b2851d-9e79-4fc8-bee3-f5f6c979b39d",
+      "197250f3-08d8-4b08-87d3-67e1346479f7": "75138cde-b0cb-4ba7-b3a1-84b777e955a6"
+    },
+    "runbooks": {
+      "7f6b5013-c0d9-4509-85d7-36f660f325e6": "62e775e4-7b6a-4dd7-b587-0a0d6877b90e",
+      "3a9bd10b-f714-4cae-96f6-e0c8b5f23923": "051cae11-50bd-4a61-8b3a-f1a461008345",
+      "1e4c6ccf-f003-4804-a825-bed477d809f5": "9dc68833-b803-4fba-abff-e66ab851ff4e",
+      "8198e379-3dcd-4371-8e54-1c315db72499": "db16dcb9-451e-4bb5-9435-fe44da4a4b88",
+      "2e4e5eb2-264e-4b44-a40a-37bff56150e7": "f689502d-43c3-415d-bb7c-8e1344e15107",
+      "cf6d6b0a-e22a-4326-8347-5b1513af3726": "62e775e4-7b6a-4dd7-b587-0a0d6877b90e"
+    },
+    "agentId": "3b8bac36-ee68-4550-9eef-cf9f29ef8b8f",
+    "policies": {
+      "425caa84-3bac-452b-83c4-e7e5b5aff627": "aef829f0-8d9a-41f0-b0d6-f2c233e40bf0",
+      "8e08dc5e-21b4-45b5-a29e-c65984027c92": "8e5996a1-af98-48d4-b715-0f2db1a58830",
+      "4a5e886e-bc9a-4f6d-84ac-9f63c31b3e30": "8c435a21-1839-4859-8e28-b6c1c9214935",
+      "a87b0e5a-ff8a-452c-8d75-ab028ca47eb9": "b3b5b00f-0489-46d5-b01e-661b91de2c8b",
+      "d9fec3e1-2f71-4154-9c31-14a33cc0b039": "15c3b93f-ad64-4335-8aaf-94dcf3cff88e"
+    },
+    "goldenDatasetId": "eed999e0-86d6-49c5-b760-acd0e7a63cd4",
+    "evalSuiteId": "e987d20b-15fd-4bf0-9169-8110742a3003"
+  },
+  "Order_Fulfillment_Recovery_Agent": {
+    "skills": {
+      "fe103794-e395-4184-b600-a3e26bf0d684": "c742cecc-ef4a-419c-badf-4cd1baebfbfb",
+      "74046d8f-b0ed-42de-b27a-5774027a35b9": "c700b403-e4d4-4642-9af7-77537b6282c2",
+      "f8254d44-8087-47e1-9538-9a7effc28660": "8630f113-103f-4f87-ac95-a30c9a0759ca",
+      "6d6aba89-3457-4e07-a68a-176d59a98d86": "032d6054-02ed-4139-a09e-577bbe515fcd",
+      "24aac364-e720-4f9a-9849-1908b681f4d1": "2b2d7dea-da4a-4167-bbe9-8b62a171ebbb"
+    },
+    "runbooks": {
+      "cbe42b94-cec0-47b9-91ea-62a3cf5ddf79": "62c3394d-5fe1-4539-b52a-1bf2e24055c2",
+      "a830351b-adff-4ebe-8c17-6dcc7c627869": "5e68859d-7c45-40eb-a8ef-3beff77f7e0a",
+      "47f1a20f-91de-4569-a7f1-3675d9932e10": "de6167db-0307-4b6b-a34b-defea3131e68",
+      "d9b0b57f-1143-4593-bfd9-61b9a6b56ac0": "6bc146a2-c402-48a5-82b7-0a6e59125a55",
+      "d2bde7ac-1d03-4138-abd2-83974d2ea015": "cb28bc66-96ec-4811-9622-6fc25adc224f",
+      "2291d67e-6757-49b8-aab1-8c13de017150": "62c3394d-5fe1-4539-b52a-1bf2e24055c2"
+    },
+    "agentId": "886f7cae-e4cb-4d15-a894-9eb133d5baa8",
+    "policies": {
+      "bc8d76af-4018-42d7-8605-cfc4a0b8e8fe": "be568161-150e-40ac-92fc-e374d9b5af4c",
+      "2cc7450a-e5aa-4266-b778-c0a02f256b3f": "53182756-6047-4482-8bb2-bcea5857eda9",
+      "38b7d3a2-9d49-4c3a-bc2b-8e515648bd75": "d3a3952d-2743-4c12-9531-65567696499d",
+      "b61cf9e4-4375-4f87-b524-c803e2477513": "608b0ede-3c8a-417c-a167-b90b7b593c1c",
+      "977e0f51-f203-4e0a-98e9-0d0a96f4b01d": "5b956476-4d90-432e-b95b-46298999a286",
+      "66b8f51d-0285-4d2b-8dcd-da812c5002ea": "20d8f0cd-303a-44c9-a595-afb184f3126e"
+    },
+    "goldenDatasetId": "a2d450e0-f93d-4ba6-be2c-f55ca47c3fa8",
+    "evalSuiteId": "9090ca67-a9fe-4925-8790-c241afffc8b1"
+  },
+  "Grid_Operations_Stability_Agent": {
+    "skills": {
+      "f7839662-ee99-4742-9f61-6726ed720d0f": "6778c3f5-4dd5-4d47-bd2a-85f0665316d7",
+      "7d954d74-a266-4b83-9cfb-9b2186567098": "419ba926-de19-4315-a312-aff3a559bd3c",
+      "4dc94c4b-103e-46df-a030-713532324402": "33a7c886-a4c1-4d63-ade1-c826d62e0048",
+      "9932e0ab-6f94-4f6f-a025-86761e3cb784": "50695111-14a3-4f0e-afc4-023b0876932e",
+      "3670e2a2-300a-4703-9a50-d6a9e67f58f7": "77bcbb24-d72c-446f-aff6-cc6cbe7bc0d6"
+    },
+    "runbooks": {
+      "d909257c-62d9-433d-a3da-62c4556165c8": "7f46b266-b14e-4a76-8750-1cc46a50a653",
+      "10f5082b-2b91-4880-8747-78d87be91032": "be84df2d-3ce3-4d7d-b6ef-a85cadc58ff8",
+      "a9c735ab-de05-438d-a876-a8b5ba38522e": "31b73f1f-a8ee-4e04-a3e5-0ab741283d11",
+      "5ccefb33-7fcb-4b53-9b59-34625c948eb8": "e4ba4ab2-d5f5-4fbd-ab1b-63d3ba4e7f4b",
+      "e2a7bd3e-83ec-4c19-918f-353266e80cff": "1ad07795-7c5f-47a3-97bc-afb1ee4fa0d3",
+      "d6258f4f-2a2e-4f4a-8d16-767936eac2a0": "7f46b266-b14e-4a76-8750-1cc46a50a653"
+    },
+    "agentId": "040b67a9-2dbf-4897-be6c-06994b01e798",
+    "policies": {
+      "e5b54ada-6320-44f8-b207-000fca89f273": "5aab5055-6089-44e1-8356-3a911018a2e0",
+      "5b36034f-c3a9-4c02-acb8-661a117f81d7": "7ff3d82b-85b0-4aae-a7c0-c8b43ca6c865",
+      "5513c9f9-66ff-4151-b6a5-d03879530306": "09bd2981-272a-4177-afd7-d46dd2a0172c",
+      "7b2ee622-a3f2-49a9-baf0-76cd9b9c61fe": "b409baf3-4877-431e-8d1d-9add173dd166"
+    },
+    "goldenDatasetId": "152a9662-563d-49dc-9ade-3482747b521c",
+    "evalSuiteId": "0d3d6ae1-1bf5-4d99-abee-1ecfedf0009d"
+  },
+  "Claims_Workflow_Recovery_Agent": {
+    "skills": {
+      "40192321-bcb9-4a7e-a7ac-5c334e326d04": "53b9c03e-8d68-4452-a89a-33e771a60c52",
+      "3664b754-8f49-4bfa-a79c-8303fd997de4": "56127c48-7756-4e20-a63b-8f9383861c8f",
+      "7ad26297-304a-4335-b16d-3a93816c7d51": "3e27b7b0-093d-4c53-a311-7dd2dda74c86",
+      "377f3381-5b8a-4cc0-a43c-c1426d8e33d3": "3e55a31b-71ff-4a36-93a9-6c5054c3ed5e",
+      "3970cf6c-9b8b-4802-a813-7d073551d784": "54cc7b4b-485a-4084-81dc-b25a06cad4b0"
+    },
+    "runbooks": {
+      "cd07e72e-c254-4152-9474-a3a5762bdd50": "4ffd416e-4c04-4251-b0ad-20412fcc103e",
+      "845a5776-04cf-4e52-a967-30034859f445": "5c7f01cb-d564-4b88-9632-da8cbe664839",
+      "27ce9f27-c61a-43f2-b37b-5e25b4a017ee": "beb6c54d-4b37-4dbd-bbe6-937d2ff50a00",
+      "6118e948-6700-41d9-96c6-e7c0376e6b4e": "ef3e668a-a9b1-4672-aacb-35a58e2b129e",
+      "2e798dbf-cea3-4a4c-bb35-b4961768ad0d": "44b072e7-d469-437b-bdb2-89b0fb68528c",
+      "700855de-4a02-4bb8-b437-708ef99289ab": "4ffd416e-4c04-4251-b0ad-20412fcc103e"
+    },
+    "agentId": "5979f1ee-de70-41f2-8d74-d705e341b85c",
+    "policies": {
+      "e36599c1-0314-4f60-9534-e12dd57255e8": "b0841c3a-8ac4-4079-8843-db027b20b632",
+      "4b0fe27e-82c2-4da2-bd23-e874fedfbeb6": "10e0ba96-b67e-4873-97a3-9a9161806f5e",
+      "185d1373-70c5-4769-9359-0c9316e0f56f": "0361841f-1cb2-4f82-8b98-7c0905fbc6fc",
+      "569e2e9f-569f-4ec0-9ee0-7e09860607ca": "a4b714b8-6b36-4f55-bb71-7fdb3b88abf0"
+    },
+    "goldenDatasetId": "93aade52-7e0d-4899-8e64-147554ea4496",
+    "evalSuiteId": "8ed16259-e2b6-4d0e-a834-cd050bf43198"
+  }
+}
