@@ -1637,5 +1637,247 @@ Log every action.`;
     }
   });
 
+  // ─── Self-Healing Financial / Fraud Demo Live Session ────────────────────────
+
+  type SHFinLiveDemoState = {
+    status: "idle" | "running" | "complete";
+    pipelineId: string | null;
+    triggeredAt: Date | null;
+    completedAt: Date | null;
+    agentId: string | null;
+  };
+
+  let shFinDemo: SHFinLiveDemoState = {
+    status: "idle",
+    pipelineId: null,
+    triggeredAt: null,
+    completedAt: null,
+    agentId: null,
+  };
+
+  const SH_FIN_STAGE_SEQUENCE: Array<{ stage: string; delayMs: number }> = [
+    { stage: "diagnosed",   delayMs: 25_000 },
+    { stage: "hypothesis",  delayMs: 20_000 },
+    { stage: "remediation", delayMs: 20_000 },
+    { stage: "resolved",    delayMs: 30_000 },
+  ];
+
+  async function buildFinStagePatch(stage: string): Promise<Record<string, unknown>> {
+    const patch: Record<string, unknown> = { stage };
+
+    if (stage === "diagnosed") {
+      patch.diagnosisDetails = {
+        rootCause: "Population shift: BNPL merchant category (MCC 6012) grew 340% over 60 days — severely underrepresented in champion model training data",
+        driftPSI: 0.31,
+        skillsInvoked: [
+          {
+            skillName: "Model Precision Monitoring Skill",
+            description: "Tracks real-time fraud model precision using rolling 4-hour windows with CUSUM alerting.",
+            finding: "Precision collapsed from 95.2% to 87.1% over 6 hours. 47 false negatives detected. BNPL cohort over-represented at 340%.",
+            duration: "6 hours continuous — alert triggered at threshold breach",
+          },
+          {
+            skillName: "Feature Drift Analysis Skill",
+            description: "Identifies which feature distributions have shifted to explain model performance degradation.",
+            finding: "BNPL merchant category (MCC 6012) 340% over-represented vs training distribution. Geographic Zone 7 FPR: 38%.",
+            duration: "28 minutes",
+          },
+          {
+            skillName: "Challenger Model Evaluation Skill",
+            description: "Evaluates alternative model candidates against 30-day hold-out data.",
+            finding: "Challenger v4.2.1 (BNPL-augmented): Precision 93.6%, FPR 2.8%, Gini coefficient +9pp vs champion. Approved for shadow deployment.",
+            duration: "45 minutes",
+          },
+        ],
+        falseNegativesLast24h: 47,
+        estimatedFraudExposure: 284000,
+        precisionDrop: { from: 95.2, to: 87.1 },
+        falseNegativesPerHour: 2,
+      };
+    } else if (stage === "hypothesis") {
+      patch.hypothesis = {
+        confidence: 0.97,
+        primaryHypothesis: "Activate pre-trained challenger fraud-model-v4.2.1-bnpl-augmented via shadow mode traffic split, then execute zero-downtime champion-challenger cutover once validation passes.",
+        runbookCandidates: [
+          {
+            runbookName: "Shadow Challenger Model Activation",
+            triggerCondition: "Challenger shows +2pp improvement over champion in shadow traffic",
+            expectedOutcome: "12,847 transactions sampled. 94.1% agreement. Cutover approved.",
+            estimatedDuration: "4h shadow + 90s zero-downtime cutover",
+          },
+          {
+            runbookName: "Regulatory Model Change Notification",
+            triggerCondition: "Gini coefficient improvement exceeds 5pp (SR 11-7 material change threshold)",
+            expectedOutcome: "SR 11-7 documentation package prepared and submitted to Model Risk Committee",
+            estimatedDuration: "15 minutes automated documentation",
+          },
+        ],
+      };
+    } else if (stage === "remediation") {
+      patch.remediation = {
+        status: "in_progress",
+        runbooksTriggered: [
+          {
+            runbookName: "Shadow Challenger Model Activation",
+            status: "completed",
+            result: "12,847 transactions sampled over 4 hours. Challenger agreement 94.1%. Statistical significance achieved. Precision: 93.6% vs champion 87.1%.",
+          },
+          {
+            runbookName: "Regulatory Model Change Notification",
+            status: "in_progress",
+            result: "SR 11-7 material change package auto-generated. Gini improvement 9pp exceeds 5pp threshold. Model Risk Committee notified — sign-off required before cutover.",
+          },
+        ],
+        policiesEnforced: [
+          {
+            policyName: "SR 11-7 Model Risk Management Policy",
+            rule: "Material Change Documentation",
+            decision: "BLOCKED autonomous cutover — Gini improvement 9pp exceeds 5pp material change threshold. Human sign-off required.",
+            outcome: "Model Risk Committee sign-off package prepared and submitted",
+          },
+          {
+            policyName: "FCRA Adverse Action Policy",
+            rule: "Adverse Action Reason Code Audit",
+            decision: "All automated declines during precision drift period logged with reason codes",
+            outcome: "100% FCRA audit trail maintained",
+          },
+          {
+            policyName: "PCI-DSS v4.0 Data Handling Policy",
+            rule: "Cardholder data minimization in model logs",
+            decision: "Transaction IDs only — no raw PAN data in drift analysis logs",
+            outcome: "PCI-DSS scope maintained",
+          },
+        ],
+      };
+      patch.businessImpact = {
+        withAtlas: "Detected within 2h. Challenger validated via 12,847-transaction shadow. SR 11-7 docs auto-generated. Fraud capped at $284K. Zero downtime.",
+        withoutAtlas: "Detection at next daily review (18h). Model Risk Committee 3–5 days. $1.4M cumulative fraud exposure.",
+        fraudExposurePer24h: 284000,
+        falseNegativesPerHour: 2,
+        financialExposure: "$284K capped vs est. $1.4M without Atlas",
+        precisionRestored: "93.6% (from 87.1%)",
+      };
+      patch.industryGuardrails = [
+        { framework: "SR 11-7",    constraint: "No deployment without validation + Material Change notification for >5pp Gini", status: "enforced" },
+        { framework: "FCRA",       constraint: "Adverse action reason codes stored for all automated declines",                  status: "enforced" },
+        { framework: "PCI-DSS v4.0", constraint: "No raw cardholder data in model logs or drift analysis",                      status: "enforced" },
+        { framework: "GDPR Art. 22", constraint: "Automated decision explainability maintained throughout model switch",         status: "enforced" },
+      ];
+    } else if (stage === "resolved") {
+      patch.resolution = {
+        atlasAutonomousActions: [
+          "Precision drift detected within 2 hours of onset",
+          "BNPL root cause identified in 28 minutes",
+          "Challenger v4.2.1 evaluated against 30-day hold-out data",
+          "12,847-transaction shadow deployment executed and validated",
+          "SR 11-7 material change documentation auto-generated",
+          "All FCRA adverse action audit logs maintained",
+        ],
+        requiresHumanAction: [
+          "Model Risk Committee sign-off on material change",
+          "Final champion-challenger cutover approval",
+        ],
+        withoutAtlas: "18h detection lag → 3–5 day committee process → $1.4M cumulative fraud exposure with precision offline.",
+      };
+      patch.resolvedAt = new Date();
+      patch.status = "resolved";
+    }
+
+    return patch;
+  }
+
+  function scheduleNextFinStage(pipelineId: string, seqIdx: number) {
+    if (seqIdx >= SH_FIN_STAGE_SEQUENCE.length) {
+      shFinDemo.status = "complete";
+      shFinDemo.completedAt = new Date();
+      return;
+    }
+    const { stage, delayMs } = SH_FIN_STAGE_SEQUENCE[seqIdx];
+    setTimeout(async () => {
+      if (shFinDemo.pipelineId !== pipelineId) return;
+      try {
+        const patch = await buildFinStagePatch(stage);
+        await storage.updateHealingPipeline(pipelineId, patch as any);
+        scheduleNextFinStage(pipelineId, seqIdx + 1);
+      } catch (err: any) {
+        console.error("[demo/sh-fin] stage advance error:", err.message);
+      }
+    }, delayMs);
+  }
+
+  router.post("/api/demo/sh-fin/trigger", async (req, res) => {
+    try {
+      const orgId = getOrgId(req);
+      const allAgents = await storage.getAgents(orgId);
+      const agent = allAgents.find(a => a.name === "Fraud Detection Model Recovery Agent");
+      if (!agent) return res.status(404).json({ message: "Fraud Detection Model Recovery Agent not found" });
+
+      if (shFinDemo.pipelineId) {
+        await storage.deleteHealingPipeline(shFinDemo.pipelineId).catch(() => {});
+      }
+
+      const newPipeline = await storage.createHealingPipeline({
+        title: "Fraud Model Precision Drift — BNPL Merchant Category Population Shift",
+        agentId: agent.id,
+        agentName: agent.name,
+        industry: "financial_services",
+        severity: "critical",
+        priority: "critical",
+        stage: "detected",
+        issueType: "model_drift",
+        issueDescription: "Production fraud model precision dropped from 95.2% to 87.1% over 6 hours. BNPL merchant category (MCC 6012) growth shifted transaction distribution beyond model training envelope. 47 false negatives — $284K estimated fraud exposure.",
+        triggerSource: "atlas_monitoring",
+      } as any);
+
+      shFinDemo = {
+        status: "running",
+        pipelineId: newPipeline.id,
+        triggeredAt: new Date(),
+        completedAt: null,
+        agentId: agent.id,
+      };
+
+      scheduleNextFinStage(newPipeline.id, 0);
+
+      res.json({ pipelineId: newPipeline.id, agentId: agent.id, message: "Demo incident triggered" });
+    } catch (err: any) {
+      console.error("[demo/sh-fin/trigger]", err.message);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  router.get("/api/demo/sh-fin/status", async (_req, res) => {
+    try {
+      let pipeline = null;
+      if (shFinDemo.pipelineId) {
+        pipeline = await storage.getHealingPipeline(shFinDemo.pipelineId) ?? null;
+      }
+      const elapsedSeconds = shFinDemo.triggeredAt
+        ? Math.floor((Date.now() - shFinDemo.triggeredAt.getTime()) / 1000)
+        : 0;
+      res.json({
+        status: shFinDemo.status,
+        triggeredAt: shFinDemo.triggeredAt,
+        completedAt: shFinDemo.completedAt,
+        elapsedSeconds,
+        pipeline,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  router.post("/api/demo/sh-fin/reset", async (_req, res) => {
+    try {
+      if (shFinDemo.pipelineId) {
+        await storage.deleteHealingPipeline(shFinDemo.pipelineId).catch(() => {});
+      }
+      shFinDemo = { status: "idle", pipelineId: null, triggeredAt: null, completedAt: null, agentId: null };
+      res.json({ message: "Demo reset to idle" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
 export { ensureHearstAgents, ensureFitchAgents };
 export default router;
