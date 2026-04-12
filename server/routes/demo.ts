@@ -1395,85 +1395,31 @@ Log every action.`;
 
   // ── BlackRock Use Case 2: Partner Portal Registry MCP Server ────────────────
 
-  // ─── Shared trace writer for all 6 SH demos ──────────────────────────────────
-  // Creates one run_trace record per stage so the agent's Runs & Traces tab
-  // shows the autonomous self-healing sequence as it executes in real-time.
+  // ─── Shared real-agent execution helpers for all 6 SH demos ─────────────────
+  // Each stage of the demo fires runAgentOnce() with a stage-specific prompt so
+  // the agent actually executes via LLM, creating real Runs & Traces records.
 
-  async function createSHDemoStageTrace(
-    agentId: string,
-    orgId: string,
-    modelName: string,
-    stage: string,
-    patch: Record<string, unknown>,
-    issueDescription: string,
-  ): Promise<void> {
-    try {
-      const stageMeta: Record<string, { input: string; output: string; latencyMs: number }> = {
-        detected: {
-          input: issueDescription,
-          output: "Anomaly classified and incident opened. Autonomous investigation initiated.",
-          latencyMs: 240,
-        },
-        diagnosed: {
-          input: "Investigate root cause of detected anomaly using domain-specific diagnostic skills.",
-          output: ((patch.diagnosisDetails as any)?.rootCause) || "Root cause identified.",
-          latencyMs: 42000,
-        },
-        hypothesis: {
-          input: "Formulate remediation hypothesis from diagnosis findings.",
-          output: ((patch.hypothesis as any)?.primaryHypothesis) || "Hypothesis formulated.",
-          latencyMs: 18000,
-        },
-        remediation: {
-          input: "Execute approved remediation runbooks within compliance guardrails.",
-          output: `Runbooks triggered: ${(((patch.remediation as any)?.runbooksTriggered) || []).map((r: any) => r.runbookName).join(", ")}`,
-          latencyMs: 28000,
-        },
-        resolved: {
-          input: "Validate outcomes and compile autonomous resolution report.",
-          output: "Incident resolved. All autonomous actions complete. Human review items flagged.",
-          latencyMs: 12000,
-        },
-      };
+  async function ensureSHAgentDeployment(agent: any, orgId: string): Promise<string> {
+    const allDeps = await storage.getDeploymentsByAgentId(agent.id, undefined, orgId);
+    const live = allDeps.find(d => ["active", "deployed", "promoted"].includes(d.status));
+    if (live) return live.id;
+    const dep = await storage.createDeployment({
+      agentId: agent.id,
+      agentName: agent.name,
+      environment: "prod",
+      status: "active",
+      industry: (agent.runtimeConfig as any)?.industry || "general",
+      organizationId: orgId,
+    } as any);
+    return dep.id;
+  }
 
-      const meta = stageMeta[stage] || { input: stage, output: stage, latencyMs: 5000 };
-
-      const skillsInvoked: any[] = (patch.diagnosisDetails as any)?.skillsInvoked || [];
-      const runbooksTriggered: any[] = (patch.remediation as any)?.runbooksTriggered || [];
-      const toolCallSources = skillsInvoked.length ? skillsInvoked : runbooksTriggered;
-      const toolCalls = toolCallSources.map((s: any) => ({
-        toolName: s.skillName || s.runbookName || "tool",
-        input: { task: s.description || s.result || "" },
-        output: s.finding || s.result || "Completed",
-        durationMs: 5000,
-      }));
-
-      const policiesEnforced: any[] = (patch.remediation as any)?.policiesEnforced || [];
-      const guardrails: any[] = (patch.industryGuardrails as any) || [];
-      const policyCheckSources = policiesEnforced.length ? policiesEnforced : guardrails;
-      const policyChecks = policyCheckSources.map((p: any) => ({
-        policyName: p.policyName || p.framework || "",
-        rule: p.rule || p.constraint || "",
-        decision: p.decision || p.status || "enforced",
-        outcome: p.outcome || "compliance maintained",
-      }));
-
-      await (storage as any).createTrace({
-        agentId,
-        organizationId: orgId,
-        status: "completed",
-        inputSummary: meta.input,
-        outputSummary: meta.output,
-        latencyMs: meta.latencyMs,
-        modelId: modelName,
-        toolCalls: toolCalls.length ? toolCalls : undefined,
-        policyChecks: policyChecks.length ? policyChecks : undefined,
-        environment: "prod",
-        endedAt: new Date(),
-      });
-    } catch (err: any) {
-      console.error(`[sh-demo] createSHDemoStageTrace(${stage}) error:`, err.message);
-    }
+  function fireSHAgentStage(deploymentId: string, stagePrompt: string): void {
+    // Non-blocking: pipeline UI advances deterministically; LLM execution
+    // happens in the background and writes the real run_trace record.
+    runAgentOnce(deploymentId, stagePrompt, 4).catch((err: any) =>
+      console.error("[sh-demo] runAgentOnce error:", err.message)
+    );
   }
 
   // ─── Self-Healing Healthcare Live Demo ────────────────────────────────────────
@@ -1488,9 +1434,7 @@ Log every action.`;
     triggeredAt: Date | null;
     completedAt: Date | null;
     agentId: string | null;
-    orgId: string | null;
-    modelName: string | null;
-    issueDescription: string | null;
+    deploymentId: string | null;
   };
 
   let shHealthDemo: SHLiveDemoState = {
@@ -1499,9 +1443,7 @@ Log every action.`;
     triggeredAt: null,
     completedAt: null,
     agentId: null,
-    orgId: null,
-    modelName: null,
-    issueDescription: null,
+    deploymentId: null,
   };
 
   const SH_STAGE_SEQUENCE: Array<{ stage: string; delayMs: number }> = [
@@ -1630,6 +1572,14 @@ Log every action.`;
     return patch;
   }
 
+  const SH_HEALTH_STAGE_PROMPTS: Record<string, string> = {
+    detected:    "URGENT: FHIR batch ingestion error rate has spiked to 18.4%. RxNorm value set version mismatch detected across 1,847 MedicationRequest resources. Drug-interaction validation is offline for 312 patients. Begin autonomous investigation per HIPAA and FDA 21 CFR Part 11 protocols.",
+    diagnosed:   "Root cause confirmed: RxNorm value set version mismatch caused by EHR vendor upgrade to 2025-03-01 release without prior coordination. 1,847 MedicationRequest resources failing. 312 patients have medication gaps including 3 critical contraindicated drug pairs requiring immediate clinical holds. Formulate remediation hypothesis.",
+    hypothesis:  "Formulating remediation plan. Primary hypothesis: activate lenient FHIR validation mode to accept both old and new RxNorm codes; simultaneously request EHR vendor rollback. Execute FHIR Schema Drift Response runbook and route 312 affected patients to pharmacist review queue with immediate clinical hold for 3 critical patients.",
+    remediation: "Executing remediation. Activating lenient validation mode per FHIR Schema Drift Response runbook. Routing 312 patients to pharmacist review queue. Activating clinical hold for 3 critical contraindicated patients per Patient Safety Guardrail Policy. Paging Clinical Informatics on-call. Briefing CMIO. Ensuring HIPAA audit logging maintained throughout.",
+    resolved:    "Validating resolution. Confirming all autonomous actions complete: lenient validation mode active, 312 patients in pharmacist review queue, 3 critical patients on clinical hold, EHR vendor contacted with RxNorm diff report. Drug-interaction validation restored. Compiling HIPAA, FDA 21 CFR Part 11, and HL7 FHIR R4 compliance audit trail.",
+  };
+
   function scheduleNextStage(pipelineId: string, seqIdx: number) {
     if (seqIdx >= SH_STAGE_SEQUENCE.length) {
       shHealthDemo.status = "complete";
@@ -1642,6 +1592,9 @@ Log every action.`;
       try {
         const patch = await buildStagePatch(stage);
         await storage.updateHealingPipeline(pipelineId, patch as any);
+        if (shHealthDemo.deploymentId) {
+          fireSHAgentStage(shHealthDemo.deploymentId, SH_HEALTH_STAGE_PROMPTS[stage] || stage);
+        }
         scheduleNextStage(pipelineId, seqIdx + 1);
       } catch (err: any) {
         console.error("[demo/sh-health] stage advance error:", err.message);
@@ -1660,6 +1613,9 @@ Log every action.`;
       if (shHealthDemo.pipelineId) {
         await storage.deleteHealingPipeline(shHealthDemo.pipelineId).catch(() => {});
       }
+
+      // Ensure a deployment exists so runAgentOnce can create real Runs & Traces
+      const deploymentId = await ensureSHAgentDeployment(agent, orgId);
 
       const newPipeline = await storage.createHealingPipeline({
         title: "FHIR EHR Feed Schema Drift — Drug-Interaction Validation Gap",
@@ -1680,8 +1636,11 @@ Log every action.`;
         triggeredAt: new Date(),
         completedAt: null,
         agentId: agent.id,
+        deploymentId,
       };
 
+      // Fire the real agent for the detect stage immediately
+      fireSHAgentStage(deploymentId, SH_HEALTH_STAGE_PROMPTS.detected);
       scheduleNextStage(newPipeline.id, 0);
 
       res.json({ pipelineId: newPipeline.id, agentId: agent.id, message: "Demo incident triggered" });
@@ -1717,7 +1676,7 @@ Log every action.`;
       if (shHealthDemo.pipelineId) {
         await storage.deleteHealingPipeline(shHealthDemo.pipelineId).catch(() => {});
       }
-      shHealthDemo = { status: "idle", pipelineId: null, triggeredAt: null, completedAt: null, agentId: null };
+      shHealthDemo = { status: "idle", pipelineId: null, triggeredAt: null, completedAt: null, agentId: null, deploymentId: null };
       res.json({ message: "Demo reset to idle" });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -1732,6 +1691,7 @@ Log every action.`;
     triggeredAt: Date | null;
     completedAt: Date | null;
     agentId: string | null;
+    deploymentId: string | null;
   };
 
   let shFinDemo: SHFinLiveDemoState = {
@@ -1740,6 +1700,7 @@ Log every action.`;
     triggeredAt: null,
     completedAt: null,
     agentId: null,
+    deploymentId: null,
   };
 
   const SH_FIN_STAGE_SEQUENCE: Array<{ stage: string; delayMs: number }> = [
@@ -1885,12 +1846,23 @@ Log every action.`;
       try {
         const patch = await buildFinStagePatch(stage);
         await storage.updateHealingPipeline(pipelineId, patch as any);
+        if (shFinDemo.deploymentId) {
+          fireSHAgentStage(shFinDemo.deploymentId, SH_FIN_STAGE_PROMPTS[stage] || stage);
+        }
         scheduleNextFinStage(pipelineId, seqIdx + 1);
       } catch (err: any) {
         console.error("[demo/sh-fin] stage advance error:", err.message);
       }
     }, delayMs);
   }
+
+  const SH_FIN_STAGE_PROMPTS: Record<string, string> = {
+    detected:    "URGENT: Production fraud model precision has dropped from 95.2% to 87.1% over 6 hours. BNPL merchant category (MCC 6012) grew 340% and has shifted the transaction distribution beyond the model training envelope. 47 false negatives detected — estimated $284K fraud exposure. Begin model drift investigation per SR 11-7 and FCRA protocols.",
+    diagnosed:   "Root cause confirmed: population shift in BNPL merchant category (MCC 6012). PSI drift score 0.31 exceeds threshold 0.2. Challenger model v4.2.1 BNPL-augmented shows 93.6% precision vs champion 87.1%. Gini coefficient improvement 9pp exceeds SR 11-7 material change threshold of 5pp. Formulate champion-challenger swap plan.",
+    hypothesis:  "Formulating remediation plan. Hypothesis: activate pre-trained challenger model v4.2.1-bnpl-augmented in shadow mode for 4-hour traffic split validation on 12,847 transactions. If validation passes, execute zero-downtime cutover. Prepare SR 11-7 material change documentation package for Model Risk Committee approval per FCRA and PCI-DSS requirements.",
+    remediation: "Executing remediation. Shadow Challenger Model Activation runbook initiated — sampling 12,847 transactions. Regulatory Model Change Notification auto-generating SR 11-7 material change package. BLOCKING autonomous cutover: Gini improvement 9pp exceeds 5pp material change threshold — Model Risk Committee sign-off required. PCI-DSS cardholder data audit trail maintained.",
+    resolved:    "Validating resolution. Shadow challenger validated on 12,847 transactions with 94.1% agreement. SR 11-7 material change documentation submitted to Model Risk Committee. Fraud exposure capped at $284K vs estimated $1.4M without intervention. Zero downtime achieved. Compiling FCRA, PCI-DSS, SR 11-7, and GDPR compliance audit trail.",
+  };
 
   router.post("/api/demo/sh-fin/trigger", async (req, res) => {
     try {
@@ -1902,6 +1874,8 @@ Log every action.`;
       if (shFinDemo.pipelineId) {
         await storage.deleteHealingPipeline(shFinDemo.pipelineId).catch(() => {});
       }
+
+      const deploymentId = await ensureSHAgentDeployment(agent, orgId);
 
       const newPipeline = await storage.createHealingPipeline({
         title: "Fraud Model Precision Drift — BNPL Merchant Category Population Shift",
@@ -1922,8 +1896,10 @@ Log every action.`;
         triggeredAt: new Date(),
         completedAt: null,
         agentId: agent.id,
+        deploymentId,
       };
 
+      fireSHAgentStage(deploymentId, SH_FIN_STAGE_PROMPTS.detected);
       scheduleNextFinStage(newPipeline.id, 0);
 
       res.json({ pipelineId: newPipeline.id, agentId: agent.id, message: "Demo incident triggered" });
@@ -1959,7 +1935,7 @@ Log every action.`;
       if (shFinDemo.pipelineId) {
         await storage.deleteHealingPipeline(shFinDemo.pipelineId).catch(() => {});
       }
-      shFinDemo = { status: "idle", pipelineId: null, triggeredAt: null, completedAt: null, agentId: null };
+      shFinDemo = { status: "idle", pipelineId: null, triggeredAt: null, completedAt: null, agentId: null, deploymentId: null };
       res.json({ message: "Demo reset to idle" });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -1974,6 +1950,7 @@ Log every action.`;
     triggeredAt: Date | null;
     completedAt: Date | null;
     agentId: string | null;
+    deploymentId: string | null;
   };
 
   let shMfgDemo: SHMfgLiveDemoState = {
@@ -1982,6 +1959,7 @@ Log every action.`;
     triggeredAt: null,
     completedAt: null,
     agentId: null,
+    deploymentId: null,
   };
 
   const SH_MFG_STAGE_SEQUENCE: Array<{ stage: string; delayMs: number }> = [
@@ -2143,12 +2121,23 @@ Log every action.`;
       try {
         const patch = await buildMfgStagePatch(stage);
         await storage.updateHealingPipeline(pipelineId, patch as any);
+        if (shMfgDemo.deploymentId) {
+          fireSHAgentStage(shMfgDemo.deploymentId, SH_MFG_STAGE_PROMPTS[stage] || stage);
+        }
         scheduleNextMfgStage(pipelineId, seqIdx + 1);
       } catch (err: any) {
         console.error("[demo/sh-mfg] stage advance error:", err.message);
       }
     }, delayMs);
   }
+
+  const SH_MFG_STAGE_PROMPTS: Record<string, string> = {
+    detected:    "URGENT: CNC-Line-7 spindle bearing vibration spiked to 12.3 mm/s² (baseline 4.7). BPFO harmonic at 3× (187.5 Hz) is 162% above 14-day rolling average. ISO 13373 Stage 3 wear classification — predicted failure in 8–12 days. 3 active production orders (OD-4417, OD-4421, OD-4433) at risk. Begin autonomous predictive maintenance response per ISO 55001 and OSHA protocols.",
+    diagnosed:   "Root cause confirmed: CNC-Line-7 main spindle bearing exhibiting Stage 3 wear pattern. Remaining useful life 8–12 days at current production load. FFT analysis shows BPFO harmonic amplitude 12.3 mm/s² — ISO 10816 Zone C/D boundary crossed. CNC-Line-5 has 34% spare capacity certified for all 3 affected part families. Formulate maintenance scheduling and rerouting plan.",
+    hypothesis:  "Formulating remediation plan. Hypothesis: (1) Apply OSHA-mandated 40% speed reduction on CNC-Line-7 immediately via MTConnect. (2) Reroute 3 active production orders to CNC-Line-5. (3) Schedule bearing replacement during Saturday 02:00–06:00 maintenance window. Parts (SKF 6210-2RS/C3) and technician availability confirmed in CMMS.",
+    remediation: "Executing remediation. Pushing CNC-Line-7 spindle speed reduction to 60% rated RPM via MTConnect per OSHA safety protocol. Rerouting OD-4417, OD-4421, OD-4433 to CNC-Line-5. Reserving Saturday 02:00–06:00 maintenance slot in CMMS. EPA waste disposal request filed for used bearing. ISO 9001 maintenance record logged.",
+    resolved:    "Validating resolution. CNC-Line-7 speed reduction confirmed: 60% RPM, vibration stabilized at 9.1 mm/s². All 3 production orders rerouted to CNC-Line-5 — on-time delivery maintained for all due dates. Bearing replacement scheduled Saturday 02:00–06:00. ISO 55001, OSHA, ISO 9001, and EPA compliance audit trail complete. Catastrophic failure averted: $340K vs $12K scheduled maintenance cost.",
+  };
 
   router.post("/api/demo/sh-mfg/trigger", async (req, res) => {
     try {
@@ -2160,6 +2149,8 @@ Log every action.`;
       if (shMfgDemo.pipelineId) {
         await storage.deleteHealingPipeline(shMfgDemo.pipelineId).catch(() => {});
       }
+
+      const deploymentId = await ensureSHAgentDeployment(agent, orgId);
 
       const newPipeline = await storage.createHealingPipeline({
         title: "CNC-Line-7 Bearing Wear Stage 3 — 10 Days to Predicted Failure",
@@ -2180,8 +2171,10 @@ Log every action.`;
         triggeredAt: new Date(),
         completedAt: null,
         agentId: agent.id,
+        deploymentId,
       };
 
+      fireSHAgentStage(deploymentId, SH_MFG_STAGE_PROMPTS.detected);
       scheduleNextMfgStage(newPipeline.id, 0);
 
       res.json({ pipelineId: newPipeline.id, agentId: agent.id, message: "Demo incident triggered" });
@@ -2217,7 +2210,7 @@ Log every action.`;
       if (shMfgDemo.pipelineId) {
         await storage.deleteHealingPipeline(shMfgDemo.pipelineId).catch(() => {});
       }
-      shMfgDemo = { status: "idle", pipelineId: null, triggeredAt: null, completedAt: null, agentId: null };
+      shMfgDemo = { status: "idle", pipelineId: null, triggeredAt: null, completedAt: null, agentId: null, deploymentId: null };
       res.json({ message: "Demo reset to idle" });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -2232,6 +2225,7 @@ Log every action.`;
     triggeredAt: Date | null;
     completedAt: Date | null;
     agentId: string | null;
+    deploymentId: string | null;
   };
 
   let shRetailDemo: SHRetailLiveDemoState = {
@@ -2240,6 +2234,7 @@ Log every action.`;
     triggeredAt: null,
     completedAt: null,
     agentId: null,
+    deploymentId: null,
   };
 
   const SH_RETAIL_STAGE_SEQUENCE: Array<{ stage: string; delayMs: number }> = [
@@ -2419,12 +2414,23 @@ Log every action.`;
       try {
         const patch = await buildRetailStagePatch(stage);
         await storage.updateHealingPipeline(pipelineId, patch as any);
+        if (shRetailDemo.deploymentId) {
+          fireSHAgentStage(shRetailDemo.deploymentId, SH_RETAIL_STAGE_PROMPTS[stage] || stage);
+        }
         scheduleNextRetailStage(pipelineId, seqIdx + 1);
       } catch (err: any) {
         console.error("[demo/sh-retail] stage advance error:", err.message);
       }
     }, delayMs);
   }
+
+  const SH_RETAIL_STAGE_PROMPTS: Record<string, string> = {
+    detected:    "URGENT: Primary WMS API error rate has spiked to 87%. DB connection pool exhausted — 0 of 200 connections available. Flash sale traffic is 340% above baseline. 1,847 in-flight orders at risk, 312 same-day delivery commitments, $340K SLA penalty exposure. Begin autonomous incident response per PCI-DSS and consumer protection protocols.",
+    diagnosed:   "Root cause confirmed: DB connection pool exhaustion caused by flash sale traffic spike. Primary WMS API at 0/200 connections. Read replicas have 34% spare capacity. Failover WMS available. 312 same-day delivery orders need immediate routing to backup fulfillment center. Formulate failover and connection pool scaling plan.",
+    hypothesis:  "Formulating remediation plan. Hypothesis: (1) Activate WMS read-replica failover immediately. (2) Route 312 same-day delivery orders to backup fulfillment center (BFC-East, 41 min drive time). (3) Scale DB connection pool to 400 connections. (4) Enable request queuing for remaining 1,847 orders. (5) Activate SLA breach notification per consumer protection policy.",
+    remediation: "Executing remediation. WMS read-replica failover activated — processing restored at 94% capacity. 312 same-day delivery orders rerouted to BFC-East with updated tracking notifications sent. DB connection pool scaled to 400. Request queuing enabled for 1,847 in-flight orders. SLA breach notifications sent for affected customers per consumer protection policy. PCI-DSS payment data isolation maintained.",
+    resolved:    "Validating resolution. WMS API error rate restored to 0.3%. All 1,847 in-flight orders processing normally. 312 same-day deliveries rerouted — 287 on-track, 25 flagged for SLA compensation. DB connection pool stable at 400/400. Flash sale revenue recovered: $2.1M protected. Consumer protection, PCI-DSS, GDPR, and SLA audit trail compiled.",
+  };
 
   router.post("/api/demo/sh-retail/trigger", async (req, res) => {
     try {
@@ -2436,6 +2442,8 @@ Log every action.`;
       if (shRetailDemo.pipelineId) {
         await storage.deleteHealingPipeline(shRetailDemo.pipelineId).catch(() => {});
       }
+
+      const deploymentId = await ensureSHAgentDeployment(agent, orgId);
 
       const newPipeline = await storage.createHealingPipeline({
         title: "Primary WMS API Cascade Failure — Flash Sale Peak Traffic",
@@ -2456,8 +2464,10 @@ Log every action.`;
         triggeredAt: new Date(),
         completedAt: null,
         agentId: agent.id,
+        deploymentId,
       };
 
+      fireSHAgentStage(deploymentId, SH_RETAIL_STAGE_PROMPTS.detected);
       scheduleNextRetailStage(newPipeline.id, 0);
 
       res.json({ pipelineId: newPipeline.id, agentId: agent.id, message: "Demo incident triggered" });
@@ -2493,7 +2503,7 @@ Log every action.`;
       if (shRetailDemo.pipelineId) {
         await storage.deleteHealingPipeline(shRetailDemo.pipelineId).catch(() => {});
       }
-      shRetailDemo = { status: "idle", pipelineId: null, triggeredAt: null, completedAt: null, agentId: null };
+      shRetailDemo = { status: "idle", pipelineId: null, triggeredAt: null, completedAt: null, agentId: null, deploymentId: null };
       res.json({ message: "Demo reset to idle" });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -2508,6 +2518,7 @@ Log every action.`;
     triggeredAt: Date | null;
     completedAt: Date | null;
     agentId: string | null;
+    deploymentId: string | null;
   };
 
   let shEnergyDemo: SHEnergyLiveDemoState = {
@@ -2516,6 +2527,7 @@ Log every action.`;
     triggeredAt: null,
     completedAt: null,
     agentId: null,
+    deploymentId: null,
   };
 
   const SH_ENERGY_STAGE_SEQUENCE: Array<{ stage: string; delayMs: number }> = [
@@ -2702,12 +2714,23 @@ Log every action.`;
       try {
         const patch = await buildEnergyStagePatch(stage);
         await storage.updateHealingPipeline(pipelineId, patch as any);
+        if (shEnergyDemo.deploymentId) {
+          fireSHAgentStage(shEnergyDemo.deploymentId, SH_ENERGY_STAGE_PROMPTS[stage] || stage);
+        }
         scheduleNextEnergyStage(pipelineId, seqIdx + 1);
       } catch (err: any) {
         console.error("[demo/sh-energy] stage advance error:", err.message);
       }
     }, delayMs);
   }
+
+  const SH_ENERGY_STAGE_PROMPTS: Record<string, string> = {
+    detected:    "URGENT: Circuit breaker trip on Offshore Wind Array W-12. 847 MW generation shortfall — 40% of regional wind capacity offline. Grid frequency falling: 59.63 Hz (nominal 60.00 Hz, NERC BAL-003 lower limit 59.95 Hz). 680,000 households at risk. 10-minute NERC BAL-003 recovery window starts now. Begin autonomous grid stability response per NERC, FERC, and ERCOT protocols.",
+    diagnosed:   "Root cause confirmed: W-12 Array transformer protection relay trip. 847 MW offline. Grid frequency at 59.63 Hz — 370 mHz below NERC limit. Pumped hydro (Hoover East, 420 MW) available in 4 minutes. Spinning reserves (NV Gas Peakers, 180 MW) available in 2 minutes. 247 MW demand response available via ERCOT interruptible contracts. Formulate frequency restoration plan.",
+    hypothesis:  "Formulating remediation plan. Hypothesis to restore frequency within NERC 10-min window: (1) Dispatch Hoover East pumped hydro 420 MW in 4 min. (2) Activate NV Gas Peakers 180 MW spinning reserves in 2 min. (3) Trigger 247 MW ERCOT demand response interruptible load. (4) Request W-12 Array protection relay inspection. Total: 847 MW recovery path within 9.2 minutes.",
+    remediation: "Executing remediation. Activating NV Gas Peakers 180 MW spinning reserves — online in 2 min. Dispatching Hoover East pumped hydro 420 MW — online in 4 min. Triggering 247 MW ERCOT demand response — interruptible load curtailed. Frequency trajectory improving: 59.63→59.89 Hz. NERC BAL-003 compliance maintained. FERC reporting initiated. W-12 relay inspection team dispatched.",
+    resolved:    "Validating resolution. Grid frequency restored to 59.97 Hz — within NERC BAL-003 compliance. Total recovery time: 9.2 minutes (within 10-minute window). 680,000 households maintained power continuously. Autonomous actions: 847 MW generation deficit covered, demand response coordinated, W-12 inspection initiated. Compiling NERC, FERC, ERCOT, and EPA compliance audit trail.",
+  };
 
   router.post("/api/demo/sh-energy/trigger", async (req, res) => {
     try {
@@ -2719,6 +2742,8 @@ Log every action.`;
       if (shEnergyDemo.pipelineId) {
         await storage.deleteHealingPipeline(shEnergyDemo.pipelineId).catch(() => {});
       }
+
+      const deploymentId = await ensureSHAgentDeployment(agent, orgId);
 
       const newPipeline = await storage.createHealingPipeline({
         title: "Offshore Wind Farm W-12 Outage — 847 MW Generation Shortfall",
@@ -2739,8 +2764,10 @@ Log every action.`;
         triggeredAt: new Date(),
         completedAt: null,
         agentId: agent.id,
+        deploymentId,
       };
 
+      fireSHAgentStage(deploymentId, SH_ENERGY_STAGE_PROMPTS.detected);
       scheduleNextEnergyStage(newPipeline.id, 0);
 
       res.json({ pipelineId: newPipeline.id, agentId: agent.id, message: "Demo incident triggered" });
@@ -2776,7 +2803,7 @@ Log every action.`;
       if (shEnergyDemo.pipelineId) {
         await storage.deleteHealingPipeline(shEnergyDemo.pipelineId).catch(() => {});
       }
-      shEnergyDemo = { status: "idle", pipelineId: null, triggeredAt: null, completedAt: null, agentId: null };
+      shEnergyDemo = { status: "idle", pipelineId: null, triggeredAt: null, completedAt: null, agentId: null, deploymentId: null };
       res.json({ message: "Demo reset to idle" });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
@@ -2791,6 +2818,7 @@ Log every action.`;
     triggeredAt: Date | null;
     completedAt: Date | null;
     agentId: string | null;
+    deploymentId: string | null;
   };
 
   let shInsuranceDemo: SHInsuranceLiveDemoState = {
@@ -2799,6 +2827,7 @@ Log every action.`;
     triggeredAt: null,
     completedAt: null,
     agentId: null,
+    deploymentId: null,
   };
 
   const SH_INSURANCE_STAGE_SEQUENCE: Array<{ stage: string; delayMs: number }> = [
@@ -2990,12 +3019,23 @@ Log every action.`;
       try {
         const patch = await buildInsuranceStagePatch(stage);
         await storage.updateHealingPipeline(pipelineId, patch as any);
+        if (shInsuranceDemo.deploymentId) {
+          fireSHAgentStage(shInsuranceDemo.deploymentId, SH_INSURANCE_STAGE_PROMPTS[stage] || stage);
+        }
         scheduleNextInsuranceStage(pipelineId, seqIdx + 1);
       } catch (err: any) {
         console.error("[demo/sh-insurance] stage advance error:", err.message);
       }
     }, delayMs);
   }
+
+  const SH_INSURANCE_STAGE_PROMPTS: Record<string, string> = {
+    detected:    "URGENT: ML fraud triage model false-positive rate spiked from 3.2% to 22.7% in 48 hours. CUSUM h-statistic: 8.4 (threshold 5.0 = systemic failure). Zone 7 geographic bias confirmed — 340% over-representation. 847 claims flagged, ~620 estimated misclassified. 47 vulnerable claimants (elderly/disability) affected. $2.1M in legitimate payouts delayed. NAIC, GDPR Article 22, SOX, and SFCH-01 obligations triggered. Begin autonomous claims recovery response.",
+    diagnosed:   "Root cause confirmed: Zone 7 geographic bias in fraud model training data. FPR: 3.2%→22.7%. 620 claims misclassified. 47 vulnerable claimants flagged for 24h expedited review. Total delayed: $2.1M. SOX materiality threshold ($500K) exceeded. 12 state insurance departments require notification. Formulate isolation and review routing plan.",
+    hypothesis:  "Formulating remediation plan. Hypothesis: (1) Isolate model v2.3.1 immediately; activate rules-based fallback scoring. (2) Route 620 misclassified claims to human adjuster queues with vulnerability prioritization. (3) Initiate NAIC-compliant fairness audit before recalibration. (4) Generate state regulator packages for 12 states. (5) Issue GDPR Article 22 explanations for 47 EU-linked claims within 72 hours.",
+    remediation: "Executing remediation. Model v2.3.1 isolated. Rules-based fallback activated — FPR stabilized at 2.8%. 620 claims routed: 47 vulnerable (24h SLA), 94 high-value (72h SLA), 479 standard (5-day SLA). 2 overflow adjusters allocated. GDPR Art. 22 notices drafted for 47 claims. State regulator packages queued for 12 states. Adverse action letters: 620. SOX disclosure drafted.",
+    resolved:    "Validating resolution. FPR restored to 2.8%. 620 misclassified claims in active human review — 47 vulnerable claimants prioritized. $2.1M payout exposure actively processed. GDPR Art. 22 notices sent. 12 state regulators notified. SOX disclosure filed. NAIC-compliant fairness audit initiated for model v2.4.0. Compiling NAIC, SFCH-01, GDPR, SOX, and ADA compliance audit trail.",
+  };
 
   router.post("/api/demo/sh-insurance/trigger", async (req, res) => {
     try {
@@ -3007,6 +3047,8 @@ Log every action.`;
       if (shInsuranceDemo.pipelineId) {
         await storage.deleteHealingPipeline(shInsuranceDemo.pipelineId).catch(() => {});
       }
+
+      const deploymentId = await ensureSHAgentDeployment(agent, orgId);
 
       const newPipeline = await storage.createHealingPipeline({
         title: "Fraud Triage Model FPR Spike — 847 Claims Affected, $2.1M Delayed",
@@ -3027,8 +3069,10 @@ Log every action.`;
         triggeredAt: new Date(),
         completedAt: null,
         agentId: agent.id,
+        deploymentId,
       };
 
+      fireSHAgentStage(deploymentId, SH_INSURANCE_STAGE_PROMPTS.detected);
       scheduleNextInsuranceStage(newPipeline.id, 0);
 
       res.json({ pipelineId: newPipeline.id, agentId: agent.id, message: "Demo incident triggered" });
@@ -3064,7 +3108,7 @@ Log every action.`;
       if (shInsuranceDemo.pipelineId) {
         await storage.deleteHealingPipeline(shInsuranceDemo.pipelineId).catch(() => {});
       }
-      shInsuranceDemo = { status: "idle", pipelineId: null, triggeredAt: null, completedAt: null, agentId: null };
+      shInsuranceDemo = { status: "idle", pipelineId: null, triggeredAt: null, completedAt: null, agentId: null, deploymentId: null };
       res.json({ message: "Demo reset to idle" });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
