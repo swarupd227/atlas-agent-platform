@@ -5737,8 +5737,10 @@ clean:
       const serviceEntries = allSlots.map(slot => {
         const slug = slot.prefix.split("/").pop()!;
         const buildCtx = `./${slot.prefix}`;
-        const startCmd = format === "typescript" ? `["npm", "start"]` : `["python", "src/runtime/orchestrator.py"]`;
-        const llmKey = llmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY";
+        const startCmd = framework === "claude-code"
+          ? `["npm", "start"]`
+          : format === "typescript" ? `["npm", "start"]` : `["python", "src/runtime/orchestrator.py"]`;
+        const llmKey = resolvedBundleProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY";
         return `  ${slug}:\n    build: ${buildCtx}\n    command: ${startCmd}\n    environment:\n      - ${llmKey}=\${${llmKey}}\n      - AGENT_NAME=${slot.agent.name}\n    restart: unless-stopped`;
       });
       files["docker-compose.yml"] = `version: "3.9"\nservices:\n${serviceEntries.join("\n")}\n`;
@@ -5768,7 +5770,7 @@ clean:
           };
         }),
         format,
-        llmProvider,
+        llmProvider: resolvedBundleProvider,
         totalAgents: allSlots.length,
         bundleHash: crypto.createHash("sha256").update(JSON.stringify(allSlots.map(s => s.agent.id))).digest("hex"),
       };
@@ -5777,7 +5779,7 @@ clean:
       // Bundle-level README.md
       const memberRows = memberAgents.map(a => `| \`agents/${a.name.toLowerCase().replace(/[^a-z0-9-]/g, "-")}/\` | ${a.name} | ${teamMemberLinks.find(l => l.memberAgentId === a.id)?.role || "member"} |`).join("\n");
       const installCmd = format === "typescript" ? "npm install" : "pip install -r requirements.txt";
-      files["README.md"] = `# ${orchestrator.name} — Multi-Agent Bundle\n\n${orchestrator.description || ""}\n\nThis bundle contains **${allSlots.length} agent${allSlots.length !== 1 ? "s" : ""}**: the orchestrator and ${memberAgents.length} member agent${memberAgents.length !== 1 ? "s" : ""}.\n\n## Bundle Structure\n\n\`\`\`\norchestrator/   # ${orchestrator.name} (orchestrator)\nagents/\n${memberAgents.map(a => `  ${a.name.toLowerCase().replace(/[^a-z0-9-]/g, "-")}/   # ${a.name}`).join("\n")}\nalmp-bundle.manifest.json\ndocker-compose.yml\n\`\`\`\n\n## Agents\n\n| Directory | Agent | Role |\n|-----------|-------|------|\n| \`orchestrator/\` | ${orchestrator.name} | orchestrator |\n${memberRows}\n\n## Quick Start\n\n### Individual Setup\n\nNavigate into each agent directory and run:\n\n\`\`\`bash\n${installCmd}\n${format === "typescript" ? "npm start" : "python src/runtime/orchestrator.py"}\n\`\`\`\n\n### Docker Compose (all agents)\n\n\`\`\`bash\ncp .env.example .env   # fill in your API key\ndocker-compose up --build\n\`\`\`\n\n## Configuration\n\nEach agent directory has its own \`.env.example\`. Copy it to \`.env\` and configure your ${llmProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"}.\n`;
+      files["README.md"] = `# ${orchestrator.name} — Multi-Agent Bundle\n\n${orchestrator.description || ""}\n\nThis bundle contains **${allSlots.length} agent${allSlots.length !== 1 ? "s" : ""}**: the orchestrator and ${memberAgents.length} member agent${memberAgents.length !== 1 ? "s" : ""}.\n\n## Bundle Structure\n\n\`\`\`\norchestrator/   # ${orchestrator.name} (orchestrator)\nagents/\n${memberAgents.map(a => `  ${a.name.toLowerCase().replace(/[^a-z0-9-]/g, "-")}/   # ${a.name}`).join("\n")}\nalmp-bundle.manifest.json\ndocker-compose.yml\n\`\`\`\n\n## Agents\n\n| Directory | Agent | Role |\n|-----------|-------|------|\n| \`orchestrator/\` | ${orchestrator.name} | orchestrator |\n${memberRows}\n\n## Quick Start\n\n### Individual Setup\n\nNavigate into each agent directory and run:\n\n\`\`\`bash\n${installCmd}\n${format === "typescript" ? "npm start" : "python src/runtime/orchestrator.py"}\n\`\`\`\n\n### Docker Compose (all agents)\n\n\`\`\`bash\ncp .env.example .env   # fill in your API key\ndocker-compose up --build\n\`\`\`\n\n## Configuration\n\nEach agent directory has its own \`.env.example\`. Copy it to \`.env\` and configure your ${resolvedBundleProvider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY"}.\n`;
 
       const totalBundleFiles = Object.keys(files).length;
       emit("progress", { phase: "packaging", message: `Packaging ${totalBundleFiles} file${totalBundleFiles !== 1 ? "s" : ""} across ${allSlots.length} agent${allSlots.length !== 1 ? "s" : ""}...` });

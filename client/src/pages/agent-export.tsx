@@ -1403,8 +1403,8 @@ function ConfigureStep({
             </div>
             <div className="flex flex-col gap-2">
               <Label className="text-xs font-medium">Language</Label>
-              <Select value={exportFormat} onValueChange={setExportFormat}>
-                <SelectTrigger data-testid="select-format-bundle">
+              <Select value={exportFormat} onValueChange={setExportFormat} disabled={exportFramework === "claude-code"}>
+                <SelectTrigger data-testid="select-format-bundle" className={exportFramework === "claude-code" ? "opacity-60 cursor-not-allowed" : ""}>
                   <SelectValue placeholder="Select language" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1418,8 +1418,8 @@ function ConfigureStep({
             </div>
             <div className="flex flex-col gap-2">
               <Label className="text-xs font-medium">LLM Provider</Label>
-              <Select value={exportLlmProvider} onValueChange={setExportLlmProvider}>
-                <SelectTrigger data-testid="select-llm-provider-bundle">
+              <Select value={exportLlmProvider} onValueChange={setExportLlmProvider} disabled={exportFramework === "claude-code"}>
+                <SelectTrigger data-testid="select-llm-provider-bundle" className={exportFramework === "claude-code" ? "opacity-60 cursor-not-allowed" : ""}>
                   <SelectValue placeholder="Select provider" />
                 </SelectTrigger>
                 <SelectContent>
@@ -1458,8 +1458,8 @@ function ConfigureStep({
           </div>
           <div className="flex flex-col gap-2">
             <Label className="text-xs font-medium">Language</Label>
-            <Select value={exportFormat} onValueChange={setExportFormat}>
-              <SelectTrigger data-testid="select-format">
+            <Select value={exportFormat} onValueChange={setExportFormat} disabled={exportFramework === "claude-code"}>
+              <SelectTrigger data-testid="select-format" className={exportFramework === "claude-code" ? "opacity-60 cursor-not-allowed" : ""}>
                 <SelectValue placeholder="Select language" />
               </SelectTrigger>
               <SelectContent>
@@ -1476,8 +1476,8 @@ function ConfigureStep({
           </div>
           <div className="flex flex-col gap-2">
             <Label className="text-xs font-medium">LLM Provider</Label>
-            <Select value={exportLlmProvider} onValueChange={setExportLlmProvider}>
-              <SelectTrigger data-testid="select-llm-provider">
+            <Select value={exportLlmProvider} onValueChange={setExportLlmProvider} disabled={exportFramework === "claude-code"}>
+              <SelectTrigger data-testid="select-llm-provider" className={exportFramework === "claude-code" ? "opacity-60 cursor-not-allowed" : ""}>
                 <SelectValue placeholder="Select provider" />
               </SelectTrigger>
               <SelectContent>
