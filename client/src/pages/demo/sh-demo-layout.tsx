@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,20 +8,22 @@ import {
   Activity,
   AlertTriangle,
   CheckCircle2,
+  Clock,
+  Brain,
+  Cpu,
+  FileText,
   Loader2,
   Shield,
   Wrench,
   Zap,
-  Brain,
-  RefreshCw,
-  ChevronRight,
-  BookOpen,
-  Lock,
-  TrendingDown,
   TrendingUp,
+  TrendingDown,
+  ChevronRight,
+  ChevronLeft,
 } from "lucide-react";
+import type { HealingPipeline } from "@shared/schema";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Scenario Config ──────────────────────────────────────────────────────────
 
 export interface SHScenarioConfig {
   scenario: string;
@@ -34,324 +37,83 @@ export interface SHScenarioConfig {
   complianceFrameworks: string[];
 }
 
-type Screen = "incident" | "healing" | "resolution";
+// ─── Stage Definitions ────────────────────────────────────────────────────────
 
-interface SHEvent {
-  id: string;
-  type: string;
-  payload: Record<string, unknown>;
-  ts: number;
-}
+const STAGES = [
+  { key: "detect",     label: "Detect",     icon: Activity,    step: 1 },
+  { key: "diagnose",   label: "Diagnose",   icon: Brain,       step: 2 },
+  { key: "hypothesize",label: "Hypothesize",icon: Cpu,         step: 3 },
+  { key: "remediate",  label: "Remediate",  icon: Wrench,      step: 4 },
+  { key: "validate",   label: "Validate",   icon: Shield,      step: 5 },
+] as const;
 
-interface PhaseState {
-  key: string;
-  label: string;
-  status: "pending" | "active" | "complete";
-}
+type StageKey = typeof STAGES[number]["key"];
 
-interface RunStartPayload {
-  incidentTitle: string;
-  incidentSeverity: string;
-  incidentType: string;
-  incidentSummary: string;
-  agentName: string;
-  agentCode: string;
-  industry: string;
-  triggerMetric: { label: string; before: string; after: string; unit: string };
-}
+// ─── Utility ──────────────────────────────────────────────────────────────────
 
-interface RunCompletePayload {
-  headline: string;
-  autonomousActions: string[];
-  metricsRestored: Array<{ label: string; value: string }>;
-}
-
-interface LiveRunState {
-  status: "idle" | "connecting" | "running" | "complete" | "error";
-  screen: Screen;
-  events: SHEvent[];
-  phases: PhaseState[];
-  runStart: RunStartPayload | null;
-  runComplete: RunCompletePayload | null;
-  errorMessage: string | null;
-}
-
-const PHASE_ORDER = ["detect", "diagnose", "remediate", "validate"];
-
-const PHASE_DEFAULTS: PhaseState[] = PHASE_ORDER.map(k => ({
-  key: k,
-  label: k.charAt(0).toUpperCase() + k.slice(1),
-  status: "pending",
-}));
-
-// ─── Hook ─────────────────────────────────────────────────────────────────────
-
-function useSHLiveRun(scenario: string) {
-  const [state, setState] = useState<LiveRunState>({
-    status: "idle",
-    screen: "incident",
-    events: [],
-    phases: PHASE_DEFAULTS,
-    runStart: null,
-    runComplete: null,
-    errorMessage: null,
-  });
-
-  const esRef = useRef<EventSource | null>(null);
-  const counterRef = useRef(0);
-
-  const trigger = useCallback(() => {
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
-    }
-
-    setState({
-      status: "connecting",
-      screen: "healing",
-      events: [],
-      phases: PHASE_DEFAULTS,
-      runStart: null,
-      runComplete: null,
-      errorMessage: null,
-    });
-
-    const es = new EventSource(`/demo-api/sh-healing/stream?scenario=${encodeURIComponent(scenario)}`);
-    esRef.current = es;
-
-    const addEvent = (type: string, payload: Record<string, unknown>) => {
-      setState(prev => ({
-        ...prev,
-        events: [...prev.events, { id: String(counterRef.current++), type, payload, ts: Date.now() }],
-      }));
-    };
-
-    const updatePhase = (phaseKey: string, newStatus: PhaseState["status"]) => {
-      setState(prev => ({
-        ...prev,
-        phases: prev.phases.map(p => {
-          if (p.key === phaseKey) return { ...p, status: newStatus };
-          if (newStatus === "active" && PHASE_ORDER.indexOf(p.key) < PHASE_ORDER.indexOf(phaseKey)) {
-            return { ...p, status: "complete" };
-          }
-          return p;
-        }),
-      }));
-    };
-
-    es.addEventListener("run_start", e => {
-      const payload = JSON.parse((e as MessageEvent).data);
-      setState(prev => ({ ...prev, status: "running", runStart: payload as RunStartPayload }));
-      addEvent("run_start", payload);
-    });
-
-    es.addEventListener("setup", e => {
-      addEvent("setup", JSON.parse((e as MessageEvent).data));
-    });
-
-    es.addEventListener("phase_start", e => {
-      const payload = JSON.parse((e as MessageEvent).data);
-      updatePhase(payload.phase, "active");
-      addEvent("phase_start", payload);
-    });
-
-    es.addEventListener("skill_invoked", e => {
-      addEvent("skill_invoked", JSON.parse((e as MessageEvent).data));
-    });
-
-    es.addEventListener("runbook_triggered", e => {
-      addEvent("runbook_triggered", JSON.parse((e as MessageEvent).data));
-    });
-
-    es.addEventListener("policy_checked", e => {
-      addEvent("policy_checked", JSON.parse((e as MessageEvent).data));
-    });
-
-    es.addEventListener("phase_complete", e => {
-      const payload = JSON.parse((e as MessageEvent).data);
-      updatePhase(payload.phase, "complete");
-      addEvent("phase_complete", payload);
-    });
-
-    es.addEventListener("run_complete", e => {
-      const payload = JSON.parse((e as MessageEvent).data);
-      es.close();
-      esRef.current = null;
-      setState(prev => ({
-        ...prev,
-        status: "complete",
-        screen: "resolution",
-        runComplete: payload as RunCompletePayload,
-        phases: prev.phases.map(p => ({ ...p, status: "complete" })),
-      }));
-      addEvent("run_complete", payload);
-    });
-
-    es.addEventListener("error", e => {
-      const payload = (e as MessageEvent).data ? JSON.parse((e as MessageEvent).data) : { message: "Connection error" };
-      es.close();
-      esRef.current = null;
-      setState(prev => ({
-        ...prev,
-        status: "error",
-        errorMessage: payload.message || "Self-healing pipeline error",
-      }));
-    });
-
-    es.onerror = () => {
-      if (es.readyState === EventSource.CLOSED) {
-        setState(prev => {
-          if (prev.status === "complete") return prev;
-          return { ...prev, status: "error", errorMessage: "Connection to self-healing pipeline lost" };
-        });
-      }
-    };
-  }, [scenario]);
-
-  const reset = useCallback(() => {
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
-    }
-    setState({
-      status: "idle",
-      screen: "incident",
-      events: [],
-      phases: PHASE_DEFAULTS,
-      runStart: null,
-      runComplete: null,
-      errorMessage: null,
-    });
-  }, []);
-
-  useEffect(() => () => { esRef.current?.close(); }, []);
-
-  return { state, trigger, reset };
-}
-
-// ─── Phase Icons ──────────────────────────────────────────────────────────────
-
-const PHASE_ICONS: Record<string, React.ReactNode> = {
-  detect: <Activity className="h-4 w-4" />,
-  diagnose: <Brain className="h-4 w-4" />,
-  remediate: <Wrench className="h-4 w-4" />,
-  validate: <Shield className="h-4 w-4" />,
+const SEVERITY_STYLES: Record<string, string> = {
+  critical: "bg-red-100 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800",
+  high:     "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950 dark:text-orange-300 dark:border-orange-800",
+  medium:   "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800",
+  low:      "bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800",
 };
 
-// ─── Event Row ────────────────────────────────────────────────────────────────
-
-function EventRow({ ev }: { ev: SHEvent }) {
-  if (ev.type === "setup") {
-    return (
-      <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground">
-        <Loader2 className="h-3 w-3 animate-spin shrink-0" />
-        <span>{ev.payload.message as string}</span>
-      </div>
-    );
-  }
-
-  if (ev.type === "phase_start") {
-    const phaseKey = ev.payload.phase as string;
-    return (
-      <div className="flex items-center gap-2 px-3 py-2 mt-2 bg-muted/50 rounded-md border border-border">
-        <div className="text-primary shrink-0">{PHASE_ICONS[phaseKey] || <Activity className="h-4 w-4" />}</div>
-        <span className="text-xs font-semibold uppercase tracking-wide text-primary">
-          Phase: {ev.payload.label as string}
-        </span>
-        <div className="ml-auto">
-          <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
-        </div>
-      </div>
-    );
-  }
-
-  if (ev.type === "skill_invoked") {
-    return (
-      <div className="px-3 py-2 border-l-2 border-amber-400 bg-amber-50 dark:bg-amber-950/20 ml-2 rounded-r-md">
-        <div className="flex items-center gap-1.5 mb-0.5">
-          <Zap className="h-3 w-3 text-amber-600 dark:text-amber-400 shrink-0" />
-          <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-300 uppercase tracking-wide">Skill</span>
-          <span className="text-[11px] font-medium text-amber-800 dark:text-amber-200 ml-1">{ev.payload.skillName as string}</span>
-          {ev.payload.duration && (
-            <span className="ml-auto text-[10px] text-amber-600/70 dark:text-amber-400/70">{ev.payload.duration as string}</span>
-          )}
-        </div>
-        <p className="text-[11px] text-amber-800 dark:text-amber-200 leading-relaxed">{ev.payload.finding as string}</p>
-      </div>
-    );
-  }
-
-  if (ev.type === "runbook_triggered") {
-    return (
-      <div className="px-3 py-2 border-l-2 border-purple-400 bg-purple-50 dark:bg-purple-950/20 ml-2 rounded-r-md">
-        <div className="flex items-center gap-1.5 mb-0.5">
-          <BookOpen className="h-3 w-3 text-purple-600 dark:text-purple-400 shrink-0" />
-          <span className="text-[11px] font-semibold text-purple-700 dark:text-purple-300 uppercase tracking-wide">Runbook</span>
-          <span className="text-[11px] font-medium text-purple-800 dark:text-purple-200 ml-1">{ev.payload.runbookName as string}</span>
-        </div>
-        <p className="text-[11px] text-purple-800 dark:text-purple-200 leading-relaxed">{ev.payload.result as string}</p>
-      </div>
-    );
-  }
-
-  if (ev.type === "policy_checked") {
-    const outcome = (ev.payload.outcome as string) || "";
-    const isOk = outcome.toLowerCase().startsWith("compliant") || outcome.toLowerCase().startsWith("on track");
-    return (
-      <div className={`px-3 py-2 border-l-2 ml-2 rounded-r-md ${isOk ? "border-green-400 bg-green-50 dark:bg-green-950/20" : "border-red-400 bg-red-50 dark:bg-red-950/20"}`}>
-        <div className="flex items-center gap-1.5 mb-0.5">
-          <Lock className={`h-3 w-3 shrink-0 ${isOk ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"}`} />
-          <span className={`text-[11px] font-semibold uppercase tracking-wide ${isOk ? "text-green-700 dark:text-green-300" : "text-red-700 dark:text-red-300"}`}>Policy</span>
-          <span className={`text-[11px] font-medium ml-1 ${isOk ? "text-green-800 dark:text-green-200" : "text-red-800 dark:text-red-200"}`}>{ev.payload.policyName as string}</span>
-        </div>
-        <p className={`text-[11px] leading-relaxed ${isOk ? "text-green-800 dark:text-green-200" : "text-red-800 dark:text-red-200"}`}>{outcome}</p>
-      </div>
-    );
-  }
-
-  if (ev.type === "phase_complete") {
-    return (
-      <div className="px-3 py-2 bg-green-50 dark:bg-green-950/30 rounded-md border border-green-200 dark:border-green-800">
-        <div className="flex items-center gap-1.5 mb-1">
-          <CheckCircle2 className="h-4 w-4 text-green-600 dark:text-green-400 shrink-0" />
-          <span className="text-[11px] font-semibold text-green-700 dark:text-green-300 uppercase tracking-wide">
-            {ev.payload.label as string} — Complete
-          </span>
-        </div>
-        {ev.payload.analysis && (
-          <p className="text-[11px] text-green-800 dark:text-green-200 leading-relaxed">{ev.payload.analysis as string}</p>
-        )}
-      </div>
-    );
-  }
-
-  return null;
+function Chip({ label, color }: { label: string; color?: string }) {
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border uppercase tracking-wide ${color || "bg-muted text-muted-foreground border-border"}`}>
+      {label}
+    </span>
+  );
 }
 
-// ─── Phase Progress Bar ───────────────────────────────────────────────────────
-
-function PhaseProgressBar({ phases }: { phases: PhaseState[] }) {
+function Section({ title, icon: Icon, children }: { title: string; icon?: React.ElementType; children: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-0 w-full">
-      {phases.map((phase, idx) => {
-        const isComplete = phase.status === "complete";
-        const isActive = phase.status === "active";
-        const isPending = phase.status === "pending";
+    <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+      <div className="flex items-center gap-2">
+        {Icon && <Icon className="h-4 w-4 text-muted-foreground" />}
+        <h3 className="text-sm font-semibold">{title}</h3>
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function KV({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</span>
+      <span className="text-sm font-medium text-foreground">{value}</span>
+    </div>
+  );
+}
+
+// ─── Stage Progress Bar ───────────────────────────────────────────────────────
+
+function StageProgress({ activeIdx, onStage }: { activeIdx: number; onStage: (idx: number) => void }) {
+  return (
+    <div className="flex items-center w-full gap-0">
+      {STAGES.map((s, idx) => {
+        const Icon = s.icon;
+        const done = idx < activeIdx;
+        const active = idx === activeIdx;
         return (
-          <div key={phase.key} className="flex items-center flex-1 min-w-0">
-            <div className={`flex items-center gap-1.5 flex-1 px-2 py-1.5 rounded-md text-xs font-medium transition-all ${
-              isComplete ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-300" :
-              isActive ? "bg-primary/10 text-primary animate-pulse" :
-              "bg-muted/40 text-muted-foreground"
-            }`}>
-              <span className="shrink-0">{
-                isComplete ? <CheckCircle2 className="h-3.5 w-3.5" /> :
-                isActive ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> :
-                PHASE_ICONS[phase.key]
-              }</span>
-              <span className="truncate capitalize">{phase.label}</span>
-            </div>
-            {idx < phases.length - 1 && (
+          <div key={s.key} className="flex items-center flex-1 min-w-0">
+            <button
+              data-testid={`stage-${s.key}`}
+              onClick={() => onStage(idx)}
+              className={`flex items-center gap-1.5 flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer min-w-0 ${
+                done   ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/40" :
+                active ? "bg-primary/10 text-primary ring-1 ring-primary/30" :
+                         "bg-muted/40 text-muted-foreground hover:bg-muted/70"
+              }`}
+            >
+              <span className="shrink-0">
+                {done ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Icon className="h-3.5 w-3.5" />}
+              </span>
+              <span className="truncate hidden sm:inline capitalize">{s.label}</span>
+              <span className="sm:hidden text-[10px]">{s.step}</span>
+            </button>
+            {idx < STAGES.length - 1 && (
               <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0 mx-0.5" />
             )}
           </div>
@@ -361,299 +123,328 @@ function PhaseProgressBar({ phases }: { phases: PhaseState[] }) {
   );
 }
 
-// ─── Screen 1: Incident ───────────────────────────────────────────────────────
+// ─── Platform Intelligence Panel ─────────────────────────────────────────────
 
-function IncidentScreen({
-  config,
-  onTrigger,
-}: {
-  config: SHScenarioConfig;
-  onTrigger: () => void;
-}) {
+function PlatformIntelligencePanel({ pipeline }: { pipeline: HealingPipeline }) {
+  const diagnosis = (pipeline.diagnosisDetails as Record<string, unknown>) || {};
+  const guardrails = (pipeline.industryGuardrails as Array<Record<string, string>>) || [];
+  const skills: Array<{ skillName: string; finding: string; duration?: string }> = [
+    ...((diagnosis.skillsInvoked || []) as Array<{ skillName: string; finding: string; duration?: string }>),
+    ...((diagnosis.atlasSkillsInvoked || []) as Array<{ skillName: string; finding: string; duration?: string }>),
+  ];
+
   return (
-    <div className="max-w-3xl mx-auto space-y-6 py-6">
-      {/* Alert header */}
-      <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/30 p-5">
-        <div className="flex items-start gap-4">
-          <div className="shrink-0 mt-0.5 rounded-lg bg-red-100 dark:bg-red-900/50 p-2.5">
-            <AlertTriangle className="h-6 w-6 text-red-600 dark:text-red-400" />
-          </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex flex-wrap items-center gap-2 mb-2">
-              <Badge className="bg-red-600 text-white border-0 text-[10px] uppercase tracking-wide px-2">Critical</Badge>
-              <Badge variant="outline" className="text-[10px] border-red-200 dark:border-red-800 text-red-700 dark:text-red-300">{config.domain}</Badge>
-              <span className="text-xs text-muted-foreground font-mono">{config.agentCode}</span>
-            </div>
-            <h2 className="text-lg font-semibold text-red-900 dark:text-red-100 mb-1">{config.title}</h2>
-            <p className="text-sm text-muted-foreground">{config.subtitle}</p>
-          </div>
-        </div>
-      </div>
-
-      {/* Incident details */}
-      <div className="rounded-xl border border-border bg-card p-5 space-y-4">
-        <div>
-          <h3 className="text-sm font-semibold mb-2">Incident Briefing</h3>
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            Atlas has detected an active incident in your {config.domain.toLowerCase()} environment.
-            The self-healing agent <strong className="text-foreground">{config.agentCode}</strong> is
-            standing by to autonomously diagnose, remediate, and validate the issue — with a full compliance
-            audit trail.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div className="rounded-lg bg-muted/40 p-3">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Agent</p>
-            <p className="text-xs font-semibold font-mono">{config.agentCode}</p>
-          </div>
-          <div className="rounded-lg bg-muted/40 p-3">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Industry</p>
-            <p className="text-xs font-semibold">{config.domain}</p>
-          </div>
-          <div className="rounded-lg bg-muted/40 p-3">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Phases</p>
-            <p className="text-xs font-semibold">4 — Detect → Validate</p>
-          </div>
-          <div className="rounded-lg bg-muted/40 p-3">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Mode</p>
-            <p className="text-xs font-semibold text-green-600 dark:text-green-400">Autonomous</p>
-          </div>
-        </div>
-
-        <div>
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-2">Compliance Frameworks</p>
-          <div className="flex flex-wrap gap-1.5">
-            {config.complianceFrameworks.map(fw => (
-              <Badge key={fw} variant="outline" className="text-[10px] font-medium">{fw}</Badge>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Healing phases preview */}
-      <div className="rounded-xl border border-border bg-card p-5">
-        <h3 className="text-sm font-semibold mb-3">Self-Healing Pipeline</h3>
+    <Section title="Platform Intelligence in Action" icon={Zap}>
+      {skills.length > 0 ? (
         <div className="space-y-2">
-          {["Detect Anomaly", "Diagnose Root Cause", "Execute Remediation", "Validate & Close"].map((label, idx) => (
-            <div key={label} className="flex items-center gap-3 text-sm text-muted-foreground">
-              <div className="w-5 h-5 rounded-full bg-muted flex items-center justify-center text-[10px] font-bold shrink-0">
-                {idx + 1}
+          {skills.map((sk, i) => (
+            <div key={i} className="rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 p-2.5">
+              <div className="flex items-center gap-1.5 mb-1">
+                <Zap className="h-3 w-3 text-amber-600 dark:text-amber-400 shrink-0" />
+                <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-300 truncate">{sk.skillName}</span>
+                {sk.duration && <span className="ml-auto text-[10px] text-amber-600/70 dark:text-amber-400/70 shrink-0">{sk.duration}</span>}
               </div>
-              <span>{label}</span>
+              <p className="text-[11px] text-amber-800 dark:text-amber-200 leading-relaxed">{sk.finding}</p>
             </div>
           ))}
         </div>
-      </div>
+      ) : (
+        <p className="text-xs text-muted-foreground">Skills analysis available after diagnosis phase.</p>
+      )}
 
-      {/* CTA */}
-      <Button
-        data-testid="button-trigger-healing"
-        size="lg"
-        className="w-full text-base font-semibold py-6"
-        onClick={onTrigger}
-      >
-        <Activity className="h-5 w-5 mr-2" />
-        Trigger Atlas Self-Healing
-      </Button>
-    </div>
+      {guardrails.length > 0 && (
+        <div className="space-y-1.5 pt-2 border-t border-border">
+          <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Regulatory Guardrails</p>
+          {guardrails.map((g, i) => (
+            <div key={i} className="rounded-lg bg-muted/40 p-2 flex items-start gap-2">
+              <Shield className="h-3 w-3 text-primary shrink-0 mt-0.5" />
+              <div>
+                <p className="text-[11px] font-semibold">{g.framework}</p>
+                <p className="text-[11px] text-muted-foreground">{g.constraint}</p>
+                <Chip label={g.status || "active"} color="bg-green-100 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-300 dark:border-green-800" />
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
   );
 }
 
-// ─── Screen 2: Live Healing ───────────────────────────────────────────────────
+// ─── Business Impact Panel ────────────────────────────────────────────────────
 
-function HealingScreen({
-  state,
-  config,
-}: {
-  state: LiveRunState;
-  config: SHScenarioConfig;
-}) {
-  const feedRef = useRef<HTMLDivElement>(null);
-  const { runStart, events, phases, status } = state;
+function BusinessImpactPanel({ pipeline }: { pipeline: HealingPipeline }) {
+  const impact = (pipeline.businessImpact as Record<string, string>) || {};
+  const withAtlas = impact.withAtlas || "";
+  const withoutAtlas = impact.withoutAtlas || "";
 
-  useEffect(() => {
-    const el = feedRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [events.length]);
-
-  const filteredEvents = events.filter(e =>
-    ["setup", "phase_start", "skill_invoked", "runbook_triggered", "policy_checked", "phase_complete"].includes(e.type)
-  );
+  if (!withAtlas && !withoutAtlas) return null;
 
   return (
-    <div className="flex flex-col gap-4 h-full min-h-0">
-      {/* Phase progress */}
-      <div className="rounded-xl border border-border bg-card p-4">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Self-Healing Progress</span>
-          {status === "running" && (
-            <div className="flex items-center gap-1.5 text-xs text-primary">
-              <Loader2 className="h-3 w-3 animate-spin" />
-              <span>Live</span>
+    <Section title="Business Impact" icon={TrendingUp}>
+      <div className="grid grid-cols-1 gap-2">
+        {withAtlas && (
+          <div className="rounded-lg bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 p-3">
+            <div className="flex items-center gap-1.5 mb-1">
+              <TrendingUp className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
+              <span className="text-[11px] font-semibold text-green-700 dark:text-green-300 uppercase tracking-wide">With Atlas</span>
             </div>
-          )}
-        </div>
-        <PhaseProgressBar phases={phases} />
-      </div>
-
-      {/* Incident snapshot */}
-      {runStart && (
-        <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/20 px-4 py-3 flex items-center gap-4">
-          <AlertTriangle className="h-5 w-5 text-red-500 shrink-0" />
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-red-900 dark:text-red-100 truncate">{runStart.incidentTitle}</p>
-            <p className="text-xs text-red-700 dark:text-red-300">{runStart.incidentType} · {runStart.industry}</p>
+            <p className="text-xs text-green-800 dark:text-green-200 leading-relaxed">{withAtlas}</p>
           </div>
-          {runStart.triggerMetric && (
-            <div className="shrink-0 text-right hidden sm:block">
-              <p className="text-[10px] text-muted-foreground uppercase tracking-wide">{runStart.triggerMetric.label}</p>
-              <div className="flex items-center gap-1 justify-end text-xs font-semibold">
-                <span className="text-muted-foreground line-through">{runStart.triggerMetric.before}</span>
-                <TrendingDown className="h-3 w-3 text-red-500" />
-                <span className="text-red-600 dark:text-red-400">{runStart.triggerMetric.after}</span>
-              </div>
+        )}
+        {withoutAtlas && (
+          <div className="rounded-lg bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 p-3">
+            <div className="flex items-center gap-1.5 mb-1">
+              <TrendingDown className="h-3.5 w-3.5 text-red-600 dark:text-red-400" />
+              <span className="text-[11px] font-semibold text-red-700 dark:text-red-300 uppercase tracking-wide">Without Atlas</span>
             </div>
-          )}
-        </div>
-      )}
-
-      {/* Live event feed */}
-      <div
-        ref={feedRef}
-        data-testid="sh-event-feed"
-        className="flex-1 overflow-y-auto rounded-xl border border-border bg-card p-3 space-y-2 min-h-0 max-h-[420px]"
-      >
-        {filteredEvents.length === 0 ? (
-          <div className="flex items-center justify-center h-20 text-muted-foreground text-xs">
-            <Loader2 className="h-4 w-4 animate-spin mr-2" />
-            Connecting to self-healing pipeline…
+            <p className="text-xs text-red-800 dark:text-red-200 leading-relaxed">{withoutAtlas}</p>
           </div>
-        ) : (
-          filteredEvents.map(ev => <EventRow key={ev.id} ev={ev} />)
         )}
       </div>
+    </Section>
+  );
+}
 
-      {/* Agent identity */}
-      <div className="rounded-xl border border-border bg-card px-4 py-3 flex items-center gap-3">
-        <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center shrink-0">
-          <Shield className="h-4 w-4 text-primary" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-xs font-semibold truncate">{config.title}</p>
-          <p className="text-[10px] text-muted-foreground font-mono">{config.agentCode}</p>
-        </div>
-        <div className="flex flex-wrap gap-1 justify-end">
-          {config.complianceFrameworks.slice(0, 2).map(fw => (
-            <Badge key={fw} variant="outline" className="text-[9px] font-medium">{fw}</Badge>
-          ))}
-        </div>
-      </div>
+// ─── Stage Content Panels ─────────────────────────────────────────────────────
 
-      {state.status === "error" && state.errorMessage && (
-        <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/30 p-4 text-sm text-red-700 dark:text-red-300">
-          <strong>Error:</strong> {state.errorMessage}
+function StageDetect({ pipeline }: { pipeline: HealingPipeline }) {
+  return (
+    <div className="space-y-4">
+      <Section title="Incident Detected" icon={AlertTriangle}>
+        <div className="grid grid-cols-2 gap-3">
+          <KV label="Severity" value={
+            <Chip label={pipeline.severity} color={SEVERITY_STYLES[pipeline.severity] || SEVERITY_STYLES.medium} />
+          } />
+          <KV label="Issue Type" value={pipeline.issueType} />
+          <KV label="Industry" value={pipeline.industry} />
+          <KV label="Agent" value={<span className="font-mono">{pipeline.agentName}</span>} />
         </div>
+        {pipeline.issueDescription && (
+          <div className="mt-2 pt-2 border-t border-border">
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Description</p>
+            <p className="text-sm text-foreground leading-relaxed">{pipeline.issueDescription}</p>
+          </div>
+        )}
+      </Section>
+
+      <Section title="Detection Context" icon={Clock}>
+        <div className="grid grid-cols-2 gap-3">
+          <KV label="Status" value={<Chip label={pipeline.status} />} />
+          <KV label="Priority" value={<Chip label={pipeline.priority} />} />
+          {pipeline.triggerSource && <KV label="Trigger Source" value={pipeline.triggerSource} />}
+          {pipeline.detectedAt && (
+            <KV label="Detected At" value={new Date(pipeline.detectedAt).toLocaleString()} />
+          )}
+        </div>
+      </Section>
+    </div>
+  );
+}
+
+function StageDiagnose({ pipeline }: { pipeline: HealingPipeline }) {
+  const details = (pipeline.diagnosisDetails as Record<string, unknown>) || {};
+  const rootCause = details.rootCause as string | undefined;
+
+  return (
+    <div className="space-y-4">
+      <Section title="Root Cause Analysis" icon={Brain}>
+        {rootCause ? (
+          <>
+            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Root Cause</p>
+            <p className="text-sm leading-relaxed">{rootCause}</p>
+          </>
+        ) : (
+          <p className="text-sm text-muted-foreground">Diagnosis analysis will appear here after the detection phase.</p>
+        )}
+      </Section>
+
+      {Object.keys(details).filter(k => !["rootCause", "skillsInvoked", "atlasSkillsInvoked"].includes(k)).length > 0 && (
+        <Section title="Diagnosis Details" icon={FileText}>
+          <div className="space-y-2">
+            {Object.entries(details)
+              .filter(([k]) => !["rootCause", "skillsInvoked", "atlasSkillsInvoked"].includes(k))
+              .map(([key, val]) => (
+                <KV key={key} label={key.replace(/([A-Z])/g, " $1").trim()} value={
+                  typeof val === "string" || typeof val === "number"
+                    ? String(val)
+                    : <span className="text-xs text-muted-foreground font-mono">{JSON.stringify(val)}</span>
+                } />
+              ))}
+          </div>
+        </Section>
       )}
     </div>
   );
 }
 
-// ─── Screen 3: Resolution ─────────────────────────────────────────────────────
-
-function ResolutionScreen({
-  state,
-  config,
-  onReset,
-}: {
-  state: LiveRunState;
-  config: SHScenarioConfig;
-  onReset: () => void;
-}) {
-  const { runComplete } = state;
-  if (!runComplete) return null;
+function StageHypothesize({ pipeline }: { pipeline: HealingPipeline }) {
+  const hyp = (pipeline.hypothesis as Record<string, unknown>) || {};
+  const primary = hyp.primaryHypothesis as string | undefined;
+  const confidence = hyp.confidence as number | undefined;
+  const candidates = (hyp.runbookCandidates as Array<Record<string, string>>) || [];
 
   return (
-    <div className="max-w-3xl mx-auto space-y-5 py-6">
-      {/* Headline */}
-      <div className="rounded-xl border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950/30 p-5">
-        <div className="flex items-start gap-4">
-          <div className="shrink-0 rounded-lg bg-green-100 dark:bg-green-900/50 p-2.5">
-            <CheckCircle2 className="h-6 w-6 text-green-600 dark:text-green-400" />
-          </div>
-          <div className="flex-1">
-            <div className="flex items-center gap-2 mb-1">
-              <Badge className="bg-green-600 text-white border-0 text-[10px] uppercase tracking-wide px-2">Resolved</Badge>
-              <span className="text-xs text-muted-foreground font-mono">{config.agentCode}</span>
-            </div>
-            <h2 className="text-lg font-semibold text-green-900 dark:text-green-100">{runComplete.headline}</h2>
-          </div>
-        </div>
-      </div>
-
-      {/* Metrics restored */}
-      {runComplete.metricsRestored?.length > 0 && (
-        <div className="rounded-xl border border-border bg-card p-5">
-          <h3 className="text-sm font-semibold mb-3">Metrics Restored</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {runComplete.metricsRestored.map(m => (
-              <div key={m.label} className="rounded-lg bg-muted/40 p-3 flex items-start gap-3">
-                <TrendingUp className="h-4 w-4 text-green-500 shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-0.5">{m.label}</p>
-                  <p className="text-xs font-semibold text-foreground">{m.value}</p>
+    <div className="space-y-4">
+      <Section title="Primary Hypothesis" icon={Cpu}>
+        {primary ? (
+          <div className="space-y-2">
+            <p className="text-sm leading-relaxed">{primary}</p>
+            {confidence !== undefined && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Confidence</span>
+                <div className="flex-1 rounded-full bg-muted h-2 overflow-hidden">
+                  <div
+                    className="h-2 rounded-full bg-primary transition-all"
+                    style={{ width: `${Math.min(100, confidence * 100)}%` }}
+                  />
                 </div>
+                <span className="text-xs font-semibold">{Math.round(confidence * 100)}%</span>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">Hypothesis formation pending diagnosis completion.</p>
+        )}
+      </Section>
+
+      {candidates.length > 0 && (
+        <Section title="Runbook Candidates" icon={FileText}>
+          <div className="space-y-2">
+            {candidates.map((c, i) => (
+              <div key={i} className="rounded-lg bg-muted/40 p-3">
+                <p className="text-xs font-semibold mb-1">{c.runbookName}</p>
+                {c.triggerCondition && <p className="text-[11px] text-muted-foreground mb-1"><strong>Trigger:</strong> {c.triggerCondition}</p>}
+                {c.expectedOutcome && <p className="text-[11px] text-muted-foreground"><strong>Outcome:</strong> {c.expectedOutcome}</p>}
+                {c.estimatedDuration && <p className="text-[10px] text-muted-foreground mt-1">Est. {c.estimatedDuration}</p>}
               </div>
             ))}
           </div>
-        </div>
+        </Section>
+      )}
+    </div>
+  );
+}
+
+function StageRemediate({ pipeline }: { pipeline: HealingPipeline }) {
+  const rem = (pipeline.remediation as Record<string, unknown>) || {};
+  const status = rem.status as string | undefined;
+  const runbooks = (rem.runbooksTriggered as Array<Record<string, string>>) || [];
+  const policies = (rem.policiesEnforced as Array<Record<string, string>>) || [];
+
+  return (
+    <div className="space-y-4">
+      <Section title="Remediation Status" icon={Wrench}>
+        {status ? (
+          <div className="flex items-center gap-2">
+            <Chip label={status} color="bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800" />
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">Remediation will activate after hypothesis is confirmed.</p>
+        )}
+      </Section>
+
+      {runbooks.length > 0 && (
+        <Section title="Runbooks Triggered" icon={FileText}>
+          <div className="space-y-2">
+            {runbooks.map((rb, i) => (
+              <div key={i} className="rounded-lg bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 p-2.5">
+                <p className="text-xs font-semibold text-purple-800 dark:text-purple-200 mb-0.5">{rb.runbookName}</p>
+                <p className="text-[11px] text-purple-700 dark:text-purple-300">{rb.status}</p>
+                {rb.result && <p className="text-[11px] text-purple-600 dark:text-purple-400 mt-1">{rb.result}</p>}
+              </div>
+            ))}
+          </div>
+        </Section>
       )}
 
-      {/* Autonomous actions */}
-      {runComplete.autonomousActions?.length > 0 && (
-        <div className="rounded-xl border border-border bg-card p-5">
-          <h3 className="text-sm font-semibold mb-3">Autonomous Actions Taken</h3>
-          <ul className="space-y-2">
-            {runComplete.autonomousActions.map((action, idx) => (
-              <li key={idx} className="flex items-start gap-2.5 text-sm text-muted-foreground">
+      {policies.length > 0 && (
+        <Section title="Policies Enforced" icon={Shield}>
+          <div className="space-y-2">
+            {policies.map((p, i) => (
+              <div key={i} className="rounded-lg bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 p-2.5">
+                <p className="text-xs font-semibold text-green-800 dark:text-green-200 mb-0.5">{p.policyName}</p>
+                {p.rule && <p className="text-[11px] text-green-700 dark:text-green-300">{p.rule}</p>}
+                <p className="text-[11px] font-medium text-green-600 dark:text-green-400 mt-0.5">{p.decision} — {p.outcome}</p>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+    </div>
+  );
+}
+
+function StageValidate({ pipeline }: { pipeline: HealingPipeline }) {
+  const res = (pipeline.resolution as Record<string, unknown>) || {};
+  const atlasActions = (res.atlasAutonomousActions as string[]) || [];
+  const humanActions = (res.requiresHumanAction as string[]) || [];
+  const withoutAtlas = res.withoutAtlas as string | undefined;
+
+  return (
+    <div className="space-y-4">
+      {atlasActions.length > 0 && (
+        <Section title="Atlas Autonomous Actions" icon={Zap}>
+          <ul className="space-y-1.5">
+            {atlasActions.map((action, i) => (
+              <li key={i} className="flex items-start gap-2 text-sm">
                 <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0 mt-0.5" />
                 <span>{action}</span>
               </li>
             ))}
           </ul>
-        </div>
+        </Section>
       )}
 
-      {/* Platform intelligence callout */}
-      <div className="rounded-xl border border-primary/20 bg-primary/5 p-5">
-        <div className="flex items-start gap-3">
-          <Zap className="h-5 w-5 text-primary shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-semibold mb-1">Atlas Platform Intelligence</p>
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              This healing run was fully autonomous — no human intervention required.
-              Atlas's industry-aware agent network diagnosed and resolved the {config.domain.toLowerCase()} incident
-              while maintaining compliance with {config.complianceFrameworks.slice(0, 2).join(", ")}.
-              All events were captured in an immutable audit trail.
-            </p>
-          </div>
-        </div>
-      </div>
+      {humanActions.length > 0 && (
+        <Section title="Human Actions Required" icon={FileText}>
+          <ul className="space-y-1.5">
+            {humanActions.map((action, i) => (
+              <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+                <Clock className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+                <span>{action}</span>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      )}
 
-      {/* Actions */}
-      <div className="flex gap-3">
-        <Button
-          data-testid="button-run-again"
-          variant="outline"
-          className="flex-1"
-          onClick={onReset}
-        >
-          <RefreshCw className="h-4 w-4 mr-2" />
-          Run Again
-        </Button>
-        <Link href="/demo" className="flex-1">
-          <Button data-testid="button-back-to-demo-center" variant="default" className="w-full">
-            All Demos
+      {withoutAtlas && (
+        <Section title="Without Atlas — Counterfactual" icon={TrendingDown}>
+          <div className="rounded-lg bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 p-3">
+            <p className="text-sm text-red-800 dark:text-red-200 leading-relaxed">{withoutAtlas}</p>
+          </div>
+        </Section>
+      )}
+
+      {atlasActions.length === 0 && humanActions.length === 0 && !withoutAtlas && (
+        <Section title="Validation" icon={Shield}>
+          <p className="text-sm text-muted-foreground">Resolution data will be available after remediation completes.</p>
+        </Section>
+      )}
+    </div>
+  );
+}
+
+// ─── Empty State ──────────────────────────────────────────────────────────────
+
+function EmptyState({ config }: { config: SHScenarioConfig }) {
+  return (
+    <div className="max-w-2xl mx-auto py-12 text-center space-y-4">
+      <div className="mx-auto w-14 h-14 rounded-full bg-muted flex items-center justify-center">
+        <Activity className="h-7 w-7 text-muted-foreground" />
+      </div>
+      <h2 className="text-lg font-semibold">No Healing Pipeline Data</h2>
+      <p className="text-sm text-muted-foreground leading-relaxed max-w-md mx-auto">
+        The self-healing pipeline for <strong>{config.title}</strong> has not been initialized yet.
+        Atlas will automatically create and populate this pipeline when an incident is detected in the{" "}
+        <strong>{config.domain}</strong> environment.
+      </p>
+      <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
+        <Link href="/demo">
+          <Button data-testid="button-back-to-demos" variant="outline">
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back to Demo Center
           </Button>
         </Link>
       </div>
@@ -664,13 +455,29 @@ function ResolutionScreen({
 // ─── Main Layout ──────────────────────────────────────────────────────────────
 
 export default function SHDemoLayout({ config }: { config: SHScenarioConfig }) {
-  const { state, trigger, reset } = useSHLiveRun(config.scenario);
+  const [activeStageIdx, setActiveStageIdx] = useState(0);
+
+  const { data: pipeline, isLoading, isError } = useQuery<HealingPipeline>({
+    queryKey: ["/api/healing-pipelines", config.pipelineId],
+    enabled: !!config.pipelineId,
+    retry: 1,
+  });
+
+  const { data: agent } = useQuery<{ name: string; agentType: string; industry: string }>({
+    queryKey: ["/api/agents", config.agentId],
+    enabled: !!config.agentId,
+    retry: 1,
+  });
+
+  const stageCount = STAGES.length;
+  const canPrev = activeStageIdx > 0;
+  const canNext = activeStageIdx < stageCount - 1;
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
+      {/* Sticky Header */}
       <div className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3">
+        <div className="max-w-6xl mx-auto px-4 sm:px-6 py-3 flex items-center gap-3">
           <Link href="/demo">
             <Button data-testid="button-back" variant="ghost" size="sm" className="gap-1.5 text-muted-foreground">
               <ArrowLeft className="h-4 w-4" />
@@ -679,51 +486,104 @@ export default function SHDemoLayout({ config }: { config: SHScenarioConfig }) {
           </Link>
           <div className="h-4 w-px bg-border" />
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="text-sm font-semibold truncate">{config.title}</span>
-              <Badge variant="outline" className="text-[10px] shrink-0">Self-Healing</Badge>
+              <Badge variant="outline" className="text-[10px] shrink-0 border-primary/40 text-primary">Self-Healing</Badge>
               <Badge variant="outline" className="text-[10px] shrink-0 hidden sm:inline-flex">{config.domain}</Badge>
+              <span className="text-[10px] text-muted-foreground font-mono hidden sm:inline">{config.agentCode}</span>
             </div>
           </div>
-          {state.screen !== "incident" && (
-            <div className="flex items-center gap-2">
-              {state.status === "running" && (
-                <div className="flex items-center gap-1.5 text-xs text-primary">
-                  <div className="h-2 w-2 rounded-full bg-primary animate-pulse" />
-                  <span className="hidden sm:inline">Live</span>
-                </div>
-              )}
-              {state.status === "complete" && (
-                <div className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
-                  <CheckCircle2 className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">Resolved</span>
-                </div>
-              )}
-              <Button
-                data-testid="button-reset"
-                variant="ghost"
-                size="sm"
-                onClick={reset}
-                className="text-xs gap-1.5"
-              >
-                <RefreshCw className="h-3.5 w-3.5" />
-                <span className="hidden sm:inline">Reset</span>
-              </Button>
+          {agent && (
+            <div className="shrink-0 hidden md:flex items-center gap-1.5 text-xs text-muted-foreground">
+              <Cpu className="h-3.5 w-3.5" />
+              <span>{agent.name || config.title}</span>
             </div>
           )}
         </div>
       </div>
 
       {/* Content */}
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-4">
-        {state.screen === "incident" && (
-          <IncidentScreen config={config} onTrigger={trigger} />
-        )}
-        {state.screen === "healing" && (
-          <HealingScreen state={state} config={config} />
-        )}
-        {state.screen === "resolution" && (
-          <ResolutionScreen state={state} config={config} onReset={reset} />
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-20">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : isError || !pipeline ? (
+          <EmptyState config={config} />
+        ) : (
+          <div className="space-y-5">
+            {/* Incident summary bar */}
+            <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/20 px-4 py-3 flex items-center gap-4">
+              <AlertTriangle className="h-5 w-5 text-red-500 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-red-900 dark:text-red-100 truncate">{pipeline.title}</p>
+                <p className="text-xs text-red-700 dark:text-red-300">{pipeline.issueType} · {pipeline.industry}</p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <Chip label={pipeline.severity} color={SEVERITY_STYLES[pipeline.severity] || SEVERITY_STYLES.medium} />
+                <Chip label={pipeline.stage} />
+              </div>
+            </div>
+
+            {/* Stage progress */}
+            <StageProgress activeIdx={activeStageIdx} onStage={setActiveStageIdx} />
+
+            {/* Main grid */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+              {/* Left: stage content */}
+              <div className="lg:col-span-2 space-y-4">
+                {activeStageIdx === 0 && <StageDetect pipeline={pipeline} />}
+                {activeStageIdx === 1 && <StageDiagnose pipeline={pipeline} />}
+                {activeStageIdx === 2 && <StageHypothesize pipeline={pipeline} />}
+                {activeStageIdx === 3 && <StageRemediate pipeline={pipeline} />}
+                {activeStageIdx === 4 && <StageValidate pipeline={pipeline} />}
+
+                {/* Stage navigation */}
+                <div className="flex items-center gap-3">
+                  <Button
+                    data-testid="button-prev-stage"
+                    variant="outline"
+                    size="sm"
+                    disabled={!canPrev}
+                    onClick={() => setActiveStageIdx(i => i - 1)}
+                    className="flex-1 sm:flex-none"
+                  >
+                    <ChevronLeft className="h-4 w-4 mr-1" />
+                    Previous
+                  </Button>
+                  <span className="text-xs text-muted-foreground flex-1 text-center">
+                    Stage {activeStageIdx + 1} of {stageCount}: <strong>{STAGES[activeStageIdx].label}</strong>
+                  </span>
+                  <Button
+                    data-testid="button-next-stage"
+                    variant={canNext ? "default" : "outline"}
+                    size="sm"
+                    disabled={!canNext}
+                    onClick={() => setActiveStageIdx(i => i + 1)}
+                    className="flex-1 sm:flex-none"
+                  >
+                    Next
+                    <ChevronRight className="h-4 w-4 ml-1" />
+                  </Button>
+                </div>
+              </div>
+
+              {/* Right: intelligence panels */}
+              <div className="space-y-4">
+                <PlatformIntelligencePanel pipeline={pipeline} />
+                <BusinessImpactPanel pipeline={pipeline} />
+
+                {/* Compliance */}
+                <Section title="Compliance Frameworks" icon={Shield}>
+                  <div className="flex flex-wrap gap-1.5">
+                    {config.complianceFrameworks.map(fw => (
+                      <Badge key={fw} variant="outline" className="text-[10px] font-medium">{fw}</Badge>
+                    ))}
+                  </div>
+                </Section>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

@@ -194,7 +194,7 @@ const DEMOS: Demo[] = [
     iconColor: "hsl(199 89% 42%)",
     duration: "6 min",
     screens: 3,
-    tags: ["Self-Healing", "FHIR R4", "HIPAA", "Drug Safety"],
+    tags: ["Self-Healing", "FHIR R4", "HIPAA", "Drug Safety", "Platform Intelligence"],
     badge: "Self-Healing",
   },
   {
@@ -210,7 +210,7 @@ const DEMOS: Demo[] = [
     iconColor: "hsl(220 70% 50%)",
     duration: "7 min",
     screens: 3,
-    tags: ["Self-Healing", "Model Drift", "SR 11-7", "FCRA"],
+    tags: ["Self-Healing", "Model Drift", "SR 11-7", "FCRA", "Platform Intelligence"],
     badge: "Self-Healing",
   },
   {
@@ -226,7 +226,7 @@ const DEMOS: Demo[] = [
     iconColor: "hsl(25 95% 53%)",
     duration: "6 min",
     screens: 3,
-    tags: ["Self-Healing", "Predictive Maintenance", "ISO 55001", "OSHA"],
+    tags: ["Self-Healing", "Predictive Maintenance", "ISO 55001", "OSHA", "Platform Intelligence"],
     badge: "Self-Healing",
   },
   {
@@ -242,7 +242,7 @@ const DEMOS: Demo[] = [
     iconColor: "hsl(142 71% 45%)",
     duration: "6 min",
     screens: 3,
-    tags: ["Self-Healing", "WMS", "Order Routing", "PCI-DSS"],
+    tags: ["Self-Healing", "WMS", "Order Routing", "PCI-DSS", "Platform Intelligence"],
     badge: "Self-Healing",
   },
   {
@@ -258,7 +258,7 @@ const DEMOS: Demo[] = [
     iconColor: "hsl(262 80% 58%)",
     duration: "6 min",
     screens: 3,
-    tags: ["Self-Healing", "NERC CIP", "Grid Stability", "FERC"],
+    tags: ["Self-Healing", "NERC CIP", "Grid Stability", "FERC", "Platform Intelligence"],
     badge: "Self-Healing",
   },
   {
@@ -274,7 +274,7 @@ const DEMOS: Demo[] = [
     iconColor: "hsl(330 80% 50%)",
     duration: "7 min",
     screens: 3,
-    tags: ["Self-Healing", "Model Bias", "NAIC", "GDPR Art. 22"],
+    tags: ["Self-Healing", "Model Bias", "NAIC", "GDPR Art. 22", "Platform Intelligence"],
     badge: "Self-Healing",
   },
 ];
@@ -417,6 +417,15 @@ export default function DemoCenter() {
                               data-testid={`badge-demo-type-${demo.id}`}
                             >
                               ⚡ {demo.badge}
+                            </Badge>
+                          )}
+                          {demo.industryId === "self_healing" && (
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] shrink-0 bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800"
+                              data-testid={`badge-platform-intelligence-${demo.id}`}
+                            >
+                              Platform Intelligence
                             </Badge>
                           )}
                           <Badge
