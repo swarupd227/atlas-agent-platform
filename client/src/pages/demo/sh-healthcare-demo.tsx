@@ -2,6 +2,7 @@ import SHDemoLayout from "./sh-demo-layout";
 import type { SHScenarioConfig } from "./sh-demo-layout";
 
 const config: SHScenarioConfig = {
+  scenario: "healthcare",
   title: "Clinical Data Integrity Monitor",
   subtitle: "FHIR EHR Feed Self-Healing",
   domain: "Healthcare",

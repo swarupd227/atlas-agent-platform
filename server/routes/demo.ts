@@ -3,6 +3,7 @@ import { hearstLiveRunHandler, ensureHearstAgents } from "../hearst-live-run";
 import { fitchLiveRunHandler, ensureFitchAgents, getFitchPipelineAgentNames, getFitchAgentIdByName } from "../fitch-live-run";
 import { littlerLiveRunHandler } from "../littler-live-run";
 import { otcQuoteLiveRunHandler } from "../otc-quote-live-run";
+import { shLiveRunHandler } from "../sh-live-run";
 import { seedPartnerPortalRegistry } from "../seed-blackrock2-partner-portal";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
@@ -1394,6 +1395,9 @@ Log every action.`;
 
   // ── BlackRock Use Case 2: Partner Portal Registry MCP Server ────────────────
 
+  // ── Self-Healing Live-Run SSE ─────────────────────────────────────────────
+  // GET /demo-api/sh-healing/stream?scenario=healthcare|financial|manufacturing|retail|energy|insurance
+  router.get("/demo-api/sh-healing/stream", shLiveRunHandler);
 
 export { ensureHearstAgents, ensureFitchAgents };
 export default router;

@@ -2,6 +2,7 @@ import SHDemoLayout from "./sh-demo-layout";
 import type { SHScenarioConfig } from "./sh-demo-layout";
 
 const config: SHScenarioConfig = {
+  scenario: "manufacturing",
   title: "Factory Floor Anomaly Recovery Agent",
   subtitle: "CNC Bearing Wear Predictive Self-Healing",
   domain: "Manufacturing",

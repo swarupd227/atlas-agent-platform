@@ -2,6 +2,7 @@ import SHDemoLayout from "./sh-demo-layout";
 import type { SHScenarioConfig } from "./sh-demo-layout";
 
 const config: SHScenarioConfig = {
+  scenario: "insurance",
   title: "Claims Workflow Recovery Agent",
   subtitle: "Fraud Model FPR Spike Self-Healing",
   domain: "Insurance",

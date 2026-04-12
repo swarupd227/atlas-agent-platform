@@ -2,6 +2,7 @@ import SHDemoLayout from "./sh-demo-layout";
 import type { SHScenarioConfig } from "./sh-demo-layout";
 
 const config: SHScenarioConfig = {
+  scenario: "energy",
   title: "Grid Operations Stability Agent",
   subtitle: "Wind Farm Offshore Outage Self-Healing",
   domain: "Energy / Utilities",

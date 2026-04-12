@@ -2,6 +2,7 @@ import SHDemoLayout from "./sh-demo-layout";
 import type { SHScenarioConfig } from "./sh-demo-layout";
 
 const config: SHScenarioConfig = {
+  scenario: "retail",
   title: "Order Fulfillment Recovery Agent",
   subtitle: "WMS API Cascade Failure Self-Healing",
   domain: "Retail / E-Commerce",
