@@ -110,7 +110,17 @@ async function findMcpServerByName(name) {
     const all = await api("GET", `/api/mcp-servers`, null, { silent: true });
     _mcpServerCache = Array.isArray(all) ? all : [];
   }
-  return _mcpServerCache.find(s => s.name === name) || null;
+  // Exact match first
+  const exact = _mcpServerCache.find(s => s.name === name);
+  if (exact) return exact;
+  // Partial keyword match — e.g. "Splunk MCP Server" matches "Splunk SIEM"
+  // Uses the first significant keyword of the lookup name (skip generic suffixes)
+  const keyword = name.split(/\s+/).find(w => !["MCP","Server","API","Connector","the","a","an"].includes(w));
+  if (keyword) {
+    const partial = _mcpServerCache.find(s => s.name.toLowerCase().includes(keyword.toLowerCase()));
+    if (partial) return partial;
+  }
+  return null;
 }
 
 // Industry-appropriate MCP server names for each SH demo agent.
