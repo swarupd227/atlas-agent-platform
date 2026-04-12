@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import type { HealingPipeline } from "@shared/schema";
 
-// ─── Scenario Config ──────────────────────────────────────────────────────────
+// ─── Config ───────────────────────────────────────────────────────────────────
 
 export interface SHScenarioConfig {
   scenario: string;
@@ -39,24 +39,39 @@ export interface SHScenarioConfig {
   complianceFrameworks: string[];
 }
 
-// ─── Stage Definitions ────────────────────────────────────────────────────────
+// ─── Stage map ────────────────────────────────────────────────────────────────
 
 const STAGES = [
-  { key: "detected",   label: "Detect",      icon: Activity  },
-  { key: "diagnosed",  label: "Diagnose",    icon: Brain     },
-  { key: "hypothesis", label: "Hypothesize", icon: Cpu       },
-  { key: "remediation",label: "Remediate",   icon: Wrench    },
-  { key: "resolved",   label: "Validate",    icon: Shield    },
+  { dbKey: "detected",    label: "Detect",      icon: Activity  },
+  { dbKey: "diagnosed",   label: "Diagnose",    icon: Brain     },
+  { dbKey: "hypothesis",  label: "Hypothesize", icon: Cpu       },
+  { dbKey: "remediation", label: "Remediate",   icon: Wrench    },
+  { dbKey: "resolved",    label: "Validate",    icon: Shield    },
 ] as const;
 
-type StageKey = typeof STAGES[number]["key"];
-
-function stageIndex(stage: string): number {
-  const idx = STAGES.findIndex(s => s.key === stage);
+function stageIndex(dbKey: string): number {
+  const idx = STAGES.findIndex(s => s.dbKey === dbKey);
   return idx >= 0 ? idx : 0;
 }
 
-// ─── Utilities ────────────────────────────────────────────────────────────────
+// ─── JSONB field helpers (type-safe, no `any`) ────────────────────────────────
+
+function asRecord(val: unknown): Record<string, unknown> {
+  if (val && typeof val === "object" && !Array.isArray(val)) return val as Record<string, unknown>;
+  return {};
+}
+
+function asStringArray(val: unknown): string[] {
+  if (Array.isArray(val)) return val.filter((v): v is string => typeof v === "string");
+  return [];
+}
+
+function asRecordArray(val: unknown): Record<string, string>[] {
+  if (Array.isArray(val)) return val.filter((v): v is Record<string, string> => v !== null && typeof v === "object" && !Array.isArray(v));
+  return [];
+}
+
+// ─── Shared atoms ─────────────────────────────────────────────────────────────
 
 const SEVERITY_STYLES: Record<string, string> = {
   critical: "bg-red-100 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800",
@@ -73,7 +88,7 @@ function Chip({ label, color }: { label: string; color?: string }) {
   );
 }
 
-function Section({ title, icon: Icon, children }: { title: string; icon?: React.ElementType; children: React.ReactNode }) {
+function Panel({ title, icon: Icon, children }: { title: string; icon?: React.ElementType; children: React.ReactNode }) {
   return (
     <div className="rounded-xl border border-border bg-card p-4 space-y-3">
       {(title || Icon) && (
@@ -91,7 +106,7 @@ function KV({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</span>
-      <span className="text-sm font-medium text-foreground">{value}</span>
+      <div className="text-sm font-medium text-foreground">{value}</div>
     </div>
   );
 }
@@ -111,30 +126,37 @@ function StageProgress({
   return (
     <div className="flex items-center w-full gap-0">
       {STAGES.map((s, idx) => {
-        const Icon = s.icon;
-        const done    = idx < liveIdx;
-        const live    = idx === liveIdx;
-        const viewing = idx === activeIdx;
+        const Icon      = s.icon;
+        const isDone    = idx < liveIdx;
+        const isLive    = idx === liveIdx;
+        const isViewing = idx === activeIdx;
         return (
-          <div key={s.key} className="flex items-center flex-1 min-w-0">
+          <div key={s.dbKey} className="flex items-center flex-1 min-w-0">
             <button
-              data-testid={`stage-${s.key}`}
+              data-testid={`stage-${s.dbKey}`}
               onClick={() => onStage(idx)}
               title={s.label}
               className={`flex items-center gap-1.5 flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer min-w-0 ${
-                viewing && done  ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-300 ring-1 ring-green-400" :
-                viewing && live  ? "bg-primary/10 text-primary ring-1 ring-primary/30" :
-                viewing          ? "bg-muted text-foreground ring-1 ring-border" :
-                done             ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/40" :
-                live             ? "bg-primary/5 text-primary hover:bg-primary/10" :
-                                   "bg-muted/40 text-muted-foreground hover:bg-muted/70"
+                isViewing && isDone ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-300 ring-1 ring-green-400" :
+                isViewing && isLive ? "bg-primary/10 text-primary ring-1 ring-primary/30" :
+                isViewing           ? "bg-muted text-foreground ring-1 ring-border" :
+                isDone              ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-300 hover:bg-green-200" :
+                isLive              ? "bg-primary/5 text-primary hover:bg-primary/10" :
+                                      "bg-muted/40 text-muted-foreground hover:bg-muted/70"
               }`}
             >
               <span className="shrink-0">
-                {done ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Icon className="h-3.5 w-3.5" />}
+                {isDone ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Icon className="h-3.5 w-3.5" />}
               </span>
               <span className="truncate hidden sm:inline">{s.label}</span>
-              {live && <span className="ml-auto shrink-0 hidden sm:inline"><span className="relative flex h-1.5 w-1.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" /><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-primary" /></span></span>}
+              {isLive && (
+                <span className="ml-auto shrink-0 hidden sm:flex">
+                  <span className="relative flex h-1.5 w-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-primary" />
+                  </span>
+                </span>
+              )}
             </button>
             {idx < STAGES.length - 1 && (
               <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0 mx-0.5" />
@@ -146,40 +168,230 @@ function StageProgress({
   );
 }
 
-// ─── Platform Intelligence Panel (3-Tab) ─────────────────────────────────────
+// ─── Persistent Issue Summary Card ───────────────────────────────────────────
+
+function IssueSummaryCard({ pipeline, config }: { pipeline: HealingPipeline; config: SHScenarioConfig }) {
+  return (
+    <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/20 p-4">
+      <div className="flex items-start gap-3">
+        <AlertTriangle className="h-5 w-5 text-red-500 shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <div className="flex flex-wrap items-center gap-2 mb-1">
+            <Chip label={pipeline.severity} color={SEVERITY_STYLES[pipeline.severity] || SEVERITY_STYLES.medium} />
+            <Chip label={pipeline.stage} />
+            <span className="text-[10px] text-muted-foreground font-mono">{config.agentCode}</span>
+          </div>
+          <h2 className="text-sm font-semibold text-red-900 dark:text-red-100 mb-0.5">{pipeline.title}</h2>
+          <p className="text-xs text-red-700 dark:text-red-300 mb-1">{config.subtitle}</p>
+          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+            <span><strong className="text-foreground">Type:</strong> {pipeline.issueType}</span>
+            <span><strong className="text-foreground">Industry:</strong> {pipeline.industry}</span>
+            <span><strong className="text-foreground">Priority:</strong> {pipeline.priority}</span>
+          </div>
+          {pipeline.issueDescription && (
+            <p className="text-xs text-red-800 dark:text-red-200 mt-2 leading-relaxed">{pipeline.issueDescription}</p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Stage Content Panels ─────────────────────────────────────────────────────
+
+function StageDetect({ pipeline }: { pipeline: HealingPipeline }) {
+  return (
+    <Panel title="Detection Metadata" icon={Clock}>
+      <div className="grid grid-cols-2 gap-3">
+        <KV label="Status" value={<Chip label={pipeline.status} />} />
+        {pipeline.triggerSource && <KV label="Trigger Source" value={pipeline.triggerSource} />}
+        {pipeline.detectedAt && (
+          <KV label="Detected At" value={new Date(pipeline.detectedAt).toLocaleString()} />
+        )}
+      </div>
+    </Panel>
+  );
+}
+
+function StageDiagnose({ pipeline }: { pipeline: HealingPipeline }) {
+  const details  = asRecord(pipeline.diagnosisDetails);
+  const rootCause = typeof details.rootCause === "string" ? details.rootCause : null;
+  const extra = Object.entries(details).filter(([k]) => !["rootCause", "skillsInvoked", "atlasSkillsInvoked"].includes(k));
+
+  return (
+    <Panel title="Root Cause Analysis" icon={Brain}>
+      {rootCause ? (
+        <p className="text-sm leading-relaxed">{rootCause}</p>
+      ) : (
+        <p className="text-sm text-muted-foreground">Root cause analysis pending — diagnosis in progress.</p>
+      )}
+      {extra.length > 0 && (
+        <div className="space-y-2 pt-2 border-t border-border">
+          {extra.map(([k, v]) => (
+            <KV
+              key={k}
+              label={k.replace(/([A-Z])/g, " $1").trim()}
+              value={typeof v === "string" || typeof v === "number"
+                ? String(v)
+                : <span className="text-xs font-mono text-muted-foreground">{JSON.stringify(v)}</span>
+              }
+            />
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function StageHypothesize({ pipeline }: { pipeline: HealingPipeline }) {
+  const hyp        = asRecord(pipeline.hypothesis);
+  const primary    = typeof hyp.primaryHypothesis === "string" ? hyp.primaryHypothesis : null;
+  const confidence = typeof hyp.confidence === "number" ? hyp.confidence : null;
+  const candidates = asRecordArray(hyp.runbookCandidates);
+
+  return (
+    <div className="space-y-4">
+      <Panel title="Primary Hypothesis" icon={Cpu}>
+        {primary ? (
+          <div className="space-y-2">
+            <p className="text-sm leading-relaxed">{primary}</p>
+            {confidence !== null && (
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Confidence</span>
+                <div className="flex-1 rounded-full bg-muted h-2 overflow-hidden">
+                  <div
+                    className="h-2 rounded-full bg-primary"
+                    style={{ width: `${Math.min(100, confidence * 100)}%` }}
+                  />
+                </div>
+                <span className="text-xs font-semibold">{Math.round(confidence * 100)}%</span>
+              </div>
+            )}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">Hypothesis formation pending diagnosis completion.</p>
+        )}
+      </Panel>
+
+      {candidates.length > 0 && (
+        <Panel title="Runbook Candidates" icon={FileText}>
+          <div className="space-y-2">
+            {candidates.map((c, i) => (
+              <div key={i} className="rounded-lg bg-muted/40 p-3">
+                <p className="text-xs font-semibold mb-1">{c.runbookName}</p>
+                {c.triggerCondition && <p className="text-[11px] text-muted-foreground mb-0.5"><strong>Trigger:</strong> {c.triggerCondition}</p>}
+                {c.expectedOutcome  && <p className="text-[11px] text-muted-foreground"><strong>Outcome:</strong> {c.expectedOutcome}</p>}
+                {c.estimatedDuration && <p className="text-[10px] text-muted-foreground mt-1">Est. {c.estimatedDuration}</p>}
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+    </div>
+  );
+}
+
+function StageRemediate({ pipeline }: { pipeline: HealingPipeline }) {
+  const rem    = asRecord(pipeline.remediation);
+  const status = typeof rem.status === "string" ? rem.status : null;
+
+  return (
+    <Panel title="Remediation Status" icon={Wrench}>
+      {status ? (
+        <div className="space-y-1">
+          <Chip label={status} color="bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800" />
+          <p className="text-xs text-muted-foreground">Autonomous actions executing — see Platform Intelligence panel for details.</p>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">Remediation activates after hypothesis is confirmed.</p>
+      )}
+    </Panel>
+  );
+}
+
+function StageValidate({ pipeline }: { pipeline: HealingPipeline }) {
+  const res           = asRecord(pipeline.resolution);
+  const atlasActions  = asStringArray(res.atlasAutonomousActions);
+  const humanActions  = asStringArray(res.requiresHumanAction);
+
+  return (
+    <Panel title="Resolution Timeline" icon={Clock}>
+      {atlasActions.length > 0 ? (
+        <ul className="space-y-2">
+          {atlasActions.map((action, i) => (
+            <li key={i} className="flex items-start gap-2 text-sm">
+              <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0 mt-0.5" />
+              <span>{action}</span>
+            </li>
+          ))}
+          {humanActions.map((action, i) => (
+            <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+              <Clock className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+              <span>{action}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-sm text-muted-foreground">Resolution data available after remediation completes.</p>
+      )}
+      {pipeline.resolvedAt && (
+        <p className="text-[10px] text-muted-foreground border-t border-border pt-2">
+          Resolved {new Date(pipeline.resolvedAt).toLocaleString()}
+        </p>
+      )}
+    </Panel>
+  );
+}
+
+// ─── Platform Intelligence Panel — 3 tabs, stage-aware ───────────────────────
 
 type PITab = "skills" | "runbooks" | "policies";
 
-function PlatformIntelligencePanel({ pipeline }: { pipeline: HealingPipeline }) {
-  const [tab, setTab] = useState<PITab>("skills");
-  const diagnosis  = (pipeline.diagnosisDetails as Record<string, unknown>) || {};
-  const remediation = (pipeline.remediation     as Record<string, unknown>) || {};
-  const guardrails  = (pipeline.industryGuardrails as Array<Record<string, string>>) || [];
+const PI_TAB_DEFAULTS: Record<number, PITab> = {
+  0: "skills", 1: "skills", 2: "runbooks", 3: "runbooks", 4: "policies",
+};
 
-  const skills: Array<{ skillName: string; finding: string; duration?: string }> = [
-    ...((diagnosis.skillsInvoked     || []) as Array<{ skillName: string; finding: string; duration?: string }>),
-    ...((diagnosis.atlasSkillsInvoked || []) as Array<{ skillName: string; finding: string; duration?: string }>),
-  ];
-  const runbooks: Array<{ runbookName: string; status?: string; result?: string }> =
-    ((remediation.runbooksTriggered || []) as Array<{ runbookName: string; status?: string; result?: string }>);
-  const policies: Array<{ policyName?: string; rule?: string; decision?: string; outcome?: string }> = [
-    ...((remediation.policiesEnforced || []) as Array<{ policyName?: string; rule?: string; decision?: string; outcome?: string }>),
-    ...guardrails.map(g => ({ policyName: g.framework, rule: g.constraint, decision: g.status, outcome: "" })),
+function PlatformIntelligencePanel({ pipeline, activeIdx }: { pipeline: HealingPipeline; activeIdx: number }) {
+  const [tab, setTab] = useState<PITab>(PI_TAB_DEFAULTS[activeIdx] || "skills");
+
+  useEffect(() => {
+    setTab(PI_TAB_DEFAULTS[activeIdx] || "skills");
+  }, [activeIdx]);
+
+  const diagnosis   = asRecord(pipeline.diagnosisDetails);
+  const remediation = asRecord(pipeline.remediation);
+  const guardrails  = asRecordArray(pipeline.industryGuardrails);
+
+  const skills = [
+    ...asRecordArray(diagnosis.skillsInvoked),
+    ...asRecordArray(diagnosis.atlasSkillsInvoked),
+  ] as Array<{ skillName: string; finding: string; duration?: string }>;
+
+  const runbooks = asRecordArray(remediation.runbooksTriggered) as Array<{
+    runbookName: string; status?: string; result?: string;
+  }>;
+
+  const policies = [
+    ...(asRecordArray(remediation.policiesEnforced) as Array<{
+      policyName?: string; rule?: string; decision?: string; outcome?: string;
+    }>),
+    ...guardrails.map(g => ({
+      policyName: g.framework, rule: g.constraint, decision: g.status, outcome: "",
+    })),
   ];
 
   const TABS: { key: PITab; label: string; count: number; icon: React.ElementType }[] = [
-    { key: "skills",   label: "Skills Invoked",     count: skills.length,   icon: Zap      },
-    { key: "runbooks", label: "Runbooks Triggered",  count: runbooks.length, icon: BookOpen },
-    { key: "policies", label: "Policies Enforced",   count: policies.length, icon: Lock     },
+    { key: "skills",   label: "Skills",   count: skills.length,   icon: Zap      },
+    { key: "runbooks", label: "Runbooks", count: runbooks.length, icon: BookOpen },
+    { key: "policies", label: "Policies", count: policies.length, icon: Lock     },
   ];
 
   return (
     <div className="rounded-xl border border-border bg-card overflow-hidden">
-      <div className="flex items-center gap-1 border-b border-border px-3 py-2">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-border">
         <Zap className="h-3.5 w-3.5 text-primary" />
-        <span className="text-[11px] font-semibold text-foreground ml-1">Platform Intelligence in Action</span>
+        <span className="text-[11px] font-semibold">Platform Intelligence in Action</span>
       </div>
-      {/* Tab bar */}
       <div className="flex border-b border-border">
         {TABS.map(t => (
           <button
@@ -193,13 +405,14 @@ function PlatformIntelligencePanel({ pipeline }: { pipeline: HealingPipeline }) 
             }`}
           >
             <t.icon className="h-3 w-3 shrink-0" />
-            <span className="hidden sm:inline truncate">{t.label}</span>
-            {t.count > 0 && <span className="ml-auto bg-muted rounded-full px-1.5 text-[9px] font-bold">{t.count}</span>}
+            <span className="truncate">{t.label}</span>
+            {t.count > 0 && (
+              <span className="ml-0.5 bg-muted rounded-full px-1 text-[9px] font-bold">{t.count}</span>
+            )}
           </button>
         ))}
       </div>
-      {/* Tab content */}
-      <div className="p-3 space-y-2 max-h-64 overflow-y-auto">
+      <div className="p-3 space-y-2 max-h-60 overflow-y-auto">
         {tab === "skills" && (
           skills.length > 0 ? skills.map((sk, i) => (
             <div key={i} className="rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 p-2.5">
@@ -210,7 +423,7 @@ function PlatformIntelligencePanel({ pipeline }: { pipeline: HealingPipeline }) 
               </div>
               <p className="text-[11px] text-amber-800 dark:text-amber-200 leading-relaxed">{sk.finding}</p>
             </div>
-          )) : <p className="text-xs text-muted-foreground py-2">Skills analysis populates after diagnosis.</p>
+          )) : <p className="text-xs text-muted-foreground py-1">Skills analysis populates after detection.</p>
         )}
 
         {tab === "runbooks" && (
@@ -223,43 +436,72 @@ function PlatformIntelligencePanel({ pipeline }: { pipeline: HealingPipeline }) 
               {rb.status && <p className="text-[11px] text-purple-600 dark:text-purple-400">{rb.status}</p>}
               {rb.result && <p className="text-[11px] text-purple-800 dark:text-purple-200 mt-1">{rb.result}</p>}
             </div>
-          )) : <p className="text-xs text-muted-foreground py-2">Runbooks activate during remediation phase.</p>
+          )) : <p className="text-xs text-muted-foreground py-1">Runbooks trigger during remediation.</p>
         )}
 
         {tab === "policies" && (
           policies.length > 0 ? policies.map((p, i) => {
-            const ok = (p.decision || "").toLowerCase().includes("compliant") || (p.decision || "").toLowerCase().includes("pass");
+            const isOk = typeof p.decision === "string" && (p.decision.toLowerCase().includes("compliant") || p.decision.toLowerCase().includes("pass"));
             return (
-              <div key={i} className={`rounded-lg border p-2.5 ${ok ? "bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800" : "bg-muted/40 border-border"}`}>
+              <div key={i} className={`rounded-lg border p-2.5 ${isOk ? "bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800" : "bg-muted/40 border-border"}`}>
                 <div className="flex items-center gap-1.5 mb-0.5">
-                  <Lock className={`h-3 w-3 shrink-0 ${ok ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`} />
-                  <span className={`text-[11px] font-semibold truncate ${ok ? "text-green-700 dark:text-green-300" : "text-foreground"}`}>{p.policyName}</span>
+                  <Lock className={`h-3 w-3 shrink-0 ${isOk ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`} />
+                  <span className={`text-[11px] font-semibold truncate ${isOk ? "text-green-700 dark:text-green-300" : "text-foreground"}`}>{p.policyName}</span>
                 </div>
                 {p.rule && <p className="text-[11px] text-muted-foreground">{p.rule}</p>}
-                {(p.decision || p.outcome) && <p className={`text-[11px] mt-0.5 font-medium ${ok ? "text-green-700 dark:text-green-300" : "text-foreground"}`}>{[p.decision, p.outcome].filter(Boolean).join(" — ")}</p>}
+                {(p.decision || p.outcome) && (
+                  <p className={`text-[11px] mt-0.5 font-medium ${isOk ? "text-green-700 dark:text-green-300" : "text-foreground"}`}>
+                    {[p.decision, p.outcome].filter(Boolean).join(" — ")}
+                  </p>
+                )}
               </div>
             );
-          }) : <p className="text-xs text-muted-foreground py-2">Policy checks run alongside remediation.</p>
+          }) : <p className="text-xs text-muted-foreground py-1">Policy enforcement runs alongside remediation.</p>
         )}
       </div>
     </div>
   );
 }
 
-// ─── With Atlas vs Without Atlas Comparison ───────────────────────────────────
+// ─── Business Impact Panel ────────────────────────────────────────────────────
+
+function BusinessImpactPanel({ pipeline }: { pipeline: HealingPipeline }) {
+  const impact = asRecord(pipeline.businessImpact);
+  const entries = Object.entries(impact).filter(([, v]) => v !== null && v !== undefined && v !== "");
+  if (entries.length === 0) return null;
+
+  return (
+    <Panel title="Business Impact" icon={TrendingUp}>
+      <div className="space-y-2">
+        {entries.map(([k, v]) => (
+          <KV
+            key={k}
+            label={k.replace(/([A-Z])/g, " $1").trim()}
+            value={typeof v === "string" ? v : JSON.stringify(v)}
+          />
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
+// ─── With Atlas vs Without Atlas Card ────────────────────────────────────────
 
 function AtlasComparisonCard({ pipeline }: { pipeline: HealingPipeline }) {
-  const impact = (pipeline.businessImpact as Record<string, string>) || {};
-  const res    = (pipeline.resolution    as Record<string, string>) || {};
-
-  const withAtlas    = impact.withAtlas    || res.atlasAutonomousActions?.toString() || "";
-  const withoutAtlas = impact.withoutAtlas || res.withoutAtlas || "";
+  const impact       = asRecord(pipeline.businessImpact);
+  const res          = asRecord(pipeline.resolution);
+  const withAtlas    = typeof impact.withAtlas === "string" ? impact.withAtlas : "";
+  const withoutAtlas = typeof impact.withoutAtlas === "string"
+    ? impact.withoutAtlas
+    : typeof res.withoutAtlas === "string"
+      ? res.withoutAtlas
+      : "";
 
   if (!withAtlas && !withoutAtlas) return null;
 
   return (
-    <Section title="With Atlas vs Without Atlas" icon={TrendingUp}>
-      <div className="grid grid-cols-1 gap-2">
+    <Panel title="With Atlas vs Without Atlas" icon={Activity}>
+      <div className="space-y-2">
         {withAtlas && (
           <div className="rounded-lg bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 p-3">
             <div className="flex items-center gap-1.5 mb-1">
@@ -279,199 +521,36 @@ function AtlasComparisonCard({ pipeline }: { pipeline: HealingPipeline }) {
           </div>
         )}
       </div>
-    </Section>
+    </Panel>
   );
 }
 
-// ─── Resolution Timeline ──────────────────────────────────────────────────────
+// ─── Industry Guardrails Panel ────────────────────────────────────────────────
 
-function ResolutionTimeline({ pipeline }: { pipeline: HealingPipeline }) {
-  const res = (pipeline.resolution as Record<string, unknown>) || {};
-  const atlasActions  = (res.atlasAutonomousActions as string[]) || [];
-  const humanActions  = (res.requiresHumanAction   as string[]) || [];
-  const resolvedAt = pipeline.resolvedAt;
-
-  if (atlasActions.length === 0 && humanActions.length === 0) return null;
+function IndustryGuardrailsPanel({ pipeline }: { pipeline: HealingPipeline }) {
+  const guardrails = asRecordArray(pipeline.industryGuardrails);
+  if (guardrails.length === 0) return null;
 
   return (
-    <Section title="Resolution Timeline" icon={Clock}>
+    <Panel title="Industry Guardrails" icon={Shield}>
       <div className="space-y-2">
-        {resolvedAt && (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground pb-1 border-b border-border">
-            <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
-            <span>Resolved {new Date(resolvedAt).toLocaleString()}</span>
-          </div>
-        )}
-        {atlasActions.map((action, i) => (
-          <div key={i} className="flex items-start gap-2 text-sm">
-            <div className="flex flex-col items-center shrink-0">
-              <div className="w-2.5 h-2.5 rounded-full bg-green-500 mt-0.5" />
-              {i < atlasActions.length - 1 && <div className="w-px flex-1 bg-border mt-1 min-h-[12px]" />}
+        {guardrails.map((g, i) => (
+          <div key={i} className="rounded-lg bg-muted/40 p-2.5 flex items-start gap-2.5">
+            <Shield className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
+            <div>
+              <p className="text-[11px] font-semibold">{g.framework}</p>
+              <p className="text-[11px] text-muted-foreground">{g.constraint}</p>
+              {g.status && (
+                <Chip
+                  label={g.status}
+                  color="bg-green-100 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-300 dark:border-green-800"
+                />
+              )}
             </div>
-            <span className="text-sm">{action}</span>
-          </div>
-        ))}
-        {humanActions.map((action, i) => (
-          <div key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
-            <div className="shrink-0 mt-0.5"><Clock className="h-3.5 w-3.5 text-amber-500" /></div>
-            <span>{action}</span>
           </div>
         ))}
       </div>
-    </Section>
-  );
-}
-
-// ─── Stage Content Panels ─────────────────────────────────────────────────────
-
-function StageDetect({ pipeline }: { pipeline: HealingPipeline }) {
-  return (
-    <div className="space-y-4">
-      <Section title="Incident Detected" icon={AlertTriangle}>
-        <div className="grid grid-cols-2 gap-3">
-          <KV label="Severity" value={<Chip label={pipeline.severity} color={SEVERITY_STYLES[pipeline.severity] || SEVERITY_STYLES.medium} />} />
-          <KV label="Issue Type" value={pipeline.issueType} />
-          <KV label="Industry" value={pipeline.industry} />
-          <KV label="Status" value={<Chip label={pipeline.status} />} />
-        </div>
-        {pipeline.issueDescription && (
-          <div className="pt-2 border-t border-border">
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Description</p>
-            <p className="text-sm leading-relaxed">{pipeline.issueDescription}</p>
-          </div>
-        )}
-      </Section>
-      <Section title="Detection Metadata" icon={Clock}>
-        <div className="grid grid-cols-2 gap-3">
-          <KV label="Priority" value={<Chip label={pipeline.priority} />} />
-          {pipeline.triggerSource && <KV label="Trigger Source" value={pipeline.triggerSource} />}
-          {pipeline.detectedAt && <KV label="Detected At" value={new Date(pipeline.detectedAt).toLocaleString()} />}
-        </div>
-      </Section>
-    </div>
-  );
-}
-
-function StageDiagnose({ pipeline }: { pipeline: HealingPipeline }) {
-  const details = (pipeline.diagnosisDetails as Record<string, unknown>) || {};
-  const rootCause = details.rootCause as string | undefined;
-
-  return (
-    <div className="space-y-4">
-      <Section title="Root Cause Analysis" icon={Brain}>
-        {rootCause ? (
-          <p className="text-sm leading-relaxed">{rootCause}</p>
-        ) : (
-          <p className="text-sm text-muted-foreground">Root cause analysis pending — diagnosis phase in progress.</p>
-        )}
-        {Object.entries(details)
-          .filter(([k]) => !["rootCause", "skillsInvoked", "atlasSkillsInvoked"].includes(k))
-          .map(([k, v]) => (
-            <KV key={k} label={k.replace(/([A-Z])/g, " $1").trim()} value={
-              typeof v === "string" || typeof v === "number" ? String(v)
-                : <span className="text-xs font-mono text-muted-foreground">{JSON.stringify(v)}</span>
-            } />
-          ))}
-      </Section>
-    </div>
-  );
-}
-
-function StageHypothesize({ pipeline }: { pipeline: HealingPipeline }) {
-  const hyp       = (pipeline.hypothesis as Record<string, unknown>) || {};
-  const primary   = hyp.primaryHypothesis as string | undefined;
-  const confidence = hyp.confidence as number | undefined;
-  const candidates = (hyp.runbookCandidates as Array<Record<string, string>>) || [];
-
-  return (
-    <div className="space-y-4">
-      <Section title="Primary Hypothesis" icon={Cpu}>
-        {primary ? (
-          <div className="space-y-2">
-            <p className="text-sm leading-relaxed">{primary}</p>
-            {confidence !== undefined && (
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Confidence</span>
-                <div className="flex-1 rounded-full bg-muted h-2 overflow-hidden">
-                  <div className="h-2 rounded-full bg-primary" style={{ width: `${Math.min(100, confidence * 100)}%` }} />
-                </div>
-                <span className="text-xs font-semibold">{Math.round(confidence * 100)}%</span>
-              </div>
-            )}
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">Hypothesis formation pending diagnosis completion.</p>
-        )}
-      </Section>
-
-      {candidates.length > 0 && (
-        <Section title="Runbook Candidates" icon={FileText}>
-          <div className="space-y-2">
-            {candidates.map((c, i) => (
-              <div key={i} className="rounded-lg bg-muted/40 p-3">
-                <p className="text-xs font-semibold mb-1">{c.runbookName}</p>
-                {c.triggerCondition && <p className="text-[11px] text-muted-foreground mb-0.5"><strong>Trigger:</strong> {c.triggerCondition}</p>}
-                {c.expectedOutcome  && <p className="text-[11px] text-muted-foreground"><strong>Outcome:</strong> {c.expectedOutcome}</p>}
-                {c.estimatedDuration && <p className="text-[10px] text-muted-foreground mt-1">Est. {c.estimatedDuration}</p>}
-              </div>
-            ))}
-          </div>
-        </Section>
-      )}
-    </div>
-  );
-}
-
-function StageRemediate({ pipeline }: { pipeline: HealingPipeline }) {
-  const rem     = (pipeline.remediation as Record<string, unknown>) || {};
-  const status  = rem.status as string | undefined;
-
-  return (
-    <div className="space-y-4">
-      <Section title="Remediation Status" icon={Wrench}>
-        {status ? (
-          <div className="flex items-center gap-2">
-            <Chip label={status} color="bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800" />
-            <span className="text-xs text-muted-foreground">Autonomous actions executing via Platform Intelligence</span>
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground">Remediation activates after hypothesis confirmation.</p>
-        )}
-      </Section>
-    </div>
-  );
-}
-
-function StageValidate({ pipeline }: { pipeline: HealingPipeline }) {
-  const guardrails = (pipeline.industryGuardrails as Array<Record<string, string>>) || [];
-
-  return (
-    <div className="space-y-4">
-      <ResolutionTimeline pipeline={pipeline} />
-
-      {guardrails.length > 0 && (
-        <Section title="Regulatory Guardrails Verified" icon={Shield}>
-          <div className="space-y-2">
-            {guardrails.map((g, i) => (
-              <div key={i} className="flex items-start gap-3 rounded-lg bg-muted/40 p-2.5">
-                <Shield className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-[11px] font-semibold">{g.framework}</p>
-                  <p className="text-[11px] text-muted-foreground">{g.constraint}</p>
-                  <Chip label={g.status || "verified"} color="bg-green-100 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-300 dark:border-green-800" />
-                </div>
-              </div>
-            ))}
-          </div>
-        </Section>
-      )}
-
-      {guardrails.length === 0 && (pipeline.resolution as any)?.atlasAutonomousActions?.length === 0 && (
-        <Section title="Validation" icon={Shield}>
-          <p className="text-sm text-muted-foreground">Validation data populates after remediation completes.</p>
-        </Section>
-      )}
-    </div>
+    </Panel>
   );
 }
 
@@ -504,31 +583,30 @@ function EmptyState({ config }: { config: SHScenarioConfig }) {
 // ─── Main Layout ──────────────────────────────────────────────────────────────
 
 export default function SHDemoLayout({ config }: { config: SHScenarioConfig }) {
-  const [activeStageIdx, setActiveStageIdx] = useState<number | null>(null);
+  const [activeIdx, setActiveIdx] = useState<number | null>(null);
 
-  // Step 1: Fetch all agents and resolve by name/agentCode
-  const { data: allAgents = [] } = useQuery<{ id: string; name: string; agentType?: string }[]>({
-    queryKey: ["/api/agents"],
+  // Step 1: search agents by agentCode
+  const { data: agentSearchResult = [] } = useQuery<{ id: string; name: string }[]>({
+    queryKey: [`/api/agents?search=${encodeURIComponent(config.agentCode)}`],
     retry: 1,
   });
-  const resolvedAgent = allAgents.find(a => a.name === config.title) ?? null;
-  const resolvedAgentId = resolvedAgent?.id ?? config.agentId;
+  const resolvedAgentId = agentSearchResult.find(a => a.name === config.title)?.id;
 
-  // Step 2: Fetch all healing pipelines and filter by resolved agentId
-  const { data: allPipelines, isLoading: pipelinesLoading } = useQuery<HealingPipeline[]>({
+  // Step 2: fetch all healing pipelines; filter by resolved agentId
+  const { data: allPipelines, isLoading } = useQuery<HealingPipeline[]>({
     queryKey: ["/api/healing-pipelines"],
     retry: 1,
   });
-  const pipeline = allPipelines?.find(p => p.agentId === resolvedAgentId) ?? null;
+  const pipeline = allPipelines?.find(p => resolvedAgentId ? p.agentId === resolvedAgentId : p.agentId === config.agentId) ?? null;
 
-  // Bind stage stepper to live pipeline.stage; allow manual override
+  // Bind active stage to pipeline.stage on first load; manual override afterward
   useEffect(() => {
-    if (pipeline && activeStageIdx === null) {
-      setActiveStageIdx(stageIndex(pipeline.stage));
+    if (pipeline && activeIdx === null) {
+      setActiveIdx(stageIndex(pipeline.stage));
     }
-  }, [pipeline, activeStageIdx]);
+  }, [pipeline, activeIdx]);
 
-  const activeIdx  = activeStageIdx ?? 0;
+  const currentIdx = activeIdx ?? 0;
   const stageCount = STAGES.length;
 
   return (
@@ -546,80 +624,64 @@ export default function SHDemoLayout({ config }: { config: SHScenarioConfig }) {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-sm font-semibold truncate">{config.title}</span>
-              <Badge variant="outline" className="text-[10px] shrink-0 border-violet-300 text-violet-700 dark:border-violet-700 dark:text-violet-300">Self-Healing</Badge>
+              <Badge variant="outline" className="text-[10px] shrink-0 border-violet-300 text-violet-700 dark:border-violet-700 dark:text-violet-300">
+                Self-Healing
+              </Badge>
               <Badge variant="outline" className="text-[10px] shrink-0 hidden sm:inline-flex">{config.domain}</Badge>
-              <span className="text-[10px] text-muted-foreground font-mono hidden md:inline">{config.agentCode}</span>
             </div>
+            <p className="text-[11px] text-muted-foreground mt-0.5 hidden sm:block">{config.subtitle}</p>
           </div>
-          {pipeline && (
-            <Chip
-              label={pipeline.stage}
-              color={pipeline.stage === "resolved"
-                ? "bg-green-100 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-300 dark:border-green-800"
-                : SEVERITY_STYLES[pipeline.severity] || "bg-muted text-muted-foreground border-border"}
-            />
-          )}
         </div>
       </div>
 
       {/* Content */}
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
-        {pipelinesLoading ? (
-          <div className="flex items-center justify-center py-20">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-24">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           </div>
         ) : !pipeline ? (
           <EmptyState config={config} />
         ) : (
           <div className="space-y-5">
-            {/* Incident summary bar */}
-            <div className="rounded-xl border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/20 px-4 py-3 flex items-center gap-4">
-              <AlertTriangle className="h-5 w-5 text-red-500 shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-red-900 dark:text-red-100 truncate">{pipeline.title}</p>
-                <p className="text-xs text-red-700 dark:text-red-300">{pipeline.issueType} · {pipeline.industry}</p>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <Chip label={pipeline.severity} color={SEVERITY_STYLES[pipeline.severity] || SEVERITY_STYLES.medium} />
-                <Chip label={pipeline.stage} />
-              </div>
-            </div>
+            {/* Persistent issue summary — always visible */}
+            <IssueSummaryCard pipeline={pipeline} config={config} />
 
-            {/* Stage progress — bound to live pipeline.stage, manually browseable */}
-            <StageProgress pipeline={pipeline} activeIdx={activeIdx} onStage={setActiveStageIdx} />
+            {/* Stage progress bar */}
+            <StageProgress pipeline={pipeline} activeIdx={currentIdx} onStage={setActiveIdx} />
 
-            {/* Main grid */}
+            {/* Two-column layout */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-              {/* Left: stage content */}
+              {/* Left (2/3): stage content */}
               <div className="lg:col-span-2 space-y-4">
-                {activeIdx === 0 && <StageDetect pipeline={pipeline} />}
-                {activeIdx === 1 && <StageDiagnose pipeline={pipeline} />}
-                {activeIdx === 2 && <StageHypothesize pipeline={pipeline} />}
-                {activeIdx === 3 && <StageRemediate pipeline={pipeline} />}
-                {activeIdx === 4 && <StageValidate pipeline={pipeline} />}
+                {currentIdx === 0 && <StageDetect pipeline={pipeline} />}
+                {currentIdx === 1 && <StageDiagnose pipeline={pipeline} />}
+                {currentIdx === 2 && <StageHypothesize pipeline={pipeline} />}
+                {currentIdx === 3 && <StageRemediate pipeline={pipeline} />}
+                {currentIdx === 4 && <StageValidate pipeline={pipeline} />}
 
-                {/* Stage navigation */}
+                {/* Navigation */}
                 <div className="flex items-center gap-3">
                   <Button
                     data-testid="button-prev-stage"
                     variant="outline"
                     size="sm"
-                    disabled={activeIdx === 0}
-                    onClick={() => setActiveStageIdx(i => Math.max(0, (i ?? 0) - 1))}
+                    disabled={currentIdx === 0}
+                    onClick={() => setActiveIdx(i => Math.max(0, (i ?? 0) - 1))}
                     className="flex-1 sm:flex-none"
                   >
                     <ChevronLeft className="h-4 w-4 mr-1" />
                     Previous
                   </Button>
                   <span className="text-xs text-muted-foreground flex-1 text-center">
-                    Stage {activeIdx + 1} of {stageCount} — <strong>{STAGES[activeIdx].label}</strong>
+                    Stage {currentIdx + 1} of {stageCount} — <strong>{STAGES[currentIdx].label}</strong>
                   </span>
                   <Button
                     data-testid="button-next-stage"
-                    variant={activeIdx < stageCount - 1 ? "default" : "outline"}
+                    variant={currentIdx < stageCount - 1 ? "default" : "outline"}
                     size="sm"
-                    disabled={activeIdx === stageCount - 1}
-                    onClick={() => setActiveStageIdx(i => Math.min(stageCount - 1, (i ?? 0) + 1))}
+                    disabled={currentIdx === stageCount - 1}
+                    onClick={() => setActiveIdx(i => Math.min(stageCount - 1, (i ?? 0) + 1))}
                     className="flex-1 sm:flex-none"
                   >
                     Next
@@ -628,22 +690,19 @@ export default function SHDemoLayout({ config }: { config: SHScenarioConfig }) {
                 </div>
               </div>
 
-              {/* Right: intelligence + comparison panels */}
+              {/* Right (1/3): persistent intelligence panels */}
               <div className="space-y-4">
-                {/* Platform Intelligence — 3 tabs */}
-                <PlatformIntelligencePanel pipeline={pipeline} />
-
-                {/* With Atlas vs Without Atlas comparison */}
+                <PlatformIntelligencePanel pipeline={pipeline} activeIdx={currentIdx} />
+                <BusinessImpactPanel pipeline={pipeline} />
                 <AtlasComparisonCard pipeline={pipeline} />
-
-                {/* Compliance frameworks */}
-                <Section title="Compliance Frameworks" icon={Shield}>
+                <IndustryGuardrailsPanel pipeline={pipeline} />
+                <Panel title="Compliance" icon={Shield}>
                   <div className="flex flex-wrap gap-1.5">
                     {config.complianceFrameworks.map(fw => (
                       <Badge key={fw} variant="outline" className="text-[10px] font-medium">{fw}</Badge>
                     ))}
                   </div>
-                </Section>
+                </Panel>
               </div>
             </div>
           </div>
