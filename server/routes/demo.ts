@@ -2137,5 +2137,281 @@ Log every action.`;
     }
   });
 
+  // ─── Self-Healing Retail / Order Fulfillment Demo Live Session ───────────────
+
+  type SHRetailLiveDemoState = {
+    status: "idle" | "running" | "complete";
+    pipelineId: string | null;
+    triggeredAt: Date | null;
+    completedAt: Date | null;
+    agentId: string | null;
+  };
+
+  let shRetailDemo: SHRetailLiveDemoState = {
+    status: "idle",
+    pipelineId: null,
+    triggeredAt: null,
+    completedAt: null,
+    agentId: null,
+  };
+
+  const SH_RETAIL_STAGE_SEQUENCE: Array<{ stage: string; delayMs: number }> = [
+    { stage: "diagnosed",   delayMs: 25_000 },
+    { stage: "hypothesis",  delayMs: 20_000 },
+    { stage: "remediation", delayMs: 20_000 },
+    { stage: "resolved",    delayMs: 30_000 },
+  ];
+
+  async function buildRetailStagePatch(stage: string): Promise<Record<string, unknown>> {
+    const patch: Record<string, unknown> = { stage };
+
+    if (stage === "diagnosed") {
+      patch.diagnosisDetails = {
+        rootCause: "Primary WMS database connection pool exhausted (0/200 connections available). Flash sale traffic 340% above baseline overwhelmed DB thread pool. API error rate: 87%. 1,847 in-flight orders at risk of loss or duplication.",
+        wmsErrorRate: 87,
+        queueDepth: 12847,
+        connectionPool: { available: 0, total: 200 },
+        ordersAtRisk: 1847,
+        sameDayDeliveries: 312,
+        slaExposure: 340000,
+        skillsInvoked: [
+          {
+            skillName: "WMS Health Monitoring Skill",
+            description: "Continuous monitoring of WMS API health, error rates, DB connection pool depth, and order queue latency across all fulfillment nodes.",
+            finding: "Primary WMS API error rate: 87% (alert threshold 2%, critical 20%). DB connection pool: 0/200. Queue depth: 12,847 pending operations. Latency p99: 42 seconds.",
+            duration: "4 minutes — alert triggered on error rate crossing 20% threshold",
+          },
+          {
+            skillName: "SLA Breach Detection Skill",
+            description: "Quantifies SLA penalty exposure across all at-risk orders, prioritized by delivery commitment and penalty tier.",
+            finding: "1,847 orders in-flight · $340K SLA penalty exposure · 312 same-day delivery commitments ($180 penalty/order) · 482 next-day ($45/order) · 1,053 standard ($12/order).",
+            duration: "3 minutes",
+          },
+          {
+            skillName: "Fallback Routing Engine Skill",
+            description: "Evaluates alternate fulfillment paths across secondary DCs, 3PL partners, and in-store pickup. Validates inventory availability and delivery time eligibility.",
+            finding: "DC-West: capacity 1,200 orders (same-day eligible). 3PL-FedEx: capacity 400 orders (next-day eligible). 247 retail stores: local pickup eligible. All 1,847 orders can be rerouted.",
+            duration: "6 minutes",
+          },
+        ],
+        routingPlan: [
+          { destination: "DC-West (Secondary)",  orderCount: 1200, eligibility: "Same-day + next-day" },
+          { destination: "3PL-FedEx",             orderCount: 400,  eligibility: "Next-day" },
+          { destination: "Retail Stores (247)",   orderCount: 247,  eligibility: "Local pickup" },
+        ],
+      };
+    } else if (stage === "hypothesis") {
+      patch.hypothesis = {
+        confidence: 0.96,
+        primaryHypothesis: "Immediately preserve all 1,847 in-flight orders to durable queue to prevent loss, activate fallback routing to DC-West/3PL-FedEx/stores, dispatch proactive customer notifications within CP-01 30-minute window, and prepare SLA breach escalation package.",
+        runbookCandidates: [
+          {
+            runbookName: "WMS Outage Response Protocol",
+            triggerCondition: "WMS API error rate > 20% for 2+ minutes",
+            expectedOutcome: "WMS switched to degraded mode · All in-flight order state preserved to durable queue · Zero order loss or duplication",
+            estimatedDuration: "90 seconds automated failover",
+          },
+          {
+            runbookName: "Overflow Order Rerouting Protocol",
+            triggerCondition: "Primary WMS unavailable — 1,847 orders queued",
+            expectedOutcome: "1,200 orders → DC-West, 400 → 3PL-FedEx, 247 → retail stores. Delivery commitments preserved for 94% of orders.",
+            estimatedDuration: "18 minutes (routing + ERP update + carrier API calls)",
+          },
+          {
+            runbookName: "Customer Notification Blast Protocol",
+            triggerCondition: "CP-01: at-risk customer notification required within 30 min",
+            expectedOutcome: "1,847 customers notified via SMS + email within 22 minutes. Personalized message with new ETA and order tracking link.",
+            estimatedDuration: "22 minutes (CP-01 compliant)",
+          },
+          {
+            runbookName: "SLA Breach Escalation Protocol",
+            triggerCondition: "SLA penalty exposure > $100K",
+            expectedOutcome: "Escalation package auto-generated. VP Operations + Carrier Account Mgr notified. $340K exposure → $28K actual penalties with proactive remediation.",
+            estimatedDuration: "8 minutes automated documentation",
+          },
+        ],
+      };
+    } else if (stage === "remediation") {
+      patch.remediation = {
+        status: "in_progress",
+        runbooksTriggered: [
+          {
+            runbookName: "WMS Outage Response Protocol",
+            status: "completed",
+            result: "WMS switched to degraded mode in 90 seconds. 1,847 in-flight orders preserved to durable Kafka queue. Zero order loss. Zero duplicate shipments.",
+          },
+          {
+            runbookName: "Overflow Order Rerouting Protocol",
+            status: "completed",
+            result: "1,200 orders routed to DC-West (same-day preserved), 400 to 3PL-FedEx (next-day), 247 to retail stores (local pickup). ERP updated. Carrier APIs confirmed.",
+          },
+          {
+            runbookName: "Customer Notification Blast Protocol",
+            status: "completed",
+            result: "1,847 SMS + email notifications dispatched in 22 minutes. CP-01 30-minute window met. Personalized ETAs included. 94% delivery commitment preserved.",
+          },
+          {
+            runbookName: "SLA Breach Escalation Protocol",
+            status: "in_progress",
+            result: "SLA exposure quantified: $340K gross → $28K net with proactive remediation credits. Escalation package submitted to VP Operations and Carrier Account Manager.",
+          },
+        ],
+        policiesEnforced: [
+          {
+            policyName: "Consumer Protection Policy (CP-01)",
+            rule: "At-risk customer notification within 30 minutes of outage",
+            decision: "1,847 customer notifications dispatched at T+22min — CP-01 window met",
+            outcome: "100% of at-risk customers notified within regulatory window",
+          },
+          {
+            policyName: "PCI-DSS v4.0 Data Handling Policy",
+            rule: "No cardholder PAN data in routing logs or recovery queue",
+            decision: "Order recovery queue contains order ID, item list, delivery address only — zero PAN data",
+            outcome: "PCI-DSS scope maintained throughout failover",
+          },
+          {
+            policyName: "GDPR / CCPA Data Minimization Policy",
+            rule: "Only order ID, delivery address, and item list shared with 3PL partners",
+            decision: "3PL-FedEx data transfer limited to operational minimum — no customer PII beyond delivery address",
+            outcome: "GDPR Art. 5(1)(c) and CCPA data minimization satisfied",
+          },
+          {
+            policyName: "SLA Escalation Policy",
+            rule: "Escalate to VP Operations if SLA exposure > $100K or 500+ orders at risk",
+            decision: "$340K exposure exceeds $100K threshold — escalation auto-triggered with full breach analysis",
+            outcome: "VP Operations and Carrier Account Manager notified with remediation plan",
+          },
+        ],
+      };
+      patch.businessImpact = {
+        withAtlas: "WMS outage detected in 4 minutes. 1,847 orders preserved with zero loss. Fallback routing completed in 18 minutes. 1,847 customers notified in 22 minutes. SLA exposure reduced from $340K to $28K.",
+        withoutAtlas: "Detection at 45–90 minutes. Manual rerouting 3–4 hours. Orders lost or duplicated. Customers discover issue via WISMO calls. Full $340K SLA penalties + 12% churn on affected cohort.",
+        ordersProtected: "1,847 orders — zero loss, zero duplication",
+        slaReduction: "$340K exposure → $28K net (92% reduction via proactive remediation)",
+        notificationCompliance: "CP-01 met: 22 minutes (30-minute window)",
+      };
+      patch.industryGuardrails = [
+        { framework: "Consumer Protection CP-01", constraint: "Customer notification within 30 minutes of service disruption",                              status: "enforced" },
+        { framework: "PCI-DSS v4.0",              constraint: "Zero cardholder PAN data in any recovery queue or routing log",                             status: "enforced" },
+        { framework: "GDPR Art. 5(1)(c)",         constraint: "Data minimization — only operational minimum shared with 3PL partners",                     status: "enforced" },
+        { framework: "CCPA §1798.100",            constraint: "No additional PI collection during failover — existing consent scope only",                  status: "enforced" },
+      ];
+    } else if (stage === "resolved") {
+      patch.resolution = {
+        atlasAutonomousActions: [
+          "WMS outage detected in 4 minutes (vs 45–90 min manual monitoring)",
+          "1,847 in-flight orders preserved to durable queue — zero loss, zero duplication",
+          "WMS switched to degraded mode in 90 seconds via automated failover",
+          "Fallback routing completed: 1,200 → DC-West, 400 → 3PL-FedEx, 247 → retail stores",
+          "1,847 customer notifications dispatched in 22 minutes (CP-01: 30-min window met)",
+          "SLA exposure quantified and escalation package submitted — $340K → $28K net",
+          "ERP and carrier APIs updated with new routing assignments",
+        ],
+        requiresHumanAction: [
+          "VP Operations sign-off on SLA penalty negotiation with carriers",
+          "Post-incident WMS capacity review and DB connection pool sizing",
+        ],
+        withoutAtlas: "45–90 min detection, 3–4 hr manual rerouting, order loss/duplication, $340K SLA penalties, 12% churn on affected customer cohort.",
+      };
+      patch.resolvedAt = new Date();
+      patch.status = "resolved";
+    }
+
+    return patch;
+  }
+
+  function scheduleNextRetailStage(pipelineId: string, seqIdx: number) {
+    if (seqIdx >= SH_RETAIL_STAGE_SEQUENCE.length) {
+      shRetailDemo.status = "complete";
+      shRetailDemo.completedAt = new Date();
+      return;
+    }
+    const { stage, delayMs } = SH_RETAIL_STAGE_SEQUENCE[seqIdx];
+    setTimeout(async () => {
+      if (shRetailDemo.pipelineId !== pipelineId) return;
+      try {
+        const patch = await buildRetailStagePatch(stage);
+        await storage.updateHealingPipeline(pipelineId, patch as any);
+        scheduleNextRetailStage(pipelineId, seqIdx + 1);
+      } catch (err: any) {
+        console.error("[demo/sh-retail] stage advance error:", err.message);
+      }
+    }, delayMs);
+  }
+
+  router.post("/api/demo/sh-retail/trigger", async (req, res) => {
+    try {
+      const orgId = getOrgId(req);
+      const allAgents = await storage.getAgents(orgId);
+      const agent = allAgents.find(a => a.name === "Order Fulfillment Recovery Agent");
+      if (!agent) return res.status(404).json({ message: "Order Fulfillment Recovery Agent not found" });
+
+      if (shRetailDemo.pipelineId) {
+        await storage.deleteHealingPipeline(shRetailDemo.pipelineId).catch(() => {});
+      }
+
+      const newPipeline = await storage.createHealingPipeline({
+        title: "Primary WMS API Cascade Failure — Flash Sale Peak Traffic",
+        agentId: agent.id,
+        agentName: agent.name,
+        industry: "retail",
+        severity: "critical",
+        priority: "critical",
+        stage: "detected",
+        issueType: "system_outage",
+        issueDescription: "Primary WMS API error rate: 87% (DB connection pool exhausted — 0/200 connections available). Flash sale traffic 340% above baseline. 1,847 in-flight orders at risk. 312 same-day delivery commitments. $340K SLA penalty exposure.",
+        triggerSource: "atlas_monitoring",
+      } as any);
+
+      shRetailDemo = {
+        status: "running",
+        pipelineId: newPipeline.id,
+        triggeredAt: new Date(),
+        completedAt: null,
+        agentId: agent.id,
+      };
+
+      scheduleNextRetailStage(newPipeline.id, 0);
+
+      res.json({ pipelineId: newPipeline.id, agentId: agent.id, message: "Demo incident triggered" });
+    } catch (err: any) {
+      console.error("[demo/sh-retail/trigger]", err.message);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  router.get("/api/demo/sh-retail/status", async (_req, res) => {
+    try {
+      let pipeline = null;
+      if (shRetailDemo.pipelineId) {
+        pipeline = await storage.getHealingPipeline(shRetailDemo.pipelineId) ?? null;
+      }
+      const elapsedSeconds = shRetailDemo.triggeredAt
+        ? Math.floor((Date.now() - shRetailDemo.triggeredAt.getTime()) / 1000)
+        : 0;
+      res.json({
+        status: shRetailDemo.status,
+        triggeredAt: shRetailDemo.triggeredAt,
+        completedAt: shRetailDemo.completedAt,
+        elapsedSeconds,
+        pipeline,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  router.post("/api/demo/sh-retail/reset", async (_req, res) => {
+    try {
+      if (shRetailDemo.pipelineId) {
+        await storage.deleteHealingPipeline(shRetailDemo.pipelineId).catch(() => {});
+      }
+      shRetailDemo = { status: "idle", pipelineId: null, triggeredAt: null, completedAt: null, agentId: null };
+      res.json({ message: "Demo reset to idle" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
 export { ensureHearstAgents, ensureFitchAgents };
 export default router;
