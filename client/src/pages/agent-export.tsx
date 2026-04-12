@@ -392,7 +392,8 @@ export default function AgentExport() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${(agent?.name || "agent").replace(/[^a-zA-Z0-9_-]/g, "-")}-export.zip`;
+    const slug = (agent?.name || "agent").replace(/[^a-zA-Z0-9_-]/g, "-");
+    a.download = exportPreview.metadata?.bundled ? `${slug}-bundle.zip` : `${slug}-export.zip`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -567,7 +568,8 @@ export default function AgentExport() {
                 Back
               </Button>
               <Button variant="outline" size="sm" onClick={downloadExportPackage} data-testid="button-export-download">
-                <Download className="w-3.5 h-3.5 mr-1.5" /> Download
+                <Download className="w-3.5 h-3.5 mr-1.5" />
+                {exportPreview?.metadata?.bundled ? "Download Bundle" : "Download"}
               </Button>
               <Button size="sm" onClick={() => setExportStep("download")} data-testid="button-export-next-download">
                 Next: Deliver <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
@@ -585,7 +587,11 @@ export default function AgentExport() {
                 disabled={deliveryTarget === "git" && !gitRepoUrl.trim()}
                 data-testid="button-export-deliver"
               >
-                {deliveryTarget === "zip" ? <><Download className="w-3.5 h-3.5 mr-1.5" />Download ZIP</> : deliveryTarget === "git" ? <><GitBranch className="w-3.5 h-3.5 mr-1.5" />Push</> : <><Copy className="w-3.5 h-3.5 mr-1.5" />Copy to Clipboard</>}
+                {deliveryTarget === "zip"
+                  ? <><Download className="w-3.5 h-3.5 mr-1.5" />{exportPreview?.metadata?.bundled ? "Download Bundle ZIP" : "Download ZIP"}</>
+                  : deliveryTarget === "git"
+                    ? <><GitBranch className="w-3.5 h-3.5 mr-1.5" />Push</>
+                    : <><Copy className="w-3.5 h-3.5 mr-1.5" />Copy to Clipboard</>}
               </Button>
             </>
           )}
