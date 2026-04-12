@@ -1395,6 +1395,247 @@ Log every action.`;
 
   // ── BlackRock Use Case 2: Partner Portal Registry MCP Server ────────────────
 
+  // ─── Self-Healing Healthcare Live Demo ────────────────────────────────────────
+  // Server-side state machine: one active demo session at a time.
+  // Incident auto-advances through stages with realistic delays so the prospect
+  // can watch Atlas detect → diagnose → hypothesize → remediate → resolve in
+  // roughly 95 seconds of wall-clock time.
+
+  type SHLiveDemoState = {
+    status: "idle" | "running" | "complete";
+    pipelineId: string | null;
+    triggeredAt: Date | null;
+    completedAt: Date | null;
+    agentId: string | null;
+  };
+
+  let shHealthDemo: SHLiveDemoState = {
+    status: "idle",
+    pipelineId: null,
+    triggeredAt: null,
+    completedAt: null,
+    agentId: null,
+  };
+
+  const SH_STAGE_SEQUENCE: Array<{ stage: string; delayMs: number }> = [
+    { stage: "diagnosed",   delayMs: 25_000 },
+    { stage: "hypothesis",  delayMs: 20_000 },
+    { stage: "remediation", delayMs: 20_000 },
+    { stage: "resolved",    delayMs: 30_000 },
+  ];
+
+  async function buildStagePatch(stage: string): Promise<Record<string, unknown>> {
+    const patch: Record<string, unknown> = { stage };
+
+    if (stage === "diagnosed") {
+      patch.diagnosisDetails = {
+        rootCause: "RxNorm value set version mismatch — EHR upgraded to 2025-03-01 release without coordinating with FHIR validation service",
+        skillsInvoked: [
+          {
+            skillName: "Batch Anomaly Triage Skill",
+            description: "Monitors FHIR batch ingestion error rates using CUSUM change-point detection.",
+            finding: "Error rate spike to 18.4% detected within 4 minutes. Pattern: schema_change (confidence 0.94)",
+            duration: "4 minutes",
+          },
+          {
+            skillName: "FHIR Schema Validation Skill",
+            description: "Validates FHIR R4 resources against HL7 schema and active value set versions.",
+            finding: "1,847 MedicationRequest resources failing. Breaking change: RxNorm codes not found in active value set",
+            duration: "8 minutes",
+          },
+          {
+            skillName: "Drug-Interaction Cross-Check Skill",
+            description: "Cross-checks patient medication lists against contraindication databases.",
+            finding: "312 patients with medication gaps. 3 contraindicated pairs — IMMEDIATE clinical alerts. 47 serious interactions for pharmacist review.",
+            duration: "12 minutes",
+          },
+        ],
+        affectedPatients: 312,
+        criticalPatients: 3,
+        affectedResources: 1847,
+        detectionLatency: "4 minutes (vs ~2.5 hours without Atlas monitoring)",
+      };
+    } else if (stage === "hypothesis") {
+      patch.hypothesis = {
+        confidence: 0.96,
+        primaryHypothesis: "EHR vendor RxNorm value set version change broke FHIR validation. Non-breaking fix: update FHIR profile to accept both old and new codes. Vendor rollback requested in parallel.",
+        runbookCandidates: [
+          {
+            runbookName: "FHIR Schema Drift Response",
+            triggerCondition: "breaking schema change confirmed",
+            expectedOutcome: "Lenient validation mode activated; vendor contacted; affected records quarantined",
+            estimatedDuration: "45 minutes",
+          },
+          {
+            runbookName: "Clinical Data Batch Revalidation Protocol",
+            triggerCondition: "feed restored and profile updated",
+            expectedOutcome: "All 1,847 records revalidated; drug-interaction checks restored",
+            estimatedDuration: "60 minutes",
+          },
+        ],
+      };
+    } else if (stage === "remediation") {
+      patch.remediation = {
+        status: "in_progress",
+        runbooksTriggered: [
+          {
+            runbookName: "FHIR Schema Drift Response",
+            status: "completed",
+            result: "Lenient validation mode activated. EHR vendor contacted — rollback ETA 2 hours. 312 patients in pharmacist review queue.",
+          },
+          {
+            runbookName: "Clinical Informatics Escalation Protocol",
+            status: "completed",
+            result: "Clinical Informatics on-call paged. CMIO briefed on 3 critical patient exposures. No harm events confirmed.",
+          },
+        ],
+        policiesEnforced: [
+          {
+            policyName: "Patient Safety Guardrail Policy",
+            rule: "Contraindicated Interaction Hold",
+            decision: "BLOCKED automated processing for 3 critical patients. Clinical hold activated.",
+            outcome: "No autonomous action on contraindicated patients",
+          },
+          {
+            policyName: "HIPAA Data Handling Policy",
+            rule: "Access Audit Logging",
+            decision: "All PHI access during healing logged with patient tokens only",
+            outcome: "100% audit trail maintained",
+          },
+        ],
+      };
+      patch.businessImpact = {
+        withAtlas: "Detected in 4 min. Clinical holds activated in 12 min. Full remediation in 28 min. 0 patient harm events.",
+        withoutAtlas: "Detection: 2.5 hours. Remediation: 6–8 FTE-hours. Drug-interaction offline 8+ hours.",
+        patientsAtRisk: 312,
+        criticalSafetyExposure: "3 patients with contraindicated drug combinations had interaction checks offline for 4.2 hours",
+        financialExposure: "$0 achieved vs est. $2.4M liability exposure from undetected contraindicated interactions",
+        complianceExposure: "HIPAA: Potential breach notification if harm had occurred",
+        estimatedExposureWindow: "4.2 hours",
+      };
+      patch.industryGuardrails = [
+        { framework: "HIPAA Security Rule",      constraint: "PHI minimization — patient tokens only in logs",           status: "enforced" },
+        { framework: "FDA 21 CFR Part 11",       constraint: "Immutable audit trail for all record modifications",       status: "enforced" },
+        { framework: "HL7 FHIR R4",              constraint: "No non-conformant resources committed to production",      status: "enforced" },
+        { framework: "Patient Safety Guardrail", constraint: "Clinical hold on contraindicated patients — no auto-action", status: "enforced" },
+      ];
+    } else if (stage === "resolved") {
+      patch.resolution = {
+        atlasAutonomousActions: [
+          "Feed anomaly detected in 4 minutes",
+          "Schema drift classified in 12 minutes",
+          "3 critical patients placed on clinical hold immediately",
+          "312 patients routed to pharmacist review queue",
+          "EHR vendor contacted with RxNorm diff report",
+          "Lenient validation mode activated for non-breaking changes",
+        ],
+        requiresHumanAction: [
+          "Pharmacist review of 47 serious interaction cases",
+          "Clinical Informatics sign-off to complete reconciliation",
+          "EHR vendor coordination for permanent RxNorm fix",
+        ],
+        withoutAtlas: "Manual detection ~2.5 hours later. Reconciliation of 1,847 records: 6–8 hours for 2–3 FTEs. Drug-interaction offline throughout.",
+      };
+      patch.resolvedAt = new Date();
+      patch.status = "resolved";
+    }
+
+    return patch;
+  }
+
+  function scheduleNextStage(pipelineId: string, seqIdx: number) {
+    if (seqIdx >= SH_STAGE_SEQUENCE.length) {
+      shHealthDemo.status = "complete";
+      shHealthDemo.completedAt = new Date();
+      return;
+    }
+    const { stage, delayMs } = SH_STAGE_SEQUENCE[seqIdx];
+    setTimeout(async () => {
+      if (shHealthDemo.pipelineId !== pipelineId) return;
+      try {
+        const patch = await buildStagePatch(stage);
+        await storage.updateHealingPipeline(pipelineId, patch as any);
+        scheduleNextStage(pipelineId, seqIdx + 1);
+      } catch (err: any) {
+        console.error("[demo/sh-health] stage advance error:", err.message);
+      }
+    }, delayMs);
+  }
+
+  router.post("/api/demo/sh-health/trigger", async (req, res) => {
+    try {
+      const orgId = getOrgId(req);
+      const allAgents = await storage.getAgents(orgId);
+      const agent = allAgents.find(a => a.name === "Clinical Data Integrity Monitor");
+      if (!agent) return res.status(404).json({ message: "Clinical Data Integrity Monitor agent not found" });
+
+      // Clean up previous demo run
+      if (shHealthDemo.pipelineId) {
+        await storage.deleteHealingPipeline(shHealthDemo.pipelineId).catch(() => {});
+      }
+
+      const newPipeline = await storage.createHealingPipeline({
+        title: "FHIR EHR Feed Schema Drift — Drug-Interaction Validation Gap",
+        agentId: agent.id,
+        agentName: agent.name,
+        industry: "healthcare",
+        severity: "critical",
+        priority: "critical",
+        stage: "detected",
+        issueType: "schema_drift",
+        issueDescription: "FHIR batch ingestion error rate spiked to 18.4%. RxNorm value set version mismatch detected across 1,847 MedicationRequest resources. Drug-interaction validation offline for 312 patients.",
+        triggerSource: "atlas_monitoring",
+      } as any);
+
+      shHealthDemo = {
+        status: "running",
+        pipelineId: newPipeline.id,
+        triggeredAt: new Date(),
+        completedAt: null,
+        agentId: agent.id,
+      };
+
+      scheduleNextStage(newPipeline.id, 0);
+
+      res.json({ pipelineId: newPipeline.id, agentId: agent.id, message: "Demo incident triggered" });
+    } catch (err: any) {
+      console.error("[demo/sh-health/trigger]", err.message);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  router.get("/api/demo/sh-health/status", async (_req, res) => {
+    try {
+      let pipeline = null;
+      if (shHealthDemo.pipelineId) {
+        pipeline = await storage.getHealingPipeline(shHealthDemo.pipelineId) ?? null;
+      }
+      const elapsedSeconds = shHealthDemo.triggeredAt
+        ? Math.floor((Date.now() - shHealthDemo.triggeredAt.getTime()) / 1000)
+        : 0;
+      res.json({
+        status: shHealthDemo.status,
+        triggeredAt: shHealthDemo.triggeredAt,
+        completedAt: shHealthDemo.completedAt,
+        elapsedSeconds,
+        pipeline,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  router.post("/api/demo/sh-health/reset", async (_req, res) => {
+    try {
+      if (shHealthDemo.pipelineId) {
+        await storage.deleteHealingPipeline(shHealthDemo.pipelineId).catch(() => {});
+      }
+      shHealthDemo = { status: "idle", pipelineId: null, triggeredAt: null, completedAt: null, agentId: null };
+      res.json({ message: "Demo reset to idle" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
 
 export { ensureHearstAgents, ensureFitchAgents };
 export default router;
