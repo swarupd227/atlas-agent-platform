@@ -393,7 +393,7 @@ export default function AgentExport() {
     const a = document.createElement("a");
     a.href = url;
     const slug = (agent?.name || "agent").replace(/[^a-zA-Z0-9_-]/g, "-");
-    a.download = exportPreview.metadata?.bundled ? `${slug}-bundle.zip` : `${slug}-export.zip`;
+    a.download = `${slug}-export.zip`;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -569,7 +569,7 @@ export default function AgentExport() {
               </Button>
               <Button variant="outline" size="sm" onClick={downloadExportPackage} data-testid="button-export-download">
                 <Download className="w-3.5 h-3.5 mr-1.5" />
-                {exportPreview?.metadata?.bundled ? "Download Bundle" : "Download"}
+                Download
               </Button>
               <Button size="sm" onClick={() => setExportStep("download")} data-testid="button-export-next-download">
                 Next: Deliver <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
@@ -588,7 +588,7 @@ export default function AgentExport() {
                 data-testid="button-export-deliver"
               >
                 {deliveryTarget === "zip"
-                  ? <><Download className="w-3.5 h-3.5 mr-1.5" />{exportPreview?.metadata?.bundled ? "Download Bundle ZIP" : "Download ZIP"}</>
+                  ? <><Download className="w-3.5 h-3.5 mr-1.5" />Download ZIP</>
                   : deliveryTarget === "git"
                     ? <><GitBranch className="w-3.5 h-3.5 mr-1.5" />Push</>
                     : <><Copy className="w-3.5 h-3.5 mr-1.5" />Copy to Clipboard</>}

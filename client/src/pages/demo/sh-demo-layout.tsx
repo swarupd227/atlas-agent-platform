@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +20,8 @@ import {
   TrendingDown,
   ChevronRight,
   ChevronLeft,
+  BookOpen,
+  Lock,
 } from "lucide-react";
 import type { HealingPipeline } from "@shared/schema";
 
@@ -40,16 +42,21 @@ export interface SHScenarioConfig {
 // ─── Stage Definitions ────────────────────────────────────────────────────────
 
 const STAGES = [
-  { key: "detect",     label: "Detect",     icon: Activity,    step: 1 },
-  { key: "diagnose",   label: "Diagnose",   icon: Brain,       step: 2 },
-  { key: "hypothesize",label: "Hypothesize",icon: Cpu,         step: 3 },
-  { key: "remediate",  label: "Remediate",  icon: Wrench,      step: 4 },
-  { key: "validate",   label: "Validate",   icon: Shield,      step: 5 },
+  { key: "detected",   label: "Detect",      icon: Activity  },
+  { key: "diagnosed",  label: "Diagnose",    icon: Brain     },
+  { key: "hypothesis", label: "Hypothesize", icon: Cpu       },
+  { key: "remediation",label: "Remediate",   icon: Wrench    },
+  { key: "resolved",   label: "Validate",    icon: Shield    },
 ] as const;
 
 type StageKey = typeof STAGES[number]["key"];
 
-// ─── Utility ──────────────────────────────────────────────────────────────────
+function stageIndex(stage: string): number {
+  const idx = STAGES.findIndex(s => s.key === stage);
+  return idx >= 0 ? idx : 0;
+}
+
+// ─── Utilities ────────────────────────────────────────────────────────────────
 
 const SEVERITY_STYLES: Record<string, string> = {
   critical: "bg-red-100 text-red-700 border-red-200 dark:bg-red-950 dark:text-red-300 dark:border-red-800",
@@ -60,7 +67,7 @@ const SEVERITY_STYLES: Record<string, string> = {
 
 function Chip({ label, color }: { label: string; color?: string }) {
   return (
-    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border uppercase tracking-wide ${color || "bg-muted text-muted-foreground border-border"}`}>
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold border uppercase tracking-wide ${color ?? "bg-muted text-muted-foreground border-border"}`}>
       {label}
     </span>
   );
@@ -69,10 +76,12 @@ function Chip({ label, color }: { label: string; color?: string }) {
 function Section({ title, icon: Icon, children }: { title: string; icon?: React.ElementType; children: React.ReactNode }) {
   return (
     <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-      <div className="flex items-center gap-2">
-        {Icon && <Icon className="h-4 w-4 text-muted-foreground" />}
-        <h3 className="text-sm font-semibold">{title}</h3>
-      </div>
+      {(title || Icon) && (
+        <div className="flex items-center gap-2">
+          {Icon && <Icon className="h-4 w-4 text-muted-foreground shrink-0" />}
+          <h3 className="text-sm font-semibold">{title}</h3>
+        </div>
+      )}
       {children}
     </div>
   );
@@ -89,29 +98,43 @@ function KV({ label, value }: { label: string; value: React.ReactNode }) {
 
 // ─── Stage Progress Bar ───────────────────────────────────────────────────────
 
-function StageProgress({ activeIdx, onStage }: { activeIdx: number; onStage: (idx: number) => void }) {
+function StageProgress({
+  pipeline,
+  activeIdx,
+  onStage,
+}: {
+  pipeline: HealingPipeline;
+  activeIdx: number;
+  onStage: (idx: number) => void;
+}) {
+  const liveIdx = stageIndex(pipeline.stage);
   return (
     <div className="flex items-center w-full gap-0">
       {STAGES.map((s, idx) => {
         const Icon = s.icon;
-        const done = idx < activeIdx;
-        const active = idx === activeIdx;
+        const done    = idx < liveIdx;
+        const live    = idx === liveIdx;
+        const viewing = idx === activeIdx;
         return (
           <div key={s.key} className="flex items-center flex-1 min-w-0">
             <button
               data-testid={`stage-${s.key}`}
               onClick={() => onStage(idx)}
+              title={s.label}
               className={`flex items-center gap-1.5 flex-1 px-2 py-2 rounded-lg text-xs font-medium transition-all cursor-pointer min-w-0 ${
-                done   ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/40" :
-                active ? "bg-primary/10 text-primary ring-1 ring-primary/30" :
-                         "bg-muted/40 text-muted-foreground hover:bg-muted/70"
+                viewing && done  ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-300 ring-1 ring-green-400" :
+                viewing && live  ? "bg-primary/10 text-primary ring-1 ring-primary/30" :
+                viewing          ? "bg-muted text-foreground ring-1 ring-border" :
+                done             ? "bg-green-100 dark:bg-green-950/40 text-green-700 dark:text-green-300 hover:bg-green-200 dark:hover:bg-green-900/40" :
+                live             ? "bg-primary/5 text-primary hover:bg-primary/10" :
+                                   "bg-muted/40 text-muted-foreground hover:bg-muted/70"
               }`}
             >
               <span className="shrink-0">
                 {done ? <CheckCircle2 className="h-3.5 w-3.5" /> : <Icon className="h-3.5 w-3.5" />}
               </span>
-              <span className="truncate hidden sm:inline capitalize">{s.label}</span>
-              <span className="sm:hidden text-[10px]">{s.step}</span>
+              <span className="truncate hidden sm:inline">{s.label}</span>
+              {live && <span className="ml-auto shrink-0 hidden sm:inline"><span className="relative flex h-1.5 w-1.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" /><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-primary" /></span></span>}
             </button>
             {idx < STAGES.length - 1 && (
               <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40 shrink-0 mx-0.5" />
@@ -123,71 +146,125 @@ function StageProgress({ activeIdx, onStage }: { activeIdx: number; onStage: (id
   );
 }
 
-// ─── Platform Intelligence Panel ─────────────────────────────────────────────
+// ─── Platform Intelligence Panel (3-Tab) ─────────────────────────────────────
+
+type PITab = "skills" | "runbooks" | "policies";
 
 function PlatformIntelligencePanel({ pipeline }: { pipeline: HealingPipeline }) {
-  const diagnosis = (pipeline.diagnosisDetails as Record<string, unknown>) || {};
-  const guardrails = (pipeline.industryGuardrails as Array<Record<string, string>>) || [];
+  const [tab, setTab] = useState<PITab>("skills");
+  const diagnosis  = (pipeline.diagnosisDetails as Record<string, unknown>) || {};
+  const remediation = (pipeline.remediation     as Record<string, unknown>) || {};
+  const guardrails  = (pipeline.industryGuardrails as Array<Record<string, string>>) || [];
+
   const skills: Array<{ skillName: string; finding: string; duration?: string }> = [
-    ...((diagnosis.skillsInvoked || []) as Array<{ skillName: string; finding: string; duration?: string }>),
+    ...((diagnosis.skillsInvoked     || []) as Array<{ skillName: string; finding: string; duration?: string }>),
     ...((diagnosis.atlasSkillsInvoked || []) as Array<{ skillName: string; finding: string; duration?: string }>),
+  ];
+  const runbooks: Array<{ runbookName: string; status?: string; result?: string }> =
+    ((remediation.runbooksTriggered || []) as Array<{ runbookName: string; status?: string; result?: string }>);
+  const policies: Array<{ policyName?: string; rule?: string; decision?: string; outcome?: string }> = [
+    ...((remediation.policiesEnforced || []) as Array<{ policyName?: string; rule?: string; decision?: string; outcome?: string }>),
+    ...guardrails.map(g => ({ policyName: g.framework, rule: g.constraint, decision: g.status, outcome: "" })),
+  ];
+
+  const TABS: { key: PITab; label: string; count: number; icon: React.ElementType }[] = [
+    { key: "skills",   label: "Skills Invoked",     count: skills.length,   icon: Zap      },
+    { key: "runbooks", label: "Runbooks Triggered",  count: runbooks.length, icon: BookOpen },
+    { key: "policies", label: "Policies Enforced",   count: policies.length, icon: Lock     },
   ];
 
   return (
-    <Section title="Platform Intelligence in Action" icon={Zap}>
-      {skills.length > 0 ? (
-        <div className="space-y-2">
-          {skills.map((sk, i) => (
+    <div className="rounded-xl border border-border bg-card overflow-hidden">
+      <div className="flex items-center gap-1 border-b border-border px-3 py-2">
+        <Zap className="h-3.5 w-3.5 text-primary" />
+        <span className="text-[11px] font-semibold text-foreground ml-1">Platform Intelligence in Action</span>
+      </div>
+      {/* Tab bar */}
+      <div className="flex border-b border-border">
+        {TABS.map(t => (
+          <button
+            key={t.key}
+            data-testid={`pi-tab-${t.key}`}
+            onClick={() => setTab(t.key)}
+            className={`flex-1 flex items-center justify-center gap-1 px-2 py-2 text-[10px] font-medium transition-colors ${
+              tab === t.key
+                ? "border-b-2 border-primary text-primary bg-primary/5"
+                : "text-muted-foreground hover:text-foreground border-b-2 border-transparent"
+            }`}
+          >
+            <t.icon className="h-3 w-3 shrink-0" />
+            <span className="hidden sm:inline truncate">{t.label}</span>
+            {t.count > 0 && <span className="ml-auto bg-muted rounded-full px-1.5 text-[9px] font-bold">{t.count}</span>}
+          </button>
+        ))}
+      </div>
+      {/* Tab content */}
+      <div className="p-3 space-y-2 max-h-64 overflow-y-auto">
+        {tab === "skills" && (
+          skills.length > 0 ? skills.map((sk, i) => (
             <div key={i} className="rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 p-2.5">
               <div className="flex items-center gap-1.5 mb-1">
                 <Zap className="h-3 w-3 text-amber-600 dark:text-amber-400 shrink-0" />
                 <span className="text-[11px] font-semibold text-amber-700 dark:text-amber-300 truncate">{sk.skillName}</span>
-                {sk.duration && <span className="ml-auto text-[10px] text-amber-600/70 dark:text-amber-400/70 shrink-0">{sk.duration}</span>}
+                {sk.duration && <span className="ml-auto text-[10px] text-amber-600/70 shrink-0">{sk.duration}</span>}
               </div>
               <p className="text-[11px] text-amber-800 dark:text-amber-200 leading-relaxed">{sk.finding}</p>
             </div>
-          ))}
-        </div>
-      ) : (
-        <p className="text-xs text-muted-foreground">Skills analysis available after diagnosis phase.</p>
-      )}
+          )) : <p className="text-xs text-muted-foreground py-2">Skills analysis populates after diagnosis.</p>
+        )}
 
-      {guardrails.length > 0 && (
-        <div className="space-y-1.5 pt-2 border-t border-border">
-          <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Regulatory Guardrails</p>
-          {guardrails.map((g, i) => (
-            <div key={i} className="rounded-lg bg-muted/40 p-2 flex items-start gap-2">
-              <Shield className="h-3 w-3 text-primary shrink-0 mt-0.5" />
-              <div>
-                <p className="text-[11px] font-semibold">{g.framework}</p>
-                <p className="text-[11px] text-muted-foreground">{g.constraint}</p>
-                <Chip label={g.status || "active"} color="bg-green-100 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-300 dark:border-green-800" />
+        {tab === "runbooks" && (
+          runbooks.length > 0 ? runbooks.map((rb, i) => (
+            <div key={i} className="rounded-lg bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 p-2.5">
+              <div className="flex items-center gap-1.5 mb-1">
+                <BookOpen className="h-3 w-3 text-purple-600 dark:text-purple-400 shrink-0" />
+                <span className="text-[11px] font-semibold text-purple-700 dark:text-purple-300 truncate">{rb.runbookName}</span>
               </div>
+              {rb.status && <p className="text-[11px] text-purple-600 dark:text-purple-400">{rb.status}</p>}
+              {rb.result && <p className="text-[11px] text-purple-800 dark:text-purple-200 mt-1">{rb.result}</p>}
             </div>
-          ))}
-        </div>
-      )}
-    </Section>
+          )) : <p className="text-xs text-muted-foreground py-2">Runbooks activate during remediation phase.</p>
+        )}
+
+        {tab === "policies" && (
+          policies.length > 0 ? policies.map((p, i) => {
+            const ok = (p.decision || "").toLowerCase().includes("compliant") || (p.decision || "").toLowerCase().includes("pass");
+            return (
+              <div key={i} className={`rounded-lg border p-2.5 ${ok ? "bg-green-50 dark:bg-green-950/20 border-green-200 dark:border-green-800" : "bg-muted/40 border-border"}`}>
+                <div className="flex items-center gap-1.5 mb-0.5">
+                  <Lock className={`h-3 w-3 shrink-0 ${ok ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`} />
+                  <span className={`text-[11px] font-semibold truncate ${ok ? "text-green-700 dark:text-green-300" : "text-foreground"}`}>{p.policyName}</span>
+                </div>
+                {p.rule && <p className="text-[11px] text-muted-foreground">{p.rule}</p>}
+                {(p.decision || p.outcome) && <p className={`text-[11px] mt-0.5 font-medium ${ok ? "text-green-700 dark:text-green-300" : "text-foreground"}`}>{[p.decision, p.outcome].filter(Boolean).join(" — ")}</p>}
+              </div>
+            );
+          }) : <p className="text-xs text-muted-foreground py-2">Policy checks run alongside remediation.</p>
+        )}
+      </div>
+    </div>
   );
 }
 
-// ─── Business Impact Panel ────────────────────────────────────────────────────
+// ─── With Atlas vs Without Atlas Comparison ───────────────────────────────────
 
-function BusinessImpactPanel({ pipeline }: { pipeline: HealingPipeline }) {
+function AtlasComparisonCard({ pipeline }: { pipeline: HealingPipeline }) {
   const impact = (pipeline.businessImpact as Record<string, string>) || {};
-  const withAtlas = impact.withAtlas || "";
-  const withoutAtlas = impact.withoutAtlas || "";
+  const res    = (pipeline.resolution    as Record<string, string>) || {};
+
+  const withAtlas    = impact.withAtlas    || res.atlasAutonomousActions?.toString() || "";
+  const withoutAtlas = impact.withoutAtlas || res.withoutAtlas || "";
 
   if (!withAtlas && !withoutAtlas) return null;
 
   return (
-    <Section title="Business Impact" icon={TrendingUp}>
+    <Section title="With Atlas vs Without Atlas" icon={TrendingUp}>
       <div className="grid grid-cols-1 gap-2">
         {withAtlas && (
           <div className="rounded-lg bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 p-3">
             <div className="flex items-center gap-1.5 mb-1">
               <TrendingUp className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
-              <span className="text-[11px] font-semibold text-green-700 dark:text-green-300 uppercase tracking-wide">With Atlas</span>
+              <span className="text-[11px] font-bold text-green-700 dark:text-green-300 uppercase tracking-wide">With Atlas</span>
             </div>
             <p className="text-xs text-green-800 dark:text-green-200 leading-relaxed">{withAtlas}</p>
           </div>
@@ -196,11 +273,50 @@ function BusinessImpactPanel({ pipeline }: { pipeline: HealingPipeline }) {
           <div className="rounded-lg bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 p-3">
             <div className="flex items-center gap-1.5 mb-1">
               <TrendingDown className="h-3.5 w-3.5 text-red-600 dark:text-red-400" />
-              <span className="text-[11px] font-semibold text-red-700 dark:text-red-300 uppercase tracking-wide">Without Atlas</span>
+              <span className="text-[11px] font-bold text-red-700 dark:text-red-300 uppercase tracking-wide">Without Atlas</span>
             </div>
             <p className="text-xs text-red-800 dark:text-red-200 leading-relaxed">{withoutAtlas}</p>
           </div>
         )}
+      </div>
+    </Section>
+  );
+}
+
+// ─── Resolution Timeline ──────────────────────────────────────────────────────
+
+function ResolutionTimeline({ pipeline }: { pipeline: HealingPipeline }) {
+  const res = (pipeline.resolution as Record<string, unknown>) || {};
+  const atlasActions  = (res.atlasAutonomousActions as string[]) || [];
+  const humanActions  = (res.requiresHumanAction   as string[]) || [];
+  const resolvedAt = pipeline.resolvedAt;
+
+  if (atlasActions.length === 0 && humanActions.length === 0) return null;
+
+  return (
+    <Section title="Resolution Timeline" icon={Clock}>
+      <div className="space-y-2">
+        {resolvedAt && (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground pb-1 border-b border-border">
+            <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
+            <span>Resolved {new Date(resolvedAt).toLocaleString()}</span>
+          </div>
+        )}
+        {atlasActions.map((action, i) => (
+          <div key={i} className="flex items-start gap-2 text-sm">
+            <div className="flex flex-col items-center shrink-0">
+              <div className="w-2.5 h-2.5 rounded-full bg-green-500 mt-0.5" />
+              {i < atlasActions.length - 1 && <div className="w-px flex-1 bg-border mt-1 min-h-[12px]" />}
+            </div>
+            <span className="text-sm">{action}</span>
+          </div>
+        ))}
+        {humanActions.map((action, i) => (
+          <div key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
+            <div className="shrink-0 mt-0.5"><Clock className="h-3.5 w-3.5 text-amber-500" /></div>
+            <span>{action}</span>
+          </div>
+        ))}
       </div>
     </Section>
   );
@@ -213,29 +329,23 @@ function StageDetect({ pipeline }: { pipeline: HealingPipeline }) {
     <div className="space-y-4">
       <Section title="Incident Detected" icon={AlertTriangle}>
         <div className="grid grid-cols-2 gap-3">
-          <KV label="Severity" value={
-            <Chip label={pipeline.severity} color={SEVERITY_STYLES[pipeline.severity] || SEVERITY_STYLES.medium} />
-          } />
+          <KV label="Severity" value={<Chip label={pipeline.severity} color={SEVERITY_STYLES[pipeline.severity] || SEVERITY_STYLES.medium} />} />
           <KV label="Issue Type" value={pipeline.issueType} />
           <KV label="Industry" value={pipeline.industry} />
-          <KV label="Agent" value={<span className="font-mono">{pipeline.agentName}</span>} />
+          <KV label="Status" value={<Chip label={pipeline.status} />} />
         </div>
         {pipeline.issueDescription && (
-          <div className="mt-2 pt-2 border-t border-border">
+          <div className="pt-2 border-t border-border">
             <p className="text-[10px] text-muted-foreground uppercase tracking-wide mb-1">Description</p>
-            <p className="text-sm text-foreground leading-relaxed">{pipeline.issueDescription}</p>
+            <p className="text-sm leading-relaxed">{pipeline.issueDescription}</p>
           </div>
         )}
       </Section>
-
-      <Section title="Detection Context" icon={Clock}>
+      <Section title="Detection Metadata" icon={Clock}>
         <div className="grid grid-cols-2 gap-3">
-          <KV label="Status" value={<Chip label={pipeline.status} />} />
           <KV label="Priority" value={<Chip label={pipeline.priority} />} />
           {pipeline.triggerSource && <KV label="Trigger Source" value={pipeline.triggerSource} />}
-          {pipeline.detectedAt && (
-            <KV label="Detected At" value={new Date(pipeline.detectedAt).toLocaleString()} />
-          )}
+          {pipeline.detectedAt && <KV label="Detected At" value={new Date(pipeline.detectedAt).toLocaleString()} />}
         </div>
       </Section>
     </div>
@@ -250,37 +360,26 @@ function StageDiagnose({ pipeline }: { pipeline: HealingPipeline }) {
     <div className="space-y-4">
       <Section title="Root Cause Analysis" icon={Brain}>
         {rootCause ? (
-          <>
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Root Cause</p>
-            <p className="text-sm leading-relaxed">{rootCause}</p>
-          </>
+          <p className="text-sm leading-relaxed">{rootCause}</p>
         ) : (
-          <p className="text-sm text-muted-foreground">Diagnosis analysis will appear here after the detection phase.</p>
+          <p className="text-sm text-muted-foreground">Root cause analysis pending — diagnosis phase in progress.</p>
         )}
+        {Object.entries(details)
+          .filter(([k]) => !["rootCause", "skillsInvoked", "atlasSkillsInvoked"].includes(k))
+          .map(([k, v]) => (
+            <KV key={k} label={k.replace(/([A-Z])/g, " $1").trim()} value={
+              typeof v === "string" || typeof v === "number" ? String(v)
+                : <span className="text-xs font-mono text-muted-foreground">{JSON.stringify(v)}</span>
+            } />
+          ))}
       </Section>
-
-      {Object.keys(details).filter(k => !["rootCause", "skillsInvoked", "atlasSkillsInvoked"].includes(k)).length > 0 && (
-        <Section title="Diagnosis Details" icon={FileText}>
-          <div className="space-y-2">
-            {Object.entries(details)
-              .filter(([k]) => !["rootCause", "skillsInvoked", "atlasSkillsInvoked"].includes(k))
-              .map(([key, val]) => (
-                <KV key={key} label={key.replace(/([A-Z])/g, " $1").trim()} value={
-                  typeof val === "string" || typeof val === "number"
-                    ? String(val)
-                    : <span className="text-xs text-muted-foreground font-mono">{JSON.stringify(val)}</span>
-                } />
-              ))}
-          </div>
-        </Section>
-      )}
     </div>
   );
 }
 
 function StageHypothesize({ pipeline }: { pipeline: HealingPipeline }) {
-  const hyp = (pipeline.hypothesis as Record<string, unknown>) || {};
-  const primary = hyp.primaryHypothesis as string | undefined;
+  const hyp       = (pipeline.hypothesis as Record<string, unknown>) || {};
+  const primary   = hyp.primaryHypothesis as string | undefined;
   const confidence = hyp.confidence as number | undefined;
   const candidates = (hyp.runbookCandidates as Array<Record<string, string>>) || [];
 
@@ -294,10 +393,7 @@ function StageHypothesize({ pipeline }: { pipeline: HealingPipeline }) {
               <div className="flex items-center gap-2">
                 <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Confidence</span>
                 <div className="flex-1 rounded-full bg-muted h-2 overflow-hidden">
-                  <div
-                    className="h-2 rounded-full bg-primary transition-all"
-                    style={{ width: `${Math.min(100, confidence * 100)}%` }}
-                  />
+                  <div className="h-2 rounded-full bg-primary" style={{ width: `${Math.min(100, confidence * 100)}%` }} />
                 </div>
                 <span className="text-xs font-semibold">{Math.round(confidence * 100)}%</span>
               </div>
@@ -314,8 +410,8 @@ function StageHypothesize({ pipeline }: { pipeline: HealingPipeline }) {
             {candidates.map((c, i) => (
               <div key={i} className="rounded-lg bg-muted/40 p-3">
                 <p className="text-xs font-semibold mb-1">{c.runbookName}</p>
-                {c.triggerCondition && <p className="text-[11px] text-muted-foreground mb-1"><strong>Trigger:</strong> {c.triggerCondition}</p>}
-                {c.expectedOutcome && <p className="text-[11px] text-muted-foreground"><strong>Outcome:</strong> {c.expectedOutcome}</p>}
+                {c.triggerCondition && <p className="text-[11px] text-muted-foreground mb-0.5"><strong>Trigger:</strong> {c.triggerCondition}</p>}
+                {c.expectedOutcome  && <p className="text-[11px] text-muted-foreground"><strong>Outcome:</strong> {c.expectedOutcome}</p>}
                 {c.estimatedDuration && <p className="text-[10px] text-muted-foreground mt-1">Est. {c.estimatedDuration}</p>}
               </div>
             ))}
@@ -327,10 +423,8 @@ function StageHypothesize({ pipeline }: { pipeline: HealingPipeline }) {
 }
 
 function StageRemediate({ pipeline }: { pipeline: HealingPipeline }) {
-  const rem = (pipeline.remediation as Record<string, unknown>) || {};
-  const status = rem.status as string | undefined;
-  const runbooks = (rem.runbooksTriggered as Array<Record<string, string>>) || [];
-  const policies = (rem.policiesEnforced as Array<Record<string, string>>) || [];
+  const rem     = (pipeline.remediation as Record<string, unknown>) || {};
+  const status  = rem.status as string | undefined;
 
   return (
     <div className="space-y-4">
@@ -338,88 +432,43 @@ function StageRemediate({ pipeline }: { pipeline: HealingPipeline }) {
         {status ? (
           <div className="flex items-center gap-2">
             <Chip label={status} color="bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-950 dark:text-blue-300 dark:border-blue-800" />
+            <span className="text-xs text-muted-foreground">Autonomous actions executing via Platform Intelligence</span>
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">Remediation will activate after hypothesis is confirmed.</p>
+          <p className="text-sm text-muted-foreground">Remediation activates after hypothesis confirmation.</p>
         )}
       </Section>
-
-      {runbooks.length > 0 && (
-        <Section title="Runbooks Triggered" icon={FileText}>
-          <div className="space-y-2">
-            {runbooks.map((rb, i) => (
-              <div key={i} className="rounded-lg bg-purple-50 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 p-2.5">
-                <p className="text-xs font-semibold text-purple-800 dark:text-purple-200 mb-0.5">{rb.runbookName}</p>
-                <p className="text-[11px] text-purple-700 dark:text-purple-300">{rb.status}</p>
-                {rb.result && <p className="text-[11px] text-purple-600 dark:text-purple-400 mt-1">{rb.result}</p>}
-              </div>
-            ))}
-          </div>
-        </Section>
-      )}
-
-      {policies.length > 0 && (
-        <Section title="Policies Enforced" icon={Shield}>
-          <div className="space-y-2">
-            {policies.map((p, i) => (
-              <div key={i} className="rounded-lg bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 p-2.5">
-                <p className="text-xs font-semibold text-green-800 dark:text-green-200 mb-0.5">{p.policyName}</p>
-                {p.rule && <p className="text-[11px] text-green-700 dark:text-green-300">{p.rule}</p>}
-                <p className="text-[11px] font-medium text-green-600 dark:text-green-400 mt-0.5">{p.decision} — {p.outcome}</p>
-              </div>
-            ))}
-          </div>
-        </Section>
-      )}
     </div>
   );
 }
 
 function StageValidate({ pipeline }: { pipeline: HealingPipeline }) {
-  const res = (pipeline.resolution as Record<string, unknown>) || {};
-  const atlasActions = (res.atlasAutonomousActions as string[]) || [];
-  const humanActions = (res.requiresHumanAction as string[]) || [];
-  const withoutAtlas = res.withoutAtlas as string | undefined;
+  const guardrails = (pipeline.industryGuardrails as Array<Record<string, string>>) || [];
 
   return (
     <div className="space-y-4">
-      {atlasActions.length > 0 && (
-        <Section title="Atlas Autonomous Actions" icon={Zap}>
-          <ul className="space-y-1.5">
-            {atlasActions.map((action, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm">
-                <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0 mt-0.5" />
-                <span>{action}</span>
-              </li>
-            ))}
-          </ul>
-        </Section>
-      )}
+      <ResolutionTimeline pipeline={pipeline} />
 
-      {humanActions.length > 0 && (
-        <Section title="Human Actions Required" icon={FileText}>
-          <ul className="space-y-1.5">
-            {humanActions.map((action, i) => (
-              <li key={i} className="flex items-start gap-2 text-sm text-muted-foreground">
-                <Clock className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
-                <span>{action}</span>
-              </li>
+      {guardrails.length > 0 && (
+        <Section title="Regulatory Guardrails Verified" icon={Shield}>
+          <div className="space-y-2">
+            {guardrails.map((g, i) => (
+              <div key={i} className="flex items-start gap-3 rounded-lg bg-muted/40 p-2.5">
+                <Shield className="h-3.5 w-3.5 text-primary shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-[11px] font-semibold">{g.framework}</p>
+                  <p className="text-[11px] text-muted-foreground">{g.constraint}</p>
+                  <Chip label={g.status || "verified"} color="bg-green-100 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-300 dark:border-green-800" />
+                </div>
+              </div>
             ))}
-          </ul>
-        </Section>
-      )}
-
-      {withoutAtlas && (
-        <Section title="Without Atlas — Counterfactual" icon={TrendingDown}>
-          <div className="rounded-lg bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 p-3">
-            <p className="text-sm text-red-800 dark:text-red-200 leading-relaxed">{withoutAtlas}</p>
           </div>
         </Section>
       )}
 
-      {atlasActions.length === 0 && humanActions.length === 0 && !withoutAtlas && (
+      {guardrails.length === 0 && (pipeline.resolution as any)?.atlasAutonomousActions?.length === 0 && (
         <Section title="Validation" icon={Shield}>
-          <p className="text-sm text-muted-foreground">Resolution data will be available after remediation completes.</p>
+          <p className="text-sm text-muted-foreground">Validation data populates after remediation completes.</p>
         </Section>
       )}
     </div>
@@ -430,17 +479,17 @@ function StageValidate({ pipeline }: { pipeline: HealingPipeline }) {
 
 function EmptyState({ config }: { config: SHScenarioConfig }) {
   return (
-    <div className="max-w-2xl mx-auto py-12 text-center space-y-4">
+    <div className="max-w-2xl mx-auto py-16 text-center space-y-4">
       <div className="mx-auto w-14 h-14 rounded-full bg-muted flex items-center justify-center">
         <Activity className="h-7 w-7 text-muted-foreground" />
       </div>
       <h2 className="text-lg font-semibold">No Healing Pipeline Data</h2>
       <p className="text-sm text-muted-foreground leading-relaxed max-w-md mx-auto">
-        The self-healing pipeline for <strong>{config.title}</strong> has not been initialized yet.
+        No active healing pipeline found for <strong>{config.title}</strong>.
         Atlas will automatically create and populate this pipeline when an incident is detected in the{" "}
         <strong>{config.domain}</strong> environment.
       </p>
-      <div className="flex flex-col sm:flex-row gap-3 justify-center pt-2">
+      <div className="flex justify-center pt-2">
         <Link href="/demo">
           <Button data-testid="button-back-to-demos" variant="outline">
             <ArrowLeft className="h-4 w-4 mr-2" />
@@ -455,23 +504,32 @@ function EmptyState({ config }: { config: SHScenarioConfig }) {
 // ─── Main Layout ──────────────────────────────────────────────────────────────
 
 export default function SHDemoLayout({ config }: { config: SHScenarioConfig }) {
-  const [activeStageIdx, setActiveStageIdx] = useState(0);
+  const [activeStageIdx, setActiveStageIdx] = useState<number | null>(null);
 
-  const { data: pipeline, isLoading, isError } = useQuery<HealingPipeline>({
-    queryKey: ["/api/healing-pipelines", config.pipelineId],
-    enabled: !!config.pipelineId,
+  // Step 1: Fetch all agents and resolve by name/agentCode
+  const { data: allAgents = [] } = useQuery<{ id: string; name: string; agentType?: string }[]>({
+    queryKey: ["/api/agents"],
     retry: 1,
   });
+  const resolvedAgent = allAgents.find(a => a.name === config.title) ?? null;
+  const resolvedAgentId = resolvedAgent?.id ?? config.agentId;
 
-  const { data: agent } = useQuery<{ name: string; agentType: string; industry: string }>({
-    queryKey: ["/api/agents", config.agentId],
-    enabled: !!config.agentId,
+  // Step 2: Fetch all healing pipelines and filter by resolved agentId
+  const { data: allPipelines, isLoading: pipelinesLoading } = useQuery<HealingPipeline[]>({
+    queryKey: ["/api/healing-pipelines"],
     retry: 1,
   });
+  const pipeline = allPipelines?.find(p => p.agentId === resolvedAgentId) ?? null;
 
+  // Bind stage stepper to live pipeline.stage; allow manual override
+  useEffect(() => {
+    if (pipeline && activeStageIdx === null) {
+      setActiveStageIdx(stageIndex(pipeline.stage));
+    }
+  }, [pipeline, activeStageIdx]);
+
+  const activeIdx  = activeStageIdx ?? 0;
   const stageCount = STAGES.length;
-  const canPrev = activeStageIdx > 0;
-  const canNext = activeStageIdx < stageCount - 1;
 
   return (
     <div className="min-h-screen bg-background">
@@ -488,27 +546,29 @@ export default function SHDemoLayout({ config }: { config: SHScenarioConfig }) {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <span className="text-sm font-semibold truncate">{config.title}</span>
-              <Badge variant="outline" className="text-[10px] shrink-0 border-primary/40 text-primary">Self-Healing</Badge>
+              <Badge variant="outline" className="text-[10px] shrink-0 border-violet-300 text-violet-700 dark:border-violet-700 dark:text-violet-300">Self-Healing</Badge>
               <Badge variant="outline" className="text-[10px] shrink-0 hidden sm:inline-flex">{config.domain}</Badge>
-              <span className="text-[10px] text-muted-foreground font-mono hidden sm:inline">{config.agentCode}</span>
+              <span className="text-[10px] text-muted-foreground font-mono hidden md:inline">{config.agentCode}</span>
             </div>
           </div>
-          {agent && (
-            <div className="shrink-0 hidden md:flex items-center gap-1.5 text-xs text-muted-foreground">
-              <Cpu className="h-3.5 w-3.5" />
-              <span>{agent.name || config.title}</span>
-            </div>
+          {pipeline && (
+            <Chip
+              label={pipeline.stage}
+              color={pipeline.stage === "resolved"
+                ? "bg-green-100 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-300 dark:border-green-800"
+                : SEVERITY_STYLES[pipeline.severity] || "bg-muted text-muted-foreground border-border"}
+            />
           )}
         </div>
       </div>
 
       {/* Content */}
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6">
-        {isLoading ? (
+        {pipelinesLoading ? (
           <div className="flex items-center justify-center py-20">
             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
           </div>
-        ) : isError || !pipeline ? (
+        ) : !pipeline ? (
           <EmptyState config={config} />
         ) : (
           <div className="space-y-5">
@@ -525,18 +585,18 @@ export default function SHDemoLayout({ config }: { config: SHScenarioConfig }) {
               </div>
             </div>
 
-            {/* Stage progress */}
-            <StageProgress activeIdx={activeStageIdx} onStage={setActiveStageIdx} />
+            {/* Stage progress — bound to live pipeline.stage, manually browseable */}
+            <StageProgress pipeline={pipeline} activeIdx={activeIdx} onStage={setActiveStageIdx} />
 
             {/* Main grid */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
               {/* Left: stage content */}
               <div className="lg:col-span-2 space-y-4">
-                {activeStageIdx === 0 && <StageDetect pipeline={pipeline} />}
-                {activeStageIdx === 1 && <StageDiagnose pipeline={pipeline} />}
-                {activeStageIdx === 2 && <StageHypothesize pipeline={pipeline} />}
-                {activeStageIdx === 3 && <StageRemediate pipeline={pipeline} />}
-                {activeStageIdx === 4 && <StageValidate pipeline={pipeline} />}
+                {activeIdx === 0 && <StageDetect pipeline={pipeline} />}
+                {activeIdx === 1 && <StageDiagnose pipeline={pipeline} />}
+                {activeIdx === 2 && <StageHypothesize pipeline={pipeline} />}
+                {activeIdx === 3 && <StageRemediate pipeline={pipeline} />}
+                {activeIdx === 4 && <StageValidate pipeline={pipeline} />}
 
                 {/* Stage navigation */}
                 <div className="flex items-center gap-3">
@@ -544,22 +604,22 @@ export default function SHDemoLayout({ config }: { config: SHScenarioConfig }) {
                     data-testid="button-prev-stage"
                     variant="outline"
                     size="sm"
-                    disabled={!canPrev}
-                    onClick={() => setActiveStageIdx(i => i - 1)}
+                    disabled={activeIdx === 0}
+                    onClick={() => setActiveStageIdx(i => Math.max(0, (i ?? 0) - 1))}
                     className="flex-1 sm:flex-none"
                   >
                     <ChevronLeft className="h-4 w-4 mr-1" />
                     Previous
                   </Button>
                   <span className="text-xs text-muted-foreground flex-1 text-center">
-                    Stage {activeStageIdx + 1} of {stageCount}: <strong>{STAGES[activeStageIdx].label}</strong>
+                    Stage {activeIdx + 1} of {stageCount} — <strong>{STAGES[activeIdx].label}</strong>
                   </span>
                   <Button
                     data-testid="button-next-stage"
-                    variant={canNext ? "default" : "outline"}
+                    variant={activeIdx < stageCount - 1 ? "default" : "outline"}
                     size="sm"
-                    disabled={!canNext}
-                    onClick={() => setActiveStageIdx(i => i + 1)}
+                    disabled={activeIdx === stageCount - 1}
+                    onClick={() => setActiveStageIdx(i => Math.min(stageCount - 1, (i ?? 0) + 1))}
                     className="flex-1 sm:flex-none"
                   >
                     Next
@@ -568,12 +628,15 @@ export default function SHDemoLayout({ config }: { config: SHScenarioConfig }) {
                 </div>
               </div>
 
-              {/* Right: intelligence panels */}
+              {/* Right: intelligence + comparison panels */}
               <div className="space-y-4">
+                {/* Platform Intelligence — 3 tabs */}
                 <PlatformIntelligencePanel pipeline={pipeline} />
-                <BusinessImpactPanel pipeline={pipeline} />
 
-                {/* Compliance */}
+                {/* With Atlas vs Without Atlas comparison */}
+                <AtlasComparisonCard pipeline={pipeline} />
+
+                {/* Compliance frameworks */}
                 <Section title="Compliance Frameworks" icon={Shield}>
                   <div className="flex flex-wrap gap-1.5">
                     {config.complianceFrameworks.map(fw => (
