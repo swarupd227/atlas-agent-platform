@@ -301,7 +301,7 @@ const industryBadgeStyle: Record<string, string> = {
   manufacturing:
     "bg-orange-50 text-orange-800 border-orange-300 dark:bg-orange-950/50 dark:text-orange-300 dark:border-orange-800/50",
   self_healing:
-    "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950 dark:text-violet-300 dark:border-violet-800",
+    "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800",
 };
 
 export default function DemoCenter() {

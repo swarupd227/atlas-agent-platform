@@ -33,8 +33,6 @@ export interface SHScenarioConfig {
   subtitle: string;
   domain: string;
   agentCode: string;
-  pipelineId: string;
-  agentId: string;
   accentColor: string;
   complianceFrameworks: string[];
 }
@@ -585,19 +583,25 @@ function EmptyState({ config }: { config: SHScenarioConfig }) {
 export default function SHDemoLayout({ config }: { config: SHScenarioConfig }) {
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
 
-  // Step 1: search agents by agentCode
-  const { data: agentSearchResult = [] } = useQuery<{ id: string; name: string }[]>({
-    queryKey: [`/api/agents?search=${encodeURIComponent(config.agentCode)}`],
+  // Step 1: Search agents by name (server filters by name containing search term).
+  // Strictly match by exact name — no hardcoded ID fallback.
+  const { data: agentSearchResult = [], isLoading: agentLoading } = useQuery<{ id: string; name: string }[]>({
+    queryKey: [`/api/agents?search=${encodeURIComponent(config.title)}`],
     retry: 1,
   });
-  const resolvedAgentId = agentSearchResult.find(a => a.name === config.title)?.id;
+  const resolvedAgent = agentSearchResult.find(a => a.name === config.title) ?? null;
 
-  // Step 2: fetch all healing pipelines; filter by resolved agentId
-  const { data: allPipelines, isLoading } = useQuery<HealingPipeline[]>({
-    queryKey: ["/api/healing-pipelines"],
+  // Step 2: Fetch healing pipelines filtered server-side by the resolved agentId.
+  // Only fires once the agent is resolved; disabled (empty) when agent not found.
+  const { data: agentPipelines = [], isLoading: pipelinesLoading } = useQuery<HealingPipeline[]>({
+    queryKey: resolvedAgent
+      ? [`/api/healing-pipelines?agentId=${encodeURIComponent(resolvedAgent.id)}`]
+      : ["/api/healing-pipelines?agentId=__none__"],
+    enabled: !agentLoading && resolvedAgent !== null,
     retry: 1,
   });
-  const pipeline = allPipelines?.find(p => resolvedAgentId ? p.agentId === resolvedAgentId : p.agentId === config.agentId) ?? null;
+  const pipeline = agentPipelines[0] ?? null;
+  const isLoading = agentLoading || (resolvedAgent !== null && pipelinesLoading);
 
   // Bind active stage to pipeline.stage on first load; manual override afterward
   useEffect(() => {
