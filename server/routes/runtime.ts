@@ -5233,6 +5233,7 @@ spec:
           n8n:                 { ts: "npx ts-node nodes/AgentNode.ts", py: "python nodes/agent_node.py" },
           vertex:              { ts: "npx ts-node entrypoint.ts", py: "python entrypoint.py" },
           databricks:          { ts: "python agent.py", py: "python agent.py" },
+          "claude-code":       { ts: "npx ts-node src/claude_code_agent.ts", py: "npx ts-node src/claude_code_agent.ts" },
         };
         const entry = entryMap[framework] || entryMap.generic;
         const runCmd = isTs ? entry.ts : entry.py;
@@ -5451,7 +5452,7 @@ clean:
           agentName: agent.name,
           agentId: agent.id,
           format,
-          llmProvider,
+          llmProvider: resolvedProvider,
           framework,
           pattern: "react_loop",
           toolAdapters: toolAdapters || {},
