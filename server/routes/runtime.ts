@@ -3464,6 +3464,15 @@ IMPLEMENT:
    artifact_path="agent", pip_requirements=["openai>=1.30.0","requests>=2.31.0"],
    input_example={"input": [{"role":"user","content":"Hello"}]},
    resources=[DatabricksServingEndpoint(endpoint_name=_SERVING_ENDPOINT_NAME)]`,
+        "claude-code": `Generate the entrypoint file (src/claude_code_agent.ts) — Claude Code SDK (TypeScript only):
+1. Import { query } from "@anthropic-ai/claude-code" — this is the ONLY import needed for the LLM
+2. Define customTools array: each entry has name, description, input_schema (JSON Schema), and run: async (input) => string
+3. In each tool run(), call the corresponding adapter from loadTools() and return JSON.stringify(result)
+4. Call query({ prompt: task, options: { maxTurns: N, systemPrompt: SYSTEM_PROMPT, customTools, cwd: process.cwd() } })
+5. Iterate the async generator: message.type === "assistant" → log text/tool_use blocks; message.type === "result" → log final result
+6. Accept task from process.argv[2]; track and log turn count and total token usage
+7. Export run() as a named export; add if (require.main === module) guard at bottom
+8. IMPORTANT: TypeScript only — do not use Python or the standard Anthropic SDK; always use ANTHROPIC_API_KEY`,
       };
 
       const fwInstr = frameworkInstructions[ctx.framework] || frameworkInstructions.generic;
@@ -3580,7 +3589,7 @@ Write a REAL implementation using the hint above. Make actual HTTP calls, DB que
         llmProvider: z.enum(["openai", "anthropic"]).default("openai"),
         maxIterations: z.number().int().positive().default(agentMaxIter),
         completionPromise: z.string().default("TASK_COMPLETE"),
-        framework: z.enum(["generic", "langgraph", "crewai", "foundry", "autogen", "semantic-kernel", "openai-assistants", "bedrock", "n8n", "vertex", "databricks"]).default("generic"),
+        framework: z.enum(["generic", "langgraph", "crewai", "foundry", "autogen", "semantic-kernel", "openai-assistants", "bedrock", "n8n", "vertex", "databricks", "claude-code"]).default("generic"),
         toolAdapters: z.record(z.enum(["builtin", "customer", "stub"])).optional(),
         pinVersions: z.boolean().default(true),
         otelEnabled: z.boolean().default(false),
@@ -3590,7 +3599,8 @@ Write a REAL implementation using the hint above. Make actual HTTP calls, DB que
       const { format: rawFormat, llmProvider, maxIterations, completionPromise, framework, toolAdapters, pinVersions, otelEnabled, spanGranularity } = exportSchema.parse(req.body || {});
 
       const PYTHON_ONLY_FRAMEWORKS = ["foundry", "autogen", "semantic-kernel"];
-      const format = PYTHON_ONLY_FRAMEWORKS.includes(framework) ? "python" : rawFormat;
+      const TS_ONLY_FRAMEWORKS = ["claude-code"];
+      const format = PYTHON_ONLY_FRAMEWORKS.includes(framework) ? "python" : TS_ONLY_FRAMEWORKS.includes(framework) ? "typescript" : rawFormat;
 
       const blueprintJson = (agent.blueprintJson && typeof agent.blueprintJson === "object")
         ? agent.blueprintJson as Record<string, unknown>
@@ -5041,6 +5051,19 @@ jobs:
           files["Dockerfile"] = aiResult?.dockerfile || dockerfilePy.replace("entrypoint.py", "src/assistants_agent.py");
         }
         files[".env.example"] = envExample + "OPENAI_ASSISTANT_ID=asst_your-assistant-id\n";
+      } else if (framework === "claude-code") {
+        // Claude Code SDK — TypeScript only, Anthropic only
+        const ccToolDefs = tools.length > 0
+          ? tools.map(t => `  {\n    name: "${t.name}",\n    description: "${(t.description || t.name).replace(/"/g, "'")}",\n    input_schema: ${JSON.stringify(t.parameters || { type: "object", properties: {} })},\n    run: async (input: Record<string, unknown>): Promise<string> => {\n      const fn = toolRegistry["${t.name}"];\n      if (!fn) throw new Error("Tool not found: ${t.name}");\n      return JSON.stringify((await Promise.resolve(fn(input))) ?? {});\n    },\n  }`).join(",\n")
+          : "  /* no tools configured */";
+        const claudeCodeTemplate = `// Claude Code SDK Agent\n// Generated for ${agent.name}\n// Requires: Claude Pro/Max/Team subscription\n// Install: npm install @anthropic-ai/claude-code\nimport { query } from "@anthropic-ai/claude-code";\nimport { loadTools } from "../tools";\n\nconst SYSTEM_PROMPT = \`${systemPrompt.substring(0, 400).replace(/`/g, "'")}\`;\nconst toolRegistry = loadTools();\n\nconst customTools = [\n${ccToolDefs}\n];\n\nexport async function run(task: string): Promise<void> {\n  let turnCount = 0;\n  let totalTokens = 0;\n\n  for await (const message of query({\n    prompt: task,\n    options: {\n      maxTurns: ${maxIterations},\n      systemPrompt: SYSTEM_PROMPT,\n      customTools,\n      cwd: process.cwd(),\n    },\n  })) {\n    turnCount++;\n    if (message.type === "assistant") {\n      for (const block of message.message.content) {\n        if (block.type === "text") console.log("[Turn " + turnCount + "] " + block.text);\n        else if (block.type === "tool_use") console.log("[Tool] " + block.name + "(" + JSON.stringify(block.input) + ")");\n      }\n      const usage = (message.message as Record<string, unknown>).usage as Record<string, number> | undefined;\n      if (usage) totalTokens += ((usage["input_tokens"] as number) ?? 0) + ((usage["output_tokens"] as number) ?? 0);\n    } else if (message.type === "result") {\n      console.log("Result: " + (message as Record<string, unknown>)["result"]);\n      console.log("Turns: " + turnCount + " | Tokens: " + totalTokens);\n    }\n  }\n}\n\nif (require.main === module) {\n  const task = process.argv[2] ?? "Hello, what can you help me with?";\n  run(task).catch(console.error);\n}\n`;
+        files["src/claude_code_agent.ts"] = aiResult?.entrypoint || claudeCodeTemplate;
+        files["tools/index.ts"] = generateTsToolsIndex(tools);
+        for (const tool of tools) { files[`tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, getAdapterType(tool.name)); }
+        const ccDeps = { ...baseDeps, "@anthropic-ai/claude-code": pin ? "0.2.35" : "^0.2.0" };
+        files["package.json"] = JSON.stringify({ name: agentSlug, version: "1.0.0", private: true, scripts: { start: "ts-node src/claude_code_agent.ts" }, dependencies: ccDeps }, null, 2);
+        files["Dockerfile"] = aiResult?.dockerfile || dockerfile;
+        files[".env.example"] = "ANTHROPIC_API_KEY=sk-ant-your-api-key-here\n# Claude Pro/Max/Team subscription required for Claude Code SDK\n";
       }
 
       if (!files[".env.example"]) {
@@ -5472,12 +5495,13 @@ clean:
         llmProvider: z.enum(["openai", "anthropic"]).default("openai"),
         maxIterations: z.number().int().positive().default(10),
         completionPromise: z.string().default("TASK_COMPLETE"),
-        framework: z.enum(["generic", "langgraph", "crewai", "foundry", "autogen", "semantic-kernel", "openai-assistants", "bedrock", "n8n", "vertex", "databricks"]).default("generic"),
+        framework: z.enum(["generic", "langgraph", "crewai", "foundry", "autogen", "semantic-kernel", "openai-assistants", "bedrock", "n8n", "vertex", "databricks", "claude-code"]).default("generic"),
         pinVersions: z.boolean().default(true),
       });
       const { format: rawFormat, llmProvider, maxIterations, completionPromise, framework, pinVersions } = bundleSchema.parse(req.body || {});
       const BUNDLE_PYTHON_ONLY = ["foundry", "autogen", "semantic-kernel"];
-      const format = BUNDLE_PYTHON_ONLY.includes(framework) ? "python" : rawFormat;
+      const BUNDLE_TS_ONLY = ["claude-code"];
+      const format = BUNDLE_PYTHON_ONLY.includes(framework) ? "python" : BUNDLE_TS_ONLY.includes(framework) ? "typescript" : rawFormat;
 
       emit("progress", { phase: "data", message: "Fetching team member agents..." });
       // Fetch all member agents

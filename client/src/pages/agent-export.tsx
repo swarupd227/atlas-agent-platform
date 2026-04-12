@@ -203,9 +203,13 @@ export default function AgentExport() {
   }, [exportStep, showFileSearch]);
 
   const PYTHON_ONLY_FRAMEWORKS = ["foundry", "autogen", "semantic-kernel"];
+  const TS_ONLY_FRAMEWORKS = ["claude-code"];
   useEffect(() => {
     if (PYTHON_ONLY_FRAMEWORKS.includes(exportFramework)) {
       setExportFormat("python");
+    } else if (TS_ONLY_FRAMEWORKS.includes(exportFramework)) {
+      setExportFormat("typescript");
+      setExportLlmProvider("anthropic");
     }
   }, [exportFramework]);
 
@@ -1393,6 +1397,7 @@ function ConfigureStep({
                   <SelectItem value="vertex">Vertex AI Agent Builder</SelectItem>
                   <SelectItem value="n8n">n8n Workflow</SelectItem>
                   <SelectItem value="databricks">Databricks AgentBricks</SelectItem>
+                  <SelectItem value="claude-code">Claude Code SDK (Anthropic)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1441,6 +1446,7 @@ function ConfigureStep({
                 <SelectItem value="vertex">Vertex AI Agent Builder</SelectItem>
                 <SelectItem value="n8n">n8n Workflow</SelectItem>
                 <SelectItem value="databricks">Databricks AgentBricks</SelectItem>
+                <SelectItem value="claude-code">Claude Code SDK (Anthropic)</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -1458,6 +1464,9 @@ function ConfigureStep({
             {["foundry", "autogen", "semantic-kernel"].includes(exportFramework) && (
               <p className="text-[11px] text-muted-foreground">Python only — this framework always exports Python regardless of language selection.</p>
             )}
+            {exportFramework === "claude-code" && (
+              <p className="text-[11px] text-muted-foreground">TypeScript only — Claude Code SDK does not have a Python package.</p>
+            )}
           </div>
           <div className="flex flex-col gap-2">
             <Label className="text-xs font-medium">LLM Provider</Label>
@@ -1472,6 +1481,9 @@ function ConfigureStep({
             </Select>
             {exportLlmProvider === "anthropic" && ["semantic-kernel"].includes(exportFramework) && (
               <p className="text-[11px] text-muted-foreground">Semantic Kernel natively supports Anthropic via the <code className="font-mono">semantic-kernel-connectors-ai-anthropic</code> connector — configure the service in the exported <code className="font-mono">src/kernel_agent.py</code>.</p>
+            )}
+            {exportFramework === "claude-code" && (
+              <p className="text-[11px] text-muted-foreground">Anthropic only — Claude Code SDK requires a Claude Pro/Max/Team subscription and <code className="font-mono">ANTHROPIC_API_KEY</code>.</p>
             )}
           </div>
           <div className="flex flex-col gap-2">
