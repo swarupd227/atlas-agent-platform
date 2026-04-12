@@ -52,10 +52,6 @@ const router = Router();
 
   router.get("/api/agents", async (req, res) => {
     const agents = await storage.getAgents(getOrgId(req));
-    const search = (req.query.search as string | undefined)?.toLowerCase().trim();
-    if (search) {
-      return res.json(agents.filter(a => a.name.toLowerCase().includes(search)));
-    }
     res.json(agents);
   });
 

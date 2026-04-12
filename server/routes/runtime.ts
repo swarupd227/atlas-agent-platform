@@ -11512,9 +11512,7 @@ Return ONLY a valid JSON object.`
 
   router.get("/api/healing-pipelines", async (req, res) => {
     try {
-      const all = await storage.getHealingPipelines();
-      const agentIdFilter = req.query.agentId as string | undefined;
-      const pipelines = agentIdFilter ? all.filter(p => p.agentId === agentIdFilter) : all;
+      const pipelines = await storage.getHealingPipelines();
       const priorityOrder: Record<string, number> = { critical: 0, high: 1, normal: 2 };
       pipelines.sort((a, b) => (priorityOrder[a.priority || "normal"] ?? 2) - (priorityOrder[b.priority || "normal"] ?? 2));
       res.json(pipelines);

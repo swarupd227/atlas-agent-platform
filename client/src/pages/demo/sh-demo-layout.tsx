@@ -552,6 +552,55 @@ function IndustryGuardrailsPanel({ pipeline }: { pipeline: HealingPipeline }) {
   );
 }
 
+// ─── Persistent Resolution Timeline ──────────────────────────────────────────
+// Always rendered at the bottom of the page (not conditional on active stage).
+// Data sourced from pipeline.resolution JSONB.
+
+function PersistentResolutionTimeline({ pipeline }: { pipeline: HealingPipeline }) {
+  const res          = asRecord(pipeline.resolution);
+  const atlasActions = asStringArray(res.atlasAutonomousActions);
+  const humanActions = asStringArray(res.requiresHumanAction);
+  const hasData      = atlasActions.length > 0 || humanActions.length > 0 || !!pipeline.resolvedAt;
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-4" data-testid="resolution-timeline">
+      <div className="flex items-center gap-2 mb-3">
+        <Clock className="h-4 w-4 text-muted-foreground shrink-0" />
+        <h3 className="text-sm font-semibold">Resolution Timeline</h3>
+        {pipeline.resolvedAt && (
+          <span className="ml-auto text-[10px] text-muted-foreground">
+            Resolved {new Date(pipeline.resolvedAt).toLocaleString()}
+          </span>
+        )}
+      </div>
+      {hasData ? (
+        <div className="space-y-2">
+          {atlasActions.map((action, i) => (
+            <div key={i} className="flex items-start gap-2.5">
+              <div className="flex flex-col items-center shrink-0 mt-0.5">
+                <div className="w-2.5 h-2.5 rounded-full bg-green-500" />
+                {i < atlasActions.length - 1 && <div className="w-px flex-1 bg-border mt-1 min-h-[14px]" />}
+              </div>
+              <span className="text-sm text-foreground leading-snug">{action}</span>
+            </div>
+          ))}
+          {humanActions.map((action, i) => (
+            <div key={i} className="flex items-start gap-2.5 text-muted-foreground">
+              <Clock className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
+              <span className="text-sm leading-snug">{action}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          Resolution timeline populates after remediation completes. Atlas autonomous actions
+          and any required human steps will appear here.
+        </p>
+      )}
+    </div>
+  );
+}
+
 // ─── Empty State ──────────────────────────────────────────────────────────────
 
 function EmptyState({ config }: { config: SHScenarioConfig }) {
@@ -583,25 +632,28 @@ function EmptyState({ config }: { config: SHScenarioConfig }) {
 export default function SHDemoLayout({ config }: { config: SHScenarioConfig }) {
   const [activeIdx, setActiveIdx] = useState<number | null>(null);
 
-  // Step 1: Search agents by name (server filters by name containing search term).
-  // Strictly match by exact name — no hardcoded ID fallback.
-  const { data: agentSearchResult = [], isLoading: agentLoading } = useQuery<{ id: string; name: string }[]>({
-    queryKey: [`/api/agents?search=${encodeURIComponent(config.title)}`],
+  // Step 1: Fetch all agents and resolve by agentCode first (future-proof),
+  // then fall back to exact name match. No hardcoded agent ID — lookup is always live.
+  const { data: allAgents = [], isLoading: agentLoading } = useQuery<
+    Array<{ id: string; name: string } & Record<string, unknown>>
+  >({
+    queryKey: ["/api/agents"],
     retry: 1,
   });
-  const resolvedAgent = agentSearchResult.find(a => a.name === config.title) ?? null;
+  const resolvedAgent = allAgents.find(
+    a => String(a.agentCode ?? "") === config.agentCode || a.name === config.title,
+  ) ?? null;
 
-  // Step 2: Fetch healing pipelines filtered server-side by the resolved agentId.
-  // Only fires once the agent is resolved; disabled (empty) when agent not found.
-  const { data: agentPipelines = [], isLoading: pipelinesLoading } = useQuery<HealingPipeline[]>({
-    queryKey: resolvedAgent
-      ? [`/api/healing-pipelines?agentId=${encodeURIComponent(resolvedAgent.id)}`]
-      : ["/api/healing-pipelines?agentId=__none__"],
-    enabled: !agentLoading && resolvedAgent !== null,
+  // Step 2: Fetch all healing pipelines and filter client-side by resolved agentId.
+  // Shows empty state when agent not found (no pipeline can be matched).
+  const { data: allPipelines = [], isLoading: pipelinesLoading } = useQuery<HealingPipeline[]>({
+    queryKey: ["/api/healing-pipelines"],
     retry: 1,
   });
-  const pipeline = agentPipelines[0] ?? null;
-  const isLoading = agentLoading || (resolvedAgent !== null && pipelinesLoading);
+  const pipeline = resolvedAgent
+    ? (allPipelines.find(p => p.agentId === resolvedAgent.id) ?? null)
+    : null;
+  const isLoading = agentLoading || pipelinesLoading;
 
   // Bind active stage to pipeline.stage on first load; manual override afterward
   useEffect(() => {
@@ -709,6 +761,9 @@ export default function SHDemoLayout({ config }: { config: SHScenarioConfig }) {
                 </Panel>
               </div>
             </div>
+
+            {/* Persistent resolution timeline — always visible, sourced from resolution JSONB */}
+            <PersistentResolutionTimeline pipeline={pipeline} />
           </div>
         )}
       </div>

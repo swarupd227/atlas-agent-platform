@@ -430,7 +430,11 @@ export default function DemoCenter() {
                           )}
                           <Badge
                             variant="outline"
-                            className={`text-[10px] shrink-0 ${industryBadgeStyle[demo.industryId] || ""}`}
+                            className={`text-[10px] shrink-0 ${
+                              demo.industryId === "self_healing"
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800"
+                                : (industryBadgeStyle[demo.industryId] || "")
+                            }`}
                             data-testid={`badge-demo-industry-${demo.id}`}
                           >
                             {demo.industry}
