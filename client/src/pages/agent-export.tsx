@@ -1412,6 +1412,9 @@ function ConfigureStep({
                   <SelectItem value="python">Python</SelectItem>
                 </SelectContent>
               </Select>
+              {exportFramework === "claude-code" && (
+                <p className="text-[11px] text-muted-foreground">TypeScript only — Claude Code SDK does not have a Python package.</p>
+              )}
             </div>
             <div className="flex flex-col gap-2">
               <Label className="text-xs font-medium">LLM Provider</Label>
@@ -1424,6 +1427,9 @@ function ConfigureStep({
                   <SelectItem value="anthropic">Anthropic (Claude)</SelectItem>
                 </SelectContent>
               </Select>
+              {exportFramework === "claude-code" && (
+                <p className="text-[11px] text-muted-foreground">Anthropic only — Claude Code SDK requires a Claude Pro/Max/Team subscription and <code className="font-mono">ANTHROPIC_API_KEY</code>.</p>
+              )}
             </div>
           </div>
         ) : (

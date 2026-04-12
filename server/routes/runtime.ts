@@ -3601,6 +3601,8 @@ Write a REAL implementation using the hint above. Make actual HTTP calls, DB que
       const PYTHON_ONLY_FRAMEWORKS = ["foundry", "autogen", "semantic-kernel"];
       const TS_ONLY_FRAMEWORKS = ["claude-code"];
       const format = PYTHON_ONLY_FRAMEWORKS.includes(framework) ? "python" : TS_ONLY_FRAMEWORKS.includes(framework) ? "typescript" : rawFormat;
+      // claude-code always requires Anthropic regardless of client request
+      const resolvedProvider = TS_ONLY_FRAMEWORKS.includes(framework) ? "anthropic" as const : llmProvider;
 
       const blueprintJson = (agent.blueprintJson && typeof agent.blueprintJson === "object")
         ? agent.blueprintJson as Record<string, unknown>
@@ -3826,7 +3828,7 @@ Write a REAL implementation using the hint above. Make actual HTTP calls, DB que
 
       let aiResult: Awaited<ReturnType<typeof generateAgentCodeWithAI>> = null;
 
-      emit("progress", { phase: "ai", message: `Starting AI-assisted code generation (30–60s)...`, detail: `Framework: ${framework} · Language: ${format} · Provider: ${llmProvider}` });
+      emit("progress", { phase: "ai", message: `Starting AI-assisted code generation (30–60s)...`, detail: `Framework: ${framework} · Language: ${format} · Provider: ${resolvedProvider}` });
       // Heartbeat: emit a visible progress event every 15s during AI generation.
       // This prevents proxy timeout AND gives the user feedback that work is in progress.
       let heartbeatCount = 0;
@@ -3835,7 +3837,7 @@ Write a REAL implementation using the hint above. Make actual HTTP calls, DB que
         emit("progress", {
           phase: "ai",
           message: `AI generation in progress... (${heartbeatCount * 15}s elapsed)`,
-          detail: `Building ${format} code with ${llmProvider}`,
+          detail: `Building ${format} code with ${resolvedProvider}`,
         });
       }, 15000);
       try {
@@ -3849,7 +3851,7 @@ Write a REAL implementation using the hint above. Make actual HTTP calls, DB que
           systemPrompt,
           tools,
           format,
-          llmProvider,
+          llmProvider: resolvedProvider,
           maxIterations,
           completionPromise,
           framework,
@@ -5502,6 +5504,8 @@ clean:
       const BUNDLE_PYTHON_ONLY = ["foundry", "autogen", "semantic-kernel"];
       const BUNDLE_TS_ONLY = ["claude-code"];
       const format = BUNDLE_PYTHON_ONLY.includes(framework) ? "python" : BUNDLE_TS_ONLY.includes(framework) ? "typescript" : rawFormat;
+      // claude-code always requires Anthropic regardless of client request
+      const resolvedBundleProvider = BUNDLE_TS_ONLY.includes(framework) ? "anthropic" as const : llmProvider;
 
       emit("progress", { phase: "data", message: "Fetching team member agents..." });
       // Fetch all member agents
@@ -5577,7 +5581,7 @@ clean:
         emit("progress", {
           phase: "ai",
           message: `Generating AI code for ${agentRec.name}...`,
-          detail: `${toolCount} tool${toolCount !== 1 ? "s" : ""} · ${format} · ${llmProvider}`,
+          detail: `${toolCount} tool${toolCount !== 1 ? "s" : ""} · ${format} · ${resolvedBundleProvider}`,
         });
         let aiResult: Awaited<ReturnType<typeof generateAgentCodeWithAI>> = null;
         try {
@@ -5587,7 +5591,7 @@ clean:
             systemPrompt,
             tools,
             format,
-            llmProvider,
+            llmProvider: resolvedBundleProvider,
             maxIterations: agentRec.maxToolIterations || maxIterations,
             completionPromise,
             framework,
@@ -5610,54 +5614,88 @@ clean:
           });
         }
 
-        const entrypointPath = format === "typescript" ? `${dirPrefix}/src/runtime/orchestrator.ts` : `${dirPrefix}/src/runtime/orchestrator.py`;
-        if (aiResult?.entrypoint && aiResult.entrypoint.length > 200) {
-          localFiles[entrypointPath] = aiResult.entrypoint;
-        } else {
-          localFiles[entrypointPath] = format === "typescript"
-            ? (llmProvider === "openai"
-              ? generateTsEntrypointOpenAI(tools, agentRec.maxToolIterations || maxIterations, completionPromise, mcpServerDetails, { hasKnowledge: false, hasPolicies: false, hasGraph: false })
-              : generateTsEntrypointAnthropic(tools, agentRec.maxToolIterations || maxIterations, completionPromise, mcpServerDetails, { hasKnowledge: false, hasPolicies: false, hasGraph: false }))
-            : (llmProvider === "openai"
-              ? generatePyEntrypointOpenAI(tools, agentRec.maxToolIterations || maxIterations, completionPromise, mcpServerDetails, { hasKnowledge: false, hasPolicies: false, hasGraph: false })
-              : generatePyEntrypointAnthropic(tools, agentRec.maxToolIterations || maxIterations, completionPromise, mcpServerDetails, { hasKnowledge: false, hasPolicies: false, hasGraph: false }));
-        }
-
-        localFiles[`${dirPrefix}/src/agent/prompts/system.txt`] = systemPrompt;
-
-        if (format === "typescript") {
-          localFiles[`${dirPrefix}/src/tools/index.ts`] = generateTsToolsIndex(tools);
+        if (framework === "claude-code") {
+          // Claude Code SDK — TypeScript only, Anthropic only
+          const agentIter = agentRec.maxToolIterations || maxIterations;
+          const ccToolDefs = tools.length > 0
+            ? tools.map(t => `  {\n    name: "${t.name}",\n    description: "${(t.description || t.name).replace(/"/g, "'")}",\n    input_schema: ${JSON.stringify(t.parameters || { type: "object", properties: {} })},\n    run: async (input: Record<string, unknown>): Promise<string> => {\n      const fn = toolRegistry["${t.name}"];\n      if (!fn) throw new Error("Tool not found: ${t.name}");\n      return JSON.stringify((await Promise.resolve(fn(input))) ?? {});\n    },\n  }`).join(",\n")
+            : "  /* no tools configured */";
+          const ccTemplate = `// Claude Code SDK Agent\n// Generated for ${agentRec.name}\n// Requires: Claude Pro/Max/Team subscription\n// Install: npm install @anthropic-ai/claude-code\nimport { query } from "@anthropic-ai/claude-code";\nimport { loadTools } from "../tools";\n\nconst SYSTEM_PROMPT = \`${systemPrompt.substring(0, 400).replace(/`/g, "'")}\`;\nconst toolRegistry = loadTools();\n\nconst customTools = [\n${ccToolDefs}\n];\n\nexport async function run(task: string): Promise<void> {\n  let turnCount = 0;\n  let totalTokens = 0;\n\n  for await (const message of query({\n    prompt: task,\n    options: {\n      maxTurns: ${agentIter},\n      systemPrompt: SYSTEM_PROMPT,\n      customTools,\n      cwd: process.cwd(),\n    },\n  })) {\n    turnCount++;\n    if (message.type === "assistant") {\n      for (const block of message.message.content) {\n        if (block.type === "text") console.log("[Turn " + turnCount + "] " + block.text);\n        else if (block.type === "tool_use") console.log("[Tool] " + block.name + "(" + JSON.stringify(block.input) + ")");\n      }\n      const usage = (message.message as Record<string, unknown>).usage as Record<string, number> | undefined;\n      if (usage) totalTokens += ((usage["input_tokens"] as number) ?? 0) + ((usage["output_tokens"] as number) ?? 0);\n    } else if (message.type === "result") {\n      console.log("Result: " + (message as Record<string, unknown>)["result"]);\n      console.log("Turns: " + turnCount + " | Tokens: " + totalTokens);\n    }\n  }\n}\n\nif (require.main === module) {\n  const task = process.argv[2] ?? "Hello, what can you help me with?";\n  run(task).catch(console.error);\n}\n`;
+          localFiles[`${dirPrefix}/src/claude_code_agent.ts`] = aiResult?.entrypoint || ccTemplate;
+          localFiles[`${dirPrefix}/src/agent/prompts/system.txt`] = systemPrompt;
+          localFiles[`${dirPrefix}/tools/index.ts`] = generateTsToolsIndex(tools);
           for (const tool of tools) {
-            const adapter = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, "builtin");
-            localFiles[`${dirPrefix}/src/tools/${tool.name}.ts`] = adapter;
+            localFiles[`${dirPrefix}/tools/${tool.name}.ts`] = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, "builtin");
           }
-        } else {
-          localFiles[`${dirPrefix}/src/tools/__init__.py`] = generatePyToolsInit(tools);
-          for (const tool of tools) {
-            const adapter = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, "builtin");
-            localFiles[`${dirPrefix}/src/tools/${tool.name}.py`] = adapter;
-          }
-        }
-
-        const pin = pinVersions;
-        if (format === "typescript") {
-          const openaiDep = llmProvider === "openai" ? `"openai": "${pin ? "4.77.0" : "^4.0.0"}"` : `"@anthropic-ai/sdk": "${pin ? "0.30.1" : "^0.30.0"}"`;
-          const mcpDep = mcpServerDetails.length > 0 ? `,\n    "@modelcontextprotocol/sdk": "${pin ? "1.12.1" : "^1.0.0"}"` : "";
-          localFiles[`${dirPrefix}/package.json`] = `{\n  "name": "${agentRec.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}",\n  "version": "1.0.0",\n  "scripts": { "start": "ts-node src/runtime/orchestrator.ts", "build": "tsc" },\n  "dependencies": {\n    ${openaiDep},\n    "js-yaml": "${pin ? "4.1.0" : "^4.1.0"}"${mcpDep}\n  },\n  "devDependencies": {\n    "typescript": "${pin ? "5.6.3" : "^5.0.0"}",\n    "ts-node": "${pin ? "10.9.2" : "^10.9.0"}",\n    "@types/node": "${pin ? "20.17.12" : "^20.0.0"}"\n  }\n}\n`;
+          const pin = pinVersions;
+          localFiles[`${dirPrefix}/package.json`] = JSON.stringify({
+            name: agentRec.name.toLowerCase().replace(/[^a-z0-9]/g, "-"),
+            version: "1.0.0",
+            scripts: { start: "ts-node src/claude_code_agent.ts", build: "tsc" },
+            dependencies: {
+              "@anthropic-ai/claude-code": pin ? "0.2.35" : "^0.2.0",
+              "js-yaml": pin ? "4.1.0" : "^4.1.0",
+            },
+            devDependencies: {
+              typescript: pin ? "5.6.3" : "^5.0.0",
+              "ts-node": pin ? "10.9.2" : "^10.9.0",
+              "@types/node": pin ? "20.17.12" : "^20.0.0",
+            },
+          }, null, 2) + "\n";
           localFiles[`${dirPrefix}/tsconfig.json`] = `{\n  "compilerOptions": {\n    "target": "ES2022",\n    "module": "commonjs",\n    "strict": true,\n    "esModuleInterop": true,\n    "outDir": "dist",\n    "rootDir": "src"\n  },\n  "include": ["src/**/*"]\n}\n`;
+          localFiles[`${dirPrefix}/.env.example`] = `ANTHROPIC_API_KEY=sk-ant-your-api-key-here\n# Claude Pro/Max/Team subscription required for Claude Code SDK\nAGENT_NAME=${agentRec.name}\n`;
         } else {
-          const pkgLine = llmProvider === "openai" ? (pin ? "openai==1.58.1" : "openai>=1.0") : (pin ? "anthropic==0.30.1" : "anthropic>=0.30");
-          const mcpLine = mcpServerDetails.length > 0 ? `\n${pin ? "mcp==1.9.3" : "mcp>=1.0"}` : "";
-          localFiles[`${dirPrefix}/requirements.txt`] = `${pkgLine}\n${pin ? "pyyaml==6.0.2" : "pyyaml>=6.0"}${mcpLine}\n`;
-        }
+          const entrypointPath = format === "typescript" ? `${dirPrefix}/src/runtime/orchestrator.ts` : `${dirPrefix}/src/runtime/orchestrator.py`;
+          if (aiResult?.entrypoint && aiResult.entrypoint.length > 200) {
+            localFiles[entrypointPath] = aiResult.entrypoint;
+          } else {
+            localFiles[entrypointPath] = format === "typescript"
+              ? (resolvedBundleProvider === "openai"
+                ? generateTsEntrypointOpenAI(tools, agentRec.maxToolIterations || maxIterations, completionPromise, mcpServerDetails, { hasKnowledge: false, hasPolicies: false, hasGraph: false })
+                : generateTsEntrypointAnthropic(tools, agentRec.maxToolIterations || maxIterations, completionPromise, mcpServerDetails, { hasKnowledge: false, hasPolicies: false, hasGraph: false }))
+              : (resolvedBundleProvider === "openai"
+                ? generatePyEntrypointOpenAI(tools, agentRec.maxToolIterations || maxIterations, completionPromise, mcpServerDetails, { hasKnowledge: false, hasPolicies: false, hasGraph: false })
+                : generatePyEntrypointAnthropic(tools, agentRec.maxToolIterations || maxIterations, completionPromise, mcpServerDetails, { hasKnowledge: false, hasPolicies: false, hasGraph: false }));
+          }
 
-        const llmKey = llmProvider === "openai" ? "OPENAI_API_KEY=sk-your-api-key-here" : "ANTHROPIC_API_KEY=sk-ant-your-api-key-here";
-        localFiles[`${dirPrefix}/.env.example`] = `${llmKey}\nAGENT_NAME=${agentRec.name}\n`;
+          localFiles[`${dirPrefix}/src/agent/prompts/system.txt`] = systemPrompt;
+
+          if (format === "typescript") {
+            localFiles[`${dirPrefix}/src/tools/index.ts`] = generateTsToolsIndex(tools);
+            for (const tool of tools) {
+              const adapter = aiResult?.toolAdapters?.[tool.name] || generateTsToolAdapter(tool, "builtin");
+              localFiles[`${dirPrefix}/src/tools/${tool.name}.ts`] = adapter;
+            }
+          } else {
+            localFiles[`${dirPrefix}/src/tools/__init__.py`] = generatePyToolsInit(tools);
+            for (const tool of tools) {
+              const adapter = aiResult?.toolAdapters?.[tool.name] || generatePyToolAdapter(tool, "builtin");
+              localFiles[`${dirPrefix}/src/tools/${tool.name}.py`] = adapter;
+            }
+          }
+
+          const pin = pinVersions;
+          if (format === "typescript") {
+            const openaiDep = resolvedBundleProvider === "openai" ? `"openai": "${pin ? "4.77.0" : "^4.0.0"}"` : `"@anthropic-ai/sdk": "${pin ? "0.30.1" : "^0.30.0"}"`;
+            const mcpDep = mcpServerDetails.length > 0 ? `,\n    "@modelcontextprotocol/sdk": "${pin ? "1.12.1" : "^1.0.0"}"` : "";
+            localFiles[`${dirPrefix}/package.json`] = `{\n  "name": "${agentRec.name.toLowerCase().replace(/[^a-z0-9]/g, "-")}",\n  "version": "1.0.0",\n  "scripts": { "start": "ts-node src/runtime/orchestrator.ts", "build": "tsc" },\n  "dependencies": {\n    ${openaiDep},\n    "js-yaml": "${pin ? "4.1.0" : "^4.1.0"}"${mcpDep}\n  },\n  "devDependencies": {\n    "typescript": "${pin ? "5.6.3" : "^5.0.0"}",\n    "ts-node": "${pin ? "10.9.2" : "^10.9.0"}",\n    "@types/node": "${pin ? "20.17.12" : "^20.0.0"}"\n  }\n}\n`;
+            localFiles[`${dirPrefix}/tsconfig.json`] = `{\n  "compilerOptions": {\n    "target": "ES2022",\n    "module": "commonjs",\n    "strict": true,\n    "esModuleInterop": true,\n    "outDir": "dist",\n    "rootDir": "src"\n  },\n  "include": ["src/**/*"]\n}\n`;
+          } else {
+            const pkgLine = resolvedBundleProvider === "openai" ? (pin ? "openai==1.58.1" : "openai>=1.0") : (pin ? "anthropic==0.30.1" : "anthropic>=0.30");
+            const mcpLine = mcpServerDetails.length > 0 ? `\n${pin ? "mcp==1.9.3" : "mcp>=1.0"}` : "";
+            localFiles[`${dirPrefix}/requirements.txt`] = `${pkgLine}\n${pin ? "pyyaml==6.0.2" : "pyyaml>=6.0"}${mcpLine}\n`;
+          }
+
+          const llmKey = resolvedBundleProvider === "openai" ? "OPENAI_API_KEY=sk-your-api-key-here" : "ANTHROPIC_API_KEY=sk-ant-your-api-key-here";
+          localFiles[`${dirPrefix}/.env.example`] = `${llmKey}\nAGENT_NAME=${agentRec.name}\n`;
+        }
 
         const allMcpToolNames = mcpServerDetails.flatMap(s => (s.tools || []).map(t => `${t.name} (via ${s.name})`));
         const allToolNames = [...tools.map(t => t.name), ...allMcpToolNames];
         const installCmd = format === "typescript" ? "npm install" : "pip install -r requirements.txt";
-        const runCmd = format === "typescript" ? "npm start" : "python src/runtime/orchestrator.py";
+        const runCmd = framework === "claude-code"
+          ? "npm start"
+          : format === "typescript" ? "npm start" : "python src/runtime/orchestrator.py";
         localFiles[`${dirPrefix}/README.md`] = `# ${agentRec.name}\n\n${agentRec.description || ""}\n\n## Setup\n\n\`\`\`bash\n${installCmd}\n\`\`\`\n\n## Run\n\n\`\`\`bash\n${runCmd}\n\`\`\`\n\n## Tools\n\n${allToolNames.length > 0 ? allToolNames.map(n => `- \`${n}\``).join("\n") : "_No tools configured._"}\n`;
 
         return localFiles;
