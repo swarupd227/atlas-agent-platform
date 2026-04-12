@@ -14,6 +14,7 @@
  *   6. Golden Dataset    (evaluation ground-truth test cases)
  *   7. Eval Suite        (regression suite linked to prod agent + dataset)
  *   8. Healing Pipeline  (sample incident showing autonomous remediation)
+ *   9. MCP Server Links  (industry-appropriate MCP servers so agent traces succeed)
  *
  * Idempotent: skips creation if an entity with the same name already exists in prod.
  *
@@ -102,6 +103,28 @@ async function findExistingDataset(name) {
   return list.find(d => d.name === name) || null;
 }
 
+// Cache MCP server list so we only fetch it once
+let _mcpServerCache = null;
+async function findMcpServerByName(name) {
+  if (!_mcpServerCache) {
+    const all = await api("GET", `/api/mcp-servers`, null, { silent: true });
+    _mcpServerCache = Array.isArray(all) ? all : [];
+  }
+  return _mcpServerCache.find(s => s.name === name) || null;
+}
+
+// Industry-appropriate MCP server names for each SH demo agent.
+// These names must exist in the target environment — they are seeded by the
+// registerMockMcpServers() startup routine that runs in both dev and prod.
+const SH_AGENT_MCP_SERVERS = {
+  "Clinical Data Integrity Monitor":     ["Splunk MCP Server", "ServiceNow MCP Server", "Compliance Connector MCP Server"],
+  "Fraud Detection Model Recovery Agent":["Fraud Detection Connector MCP Server", "Splunk MCP Server"],
+  "Factory Floor Anomaly Recovery Agent":["Splunk MCP Server", "ServiceNow MCP Server"],
+  "Order Fulfillment Recovery Agent":    ["Splunk MCP Server", "ServiceNow MCP Server"],
+  "Grid Operations Stability Agent":     ["Open-Meteo Weather API", "Splunk MCP Server"],
+  "Claims Workflow Recovery Agent":      ["Compliance Connector MCP Server", "Fraud Detection Connector MCP Server", "Splunk MCP Server"],
+};
+
 // ─── Main migration ────────────────────────────────────────────────────────────
 
 async function main() {
@@ -153,7 +176,7 @@ async function main() {
     if (!idMap[agentKey]) idMap[agentKey] = {};
 
     // ── Step 1: Skills ─────────────────────────────────────────────────────────
-    console.log("\n  [1/8] Skills");
+    console.log("\n  [1/9] Skills");
     const prodSkillIds = [];
     for (const skill of data.skills) {
       let prodSkill = await findExistingSkill(skill.name);
@@ -191,7 +214,7 @@ async function main() {
     }
 
     // ── Step 2: Runbooks ───────────────────────────────────────────────────────
-    console.log("\n  [2/8] Runbooks");
+    console.log("\n  [2/9] Runbooks");
     const prodRunbookIds = {};
     for (const rb of data.runbooks) {
       let prodRb = await findExistingRunbook(rb.name);
@@ -219,7 +242,7 @@ async function main() {
     }
 
     // ── Step 3: Agent ──────────────────────────────────────────────────────────
-    console.log("\n  [3/8] Agent");
+    console.log("\n  [3/9] Agent");
     let prodAgent = await findExistingAgent(agentName);
     if (!prodAgent) {
       prodAgent = await api("POST", "/api/agents", {
@@ -266,7 +289,7 @@ async function main() {
     idMap[agentKey].agentId = prodAgent.id;
 
     // ── Step 4: Policies ───────────────────────────────────────────────────────
-    console.log("\n  [4/8] Policies");
+    console.log("\n  [4/9] Policies");
     const prodPolicyBindings = [];
 
     // Check existing policyBindings on prod agent
@@ -307,7 +330,7 @@ async function main() {
     }
 
     // ── Step 5: Patch agent with policyBindings + blueprintJson ────────────────
-    console.log("\n  [5/8] Binding policies + blueprintJson");
+    console.log("\n  [5/9] Binding policies + blueprintJson");
     const patchResult = await api("PATCH", `/api/agents/${prodAgent.id}`, {
       policyBindings: prodPolicyBindings,
       blueprintJson: data.agent.blueprintJson,
@@ -316,7 +339,7 @@ async function main() {
     else console.log(`   ✗ Agent patch FAILED`);
 
     // ── Step 6: Golden Dataset + Test Cases ────────────────────────────────────
-    console.log("\n  [6/8] Golden Dataset & Test Cases");
+    console.log("\n  [6/9] Golden Dataset & Test Cases");
     let prodDatasetId = null;
     for (const evalSpec of data.evalSuites) {
       if (!evalSpec.goldenDataset) continue;
@@ -366,7 +389,7 @@ async function main() {
     }
 
     // ── Step 7: Eval Suite ─────────────────────────────────────────────────────
-    console.log("\n  [7/8] Eval Suite");
+    console.log("\n  [7/9] Eval Suite");
     for (const evalSpec of data.evalSuites) {
       const existingEvals = await api("GET", `/api/evals?agentId=${prodAgent.id}`, null, { silent: true });
       const existingEvList = Array.isArray(existingEvals) ? existingEvals : [];
@@ -396,7 +419,7 @@ async function main() {
     }
 
     // ── Step 8: Healing Pipeline ───────────────────────────────────────────────
-    console.log("\n  [8/8] Healing Pipeline");
+    console.log("\n  [8/9] Healing Pipeline");
     if (data.pipeline) {
       // Check if pipeline already exists
       const existingPipelines = await api("GET", `/api/healing-pipelines?agentId=${prodAgent.id}&limit=5`, null, { silent: true });
@@ -446,6 +469,42 @@ async function main() {
       }
     } else {
       console.log(`   ↳ No pipeline in snapshot — skipping`);
+    }
+
+    // ── Step 9: MCP Server Links ───────────────────────────────────────────────
+    console.log("\n  [9/9] MCP Server Links");
+    const serverNamesForAgent = SH_AGENT_MCP_SERVERS[agentName] || [];
+    let mcpLinked = 0;
+    let mcpSkipped = 0;
+    for (const serverName of serverNamesForAgent) {
+      const server = await findMcpServerByName(serverName);
+      if (!server) {
+        console.log(`   ✗ MCP server not found: "${serverName}" — ensure it is registered in this environment`);
+        continue;
+      }
+      // Check if already linked
+      const existing = await api("GET", `/api/agents/${prodAgent.id}/mcp-servers`, null, { silent: true });
+      const existingLinks = Array.isArray(existing) ? existing : [];
+      if (existingLinks.some(l => l.serverId === server.id)) {
+        console.log(`   ↳ "${serverName}": already linked — skipping`);
+        mcpSkipped++;
+        continue;
+      }
+      const linked = await api("POST", `/api/agents/${prodAgent.id}/mcp-servers`, {
+        serverId: server.id,
+        acknowledgeWarnings: true,
+      });
+      if (linked?.id || linked?.serverId || linked?.agentId) {
+        console.log(`   ✓ Linked: "${serverName}" (${server.id.slice(0,8)})`);
+        mcpLinked++;
+      } else {
+        console.log(`   ✗ Link FAILED: "${serverName}"`);
+      }
+    }
+    if (serverNamesForAgent.length === 0) {
+      console.log(`   ↳ No MCP servers mapped for this agent — skipping`);
+    } else {
+      console.log(`   → ${mcpLinked} linked, ${mcpSkipped} already present out of ${serverNamesForAgent.length} mapped`);
     }
 
     results.migrated.push(agentName);
