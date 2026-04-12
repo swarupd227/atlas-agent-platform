@@ -2696,5 +2696,293 @@ Log every action.`;
     }
   });
 
+  // ─── Self-Healing Insurance / Claims Workflow Demo Live Session ──────────────
+
+  type SHInsuranceLiveDemoState = {
+    status: "idle" | "running" | "complete";
+    pipelineId: string | null;
+    triggeredAt: Date | null;
+    completedAt: Date | null;
+    agentId: string | null;
+  };
+
+  let shInsuranceDemo: SHInsuranceLiveDemoState = {
+    status: "idle",
+    pipelineId: null,
+    triggeredAt: null,
+    completedAt: null,
+    agentId: null,
+  };
+
+  const SH_INSURANCE_STAGE_SEQUENCE: Array<{ stage: string; delayMs: number }> = [
+    { stage: "diagnosed",   delayMs: 25_000 },
+    { stage: "hypothesis",  delayMs: 20_000 },
+    { stage: "remediation", delayMs: 20_000 },
+    { stage: "resolved",    delayMs: 30_000 },
+  ];
+
+  async function buildInsuranceStagePatch(stage: string): Promise<Record<string, unknown>> {
+    const patch: Record<string, unknown> = { stage };
+
+    if (stage === "diagnosed") {
+      patch.diagnosisDetails = {
+        rootCause: "Fraud triage model training data contained Zone 7 geographic bias — 340% over-representation of historical fraud cases from a single ZIP code cluster caused the ML classifier to systematically flag non-fraudulent claims from that region. False-positive rate spiked from 3.2% baseline to 22.7% over 48 hours.",
+        modelFpr: { before: 3.2, after: 22.7, threshold: 5.0, restored: 2.8 },
+        affectedClaims: 847,
+        estimatedMisclassified: 620,
+        vulnerableClaimants: 47,
+        totalAmountDelayed: 2100000,
+        noPriorAlert: true,
+        skillsInvoked: [
+          {
+            skillName: "False-Positive Rate Monitoring Skill",
+            description: "CUSUM (cumulative sum) statistical process control analysis on rolling 24h claim triage decisions. Detects systemic FPR drift and isolates segment-specific vs. model-wide failure modes.",
+            finding: "FPR spiked from 3.2% to 22.7% over 48 hours. CUSUM h-statistic: 8.4 (threshold 5.0 = systemic failure). Zone 7 ZIP codes (92101–92115): FPR 41.3%. All other zones: 3.6%. Root cause: training set Zone 7 over-representation 340% above national distribution.",
+            duration: "12 minutes",
+          },
+          {
+            skillName: "Claimant Impact Assessment Skill",
+            description: "Quantifies financial and welfare impact across affected claimants. Identifies vulnerable populations (elderly, disability claimants) and determines compensation requirements under state prompt-payment statutes.",
+            finding: "847 claims flagged since model update. 620 estimated misclassified (73.2% error rate in Zone 7). 47 vulnerable claimants (23 elderly, 24 disability). Total delayed payout: $2.1M. Daily interest accrual at statutory rate: $1,470/day. SOX materiality threshold ($500K) exceeded.",
+            duration: "28 seconds",
+          },
+          {
+            skillName: "Claims Re-Routing to Human Review Skill",
+            description: "Evaluates adjuster capacity and priority scoring across misclassified claims. Prioritizes by vulnerability status, claim age, and payout size.",
+            finding: "620 claims queued for human review. Priority 1: 47 vulnerable claimants (elderly/disability) — expedited 24h SLA. Priority 2: 94 claims >$10K — 72h SLA. Priority 3: 479 standard claims — 5-day SLA. Adjuster capacity: 8 available (2 overflow allocated from reserve pool).",
+            duration: "15 seconds",
+          },
+          {
+            skillName: "Regulatory Disclosure Skill",
+            description: "Generates mandatory adverse action letters, state insurance department notifications, and GDPR Article 22 automated-decision explanations.",
+            finding: "12 state insurance departments require systemic error notification within 30 days (AZ, CA, TX, FL, NY, OH, PA, IL, MI, GA, NC, WA). 47 GDPR Art. 22 explanations required within 72 hours for EU-linked claims. Adverse action letters: 620 claims.",
+            duration: "8 seconds",
+          },
+        ],
+        impactByPriority: [
+          { priority: "Priority 1 — Vulnerable (elderly/disability)", count: 47, sla: "24h expedited", amount: 180000 },
+          { priority: "Priority 2 — High-value (>$10K)",              count: 94, sla: "72h",           amount: 890000 },
+          { priority: "Priority 3 — Standard",                        count: 479, sla: "5-day",        amount: 1030000 },
+        ],
+      };
+    } else if (stage === "hypothesis") {
+      patch.hypothesis = {
+        confidence: 0.97,
+        primaryHypothesis: "Four-phase recovery: (1) isolate model and activate rules-based fallback scoring to stop further misclassifications, (2) route 620 affected claims to human adjuster review with vulnerability prioritization, (3) initiate NAIC-compliant fairness audit before any threshold recalibration, (4) generate and file state regulator packages and GDPR Article 22 notices for all affected claimants.",
+        runbookCandidates: [
+          {
+            runbookName: "Fraud Model Isolation Protocol",
+            triggerCondition: "CUSUM h-statistic > 5.0 — autonomous",
+            expectedOutcome: "Model v2.3.1 isolated. Rules-based fallback scoring activated. FPR returns to baseline 2.8%. No further misclassifications.",
+            estimatedDuration: "< 60 seconds automated cutover",
+          },
+          {
+            runbookName: "Human Review Queue Activation Protocol",
+            triggerCondition: "Estimated misclassified claims > 50 — autonomous",
+            expectedOutcome: "620 claims queued with priority scoring. 47 vulnerable claimants flagged for 24h expedited review. 2 overflow adjusters allocated.",
+            estimatedDuration: "2 minutes to populate priority queues",
+          },
+          {
+            runbookName: "Claimant Notification and Remediation Protocol",
+            triggerCondition: "Misclassified claims affecting vulnerable claimants or amounts > $500K — autonomous (letters) + confirm-before (payments)",
+            expectedOutcome: "620 adverse action letters drafted. 47 expedited notification letters sent. GDPR Article 22 explanations queued. Statutory interest compensation calculated.",
+            estimatedDuration: "Automated letter generation; payment batch confirm-before",
+          },
+          {
+            runbookName: "State Insurance Regulator Filing Protocol",
+            triggerCondition: "Systemic AI model error — confirm-before regulatory filing",
+            expectedOutcome: "12 state insurance department notification packages prepared. Incident timeline, affected claims summary, and remediation plan included. Human sign-off required before submission.",
+            estimatedDuration: "Report generation automated — regulatory officer sign-off required",
+          },
+        ],
+      };
+    } else if (stage === "remediation") {
+      patch.remediation = {
+        status: "in_progress",
+        runbooksTriggered: [
+          {
+            runbookName: "Fraud Model Isolation Protocol",
+            status: "completed",
+            result: "Model v2.3.1 isolated at T+3min. Rules-based fallback scoring activated across all claim intake channels. Real-time FPR monitoring confirms: 22.7% → 2.8% (restored). Zero additional misclassifications since cutover.",
+          },
+          {
+            runbookName: "Human Review Queue Activation Protocol",
+            status: "completed",
+            result: "620 claims routed to human review. Priority queue populated: 47 vulnerable (24h SLA), 94 high-value (72h SLA), 479 standard (5-day SLA). 2 overflow adjusters allocated from reserve pool. Queue estimated clearance: 4.2 business days.",
+          },
+          {
+            runbookName: "Claimant Notification and Remediation Protocol",
+            status: "in_progress",
+            result: "620 adverse action letter drafts generated. 47 expedited letters queued for immediate send. GDPR Article 22 explanation packages prepared for 11 EU-linked claims (72h window: 61 hours remaining). Statutory interest accrual calculation complete: $1,470/day. Payment batch requires human approval before processing.",
+          },
+          {
+            runbookName: "State Insurance Regulator Filing Protocol",
+            status: "in_progress",
+            result: "12 state filing packages auto-generated. Contents: incident timeline, CUSUM analysis report, affected claims count, Zone 7 bias analysis, remediation steps. Awaiting regulatory officer sign-off before submission to state insurance departments.",
+          },
+        ],
+        policiesEnforced: [
+          {
+            policyName: "NAIC Model Audit Regulation — Fairness Audit Gate",
+            rule: "Recalibrated fraud threshold cannot be deployed until NAIC-01 fairness audit confirms no disparate impact across protected demographic segments",
+            decision: "Model recalibration to threshold 0.65 blocked pending fairness audit. New model v2.4.0 staged but NOT deployed. Fairness audit initiated — results expected in 3 business days.",
+            outcome: "NAIC compliance enforced. No premature recalibration. Audit in progress.",
+          },
+          {
+            policyName: "State Fair Claims Handling Policy (SFCH-01)",
+            rule: "Prompt payment restoration required; vulnerable claimants (elderly, disability) receive expedited 24-hour processing and priority queue placement",
+            decision: "47 vulnerable claimants placed in Priority 1 queue (24h SLA). All 620 claims receive SFCH-01-compliant expedited handling. Statutory interest accrual tracked.",
+            outcome: "SFCH-01 compliant. Vulnerable claimant protections active.",
+          },
+          {
+            policyName: "GDPR Article 22 — Automated Decision Explanation",
+            rule: "EU claimants subject to automated adverse decisions must receive human review option and algorithmic explanation within 72 hours",
+            decision: "11 EU-linked claims identified. GDPR Article 22 explanation packages queued. 72-hour compliance window: 61 hours remaining. Human review option explicitly offered.",
+            outcome: "GDPR Article 22 compliant. Explanations queued for delivery.",
+          },
+          {
+            policyName: "SOX Internal Controls — Material Impact Threshold",
+            rule: "Claims reserve impact > $500K triggers SOX material impact notification to Chief Actuarial Officer and external auditors",
+            decision: "Total delayed payout $2.1M exceeds $500K SOX materiality threshold. CAO notification sent automatically. External audit team alerted. Reserve adjustment entry flagged for Q2 financial statements.",
+            outcome: "SOX notification sent. External auditors informed. Reserve entry flagged.",
+          },
+        ],
+      };
+      patch.businessImpact = {
+        withAtlas: "FPR spike detected in 2 hours via CUSUM monitoring. Model isolated in 3 minutes. 620 claims re-routed within 5 hours. Regulator filing packages prepared before regulators inquire. Claimant harm minimized.",
+        withoutAtlas: "Detection 5–10 days via regulator inquiry or legal notice. 1,000+ additional claims misclassified in that window. Class-action lawsuit risk. State license suspension risk. $25M+ settlement exposure.",
+        affectedClaims: "847 claims (620 misclassified) — human review underway",
+        vulnerableClaimants: "47 vulnerable claimants — 24h expedited queue",
+        amountRestored: "$2.1M in delayed payouts processing",
+        penaltyAvoided: "NAIC/state fines + $25M+ class-action exposure avoided",
+      };
+      patch.industryGuardrails = [
+        { framework: "NAIC Model Audit Reg.", constraint: "Fairness audit required before any recalibrated threshold deployment — hard block enforced", status: "enforced" },
+        { framework: "SFCH-01 (State Fair Claims)", constraint: "Vulnerable claimants (elderly/disability) in 24h priority queue — non-negotiable", status: "enforced" },
+        { framework: "GDPR Article 22", constraint: "EU claimant algorithmic explanations + human review offer within 72 hours", status: "enforced" },
+        { framework: "SOX Internal Controls", constraint: "$2.1M > $500K materiality threshold — CAO + external auditor notified automatically", status: "enforced" },
+        { framework: "NAIC Unfair Claims Act", constraint: "Adverse action letters required for all misclassified claimants — 620 letters queued", status: "enforced" },
+      ];
+    } else if (stage === "resolved") {
+      patch.resolution = {
+        atlasAutonomousActions: [
+          "CUSUM FPR monitoring detected 22.7% spike (7× baseline) — flagged within 2 hours of onset",
+          "Root cause isolated: Zone 7 geographic bias in training data (340% over-representation)",
+          "Fraud model v2.3.1 isolated; rules-based fallback activated — FPR restored to 2.8% in < 60 seconds",
+          "620 misclassified claims routed to human review with priority scoring",
+          "47 vulnerable claimants (elderly/disability) placed in 24h Priority 1 expedited queue",
+          "GDPR Article 22 explanation packages queued for 11 EU-linked claims (72h window tracking)",
+          "SOX material impact notification sent to CAO and external auditors ($2.1M > $500K threshold)",
+          "12 state insurance department filing packages auto-generated (incident + CUSUM report + remediation plan)",
+          "Statutory interest accrual ($1,470/day) calculated and logged for compensation processing",
+        ],
+        requiresHumanAction: [
+          "Regulatory officer sign-off required before submitting 12 state insurance department filing packages",
+          "Human approval required before processing $2.1M payment batch to claimants (statutory + interest)",
+          "NAIC fairness audit results review and model v2.4.0 deployment authorization (3 business days)",
+          "Legal review of class-action exposure assessment before external communications",
+        ],
+        withoutAtlas: "5–10 days detection via regulator inquiry. 1,000+ additional misclassifications. $25M+ class-action exposure. State license suspension risk. Manual remediation weeks-long.",
+      };
+      patch.resolvedAt = new Date();
+      patch.status = "resolved";
+    }
+
+    return patch;
+  }
+
+  function scheduleNextInsuranceStage(pipelineId: string, seqIdx: number) {
+    if (seqIdx >= SH_INSURANCE_STAGE_SEQUENCE.length) {
+      shInsuranceDemo.status = "complete";
+      shInsuranceDemo.completedAt = new Date();
+      return;
+    }
+    const { stage, delayMs } = SH_INSURANCE_STAGE_SEQUENCE[seqIdx];
+    setTimeout(async () => {
+      if (shInsuranceDemo.pipelineId !== pipelineId) return;
+      try {
+        const patch = await buildInsuranceStagePatch(stage);
+        await storage.updateHealingPipeline(pipelineId, patch as any);
+        scheduleNextInsuranceStage(pipelineId, seqIdx + 1);
+      } catch (err: any) {
+        console.error("[demo/sh-insurance] stage advance error:", err.message);
+      }
+    }, delayMs);
+  }
+
+  router.post("/api/demo/sh-insurance/trigger", async (req, res) => {
+    try {
+      const orgId = getOrgId(req);
+      const allAgents = await storage.getAgents(orgId);
+      const agent = allAgents.find(a => a.name === "Claims Workflow Recovery Agent");
+      if (!agent) return res.status(404).json({ message: "Claims Workflow Recovery Agent not found" });
+
+      if (shInsuranceDemo.pipelineId) {
+        await storage.deleteHealingPipeline(shInsuranceDemo.pipelineId).catch(() => {});
+      }
+
+      const newPipeline = await storage.createHealingPipeline({
+        title: "Fraud Triage Model FPR Spike — 847 Claims Affected, $2.1M Delayed",
+        agentId: agent.id,
+        agentName: agent.name,
+        industry: "insurance",
+        severity: "critical",
+        priority: "critical",
+        stage: "detected",
+        issueType: "model_false_positive_spike",
+        issueDescription: "ML fraud triage model FPR spiked from 3.2% to 22.7% — Zone 7 geographic bias detected. 847 claims flagged, ~620 estimated misclassified. 47 vulnerable claimants (elderly/disability) affected. $2.1M in legitimate payouts delayed. NAIC, SFCH-01, GDPR Article 22, and SOX obligations triggered.",
+        triggerSource: "atlas_monitoring",
+      } as any);
+
+      shInsuranceDemo = {
+        status: "running",
+        pipelineId: newPipeline.id,
+        triggeredAt: new Date(),
+        completedAt: null,
+        agentId: agent.id,
+      };
+
+      scheduleNextInsuranceStage(newPipeline.id, 0);
+
+      res.json({ pipelineId: newPipeline.id, agentId: agent.id, message: "Demo incident triggered" });
+    } catch (err: any) {
+      console.error("[demo/sh-insurance/trigger]", err.message);
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  router.get("/api/demo/sh-insurance/status", async (_req, res) => {
+    try {
+      let pipeline = null;
+      if (shInsuranceDemo.pipelineId) {
+        pipeline = await storage.getHealingPipeline(shInsuranceDemo.pipelineId) ?? null;
+      }
+      const elapsedSeconds = shInsuranceDemo.triggeredAt
+        ? Math.floor((Date.now() - shInsuranceDemo.triggeredAt.getTime()) / 1000)
+        : 0;
+      res.json({
+        status: shInsuranceDemo.status,
+        triggeredAt: shInsuranceDemo.triggeredAt,
+        completedAt: shInsuranceDemo.completedAt,
+        elapsedSeconds,
+        pipeline,
+      });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
+  router.post("/api/demo/sh-insurance/reset", async (_req, res) => {
+    try {
+      if (shInsuranceDemo.pipelineId) {
+        await storage.deleteHealingPipeline(shInsuranceDemo.pipelineId).catch(() => {});
+      }
+      shInsuranceDemo = { status: "idle", pipelineId: null, triggeredAt: null, completedAt: null, agentId: null };
+      res.json({ message: "Demo reset to idle" });
+    } catch (err: any) {
+      res.status(500).json({ message: err.message });
+    }
+  });
+
 export { ensureHearstAgents, ensureFitchAgents };
 export default router;
