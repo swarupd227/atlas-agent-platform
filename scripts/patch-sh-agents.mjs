@@ -624,12 +624,20 @@ async function patchAllAgents() {
     const current = await api("GET", `/api/agents/${agent.id}`);
     if (!current) { console.log(`   ✗ Could not fetch agent detail — skipping`); continue; }
 
-    // 2. Build core patch (always update task + systemPrompt + domain + industry + ontology)
+    // 2. Build core patch — task lives in runtimeConfig.task (no top-level task column in schema)
+    const existingRuntimeConfig = (current.runtimeConfig && typeof current.runtimeConfig === "object")
+      ? current.runtimeConfig
+      : {};
     const corePatch = {
-      task: spec.task,
       systemPrompt: spec.systemPrompt,
       ontologyTags: spec.ontologyTags,
       complianceTags: spec.complianceTags,
+      runtimeConfig: {
+        ...existingRuntimeConfig,
+        task: spec.task,
+        domain: spec.domain,
+        industry: spec.industry,
+      },
     };
 
     // 3. Add blueprintJson if missing or empty
@@ -644,13 +652,13 @@ async function patchAllAgents() {
     // Apply core patch
     const patched = await api("PATCH", `/api/agents/${agent.id}`, corePatch);
     if (patched) {
-      console.log(`   ✓ task, systemPrompt, ontologyTags, complianceTags updated`);
+      console.log(`   ✓ systemPrompt, runtimeConfig.task, ontologyTags, complianceTags updated`);
       totalPatched++;
     }
 
-    // 4. Check existing policies
-    const existingPolicies = await api("GET", `/api/agents/${agent.id}/policies`) || [];
-    const existingNames = new Set(existingPolicies.map(p => p.name));
+    // 4. Check existing policies via policyBindings on the agent record
+    const existingBindings = Array.isArray(current.policyBindings) ? current.policyBindings : [];
+    const existingNames = new Set(existingBindings.map((p) => p.policyName || p.name || ""));
 
     // 5. Create missing policies and collect their IDs
     const newPolicyBindings = [...(current.policyBindings || [])];
