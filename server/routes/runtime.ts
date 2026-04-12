@@ -5642,7 +5642,7 @@ clean:
               "@types/node": pin ? "20.17.12" : "^20.0.0",
             },
           }, null, 2) + "\n";
-          localFiles[`${dirPrefix}/tsconfig.json`] = `{\n  "compilerOptions": {\n    "target": "ES2022",\n    "module": "commonjs",\n    "strict": true,\n    "esModuleInterop": true,\n    "outDir": "dist",\n    "rootDir": "src"\n  },\n  "include": ["src/**/*"]\n}\n`;
+          localFiles[`${dirPrefix}/tsconfig.json`] = `{\n  "compilerOptions": {\n    "target": "ES2022",\n    "module": "commonjs",\n    "strict": true,\n    "esModuleInterop": true,\n    "outDir": "dist"\n  },\n  "include": ["src/**/*", "tools/**/*"]\n}\n`;
           localFiles[`${dirPrefix}/.env.example`] = `ANTHROPIC_API_KEY=sk-ant-your-api-key-here\n# Claude Pro/Max/Team subscription required for Claude Code SDK\nAGENT_NAME=${agentRec.name}\n`;
         } else {
           const entrypointPath = format === "typescript" ? `${dirPrefix}/src/runtime/orchestrator.ts` : `${dirPrefix}/src/runtime/orchestrator.py`;
@@ -5795,7 +5795,7 @@ clean:
           memberCount: memberAgents.length,
           totalAgents: allSlots.length,
           format,
-          llmProvider,
+          llmProvider: resolvedBundleProvider,
           generatedAt: new Date().toISOString(),
         },
       });
