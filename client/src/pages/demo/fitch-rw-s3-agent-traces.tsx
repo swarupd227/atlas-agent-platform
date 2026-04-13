@@ -64,7 +64,7 @@ function AgentCard({ agentDef, run, hasRun }: { agentDef: typeof FITCH_RW_AGENTS
           </Badge>
           {agentId && (
             <Link href={`/agents/${agentId}`}>
-              <span className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer">
+              <span className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors cursor-pointer" data-testid={`link-agent-registry-${agentDef.key}`}>
                 <ExternalLink className="w-3 h-3" />Agent
               </span>
             </Link>
@@ -193,20 +193,36 @@ export default function FitchRWS3AgentTraces({ hasRun }: { hasRun: boolean }) {
         )}
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-        {FITCH_RW_AGENTS.map(agentDef => {
-          const run = runs.find((r: any) => r.key === agentDef.key) || null;
-          return <AgentCard key={agentDef.key} agentDef={agentDef} run={run} hasRun={hasRun} />;
-        })}
-      </div>
-
+      {/* Pre-run empty state: only show empty prompt, no agent cards */}
       {!hasRun && (
-        <div className="rounded-xl border border-dashed border-border/60 p-8 text-center">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center mx-auto mb-3" style={{ backgroundColor: `${FITCH_RW_COLOR}18` }}>
-            <Wrench className="w-5 h-5" style={{ color: FITCH_RW_COLOR }} />
+        <div className="rounded-xl border border-dashed border-border/60 p-12 text-center" data-testid="traces-empty-state">
+          <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-4" style={{ backgroundColor: `${FITCH_RW_COLOR}18` }}>
+            <Wrench className="w-6 h-6" style={{ color: FITCH_RW_COLOR }} />
           </div>
-          <p className="text-sm font-medium">No traces yet</p>
-          <p className="text-xs text-muted-foreground mt-1">Run the live pipeline to see per-agent tool calls, timings, run IDs, and result summaries.</p>
+          <p className="text-sm font-medium mb-1">No execution traces yet</p>
+          <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+            Run the live pipeline on the <strong>Live Pipeline</strong> tab to populate agent trace cards with per-agent tool calls, run IDs, latency, and result summaries.
+          </p>
+          <div className="mt-5 space-y-2 max-w-xs mx-auto text-left">
+            {FITCH_RW_AGENTS.map(a => (
+              <div key={a.key} className="flex items-center gap-2 text-[10px] text-muted-foreground/60" data-testid={`trace-placeholder-${a.key}`}>
+                <span className="w-4 h-4 rounded-full border border-border/50 flex items-center justify-center text-[9px] shrink-0">{a.step}</span>
+                <span>{a.name}</span>
+                <span className="text-muted-foreground/40">·</span>
+                <span className="font-mono text-muted-foreground/40">{a.tools.length} tools</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Post-run agent cards */}
+      {hasRun && (
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4" data-testid="traces-agent-grid">
+          {FITCH_RW_AGENTS.map(agentDef => {
+            const run = runs.find((r: any) => r.key === agentDef.key) || null;
+            return <AgentCard key={agentDef.key} agentDef={agentDef} run={run} hasRun={hasRun} />;
+          })}
         </div>
       )}
     </div>

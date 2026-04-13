@@ -66,8 +66,10 @@ function AgentStepRow({ agentDef, activeKey, completedKeys }: {
           {agentDef.name.replace(/^FITCH-RW-\d{3}\s/, "")}
         </p>
         <p className="text-[9px] text-muted-foreground/60 mt-0.5 truncate">{agentDef.role}</p>
+        <p className={`text-[9px] mt-0.5 font-mono ${isActive ? "text-amber-300/60" : "text-muted-foreground/40"}`}>{agentDef.model}</p>
       </div>
       {isActive && <Loader2 className="w-3 h-3 animate-spin shrink-0 text-amber-300" />}
+      {isCompleted && !isActive && <span className="text-[9px] text-emerald-400 shrink-0">{agentDef.tools.length} tools</span>}
     </div>
   );
 }

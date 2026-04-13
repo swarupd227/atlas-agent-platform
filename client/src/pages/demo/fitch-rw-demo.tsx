@@ -78,12 +78,12 @@ function PipelineHeader({ liveRunning, activeAgentKey, hasRun }: {
               </div>
               {run.agentId ? (
                 <Link href={`/agents/${run.agentId}`}>
-                  <span className="text-[10px] font-semibold leading-tight hover:underline cursor-pointer block line-clamp-1" style={isRunning ? { color: FITCH_RW_ACCENT } : {}}>
+                  <span className="text-[10px] font-semibold leading-tight hover:underline cursor-pointer block line-clamp-1" style={isRunning ? { color: FITCH_RW_ACCENT } : {}} data-testid={`link-agent-header-${run.key || i}`}>
                     {run.agentName}
                   </span>
                 </Link>
               ) : (
-                <span className="text-[10px] font-semibold leading-tight block line-clamp-1">{run.agentName}</span>
+                <span className="text-[10px] font-semibold leading-tight block line-clamp-1" data-testid={`text-agent-header-${run.key || i}`}>{run.agentName}</span>
               )}
               <div className="flex items-center gap-1 mt-1 text-[9px] text-muted-foreground/50">
                 <Clock className="w-2.5 h-2.5" />
@@ -292,7 +292,7 @@ export default function FitchRWDemo() {
           </button>
 
           <Link href="/demo">
-            <button className="text-[11px] text-muted-foreground hover:text-foreground transition-colors">← Demo Hub</button>
+            <button className="text-[11px] text-muted-foreground hover:text-foreground transition-colors" data-testid="link-back-demo-hub">← Demo Hub</button>
           </Link>
         </div>
       </div>
@@ -309,7 +309,7 @@ export default function FitchRWDemo() {
                   <span className="text-[10px] text-muted-foreground/70">— {FITCH_RW_AGENTS.find(a => a.key === activeAgentKey)?.name || activeAgentKey}</span>
                 )}
               </div>
-              <button onClick={() => setShowSSELog(false)} className="text-muted-foreground/50 hover:text-foreground transition-colors text-[10px]">hide ×</button>
+              <button onClick={() => setShowSSELog(false)} className="text-muted-foreground/50 hover:text-foreground transition-colors text-[10px]" data-testid="btn-hide-sse-log">hide ×</button>
             </div>
             <div className="h-32 overflow-y-auto px-3 py-2 space-y-0.5 font-mono">
               {liveEvents.slice(-30).map(ev => (
