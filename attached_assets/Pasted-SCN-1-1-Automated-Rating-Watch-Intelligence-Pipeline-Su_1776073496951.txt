@@ -1,0 +1,75 @@
+SCN-1.1  Automated Rating Watch Intelligence Pipeline
+Sub-segment: Fitch Ratings   |   Companies: Fitch Ratings (Corporate & Structured Finance)
+Business Problem
+Fitch Ratings analysts manually monitor hundreds of corporate issuers daily — scanning SEC filings, news feeds, and CDS market data to identify candidates for rating actions. This process takes 3–5 analyst-days per issuer cohort and creates latency between signal emergence and formal rating review initiation.
+Demo Narrative & Story Arc
+Atlas deploys a four-agent pipeline that continuously monitors corporate issuers across the Fitch-rated universe. When market signals breach configurable thresholds, the pipeline automatically assembles a Preliminary Rating Action Memo for analyst review — compressing a multi-day manual process to under four hours.
+1.	Market Signal Scanner polls Bloomberg/Refinitiv feeds and CDS spread data, flagging issuers showing material deterioration.
+2.	Filing Intelligence Agent ingests the latest SEC 10-K/10-Q/8-K filings for flagged issuers, extracting key financial metrics and qualitative risk language.
+3.	Peer Benchmarking Agent compares the flagged issuer's ratios against the Fitch peer cohort, computing deviation scores.
+4.	Rating Action Memo Agent synthesizes all signals into a structured Preliminary Rating Watch memo with evidence citations, recommended watch direction, and trigger summary — delivered to the analyst review queue.
+Agent Pipeline
+Agent ID	Agent Name	Model	Role	MCP Tools	Skills
+FITCH-001	Market Signal Scanner	claude-sonnet-4-5	Monitors real-time market data feeds; flags issuers with CDS spread widening >50bps, equity drawdown >15%, or news sentiment score <-0.6	• bloomberg_market_data
+• refinitiv_esg_feed
+• news_sentiment_api
+• alert_publisher	• Financial Time Series Analysis
+• Threshold Breach Detection
+• CDS Spread Monitoring
+FITCH-002	Filing Intelligence Agent	claude-opus-4-5	Ingests SEC EDGAR filings for flagged issuers; extracts financial covenants, liquidity disclosures, management risk language using RAG over structured KB	• sec_edgar_api
+• kb_search_filings
+• document_parser
+• financial_ratio_extractor	• SEC Filing Comprehension
+• Covenant Extraction
+• Liquidity Analysis
+FITCH-003	Peer Benchmarking Agent	claude-sonnet-4-5	Retrieves peer cohort data from Fitch Analytics; computes ratio deviation scores; identifies outlier positions across leverage, coverage, and cash flow metrics	• fitch_analytics_api
+• peer_cohort_selector
+• ratio_computation_engine
+• benchmark_ranker	• Peer Group Analysis
+• Financial Ratio Benchmarking
+• Outlier Detection
+FITCH-004	Rating Action Memo Agent	claude-opus-4-5	Synthesizes upstream signals into a structured Preliminary Rating Watch memo aligned with Fitch methodology; routes to analyst review queue via Approvals gate	• memo_template_engine
+• approval_gate_publisher
+• outlook_notifier
+• kb_search_methodology	• Fitch Methodology Application
+• Structured Report Generation
+• Evidence Citation
+
+⚙  Platform Intelligence Setup in Atlas
+Outcome Contract
+  Contract Name: Rating Watch Intelligence Automation
+  Risk Tier: High
+  Pricing Model: Outcome-based — per validated Rating Watch memo delivered to analyst queue
+  KPIs: Memo Generation Time (<4 hours) | Analyst Review Acceptance Rate (>85%) | Signal Coverage Recall (>95% of actual actions pre-identified) | Cost per Memo
+  Drift Threshold: 15% degradation in acceptance rate triggers self-healing review
+Knowledge Bases (KB System)
+  Fitch Rating Methodology Library: PDF corpus of Fitch corporate, structured finance, and sovereign rating methodologies; chunked by criteria section
+  SEC Filing Archive: Rolling 8-quarter corpus of 10-K/10-Q/8-K filings for Fitch-rated issuers; refreshed nightly via EDGAR pull
+  Peer Cohort Definitions: Structured JSON of Fitch sector/subsector peer groupings with cohort membership and median ratio benchmarks
+  Historical Rating Actions DB: Vectorized record of past rating actions with trigger summaries for few-shot grounding
+MCP Server Integrations
+  Bloomberg MCP Server: Real-time equity, CDS, bond pricing; news sentiment scoring via Bloomberg NLP API
+  SEC EDGAR MCP Server: Filing ingestion API — pulls latest filings, parses XBRL-tagged financial data
+  Fitch Analytics MCP Server: Internal Fitch data warehouse — peer cohorts, historical ratios, sector benchmarks
+  Atlas Approval Gate MCP: Publishes completed memos to the Expert Validator queue with risk scoring
+Ontology / Knowledge Graph
+  FinancialServices domain ontology — CreditRating, RatingOutlook, WatchStatus, IssuanceVehicle
+  Corporate Finance sub-domain — LeverageRatio, CoverageRatio, LiquidityBuffer, CovLiteLanguage
+  Market Signal taxonomy — CDSWidening, EquityDrawdown, NewsSentiment, FilingMateriality
+Governance Policies
+  MNPI Containment Policy — blocks external data transmission of draft rating actions
+  Human-in-Loop Gate — all memos require Expert Validator approval before analyst queue delivery
+  Data Residency Policy — Fitch issuer data processed in US-East only
+  Audit Trail Requirement — immutable log of all signal ingestion and memo generation events
+Memory Architecture
+  Episodic Memory: 24-month rolling history of rating action events per issuer (MNPI-compliant retention)
+  Semantic Memory: Analyst feedback on past memos stored as preference vectors for output calibration
+Context Engineering Studio
+  Industry Preset: Financial Services — prioritizes Methodology KB over web context
+  Token budget: 70% Methodology + Filing KB | 20% Peer Cohort Data | 10% Working Context
+Key Atlas Screens to Demo
+  Overview Dashboard → Outcome Health (Rating Watch Automation)
+  Multi-Agent Pipeline Orchestrator → 4-stage pipeline visualization
+  Live Runs → Trace Detail with structured Preliminary Memo output
+  Approvals → Expert Validator queue with risk-scored memos
+  Audit Trail → MNPI-compliant action log
