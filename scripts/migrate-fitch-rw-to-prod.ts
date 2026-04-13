@@ -7,10 +7,11 @@
  *
  * Usage:
  *   npx ts-node scripts/migrate-fitch-rw-to-prod.ts \
- *     --prod-url  https://your-prod-app.replit.app \
+ *     --prod-url    https://your-prod-app.replit.app \
  *     --prod-org-id cf5754b1-ee80-4b51-8bf6-7be263c97527 \
  *     --prod-api-key sk-... \
- *     [--dev-url http://localhost:5000] \
+ *     [--dev-url    http://localhost:5000] \
+ *     [--dev-org-id  <dev-org-uuid>]   (adds x-organization-id header to Dev reads) \
  *     [--dry-run]
  *
  * Resources migrated (in dependency order):
@@ -33,6 +34,7 @@ function parseArgs(): {
   prodOrgId: string;
   prodApiKey: string;
   devUrl: string;
+  devOrgId: string;
   dryRun: boolean;
 } {
   const argv = process.argv.slice(2);
@@ -44,6 +46,7 @@ function parseArgs(): {
   const prodOrgId  = get("--prod-org-id")  ?? process.env.PROD_ORG_ID ?? "";
   const prodApiKey = get("--prod-api-key") ?? process.env.PROD_API_KEY ?? "";
   const devUrl     = get("--dev-url")      ?? process.env.DEV_URL     ?? "http://localhost:5000";
+  const devOrgId   = get("--dev-org-id")   ?? process.env.DEV_ORG_ID  ?? "";
   const dryRun     = argv.includes("--dry-run");
 
   if (!prodUrl)   { console.error("ERROR: --prod-url is required"); process.exit(1); }
@@ -54,6 +57,7 @@ function parseArgs(): {
     prodOrgId,
     prodApiKey,
     devUrl: devUrl.replace(/\/$/, ""),
+    devOrgId,
     dryRun,
   };
 }
@@ -62,8 +66,25 @@ function parseArgs(): {
 
 let CFG: ReturnType<typeof parseArgs>;
 
+// Build org-scoped headers for dev reads (optional devOrgId)
+function devHeaders(): Record<string, string> {
+  const h: Record<string, string> = { "Content-Type": "application/json" };
+  if (CFG.devOrgId) h["x-organization-id"] = CFG.devOrgId;
+  return h;
+}
+
+// Build org-scoped headers for prod requests — always includes x-organization-id
+function prodHeaders(): Record<string, string> {
+  const h: Record<string, string> = {
+    "Content-Type": "application/json",
+    "x-organization-id": CFG.prodOrgId,   // ensures tenant scope on every request
+  };
+  if (CFG.prodApiKey) h["Authorization"] = `Bearer ${CFG.prodApiKey}`;
+  return h;
+}
+
 async function devGet<T = unknown>(path: string): Promise<T> {
-  const r = await fetch(`${CFG.devUrl}${path}`);
+  const r = await fetch(`${CFG.devUrl}${path}`, { headers: devHeaders() });
   if (!r.ok) {
     const text = await r.text().catch(() => "");
     throw new Error(`DEV GET ${path} → HTTP ${r.status}: ${text.slice(0, 300)}`);
@@ -72,9 +93,7 @@ async function devGet<T = unknown>(path: string): Promise<T> {
 }
 
 async function prodGet<T = unknown>(path: string): Promise<T> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (CFG.prodApiKey) headers["Authorization"] = `Bearer ${CFG.prodApiKey}`;
-  const r = await fetch(`${CFG.prodUrl}${path}`, { headers });
+  const r = await fetch(`${CFG.prodUrl}${path}`, { headers: prodHeaders() });
   if (!r.ok) {
     const text = await r.text().catch(() => "");
     throw new Error(`PROD GET ${path} → HTTP ${r.status}: ${text.slice(0, 300)}`);
@@ -91,11 +110,9 @@ async function _prodWrite<T = unknown>(
     log(`[DRY-RUN] ${method} ${path}`);
     return { id: `dry-run-${Math.random().toString(36).slice(2, 9)}` } as T;
   }
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (CFG.prodApiKey) headers["Authorization"] = `Bearer ${CFG.prodApiKey}`;
   const r = await fetch(`${CFG.prodUrl}${path}`, {
     method,
-    headers,
+    headers: prodHeaders(),
     body: JSON.stringify(body),
   });
   const text = await r.text();
@@ -503,13 +520,7 @@ async function main() {
   );
 
   for (const { agent } of agentDetails) {
-    if (prodAgentIdByName[agent.name]) {
-      skip(`Agent already exists: ${agent.name}`);
-      summary.agents.skipped++;
-      continue;
-    }
-
-    // Resolve prod IDs for preloadedSkills (stored as [{ skillId }] JSONB)
+    // Resolve prod skill / blueprint IDs (needed for both create and reconcile)
     const devPreloadedSkills = (agent.preloadedSkills as { skillId: string }[] | undefined) ?? [];
     const prodPreloadedSkills = devPreloadedSkills
       .map(({ skillId }) => {
@@ -519,15 +530,32 @@ async function main() {
       })
       .filter(Boolean) as { skillId: string }[];
 
-    // Resolve prod blueprint ID
     const devBpId  = agent.blueprintId as string | undefined;
     const bpName   = devBpId ? devBlueprintIdToName[devBpId] : undefined;
     const prodBpId = bpName  ? prodBlueprintIdByName[bpName]  : undefined;
 
-    // policyBindings, ontologyTags, evalBindings are stored by name/label/suiteName (not IDs)
+    // policyBindings, ontologyTags, evalBindings are stored by name/label/suiteName (no IDs)
     const policyBindings = agent.policyBindings ?? [];
     const ontologyTags   = agent.ontologyTags   ?? [];
     const evalBindings   = agent.evalBindings   ?? [];
+
+    if (prodAgentIdByName[agent.name]) {
+      // Agent already exists on Prod — reconcile inline linkage fields via PATCH so that
+      // re-runs (or partial prior migrations) still converge to the correct state.
+      const existingId = prodAgentIdByName[agent.name];
+      skip(`Agent already exists: ${agent.name} — reconciling bindings via PATCH`);
+      await prodPatch(`/api/agents/${existingId}`, {
+        preloadedSkills: prodPreloadedSkills,
+        blueprintId:     prodBpId ?? null,
+        policyBindings,
+        ontologyTags,
+        evalBindings,
+      }).catch((e: Error) =>
+        warn(`Reconcile PATCH for "${agent.name}" failed: ${e.message}`)
+      );
+      summary.agents.skipped++;
+      continue;
+    }
 
     const agentPayload = forProd(agent as Record<string, unknown>, {
       blueprintId:     prodBpId ?? null,

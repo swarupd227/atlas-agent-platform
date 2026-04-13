@@ -27,6 +27,8 @@ PROD_API_KEY="YOUR-PROD-API-KEY"       # Leave empty ("") if no auth required
 
 # Dev API base — defaults to localhost:5000 (change if dev runs elsewhere)
 DEV_URL="${DEV_URL:-http://localhost:5000}"
+# Optional: Dev org UUID to scope API reads (sent as x-organization-id header)
+DEV_ORG_ID="${DEV_ORG_ID:-}"
 
 # ─── Pre-flight checks ────────────────────────────────────────────────────────
 
@@ -59,11 +61,17 @@ done
 
 # ─── Run the migration ────────────────────────────────────────────────────────
 
+DEV_ORG_ARG=""
+if [[ -n "$DEV_ORG_ID" ]]; then
+  DEV_ORG_ARG="--dev-org-id $DEV_ORG_ID"
+fi
+
 npx ts-node \
   --project tsconfig.json \
   scripts/migrate-fitch-rw-to-prod.ts \
-  --prod-url    "$PROD_URL" \
-  --prod-org-id "$PROD_ORG_ID" \
+  --prod-url     "$PROD_URL" \
+  --prod-org-id  "$PROD_ORG_ID" \
   --prod-api-key "$PROD_API_KEY" \
-  --dev-url     "$DEV_URL" \
+  --dev-url      "$DEV_URL" \
+  $DEV_ORG_ARG \
   $DRY_RUN_FLAG
