@@ -1385,19 +1385,19 @@ function ConfigureStep({
                 <SelectTrigger data-testid="select-framework-bundle">
                   <SelectValue placeholder="Select framework" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="max-h-72">
                   <SelectItem value="generic">Generic (ReAct Agent Loop)</SelectItem>
+                  <SelectItem value="claude-code">Claude Code SDK (Anthropic)</SelectItem>
                   <SelectItem value="langgraph">LangGraph</SelectItem>
                   <SelectItem value="crewai">CrewAI</SelectItem>
                   <SelectItem value="autogen">AutoGen (Microsoft)</SelectItem>
                   <SelectItem value="semantic-kernel">Semantic Kernel</SelectItem>
-                  <SelectItem value="foundry">Azure AI Foundry</SelectItem>
                   <SelectItem value="openai-assistants">OpenAI Assistants API</SelectItem>
+                  <SelectItem value="foundry">Azure AI Foundry</SelectItem>
                   <SelectItem value="bedrock">AWS Bedrock Agents</SelectItem>
                   <SelectItem value="vertex">Vertex AI Agent Builder</SelectItem>
                   <SelectItem value="n8n">n8n Workflow</SelectItem>
                   <SelectItem value="databricks">Databricks AgentBricks</SelectItem>
-                  <SelectItem value="claude-code">Claude Code SDK (Anthropic)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -1440,19 +1440,19 @@ function ConfigureStep({
               <SelectTrigger data-testid="select-framework">
                 <SelectValue placeholder="Select framework" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="max-h-72">
                 <SelectItem value="generic">Generic (ReAct Agent Loop)</SelectItem>
+                <SelectItem value="claude-code">Claude Code SDK (Anthropic)</SelectItem>
                 <SelectItem value="langgraph">LangGraph</SelectItem>
                 <SelectItem value="crewai">CrewAI</SelectItem>
                 <SelectItem value="autogen">AutoGen (Microsoft)</SelectItem>
                 <SelectItem value="semantic-kernel">Semantic Kernel (Microsoft)</SelectItem>
-                <SelectItem value="foundry">Azure AI Foundry</SelectItem>
                 <SelectItem value="openai-assistants">OpenAI Assistants API</SelectItem>
+                <SelectItem value="foundry">Azure AI Foundry</SelectItem>
                 <SelectItem value="bedrock">AWS Bedrock Agents</SelectItem>
                 <SelectItem value="vertex">Vertex AI Agent Builder</SelectItem>
                 <SelectItem value="n8n">n8n Workflow</SelectItem>
                 <SelectItem value="databricks">Databricks AgentBricks</SelectItem>
-                <SelectItem value="claude-code">Claude Code SDK (Anthropic)</SelectItem>
               </SelectContent>
             </Select>
           </div>
