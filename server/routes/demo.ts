@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { hearstLiveRunHandler, ensureHearstAgents } from "../hearst-live-run";
 import { fitchLiveRunHandler, ensureFitchAgents, getFitchPipelineAgentNames, getFitchAgentIdByName } from "../fitch-live-run";
+import { fitchRWLiveRunHandler, fitchRWSetupHandler, getFitchRWAgentRuns } from "../fitch-rw-live-run";
 import { littlerLiveRunHandler } from "../littler-live-run";
 import { otcQuoteLiveRunHandler } from "../otc-quote-live-run";
 
@@ -3114,6 +3115,11 @@ Log every action.`;
       res.status(500).json({ message: err.message });
     }
   });
+
+  // ── SCN-1.1 Fitch Rating Watch Intelligence Pipeline routes ────────────────
+  router.post("/demo-api/fitch-rw/setup",     fitchRWSetupHandler);
+  router.get("/demo-api/fitch-rw/live-run",   fitchRWLiveRunHandler);
+  router.get("/demo-api/fitch-rw/agent-runs", getFitchRWAgentRuns);
 
 export { ensureHearstAgents, ensureFitchAgents };
 export default router;
