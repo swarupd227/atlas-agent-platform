@@ -488,14 +488,16 @@ async function main() {
 
   const agentDetails: AgentFull[] = await Promise.all(
     devAgents.map(async (agent) => {
-      const [kbLinks, mcpLinks] = await Promise.all([
-        devGet<{ knowledgeBaseId: string; [k: string]: unknown }[]>(
+      // GET /api/agents/:agentId/knowledge-bases returns { links, knowledgeBases }
+      const [kbResp, mcpLinks] = await Promise.all([
+        devGet<{ links: { knowledgeBaseId: string; [k: string]: unknown }[] }>(
           `/api/agents/${agent.id}/knowledge-bases`
-        ).catch(() => [] as { knowledgeBaseId: string }[]),
+        ).catch(() => ({ links: [] as { knowledgeBaseId: string }[] })),
         devGet<{ serverId: string; [k: string]: unknown }[]>(
           `/api/agents/${agent.id}/mcp-servers`
         ).catch(() => [] as { serverId: string }[]),
       ]);
+      const kbLinks = Array.isArray(kbResp) ? kbResp : (kbResp?.links ?? []);
       return { agent, kbLinks, mcpLinks };
     })
   );
@@ -623,12 +625,14 @@ async function main() {
       continue;
     }
 
+    // GET /api/agents/:agentId/knowledge-bases returns { links, knowledgeBases }
     let existingProdKbLinks: { knowledgeBaseId: string }[] = [];
     try {
-      existingProdKbLinks = await prodGet<{ knowledgeBaseId: string }[]>(
-        `/api/agents/${prodAgentId}/knowledge-bases`
-      );
-    } catch { /* new agent */ }
+      const kbResp = await prodGet<
+        { links: { knowledgeBaseId: string }[] } | { knowledgeBaseId: string }[]
+      >(`/api/agents/${prodAgentId}/knowledge-bases`);
+      existingProdKbLinks = Array.isArray(kbResp) ? kbResp : (kbResp?.links ?? []);
+    } catch { /* new agent, no links yet */ }
     const alreadyLinkedKbIds = new Set(existingProdKbLinks.map(l => l.knowledgeBaseId));
 
     for (const link of kbLinks) {
