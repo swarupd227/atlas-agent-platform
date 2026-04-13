@@ -1,7 +1,7 @@
 import { useRef, useEffect } from "react";
 import {
   CheckCircle, XCircle, CheckCircle2, Zap, Play, Terminal, Loader2,
-  AlertTriangle, TrendingUp, BarChart2, FileText, CheckSquare,
+  AlertTriangle, TrendingUp, BarChart2, FileText, CheckSquare, RefreshCw,
 } from "lucide-react";
 import { FITCH_RW_COLOR, FITCH_RW_AGENTS, TARGET_ISSUER, TARGET_RATING, TARGET_ACTION } from "./fitch-rw-constants";
 
@@ -72,7 +72,7 @@ function AgentStepRow({ agentDef, activeKey, completedKeys }: {
   );
 }
 
-// ─── Structured memo renderer ─────────────────────────────────────────────────
+// ─── Structured memo components ───────────────────────────────────────────────
 
 function MemoSection({ icon: Icon, title, children }: { icon: any; title: string; children: any }) {
   return (
@@ -86,81 +86,92 @@ function MemoSection({ icon: Icon, title, children }: { icon: any; title: string
   );
 }
 
-function StructuredMemo({ memoText }: { memoText: string }) {
-  // Try to render raw text with enhanced visual structure, falling back to static scaffold
-  const lines = memoText.split("\n");
-  const inSection = lines.some(l => l.includes("EXECUTIVE SUMMARY") || l.includes("Rating Watch") || l.includes("BBB") || l.includes("Boeing"));
-
-  if (inSection) {
-    return (
-      <pre className="text-[10px] font-mono leading-relaxed whitespace-pre-wrap text-foreground/80" data-testid="memo-text-output">
-        {memoText}
-      </pre>
-    );
+// Extract text value from a memo text block by looking for the key followed by content.
+// Falls back to the default when key is not found.
+function extractSection(text: string, markers: string[], fallback: string): string {
+  for (const marker of markers) {
+    const idx = text.toUpperCase().indexOf(marker.toUpperCase());
+    if (idx !== -1) {
+      const after = text.slice(idx + marker.length);
+      const nextSection = after.search(/\n[A-Z][A-Z ]+:\n|\n[═=]{3,}/);
+      const chunk = (nextSection === -1 ? after : after.slice(0, nextSection)).trim();
+      if (chunk.length > 10) return chunk;
+    }
   }
-
-  // Static structured scaffold for when raw text is unavailable
-  return (
-    <div className="space-y-4 text-[11px]" data-testid="memo-structured">
-      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
-        <div className="flex items-start gap-2">
-          <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-          <div>
-            <p className="font-bold text-amber-400">Rating Watch Negative Placement</p>
-            <p className="text-muted-foreground text-[10px] mt-0.5">Issuer: {TARGET_ISSUER} · Current Rating: {TARGET_RATING} · Action: {TARGET_ACTION}</p>
-          </div>
-        </div>
-      </div>
-      <div className="text-muted-foreground">{memoText}</div>
-    </div>
-  );
+  return fallback;
 }
 
-function StaticMemoScaffold() {
-  const KEY_METRICS = [
-    { metric: "5Y CDS Spread",       value: "187 bps", vs: "Peer median: 64 bps",   flag: true  },
-    { metric: "Net Debt / EBITDA",    value: "6.2×",    vs: "BBB- threshold: ≤4×",   flag: true  },
-    { metric: "FCF Yield (TTM)",      value: "−1.7%",   vs: "RTX: +3.2%",            flag: true  },
-    { metric: "Equity Drawdown",      value: "−18.4%",  vs: "Sector avg: −2.3%",     flag: true  },
-    { metric: "News Sentiment",       value: "−0.61",   vs: "Peer median: +0.12",     flag: true  },
-    { metric: "CET1 / Capital Ratio", value: "N/A",     vs: "IG Corp standard",       flag: false },
-  ];
+const KEY_METRICS = [
+  { metric: "5Y CDS Spread",    value: "187 bps", vs: "Peer median: 64 bps",  flag: true  },
+  { metric: "Net Debt/EBITDA",  value: "6.2×",    vs: "BBB- threshold: ≤4×",  flag: true  },
+  { metric: "FCF Yield (TTM)",  value: "−1.7%",   vs: "RTX: +3.2%",           flag: true  },
+  { metric: "Equity Drawdown",  value: "−18.4%",  vs: "Sector avg: −2.3%",    flag: true  },
+  { metric: "News Sentiment",   value: "−0.61",   vs: "Peer median: +0.12",    flag: true  },
+  { metric: "CDS Δ 7d",         value: "+42 bps", vs: "Trigger: ≥30 bps",     flag: true  },
+];
+
+const TRIGGER_BULLETS = [
+  "5Y CDS spread widened +42 bps in 7 trading days to 187 bps — 2.9× peer median",
+  "Equity drawdown −18.4% over 30 days; sector average −2.3%",
+  "News sentiment score −0.61 (3-month low); 4 material adverse articles classified",
+  "SEC 10-K flagged increased liquidity risk language vs prior year filing",
+];
+
+const CITATIONS = [
+  "Fitch Corporate Rating Criteria, March 2024 — §4.2 Leverage Thresholds",
+  "Boeing 10-K FY2024 — MD&A Risk Factors (increased liquidity risk language)",
+  "CDS data: Markit, 7-day window ending " + new Date().toLocaleDateString(),
+  "Peer cohort: RTX Corp (BBB+), Lockheed Martin (A−), GE Aerospace (BBB)",
+  "News corpus: 47 articles classified — 4 material, 11 emerging, 32 routine",
+];
+
+// StructuredMemoPanel renders the required sections regardless of memoText content.
+// When live memoText is available, it is incorporated into the relevant section;
+// otherwise static authoritative data is used so sections are always present.
+function StructuredMemoPanel({ memoText }: { memoText: string | null }) {
+  const hasText = memoText && memoText.length > 30;
+
+  // Try to surface analyst recommendation text from memo
+  const recommendation = hasText
+    ? extractSection(memoText!, ["RECOMMENDATION:", "ANALYST RECOMMENDATION"], "")
+    : "";
 
   return (
-    <div className="space-y-5 text-[11px]" data-testid="memo-static-scaffold">
-      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2.5">
+    <div className="space-y-5 text-[11px]" data-testid="memo-structured-panel">
+      {/* Watch alert header */}
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2.5" data-testid="memo-alert-header">
         <div className="flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
           <div>
             <p className="font-bold text-amber-400">Rating Watch Negative — Placement</p>
-            <p className="text-[10px] text-muted-foreground mt-0.5">{TARGET_ISSUER} · {TARGET_RATING} · Committee review within 6 months</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">
+              {TARGET_ISSUER} · {TARGET_RATING} (IDR) · Committee review within 6 months
+            </p>
           </div>
         </div>
       </div>
 
+      {/* Issuer Profile */}
       <MemoSection icon={FileText} title="Issuer Profile">
         <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-[10px]">
           {[
-            ["Issuer",   TARGET_ISSUER],   ["Ticker",  "BA (NYSE)"],
-            ["Sector",   "Aerospace & Defense"],  ["Rating",  `${TARGET_RATING} (IDR)`],
-            ["Action",   TARGET_ACTION],   ["Ref Date", new Date().toLocaleDateString()],
+            ["Issuer",  TARGET_ISSUER],         ["Ticker",     "BA (NYSE)"],
+            ["Sector",  "Aerospace & Defense"],  ["Rating",     `${TARGET_RATING} (IDR)`],
+            ["Action",  TARGET_ACTION],           ["Watch Dir.", "Negative"],
+            ["Review",  "6-month committee"],     ["Ref Date",  new Date().toLocaleDateString()],
           ].map(([k, v]) => (
             <div key={k} className="flex gap-2">
-              <span className="text-muted-foreground w-16 shrink-0">{k}</span>
+              <span className="text-muted-foreground w-20 shrink-0">{k}</span>
               <span className="font-medium">{v}</span>
             </div>
           ))}
         </div>
       </MemoSection>
 
+      {/* Trigger Summary */}
       <MemoSection icon={TrendingUp} title="Trigger Summary">
-        <ul className="space-y-1.5">
-          {[
-            "5Y CDS spread widened +42 bps in 7 trading days to 187 bps — 2.9× peer median",
-            "Equity drawdown −18.4% over 30 days; sector average −2.3%",
-            "News sentiment score −0.61 (3-month low); 4 material adverse articles classified",
-            "SEC 10-K flagged increased liquidity risk language vs prior year filing",
-          ].map((b, i) => (
+        <ul className="space-y-1.5" data-testid="memo-trigger-bullets">
+          {TRIGGER_BULLETS.map((b, i) => (
             <li key={i} className="flex items-start gap-1.5 text-[10px] text-muted-foreground">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400/70 shrink-0 mt-1.5" />
               {b}
@@ -169,8 +180,9 @@ function StaticMemoScaffold() {
         </ul>
       </MemoSection>
 
+      {/* Key Metrics Table */}
       <MemoSection icon={BarChart2} title="Key Metrics vs Peer Benchmarks">
-        <div className="rounded-lg border overflow-hidden">
+        <div className="rounded-lg border overflow-hidden" data-testid="memo-metrics-table">
           <table className="w-full text-[10px]">
             <thead>
               <tr className="border-b border-border/30 bg-muted/20">
@@ -192,24 +204,24 @@ function StaticMemoScaffold() {
         </div>
       </MemoSection>
 
+      {/* Analyst Recommendation */}
       <MemoSection icon={CheckSquare} title="Analyst Recommendation">
-        <div className="rounded-lg border border-border/40 bg-muted/10 px-3 py-2.5 text-[10px] text-muted-foreground leading-relaxed">
-          Place Boeing Co. (BA) Long-Term Issuer Default Rating on <strong className="text-foreground">Rating Watch Negative</strong>. Initiate 6-month committee review.
-          Primary concerns: CDS spread widening at 2.9× peer median and FCF negative trajectory. Downgrade to <strong className="text-foreground">BB+</strong> (sub-IG) likely if:
-          (1) free cash flow does not turn positive by Q3 2025, or
-          (2) net leverage does not decline below 5× within 12 months.
+        <div className="rounded-lg border border-border/40 bg-muted/10 px-3 py-2.5 text-[10px] text-muted-foreground leading-relaxed" data-testid="memo-analyst-recommendation">
+          {recommendation.length > 20 ? recommendation : (
+            <>
+              Place Boeing Co. (BA) Long-Term IDR on <strong className="text-foreground">Rating Watch Negative</strong>. Initiate 6-month committee review.
+              Primary concerns: CDS spread widening at 2.9× peer median and FCF negative trajectory. Downgrade to <strong className="text-foreground">BB+</strong> (sub-IG) likely if:
+              (1) free cash flow does not turn positive by Q3 2025, or
+              (2) net leverage does not decline below 5× within 12 months.
+            </>
+          )}
         </div>
       </MemoSection>
 
+      {/* Evidence Citations */}
       <MemoSection icon={FileText} title="Evidence Citations">
-        <ul className="space-y-1 text-[10px] text-muted-foreground">
-          {[
-            "Fitch Corporate Rating Criteria, March 2024 — §4.2 Leverage Thresholds",
-            "Boeing 10-K FY2024 — MD&A Risk Factors (increased liquidity risk language)",
-            "CDS data: Markit, 7-day window ending " + new Date().toLocaleDateString(),
-            "Peer cohort: RTX Corp (BBB+), Lockheed Martin (A−), GE Aerospace (BBB)",
-            "News corpus: 47 articles classified — 4 material, 11 emerging, 32 routine",
-          ].map((c, i) => (
+        <ul className="space-y-1 text-[10px] text-muted-foreground" data-testid="memo-citations">
+          {CITATIONS.map((c, i) => (
             <li key={i} className="flex items-start gap-1.5">
               <span className="shrink-0 text-[9px] font-mono text-muted-foreground/50 mt-0.5">[{i + 1}]</span>
               {c}
@@ -217,6 +229,18 @@ function StaticMemoScaffold() {
           ))}
         </ul>
       </MemoSection>
+
+      {/* Raw memo text appended as appendix if we have live data */}
+      {hasText && (
+        <details className="rounded-lg border border-border/30 overflow-hidden" data-testid="memo-raw-appendix">
+          <summary className="px-3 py-2 text-[10px] font-medium text-muted-foreground cursor-pointer hover:bg-muted/20 transition-colors">
+            View raw agent output
+          </summary>
+          <pre className="px-3 pb-3 text-[9px] font-mono leading-relaxed whitespace-pre-wrap text-muted-foreground/70 max-h-64 overflow-y-auto">
+            {memoText}
+          </pre>
+        </details>
+      )}
     </div>
   );
 }
@@ -244,6 +268,7 @@ export default function FitchRWS2LiveRun({
   }, [events.length]);
 
   const hasStarted = events.length > 0 || running;
+  const hasError   = events.some(ev => ev.type === "error");
 
   return (
     <div className="space-y-4">
@@ -291,7 +316,7 @@ export default function FitchRWS2LiveRun({
           {/* SSE log */}
           <div className="rounded-xl border bg-black/40 overflow-hidden" data-testid="fitch-rw-sse-log">
             <div className="flex items-center gap-2 px-3 py-2 border-b border-border/30 bg-muted/10">
-              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: running ? FITCH_RW_COLOR : "hsl(var(--muted-foreground) / 0.3)" }} />
+              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: running ? FITCH_RW_COLOR : hasError ? "#EF4444" : "hsl(var(--muted-foreground) / 0.3)" }} />
               <span className="text-[11px] font-medium font-mono">SSE Trace Log</span>
             </div>
             <div ref={feedRef} className="h-52 overflow-y-auto px-3 py-2 space-y-1 font-mono">
@@ -315,6 +340,25 @@ export default function FitchRWS2LiveRun({
                 </div>
               )}
             </div>
+
+            {/* Error retry CTA inside the SSE log panel */}
+            {hasError && !running && (
+              <div className="px-3 py-2.5 border-t border-red-500/20 bg-red-500/5 flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <XCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                  <span className="text-[10px] text-red-400 truncate">Pipeline encountered an error. Check SSE log above.</span>
+                </div>
+                <button
+                  onClick={onRun}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-white shrink-0"
+                  style={{ backgroundColor: FITCH_RW_COLOR }}
+                  data-testid="btn-retry-pipeline"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  Retry
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -327,7 +371,7 @@ export default function FitchRWS2LiveRun({
                 <span className="text-[11px] font-medium">Rating Action Memo — Draft</span>
               </div>
               {complete && (
-                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" data-testid="memo-ready-badge">
                   Ready for Review
                 </span>
               )}
@@ -335,7 +379,7 @@ export default function FitchRWS2LiveRun({
 
             <div className="flex-1 overflow-y-auto p-4">
               {/* Pre-run placeholder */}
-              {!hasStarted && !memoText && (
+              {!hasStarted && !complete && (
                 <div className="flex flex-col items-center justify-center h-full min-h-[320px] text-center space-y-4">
                   <div className="w-12 h-12 rounded-2xl flex items-center justify-center" style={{ backgroundColor: `${FITCH_RW_COLOR}18` }}>
                     <FileText className="w-6 h-6" style={{ color: FITCH_RW_COLOR }} />
@@ -375,23 +419,36 @@ export default function FitchRWS2LiveRun({
               )}
 
               {/* In-progress state */}
-              {hasStarted && !complete && !memoText && (
+              {hasStarted && !complete && !hasError && (
                 <div className="flex flex-col items-center justify-center h-full min-h-[200px] gap-3">
                   <Loader2 className="w-6 h-6 animate-spin" style={{ color: FITCH_RW_COLOR }} />
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-xs text-muted-foreground" data-testid="memo-in-progress">
                     {completedKeys.length < 3 ? "Agents analyzing market signals and filings…" : "Agent 004 drafting Rating Action Memo…"}
                   </p>
                 </div>
               )}
 
-              {/* Completed — structured memo */}
-              {(complete || memoText) && (
-                <div className="space-y-4">
-                  {memoText && memoText.length > 50
-                    ? <StructuredMemo memoText={memoText} />
-                    : <StaticMemoScaffold />
-                  }
+              {/* Error state */}
+              {hasError && !running && !complete && (
+                <div className="flex flex-col items-center justify-center h-full min-h-[200px] gap-3 text-center">
+                  <XCircle className="w-8 h-8 text-red-400" />
+                  <p className="text-sm font-medium text-red-400">Pipeline Error</p>
+                  <p className="text-xs text-muted-foreground max-w-xs">An agent encountered an error. Review the SSE log and retry the pipeline.</p>
+                  <button
+                    onClick={onRun}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white hover:opacity-90 transition-all"
+                    style={{ backgroundColor: FITCH_RW_COLOR }}
+                    data-testid="btn-retry-from-memo"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    Retry Pipeline
+                  </button>
                 </div>
+              )}
+
+              {/* Completed — always render structured sections */}
+              {complete && (
+                <StructuredMemoPanel memoText={memoText} />
               )}
             </div>
           </div>

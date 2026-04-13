@@ -97,9 +97,9 @@ function AgentCard({ agentDef, run, hasRun }: { agentDef: typeof FITCH_RW_AGENTS
         {runId && agentId && (
           <div className="flex items-center gap-2 py-1.5 px-2.5 rounded-lg border border-border/30 bg-muted/10">
             <Hash className="w-3 h-3 text-muted-foreground/50 shrink-0" />
-            <span className="text-[9px] font-mono text-muted-foreground/60 truncate flex-1">Run ID: {runId}</span>
-            <Link href={`/runtime/runs/${runId}`}>
-              <span className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1 cursor-pointer transition-colors shrink-0" data-testid={`link-run-${agentDef.key}`}>
+            <span className="text-[9px] font-mono text-muted-foreground/60 truncate flex-1" data-testid={`text-run-id-${agentDef.key}`}>Run ID: {runId}</span>
+            <Link href={`/agents/${agentId}/runs/${runId}`}>
+              <span className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1 cursor-pointer transition-colors shrink-0" data-testid={`link-run-trace-${agentDef.key}`}>
                 <ExternalLink className="w-3 h-3" />View Trace
               </span>
             </Link>

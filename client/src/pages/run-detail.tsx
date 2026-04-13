@@ -713,8 +713,9 @@ function McpTranscriptView({ runId }: { runId: string }) {
 }
 
 export default function RunDetail() {
-  const [, params] = useRoute("/runtime/runs/:id");
-  const runId = params?.id;
+  const [matchRuntime, paramsRuntime] = useRoute("/runtime/runs/:id");
+  const [matchAgent,   paramsAgent]   = useRoute("/agents/:agentId/runs/:id");
+  const runId = (matchRuntime ? paramsRuntime?.id : matchAgent ? paramsAgent?.id : undefined);
 
   const { data: run, isLoading } = useQuery<RunWithSteps>({
     queryKey: ["/api/runtime/runs", runId],

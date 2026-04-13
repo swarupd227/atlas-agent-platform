@@ -179,6 +179,7 @@ function DashboardRouter() {
       <Route path="/deployments/:id" component={ReleaseDetail} />
       <Route path="/traces/:id" component={TraceDetail} />
       <Route path="/runtime/runs/:id" component={RunDetail} />
+      <Route path="/agents/:agentId/runs/:id" component={RunDetail} />
       <Route path="/monitor" component={Monitor} />
       <Route path="/observability" component={ObservabilityPage} />
       <Route path="/governance/policy-engine" component={PolicyEngine} />
