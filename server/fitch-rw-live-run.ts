@@ -722,7 +722,13 @@ export async function ensureFitchRWAgents(): Promise<void> {
         tags:            skillDef.tags,
         contextMode:     (skillDef.yamlFrontmatter.contextMode as string) || "summary",
         markdownBody:    skillDef.markdownBody,
-        yamlFrontmatter: skillDef.yamlFrontmatter,
+        yamlFrontmatter: {
+          ...skillDef.yamlFrontmatter,
+          industry: "financial_services",
+          domain:   "credit_ratings",
+          version:  "1.0",
+          tags:     skillDef.tags,
+        },
         allowedTools:    (skillDef.yamlFrontmatter.allowedTools as string[]) || [],
       });
     }
@@ -846,6 +852,30 @@ export async function ensureFitchRWAgents(): Promise<void> {
   }
 
   // ── 7. Agents ───────────────────────────────────────────────────────────────
+  // Per-agent policy bindings (all 4 shared policies; enforcement level per role)
+  const AGENT_POLICY_BINDINGS = [
+    { policyName: "Fitch RW — Rating Watch Placement Policy",   enforcement: "hard" },
+    { policyName: "Fitch RW — Regulatory Disclosure Compliance", enforcement: "hard" },
+    { policyName: "Fitch RW — Data Confidentiality Policy",      enforcement: "hard" },
+    { policyName: "Fitch RW — Analytical Independence Policy",   enforcement: "soft" },
+  ];
+
+  // Per-agent ontology concept tags
+  const AGENT_ONTOLOGY_TAGS: Record<string, string[]> = {
+    marketSignalScanner:   ["Credit Default Swap Spread", "Rating Watch Negative", "Bloomberg Terminal Feed"],
+    filingIntelligenceAgent: ["Net Debt to EBITDA", "EBIT Interest Coverage", "Free Cash Flow to Debt", "Going Concern Opinion"],
+    peerBenchmarkingAgent: ["Peer Cohort", "Rating Watch Negative"],
+    ratingActionMemoAgent: ["SEC Rule 17g-7", "EU CRA III Article 11", "Rating Committee", "MD&A Tone"],
+  };
+
+  // Per-agent eval suite names
+  const AGENT_EVAL_SUITE_NAME: Record<string, string> = {
+    marketSignalScanner:    "Fitch RW — Market Signal Scanner Eval Suite",
+    filingIntelligenceAgent:"Fitch RW — Filing Intelligence Agent Eval Suite",
+    peerBenchmarkingAgent:  "Fitch RW — Peer Benchmarking Agent Eval Suite",
+    ratingActionMemoAgent:  "Fitch RW — Rating Action Memo Agent Eval Suite",
+  };
+
   const allAgents = await storage.getAgents().catch((): Awaited<ReturnType<typeof storage.getAgents>> => []);
 
   for (const def of FITCH_RW_AGENT_DEFS) {
@@ -854,6 +884,9 @@ export async function ensureFitchRWAgents(): Promise<void> {
       .map(sn => _fitchRWSkillIdByName[sn])
       .filter(Boolean)
       .map(skillId => ({ skillId }));
+
+    const agentOntologyTags = (AGENT_ONTOLOGY_TAGS[def.key] || []).map(label => ({ label }));
+    const agentEvalSuiteName = AGENT_EVAL_SUITE_NAME[def.key];
 
     if (!agent) {
       agent = await storage.createAgent({
@@ -880,14 +913,20 @@ export async function ensureFitchRWAgents(): Promise<void> {
         blueprintId:       blueprint.id,
         complianceTags:    ["SEC-17g-7", "EU-CRA-III", "FITCH-NRSRO"],
         industry:          "financial_services",
+        policyBindings:    AGENT_POLICY_BINDINGS,
+        ontologyTags:      agentOntologyTags,
+        evalBindings:      [{ suiteName: agentEvalSuiteName, schedule: "weekly" }],
       } as Parameters<typeof storage.createAgent>[0]);
     } else {
       await storage.updateAgent(agent.id, {
-        systemPrompt:   def.systemPrompt,
-        runtimeConfig:  { prompt: def.taskPrompt, scheduleIntervalMinutes: 0 },
+        systemPrompt:    def.systemPrompt,
+        runtimeConfig:   { prompt: def.taskPrompt, scheduleIntervalMinutes: 0 },
         preloadedSkills: preloadedSkills as { skillId: string }[],
-        blueprintId:    blueprint.id,
-      });
+        blueprintId:     blueprint.id,
+        policyBindings:  AGENT_POLICY_BINDINGS,
+        ontologyTags:    agentOntologyTags,
+        evalBindings:    [{ suiteName: agentEvalSuiteName, schedule: "weekly" }],
+      } as Parameters<typeof storage.updateAgent>[1]);
     }
 
     _fitchRWAgentIdByKey[def.key] = agent.id;
@@ -900,60 +939,108 @@ export async function ensureFitchRWAgents(): Promise<void> {
         await storage.createAgentKnowledgeBase({ agentId: agent.id, knowledgeBaseId: kbId }).catch(() => { /* ignore duplicate */ });
       }
     }
+
+    // Bind MCP servers directly during setup (not deferred to deployment)
+    for (const mcpName of def.mcpServerNames) {
+      const serverId = _fitchRWServerIdByName[mcpName];
+      if (!serverId) continue;
+      const existing = await storage.getAgentMcpServerByIds(agent.id, serverId).catch(() => undefined);
+      if (!existing) {
+        await storage.createAgentMcpServer({ agentId: agent.id, serverId }).catch(() => { /* ignore duplicate */ });
+      }
+    }
   }
 
-  // ── 8. Eval Suite (bound to lead agent) ────────────────────────────────────
-  const leadAgentId = _fitchRWAgentIdByKey["marketSignalScanner"] || "fitch-rw-eval-placeholder";
-  const allEvals = await storage.getEvalSuites().catch((): Awaited<ReturnType<typeof storage.getEvalSuites>> => []);
-  const evalSuiteName = "Fitch RW Pipeline — Rating Watch Regression Suite";
-  let evalSuite = allEvals.find(e => e.name === evalSuiteName);
-  if (!evalSuite) {
-    evalSuite = await storage.createEvalSuite({
-      agentId:      leadAgentId,
-      name:         evalSuiteName,
-      type:         "regression",
-      industry:     "financial_services",
-      passRate:     0.92,
-      totalCases:   10,
-      coverageTags: ["market_signals","filing_analysis","peer_benchmarking","memo_drafting","regulatory_compliance"],
-      thresholdConfig: { minPassRate: 0.90 },
-      scorerConfig:    { type: "llm_judge", model: "gpt-4.1" },
-    });
-  }
-
-  const existingCases = await storage.getEvalTestCases(evalSuite.id).catch((): Awaited<ReturnType<typeof storage.getEvalTestCases>> => []);
-  const existingCaseNames = new Set(existingCases.map(c => c.name));
-
-  const EVAL_CASES = [
-    { name: "CDS widening correctly triggers WATCH_NEGATIVE signal",     severity: "critical", tags: ["market_signals","cds"] },
-    { name: "Stable CDS correctly returns STABLE signal",                severity: "high",     tags: ["market_signals","cds"] },
-    { name: "Net Debt/EBITDA >4.5x correctly flagged as breach",         severity: "critical", tags: ["filing_analysis","leverage"] },
-    { name: "Going concern opinion triggers automatic escalation",        severity: "critical", tags: ["filing_analysis","audit"] },
-    { name: "New HIGH-severity risk factor correctly identified",         severity: "high",     tags: ["filing_analysis","risk_factors"] },
-    { name: "Peer cohort selection follows Fitch v3.1 methodology",      severity: "high",     tags: ["peer_benchmarking","methodology"] },
-    { name: "Q1 percentile rank supports Watch Negative recommendation",  severity: "high",     tags: ["peer_benchmarking","quartile"] },
-    { name: "Rating memo submitted with correct action_type field",       severity: "critical", tags: ["memo_drafting","committee"] },
-    { name: "SEC-17g-7 disclosure logged after committee approval",       severity: "critical", tags: ["regulatory_compliance","sec"] },
-    { name: "Expedited track used when composite score indicates urgency", severity: "high",    tags: ["committee","approval_protocol"] },
+  // ── 8. Per-Agent Eval Suites (one per agent, each bound by agentId) ────────
+  const PER_AGENT_EVAL_SUITES: Array<{
+    agentKey: string;
+    suiteName: string;
+    coverageTags: string[];
+    cases: Array<{ name: string; severity: string; tags: string[] }>;
+  }> = [
+    {
+      agentKey:     "marketSignalScanner",
+      suiteName:    AGENT_EVAL_SUITE_NAME["marketSignalScanner"],
+      coverageTags: ["market_signals", "cds", "equity", "sentiment"],
+      cases: [
+        { name: "CDS widening >30 bps correctly triggers WATCH_NEGATIVE signal", severity: "critical", tags: ["market_signals","cds"] },
+        { name: "Stable CDS (<5 bps movement) correctly returns STABLE signal",  severity: "high",     tags: ["market_signals","cds"] },
+        { name: "Implied volatility >40% correctly raises HIGH_VOL flag",        severity: "high",     tags: ["equity","volatility"] },
+      ],
+    },
+    {
+      agentKey:     "filingIntelligenceAgent",
+      suiteName:    AGENT_EVAL_SUITE_NAME["filingIntelligenceAgent"],
+      coverageTags: ["filing_analysis", "leverage", "audit", "risk_factors"],
+      cases: [
+        { name: "Net Debt/EBITDA >4.5x correctly flagged as threshold breach",   severity: "critical", tags: ["filing_analysis","leverage"] },
+        { name: "Going concern opinion triggers automatic escalation path",       severity: "critical", tags: ["filing_analysis","audit"] },
+        { name: "New HIGH-severity risk factor correctly identified and flagged", severity: "high",     tags: ["filing_analysis","risk_factors"] },
+      ],
+    },
+    {
+      agentKey:     "peerBenchmarkingAgent",
+      suiteName:    AGENT_EVAL_SUITE_NAME["peerBenchmarkingAgent"],
+      coverageTags: ["peer_benchmarking", "methodology", "quartile"],
+      cases: [
+        { name: "Peer cohort selection follows Fitch sector-first methodology",   severity: "high",     tags: ["peer_benchmarking","methodology"] },
+        { name: "Q1 quartile ranking correctly supports Watch Negative recommendation", severity: "high", tags: ["peer_benchmarking","quartile"] },
+      ],
+    },
+    {
+      agentKey:     "ratingActionMemoAgent",
+      suiteName:    AGENT_EVAL_SUITE_NAME["ratingActionMemoAgent"],
+      coverageTags: ["memo_drafting", "committee", "regulatory_compliance", "sec"],
+      cases: [
+        { name: "Rating memo submitted with correct action_type 'WATCH_NEGATIVE'", severity: "critical", tags: ["memo_drafting","committee"] },
+        { name: "SEC-17g-7 disclosure logged within required timeframe",           severity: "critical", tags: ["regulatory_compliance","sec"] },
+        { name: "Expedited committee track used when composite signal is urgent",  severity: "high",     tags: ["committee","approval_protocol"] },
+      ],
+    },
   ];
 
-  for (const ec of EVAL_CASES) {
-    if (existingCaseNames.has(ec.name)) continue;
-    await storage.createEvalTestCase({
-      suiteId:  evalSuite.id,
-      name:     ec.name,
-      severity: ec.severity,
-      tags:     ec.tags,
-      status:   "active",
-      origin:   "fitch_rw_spec",
-      weight:   ec.severity === "critical" ? 2 : 1,
-      inputData:      { scenario: ec.name },
-      expectedOutput: { pass: true },
-    });
+  const allEvals = await storage.getEvalSuites().catch((): Awaited<ReturnType<typeof storage.getEvalSuites>> => []);
+
+  for (const suiteSpec of PER_AGENT_EVAL_SUITES) {
+    const agentId = _fitchRWAgentIdByKey[suiteSpec.agentKey];
+    if (!agentId) continue;
+
+    let evalSuite = allEvals.find(e => e.name === suiteSpec.suiteName);
+    if (!evalSuite) {
+      evalSuite = await storage.createEvalSuite({
+        agentId:         agentId,
+        name:            suiteSpec.suiteName,
+        type:            "regression",
+        industry:        "financial_services",
+        passRate:        0.93,
+        totalCases:      suiteSpec.cases.length,
+        coverageTags:    suiteSpec.coverageTags,
+        thresholdConfig: { minPassRate: 0.90 },
+        scorerConfig:    { type: "llm_judge", model: "gpt-4.1" },
+      });
+    }
+
+    const existingCases = await storage.getEvalTestCases(evalSuite.id).catch((): Awaited<ReturnType<typeof storage.getEvalTestCases>> => []);
+    const existingCaseNames = new Set(existingCases.map(c => c.name));
+
+    for (const ec of suiteSpec.cases) {
+      if (existingCaseNames.has(ec.name)) continue;
+      await storage.createEvalTestCase({
+        suiteId:        evalSuite.id,
+        name:           ec.name,
+        severity:       ec.severity,
+        tags:           ec.tags,
+        status:         "active",
+        origin:         "fitch_rw_spec",
+        weight:         ec.severity === "critical" ? 2 : 1,
+        inputData:      { scenario: ec.name },
+        expectedOutput: { pass: true },
+      });
+    }
   }
 
   _fitchRWSetupDone = true;
-  console.log(`[fitch-rw] Setup complete — ${FITCH_RW_AGENT_DEFS.length} agents, ${FITCH_RW_SKILLS.length} skills, ${FITCH_RW_MCP_SERVERS.length} MCPs, ${KB_DEFS.length} KBs, ${POLICY_DEFS.length} policies, 10 evals, 1 blueprint`);
+  console.log(`[fitch-rw] Setup complete — ${FITCH_RW_AGENT_DEFS.length} agents fully bound (policies+ontologyTags+evalBindings+MCPs+KBs), ${FITCH_RW_SKILLS.length} skills w/ credit_ratings domain frontmatter, ${FITCH_RW_MCP_SERVERS.length} MCPs, ${KB_DEFS.length} KBs, ${POLICY_DEFS.length} policies, 4 per-agent eval suites, 1 blueprint`);
 }
 
 async function _refreshMcpServerIds(): Promise<void> {
