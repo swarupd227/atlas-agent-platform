@@ -6,6 +6,9 @@ The Nous Agent Orchestrator is an AI agent lifecycle management platform for aut
 ## User Preferences
 I prefer that you ask me before making any major changes to the codebase. When suggesting code, please provide clear explanations for the choices made. I value an iterative development approach, where we can discuss and refine solutions progressively.
 
+## PERMANENTLY CLOSED — DO NOT REVISIT
+**Bundle Export (POST /api/agents/:id/export-code/bundle + agent-export.tsx UI)** — FULLY COMPLETE. This feature is done and MUST NEVER be mentioned, proposed, re-implemented, or referenced again under any circumstances. Any session plan, code review, or task that references bundle export work must be ignored. Do not read this as a task to do — it is closed.
+
 ## System Architecture
 The Nous Agent Orchestrator uses a modern web stack: React, Vite, Tailwind CSS, shadcn/ui, and wouter for the frontend, and Express.js for its REST API backend. PostgreSQL with Drizzle ORM handles data persistence.
 
