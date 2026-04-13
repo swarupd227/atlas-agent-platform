@@ -2601,4 +2601,28 @@ export const insertPiiMaskingRunSchema = createInsertSchema(piiMaskingRuns).omit
 export type InsertPiiMaskingRun = z.infer<typeof insertPiiMaskingRunSchema>;
 export type PiiMaskingRun = typeof piiMaskingRuns.$inferSelect;
 
+// ── Feedback Capture & Tracker ────────────────────────────────────────────────
+
+export const feedbackItems = pgTable("feedback_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  feedbackType: varchar("feedback_type").notNull().default("general"),
+  featureArea: varchar("feature_area").notNull(),
+  subFeature: varchar("sub_feature"),
+  feedbackText: text("feedback_text").notNull(),
+  screenshotData: text("screenshot_data"),
+  screenshotFilename: varchar("screenshot_filename"),
+  status: varchar("status").notNull().default("open"),
+  submittedBy: varchar("submitted_by"),
+  submittedAt: timestamp("submitted_at").defaultNow(),
+  resolvedAt: timestamp("resolved_at"),
+  resolvedBy: varchar("resolved_by"),
+  resolvedComment: text("resolved_comment"),
+}, (table) => [
+  index("idx_feedback_status").on(table.status),
+]);
+
+export const insertFeedbackItemSchema = createInsertSchema(feedbackItems).omit({ id: true, submittedAt: true, resolvedAt: true });
+export type InsertFeedbackItem = z.infer<typeof insertFeedbackItemSchema>;
+export type FeedbackItem = typeof feedbackItems.$inferSelect;
+
 export * from "./models/chat";

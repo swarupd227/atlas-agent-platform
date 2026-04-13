@@ -106,6 +106,7 @@ import SHEnergyDemo from "@/pages/demo/sh-energy-demo";
 import SHInsuranceDemo from "@/pages/demo/sh-insurance-demo";
 import DemoCenter from "@/pages/demo/demo-center";
 import ObservabilityPage from "@/pages/observability";
+import FeedbackTracker from "@/pages/feedback";
 import { Shield, LogOut } from "lucide-react";
 
 function HeaderControls() {
@@ -240,6 +241,7 @@ function DashboardRouter() {
       <Route path="/demo/sh-retail" component={SHRetailDemo} />
       <Route path="/demo/sh-energy" component={SHEnergyDemo} />
       <Route path="/demo/sh-insurance" component={SHInsuranceDemo} />
+      <Route path="/feedback" component={FeedbackTracker} />
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>

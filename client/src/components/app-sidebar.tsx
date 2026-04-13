@@ -58,6 +58,7 @@ import {
 } from "@/components/ui/collapsible";
 import { useRole } from "./role-provider";
 import { type LucideIcon } from "lucide-react";
+import { FeedbackTrigger } from "./feedback-modal";
 
 interface NavItem {
   title: string;
@@ -253,7 +254,9 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter />
+      <SidebarFooter className="pb-3 pt-1 px-2 border-t mt-1">
+        <FeedbackTrigger />
+      </SidebarFooter>
     </Sidebar>
   );
 }

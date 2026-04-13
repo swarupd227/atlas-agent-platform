@@ -261,6 +261,24 @@ export async function runStartupMigrations() {
         created_at           TIMESTAMP DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_pii_masking_runs_pipeline ON pii_masking_runs(pipeline_run_id);
+
+      -- Feedback Capture & Tracker
+      CREATE TABLE IF NOT EXISTS feedback_items (
+        id                   VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        feedback_type        VARCHAR NOT NULL DEFAULT 'general',
+        feature_area         VARCHAR NOT NULL,
+        sub_feature          VARCHAR,
+        feedback_text        TEXT NOT NULL,
+        screenshot_data      TEXT,
+        screenshot_filename  VARCHAR,
+        status               VARCHAR NOT NULL DEFAULT 'open',
+        submitted_by         VARCHAR,
+        submitted_at         TIMESTAMP DEFAULT NOW(),
+        resolved_at          TIMESTAMP,
+        resolved_by          VARCHAR,
+        resolved_comment     TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback_items(status);
     `);
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
