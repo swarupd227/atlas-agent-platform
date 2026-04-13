@@ -3832,17 +3832,17 @@ Write a REAL implementation using the hint above. Make actual HTTP calls, DB que
       let aiResult: Awaited<ReturnType<typeof generateAgentCodeWithAI>> = null;
 
       emit("progress", { phase: "ai", message: `Starting AI-assisted code generation (30–60s)...`, detail: `Framework: ${framework} · Language: ${format} · Provider: ${resolvedProvider}` });
-      // Heartbeat: emit a visible progress event every 15s during AI generation.
-      // This prevents proxy timeout AND gives the user feedback that work is in progress.
+      // Heartbeat: emit a visible progress event every 8s during AI generation.
+      // 8s keeps well inside Replit's production proxy idle-timeout window.
       let heartbeatCount = 0;
       const heartbeatInterval = setInterval(() => {
         heartbeatCount++;
         emit("progress", {
           phase: "ai",
-          message: `AI generation in progress... (${heartbeatCount * 15}s elapsed)`,
+          message: `AI generation in progress... (${heartbeatCount * 8}s elapsed)`,
           detail: `Building ${format} code with ${resolvedProvider}`,
         });
-      }, 15000);
+      }, 8000);
       try {
         const blockedToolsFromPolicies = linkedPolicies.flatMap(p => {
           const rules = (p.policyJson || {}) as Record<string, unknown>;
@@ -5713,17 +5713,18 @@ clean:
         message: `Starting AI generation for ${allSlots.length} agent${allSlots.length !== 1 ? "s" : ""} in parallel...`,
         detail: allSlots.map(s => s.agent.name).join(", "),
       });
-      // Heartbeat: emit a visible progress tick every 15s so the log panel stays active
+      // Heartbeat: emit a visible progress tick every 8s so the log panel stays active
       // and the production proxy keeps the connection alive during AI generation.
+      // 8s is safely below Replit's proxy idle-timeout window.
       let bundleHeartbeat = 0;
       const bundleHeartbeatInterval = setInterval(() => {
         bundleHeartbeat++;
         emit("progress", {
           phase: "ai",
-          message: `AI generation in progress... (${bundleHeartbeat * 15}s elapsed)`,
+          message: `AI generation in progress... (${bundleHeartbeat * 8}s elapsed)`,
           detail: `${allSlots.length} agent${allSlots.length !== 1 ? "s" : ""} running in parallel`,
         });
-      }, 15000);
+      }, 8000);
       try {
         const agentFileMaps = await Promise.all(
           allSlots.map(slot => buildAgentFiles(slot.agent, slot.prefix)),

@@ -156,6 +156,7 @@ export default function AgentExport() {
   const [checklistState, setChecklistState] = useState<Record<string, boolean>>({});
   const [bundleExport, setBundleExport] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [exportHasError, setExportHasError] = useState(false);
   const [exportLogs, setExportLogs] = useState<Array<{ event: string; phase: string; message: string; detail?: string; ts: number }>>([]);
   const fileSearchInputRef = useRef<HTMLInputElement>(null);
   const resizingRef = useRef(false);
@@ -298,6 +299,7 @@ export default function AgentExport() {
 
   async function streamExport(url: string, body: object, preferredFile?: (files: string[]) => string | undefined) {
     setIsGenerating(true);
+    setExportHasError(false);
     setExportLogs([]);
     const TICK_PREFIX = "AI generation in progress";
     const addLog = (entry: { event: string; phase: string; message: string; detail?: string }) =>
@@ -377,9 +379,14 @@ export default function AgentExport() {
         }
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Network error during export";
+      const rawMsg = err instanceof Error ? err.message : "Network error during export";
+      const isFetchError = rawMsg.toLowerCase().includes("failed to fetch") || rawMsg.toLowerCase().includes("network");
+      const msg = isFetchError
+        ? "Connection to server was lost during generation. This usually happens when AI generation takes longer than expected. Please click Generate again to retry."
+        : rawMsg;
       addLog({ event: "error", phase: "error", message: msg });
-      toast({ title: "Export failed", description: msg, variant: "destructive" });
+      setExportHasError(true);
+      toast({ title: "Export interrupted", description: isFetchError ? "Connection lost — click Generate to retry." : rawMsg, variant: "destructive" });
     } finally {
       setIsGenerating(false);
     }
@@ -603,10 +610,19 @@ export default function AgentExport() {
       </header>
 
       <div className="flex-1 min-h-0 overflow-hidden">
-        {exportStep === "configure" && isGenerating && (
-          <ExportLogPanel logs={exportLogs} agentName={agent?.name || "Agent"} isBundling={bundleExport && agent?.agentType === "team"} memberCount={teamMembers.length} />
+        {exportStep === "configure" && (isGenerating || exportHasError) && (
+          <ExportLogPanel
+            logs={exportLogs}
+            agentName={agent?.name || "Agent"}
+            isBundling={bundleExport && agent?.agentType === "team"}
+            memberCount={teamMembers.length}
+            isGenerating={isGenerating}
+            hasError={exportHasError}
+            onRetry={() => { setExportHasError(false); handleGenerate(); }}
+            onDismiss={() => setExportHasError(false)}
+          />
         )}
-        {exportStep === "configure" && !isGenerating && (
+        {exportStep === "configure" && !isGenerating && !exportHasError && (
           <ConfigureStep
             agent={agent}
             agentId={agentId!}
@@ -810,6 +826,12 @@ export default function AgentExport() {
                 ) : (
                   <Editor
                     height="100%"
+                    loading={
+                      <div className="flex flex-col items-center justify-center h-full gap-2 text-muted-foreground bg-[#1e1e1e]">
+                        <Loader2 className="w-4 h-4 animate-spin opacity-60" />
+                        <span className="text-xs opacity-60">Rendering editor…</span>
+                      </div>
+                    }
                     language={(() => {
                       const ext = exportPreviewFile.split(".").pop()?.toLowerCase() || "";
                       if (["ts", "tsx"].includes(ext)) return "typescript";
@@ -1072,11 +1094,15 @@ const PHASE_META: Record<string, { icon: React.ReactNode; color: string }> = {
   info:      { icon: <Info className="w-3.5 h-3.5" />,       color: "text-slate-400" },
 };
 
-function ExportLogPanel({ logs, agentName, isBundling, memberCount = 0 }: {
+function ExportLogPanel({ logs, agentName, isBundling, memberCount = 0, isGenerating = true, hasError = false, onRetry, onDismiss }: {
   logs: Array<{ event: string; phase: string; message: string; detail?: string; ts: number }>;
   agentName: string;
   isBundling: boolean;
   memberCount?: number;
+  isGenerating?: boolean;
+  hasError?: boolean;
+  onRetry?: () => void;
+  onDismiss?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -1088,9 +1114,14 @@ function ExportLogPanel({ logs, agentName, isBundling, memberCount = 0 }: {
   return (
     <div className="h-full flex flex-col bg-[#0d1117] text-white font-mono overflow-hidden" data-testid="export-log-panel">
       <div className="flex items-center gap-3 px-5 py-3 border-b border-white/10 shrink-0">
-        <Loader2 className="w-4 h-4 animate-spin text-violet-400" />
-        <span className="text-sm font-medium text-white/90">
-          {isBundling ? "Generating multi-agent bundle" : "Generating agent code"} — {agentName}
+        {hasError
+          ? <XOctagon className="w-4 h-4 text-red-400 shrink-0" />
+          : <Loader2 className="w-4 h-4 animate-spin text-violet-400 shrink-0" />
+        }
+        <span className={`text-sm font-medium ${hasError ? "text-red-300" : "text-white/90"}`}>
+          {hasError
+            ? "Generation interrupted"
+            : (isBundling ? "Generating multi-agent bundle" : "Generating agent code") + " — " + agentName}
         </span>
         <span className="ml-auto text-xs text-white/40">{logs.length} event{logs.length !== 1 ? "s" : ""}</span>
       </div>
@@ -1125,21 +1156,42 @@ function ExportLogPanel({ logs, agentName, isBundling, memberCount = 0 }: {
       </div>
 
       <div className="shrink-0 px-5 py-2 border-t border-white/10 flex items-center gap-2">
-        {(() => {
-          const totalSteps = isBundling ? (8 + memberCount) : 20;
-          const pct = Math.min(100, (logs.length / totalSteps) * 100);
-          return (
-            <>
-              <div className="h-1 flex-1 bg-white/10 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-gradient-to-r from-violet-500 to-indigo-500 rounded-full transition-all duration-500"
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-              <span className="text-[10px] text-white/30 shrink-0">{logs.length} / ~{totalSteps} steps</span>
-            </>
-          );
-        })()}
+        {hasError ? (
+          <>
+            <button
+              onClick={onRetry}
+              className="flex items-center gap-1.5 text-xs bg-violet-600 hover:bg-violet-500 text-white px-3 py-1.5 rounded-md transition-colors font-sans"
+              data-testid="button-retry-export"
+            >
+              <RefreshCw className="w-3 h-3" />
+              Retry Generation
+            </button>
+            <button
+              onClick={onDismiss}
+              className="flex items-center gap-1.5 text-xs text-white/40 hover:text-white/70 px-2 py-1.5 rounded-md transition-colors font-sans"
+              data-testid="button-dismiss-error"
+            >
+              Dismiss
+            </button>
+            <span className="ml-auto text-[10px] text-red-400/60">Generation failed — retry or adjust settings</span>
+          </>
+        ) : (
+          (() => {
+            const totalSteps = isBundling ? (8 + memberCount) : 20;
+            const pct = Math.min(100, (logs.length / totalSteps) * 100);
+            return (
+              <>
+                <div className="h-1 flex-1 bg-white/10 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-violet-500 to-indigo-500 rounded-full transition-all duration-500"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <span className="text-[10px] text-white/30 shrink-0">{logs.length} / ~{totalSteps} steps</span>
+              </>
+            );
+          })()
+        )}
       </div>
     </div>
   );
