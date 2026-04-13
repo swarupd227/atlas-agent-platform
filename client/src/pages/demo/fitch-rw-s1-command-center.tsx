@@ -6,14 +6,14 @@ import { FITCH_RW_ISSUERS, FITCH_RW_KPI_DATA, FITCH_RW_COLOR, FITCH_RW_ACCENT, t
 
 function sentimentBar(val: number) {
   const clamped = Math.max(-1, Math.min(1, val));
-  const pct = ((clamped + 1) / 2) * 100;
+  const pct = Math.abs(clamped) * 50;
   const color = clamped < -0.4 ? "#EF4444" : clamped < 0 ? "#F59E0B" : "#10B981";
   return (
     <div className="flex items-center gap-1.5">
       <div className="relative h-1.5 w-16 rounded-full bg-muted/40">
         <div
           className="absolute top-0 h-full rounded-full"
-          style={{ left: "50%", width: `${Math.abs(clamped) * 50}%`, transform: clamped < 0 ? "translateX(-100%)" : "none", backgroundColor: color }}
+          style={{ left: "50%", width: `${pct}%`, transform: clamped < 0 ? "translateX(-100%)" : "none", backgroundColor: color }}
         />
         <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-px h-2 bg-border" />
       </div>
@@ -24,10 +24,10 @@ function sentimentBar(val: number) {
 
 function StatusPill({ status }: { status: FitchRWIssuer["status"] }) {
   if (status === "flagged")
-    return <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-400 border border-red-500/20 font-medium"><span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />Flagged</span>;
+    return <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-red-500/10 text-red-400 border border-red-500/20 font-medium whitespace-nowrap"><span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse" />Flagged</span>;
   if (status === "watch")
-    return <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20"><span className="w-1.5 h-1.5 rounded-full bg-amber-400" />Watch</span>;
-  return <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />Stable</span>;
+    return <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 whitespace-nowrap"><span className="w-1.5 h-1.5 rounded-full bg-amber-400" />Watch</span>;
+  return <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 whitespace-nowrap"><span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />Stable</span>;
 }
 
 function IssuerRow({ issuer, highlight }: { issuer: FitchRWIssuer; highlight: boolean }) {
@@ -40,37 +40,45 @@ function IssuerRow({ issuer, highlight }: { issuer: FitchRWIssuer; highlight: bo
       className={`border-b border-border/40 transition-colors ${highlight ? "bg-red-500/5 hover:bg-red-500/8" : "hover:bg-muted/20"}`}
       data-testid={`row-issuer-${issuer.id}`}
     >
-      <td className="py-2.5 pl-4 pr-2">
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] font-mono font-bold w-8 text-muted-foreground">{issuer.ticker}</span>
-          <div>
-            <p className="text-[11px] font-semibold leading-none">{issuer.name}</p>
-            <p className="text-[9px] text-muted-foreground mt-0.5">{issuer.sector}</p>
-          </div>
+      {/* Issuer name */}
+      <td className="py-2.5 pl-4 pr-2 whitespace-nowrap">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[9px] font-mono font-bold text-muted-foreground w-7 shrink-0">{issuer.ticker}</span>
+          <span className="text-[11px] font-semibold">{issuer.name}</span>
         </div>
       </td>
+      {/* Sector — dedicated column */}
+      <td className="py-2.5 px-2 whitespace-nowrap">
+        <span className="text-[10px] text-muted-foreground">{issuer.sector}</span>
+      </td>
+      {/* Rating */}
       <td className="py-2.5 px-2 text-center">
         <span className="text-[11px] font-mono font-semibold">{issuer.rating}</span>
         {issuer.status === "flagged" && issuer.id === "BA-001" && (
-          <p className="text-[9px] text-red-400/70 mt-0.5">RWN</p>
+          <span className="block text-[9px] text-red-400/70">RWN</span>
         )}
       </td>
+      {/* CDS bps */}
       <td className="py-2.5 px-2 text-right">
         <span className="text-[11px] font-mono tabular-nums">{issuer.cdsBps}</span>
         <span className="text-[9px] text-muted-foreground ml-0.5">bps</span>
       </td>
+      {/* Δ 7d */}
       <td className="py-2.5 px-2">
         <div className={`flex items-center gap-1 justify-end ${deltaColor}`}>
           <DeltaIcon className="w-3 h-3 shrink-0" />
           <span className="text-[10px] font-mono tabular-nums">{isUp ? "+" : ""}{issuer.cdsDelta7d}</span>
         </div>
       </td>
+      {/* Equity drawdown */}
       <td className="py-2.5 px-2 text-right">
         <span className={`text-[11px] font-mono tabular-nums ${issuer.equityDrawdown < -10 ? "text-red-400" : issuer.equityDrawdown < -4 ? "text-amber-400" : "text-emerald-400"}`}>
           {issuer.equityDrawdown > 0 ? "+" : ""}{issuer.equityDrawdown.toFixed(1)}%
         </span>
       </td>
+      {/* News sentiment */}
       <td className="py-2.5 px-3">{sentimentBar(issuer.newsSentiment)}</td>
+      {/* Status */}
       <td className="py-2.5 px-3"><StatusPill status={issuer.status} /></td>
     </tr>
   );
@@ -81,7 +89,7 @@ export default function FitchRWS1CommandCenter({ onRunPipeline }: { onRunPipelin
   const agentRuns: any[] = runsData?.agentRuns || [];
 
   const flagged = FITCH_RW_ISSUERS.filter(i => i.status === "flagged");
-  const watched = FITCH_RW_ISSUERS.filter(i => i.status === "watch");
+  const watched  = FITCH_RW_ISSUERS.filter(i => i.status === "watch");
 
   return (
     <div className="space-y-5">
@@ -120,7 +128,7 @@ export default function FitchRWS1CommandCenter({ onRunPipeline }: { onRunPipelin
                 {onRunPipeline && (
                   <button
                     onClick={onRunPipeline}
-                    className="text-[10px] px-2.5 py-1 rounded-lg font-semibold text-white ml-auto"
+                    className="text-[10px] px-2.5 py-1 rounded-lg font-semibold text-white ml-auto shrink-0"
                     style={{ backgroundColor: FITCH_RW_COLOR }}
                     data-testid="btn-run-from-alert"
                   >
@@ -135,8 +143,8 @@ export default function FitchRWS1CommandCenter({ onRunPipeline }: { onRunPipelin
 
       {watched.length > 0 && (
         <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3" data-testid="alert-watch-issuers">
-          <div className="flex items-center gap-2 text-xs text-amber-400">
-            <span className="w-2 h-2 rounded-full bg-amber-400" />
+          <div className="flex items-center gap-2 text-xs text-amber-400 flex-wrap">
+            <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
             <span className="font-medium">{watched.length} issuer{watched.length !== 1 ? "s" : ""} under watch</span>
             <span className="text-muted-foreground">— {watched.map(w => w.ticker).join(", ")} — CDS widening, monitoring for threshold breach</span>
           </div>
@@ -158,7 +166,8 @@ export default function FitchRWS1CommandCenter({ onRunPipeline }: { onRunPipelin
           <table className="w-full text-left" data-testid="table-issuer-watchlist">
             <thead>
               <tr className="border-b border-border/30 bg-muted/10">
-                <th className="py-2 pl-4 pr-2 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Issuer</th>
+                <th className="py-2 pl-4 pr-2 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap">Issuer</th>
+                <th className="py-2 px-2 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">Sector</th>
                 <th className="py-2 px-2 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground text-center">Rating</th>
                 <th className="py-2 px-2 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground text-right">CDS (bps)</th>
                 <th className="py-2 px-2 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground text-right">Δ 7d</th>

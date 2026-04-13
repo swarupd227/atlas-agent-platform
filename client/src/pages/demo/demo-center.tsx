@@ -25,6 +25,7 @@ import {
   ShoppingCart,
   Zap,
   Umbrella,
+  TrendingDown,
 } from "lucide-react";
 
 interface Demo {
@@ -144,12 +145,12 @@ const DEMOS: Demo[] = [
     industry: "Financial Services",
     industryId: "financial_services",
     route: "/demo/fitch-rw",
-    icon: Shield,
+    icon: TrendingDown,
     iconColor: "#1B5FAA",
     duration: "8 min",
     screens: 4,
-    tags: ["Credit Ratings", "Rating Watch", "CDS Analysis", "Memo Generation"],
-    badge: "SCN-1.1",
+    tags: ["Rating Watch", "CDS Monitoring", "SEC Filings", "Memo Generation"],
+    badge: "Rating Intelligence",
   },
   {
     id: "blackbook-valuation",

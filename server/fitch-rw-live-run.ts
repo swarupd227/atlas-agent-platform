@@ -1,5 +1,8 @@
 import { type Request, type Response } from "express";
 import { storage } from "./storage";
+import { db } from "./db";
+import { agentRuntimeRuns } from "@shared/schema";
+import { inArray } from "drizzle-orm";
 import { runAgentOnce, stopAgentRuntime, type RuntimeProgressEvent } from "./agent-runtime";
 
 const BASE_URL = `http://localhost:${process.env.PORT || 5000}`;
@@ -1314,7 +1317,23 @@ export async function getFitchRWAgentRuns(_req: Request, res: Response): Promise
 
 export async function fitchRWResetHandler(_req: Request, res: Response): Promise<void> {
   try {
-    res.json({ success: true, message: "Fitch RW demo reset." });
+    // Collect all provisioned agent IDs and delete their runtime run records
+    // so the demo starts fresh with no stale traces or results.
+    const agentIds = Object.values(_fitchRWAgentIdByKey).filter(Boolean) as string[];
+    let deletedRuns = 0;
+    if (agentIds.length > 0) {
+      const result = await db
+        .delete(agentRuntimeRuns)
+        .where(inArray(agentRuntimeRuns.agentId, agentIds));
+      // rowCount may be null on some drivers; treat null as unknown
+      deletedRuns = (result as any)?.rowCount ?? 0;
+    }
+    res.json({
+      success:     true,
+      message:     "Fitch RW demo reset — run history cleared.",
+      deletedRuns,
+      agentCount:  agentIds.length,
+    });
   } catch (err: unknown) {
     res.status(500).json({ success: false, error: err instanceof Error ? err.message : "Reset failed" });
   }
