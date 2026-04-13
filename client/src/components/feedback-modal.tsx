@@ -2,6 +2,7 @@ import { useState, useRef } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { Link } from "wouter";
 import {
   Dialog,
   DialogContent,
@@ -21,7 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Paperclip, X, Image as ImageIcon, MessageSquarePlus } from "lucide-react";
+import { Loader2, Paperclip, X, Image as ImageIcon, MessageSquarePlus, ExternalLink } from "lucide-react";
 
 const FEEDBACK_TYPES = [
   { value: "bug", label: "Bug Report" },
@@ -257,15 +258,26 @@ export function FeedbackTrigger() {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <button
-        onClick={() => setOpen(true)}
-        className="flex items-center gap-2 w-full px-3 py-1.5 text-xs text-muted-foreground/70 hover:text-muted-foreground hover:bg-sidebar-accent/40 rounded-md transition-colors"
-        data-testid="button-open-feedback"
-        title="Share feedback"
-      >
-        <MessageSquarePlus className="w-3.5 h-3.5 shrink-0" />
-        <span>Feedback</span>
-      </button>
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => setOpen(true)}
+          className="flex items-center gap-2 flex-1 px-3 py-1.5 text-xs text-muted-foreground/70 hover:text-muted-foreground hover:bg-sidebar-accent/40 rounded-md transition-colors"
+          data-testid="button-open-feedback"
+          title="Submit feedback"
+        >
+          <MessageSquarePlus className="w-3.5 h-3.5 shrink-0" />
+          <span>Feedback</span>
+        </button>
+        <Link href="/feedback">
+          <a
+            className="flex items-center justify-center w-6 h-6 rounded-md text-muted-foreground/50 hover:text-muted-foreground hover:bg-sidebar-accent/40 transition-colors shrink-0"
+            title="Open feedback tracker"
+            data-testid="link-feedback-tracker"
+          >
+            <ExternalLink className="w-3 h-3" />
+          </a>
+        </Link>
+      </div>
       <FeedbackModal open={open} onOpenChange={setOpen} />
     </>
   );
