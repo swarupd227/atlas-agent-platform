@@ -1320,19 +1320,15 @@ export async function fitchRWResetHandler(_req: Request, res: Response): Promise
     // Collect all provisioned agent IDs and delete their runtime run records
     // so the demo starts fresh with no stale traces or results.
     const agentIds = Object.values(_fitchRWAgentIdByKey).filter(Boolean) as string[];
-    let deletedRuns = 0;
     if (agentIds.length > 0) {
-      const result = await db
+      await db
         .delete(agentRuntimeRuns)
         .where(inArray(agentRuntimeRuns.agentId, agentIds));
-      // rowCount may be null on some drivers; treat null as unknown
-      deletedRuns = (result as any)?.rowCount ?? 0;
     }
     res.json({
-      success:     true,
-      message:     "Fitch RW demo reset — run history cleared.",
-      deletedRuns,
-      agentCount:  agentIds.length,
+      success:    true,
+      message:    "Fitch RW demo reset — run history cleared.",
+      agentCount: agentIds.length,
     });
   } catch (err: unknown) {
     res.status(500).json({ success: false, error: err instanceof Error ? err.message : "Reset failed" });

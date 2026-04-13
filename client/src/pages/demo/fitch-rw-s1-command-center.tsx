@@ -195,13 +195,13 @@ export default function FitchRWS1CommandCenter({ onRunPipeline }: { onRunPipelin
                 <span className="text-[9px] font-mono text-muted-foreground">STEP {run.step}</span>
                 {run.agentId ? (
                   <Link href={`/agents/${run.agentId}`}>
-                    <p className="text-[11px] font-semibold mt-0.5 leading-tight hover:underline cursor-pointer flex items-center gap-1">
+                    <p className="text-[11px] font-semibold mt-0.5 leading-tight hover:underline cursor-pointer flex items-center gap-1" data-testid={`link-agent-strip-${run.key}`}>
                       {run.agentName}
                       <ExternalLink className="w-2.5 h-2.5 text-muted-foreground/50" />
                     </p>
                   </Link>
                 ) : (
-                  <p className="text-[11px] font-semibold mt-0.5 leading-tight">{run.agentName}</p>
+                  <p className="text-[11px] font-semibold mt-0.5 leading-tight" data-testid={`text-agent-strip-${run.key}`}>{run.agentName}</p>
                 )}
                 <p className="text-[10px] text-muted-foreground mt-1">{run.role || "Analysis agent"}</p>
               </div>

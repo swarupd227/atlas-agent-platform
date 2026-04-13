@@ -88,19 +88,31 @@ function MemoSection({ icon: Icon, title, children }: { icon: any; title: string
   );
 }
 
-// Extract text value from a memo text block by looking for the key followed by content.
-// Falls back to the default when key is not found.
-function extractSection(text: string, markers: string[], fallback: string): string {
+// Extract a section from memoText by searching for known header markers.
+// Returns an empty string when the section is not found — caller falls back to static data.
+function extractSection(text: string, markers: string[]): string {
   for (const marker of markers) {
     const idx = text.toUpperCase().indexOf(marker.toUpperCase());
     if (idx !== -1) {
       const after = text.slice(idx + marker.length);
-      const nextSection = after.search(/\n[A-Z][A-Z ]+:\n|\n[═=]{3,}/);
+      // A new section starts with all-caps title lines or a row of = / ═ chars
+      const nextSection = after.search(/\n[A-Z ]{4,}:\n|\n[A-Z ]{4,}\n|\n[═=─]{3,}/);
       const chunk = (nextSection === -1 ? after : after.slice(0, nextSection)).trim();
       if (chunk.length > 10) return chunk;
     }
   }
-  return fallback;
+  return "";
+}
+
+// Extract bullet-point lines from a block of text (lines starting with •, *, -, or numbers)
+function extractBullets(text: string, markers: string[]): string[] {
+  const sectionText = extractSection(text, markers);
+  if (!sectionText) return [];
+  const bullets = sectionText
+    .split("\n")
+    .map(l => l.replace(/^[\s•\-\*\d\.]+/, "").trim())
+    .filter(l => l.length > 10);
+  return bullets.length > 0 ? bullets : [];
 }
 
 const KEY_METRICS = [
@@ -128,15 +140,21 @@ const CITATIONS = [
 ];
 
 // StructuredMemoPanel renders the required sections regardless of memoText content.
-// When live memoText is available, it is incorporated into the relevant section;
-// otherwise static authoritative data is used so sections are always present.
+// When live memoText is available from the SSE pipeline_complete event, content is
+// extracted from it for each section; static authoritative data serves as fallback.
 function StructuredMemoPanel({ memoText }: { memoText: string | null }) {
   const hasText = memoText && memoText.length > 30;
+  const text = memoText || "";
 
-  // Try to surface analyst recommendation text from memo
-  const recommendation = hasText
-    ? extractSection(memoText!, ["RECOMMENDATION:", "ANALYST RECOMMENDATION"], "")
-    : "";
+  // Extract each section from the live memo text where available
+  const liveTriggerBullets = hasText ? extractBullets(text, ["KEY RATING DRIVERS:", "TRIGGER SUMMARY", "RATING DRIVERS:", "TRIGGERS:"]) : [];
+  const liveRecommendation = hasText ? extractSection(text, ["RECOMMENDATION:", "ANALYST RECOMMENDATION", "RECOMMENDATION\n"]) : "";
+  const liveCitations       = hasText ? extractSection(text, ["EVIDENCE CITATIONS", "REFERENCES:", "METHODOLOGY:"]) : "";
+
+  // Use live content when extracted; otherwise fall back to static authoritative values
+  const triggerBullets = liveTriggerBullets.length >= 2 ? liveTriggerBullets : TRIGGER_BULLETS;
+  const recommendation  = liveRecommendation.length > 20  ? liveRecommendation  : null;
+  const citationsRaw    = liveCitations.length > 10        ? liveCitations        : null;
 
   return (
     <div className="space-y-5 text-[11px]" data-testid="memo-structured-panel">
@@ -170,10 +188,10 @@ function StructuredMemoPanel({ memoText }: { memoText: string | null }) {
         </div>
       </MemoSection>
 
-      {/* Trigger Summary */}
+      {/* Trigger Summary — uses live memoText bullets when extracted, static fallback otherwise */}
       <MemoSection icon={TrendingUp} title="Trigger Summary">
         <ul className="space-y-1.5" data-testid="memo-trigger-bullets">
-          {TRIGGER_BULLETS.map((b, i) => (
+          {triggerBullets.map((b, i) => (
             <li key={i} className="flex items-start gap-1.5 text-[10px] text-muted-foreground">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-400/70 shrink-0 mt-1.5" />
               {b}
@@ -206,10 +224,12 @@ function StructuredMemoPanel({ memoText }: { memoText: string | null }) {
         </div>
       </MemoSection>
 
-      {/* Analyst Recommendation */}
+      {/* Analyst Recommendation — uses live memoText content when available */}
       <MemoSection icon={CheckSquare} title="Analyst Recommendation">
         <div className="rounded-lg border border-border/40 bg-muted/10 px-3 py-2.5 text-[10px] text-muted-foreground leading-relaxed" data-testid="memo-analyst-recommendation">
-          {recommendation.length > 20 ? recommendation : (
+          {recommendation ? (
+            <span className="whitespace-pre-wrap">{recommendation}</span>
+          ) : (
             <>
               Place Boeing Co. (BA) Long-Term IDR on <strong className="text-foreground">Rating Watch Negative</strong>. Initiate 6-month committee review.
               Primary concerns: CDS spread widening at 2.9× peer median and FCF negative trajectory. Downgrade to <strong className="text-foreground">BB+</strong> (sub-IG) likely if:
@@ -220,16 +240,20 @@ function StructuredMemoPanel({ memoText }: { memoText: string | null }) {
         </div>
       </MemoSection>
 
-      {/* Evidence Citations */}
+      {/* Evidence Citations — uses live memoText citations when available, static fallback otherwise */}
       <MemoSection icon={FileText} title="Evidence Citations">
-        <ul className="space-y-1 text-[10px] text-muted-foreground" data-testid="memo-citations">
-          {CITATIONS.map((c, i) => (
-            <li key={i} className="flex items-start gap-1.5">
-              <span className="shrink-0 text-[9px] font-mono text-muted-foreground/50 mt-0.5">[{i + 1}]</span>
-              {c}
-            </li>
-          ))}
-        </ul>
+        {citationsRaw ? (
+          <pre className="text-[10px] text-muted-foreground whitespace-pre-wrap leading-relaxed" data-testid="memo-citations">{citationsRaw}</pre>
+        ) : (
+          <ul className="space-y-1 text-[10px] text-muted-foreground" data-testid="memo-citations">
+            {CITATIONS.map((c, i) => (
+              <li key={i} className="flex items-start gap-1.5">
+                <span className="shrink-0 text-[9px] font-mono text-muted-foreground/50 mt-0.5">[{i + 1}]</span>
+                {c}
+              </li>
+            ))}
+          </ul>
+        )}
       </MemoSection>
 
       {/* Raw memo text appended as appendix if we have live data */}
