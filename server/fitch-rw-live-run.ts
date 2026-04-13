@@ -330,7 +330,25 @@ Execute ALL steps in order:
 3. Call get_committee_decision with the memo_id returned from step 2
 4. Call log_regulatory_disclosure with memo_id, regulation "SEC-17g-7", issuer_id "${TARGET_ID}", action_type "Rating Watch Negative"
 
-IMPORTANT: End your final response with ONLY this JSON block:
+After completing all tool calls, write the full Rating Action Memo text in this format:
+
+---
+FITCH RATINGS — RATING ACTION MEMO
+Issuer: ${TARGET_ISSUER} | Rating: BBB- | Action: Rating Watch Negative
+
+RATIONALE:
+[3-sentence rationale combining CDS widening + filing stress + peer benchmarking, citing specific numbers from tool results]
+
+SENSITIVITY ANALYSIS:
+[What conditions would resolve the Watch to a downgrade vs. affirmation]
+
+REGULATORY COMPLIANCE:
+Memo ID: [from submit_rating_memo]
+Committee Decision: [from get_committee_decision]
+SEC 17g-7 Disclosure: [from log_regulatory_disclosure]
+---
+
+Then end your response with this JSON block (fill in actual values from tool results):
 \`\`\`json
 {
   "issuer": "${TARGET_ISSUER}",
@@ -345,7 +363,7 @@ IMPORTANT: End your final response with ONLY this JSON block:
   "rating_watch_placed": false
 }
 \`\`\``,
-    taskPrompt: `Draft and submit the Rating Watch Negative memo for ${TARGET_ISSUER} (${TARGET_ID}). Call get_validator_queue, submit_rating_memo, get_committee_decision, and log_regulatory_disclosure. Produce the pipeline completion JSON.`,
+    taskPrompt: `Draft and submit the Rating Watch Negative memo for ${TARGET_ISSUER} (${TARGET_ID}). Call get_validator_queue, submit_rating_memo, get_committee_decision, and log_regulatory_disclosure. Write the full memo text citing specific CDS/ratio/peer numbers, then append the pipeline completion JSON.`,
   },
 ];
 
@@ -1046,6 +1064,10 @@ export async function fitchRWLiveRunHandler(req: Request, res: Response): Promis
     sse(res, "setup", { message: "Fitch RW agents, MCP servers, skills, KBs, policies, and ontology verified" });
 
     const resultSummaries: Record<string, unknown> = {};
+    // Tracks the actual model output text from Agent 004 (FITCH-RW-004 Rating Action Memo Agent).
+    // This is set from the final_analysis event captured during runAgentOnce and used verbatim
+    // in the pipeline_complete memoText field, satisfying the requirement for the real memo text.
+    let memoAgentRawOutput = "";
 
     for (const def of FITCH_RW_AGENT_DEFS) {
       if (clientDisconnected) break;
@@ -1108,6 +1130,10 @@ export async function fitchRWLiveRunHandler(req: Request, res: Response): Promis
         runSuccess = result.success;
         // Prefer the real model output captured from final_analysis over the generic cycle message
         resultText = capturedFinalAnalysis || result.message || "";
+        // Persist Agent 004's raw output so pipeline_complete can emit it verbatim as memoText
+        if (def.key === "ratingActionMemoAgent" && capturedFinalAnalysis) {
+          memoAgentRawOutput = capturedFinalAnalysis;
+        }
       } catch (err: unknown) {
         runSuccess = false;
         resultText = err instanceof Error ? err.message : "Agent run failed";
@@ -1133,26 +1159,37 @@ export async function fitchRWLiveRunHandler(req: Request, res: Response): Promis
       if (!clientDisconnected) await new Promise<void>(r => setTimeout(r, 500));
     }
 
-    // Final memo output from Agent 004 — compose from parsed JSON fields captured via final_analysis
-    const memoSummary = resultSummaries["ratingActionMemoAgent"] as Record<string, unknown> | null | undefined;
+    // Final memo output for pipeline_complete.
+    // Priority 1: use the actual model-produced text from Agent 004's final_analysis event — this is
+    //             the real memo prose the agent wrote (including rationale + JSON block).
+    // Priority 2: if the agent produced parseable JSON but no prose, synthesize a summary from the fields.
+    // Priority 3: generic fallback.
     let memoText: string;
-    if (memoSummary && typeof memoSummary === "object") {
-      const decision    = memoSummary["committee_decision"] ?? "APPROVED";
-      const memoId      = memoSummary["memo_id"] ?? "FITCH-RW-MEMO-004";
-      const rating      = memoSummary["proposed_rating"] ?? "BBB-";
-      const actionType  = memoSummary["action_type"] ?? "Rating Watch Negative";
-      const rationale   = memoSummary["rationale_summary"] ?? memoSummary["key_finding"] ?? "CDS widening + fundamental deterioration + bottom-quartile peer positioning triggered Watch placement.";
-      const discId      = memoSummary["disclosure_filing_id"] ?? "PENDING";
-      memoText = [
-        `FITCH RATINGS — RATING ACTION MEMO`,
-        `Memo ID: ${memoId}  |  Committee Decision: ${decision}`,
-        `Action: Place ${TARGET_ISSUER} (${TARGET_ID}) on ${actionType} at ${rating}`,
-        `Rationale: ${rationale}`,
-        `Regulatory Disclosure Filed: ${discId}`,
-        `Pipeline Status: All 4 agents completed — MNPI containment, human-in-loop gate, and audit trail policies satisfied.`,
-      ].join("\n");
+    if (memoAgentRawOutput) {
+      // Strip any trailing JSON code-block (```json … ```) from the raw output so the memoText
+      // contains only the prose section; the structured fields are already in `resultSummaries`.
+      const jsonBlockStart = memoAgentRawOutput.lastIndexOf("```json");
+      memoText = (jsonBlockStart > 0 ? memoAgentRawOutput.slice(0, jsonBlockStart) : memoAgentRawOutput).trim();
     } else {
-      memoText = `Rating Watch Negative pipeline completed for ${TARGET_ISSUER}. Committee decision pending retrieval.`;
+      const memoSummary = resultSummaries["ratingActionMemoAgent"] as Record<string, unknown> | null | undefined;
+      if (memoSummary && typeof memoSummary === "object") {
+        const decision    = memoSummary["committee_decision"] ?? "APPROVED";
+        const memoId      = memoSummary["memo_id"] ?? "FITCH-RW-MEMO-004";
+        const rating      = memoSummary["proposed_rating"] ?? "BBB-";
+        const actionType  = memoSummary["action_type"] ?? "Rating Watch Negative";
+        const rationale   = memoSummary["rationale_summary"] ?? memoSummary["key_finding"] ?? "CDS widening + fundamental deterioration + bottom-quartile peer positioning triggered Watch placement.";
+        const discId      = memoSummary["disclosure_filing_id"] ?? "PENDING";
+        memoText = [
+          `FITCH RATINGS — RATING ACTION MEMO`,
+          `Memo ID: ${memoId}  |  Committee Decision: ${decision}`,
+          `Action: Place ${TARGET_ISSUER} (${TARGET_ID}) on ${actionType} at ${rating}`,
+          `Rationale: ${rationale}`,
+          `Regulatory Disclosure Filed: ${discId}`,
+          `Pipeline Status: All 4 agents completed — MNPI containment, human-in-loop gate, and audit trail policies satisfied.`,
+        ].join("\n");
+      } else {
+        memoText = `Rating Watch Negative pipeline completed for ${TARGET_ISSUER}. Committee decision pending retrieval.`;
+      }
     }
 
     sse(res, "pipeline_complete", {
