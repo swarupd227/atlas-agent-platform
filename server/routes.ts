@@ -44,6 +44,7 @@ import bbMarketDataRouter from "./mock-mcp/bb-market-data";
 import bbReportEngineRouter from "./mock-mcp/bb-report-engine";
 import { bbLiveRunHandler, getBBAgentRuns, getBBOutcomeData, getBBSelfHealingStatus, resetBBDemo, ensureBBAgents } from "./blackbook-live-run";
 import { registerMockMcpServers } from "./mock-mcp/register";
+import piiRouter from "./routes/pii";
 
 export { computeConstraintGraph, recomputeOutcomeKpis };
 export type { KpiReEvalResult };
@@ -202,6 +203,7 @@ export async function registerRoutes(
   app.use(skillsRouter);
   app.use(autonomyRouter);
   app.use(shadowCanaryRouter);
+  app.use(piiRouter);
 
   // Run idempotent startup SQL migrations (CREATE TABLE IF NOT EXISTS).
   // Awaited before starting the worker so tables are guaranteed to exist before

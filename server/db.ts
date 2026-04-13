@@ -224,6 +224,43 @@ export async function runStartupMigrations() {
       ALTER TABLE interrupt_instances ADD COLUMN IF NOT EXISTS routed_to         VARCHAR;
       ALTER TABLE interrupt_instances ADD COLUMN IF NOT EXISTS state_patch_applied BOOLEAN DEFAULT FALSE;
       ALTER TABLE interrupt_instances ADD COLUMN IF NOT EXISTS validation_errors JSONB;
+
+      -- GAP4: PII Masking Pipeline tables
+      CREATE TABLE IF NOT EXISTS pii_masking_configs (
+        id                   VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        pipeline_id          VARCHAR NOT NULL UNIQUE,
+        enabled              BOOLEAN NOT NULL DEFAULT TRUE,
+        engine               VARCHAR NOT NULL DEFAULT 'regex',
+        entity_types         JSONB NOT NULL DEFAULT '["EMAIL_ADDRESS","PHONE_NUMBER","US_SSN","CREDIT_CARD","IP_ADDRESS","URL"]',
+        custom_patterns      JSONB NOT NULL DEFAULT '[]',
+        input_field          VARCHAR NOT NULL DEFAULT 'artifact_texts',
+        output_field         VARCHAR NOT NULL DEFAULT 'masked_artifact_texts',
+        report_field         VARCHAR NOT NULL DEFAULT 'pii_masking_reports',
+        rehydration_enabled  BOOLEAN NOT NULL DEFAULT TRUE,
+        rehydration_fields   JSONB NOT NULL DEFAULT '[]',
+        fail_on_error        BOOLEAN NOT NULL DEFAULT TRUE,
+        created_at           TIMESTAMP DEFAULT NOW(),
+        updated_at           TIMESTAMP DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS pii_masking_runs (
+        id                   VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        pipeline_run_id      VARCHAR NOT NULL,
+        config_id            VARCHAR,
+        engine_used          VARCHAR NOT NULL DEFAULT 'regex',
+        artifact_count       INTEGER NOT NULL DEFAULT 0,
+        total_replacements   INTEGER NOT NULL DEFAULT 0,
+        entity_breakdown     JSONB NOT NULL DEFAULT '{}',
+        duration_ms          REAL NOT NULL DEFAULT 0,
+        artifact_reports     JSONB NOT NULL DEFAULT '[]',
+        rehydration_applied  BOOLEAN NOT NULL DEFAULT FALSE,
+        rehydration_tokens   INTEGER NOT NULL DEFAULT 0,
+        rehydration_fields   JSONB NOT NULL DEFAULT '[]',
+        status               VARCHAR NOT NULL DEFAULT 'completed',
+        error                TEXT,
+        created_at           TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_pii_masking_runs_pipeline ON pii_masking_runs(pipeline_run_id);
     `);
     console.log("[db] Startup migrations complete");
   } catch (err: any) {

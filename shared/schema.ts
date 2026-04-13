@@ -2554,4 +2554,51 @@ export const insertInterruptInstanceSchema = createInsertSchema(interruptInstanc
 export type InsertInterruptInstance = z.infer<typeof insertInterruptInstanceSchema>;
 export type InterruptInstance = typeof interruptInstances.$inferSelect;
 
+// ── GAP4: PII Masking Pipeline ───────────────────────────────────────────────
+
+export const piiMaskingConfigs = pgTable("pii_masking_configs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  pipelineId: varchar("pipeline_id").notNull().unique(),
+  enabled: boolean("enabled").notNull().default(true),
+  engine: varchar("engine").notNull().default("regex"),
+  entityTypes: jsonb("entity_types").notNull().default(sql`'["EMAIL_ADDRESS","PHONE_NUMBER","US_SSN","CREDIT_CARD","IP_ADDRESS","URL"]'::jsonb`),
+  customPatterns: jsonb("custom_patterns").notNull().default(sql`'[]'::jsonb`),
+  inputField: varchar("input_field").notNull().default("artifact_texts"),
+  outputField: varchar("output_field").notNull().default("masked_artifact_texts"),
+  reportField: varchar("report_field").notNull().default("pii_masking_reports"),
+  rehydrationEnabled: boolean("rehydration_enabled").notNull().default(true),
+  rehydrationFields: jsonb("rehydration_fields").notNull().default(sql`'[]'::jsonb`),
+  failOnError: boolean("fail_on_error").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPiiMaskingConfigSchema = createInsertSchema(piiMaskingConfigs).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertPiiMaskingConfig = z.infer<typeof insertPiiMaskingConfigSchema>;
+export type PiiMaskingConfig = typeof piiMaskingConfigs.$inferSelect;
+
+export const piiMaskingRuns = pgTable("pii_masking_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  pipelineRunId: varchar("pipeline_run_id").notNull(),
+  configId: varchar("config_id"),
+  engineUsed: varchar("engine_used").notNull().default("regex"),
+  artifactCount: integer("artifact_count").notNull().default(0),
+  totalReplacements: integer("total_replacements").notNull().default(0),
+  entityBreakdown: jsonb("entity_breakdown").notNull().default(sql`'{}'::jsonb`),
+  durationMs: real("duration_ms").notNull().default(0),
+  artifactReports: jsonb("artifact_reports").notNull().default(sql`'[]'::jsonb`),
+  rehydrationApplied: boolean("rehydration_applied").notNull().default(false),
+  rehydrationTokens: integer("rehydration_tokens").notNull().default(0),
+  rehydrationFields: jsonb("rehydration_fields").notNull().default(sql`'[]'::jsonb`),
+  status: varchar("status").notNull().default("completed"),
+  error: text("error"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_pii_masking_runs_pipeline").on(table.pipelineRunId),
+]);
+
+export const insertPiiMaskingRunSchema = createInsertSchema(piiMaskingRuns).omit({ id: true, createdAt: true });
+export type InsertPiiMaskingRun = z.infer<typeof insertPiiMaskingRunSchema>;
+export type PiiMaskingRun = typeof piiMaskingRuns.$inferSelect;
+
 export * from "./models/chat";
