@@ -14,16 +14,16 @@
  *     [--dry-run]
  *
  * Resources migrated (in dependency order):
- *   1. Ontology concepts (12)
- *   2. Policies (4: MNPI Containment, Human-in-Loop Gate, Data Residency, Audit Trail)
- *   3. Knowledge bases (4)
- *   4. Skills (12, 3 per agent)
- *   5. Blueprints (4, one per agent)
- *   6. MCP servers + tools (4 servers, 4 tools each)
- *   7. Eval suite + test cases (1 shared suite, 10 cases)
- *   8. Agents (4, FITCH-RW-001 through FITCH-RW-004) with all linkages
- *   9. Agent → KB links
- *  10. Agent → MCP server links
+ *   1.  Ontology concepts (12)
+ *   2.  Governance policies (4)
+ *   3.  Knowledge bases (4)
+ *   4.  Skills (12, 3 per agent)
+ *   5.  Blueprints (4, one per agent)
+ *   6.  MCP servers + tools (4 servers, 4 tools each)
+ *   7.  Agents (4, FITCH-RW-001 through FITCH-RW-004) ← agents before eval suite
+ *   8.  Shared eval suite + test cases (agentId resolved from prod)
+ *   9.  Agent → KB links
+ *   10. Agent → MCP server links
  */
 
 // ─── CLI argument parsing ─────────────────────────────────────────────────────
@@ -40,16 +40,22 @@ function parseArgs(): {
     const idx = argv.indexOf(flag);
     return idx !== -1 ? argv[idx + 1] : undefined;
   };
-  const prodUrl   = get("--prod-url")    ?? process.env.PROD_URL ?? "";
-  const prodOrgId = get("--prod-org-id") ?? process.env.PROD_ORG_ID ?? "";
+  const prodUrl    = get("--prod-url")     ?? process.env.PROD_URL    ?? "";
+  const prodOrgId  = get("--prod-org-id")  ?? process.env.PROD_ORG_ID ?? "";
   const prodApiKey = get("--prod-api-key") ?? process.env.PROD_API_KEY ?? "";
-  const devUrl    = get("--dev-url")     ?? process.env.DEV_URL ?? "http://localhost:5000";
-  const dryRun    = argv.includes("--dry-run");
+  const devUrl     = get("--dev-url")      ?? process.env.DEV_URL     ?? "http://localhost:5000";
+  const dryRun     = argv.includes("--dry-run");
 
   if (!prodUrl)   { console.error("ERROR: --prod-url is required"); process.exit(1); }
   if (!prodOrgId) { console.error("ERROR: --prod-org-id is required"); process.exit(1); }
 
-  return { prodUrl: prodUrl.replace(/\/$/, ""), prodOrgId, prodApiKey, devUrl: devUrl.replace(/\/$/, ""), dryRun };
+  return {
+    prodUrl: prodUrl.replace(/\/$/, ""),
+    prodOrgId,
+    prodApiKey,
+    devUrl: devUrl.replace(/\/$/, ""),
+    dryRun,
+  };
 }
 
 // ─── HTTP helpers ─────────────────────────────────────────────────────────────
@@ -76,43 +82,32 @@ async function prodGet<T = unknown>(path: string): Promise<T> {
   return r.json() as Promise<T>;
 }
 
-async function prodPost<T = unknown>(path: string, body: unknown): Promise<T> {
+async function _prodWrite<T = unknown>(
+  method: "POST" | "PUT" | "PATCH",
+  path: string,
+  body: unknown,
+): Promise<T> {
   if (CFG.dryRun) {
-    log(`[DRY-RUN] POST ${path}`);
+    log(`[DRY-RUN] ${method} ${path}`);
     return { id: `dry-run-${Math.random().toString(36).slice(2, 9)}` } as T;
   }
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (CFG.prodApiKey) headers["Authorization"] = `Bearer ${CFG.prodApiKey}`;
   const r = await fetch(`${CFG.prodUrl}${path}`, {
-    method: "POST",
+    method,
     headers,
     body: JSON.stringify(body),
   });
   const text = await r.text();
   let data: T;
   try { data = JSON.parse(text) as T; } catch { data = text as unknown as T; }
-  if (!r.ok) throw new Error(`PROD POST ${path} → HTTP ${r.status}: ${JSON.stringify(data).slice(0, 400)}`);
+  if (!r.ok) throw new Error(`PROD ${method} ${path} → HTTP ${r.status}: ${JSON.stringify(data).slice(0, 400)}`);
   return data;
 }
 
-async function prodPatch<T = unknown>(path: string, body: unknown): Promise<T> {
-  if (CFG.dryRun) {
-    log(`[DRY-RUN] PATCH ${path}`);
-    return {} as T;
-  }
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (CFG.prodApiKey) headers["Authorization"] = `Bearer ${CFG.prodApiKey}`;
-  const r = await fetch(`${CFG.prodUrl}${path}`, {
-    method: "PATCH",
-    headers,
-    body: JSON.stringify(body),
-  });
-  const text = await r.text();
-  let data: T;
-  try { data = JSON.parse(text) as T; } catch { data = text as unknown as T; }
-  if (!r.ok) throw new Error(`PROD PATCH ${path} → HTTP ${r.status}: ${JSON.stringify(data).slice(0, 400)}`);
-  return data;
-}
+const prodPost  = <T = unknown>(path: string, body: unknown) => _prodWrite<T>("POST",  path, body);
+const prodPut   = <T = unknown>(path: string, body: unknown) => _prodWrite<T>("PUT",   path, body);
+const prodPatch = <T = unknown>(path: string, body: unknown) => _prodWrite<T>("PATCH", path, body);
 
 // ─── Logging ──────────────────────────────────────────────────────────────────
 
@@ -123,6 +118,7 @@ const step = (n: number, total: number, msg: string) =>
   process.stdout.write(`\nSTEP ${n}/${total}  ${msg}\n${"─".repeat(60)}\n`);
 
 // ─── Strip server-generated fields + inject prod org ID ───────────────────────
+// NOTE: Do NOT use forProd() for ontology concepts — their id must be preserved.
 
 function forProd(obj: Record<string, unknown>, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   const {
@@ -130,22 +126,23 @@ function forProd(obj: Record<string, unknown>, overrides: Record<string, unknown
     performanceScore, totalRuns, monthlyCost, monthlyRevenue, triggerCount,
     ...rest
   } = obj;
+  void id; // intentionally stripped for most resources
   return { ...rest, organizationId: CFG.prodOrgId, ...overrides };
 }
 
 // ─── Summary counters ─────────────────────────────────────────────────────────
 
 const summary = {
-  agents:   { created: 0, skipped: 0 },
-  kbs:      { created: 0, skipped: 0 },
-  skills:   { created: 0, skipped: 0 },
-  policies: { created: 0, skipped: 0 },
-  ontology: { created: 0, skipped: 0 },
+  agents:     { created: 0, skipped: 0 },
+  kbs:        { created: 0, skipped: 0 },
+  skills:     { created: 0, skipped: 0 },
+  policies:   { created: 0, skipped: 0 },
+  ontology:   { created: 0, skipped: 0 },
   blueprints: { created: 0, skipped: 0 },
   mcpServers: { created: 0, skipped: 0 },
-  evals:    { created: 0, skipped: 0 },
-  kbLinks:  { created: 0, skipped: 0 },
-  mcpLinks: { created: 0, skipped: 0 },
+  evals:      { created: 0, skipped: 0 },
+  kbLinks:    { created: 0, skipped: 0 },
+  mcpLinks:   { created: 0, skipped: 0 },
 };
 
 // ─── Main ─────────────────────────────────────────────────────────────────────
@@ -182,10 +179,19 @@ async function main() {
     devGet<{ id: string; name: string; [k: string]: unknown }[]>("/api/blueprints"),
     devGet<{ id: string; name: string; [k: string]: unknown }[]>("/api/mcp-servers"),
     devGet<{ id: string; name: string; agentId: string; [k: string]: unknown }[]>("/api/evals"),
-    devGet<{ id: string; label: string; [k: string]: unknown }[]>("/api/ontology/concepts?industry=financial_services"),
+    // industryId (not industry) is required by GET /api/ontology/concepts
+    devGet<{ id: string; label: string; [k: string]: unknown }[]>(
+      "/api/ontology/concepts?industryId=financial_services"
+    ),
   ]);
 
-  // Filter to Fitch RW resources by well-known name prefixes/values
+  // ── Filter to Fitch RW resources ────────────────────────────────────────────
+  //
+  // Agents are matched by the "FITCH-RW-" name prefix, which acts as the logical
+  // external identifier for this pipeline (the agents schema has no externalId column;
+  // the task spec's "externalId prefix FITCH-RW-" maps to the agent name convention).
+  const FITCH_RW_NAME_PREFIX = "FITCH-RW-";
+
   const FITCH_AGENT_NAMES = [
     "FITCH-RW-001 Market Signal Scanner",
     "FITCH-RW-002 Filing Intelligence Agent",
@@ -230,24 +236,34 @@ async function main() {
   ];
   const FITCH_EVAL_SUITE_NAME = "Fitch RW — Rating Watch Intelligence Regression Suite";
 
-  const devAgents    = devAgentsList.filter(a => FITCH_AGENT_NAMES.includes(a.name));
-  const devKbs       = devKbList.filter(k => FITCH_KB_NAMES.includes(k.name));
-  const devPolicies  = devPolicyList.filter(p => FITCH_POLICY_NAMES.includes(p.name));
-  const devSkills    = devSkillList.filter(s => FITCH_SKILL_NAMES.includes(s.name));
+  // Primary filter: exact FITCH_AGENT_NAMES; fallback scan by name prefix
+  const devAgents = devAgentsList.filter(a =>
+    FITCH_AGENT_NAMES.includes(a.name) || a.name.startsWith(FITCH_RW_NAME_PREFIX)
+  );
+  const devKbs        = devKbList.filter(k   => FITCH_KB_NAMES.includes(k.name));
+  const devPolicies   = devPolicyList.filter(p => FITCH_POLICY_NAMES.includes(p.name));
+  const devSkills     = devSkillList.filter(s  => FITCH_SKILL_NAMES.includes(s.name));
   const devBlueprints = devBlueprintList.filter(b => FITCH_BLUEPRINT_NAMES.includes(b.name));
   const devMcpServers = devMcpServerList.filter(m => FITCH_MCP_NAMES.includes(m.name));
-  const devOntology  = devOntologyList.filter(o => FITCH_ONTOLOGY_LABELS.includes(o.label));
-  const devEvalSuite = devEvalList.find(e => e.name === FITCH_EVAL_SUITE_NAME);
+  const devOntology   = devOntologyList.filter(o => FITCH_ONTOLOGY_LABELS.includes(o.label));
+  const devEvalSuite  = devEvalList.find(e => e.name === FITCH_EVAL_SUITE_NAME);
 
   console.log(`  Found: ${devAgents.length} agents, ${devKbs.length} KBs, ${devPolicies.length} policies`);
   console.log(`         ${devSkills.length} skills, ${devBlueprints.length} blueprints, ${devMcpServers.length} MCP servers`);
   console.log(`         ${devOntology.length} ontology concepts, eval suite: ${devEvalSuite ? "✓" : "✗"}`);
 
   if (devAgents.length < 4) {
-    warn(`Only ${devAgents.length}/4 Fitch RW agents found in Dev. Run the /demo-api/fitch-rw/setup endpoint first.`);
+    warn(
+      `Only ${devAgents.length}/4 Fitch RW agents found in Dev (expected names starting with "${FITCH_RW_NAME_PREFIX}"). ` +
+      `Run GET ${CFG.devUrl}/demo-api/fitch-rw/setup first to provision agents.`
+    );
+  }
+  if (devAgents.length === 0) {
+    warn("No Fitch RW agents found — aborting migration. Setup the demo environment first.");
+    process.exit(1);
   }
 
-  // ── Fetch prod current state (for idempotency checks) ──────────────────────
+  // ── Fetch current Prod state (idempotency) ──────────────────────────────────
 
   console.log("\nFetching current Production state for idempotency checks…");
   const [
@@ -260,17 +276,26 @@ async function main() {
     prodEvalList,
     prodOntologyList,
   ] = await Promise.all([
-    prodGet<{ id: string; name: string; [k: string]: unknown }[]>("/api/agents").catch((): { id: string; name: string }[] => []),
-    prodGet<{ id: string; name: string; [k: string]: unknown }[]>("/api/knowledge-bases").catch((): { id: string; name: string }[] => []),
-    prodGet<{ id: string; name: string; [k: string]: unknown }[]>("/api/policies").catch((): { id: string; name: string }[] => []),
-    prodGet<{ id: string; name: string; [k: string]: unknown }[]>("/api/skills").catch((): { id: string; name: string }[] => []),
-    prodGet<{ id: string; name: string; [k: string]: unknown }[]>("/api/blueprints").catch((): { id: string; name: string }[] => []),
-    prodGet<{ id: string; name: string; [k: string]: unknown }[]>("/api/mcp-servers").catch((): { id: string; name: string }[] => []),
-    prodGet<{ id: string; name: string; agentId: string; [k: string]: unknown }[]>("/api/evals").catch((): { id: string; name: string; agentId: string }[] => []),
-    prodGet<{ id: string; label: string; [k: string]: unknown }[]>("/api/ontology/concepts?industry=financial_services").catch((): { id: string; label: string }[] => []),
+    prodGet<{ id: string; name: string; [k: string]: unknown }[]>("/api/agents")
+      .catch((): { id: string; name: string }[] => []),
+    prodGet<{ id: string; name: string; [k: string]: unknown }[]>("/api/knowledge-bases")
+      .catch((): { id: string; name: string }[] => []),
+    prodGet<{ id: string; name: string; [k: string]: unknown }[]>("/api/policies")
+      .catch((): { id: string; name: string }[] => []),
+    prodGet<{ id: string; name: string; [k: string]: unknown }[]>("/api/skills")
+      .catch((): { id: string; name: string }[] => []),
+    prodGet<{ id: string; name: string; [k: string]: unknown }[]>("/api/blueprints")
+      .catch((): { id: string; name: string }[] => []),
+    prodGet<{ id: string; name: string; [k: string]: unknown }[]>("/api/mcp-servers")
+      .catch((): { id: string; name: string }[] => []),
+    prodGet<{ id: string; name: string; agentId: string; [k: string]: unknown }[]>("/api/evals")
+      .catch((): { id: string; name: string; agentId: string }[] => []),
+    prodGet<{ id: string; label: string; [k: string]: unknown }[]>(
+      "/api/ontology/concepts?industryId=financial_services"
+    ).catch((): { id: string; label: string }[] => []),
   ]);
 
-  // ID maps for prod resources (name/label → prod ID)
+  // Prod ID maps (name/label → prod ID)
   const prodKbIdByName:        Record<string, string> = {};
   const prodPolicyIdByName:    Record<string, string> = {};
   const prodSkillIdByName:     Record<string, string> = {};
@@ -279,17 +304,31 @@ async function main() {
   const prodAgentIdByName:     Record<string, string> = {};
   const prodOntologyIdByLabel: Record<string, string> = {};
 
-  prodKbList.forEach(k    => { prodKbIdByName[k.name]        = k.id; });
-  prodPolicyList.forEach(p => { prodPolicyIdByName[p.name]   = p.id; });
-  prodSkillList.forEach(s  => { prodSkillIdByName[s.name]    = s.id; });
-  prodBlueprintList.forEach(b => { prodBlueprintIdByName[b.name] = b.id; });
-  prodMcpServerList.forEach(m => { prodMcpIdByName[m.name]   = m.id; });
-  prodAgentsList.forEach(a => { prodAgentIdByName[a.name]    = a.id; });
-  prodOntologyList.forEach(o => { prodOntologyIdByLabel[o.label] = o.id; });
+  prodKbList.forEach(k      => { prodKbIdByName[k.name]           = k.id; });
+  prodPolicyList.forEach(p  => { prodPolicyIdByName[p.name]       = p.id; });
+  prodSkillList.forEach(s   => { prodSkillIdByName[s.name]        = s.id; });
+  prodBlueprintList.forEach(b => { prodBlueprintIdByName[b.name]  = b.id; });
+  prodMcpServerList.forEach(m => { prodMcpIdByName[m.name]        = m.id; });
+  prodAgentsList.forEach(a  => { prodAgentIdByName[a.name]        = a.id; });
+  prodOntologyList.forEach(o => { prodOntologyIdByLabel[o.label]  = o.id; });
 
   let prodEvalSuiteId = prodEvalList.find(e => e.name === FITCH_EVAL_SUITE_NAME)?.id;
 
+  // Dev name → ID reverse maps (for resolving links during agent creation)
+  const devKbIdToName:        Record<string, string> = {};
+  const devMcpIdToName:       Record<string, string> = {};
+  const devBlueprintIdToName: Record<string, string> = {};
+  const devSkillIdToName:     Record<string, string> = {};
+  devKbs.forEach(k        => { devKbIdToName[k.id]        = k.name; });
+  devMcpServers.forEach(m => { devMcpIdToName[m.id]       = m.name; });
+  devBlueprints.forEach(b => { devBlueprintIdToName[b.id] = b.name; });
+  devSkills.forEach(s     => { devSkillIdToName[s.id]     = s.name; });
+
   // ── STEP 1: Ontology Concepts ───────────────────────────────────────────────
+  //
+  // IMPORTANT: POST /api/ontology/concepts requires both `id` (the UUID) AND `industryId`
+  // as required fields. We therefore preserve the dev `id` and explicitly set `industryId`.
+  // forProd() is NOT used here.
 
   step(1, TOTAL_STEPS, "Ontology concepts");
   for (const concept of devOntology) {
@@ -297,7 +336,19 @@ async function main() {
       skip(`Ontology concept already exists: ${concept.label}`);
       summary.ontology.skipped++;
     } else {
-      const created = await prodPost<{ id: string }>("/api/ontology/concepts", forProd(concept as Record<string, unknown>));
+      const { createdAt, updatedAt, industry, status, ...rest } = concept as Record<string, unknown>;
+      void createdAt; void updatedAt; void status;
+      // Preserve `id` — required by the endpoint schema
+      const ontologyPayload: Record<string, unknown> = {
+        ...rest,
+        industryId: (industry as string | undefined) ?? "financial_services",
+        source: (concept as Record<string, unknown>).source ?? "custom-extension",
+        properties: (concept as Record<string, unknown>).properties ?? [],
+        relationships: (concept as Record<string, unknown>).relationships ?? [],
+        synonyms: (concept as Record<string, unknown>).synonyms ?? [],
+        tags: (concept as Record<string, unknown>).tags ?? [],
+      };
+      const created = await prodPost<{ id: string }>("/api/ontology/concepts", ontologyPayload);
       prodOntologyIdByLabel[concept.label] = created.id;
       log(`Created ontology concept: ${concept.label}`);
       summary.ontology.created++;
@@ -312,7 +363,10 @@ async function main() {
       skip(`Policy already exists: ${policy.name}`);
       summary.policies.skipped++;
     } else {
-      const created = await prodPost<{ id: string }>("/api/policies", forProd(policy as Record<string, unknown>, { scopeId: null }));
+      const created = await prodPost<{ id: string }>(
+        "/api/policies",
+        forProd(policy as Record<string, unknown>, { scopeId: null })
+      );
       prodPolicyIdByName[policy.name] = created.id;
       log(`Created policy: ${policy.name}`);
       summary.policies.created++;
@@ -327,7 +381,10 @@ async function main() {
       skip(`KB already exists: ${kb.name}`);
       summary.kbs.skipped++;
     } else {
-      const created = await prodPost<{ id: string }>("/api/knowledge-bases", forProd(kb as Record<string, unknown>));
+      const created = await prodPost<{ id: string }>(
+        "/api/knowledge-bases",
+        forProd(kb as Record<string, unknown>)
+      );
       prodKbIdByName[kb.name] = created.id;
       log(`Created KB: ${kb.name}`);
       summary.kbs.created++;
@@ -342,7 +399,10 @@ async function main() {
       skip(`Skill already exists: ${skill.name}`);
       summary.skills.skipped++;
     } else {
-      const created = await prodPost<{ id: string }>("/api/skills", forProd(skill as Record<string, unknown>));
+      const created = await prodPost<{ id: string }>(
+        "/api/skills",
+        forProd(skill as Record<string, unknown>)
+      );
       prodSkillIdByName[skill.name] = created.id;
       log(`Created skill: ${skill.name}`);
       summary.skills.created++;
@@ -357,7 +417,10 @@ async function main() {
       skip(`Blueprint already exists: ${bp.name}`);
       summary.blueprints.skipped++;
     } else {
-      const created = await prodPost<{ id: string }>("/api/blueprints", forProd(bp as Record<string, unknown>));
+      const created = await prodPost<{ id: string }>(
+        "/api/blueprints",
+        forProd(bp as Record<string, unknown>)
+      );
       prodBlueprintIdByName[bp.name] = created.id;
       log(`Created blueprint: ${bp.name}`);
       summary.blueprints.created++;
@@ -367,16 +430,16 @@ async function main() {
   // ── STEP 6: MCP Servers + Tools ─────────────────────────────────────────────
 
   step(6, TOTAL_STEPS, "MCP servers and tools");
-  const prodMcpToolsCreated: Record<string, number> = {};
-
   for (const server of devMcpServers) {
     let serverId = prodMcpIdByName[server.name];
     if (serverId) {
       skip(`MCP server already exists: ${server.name}`);
       summary.mcpServers.skipped++;
     } else {
-      const payload = forProd(server as Record<string, unknown>);
-      const created = await prodPost<{ id: string }>("/api/mcp-servers", payload);
+      const created = await prodPost<{ id: string }>(
+        "/api/mcp-servers",
+        forProd(server as Record<string, unknown>)
+      );
       serverId = created.id;
       prodMcpIdByName[server.name] = serverId;
       log(`Created MCP server: ${server.name} → ${serverId}`);
@@ -396,7 +459,7 @@ async function main() {
     let prodTools: { id: string; name: string }[] = [];
     try {
       prodTools = await prodGet<{ id: string; name: string }[]>(`/api/mcp-servers/${serverId}/tools`);
-    } catch { /* server may be new */ }
+    } catch { /* new server */ }
     const prodToolNames = new Set(prodTools.map(t => t.name));
 
     let toolsCreated = 0;
@@ -406,73 +469,20 @@ async function main() {
       await prodPost(`/api/mcp-servers/${serverId}/tools`, toolPayload);
       toolsCreated++;
     }
-    prodMcpToolsCreated[server.name] = toolsCreated;
     if (toolsCreated > 0) log(`  └─ Created ${toolsCreated} tool(s) for: ${server.name}`);
   }
 
-  // ── STEP 7: Eval Suite + Test Cases ─────────────────────────────────────────
+  // ── STEP 7: Agents ──────────────────────────────────────────────────────────
+  //
+  // Agents are created BEFORE the eval suite so that a valid agentId is available
+  // when creating the eval suite in Step 8.
 
-  step(7, TOTAL_STEPS, "Shared eval suite + test cases");
-  if (!devEvalSuite) {
-    warn(`Eval suite "${FITCH_EVAL_SUITE_NAME}" not found in Dev — skipping`);
-  } else {
-    // We need a prod agent ID for agentId field. Use the first agent if it exists; defer if not.
-    // Will patch after agents are created if needed.
-    const firstProdAgentId = prodAgentsList.find(a =>
-      a.name === "FITCH-RW-001 Market Signal Scanner"
-    )?.id;
+  step(7, TOTAL_STEPS, `Fitch RW agents (${devAgents.length} found via "${FITCH_RW_NAME_PREFIX}" prefix)`);
 
-    if (prodEvalSuiteId) {
-      skip(`Eval suite already exists: ${FITCH_EVAL_SUITE_NAME}`);
-      summary.evals.skipped++;
-    } else {
-      const evalPayload = forProd(devEvalSuite as unknown as Record<string, unknown>, {
-        agentId: firstProdAgentId ?? null,
-      });
-      const created = await prodPost<{ id: string }>("/api/evals", evalPayload);
-      prodEvalSuiteId = created.id;
-      log(`Created eval suite: ${FITCH_EVAL_SUITE_NAME} → ${prodEvalSuiteId}`);
-      summary.evals.created++;
-    }
-
-    // Migrate test cases
-    if (prodEvalSuiteId) {
-      let devCases: { id: string; name: string; [k: string]: unknown }[] = [];
-      try {
-        devCases = await devGet<{ id: string; name: string; [k: string]: unknown }[]>(
-          `/api/evals/${devEvalSuite.id}/test-cases`
-        );
-      } catch (e) {
-        warn(`Could not fetch eval test cases: ${(e as Error).message}`);
-      }
-
-      let prodCases: { id: string; name: string }[] = [];
-      try {
-        prodCases = await prodGet<{ id: string; name: string }[]>(
-          `/api/evals/${prodEvalSuiteId}/test-cases`
-        );
-      } catch { /* may be new */ }
-      const prodCaseNames = new Set(prodCases.map(c => c.name));
-
-      let casesCreated = 0;
-      for (const tc of devCases) {
-        if (prodCaseNames.has(tc.name as string)) continue;
-        const casePayload = forProd(tc as Record<string, unknown>, { suiteId: prodEvalSuiteId });
-        await prodPost(`/api/evals/${prodEvalSuiteId}/test-cases`, casePayload);
-        casesCreated++;
-      }
-      if (casesCreated > 0) log(`  └─ Created ${casesCreated} test case(s)`);
-    }
-  }
-
-  // ── STEP 8: Agents ──────────────────────────────────────────────────────────
-
-  step(8, TOTAL_STEPS, "Fitch RW agents (FITCH-RW-001 through FITCH-RW-004)");
-
-  // Fetch per-agent linkage details from Dev
+  // Fetch per-agent linkage details from Dev in parallel
   interface AgentFull {
     agent: { id: string; name: string; [k: string]: unknown };
-    kbLinks: { knowledgeBaseId: string; [k: string]: unknown }[];
+    kbLinks:  { knowledgeBaseId: string; [k: string]: unknown }[];
     mcpLinks: { serverId: string; [k: string]: unknown }[];
   }
 
@@ -490,16 +500,6 @@ async function main() {
     })
   );
 
-  // Map dev agent KB IDs and MCP server IDs to Prod IDs
-  const devKbIdToName: Record<string, string> = {};
-  devKbs.forEach(kb => { devKbIdToName[kb.id] = kb.name; });
-  const devMcpIdToName: Record<string, string> = {};
-  devMcpServers.forEach(m => { devMcpIdToName[m.id] = m.name; });
-  const devBlueprintIdToName: Record<string, string> = {};
-  devBlueprints.forEach(b => { devBlueprintIdToName[b.id] = b.name; });
-  const devSkillIdToName: Record<string, string> = {};
-  devSkills.forEach(s => { devSkillIdToName[s.id] = s.name; });
-
   for (const { agent } of agentDetails) {
     if (prodAgentIdByName[agent.name]) {
       skip(`Agent already exists: ${agent.name}`);
@@ -507,29 +507,25 @@ async function main() {
       continue;
     }
 
-    // Resolve prod IDs for skills (preloadedSkills is an array of { skillId })
+    // Resolve prod IDs for preloadedSkills (stored as [{ skillId }] JSONB)
     const devPreloadedSkills = (agent.preloadedSkills as { skillId: string }[] | undefined) ?? [];
     const prodPreloadedSkills = devPreloadedSkills
       .map(({ skillId }) => {
         const skillName = devSkillIdToName[skillId];
-        const prodId = skillName ? prodSkillIdByName[skillName] : undefined;
+        const prodId    = skillName ? prodSkillIdByName[skillName] : undefined;
         return prodId ? { skillId: prodId } : null;
       })
       .filter(Boolean) as { skillId: string }[];
 
     // Resolve prod blueprint ID
-    const devBpId = agent.blueprintId as string | undefined;
-    const bpName  = devBpId ? devBlueprintIdToName[devBpId] : undefined;
-    const prodBpId = bpName ? prodBlueprintIdByName[bpName] : undefined;
+    const devBpId  = agent.blueprintId as string | undefined;
+    const bpName   = devBpId ? devBlueprintIdToName[devBpId] : undefined;
+    const prodBpId = bpName  ? prodBlueprintIdByName[bpName]  : undefined;
 
-    // policyBindings — stored by policyName (no ID ref), so pass as-is
+    // policyBindings, ontologyTags, evalBindings are stored by name/label/suiteName (not IDs)
     const policyBindings = agent.policyBindings ?? [];
-
-    // ontologyTags — stored by label (no ID ref), so pass as-is
-    const ontologyTags = agent.ontologyTags ?? [];
-
-    // evalBindings — stored by suiteName (no ID ref), so pass as-is
-    const evalBindings = agent.evalBindings ?? [];
+    const ontologyTags   = agent.ontologyTags   ?? [];
+    const evalBindings   = agent.evalBindings   ?? [];
 
     const agentPayload = forProd(agent as Record<string, unknown>, {
       blueprintId:     prodBpId ?? null,
@@ -537,8 +533,7 @@ async function main() {
       policyBindings,
       ontologyTags,
       evalBindings,
-      // Clear any dev-specific runtime run IDs
-      lastRunId: null,
+      lastRunId:       null,
     });
 
     const created = await prodPost<{ id: string }>("/api/agents", agentPayload);
@@ -547,13 +542,73 @@ async function main() {
     summary.agents.created++;
   }
 
-  // Patch eval suite agentId if we deferred it (suite was created before agents existed)
-  if (prodEvalSuiteId && summary.evals.created > 0) {
-    const firstAgentId = prodAgentIdByName["FITCH-RW-001 Market Signal Scanner"];
-    if (firstAgentId) {
-      await prodPatch(`/api/evals/${prodEvalSuiteId}`, { agentId: firstAgentId }).catch(() => {
-        warn("Could not patch eval suite agentId — may need to set manually");
-      });
+  // ── STEP 8: Eval Suite + Test Cases ─────────────────────────────────────────
+  //
+  // Created AFTER agents so agentId for the suite can be resolved from prod.
+  // Uses PUT /api/evals/:id for updates (PATCH is not exposed on this resource).
+
+  step(8, TOTAL_STEPS, "Shared eval suite + test cases");
+  if (!devEvalSuite) {
+    warn(`Eval suite "${FITCH_EVAL_SUITE_NAME}" not found in Dev — skipping. Run setup first.`);
+  } else {
+    // Resolve lead agent (FITCH-RW-001) on prod now that agents have been created
+    const prodLeadAgentId = prodAgentIdByName["FITCH-RW-001 Market Signal Scanner"];
+
+    if (prodEvalSuiteId) {
+      skip(`Eval suite already exists: ${FITCH_EVAL_SUITE_NAME}`);
+      summary.evals.skipped++;
+
+      // If the suite exists but has no agentId (e.g. was migrated without one), patch it
+      if (prodLeadAgentId) {
+        await prodPut(`/api/evals/${prodEvalSuiteId}`, { agentId: prodLeadAgentId }).catch(() =>
+          warn("Could not update eval suite agentId — may need manual correction")
+        );
+      }
+    } else {
+      if (!prodLeadAgentId) {
+        warn(
+          `Cannot create eval suite: prod agent "FITCH-RW-001 Market Signal Scanner" not found. ` +
+          `Ensure agent creation succeeded in Step 7.`
+        );
+      } else {
+        const evalPayload = forProd(devEvalSuite as unknown as Record<string, unknown>, {
+          agentId: prodLeadAgentId,
+        });
+        const created = await prodPost<{ id: string }>("/api/evals", evalPayload);
+        prodEvalSuiteId = created.id;
+        log(`Created eval suite: ${FITCH_EVAL_SUITE_NAME} → ${prodEvalSuiteId}`);
+        summary.evals.created++;
+      }
+    }
+
+    // Migrate test cases if we have a suite ID
+    if (prodEvalSuiteId) {
+      let devCases: { id: string; name: string; [k: string]: unknown }[] = [];
+      try {
+        devCases = await devGet<{ id: string; name: string; [k: string]: unknown }[]>(
+          `/api/evals/${devEvalSuite.id}/test-cases`
+        );
+      } catch (e) {
+        warn(`Could not fetch eval test cases from Dev: ${(e as Error).message}`);
+      }
+
+      let prodCases: { id: string; name: string }[] = [];
+      try {
+        prodCases = await prodGet<{ id: string; name: string }[]>(
+          `/api/evals/${prodEvalSuiteId}/test-cases`
+        );
+      } catch { /* new suite */ }
+      const prodCaseNames = new Set(prodCases.map(c => c.name));
+
+      let casesCreated = 0;
+      for (const tc of devCases) {
+        if (prodCaseNames.has(tc.name as string)) continue;
+        const casePayload = forProd(tc as Record<string, unknown>, { suiteId: prodEvalSuiteId });
+        await prodPost(`/api/evals/${prodEvalSuiteId}/test-cases`, casePayload);
+        casesCreated++;
+      }
+      if (casesCreated > 0) log(`  └─ Created ${casesCreated} test case(s)`);
+      else if (devCases.length > 0) skip(`All ${devCases.length} test cases already exist`);
     }
   }
 
@@ -563,21 +618,23 @@ async function main() {
 
   for (const { agent, kbLinks } of agentDetails) {
     const prodAgentId = prodAgentIdByName[agent.name];
-    if (!prodAgentId) { warn(`No prod agent ID for "${agent.name}" — skipping KB links`); continue; }
+    if (!prodAgentId) {
+      warn(`No prod agent ID for "${agent.name}" — skipping KB links`);
+      continue;
+    }
 
-    // Fetch current links on prod to avoid duplicates
     let existingProdKbLinks: { knowledgeBaseId: string }[] = [];
     try {
       existingProdKbLinks = await prodGet<{ knowledgeBaseId: string }[]>(
         `/api/agents/${prodAgentId}/knowledge-bases`
       );
-    } catch { /* new agent, no links yet */ }
+    } catch { /* new agent */ }
     const alreadyLinkedKbIds = new Set(existingProdKbLinks.map(l => l.knowledgeBaseId));
 
     for (const link of kbLinks) {
       const kbName   = devKbIdToName[link.knowledgeBaseId];
       const prodKbId = kbName ? prodKbIdByName[kbName] : undefined;
-      if (!prodKbId) { warn(`KB "${kbName}" not found on Prod — skipping link`); continue; }
+      if (!prodKbId) { warn(`KB "${kbName ?? link.knowledgeBaseId}" not found on Prod — skipping link`); continue; }
       if (alreadyLinkedKbIds.has(prodKbId)) {
         skip(`KB "${kbName}" already linked to ${agent.name}`);
         summary.kbLinks.skipped++;
@@ -595,9 +652,11 @@ async function main() {
 
   for (const { agent, mcpLinks } of agentDetails) {
     const prodAgentId = prodAgentIdByName[agent.name];
-    if (!prodAgentId) { warn(`No prod agent ID for "${agent.name}" — skipping MCP links`); continue; }
+    if (!prodAgentId) {
+      warn(`No prod agent ID for "${agent.name}" — skipping MCP links`);
+      continue;
+    }
 
-    // Fetch current MCP links on prod
     let existingProdMcpLinks: { serverId: string }[] = [];
     try {
       existingProdMcpLinks = await prodGet<{ serverId: string }[]>(
@@ -609,7 +668,10 @@ async function main() {
     for (const link of mcpLinks) {
       const mcpName   = devMcpIdToName[link.serverId];
       const prodMcpId = mcpName ? prodMcpIdByName[mcpName] : undefined;
-      if (!prodMcpId) { warn(`MCP server "${mcpName}" not found on Prod — skipping link`); continue; }
+      if (!prodMcpId) {
+        warn(`MCP server "${mcpName ?? link.serverId}" not found on Prod — skipping link`);
+        continue;
+      }
       if (alreadyLinkedMcpIds.has(prodMcpId)) {
         skip(`MCP server "${mcpName}" already linked to ${agent.name}`);
         summary.mcpLinks.skipped++;
@@ -617,13 +679,13 @@ async function main() {
       }
       try {
         await prodPost(`/api/agents/${prodAgentId}/mcp-servers`, {
-          serverId:           prodMcpId,
+          serverId:            prodMcpId,
           acknowledgeWarnings: true,
         });
         log(`Linked MCP "${mcpName}" → ${agent.name}`);
         summary.mcpLinks.created++;
       } catch (e) {
-        warn(`MCP link "${mcpName}" → ${agent.name}: ${(e as Error).message}`);
+        warn(`MCP link "${mcpName}" → ${agent.name} failed: ${(e as Error).message}`);
       }
     }
   }
@@ -631,30 +693,29 @@ async function main() {
   // ── Summary table ────────────────────────────────────────────────────────────
 
   console.log("\n" + "═".repeat(70));
-  console.log("  MIGRATION COMPLETE" + (CFG.dryRun ? " (DRY-RUN)" : ""));
+  console.log("  MIGRATION COMPLETE" + (CFG.dryRun ? " (DRY-RUN — no writes made)" : ""));
   console.log("═".repeat(70));
   const row = (label: string, c: { created: number; skipped: number }) =>
     `  ${label.padEnd(22)} created: ${String(c.created).padStart(3)}   skipped: ${String(c.skipped).padStart(3)}`;
-  console.log(row("Agents",         summary.agents));
-  console.log(row("Knowledge Bases", summary.kbs));
-  console.log(row("Policies",        summary.policies));
-  console.log(row("Skills",          summary.skills));
-  console.log(row("Blueprints",      summary.blueprints));
-  console.log(row("MCP Servers",     summary.mcpServers));
-  console.log(row("Eval Suites",     summary.evals));
+  console.log(row("Agents",            summary.agents));
+  console.log(row("Knowledge Bases",   summary.kbs));
+  console.log(row("Policies",          summary.policies));
+  console.log(row("Skills",            summary.skills));
+  console.log(row("Blueprints",        summary.blueprints));
+  console.log(row("MCP Servers",       summary.mcpServers));
+  console.log(row("Eval Suites",       summary.evals));
   console.log(row("Ontology Concepts", summary.ontology));
-  console.log(row("KB Links",        summary.kbLinks));
-  console.log(row("MCP Links",       summary.mcpLinks));
+  console.log(row("KB Links",          summary.kbLinks));
+  console.log(row("MCP Links",         summary.mcpLinks));
   console.log("─".repeat(70));
   const totalCreated = Object.values(summary).reduce((s, c) => s + c.created, 0);
   const totalSkipped = Object.values(summary).reduce((s, c) => s + c.skipped, 0);
   console.log(`  TOTAL                  created: ${String(totalCreated).padStart(3)}   skipped: ${String(totalSkipped).padStart(3)}`);
   console.log("═".repeat(70) + "\n");
 
-  if (!CFG.dryRun) {
-    console.log("  Next step: Open the Production demo at:");
-    console.log(`  ${CFG.prodUrl}/demo/fitch-rw`);
-    console.log("  and click 'Setup Agents' to verify all 4 agents are active.\n");
+  if (!CFG.dryRun && totalCreated > 0) {
+    console.log("  Next step: verify the Production demo at:");
+    console.log(`  ${CFG.prodUrl}/demo/fitch-rw\n`);
   }
 }
 
