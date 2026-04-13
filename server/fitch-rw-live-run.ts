@@ -840,6 +840,68 @@ export async function ensureFitchRWAgents(): Promise<void> {
 
   const allAgents = await storage.getAgents().catch((): Awaited<ReturnType<typeof storage.getAgents>> => []);
 
+  // Pre-populate in-memory ID maps from DB so that on subsequent runs (after a process
+  // restart) we can reference existing agent IDs before creating/updating agents.
+  // This also enables eval suite creation BEFORE the agent loop (comment #2 fix).
+  await _refreshMcpServerIds();
+
+  // ── 8 (moved before agent loop). Shared Eval Suite ──────────────────────────
+  // Creating the eval suite before the agent loop ensures that agents can bind to a
+  // suite that already exists in the DB rather than referencing a future suite by name.
+  // On first-ever setup (no pre-existing agents) the suite is deferred inside the loop
+  // and created immediately after the first agent is provisioned.
+  const allEvals      = await storage.getEvalSuites().catch((): Awaited<ReturnType<typeof storage.getEvalSuites>> => []);
+  let evalSuite       = allEvals.find(e => e.name === SHARED_EVAL_SUITE_NAME);
+  const preexistingLeadId = _fitchRWAgentIdByKey["marketSignalScanner"];
+
+  const EVAL_CASES_DEFS = [
+    { name: "CDS widening >30 bps correctly triggers WATCH_NEGATIVE composite signal",  severity: "critical", tags: ["market_signals","cds"] },
+    { name: "Stable CDS (<5 bps 30-day delta) correctly returns STABLE signal",         severity: "high",     tags: ["market_signals","cds"] },
+    { name: "Implied volatility >40% for IG issuer correctly raises HIGH_VOL flag",     severity: "high",     tags: ["market_signals","equity"] },
+    { name: "Net Debt/EBITDA >4.5x correctly flagged as threshold breach",              severity: "critical", tags: ["filing_analysis","leverage"] },
+    { name: "Going concern auditor opinion triggers automatic Watch escalation",         severity: "critical", tags: ["filing_analysis","audit"] },
+    { name: "New HIGH-severity 10-K risk factor correctly identified and classified",   severity: "high",     tags: ["filing_analysis","risk_factors"] },
+    { name: "Peer cohort selected using Fitch sector-first v3.1 methodology",          severity: "high",     tags: ["peer_benchmarking","methodology"] },
+    { name: "Q1 quartile position correctly supports Watch Negative recommendation",    severity: "high",     tags: ["peer_benchmarking","quartile"] },
+    { name: "Rating memo submitted with correct action_type WATCH_NEGATIVE field",      severity: "critical", tags: ["memo_drafting","committee"] },
+    { name: "SEC-17g-7 disclosure logged within required timeframe after committee",    severity: "critical", tags: ["regulatory_compliance","sec"] },
+  ];
+
+  async function provisionEvalCases(suite: NonNullable<typeof evalSuite>): Promise<void> {
+    const existingCases     = await storage.getEvalTestCases(suite.id).catch((): Awaited<ReturnType<typeof storage.getEvalTestCases>> => []);
+    const existingCaseNames = new Set(existingCases.map(c => c.name));
+    for (const ec of EVAL_CASES_DEFS) {
+      if (existingCaseNames.has(ec.name)) continue;
+      await storage.createEvalTestCase({
+        suiteId:        suite.id,
+        name:           ec.name,
+        severity:       ec.severity,
+        tags:           ec.tags,
+        status:         "active",
+        origin:         "fitch_rw_spec",
+        weight:         ec.severity === "critical" ? 2 : 1,
+        inputData:      { scenario: ec.name },
+        expectedOutput: { pass: true },
+      });
+    }
+  }
+
+  if (!evalSuite && preexistingLeadId) {
+    // Subsequent runs (agents already exist in DB): create suite now, before the agent loop.
+    evalSuite = await storage.createEvalSuite({
+      agentId:         preexistingLeadId,
+      name:            SHARED_EVAL_SUITE_NAME,
+      type:            "regression",
+      industry:        "financial_services",
+      passRate:        0.92,
+      totalCases:      10,
+      coverageTags:    ["market_signals","cds","filing_analysis","leverage","peer_benchmarking","memo_drafting","regulatory_compliance"],
+      thresholdConfig: { minPassRate: 0.90 },
+      scorerConfig:    { type: "llm_judge", model: "gpt-4.1" },
+    });
+    await provisionEvalCases(evalSuite);
+  }
+
   for (const def of FITCH_RW_AGENT_DEFS) {
     let agent = allAgents.find(a => a.name === def.name);
     const preloadedSkills = def.skillNames
@@ -912,57 +974,30 @@ export async function ensureFitchRWAgents(): Promise<void> {
         await storage.createAgentMcpServer({ agentId: agent.id, serverId }).catch(() => { /* ignore duplicate */ });
       }
     }
-  }
 
-  // ── 8. Shared Eval Suite — 10 test cases, bound to all 4 agents via evalBindings ─
-  const leadAgentId = _fitchRWAgentIdByKey["marketSignalScanner"];
-  const allEvals    = await storage.getEvalSuites().catch((): Awaited<ReturnType<typeof storage.getEvalSuites>> => []);
-  let evalSuite = allEvals.find(e => e.name === SHARED_EVAL_SUITE_NAME);
-  if (!evalSuite && leadAgentId) {
-    evalSuite = await storage.createEvalSuite({
-      agentId:         leadAgentId,
-      name:            SHARED_EVAL_SUITE_NAME,
-      type:            "regression",
-      industry:        "financial_services",
-      passRate:        0.92,
-      totalCases:      10,
-      coverageTags:    ["market_signals","cds","filing_analysis","leverage","peer_benchmarking","memo_drafting","regulatory_compliance"],
-      thresholdConfig: { minPassRate: 0.90 },
-      scorerConfig:    { type: "llm_judge", model: "gpt-4.1" },
-    });
-  }
-
-  if (evalSuite) {
-    const existingCases     = await storage.getEvalTestCases(evalSuite.id).catch((): Awaited<ReturnType<typeof storage.getEvalTestCases>> => []);
-    const existingCaseNames = new Set(existingCases.map(c => c.name));
-
-    const EVAL_CASES = [
-      { name: "CDS widening >30 bps correctly triggers WATCH_NEGATIVE composite signal",  severity: "critical", tags: ["market_signals","cds"] },
-      { name: "Stable CDS (<5 bps 30-day delta) correctly returns STABLE signal",         severity: "high",     tags: ["market_signals","cds"] },
-      { name: "Implied volatility >40% for IG issuer correctly raises HIGH_VOL flag",     severity: "high",     tags: ["market_signals","equity"] },
-      { name: "Net Debt/EBITDA >4.5x correctly flagged as threshold breach",              severity: "critical", tags: ["filing_analysis","leverage"] },
-      { name: "Going concern auditor opinion triggers automatic Watch escalation",         severity: "critical", tags: ["filing_analysis","audit"] },
-      { name: "New HIGH-severity 10-K risk factor correctly identified and classified",   severity: "high",     tags: ["filing_analysis","risk_factors"] },
-      { name: "Peer cohort selected using Fitch sector-first v3.1 methodology",          severity: "high",     tags: ["peer_benchmarking","methodology"] },
-      { name: "Q1 quartile position correctly supports Watch Negative recommendation",    severity: "high",     tags: ["peer_benchmarking","quartile"] },
-      { name: "Rating memo submitted with correct action_type WATCH_NEGATIVE field",      severity: "critical", tags: ["memo_drafting","committee"] },
-      { name: "SEC-17g-7 disclosure logged within required timeframe after committee",    severity: "critical", tags: ["regulatory_compliance","sec"] },
-    ];
-
-    for (const ec of EVAL_CASES) {
-      if (existingCaseNames.has(ec.name)) continue;
-      await storage.createEvalTestCase({
-        suiteId:        evalSuite.id,
-        name:           ec.name,
-        severity:       ec.severity,
-        tags:           ec.tags,
-        status:         "active",
-        origin:         "fitch_rw_spec",
-        weight:         ec.severity === "critical" ? 2 : 1,
-        inputData:      { scenario: ec.name },
-        expectedOutput: { pass: true },
+    // Deferred eval suite creation for first-ever setup: at this point the first agent
+    // (marketSignalScanner) has just been created and we have its ID — create the suite
+    // now so subsequent agents can bind to an already-existing suite.
+    if (!evalSuite && def.key === "marketSignalScanner") {
+      evalSuite = await storage.createEvalSuite({
+        agentId:         agent.id,
+        name:            SHARED_EVAL_SUITE_NAME,
+        type:            "regression",
+        industry:        "financial_services",
+        passRate:        0.92,
+        totalCases:      10,
+        coverageTags:    ["market_signals","cds","filing_analysis","leverage","peer_benchmarking","memo_drafting","regulatory_compliance"],
+        thresholdConfig: { minPassRate: 0.90 },
+        scorerConfig:    { type: "llm_judge", model: "gpt-4.1" },
       });
+      await provisionEvalCases(evalSuite);
     }
+  }
+
+  // Ensure eval cases exist (idempotent) — handles runs where the suite already existed
+  // before this setup but its test cases were never populated.
+  if (evalSuite) {
+    await provisionEvalCases(evalSuite);
   }
 
   _fitchRWSetupDone = true;
@@ -1210,6 +1245,13 @@ export async function fitchRWLiveRunHandler(req: Request, res: Response): Promis
 
 export async function getFitchRWAgentRuns(_req: Request, res: Response): Promise<void> {
   try {
+    // Self-heal: if the process restarted since the last setup/live-run call, the in-memory
+    // ID map will be empty. Re-populate from the DB before querying run records so that
+    // already-provisioned agents return real data instead of "not_setup".
+    if (FITCH_RW_AGENT_DEFS.some(d => !_fitchRWAgentIdByKey[d.key])) {
+      await _refreshMcpServerIds();
+    }
+
     type RunRecord = {
       key:           string;
       agentId:       string | null;
