@@ -206,7 +206,7 @@ const FITCH_RW_AGENT_DEFS: FitchRWAgentDef[] = [
     name:           "FITCH-RW-001 Market Signal Scanner",
     description:    "Monitors real-time Bloomberg market signals — CDS spreads, equity stress, and news sentiment — to detect early rating watch triggers before they surface in fundamental analysis.",
     mcpServerNames: ["Fitch RW — Bloomberg Terminal"],
-    skillNames:     ["CDS Spread Interpretation", "Equity Signal Analysis", "News Sentiment Classification"],
+    skillNames:     ["Financial Time Series Analysis", "Threshold Breach Detection", "Market Sentiment Intelligence"],
     kbName:         "Fitch RW — Market Signal Reference",
     maxToolIterations: 8,
     systemPrompt: `You are FITCH-RW-001, the Market Signal Scanner for Fitch Ratings' automated Rating Watch Intelligence Pipeline.
@@ -245,7 +245,7 @@ IMPORTANT: End your final response with ONLY this JSON block:
     name:           "FITCH-RW-002 Filing Intelligence Agent",
     description:    "Extracts and interprets SEC EDGAR filing data — 10-K/10-Q financial ratios, risk factors, and MD&A tone — to assess fundamental credit trajectory for Rating Watch decisions.",
     mcpServerNames: ["Fitch RW — SEC EDGAR Intelligence"],
-    skillNames:     ["10-K Risk Factor Extraction", "Financial Ratio Normalization", "Management Disclosure Mining"],
+    skillNames:     ["SEC Filing Intelligence Extraction", "Credit Ratio Normalization", "MD&A Tone Classification"],
     kbName:         "Fitch RW — SEC EDGAR Filing Corpus",
     maxToolIterations: 8,
     systemPrompt: `You are FITCH-RW-002, the Filing Intelligence Agent for Fitch Ratings' Rating Watch Intelligence Pipeline.
@@ -282,7 +282,7 @@ IMPORTANT: End your final response with ONLY this JSON block:
     name:           "FITCH-RW-003 Peer Benchmarking Agent",
     description:    "Benchmarks the target issuer against its rated peer cohort across key credit ratios to determine whether absolute deterioration is also relative — the key test before Watch placement.",
     mcpServerNames: ["Fitch RW — Peer Analytics Engine"],
-    skillNames:     ["Peer Cohort Selection", "Rating Ratio Benchmarking", "Sector-Relative Positioning"],
+    skillNames:     ["Peer Cohort Construction", "Quartile Ratio Benchmarking", "Sector-Relative Credit Analysis"],
     kbName:         "Fitch RW — Peer Benchmark Database",
     maxToolIterations: 8,
     systemPrompt: `You are FITCH-RW-003, the Peer Benchmarking Agent for Fitch Ratings' Rating Watch Intelligence Pipeline.
@@ -317,7 +317,7 @@ IMPORTANT: End your final response with ONLY this JSON block:
     name:           "FITCH-RW-004 Rating Action Memo Agent",
     description:    "Synthesizes outputs from Agents 001–003 into a Fitch-standard Rating Action Memo, routes it through the committee approval gateway, and logs all required regulatory disclosures.",
     mcpServerNames: ["Fitch RW — Committee Approval Gateway"],
-    skillNames:     ["Rating Action Memo Drafting", "Committee Approval Protocol", "Regulatory Disclosure Standards"],
+    skillNames:     ["Rating Action Memo Composition", "Committee Workflow Management", "Regulatory Disclosure Execution"],
     kbName:         "Fitch RW — Committee & Compliance Playbook",
     maxToolIterations: 8,
     systemPrompt: `You are FITCH-RW-004, the Rating Action Memo Agent for Fitch Ratings' Rating Watch Intelligence Pipeline.
@@ -363,56 +363,66 @@ interface FitchRWSkillDef {
 }
 
 const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
-  // ── Agent 001 ──────────────────────────────────────────────────────────────
+  // ── Agent 001: Market Signal Scanner ───────────────────────────────────────
   {
-    name: "CDS Spread Interpretation",
-    description: "Interprets 5-year CDS spread movements as credit signals. Defines thresholds for WIDENING_ALERT, calculates 30-day momentum, and maps to Rating Watch probability.",
-    domain: "credit_risk",
+    name: "Financial Time Series Analysis",
+    description: "Analyzes 5-year CDS spread and equity price time series to detect momentum shifts, trend reversals, and 30-day delta signals that map to Rating Watch probability for IG issuers.",
+    domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
-    tags: ["cds", "credit_spreads", "rating_watch", "fitch"],
-    yamlFrontmatter: { skillId: "fitch-rw-cds-interpretation", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_cds_spreads", "get_credit_watch_signals"] },
-    markdownBody: `## CDS Spread Interpretation
+    tags: ["cds", "time_series", "credit_spreads", "rating_watch", "fitch"],
+    yamlFrontmatter: { skillId: "fitch-rw-time-series-analysis", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_cds_spreads", "get_equity_prices"] },
+    markdownBody: `## Financial Time Series Analysis
 
-**Thresholds:**
+**CDS time series thresholds:**
 - >15 bps 30-day widening → WIDENING_ALERT (Watch Negative candidate)
 - 5–15 bps widening → ELEVATED (monitor closely)
 - <5 bps movement → STABLE
 
+**Equity time series signals:**
+- Implied vol >40% for IG issuer → HIGH_VOL flag
+- Within 5% of 52-week low → NEAR_52W_LOW
+- Beta >1.5 → systematic risk amplifier
+
 **Key rules:**
-1. Always compare CDS change to sector median widening to distinguish idiosyncratic vs. macro stress
-2. A single spike may be noise — look for sustained widening over 2+ weeks
-3. CDS above 200 bps for BBB-rated issuer signals near-Watch threshold`,
+1. Compare CDS change to sector median to distinguish idiosyncratic vs. macro stress
+2. Sustained widening over 2+ weeks is a stronger signal than a single spike
+3. Volume spike (relative vol >2x) combined with price decline = institutional selling signal`,
   },
   {
-    name: "Equity Signal Analysis",
-    description: "Translates equity market signals — implied volatility, beta, and 52-week proximity — into credit-relevant stress indicators for Rating Watch screening.",
-    domain: "market_intelligence",
+    name: "Threshold Breach Detection",
+    description: "Applies Fitch's quantitative Rating Watch trigger matrix to multi-signal market data — detecting simultaneous CDS, equity, and sentiment threshold breaches that mandate screening.",
+    domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
-    tags: ["equity", "implied_vol", "beta", "credit_watch", "fitch"],
-    yamlFrontmatter: { skillId: "fitch-rw-equity-signal", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_equity_prices"] },
-    markdownBody: `## Equity Signal Analysis
+    tags: ["threshold", "trigger", "credit_watch", "breach_detection", "fitch"],
+    yamlFrontmatter: { skillId: "fitch-rw-threshold-breach", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_credit_watch_signals"] },
+    markdownBody: `## Threshold Breach Detection
 
-**Key thresholds:**
-- Implied vol >40% for IG issuer → HIGH_VOL flag; elevates watch probability
-- Within 5% of 52-week low → NEAR_52W_LOW; combine with CDS check
-- Beta >1.5 for IG issuer → systematic risk amplifier
+**Composite trigger matrix (any 2 of 3 = mandatory screening):**
+| Signal           | Threshold              | Action             |
+|------------------|------------------------|--------------------|
+| CDS 30-day delta | >30 bps widening       | WATCH_NEGATIVE     |
+| Equity           | NEAR_52W_LOW + HIGH_VOL| WATCH_ELEVATED     |
+| Sentiment        | Score < -0.20 + sigma  | NEGATIVE_ALERT     |
 
-**Interpretation rules:**
-1. Equity signals are leading indicators — act before fundamental deterioration is confirmed
-2. Volume spike (relative volume >2x) combined with price decline signals institutional selling
-3. Never use equity signals in isolation — always cross-check with CDS and fundamentals`,
+**Single-signal mandatory triggers (override matrix):**
+- CDS widening >50 bps → immediate Watch Negative without waiting for secondary signal
+- Going concern auditor opinion → automatic escalation regardless of market signals
+
+**Rules:**
+1. Document which thresholds were breached in the memo rationale
+2. Record composite_watch_signal from the tool output verbatim`,
   },
   {
-    name: "News Sentiment Classification",
-    description: "Classifies news sentiment into credit-relevant categories and detects statistically significant sentiment deterioration spikes that precede rating actions.",
-    domain: "nlp_intelligence",
+    name: "Market Sentiment Intelligence",
+    description: "Classifies news and market sentiment into credit-relevant categories, detecting statistically significant sentiment deterioration spikes (sigma events) that precede rating actions.",
+    domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
     tags: ["nlp", "sentiment", "news", "sigma_spike", "fitch"],
-    yamlFrontmatter: { skillId: "fitch-rw-news-sentiment", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_news_sentiment"] },
-    markdownBody: `## News Sentiment Classification
+    yamlFrontmatter: { skillId: "fitch-rw-sentiment-intelligence", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_news_sentiment"] },
+    markdownBody: `## Market Sentiment Intelligence
 
 **Sentiment scale:** -1.0 (strongly negative) to +1.0 (strongly positive)
 
@@ -427,16 +437,16 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
 3. Track sentiment trend over 30/60/90 days — a declining trend matters more than a single score`,
   },
 
-  // ── Agent 002 ──────────────────────────────────────────────────────────────
+  // ── Agent 002: Filing Intelligence Agent ───────────────────────────────────
   {
-    name: "10-K Risk Factor Extraction",
-    description: "Extracts, classifies, and tracks changes in 10-K risk factor disclosures year-over-year, with particular attention to new liquidity, leverage, and covenant risk factors.",
-    domain: "regulatory_intelligence",
+    name: "SEC Filing Intelligence Extraction",
+    description: "Extracts, classifies, and tracks changes in 10-K/10-Q/8-K filing data — financial statements, risk factors, and auditor opinions — for credit relevance and year-over-year trajectory.",
+    domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
-    tags: ["10-K", "risk_factors", "sec_edgar", "filing_analysis", "fitch"],
-    yamlFrontmatter: { skillId: "fitch-rw-risk-factor-extraction", trustTier: "platform-provided", complexity: "advanced", contextMode: "summary", allowedTools: ["get_risk_factors", "get_filing_extracts"] },
-    markdownBody: `## 10-K Risk Factor Extraction
+    tags: ["10-K", "sec_edgar", "filing_extraction", "risk_factors", "fitch"],
+    yamlFrontmatter: { skillId: "fitch-rw-filing-extraction", trustTier: "platform-provided", complexity: "advanced", contextMode: "summary", allowedTools: ["get_filing_extracts", "get_risk_factors"] },
+    markdownBody: `## SEC Filing Intelligence Extraction
 
 **High-priority risk categories:**
 1. LIQUIDITY — refinancing risk, revolver availability, near-term maturities
@@ -449,14 +459,14 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
 - Count of HIGH-severity risk factors is a key KPI: >3 = elevated screening`,
   },
   {
-    name: "Financial Ratio Normalization",
+    name: "Credit Ratio Normalization",
     description: "Normalizes financial ratios from SEC filings to Fitch's standard credit metric definitions, enabling direct comparison to Fitch rating factor thresholds and peer benchmarks.",
-    domain: "quantitative_credit",
+    domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
     tags: ["financial_ratios", "normalization", "credit_metrics", "fitch_methodology"],
     yamlFrontmatter: { skillId: "fitch-rw-ratio-normalization", trustTier: "platform-provided", complexity: "advanced", contextMode: "summary", allowedTools: ["get_financial_ratios"] },
-    markdownBody: `## Financial Ratio Normalization
+    markdownBody: `## Credit Ratio Normalization
 
 **Fitch-standard definitions:**
 - Net Debt/EBITDA: (Total Debt - Cash) / EBITDA (LTM, adjusted)
@@ -469,14 +479,14 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
 - FCF/Debt: ≥5% (below = liquidity concern)`,
   },
   {
-    name: "Management Disclosure Mining",
-    description: "Mines MD&A and earnings call transcripts for credit-relevant management signals: tone classification, guidance changes, restructuring mentions, and liquidity emphasis.",
-    domain: "nlp_intelligence",
+    name: "MD&A Tone Classification",
+    description: "Classifies management tone in MD&A and earnings call transcripts into credit-relevant categories (confident/cautious/defensive/distressed) and flags guidance changes and liquidity signals.",
+    domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
-    tags: ["mda", "earnings_call", "tone_analysis", "management_signals", "fitch"],
-    yamlFrontmatter: { skillId: "fitch-rw-mda-mining", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_management_discussion"] },
-    markdownBody: `## Management Disclosure Mining
+    tags: ["mda", "earnings_call", "tone_classification", "management_signals", "fitch"],
+    yamlFrontmatter: { skillId: "fitch-rw-mda-tone", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_management_discussion"] },
+    markdownBody: `## MD&A Tone Classification
 
 **Tone classification:**
 - CONFIDENT: reaffirmed/raised guidance, margin expansion language
@@ -490,16 +500,16 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
 3. "Exploring strategic alternatives" → strong Watch negative trigger`,
   },
 
-  // ── Agent 003 ──────────────────────────────────────────────────────────────
+  // ── Agent 003: Peer Benchmarking Agent ─────────────────────────────────────
   {
-    name: "Peer Cohort Selection",
-    description: "Applies Fitch's peer selection methodology to identify an appropriate comparison cohort for Rating Watch analysis: sector-first with rating band fallback.",
-    domain: "quantitative_credit",
+    name: "Peer Cohort Construction",
+    description: "Applies Fitch's peer selection methodology to identify an appropriate comparison cohort: sector-first selection with rating band fallback, capped at 8 issuers.",
+    domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
     tags: ["peer_selection", "cohort", "fitch_methodology", "benchmarking"],
-    yamlFrontmatter: { skillId: "fitch-rw-peer-cohort-selection", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_peer_cohort", "get_rating_distribution"] },
-    markdownBody: `## Peer Cohort Selection — Fitch Methodology v3.1
+    yamlFrontmatter: { skillId: "fitch-rw-peer-cohort-construction", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_peer_cohort", "get_rating_distribution"] },
+    markdownBody: `## Peer Cohort Construction — Fitch Methodology v3.1
 
 **Selection algorithm:**
 1. Primary: Same sector, within ±2 rating notches
@@ -512,14 +522,14 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
 - Disclose if cross-sector comparison is used in memo rationale`,
   },
   {
-    name: "Rating Ratio Benchmarking",
-    description: "Computes P25/median/P75 quartile benchmarks for key credit ratios across a rated peer cohort and determines the anchor issuer's relative position for Rating Watch support.",
-    domain: "quantitative_credit",
+    name: "Quartile Ratio Benchmarking",
+    description: "Computes P25/median/P75 quartile benchmarks for key credit ratios across a rated peer cohort and determines anchor issuer's relative position to support Watch Negative recommendations.",
+    domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
     tags: ["ratio_benchmarks", "quartile", "peer_comparison", "fitch"],
-    yamlFrontmatter: { skillId: "fitch-rw-ratio-benchmarking", trustTier: "platform-provided", complexity: "advanced", contextMode: "summary", allowedTools: ["get_ratio_benchmarks"] },
-    markdownBody: `## Rating Ratio Benchmarking
+    yamlFrontmatter: { skillId: "fitch-rw-quartile-benchmarking", trustTier: "platform-provided", complexity: "advanced", contextMode: "summary", allowedTools: ["get_ratio_benchmarks"] },
+    markdownBody: `## Quartile Ratio Benchmarking
 
 **Key ratios (Fitch standard):**
 1. Net Debt / EBITDA — primary leverage metric (weight 40%)
@@ -533,36 +543,36 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
 - Q4 (75–100th pct): STRONG — supports Stable Outlook`,
   },
   {
-    name: "Sector-Relative Positioning",
-    description: "Determines whether credit deterioration is idiosyncratic or sector-wide — a critical distinction that affects Rating Watch urgency and the breadth of any rating action.",
-    domain: "sector_analysis",
+    name: "Sector-Relative Credit Analysis",
+    description: "Determines whether issuer credit deterioration is idiosyncratic or sector-wide — a critical distinction that affects Rating Watch urgency and the scope of any rating action.",
+    domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
-    tags: ["sector_analysis", "idiosyncratic", "macro", "rating_watch_scope"],
-    yamlFrontmatter: { skillId: "fitch-rw-sector-positioning", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["compute_relative_position"] },
-    markdownBody: `## Sector-Relative Positioning
+    tags: ["sector_analysis", "idiosyncratic", "relative_positioning", "rating_watch_scope"],
+    yamlFrontmatter: { skillId: "fitch-rw-sector-credit-analysis", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["compute_relative_position"] },
+    markdownBody: `## Sector-Relative Credit Analysis
 
-**Determining deterioration type:**
-- IDIOSYNCRATIC: Issuer ratios deteriorating while sector peers remain stable → single-issuer Watch
+**Deterioration type classification:**
+- IDIOSYNCRATIC: Issuer deteriorating while sector peers stable → single-issuer Watch
 - SECTOR_WIDE: Multiple peers showing same trend → may warrant sector review
 - MIXED: Issuer leading a sector trend → Watch Negative with sector commentary
 
-**Implications:**
-1. IDIOSYNCRATIC → single issuer Watch Negative, sector not mentioned
+**Decision rules:**
+1. IDIOSYNCRATIC → single issuer Watch Negative; sector commentary not required
 2. SECTOR_WIDE → flag for sector review; individual Watch may still be warranted
-3. Note distribution of IG vs. HY in sector — if issuer is at bottom of IG bucket, downgrade risk is binary`,
+3. Issuer at bottom of IG bucket → downgrade risk is binary (IG/HY cliff)`,
   },
 
-  // ── Agent 004 ──────────────────────────────────────────────────────────────
+  // ── Agent 004: Rating Action Memo Agent ────────────────────────────────────
   {
-    name: "Rating Action Memo Drafting",
-    description: "Drafts Fitch-standard Rating Action Memos synthesizing market, fundamental, and peer signals into a structured committee submission with clear rationale and supporting evidence.",
-    domain: "credit_writing",
+    name: "Rating Action Memo Composition",
+    description: "Composes Fitch-standard Rating Action Memos synthesizing market, fundamental, and peer signals into structured committee submissions with quantitative rationale and sensitivity analysis.",
+    domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
-    tags: ["memo_drafting", "rating_action", "committee", "fitch_standard"],
-    yamlFrontmatter: { skillId: "fitch-rw-memo-drafting", trustTier: "platform-provided", complexity: "advanced", contextMode: "summary", allowedTools: ["submit_rating_memo"] },
-    markdownBody: `## Rating Action Memo Drafting — Fitch Standard
+    tags: ["memo_composition", "rating_action", "committee_submission", "fitch_standard"],
+    yamlFrontmatter: { skillId: "fitch-rw-memo-composition", trustTier: "platform-provided", complexity: "advanced", contextMode: "summary", allowedTools: ["submit_rating_memo"] },
+    markdownBody: `## Rating Action Memo Composition — Fitch Standard
 
 **Memo structure:**
 1. Action Summary: "Fitch places [Issuer] on Rating Watch Negative at [Rating]"
@@ -576,14 +586,14 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
 3. Never use "may" or "could" for Watch triggers — be definitive`,
   },
   {
-    name: "Committee Approval Protocol",
-    description: "Manages the Fitch rating committee approval workflow: queue submission, expedited routing, decision retrieval, and escalation handling.",
-    domain: "governance",
+    name: "Committee Workflow Management",
+    description: "Manages the Fitch rating committee approval workflow: queue depth monitoring, track selection (standard vs. expedited), decision retrieval, and dissenting vote escalation.",
+    domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
-    tags: ["committee", "approval", "governance", "fitch_workflow"],
-    yamlFrontmatter: { skillId: "fitch-rw-committee-protocol", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_validator_queue", "get_committee_decision"] },
-    markdownBody: `## Committee Approval Protocol
+    tags: ["committee", "workflow", "approval", "governance", "fitch"],
+    yamlFrontmatter: { skillId: "fitch-rw-committee-workflow", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_validator_queue", "get_committee_decision"] },
+    markdownBody: `## Committee Workflow Management
 
 **Approval tracks:**
 - STANDARD: 24-hour review window; used for planned rating reviews
@@ -600,14 +610,14 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
 3. Dissenting votes (>0) require additional supporting analysis`,
   },
   {
-    name: "Regulatory Disclosure Standards",
-    description: "Ensures Rating Watch actions comply with SEC Rule 17g-7 and EU CRA III Article 11 disclosure requirements, including timing, content, and public filing obligations.",
-    domain: "compliance",
+    name: "Regulatory Disclosure Execution",
+    description: "Executes mandatory regulatory disclosure filing for Rating Watch actions under SEC Rule 17g-7 and EU CRA III Article 11, with timing compliance and 7-year record retention.",
+    domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
-    tags: ["sec_17g7", "eu_cra_iii", "regulatory_disclosure", "compliance", "fitch"],
-    yamlFrontmatter: { skillId: "fitch-rw-regulatory-disclosure", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["log_regulatory_disclosure"] },
-    markdownBody: `## Regulatory Disclosure Standards
+    tags: ["sec_17g7", "eu_cra_iii", "disclosure_execution", "compliance", "fitch"],
+    yamlFrontmatter: { skillId: "fitch-rw-disclosure-execution", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["log_regulatory_disclosure"] },
+    markdownBody: `## Regulatory Disclosure Execution
 
 **Applicable regulations:**
 - SEC Rule 17g-7: Requires disclosure of rating methodology, form, and assumptions
@@ -738,41 +748,43 @@ export async function ensureFitchRWAgents(): Promise<void> {
   // ── 4. Policies ─────────────────────────────────────────────────────────────
   const POLICY_DEFS = [
     {
-      name:   "Fitch RW — Rating Watch Placement Policy",
-      domain: "rating_governance",
-      description: "Governs conditions under which a Rating Watch Negative must be initiated, including quantitative thresholds and mandatory committee review.",
+      name:   "MNPI Containment",
+      domain: "data_governance",
+      description: "Prevents material non-public information identified in SEC filings or Bloomberg feeds from being used outside authorized analytical workflows or shared externally.",
       policyJson: { enforcement: "hard", rules: [
-        { name: "CDS Widening Threshold",     description: "30-day CDS widening >30 bps triggers mandatory Watch screening" },
-        { name: "Ratio Deterioration Trigger", description: "Net Debt/EBITDA exceeding 4.5x for IG issuer requires Watch review" },
+        { name: "MNPI Detection Gate",    description: "Agents must escalate any detected MNPI to compliance before proceeding with memo drafting" },
+        { name: "Bloomberg Restriction",  description: "Bloomberg terminal data may not be redistributed or exposed outside authorized Fitch systems" },
+        { name: "EDGAR Data Containment", description: "Filing extracts must remain within the Fitch analytical pipeline and not be forwarded externally" },
+      ]},
+    },
+    {
+      name:   "Human-in-Loop Gate",
+      domain: "agent_governance",
+      description: "Mandates human analyst review and committee approval before any Rating Watch Negative is published externally — no agent may autonomously publish a rating action.",
+      policyJson: { enforcement: "hard", rules: [
         { name: "Committee Approval Required", description: "All Rating Watch placements require rating committee approval before publication" },
+        { name: "Analyst Sign-Off",            description: "Lead analyst must review and accept the AI-drafted memo before committee submission" },
+        { name: "Dissent Review",              description: "Dissenting committee votes (>0) require additional supporting analysis before publication" },
       ]},
     },
     {
-      name:   "Fitch RW — Regulatory Disclosure Compliance",
+      name:   "Data Residency",
       domain: "compliance",
-      description: "Ensures all rating actions comply with SEC Rule 17g-7 and EU CRA III Article 11 disclosure requirements.",
+      description: "Ensures all rating-relevant data processed by Fitch RW pipeline agents remains within authorized jurisdictions and complies with cross-border data transfer regulations.",
       policyJson: { enforcement: "hard", rules: [
-        { name: "SEC 17g-7 Filing",       description: "Mandatory disclosure within 24h (4h expedited) of committee approval" },
-        { name: "EU CRA III Article 11",   description: "ESMA CEREP platform publication required for EU-listed issuers" },
-        { name: "7-Year Record Retention", description: "All disclosure logs must be retained for a minimum of 7 years" },
+        { name: "EU Data Residency",    description: "Data on EU-listed issuers must be processed and stored within EU-compliant infrastructure" },
+        { name: "SEC Data Retention",   description: "All disclosure logs and analytical outputs must be retained for minimum 7 years per SEC recordkeeping rules" },
+        { name: "Jurisdictional Scope", description: "Pipeline may only access Bloomberg and EDGAR data feeds from authorized Fitch datacenter endpoints" },
       ]},
     },
     {
-      name:   "Fitch RW — Data Confidentiality Policy",
-      domain: "data_handling",
-      description: "Restricts use of Bloomberg and EDGAR data to authorized Fitch analytical purposes only; prohibits redistribution of raw data.",
+      name:   "Audit Trail",
+      domain: "compliance",
+      description: "Requires complete, immutable, timestamped audit logs of all agent decisions, tool calls, and rating-relevant outputs produced during the Rating Watch Intelligence Pipeline.",
       policyJson: { enforcement: "hard", rules: [
-        { name: "Bloomberg Data Restriction", description: "Bloomberg terminal data may not be redistributed externally" },
-        { name: "MNPI Protection",            description: "Material non-public information identified in filings must be escalated to compliance" },
-      ]},
-    },
-    {
-      name:   "Fitch RW — Analytical Independence Policy",
-      domain: "rating_governance",
-      description: "Ensures analytical independence: prohibits analyst conflicts of interest and mandates peer review for Watch actions.",
-      policyJson: { enforcement: "soft", rules: [
-        { name: "Conflict of Interest Check", description: "Lead analyst must declare no financial interest in rated issuer" },
-        { name: "Peer Review Requirement",    description: "Rating Watch memos require review by at least one senior analyst not involved in primary analysis" },
+        { name: "Tool Call Logging",      description: "Every MCP tool call must be logged with inputs, outputs, and timestamp" },
+        { name: "Decision Trace",         description: "Each agent's reasoning and recommendation must be captured in the pipeline audit trail" },
+        { name: "Regulatory Disclosure Log", description: "SEC 17g-7 and EU CRA III disclosures must be logged with committee decision reference and timestamp" },
       ]},
     },
   ];
@@ -826,38 +838,87 @@ export async function ensureFitchRWAgents(): Promise<void> {
     });
   }
 
-  // ── 6. Blueprint ────────────────────────────────────────────────────────────
-  const allBlueprints = await storage.getBlueprints().catch((): Awaited<ReturnType<typeof storage.getBlueprints>> => []);
-  const bpName = "Fitch RW — Rating Watch Intelligence Pipeline Blueprint";
-  let blueprint = allBlueprints.find(b => b.name === bpName);
-  if (!blueprint) {
-    blueprint = await storage.createBlueprint({
-      name:          bpName,
-      description:   "4-agent sequential pipeline: Market Signal Scanner → Filing Intelligence → Peer Benchmarking → Rating Action Memo + Committee Approval. Full audit trail with SEC 17g-7 and EU CRA III compliance.",
-      version:       "1.0.0",
-      status:        "active",
-      industry:      "financial_services",
-      blueprintType: "pipeline",
+  // ── 6. Per-Agent Blueprints (one per agent as required) ─────────────────────
+  const BP_DEFS: Array<{ key: string; name: string; description: string; workflowSteps: string[]; requiredTools: string[] }> = [
+    {
+      key:         "marketSignalScanner",
+      name:        "Fitch RW — Market Signal Scanner Blueprint",
+      description: "Bloomberg market data pipeline: CDS spread time series analysis, equity signal detection, news sentiment classification, and composite credit-watch signal generation.",
       workflowSteps: [
-        "Market Signal Scanner: Bloomberg CDS + equity + news sentiment scan",
-        "Filing Intelligence Agent: SEC EDGAR ratio extraction + risk factor analysis",
-        "Peer Benchmarking Agent: cohort selection + quartile benchmarking",
-        "Rating Action Memo Agent: memo drafting + committee approval + regulatory disclosure",
+        "Step 1: Retrieve 5Y CDS spread + 30-day delta (get_cds_spreads)",
+        "Step 2: Retrieve equity price, implied vol, beta, 52W range (get_equity_prices)",
+        "Step 3: Aggregate news sentiment and detect sigma spikes (get_news_sentiment)",
+        "Step 4: Compute composite credit-watch signal (get_credit_watch_signals)",
       ],
-      requiredTools:      ["get_cds_spreads", "get_filing_extracts", "get_peer_cohort", "submit_rating_memo", "log_regulatory_disclosure"],
-      escalationTriggers: ["CDS widening >30 bps", "Net Debt/EBITDA >4.5x", "Going concern opinion"],
-      complianceNodes:    ["SEC-17g-7", "EU-CRA-III-Art11"],
-      outputFormat:       "Rating Action Memo + JSON pipeline summary",
-    });
+      requiredTools: ["get_cds_spreads", "get_equity_prices", "get_news_sentiment", "get_credit_watch_signals"],
+    },
+    {
+      key:         "filingIntelligenceAgent",
+      name:        "Fitch RW — Filing Intelligence Agent Blueprint",
+      description: "SEC EDGAR filing intelligence pipeline: financial statement extraction, credit ratio normalization, risk factor classification, and MD&A tone analysis.",
+      workflowSteps: [
+        "Step 1: Extract 10-K financial data and auditor opinion (get_filing_extracts)",
+        "Step 2: Retrieve 8-period ratio time series (get_financial_ratios)",
+        "Step 3: Classify risk factors by severity and detect new entries (get_risk_factors)",
+        "Step 4: Analyze MD&A tone and guidance direction (get_management_discussion)",
+      ],
+      requiredTools: ["get_filing_extracts", "get_financial_ratios", "get_risk_factors", "get_management_discussion"],
+    },
+    {
+      key:         "peerBenchmarkingAgent",
+      name:        "Fitch RW — Peer Benchmarking Agent Blueprint",
+      description: "Peer analysis pipeline: cohort construction, quartile ratio benchmarking, rating distribution analysis, and sector-relative positioning to support Watch Negative recommendation.",
+      workflowSteps: [
+        "Step 1: Construct rated peer cohort via Fitch v3.1 methodology (get_peer_cohort)",
+        "Step 2: Compute quartile benchmarks for key credit ratios (get_ratio_benchmarks)",
+        "Step 3: Retrieve sector rating distribution (get_rating_distribution)",
+        "Step 4: Compute sector-relative position (compute_relative_position)",
+      ],
+      requiredTools: ["get_peer_cohort", "get_ratio_benchmarks", "get_rating_distribution", "compute_relative_position"],
+    },
+    {
+      key:         "ratingActionMemoAgent",
+      name:        "Fitch RW — Rating Action Memo Agent Blueprint",
+      description: "Rating action pipeline: committee queue check, memo drafting and submission, committee decision retrieval, and mandatory SEC 17g-7 / EU CRA III regulatory disclosure logging.",
+      workflowSteps: [
+        "Step 1: Check committee queue depth and select approval track (get_validator_queue)",
+        "Step 2: Draft and submit Rating Watch Negative memo (submit_rating_memo)",
+        "Step 3: Retrieve committee decision (get_committee_decision)",
+        "Step 4: Log regulatory disclosures for SEC and EU CRA III (log_regulatory_disclosure)",
+      ],
+      requiredTools: ["get_validator_queue", "submit_rating_memo", "get_committee_decision", "log_regulatory_disclosure"],
+    },
+  ];
+
+  const allBlueprints = await storage.getBlueprints().catch((): Awaited<ReturnType<typeof storage.getBlueprints>> => []);
+  const blueprintIdByKey: Record<string, string> = {};
+  for (const bpDef of BP_DEFS) {
+    let bp = allBlueprints.find(b => b.name === bpDef.name);
+    if (!bp) {
+      bp = await storage.createBlueprint({
+        name:               bpDef.name,
+        description:        bpDef.description,
+        version:            "1.0.0",
+        status:             "active",
+        industry:           "financial_services",
+        blueprintType:      "pipeline",
+        workflowSteps:      bpDef.workflowSteps,
+        requiredTools:      bpDef.requiredTools,
+        escalationTriggers: ["CDS widening >30 bps", "Net Debt/EBITDA >4.5x", "Going concern opinion"],
+        complianceNodes:    ["SEC-17g-7", "EU-CRA-III-Art11", "MNPI-Containment", "Human-in-Loop-Gate"],
+        outputFormat:       "Rating Action Memo + JSON pipeline summary",
+      });
+    }
+    blueprintIdByKey[bpDef.key] = bp.id;
   }
 
   // ── 7. Agents ───────────────────────────────────────────────────────────────
   // Per-agent policy bindings (all 4 shared policies; enforcement level per role)
   const AGENT_POLICY_BINDINGS = [
-    { policyName: "Fitch RW — Rating Watch Placement Policy",   enforcement: "hard" },
-    { policyName: "Fitch RW — Regulatory Disclosure Compliance", enforcement: "hard" },
-    { policyName: "Fitch RW — Data Confidentiality Policy",      enforcement: "hard" },
-    { policyName: "Fitch RW — Analytical Independence Policy",   enforcement: "soft" },
+    { policyName: "MNPI Containment",  enforcement: "hard" },
+    { policyName: "Human-in-Loop Gate", enforcement: "hard" },
+    { policyName: "Data Residency",    enforcement: "hard" },
+    { policyName: "Audit Trail",       enforcement: "hard" },
   ];
 
   // Per-agent ontology concept tags
@@ -868,12 +929,13 @@ export async function ensureFitchRWAgents(): Promise<void> {
     ratingActionMemoAgent: ["SEC Rule 17g-7", "EU CRA III Article 11", "Rating Committee", "MD&A Tone"],
   };
 
-  // Per-agent eval suite names
+  // Single shared eval suite name — all 4 agents' evalBindings reference this suite
+  const SHARED_EVAL_SUITE_NAME = "Fitch RW — Rating Watch Intelligence Regression Suite";
   const AGENT_EVAL_SUITE_NAME: Record<string, string> = {
-    marketSignalScanner:    "Fitch RW — Market Signal Scanner Eval Suite",
-    filingIntelligenceAgent:"Fitch RW — Filing Intelligence Agent Eval Suite",
-    peerBenchmarkingAgent:  "Fitch RW — Peer Benchmarking Agent Eval Suite",
-    ratingActionMemoAgent:  "Fitch RW — Rating Action Memo Agent Eval Suite",
+    marketSignalScanner:    SHARED_EVAL_SUITE_NAME,
+    filingIntelligenceAgent: SHARED_EVAL_SUITE_NAME,
+    peerBenchmarkingAgent:  SHARED_EVAL_SUITE_NAME,
+    ratingActionMemoAgent:  SHARED_EVAL_SUITE_NAME,
   };
 
   const allAgents = await storage.getAgents().catch((): Awaited<ReturnType<typeof storage.getAgents>> => []);
@@ -887,6 +949,7 @@ export async function ensureFitchRWAgents(): Promise<void> {
 
     const agentOntologyTags = (AGENT_ONTOLOGY_TAGS[def.key] || []).map(label => ({ label }));
     const agentEvalSuiteName = AGENT_EVAL_SUITE_NAME[def.key];
+    const agentBlueprintId   = blueprintIdByKey[def.key];
 
     if (!agent) {
       agent = await storage.createAgent({
@@ -910,7 +973,7 @@ export async function ensureFitchRWAgents(): Promise<void> {
         successRate:       0.97,
         maturityFactors:   {},
         preloadedSkills:   preloadedSkills as { skillId: string }[],
-        blueprintId:       blueprint.id,
+        blueprintId:       agentBlueprintId,
         complianceTags:    ["SEC-17g-7", "EU-CRA-III", "FITCH-NRSRO"],
         industry:          "financial_services",
         policyBindings:    AGENT_POLICY_BINDINGS,
@@ -922,7 +985,7 @@ export async function ensureFitchRWAgents(): Promise<void> {
         systemPrompt:    def.systemPrompt,
         runtimeConfig:   { prompt: def.taskPrompt, scheduleIntervalMinutes: 0 },
         preloadedSkills: preloadedSkills as { skillId: string }[],
-        blueprintId:     blueprint.id,
+        blueprintId:     agentBlueprintId,
         policyBindings:  AGENT_POLICY_BINDINGS,
         ontologyTags:    agentOntologyTags,
         evalBindings:    [{ suiteName: agentEvalSuiteName, schedule: "weekly" }],
@@ -951,79 +1014,42 @@ export async function ensureFitchRWAgents(): Promise<void> {
     }
   }
 
-  // ── 8. Per-Agent Eval Suites (one per agent, each bound by agentId) ────────
-  const PER_AGENT_EVAL_SUITES: Array<{
-    agentKey: string;
-    suiteName: string;
-    coverageTags: string[];
-    cases: Array<{ name: string; severity: string; tags: string[] }>;
-  }> = [
-    {
-      agentKey:     "marketSignalScanner",
-      suiteName:    AGENT_EVAL_SUITE_NAME["marketSignalScanner"],
-      coverageTags: ["market_signals", "cds", "equity", "sentiment"],
-      cases: [
-        { name: "CDS widening >30 bps correctly triggers WATCH_NEGATIVE signal", severity: "critical", tags: ["market_signals","cds"] },
-        { name: "Stable CDS (<5 bps movement) correctly returns STABLE signal",  severity: "high",     tags: ["market_signals","cds"] },
-        { name: "Implied volatility >40% correctly raises HIGH_VOL flag",        severity: "high",     tags: ["equity","volatility"] },
-      ],
-    },
-    {
-      agentKey:     "filingIntelligenceAgent",
-      suiteName:    AGENT_EVAL_SUITE_NAME["filingIntelligenceAgent"],
-      coverageTags: ["filing_analysis", "leverage", "audit", "risk_factors"],
-      cases: [
-        { name: "Net Debt/EBITDA >4.5x correctly flagged as threshold breach",   severity: "critical", tags: ["filing_analysis","leverage"] },
-        { name: "Going concern opinion triggers automatic escalation path",       severity: "critical", tags: ["filing_analysis","audit"] },
-        { name: "New HIGH-severity risk factor correctly identified and flagged", severity: "high",     tags: ["filing_analysis","risk_factors"] },
-      ],
-    },
-    {
-      agentKey:     "peerBenchmarkingAgent",
-      suiteName:    AGENT_EVAL_SUITE_NAME["peerBenchmarkingAgent"],
-      coverageTags: ["peer_benchmarking", "methodology", "quartile"],
-      cases: [
-        { name: "Peer cohort selection follows Fitch sector-first methodology",   severity: "high",     tags: ["peer_benchmarking","methodology"] },
-        { name: "Q1 quartile ranking correctly supports Watch Negative recommendation", severity: "high", tags: ["peer_benchmarking","quartile"] },
-      ],
-    },
-    {
-      agentKey:     "ratingActionMemoAgent",
-      suiteName:    AGENT_EVAL_SUITE_NAME["ratingActionMemoAgent"],
-      coverageTags: ["memo_drafting", "committee", "regulatory_compliance", "sec"],
-      cases: [
-        { name: "Rating memo submitted with correct action_type 'WATCH_NEGATIVE'", severity: "critical", tags: ["memo_drafting","committee"] },
-        { name: "SEC-17g-7 disclosure logged within required timeframe",           severity: "critical", tags: ["regulatory_compliance","sec"] },
-        { name: "Expedited committee track used when composite signal is urgent",  severity: "high",     tags: ["committee","approval_protocol"] },
-      ],
-    },
-  ];
+  // ── 8. Shared Eval Suite — 10 test cases, bound to all 4 agents via evalBindings ─
+  const leadAgentId = _fitchRWAgentIdByKey["marketSignalScanner"];
+  const allEvals    = await storage.getEvalSuites().catch((): Awaited<ReturnType<typeof storage.getEvalSuites>> => []);
+  let evalSuite = allEvals.find(e => e.name === SHARED_EVAL_SUITE_NAME);
+  if (!evalSuite && leadAgentId) {
+    evalSuite = await storage.createEvalSuite({
+      agentId:         leadAgentId,
+      name:            SHARED_EVAL_SUITE_NAME,
+      type:            "regression",
+      industry:        "financial_services",
+      passRate:        0.92,
+      totalCases:      10,
+      coverageTags:    ["market_signals","cds","filing_analysis","leverage","peer_benchmarking","memo_drafting","regulatory_compliance"],
+      thresholdConfig: { minPassRate: 0.90 },
+      scorerConfig:    { type: "llm_judge", model: "gpt-4.1" },
+    });
+  }
 
-  const allEvals = await storage.getEvalSuites().catch((): Awaited<ReturnType<typeof storage.getEvalSuites>> => []);
-
-  for (const suiteSpec of PER_AGENT_EVAL_SUITES) {
-    const agentId = _fitchRWAgentIdByKey[suiteSpec.agentKey];
-    if (!agentId) continue;
-
-    let evalSuite = allEvals.find(e => e.name === suiteSpec.suiteName);
-    if (!evalSuite) {
-      evalSuite = await storage.createEvalSuite({
-        agentId:         agentId,
-        name:            suiteSpec.suiteName,
-        type:            "regression",
-        industry:        "financial_services",
-        passRate:        0.93,
-        totalCases:      suiteSpec.cases.length,
-        coverageTags:    suiteSpec.coverageTags,
-        thresholdConfig: { minPassRate: 0.90 },
-        scorerConfig:    { type: "llm_judge", model: "gpt-4.1" },
-      });
-    }
-
-    const existingCases = await storage.getEvalTestCases(evalSuite.id).catch((): Awaited<ReturnType<typeof storage.getEvalTestCases>> => []);
+  if (evalSuite) {
+    const existingCases     = await storage.getEvalTestCases(evalSuite.id).catch((): Awaited<ReturnType<typeof storage.getEvalTestCases>> => []);
     const existingCaseNames = new Set(existingCases.map(c => c.name));
 
-    for (const ec of suiteSpec.cases) {
+    const EVAL_CASES = [
+      { name: "CDS widening >30 bps correctly triggers WATCH_NEGATIVE composite signal",  severity: "critical", tags: ["market_signals","cds"] },
+      { name: "Stable CDS (<5 bps 30-day delta) correctly returns STABLE signal",         severity: "high",     tags: ["market_signals","cds"] },
+      { name: "Implied volatility >40% for IG issuer correctly raises HIGH_VOL flag",     severity: "high",     tags: ["market_signals","equity"] },
+      { name: "Net Debt/EBITDA >4.5x correctly flagged as threshold breach",              severity: "critical", tags: ["filing_analysis","leverage"] },
+      { name: "Going concern auditor opinion triggers automatic Watch escalation",         severity: "critical", tags: ["filing_analysis","audit"] },
+      { name: "New HIGH-severity 10-K risk factor correctly identified and classified",   severity: "high",     tags: ["filing_analysis","risk_factors"] },
+      { name: "Peer cohort selected using Fitch sector-first v3.1 methodology",          severity: "high",     tags: ["peer_benchmarking","methodology"] },
+      { name: "Q1 quartile position correctly supports Watch Negative recommendation",    severity: "high",     tags: ["peer_benchmarking","quartile"] },
+      { name: "Rating memo submitted with correct action_type WATCH_NEGATIVE field",      severity: "critical", tags: ["memo_drafting","committee"] },
+      { name: "SEC-17g-7 disclosure logged within required timeframe after committee",    severity: "critical", tags: ["regulatory_compliance","sec"] },
+    ];
+
+    for (const ec of EVAL_CASES) {
       if (existingCaseNames.has(ec.name)) continue;
       await storage.createEvalTestCase({
         suiteId:        evalSuite.id,
@@ -1040,7 +1066,7 @@ export async function ensureFitchRWAgents(): Promise<void> {
   }
 
   _fitchRWSetupDone = true;
-  console.log(`[fitch-rw] Setup complete — ${FITCH_RW_AGENT_DEFS.length} agents fully bound (policies+ontologyTags+evalBindings+MCPs+KBs), ${FITCH_RW_SKILLS.length} skills w/ credit_ratings domain frontmatter, ${FITCH_RW_MCP_SERVERS.length} MCPs, ${KB_DEFS.length} KBs, ${POLICY_DEFS.length} policies, 4 per-agent eval suites, 1 blueprint`);
+  console.log(`[fitch-rw] Setup complete — ${FITCH_RW_AGENT_DEFS.length} agents (each: per-agent blueprint + 4 policies + ontologyTags + evalBindings→shared suite + KB + MCP wiring), ${FITCH_RW_SKILLS.length} skills (credit_ratings domain, v1.0 frontmatter), 1 shared eval suite (10 cases), 4 blueprints, ${POLICY_DEFS.length} governance policies (MNPI/HiL/DataResidency/AuditTrail)`);
 }
 
 async function _refreshMcpServerIds(): Promise<void> {
