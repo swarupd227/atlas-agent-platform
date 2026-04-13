@@ -138,7 +138,7 @@ const DEMOS: Demo[] = [
   },
   {
     id: "fitch-rw-rating-watch",
-    title: "Automated Rating Watch Intelligence",
+    title: "Automated Rating Watch Intelligence Pipeline",
     client: "Fitch Ratings",
     description:
       "SCN-1.1: Four live AI agents screen 847 IG corporate issuers in real time, flag Boeing Co. (BA) for CDS spread widening (+42 bps) and fundamental deterioration, and autonomously draft a BBB- Rating Watch Negative committee memo — from market signal to approval queue in under 4 minutes.",
