@@ -444,6 +444,148 @@ function getServerDefinitions(): MockMcpServerDef[] {
         },
       ],
     },
+
+    // ── SCN-1.1 Fitch Rating Watch Intelligence Pipeline ────────────────────
+    {
+      name:        "Fitch RW — Bloomberg Terminal",
+      description: "Bloomberg terminal data feed for Fitch Rating Watch Intelligence: CDS spreads (5Y senior unsecured), equity price signals, news sentiment aggregation, and composite credit-watch triggers across rated issuers.",
+      baseUrl:     `${BASE_URL}/api/mock/fitch-rw-bloomberg`,
+      tools: [
+        {
+          name: "get_cds_spreads",
+          description: "Retrieve 5-year CDS spread time series and 30-day delta. Flags WIDENING_ALERT when 30d delta > 15 bps.",
+          endpoint: "/cds-spreads",
+          method: "GET",
+          inputSchema: { type: "object", properties: { issuer_id: { type: "string" }, tenor: { type: "string" } } },
+        },
+        {
+          name: "get_equity_prices",
+          description: "Retrieve equity price, implied volatility, beta, 52-week range, and relative volume. Flags HIGH_VOL and NEAR_52W_LOW signals.",
+          endpoint: "/equity-prices",
+          method: "GET",
+          inputSchema: { type: "object", properties: { issuer_id: { type: "string" } } },
+        },
+        {
+          name: "get_news_sentiment",
+          description: "Aggregate news sentiment score, article counts, sigma-spike detection, and top headlines for an issuer.",
+          endpoint: "/news-sentiment",
+          method: "GET",
+          inputSchema: { type: "object", properties: { issuer_id: { type: "string" }, days_back: { type: "number" } } },
+        },
+        {
+          name: "get_credit_watch_signals",
+          description: "Composite credit-watch signal combining CDS widening, equity decline, and news sentiment. Returns WATCH_NEGATIVE / ELEVATED / STABLE.",
+          endpoint: "/credit-watch-signals",
+          method: "GET",
+          inputSchema: { type: "object", properties: { issuer_id: { type: "string" } } },
+        },
+      ],
+    },
+    {
+      name:        "Fitch RW — SEC EDGAR Intelligence",
+      description: "SEC EDGAR filing intelligence for Fitch Rating Watch: 10-K/10-Q/8-K financial extracts, credit ratio time series, risk factor classification, and MD&A tone analysis.",
+      baseUrl:     `${BASE_URL}/api/mock/fitch-rw-sec-edgar`,
+      tools: [
+        {
+          name: "get_filing_extracts",
+          description: "Retrieve structured financial data from 10-K, 10-Q, or 8-K filings: revenue, EBITDA, net debt, interest coverage, FCF, auditor opinion.",
+          endpoint: "/filing-extracts",
+          method: "GET",
+          inputSchema: { type: "object", properties: { issuer_id: { type: "string" }, filing_type: { type: "string" } } },
+        },
+        {
+          name: "get_financial_ratios",
+          description: "Retrieve 8-period time series of key credit ratios: Net Debt/EBITDA, EBIT interest coverage, FCF/Debt, gross margin.",
+          endpoint: "/financial-ratios",
+          method: "GET",
+          inputSchema: { type: "object", properties: { issuer_id: { type: "string" } } },
+        },
+        {
+          name: "get_risk_factors",
+          description: "Extract and classify material risk factors from 10-K filings by severity and flag new risks not present in prior year.",
+          endpoint: "/risk-factors",
+          method: "GET",
+          inputSchema: { type: "object", properties: { issuer_id: { type: "string" } } },
+        },
+        {
+          name: "get_management_discussion",
+          description: "Analyze MD&A tone, guidance direction, and key credit-relevant management disclosures.",
+          endpoint: "/management-discussion",
+          method: "GET",
+          inputSchema: { type: "object", properties: { issuer_id: { type: "string" } } },
+        },
+      ],
+    },
+    {
+      name:        "Fitch RW — Peer Analytics Engine",
+      description: "Peer benchmarking and cohort analytics for Fitch Rating Watch: peer group selection, ratio quartile benchmarks, rating distribution, and relative positioning.",
+      baseUrl:     `${BASE_URL}/api/mock/fitch-rw-analytics`,
+      tools: [
+        {
+          name: "get_peer_cohort",
+          description: "Select a peer cohort for a given issuer using sector-first selection with ±2-notch cross-sector fallback.",
+          endpoint: "/peer-cohort",
+          method: "GET",
+          inputSchema: { type: "object", properties: { issuer_id: { type: "string" }, sector: { type: "string" }, rating: { type: "string" } } },
+        },
+        {
+          name: "get_ratio_benchmarks",
+          description: "Compute P25 / median / P75 benchmarks for Net Debt/EBITDA, EBIT coverage, and FCF/Debt across a cohort.",
+          endpoint: "/ratio-benchmarks",
+          method: "GET",
+          inputSchema: { type: "object", properties: { issuer_id: { type: "string" }, peer_ids: { type: "string" } } },
+        },
+        {
+          name: "get_rating_distribution",
+          description: "Distribution of IG vs. HY ratings within a sector cohort.",
+          endpoint: "/rating-distribution",
+          method: "GET",
+          inputSchema: { type: "object", properties: { sector: { type: "string" } } },
+        },
+        {
+          name: "compute_relative_position",
+          description: "Compute weighted percentile rank vs. full universe across all 3 key credit ratios. Returns overall tier and watch implication.",
+          endpoint: "/relative-position",
+          method: "GET",
+          inputSchema: { type: "object", properties: { issuer_id: { type: "string" } } },
+        },
+      ],
+    },
+    {
+      name:        "Fitch RW — Committee Approval Gateway",
+      description: "Rating committee approval gateway for Fitch Rating Watch: memo submission, validator queue management, committee decision retrieval, and regulatory disclosure logging.",
+      baseUrl:     `${BASE_URL}/api/mock/fitch-rw-approval-gate`,
+      tools: [
+        {
+          name: "submit_rating_memo",
+          description: "Submit a draft rating action memo to the rating committee queue. Supports standard (24h) and expedited (2h) tracks.",
+          endpoint: "/submit-memo",
+          method: "POST",
+          inputSchema: { type: "object", properties: { issuer_id: { type: "string" }, action_type: { type: "string" }, proposed_rating: { type: "string" }, rationale: { type: "string" }, urgency: { type: "string" } }, required: ["issuer_id","action_type","rationale"] },
+        },
+        {
+          name: "get_validator_queue",
+          description: "Retrieve current rating committee approval queue depth and item details.",
+          endpoint: "/validator-queue",
+          method: "GET",
+          inputSchema: { type: "object", properties: {} },
+        },
+        {
+          name: "get_committee_decision",
+          description: "Retrieve the committee decision for a submitted memo: APPROVED / REJECTED / PENDING.",
+          endpoint: "/committee-decision",
+          method: "GET",
+          inputSchema: { type: "object", properties: { memo_id: { type: "string" } } },
+        },
+        {
+          name: "log_regulatory_disclosure",
+          description: "Log that SEC 17g-7 or EU CRA III Article 11 regulatory disclosure has been filed for a rating action.",
+          endpoint: "/log-regulatory-disclosure",
+          method: "POST",
+          inputSchema: { type: "object", properties: { memo_id: { type: "string" }, regulation: { type: "string" }, issuer_id: { type: "string" }, action_type: { type: "string" } }, required: ["memo_id","regulation","issuer_id"] },
+        },
+      ],
+    },
   ];
 }
 
