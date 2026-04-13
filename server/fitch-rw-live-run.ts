@@ -365,13 +365,13 @@ interface FitchRWSkillDef {
 const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
   // ── Agent 001: Market Signal Scanner ───────────────────────────────────────
   {
-    name: "Financial Time Series Analysis",
-    description: "Analyzes 5-year CDS spread and equity price time series to detect momentum shifts, trend reversals, and 30-day delta signals that map to Rating Watch probability for IG issuers.",
+    name: "CDS Spread Monitoring",
+    description: "Monitors 5-year CDS spread time series and 30-day delta signals to detect WIDENING_ALERT thresholds that trigger Rating Watch Negative screening for IG issuers.",
     domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
-    tags: ["cds", "time_series", "credit_spreads", "rating_watch", "fitch"],
-    yamlFrontmatter: { skillId: "fitch-rw-time-series-analysis", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_cds_spreads", "get_equity_prices"] },
+    tags: ["cds", "spread_monitoring", "credit_spreads", "rating_watch", "fitch"],
+    yamlFrontmatter: { skillId: "fitch-rw-cds-monitoring", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_cds_spreads", "get_credit_watch_signals"] },
     markdownBody: `## Financial Time Series Analysis
 
 **CDS time series thresholds:**
@@ -390,13 +390,13 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
 3. Volume spike (relative vol >2x) combined with price decline = institutional selling signal`,
   },
   {
-    name: "Threshold Breach Detection",
-    description: "Applies Fitch's quantitative Rating Watch trigger matrix to multi-signal market data — detecting simultaneous CDS, equity, and sentiment threshold breaches that mandate screening.",
+    name: "Equity Volatility Screening",
+    description: "Screens equity market signals — implied volatility, beta, 52-week proximity, and relative volume — as leading credit stress indicators mandating Rating Watch threshold review.",
     domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
-    tags: ["threshold", "trigger", "credit_watch", "breach_detection", "fitch"],
-    yamlFrontmatter: { skillId: "fitch-rw-threshold-breach", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_credit_watch_signals"] },
+    tags: ["equity", "volatility", "beta", "credit_watch", "fitch"],
+    yamlFrontmatter: { skillId: "fitch-rw-equity-vol-screening", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_equity_prices"] },
     markdownBody: `## Threshold Breach Detection
 
 **Composite trigger matrix (any 2 of 3 = mandatory screening):**
@@ -415,8 +415,8 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
 2. Record composite_watch_signal from the tool output verbatim`,
   },
   {
-    name: "Market Sentiment Intelligence",
-    description: "Classifies news and market sentiment into credit-relevant categories, detecting statistically significant sentiment deterioration spikes (sigma events) that precede rating actions.",
+    name: "News Sentiment Detection",
+    description: "Detects statistically significant news sentiment deterioration spikes (sigma events) and classifies them into credit-relevant categories that precede rating actions for IG issuers.",
     domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
@@ -439,8 +439,8 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
 
   // ── Agent 002: Filing Intelligence Agent ───────────────────────────────────
   {
-    name: "SEC Filing Intelligence Extraction",
-    description: "Extracts, classifies, and tracks changes in 10-K/10-Q/8-K filing data — financial statements, risk factors, and auditor opinions — for credit relevance and year-over-year trajectory.",
+    name: "Covenant Extraction",
+    description: "Extracts and classifies covenant obligations, financial maintenance covenants, and year-over-year risk factor changes from 10-K/10-Q filings for Rating Watch trigger assessment.",
     domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
@@ -459,8 +459,8 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
 - Count of HIGH-severity risk factors is a key KPI: >3 = elevated screening`,
   },
   {
-    name: "Credit Ratio Normalization",
-    description: "Normalizes financial ratios from SEC filings to Fitch's standard credit metric definitions, enabling direct comparison to Fitch rating factor thresholds and peer benchmarks.",
+    name: "Liquidity Analysis",
+    description: "Analyzes near-term liquidity position — revolver availability, refinancing risk, FCF runway, and covenant headroom — and normalizes ratios against Fitch BBB- threshold definitions.",
     domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
@@ -479,8 +479,8 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
 - FCF/Debt: ≥5% (below = liquidity concern)`,
   },
   {
-    name: "MD&A Tone Classification",
-    description: "Classifies management tone in MD&A and earnings call transcripts into credit-relevant categories (confident/cautious/defensive/distressed) and flags guidance changes and liquidity signals.",
+    name: "MD&A Tone Assessment",
+    description: "Assesses management tone in MD&A and earnings call transcripts — classifying as confident/cautious/defensive/distressed — and surfaces credit-relevant guidance changes and liquidity disclosures.",
     domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
@@ -502,7 +502,7 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
 
   // ── Agent 003: Peer Benchmarking Agent ─────────────────────────────────────
   {
-    name: "Peer Cohort Construction",
+    name: "Peer Cohort Selection",
     description: "Applies Fitch's peer selection methodology to identify an appropriate comparison cohort: sector-first selection with rating band fallback, capped at 8 issuers.",
     domain: "credit_ratings",
     industry: "financial_services",
@@ -522,8 +522,8 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
 - Disclose if cross-sector comparison is used in memo rationale`,
   },
   {
-    name: "Quartile Ratio Benchmarking",
-    description: "Computes P25/median/P75 quartile benchmarks for key credit ratios across a rated peer cohort and determines anchor issuer's relative position to support Watch Negative recommendations.",
+    name: "Ratio Percentile Ranking",
+    description: "Computes P25/median/P75 quartile benchmarks for key credit ratios across a rated peer cohort and determines anchor issuer's percentile position to support Watch Negative recommendations.",
     domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
@@ -543,8 +543,8 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
 - Q4 (75–100th pct): STRONG — supports Stable Outlook`,
   },
   {
-    name: "Sector-Relative Credit Analysis",
-    description: "Determines whether issuer credit deterioration is idiosyncratic or sector-wide — a critical distinction that affects Rating Watch urgency and the scope of any rating action.",
+    name: "Sector Credit Positioning",
+    description: "Determines whether issuer credit deterioration is idiosyncratic or sector-wide — a critical distinction that affects Rating Watch urgency and the scope of any potential rating action.",
     domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
@@ -565,8 +565,8 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
 
   // ── Agent 004: Rating Action Memo Agent ────────────────────────────────────
   {
-    name: "Rating Action Memo Composition",
-    description: "Composes Fitch-standard Rating Action Memos synthesizing market, fundamental, and peer signals into structured committee submissions with quantitative rationale and sensitivity analysis.",
+    name: "Evidence Citation",
+    description: "Synthesizes quantitative evidence from market signals, filing ratios, and peer rankings into structured rating action memo rationale with specific citations and sensitivity analysis.",
     domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
@@ -586,8 +586,8 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
 3. Never use "may" or "could" for Watch triggers — be definitive`,
   },
   {
-    name: "Committee Workflow Management",
-    description: "Manages the Fitch rating committee approval workflow: queue depth monitoring, track selection (standard vs. expedited), decision retrieval, and dissenting vote escalation.",
+    name: "Committee Submission Protocol",
+    description: "Manages Fitch rating committee submissions: queue depth monitoring, approval track selection (standard vs. expedited), decision retrieval, and dissenting vote escalation handling.",
     domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
@@ -610,8 +610,8 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
 3. Dissenting votes (>0) require additional supporting analysis`,
   },
   {
-    name: "Regulatory Disclosure Execution",
-    description: "Executes mandatory regulatory disclosure filing for Rating Watch actions under SEC Rule 17g-7 and EU CRA III Article 11, with timing compliance and 7-year record retention.",
+    name: "Regulatory Filing Execution",
+    description: "Executes mandatory regulatory disclosure filings for Rating Watch actions under SEC Rule 17g-7 and EU CRA III Article 11, with timing compliance and 7-year record retention.",
     domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
@@ -651,10 +651,10 @@ export async function ensureFitchRWAgents(): Promise<void> {
 
   // ── 1. Knowledge Bases ──────────────────────────────────────────────────────
   const KB_DEFS = [
-    { name: "Fitch RW — Market Signal Reference",         description: "Reference data for Bloomberg CDS spreads, equity signals, and news sentiment thresholds used in Rating Watch screening." },
-    { name: "Fitch RW — SEC EDGAR Filing Corpus",         description: "Curated 10-K, 10-Q, and 8-K filing extracts and financial ratio normalization rules for Fitch credit analysis." },
-    { name: "Fitch RW — Peer Benchmark Database",         description: "Peer cohort data, sector rating distributions, and quartile benchmarks for rated issuers across Fitch-covered sectors." },
-    { name: "Fitch RW — Committee & Compliance Playbook", description: "Rating committee protocols, approval workflows, and SEC 17g-7 / EU CRA III regulatory disclosure requirements." },
+    { name: "Rating Methodology Library",  description: "Fitch Ratings analytical methodology documents: CDS spread thresholds, equity signal interpretation rules, sentiment scoring framework, and Rating Watch trigger criteria." },
+    { name: "SEC Filing Archive",          description: "Curated 10-K, 10-Q, and 8-K filing extracts, financial ratio normalization rules, covenant definitions, and auditor opinion classification guides." },
+    { name: "Peer Cohort Definitions",     description: "Peer cohort selection methodology (v3.1), sector classification maps, rating distribution data, and quartile benchmarks for Fitch-covered rated issuers." },
+    { name: "Historical Rating Actions DB", description: "Archive of Fitch rating actions, Watch placements, and committee decisions for precedent analysis, regulatory disclosure templates, and audit trail reference." },
   ];
 
   const kbIdByName: Record<string, string> = {};
