@@ -31,6 +31,7 @@ const FEEDBACK_TYPES = [
 ];
 
 const FEATURE_AREAS = [
+  { value: "outcomes", label: "Outcomes" },
   { value: "pipeline_builder", label: "Pipeline Builder" },
   { value: "agent_management", label: "Agent Management" },
   { value: "team_blueprints", label: "Team Blueprints" },

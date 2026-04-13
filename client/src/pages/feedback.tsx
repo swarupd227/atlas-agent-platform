@@ -55,6 +55,7 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
 };
 
 const FEATURE_LABELS: Record<string, string> = {
+  outcomes: "Outcomes",
   pipeline_builder: "Pipeline Builder",
   agent_management: "Agent Management",
   team_blueprints: "Team Blueprints",
