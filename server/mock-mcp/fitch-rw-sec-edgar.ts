@@ -207,4 +207,27 @@ router.get("/management-discussion", (req: Request, res: Response) => {
   res.json({ data, count: data.length });
 });
 
+export const toolManifest = [
+  {
+    name: "get_filing_extracts",
+    description: "Returns structured extracts from an issuer's most recent 10-K, 10-Q, or 8-K filings, including financial statement highlights, covenant terms, and auditor opinion classification.",
+    parameters: { type: "object", properties: { issuer_id: { type: "string", description: "Issuer ticker" }, filing_type: { type: "string", description: "Filing type: 10-K, 10-Q, or 8-K" } }, required: ["issuer_id", "filing_type"] },
+  },
+  {
+    name: "get_financial_ratios",
+    description: "Returns Fitch-normalized credit ratios (Net Debt/EBITDA, EBIT Interest Coverage, FCF/Gross Debt) with year-over-year trend and BBB- threshold breach indicators.",
+    parameters: { type: "object", properties: { issuer_id: { type: "string", description: "Issuer ticker" } }, required: ["issuer_id"] },
+  },
+  {
+    name: "get_risk_factors",
+    description: "Returns classified risk factors from SEC filings, categorized by severity (HIGH/MEDIUM/LOW) and type (LIQUIDITY/LEVERAGE/OPERATIONAL), with new-vs-recurring distinction.",
+    parameters: { type: "object", properties: { issuer_id: { type: "string", description: "Issuer ticker" } }, required: ["issuer_id"] },
+  },
+  {
+    name: "get_management_discussion",
+    description: "Returns MD&A tone classification (CONFIDENT/CAUTIOUS/DEFENSIVE/DISTRESSED), guidance direction (RAISED/MAINTAINED/LOWERED/WITHDRAWN), and key credit-relevant trigger phrases.",
+    parameters: { type: "object", properties: { issuer_id: { type: "string", description: "Issuer ticker" } }, required: ["issuer_id"] },
+  },
+];
+
 export default router;

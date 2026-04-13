@@ -199,4 +199,27 @@ router.get("/credit-watch-signals", (req: Request, res: Response) => {
   res.json({ data, count: data.length, alert_count: alertCount, generated_at: new Date().toISOString() });
 });
 
+export const toolManifest = [
+  {
+    name: "get_cds_spreads",
+    description: "Returns 5-year CDS spread time series, current spread level, and 30-day delta for a given issuer. Classifies the signal as WIDENING_ALERT, ELEVATED, or STABLE.",
+    parameters: { type: "object", properties: { issuer_id: { type: "string", description: "Issuer ticker (e.g. BA)" }, tenor: { type: "string", description: "CDS tenor (default: 5Y)" } }, required: ["issuer_id"] },
+  },
+  {
+    name: "get_equity_prices",
+    description: "Returns equity price data including 52-week range, YTD return, implied volatility, beta, and relative trading volume for a given issuer.",
+    parameters: { type: "object", properties: { issuer_id: { type: "string", description: "Issuer ticker" } }, required: ["issuer_id"] },
+  },
+  {
+    name: "get_news_sentiment",
+    description: "Returns weighted news sentiment score, sigma spike detection, and 30/60/90-day sentiment trend for a given issuer over a lookback window.",
+    parameters: { type: "object", properties: { issuer_id: { type: "string", description: "Issuer ticker" }, days_back: { type: "number", description: "Lookback window in days (default: 30)" } }, required: ["issuer_id"] },
+  },
+  {
+    name: "get_credit_watch_signals",
+    description: "Returns a composite credit watch signal classification (WATCH_NEGATIVE, WATCH_ELEVATED, STABLE) derived from multi-signal threshold analysis across CDS, equity, and sentiment inputs.",
+    parameters: { type: "object", properties: { issuer_id: { type: "string", description: "Issuer ticker" } }, required: ["issuer_id"] },
+  },
+];
+
 export default router;

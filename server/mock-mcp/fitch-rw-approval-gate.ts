@@ -177,4 +177,27 @@ router.post("/log-regulatory-disclosure", (req: Request, res: Response) => {
   });
 });
 
+export const toolManifest = [
+  {
+    name: "get_validator_queue",
+    description: "Returns the current rating committee queue depth, average processing time, and recommended approval track (STANDARD or EXPEDITED) based on queue load.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "submit_rating_memo",
+    description: "Submits a Rating Action Memo to the Fitch rating committee for approval. Returns a memo_id for decision retrieval. Requires issuer_id, action_type, proposed_rating, rationale, and urgency.",
+    parameters: { type: "object", properties: { issuer_id: { type: "string" }, issuer_name: { type: "string" }, action_type: { type: "string" }, proposed_rating: { type: "string" }, rationale: { type: "string" }, urgency: { type: "string", enum: ["standard", "expedited"] } }, required: ["issuer_id", "issuer_name", "action_type", "proposed_rating", "rationale", "urgency"] },
+  },
+  {
+    name: "get_committee_decision",
+    description: "Retrieves the rating committee decision (APPROVED, CONDITIONAL, or REJECTED) for a submitted memo by memo_id, including dissenting vote count and any conditions.",
+    parameters: { type: "object", properties: { memo_id: { type: "string", description: "Memo ID returned by submit_rating_memo" } }, required: ["memo_id"] },
+  },
+  {
+    name: "log_regulatory_disclosure",
+    description: "Logs a mandatory regulatory disclosure for a Rating Watch action under SEC Rule 17g-7 or EU CRA III Article 11. Returns a filing identifier and timestamp.",
+    parameters: { type: "object", properties: { memo_id: { type: "string" }, regulation: { type: "string", enum: ["SEC-17g-7", "EU-CRA-III-Art11"] }, issuer_id: { type: "string" }, action_type: { type: "string" } }, required: ["memo_id", "regulation", "issuer_id", "action_type"] },
+  },
+];
+
 export default router;

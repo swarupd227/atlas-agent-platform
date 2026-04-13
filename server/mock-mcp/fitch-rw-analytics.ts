@@ -204,4 +204,27 @@ router.get("/relative-position", (req: Request, res: Response) => {
   });
 });
 
+export const toolManifest = [
+  {
+    name: "get_peer_cohort",
+    description: "Returns the Fitch-selected peer cohort for a given issuer using sector-first selection with rating band fallback. Cohort is capped at 8 issuers.",
+    parameters: { type: "object", properties: { issuer_id: { type: "string", description: "Anchor issuer ticker" } }, required: ["issuer_id"] },
+  },
+  {
+    name: "get_ratio_benchmarks",
+    description: "Returns P25/P50/P75 quartile benchmarks for Net Debt/EBITDA, EBIT Coverage, and FCF/Debt across the peer cohort, with the anchor issuer's percentile rank on each metric.",
+    parameters: { type: "object", properties: { issuer_id: { type: "string", description: "Anchor issuer ticker" } }, required: ["issuer_id"] },
+  },
+  {
+    name: "get_rating_distribution",
+    description: "Returns the distribution of Fitch ratings across an industry sector, showing how many issuers are in each rating category.",
+    parameters: { type: "object", properties: { sector: { type: "string", description: "Sector name (e.g. Aerospace)" } }, required: ["sector"] },
+  },
+  {
+    name: "compute_relative_position",
+    description: "Computes the anchor issuer's credit deterioration type (IDIOSYNCRATIC, SECTOR_WIDE, or MIXED) and overall peer tier (WEAK, BELOW_MEDIAN, ABOVE_MEDIAN, STRONG).",
+    parameters: { type: "object", properties: { issuer_id: { type: "string", description: "Anchor issuer ticker" } }, required: ["issuer_id"] },
+  },
+];
+
 export default router;
