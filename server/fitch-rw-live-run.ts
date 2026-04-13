@@ -206,8 +206,8 @@ const FITCH_RW_AGENT_DEFS: FitchRWAgentDef[] = [
     name:           "FITCH-RW-001 Market Signal Scanner",
     description:    "Monitors real-time Bloomberg market signals — CDS spreads, equity stress, and news sentiment — to detect early rating watch triggers before they surface in fundamental analysis.",
     mcpServerNames: ["Fitch RW — Bloomberg Terminal"],
-    skillNames:     ["Financial Time Series Analysis", "Threshold Breach Detection", "Market Sentiment Intelligence"],
-    kbName:         "Fitch RW — Market Signal Reference",
+    skillNames:     ["CDS Spread Monitoring", "Equity Volatility Screening", "News Sentiment Detection"],
+    kbName:         "Rating Methodology Library",
     maxToolIterations: 8,
     systemPrompt: `You are FITCH-RW-001, the Market Signal Scanner for Fitch Ratings' automated Rating Watch Intelligence Pipeline.
 
@@ -245,8 +245,8 @@ IMPORTANT: End your final response with ONLY this JSON block:
     name:           "FITCH-RW-002 Filing Intelligence Agent",
     description:    "Extracts and interprets SEC EDGAR filing data — 10-K/10-Q financial ratios, risk factors, and MD&A tone — to assess fundamental credit trajectory for Rating Watch decisions.",
     mcpServerNames: ["Fitch RW — SEC EDGAR Intelligence"],
-    skillNames:     ["SEC Filing Intelligence Extraction", "Credit Ratio Normalization", "MD&A Tone Classification"],
-    kbName:         "Fitch RW — SEC EDGAR Filing Corpus",
+    skillNames:     ["Covenant Extraction", "Liquidity Analysis", "MD&A Tone Assessment"],
+    kbName:         "SEC Filing Archive",
     maxToolIterations: 8,
     systemPrompt: `You are FITCH-RW-002, the Filing Intelligence Agent for Fitch Ratings' Rating Watch Intelligence Pipeline.
 
@@ -282,8 +282,8 @@ IMPORTANT: End your final response with ONLY this JSON block:
     name:           "FITCH-RW-003 Peer Benchmarking Agent",
     description:    "Benchmarks the target issuer against its rated peer cohort across key credit ratios to determine whether absolute deterioration is also relative — the key test before Watch placement.",
     mcpServerNames: ["Fitch RW — Peer Analytics Engine"],
-    skillNames:     ["Peer Cohort Construction", "Quartile Ratio Benchmarking", "Sector-Relative Credit Analysis"],
-    kbName:         "Fitch RW — Peer Benchmark Database",
+    skillNames:     ["Peer Cohort Selection", "Ratio Percentile Ranking", "Sector Credit Positioning"],
+    kbName:         "Peer Cohort Definitions",
     maxToolIterations: 8,
     systemPrompt: `You are FITCH-RW-003, the Peer Benchmarking Agent for Fitch Ratings' Rating Watch Intelligence Pipeline.
 
@@ -317,8 +317,8 @@ IMPORTANT: End your final response with ONLY this JSON block:
     name:           "FITCH-RW-004 Rating Action Memo Agent",
     description:    "Synthesizes outputs from Agents 001–003 into a Fitch-standard Rating Action Memo, routes it through the committee approval gateway, and logs all required regulatory disclosures.",
     mcpServerNames: ["Fitch RW — Committee Approval Gateway"],
-    skillNames:     ["Rating Action Memo Composition", "Committee Workflow Management", "Regulatory Disclosure Execution"],
-    kbName:         "Fitch RW — Committee & Compliance Playbook",
+    skillNames:     ["Evidence Citation", "Committee Submission Protocol", "Regulatory Filing Execution"],
+    kbName:         "Historical Rating Actions DB",
     maxToolIterations: 8,
     systemPrompt: `You are FITCH-RW-004, the Rating Action Memo Agent for Fitch Ratings' Rating Watch Intelligence Pipeline.
 
@@ -372,7 +372,7 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
     version: "1.0.0",
     tags: ["cds", "spread_monitoring", "credit_spreads", "rating_watch", "fitch"],
     yamlFrontmatter: { skillId: "fitch-rw-cds-monitoring", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_cds_spreads", "get_credit_watch_signals"] },
-    markdownBody: `## Financial Time Series Analysis
+    markdownBody: `## CDS Spread Monitoring
 
 **CDS time series thresholds:**
 - >15 bps 30-day widening → WIDENING_ALERT (Watch Negative candidate)
@@ -397,7 +397,7 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
     version: "1.0.0",
     tags: ["equity", "volatility", "beta", "credit_watch", "fitch"],
     yamlFrontmatter: { skillId: "fitch-rw-equity-vol-screening", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_equity_prices"] },
-    markdownBody: `## Threshold Breach Detection
+    markdownBody: `## Equity Volatility Screening
 
 **Composite trigger matrix (any 2 of 3 = mandatory screening):**
 | Signal           | Threshold              | Action             |
@@ -422,7 +422,7 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
     version: "1.0.0",
     tags: ["nlp", "sentiment", "news", "sigma_spike", "fitch"],
     yamlFrontmatter: { skillId: "fitch-rw-sentiment-intelligence", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_news_sentiment"] },
-    markdownBody: `## Market Sentiment Intelligence
+    markdownBody: `## News Sentiment Detection
 
 **Sentiment scale:** -1.0 (strongly negative) to +1.0 (strongly positive)
 
@@ -446,7 +446,7 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
     version: "1.0.0",
     tags: ["10-K", "sec_edgar", "filing_extraction", "risk_factors", "fitch"],
     yamlFrontmatter: { skillId: "fitch-rw-filing-extraction", trustTier: "platform-provided", complexity: "advanced", contextMode: "summary", allowedTools: ["get_filing_extracts", "get_risk_factors"] },
-    markdownBody: `## SEC Filing Intelligence Extraction
+    markdownBody: `## Covenant Extraction
 
 **High-priority risk categories:**
 1. LIQUIDITY — refinancing risk, revolver availability, near-term maturities
@@ -466,7 +466,7 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
     version: "1.0.0",
     tags: ["financial_ratios", "normalization", "credit_metrics", "fitch_methodology"],
     yamlFrontmatter: { skillId: "fitch-rw-ratio-normalization", trustTier: "platform-provided", complexity: "advanced", contextMode: "summary", allowedTools: ["get_financial_ratios"] },
-    markdownBody: `## Credit Ratio Normalization
+    markdownBody: `## Liquidity Analysis
 
 **Fitch-standard definitions:**
 - Net Debt/EBITDA: (Total Debt - Cash) / EBITDA (LTM, adjusted)
@@ -486,7 +486,7 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
     version: "1.0.0",
     tags: ["mda", "earnings_call", "tone_classification", "management_signals", "fitch"],
     yamlFrontmatter: { skillId: "fitch-rw-mda-tone", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_management_discussion"] },
-    markdownBody: `## MD&A Tone Classification
+    markdownBody: `## MD&A Tone Assessment
 
 **Tone classification:**
 - CONFIDENT: reaffirmed/raised guidance, margin expansion language
@@ -509,7 +509,7 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
     version: "1.0.0",
     tags: ["peer_selection", "cohort", "fitch_methodology", "benchmarking"],
     yamlFrontmatter: { skillId: "fitch-rw-peer-cohort-construction", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_peer_cohort", "get_rating_distribution"] },
-    markdownBody: `## Peer Cohort Construction — Fitch Methodology v3.1
+    markdownBody: `## Peer Cohort Selection — Fitch Methodology v3.1
 
 **Selection algorithm:**
 1. Primary: Same sector, within ±2 rating notches
@@ -529,7 +529,7 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
     version: "1.0.0",
     tags: ["ratio_benchmarks", "quartile", "peer_comparison", "fitch"],
     yamlFrontmatter: { skillId: "fitch-rw-quartile-benchmarking", trustTier: "platform-provided", complexity: "advanced", contextMode: "summary", allowedTools: ["get_ratio_benchmarks"] },
-    markdownBody: `## Quartile Ratio Benchmarking
+    markdownBody: `## Ratio Percentile Ranking
 
 **Key ratios (Fitch standard):**
 1. Net Debt / EBITDA — primary leverage metric (weight 40%)
@@ -550,7 +550,7 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
     version: "1.0.0",
     tags: ["sector_analysis", "idiosyncratic", "relative_positioning", "rating_watch_scope"],
     yamlFrontmatter: { skillId: "fitch-rw-sector-credit-analysis", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["compute_relative_position"] },
-    markdownBody: `## Sector-Relative Credit Analysis
+    markdownBody: `## Sector Credit Positioning
 
 **Deterioration type classification:**
 - IDIOSYNCRATIC: Issuer deteriorating while sector peers stable → single-issuer Watch
@@ -572,7 +572,7 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
     version: "1.0.0",
     tags: ["memo_composition", "rating_action", "committee_submission", "fitch_standard"],
     yamlFrontmatter: { skillId: "fitch-rw-memo-composition", trustTier: "platform-provided", complexity: "advanced", contextMode: "summary", allowedTools: ["submit_rating_memo"] },
-    markdownBody: `## Rating Action Memo Composition — Fitch Standard
+    markdownBody: `## Evidence Citation — Fitch Standard
 
 **Memo structure:**
 1. Action Summary: "Fitch places [Issuer] on Rating Watch Negative at [Rating]"
@@ -593,7 +593,7 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
     version: "1.0.0",
     tags: ["committee", "workflow", "approval", "governance", "fitch"],
     yamlFrontmatter: { skillId: "fitch-rw-committee-workflow", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_validator_queue", "get_committee_decision"] },
-    markdownBody: `## Committee Workflow Management
+    markdownBody: `## Committee Submission Protocol
 
 **Approval tracks:**
 - STANDARD: 24-hour review window; used for planned rating reviews
@@ -617,7 +617,7 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
     version: "1.0.0",
     tags: ["sec_17g7", "eu_cra_iii", "disclosure_execution", "compliance", "fitch"],
     yamlFrontmatter: { skillId: "fitch-rw-disclosure-execution", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["log_regulatory_disclosure"] },
-    markdownBody: `## Regulatory Disclosure Execution
+    markdownBody: `## Regulatory Filing Execution
 
 **Applicable regulations:**
 - SEC Rule 17g-7: Requires disclosure of rating methodology, form, and assumptions
