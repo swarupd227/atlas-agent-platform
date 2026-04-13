@@ -206,7 +206,7 @@ const FITCH_RW_AGENT_DEFS: FitchRWAgentDef[] = [
     name:           "FITCH-RW-001 Market Signal Scanner",
     description:    "Monitors real-time Bloomberg market signals — CDS spreads, equity stress, and news sentiment — to detect early rating watch triggers before they surface in fundamental analysis.",
     mcpServerNames: ["Fitch RW — Bloomberg Terminal"],
-    skillNames:     ["CDS Spread Monitoring", "Equity Volatility Screening", "News Sentiment Detection"],
+    skillNames:     ["Financial Time Series Analysis", "Threshold Breach Detection", "CDS Spread Monitoring"],
     kbName:         "Rating Methodology Library",
     maxToolIterations: 8,
     systemPrompt: `You are FITCH-RW-001, the Market Signal Scanner for Fitch Ratings' automated Rating Watch Intelligence Pipeline.
@@ -245,7 +245,7 @@ IMPORTANT: End your final response with ONLY this JSON block:
     name:           "FITCH-RW-002 Filing Intelligence Agent",
     description:    "Extracts and interprets SEC EDGAR filing data — 10-K/10-Q financial ratios, risk factors, and MD&A tone — to assess fundamental credit trajectory for Rating Watch decisions.",
     mcpServerNames: ["Fitch RW — SEC EDGAR Intelligence"],
-    skillNames:     ["Covenant Extraction", "Liquidity Analysis", "MD&A Tone Assessment"],
+    skillNames:     ["SEC Filing Comprehension", "Covenant Extraction", "Liquidity Analysis"],
     kbName:         "SEC Filing Archive",
     maxToolIterations: 8,
     systemPrompt: `You are FITCH-RW-002, the Filing Intelligence Agent for Fitch Ratings' Rating Watch Intelligence Pipeline.
@@ -282,7 +282,7 @@ IMPORTANT: End your final response with ONLY this JSON block:
     name:           "FITCH-RW-003 Peer Benchmarking Agent",
     description:    "Benchmarks the target issuer against its rated peer cohort across key credit ratios to determine whether absolute deterioration is also relative — the key test before Watch placement.",
     mcpServerNames: ["Fitch RW — Peer Analytics Engine"],
-    skillNames:     ["Peer Cohort Selection", "Ratio Percentile Ranking", "Sector Credit Positioning"],
+    skillNames:     ["Peer Group Analysis", "Financial Ratio Benchmarking", "Outlier Detection"],
     kbName:         "Peer Cohort Definitions",
     maxToolIterations: 8,
     systemPrompt: `You are FITCH-RW-003, the Peer Benchmarking Agent for Fitch Ratings' Rating Watch Intelligence Pipeline.
@@ -317,7 +317,7 @@ IMPORTANT: End your final response with ONLY this JSON block:
     name:           "FITCH-RW-004 Rating Action Memo Agent",
     description:    "Synthesizes outputs from Agents 001–003 into a Fitch-standard Rating Action Memo, routes it through the committee approval gateway, and logs all required regulatory disclosures.",
     mcpServerNames: ["Fitch RW — Committee Approval Gateway"],
-    skillNames:     ["Evidence Citation", "Committee Submission Protocol", "Regulatory Filing Execution"],
+    skillNames:     ["Fitch Methodology Application", "Structured Report Generation", "Evidence Citation"],
     kbName:         "Historical Rating Actions DB",
     maxToolIterations: 8,
     systemPrompt: `You are FITCH-RW-004, the Rating Action Memo Agent for Fitch Ratings' Rating Watch Intelligence Pipeline.
@@ -377,26 +377,26 @@ const FITCH_RW_SKILLS: FitchRWSkillDef[] = [
 CDS Spread Monitoring tracks the 5-year CDS spread for an investment-grade issuer over rolling 30-day windows to detect material widening that precedes rating actions. A 30-day delta greater than 15 basis points triggers a WIDENING_ALERT classification, indicating the market is pricing increased default probability at a rate inconsistent with a stable BBB- rating. Sustained widening across two or more consecutive weeks is treated as a stronger signal than a single-session spike, because it indicates persistent institutional conviction rather than transient noise. When CDS widening exceeds 50 basis points in a single 30-day window, the skill immediately escalates to a mandatory Watch Negative recommendation without requiring corroboration from equity or sentiment signals. The skill also compares the issuer's CDS delta to the sector median: idiosyncratic widening (issuer widens while peers are flat or tightening) carries greater Rating Watch urgency than macro-driven spread movements. All raw spread levels, 30-day deltas, and signal classifications must be recorded verbatim from tool output and cited in the memo rationale produced by Agent 004.`,
   },
   {
-    name: "Equity Volatility Screening",
-    description: "Screens equity market signals — implied volatility, beta, 52-week proximity, and relative volume — as leading credit stress indicators mandating Rating Watch threshold review.",
+    name: "Threshold Breach Detection",
+    description: "Applies Fitch's composite trigger matrix across CDS, equity volatility, and sentiment signals to detect simultaneous threshold breaches mandating Rating Watch Negative screening.",
     domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
     tags: ["equity", "volatility", "beta", "credit_watch", "fitch"],
     yamlFrontmatter: { skillId: "fitch-rw-equity-vol-screening", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_equity_prices"] },
-    markdownBody: `## Equity Volatility Screening
+    markdownBody: `## Threshold Breach Detection
 
 Equity Volatility Screening uses equity market signals as forward-looking credit stress indicators, because equity markets typically price distress 30–90 days ahead of ratings actions. The screening evaluates three dimensions simultaneously: implied volatility as a proxy for option-market default concern, proximity to the 52-week low as a momentum deterioration signal, and relative trading volume to detect institutional liquidation pressure. For an investment-grade issuer, implied volatility above 40% and a price within 5% of the 52-week low together trigger a WATCH_ELEVATED classification even when CDS signals have not yet breached thresholds. Beta above 1.5 is treated as a risk amplifier that increases the weight given to any other equity signal present. Any two of the three primary signals breaching their thresholds simultaneously constitutes a mandatory composite screening event, while a single signal at extreme levels (such as greater than 50% implied volatility or greater than 20% equity decline year-to-date) overrides the matrix and mandates immediate escalation. The agent must record which specific thresholds were triggered and include these in the memo rationale so committee reviewers can evaluate the urgency classification.`,
   },
   {
-    name: "News Sentiment Detection",
-    description: "Detects statistically significant news sentiment deterioration spikes (sigma events) and classifies them into credit-relevant categories that precede rating actions for IG issuers.",
+    name: "Financial Time Series Analysis",
+    description: "Analyzes multi-dimensional financial time series — CDS spread history, equity price trajectories, and sentiment trends — to detect momentum shifts that precede Rating Watch actions.",
     domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
     tags: ["nlp", "sentiment", "news", "sigma_spike", "fitch"],
     yamlFrontmatter: { skillId: "fitch-rw-sentiment-intelligence", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_news_sentiment"] },
-    markdownBody: `## News Sentiment Detection
+    markdownBody: `## Financial Time Series Analysis — Multi-Signal Momentum Detection
 
 News Sentiment Detection classifies financial news into credit-relevant sentiment scores on a scale from -1.0 (strongly negative) to +1.0 (strongly positive), applying source-weighted NLP to surface signals that reliably precede rating actions. Headlines from financial press, regulatory filings, and rating agency commentary are weighted three times higher than general business news because they carry stronger predictive content for credit outcomes. A 30-day average sentiment score below -0.15 triggers a NEGATIVE_ALERT classification, and any single 3-sigma spike — defined as a day where negative sentiment is three standard deviations above the issuer's trailing 90-day mean — mandates immediate headline review regardless of the trailing average. Specific event types constitute automatic escalation triggers independent of score: CEO or CFO departure, earnings restatement, covenant waiver disclosure, or debt exchange announcement each mandate Watch Negative consideration without waiting for score deterioration. The skill evaluates sentiment trends over rolling 30, 60, and 90-day windows, treating a consistently declining trend as a structurally stronger signal than an isolated score drop. All detected sigma spikes, trigger events, and trailing score trajectories must be enumerated in the output for citation in the committee memo.`,
   },
@@ -427,52 +427,52 @@ Covenant Extraction retrieves and classifies the financial maintenance covenants
 Liquidity Analysis normalizes an issuer's reported financial data to Fitch's standard credit metric definitions and compares the resulting ratios against the quantitative thresholds that define the BBB- rating category boundary. Net Debt is defined as total financial debt minus unrestricted cash and short-term investments, and is divided by last-twelve-months EBITDA adjusted for restructuring charges and non-recurring items to produce the primary leverage metric. EBIT Interest Coverage is computed as operating earnings before interest and taxes divided by gross cash interest expense, capturing the issuer's ability to service its debt load from recurring operations without relying on refinancing. Free Cash Flow to Gross Debt percentage — calculated as operating cash flow minus maintenance capital expenditure, divided by total gross debt — reflects the issuer's organic debt reduction capacity and is the most forward-looking of the three metrics. For the BBB- category, Fitch's quantitative guidelines set watch-eligible thresholds at Net Debt/EBITDA exceeding 4.5x, EBIT Interest Coverage below 2.5x, or FCF/Debt below 5%; a BBB- rated issuer breaching any single threshold triggers mandatory review, and breaching two simultaneously constitutes a strong Watch Negative signal. All normalized ratio values and their directional trend versus the prior year must be enumerated in the output JSON so Agent 003 can perform peer percentile comparisons.`,
   },
   {
-    name: "MD&A Tone Assessment",
-    description: "Assesses management tone in MD&A and earnings call transcripts — classifying as confident/cautious/defensive/distressed — and surfaces credit-relevant guidance changes and liquidity disclosures.",
+    name: "SEC Filing Comprehension",
+    description: "Comprehensively interprets SEC filing disclosures — MD&A narrative tone, guidance changes, auditor opinions, and risk factor evolution — to surface credit-relevant signals across filing cycles.",
     domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
     tags: ["mda", "earnings_call", "tone_classification", "management_signals", "fitch"],
     yamlFrontmatter: { skillId: "fitch-rw-mda-tone", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_management_discussion"] },
-    markdownBody: `## MD&A Tone Assessment
+    markdownBody: `## SEC Filing Comprehension
 
 MD&A Tone Assessment classifies management's narrative disclosure into four credit-relevant tone categories based on language patterns in the Management Discussion & Analysis section and earnings call transcripts. CONFIDENT tone is characterized by guidance reaffirmation or upward revision, margin expansion commentary, and declarative forward-looking language — this tone is inconsistent with a Rating Watch placement. CAUTIOUS tone involves explicit acknowledgment of headwinds, conditional language around achieving targets, and maintained guidance with qualitative caveats — this warrants monitoring but not immediate Watch action unless accompanied by market signals. DEFENSIVE tone includes active cost reduction programs, strategic asset review language, guidance reduction, or discussion of capital structure optimization — this tone in combination with deteriorating ratios constitutes a Watch Negative support signal. DISTRESSED tone encompasses explicit liquidity management disclosures, covenant waiver requests, debt exchange discussions, or phrases such as "exploring strategic alternatives" — this tone independently triggers mandatory Watch Negative consideration regardless of market or ratio signals. Guidance directional change (RAISED, MAINTAINED, LOWERED, or WITHDRAWN) is extracted separately from tone and must be included in the output because guidance changes are a discrete credit event. All identified tone classification, guidance direction, and trigger phrases must appear in the structured output JSON for Agent 004 to incorporate in the memo rationale.`,
   },
 
   // ── Agent 003: Peer Benchmarking Agent ─────────────────────────────────────
   {
-    name: "Peer Cohort Selection",
-    description: "Applies Fitch's peer selection methodology to identify an appropriate comparison cohort: sector-first selection with rating band fallback, capped at 8 issuers.",
+    name: "Peer Group Analysis",
+    description: "Applies Fitch's peer group methodology to identify and characterize the most appropriate issuer comparison set, using sector-first selection with rating band fallback, capped at 8 issuers.",
     domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
     tags: ["peer_selection", "cohort", "fitch_methodology", "benchmarking"],
     yamlFrontmatter: { skillId: "fitch-rw-peer-cohort-construction", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_peer_cohort", "get_rating_distribution"] },
-    markdownBody: `## Peer Cohort Selection — Fitch Methodology v3.1
+    markdownBody: `## Peer Group Analysis — Fitch Methodology v3.1
 
 Peer Cohort Selection applies Fitch's standardized peer selection methodology to construct a comparison set of rated issuers appropriate for benchmarking the anchor issuer's credit metrics and relative positioning. The primary selection rule is sector-first: issuers are drawn from the same GICS sub-industry and must be within plus or minus two rating notches of the anchor, ensuring that the cohort is both operationally comparable and in a similar credit risk tier. If the primary sector produces fewer than three qualifying peers, the algorithm expands the notch band to plus or minus four notches; if three peers still cannot be identified within sector, it falls back to the nearest adjacent sector with the smallest operational divergence. The anchor issuer is never included in its own comparison cohort, as self-inclusion would bias all percentile calculations. Maximum cohort size is capped at eight issuers to maintain analytical tractability and prevent dilution of idiosyncratic signals by macro peer noise. When cross-sector comparison is required due to insufficient same-sector coverage, this must be explicitly disclosed in the memo rationale to allow committee reviewers to appropriately discount the peer positioning signal. The resulting cohort identifiers, sectors, and ratings must be enumerated in the output JSON for downstream ratio benchmarking by Ratio Percentile Ranking.`,
   },
   {
-    name: "Ratio Percentile Ranking",
-    description: "Computes P25/median/P75 quartile benchmarks for key credit ratios across a rated peer cohort and determines anchor issuer's percentile position to support Watch Negative recommendations.",
+    name: "Financial Ratio Benchmarking",
+    description: "Computes P25/median/P75 quartile benchmarks for key Fitch credit ratios across the peer group and determines the anchor issuer's percentile position to support Watch Negative recommendations.",
     domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
     tags: ["ratio_benchmarks", "quartile", "peer_comparison", "fitch"],
     yamlFrontmatter: { skillId: "fitch-rw-quartile-benchmarking", trustTier: "platform-provided", complexity: "advanced", contextMode: "summary", allowedTools: ["get_ratio_benchmarks"] },
-    markdownBody: `## Ratio Percentile Ranking
+    markdownBody: `## Financial Ratio Benchmarking
 
 Ratio Percentile Ranking computes P25, P50, and P75 quartile benchmarks for the three primary Fitch credit metrics — Net Debt/EBITDA, EBIT Interest Coverage, and FCF/Gross Debt — across the peer cohort constructed by Peer Cohort Selection, then positions the anchor issuer at its exact percentile rank within each distribution. Net Debt/EBITDA carries the highest analytical weight (40%) because it is the primary leverage metric in Fitch's IG corporate rating factor model; EBIT Interest Coverage carries 35% weight as it directly measures debt servicing capacity from operations; and FCF/Gross Debt carries 25% weight as the most forward-looking indicator of organic deleveraging potential. An anchor issuer in the bottom quartile (0th to 25th percentile) on any single metric, combined with a deteriorating absolute trend, constitutes a Watch Negative support signal; an issuer in the bottom quartile on two or more metrics constitutes a strong Watch Negative recommendation. The BELOW_MEDIAN classification (25th to 50th percentile) warrants monitoring but not immediate action in the absence of additional market or filing signals. An issuer in the top half of the peer cohort (above median) does not receive a Watch Negative recommendation from peer benchmarking alone, unless absolute ratio values have deteriorated below the Fitch BBB- threshold regardless of relative peer position. All three percentile ranks, the composite overall tier, and the resulting watch implication must be reported in the output JSON.`,
   },
   {
-    name: "Sector Credit Positioning",
-    description: "Determines whether issuer credit deterioration is idiosyncratic or sector-wide — a critical distinction that affects Rating Watch urgency and the scope of any potential rating action.",
+    name: "Outlier Detection",
+    description: "Identifies whether an issuer is a statistical outlier within its peer group — either deteriorating idiosyncratically or leading a sector trend — to determine Rating Watch scope and urgency.",
     domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
     tags: ["sector_analysis", "idiosyncratic", "relative_positioning", "rating_watch_scope"],
     yamlFrontmatter: { skillId: "fitch-rw-sector-credit-analysis", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["compute_relative_position"] },
-    markdownBody: `## Sector Credit Positioning
+    markdownBody: `## Outlier Detection
 
 Sector Credit Positioning determines whether an issuer's credit deterioration is idiosyncratic — unique to that company's specific operational or financial profile — or sector-wide, driven by macro or industry forces affecting multiple peers simultaneously. This distinction is critical because it changes the urgency, scope, and framing of any resulting Rating Watch placement. An IDIOSYNCRATIC classification, where the anchor issuer's ratios and market signals are deteriorating while peer medians are stable or improving, supports a focused single-issuer Watch Negative recommendation and requires the memo to explain the company-specific catalyst. A SECTOR_WIDE classification, where three or more cohort peers show concurrent deterioration in the same direction, indicates a systemic pressure and may require Fitch to consider a broader sector review; however, a single-issuer Watch can still be placed if the anchor is deteriorating faster or more severely than peers. A MIXED classification — where the anchor is leading or amplifying a nascent sector trend — warrants a Watch Negative with explicit sector commentary to alert committee reviewers to potential knock-on actions. The skill also flags when the anchor issuer is operating at the bottom of the investment-grade rating band (BBB-), because any further deterioration risks a cliff-effect downgrade into high-yield territory that has disproportionate balance sheet and covenant implications. All deterioration type classifications, peer direction indicators, and the resulting watch implication must be included in the output JSON.`,
   },
@@ -491,26 +491,26 @@ Sector Credit Positioning determines whether an issuer's credit deterioration is
 Evidence Citation assembles quantitative evidence from Agents 001, 002, and 003 into a structured Fitch Rating Action Memo that satisfies the committee submission requirements for a Rating Watch Negative placement. The memo opens with a definitive action summary — "Fitch Ratings places [Issuer] on Rating Watch Negative at [Current Rating]" — followed by a concise rationale section that cites a maximum of three quantitative evidence bullets, one each representing the market signal, fundamental deterioration, and peer positioning findings. Each evidence bullet must reference specific numerical values from tool output (for example, "CDS 30-day widening of 28 bps" or "Net Debt/EBITDA of 4.2x, breaching the 4.5x BBB- threshold") rather than general qualitative statements, because committee reviewers require traceable quantitative anchors. The memo must include a sensitivity analysis section specifying the precise conditions under which the Watch would resolve to a downgrade versus an affirmation, providing the analytical basis for the 6-month resolution timeline mandated by Fitch Watch policy. When deterioration has been classified as sector-wide, the memo must include a brief sector commentary paragraph to alert committee reviewers that other issuers may warrant review. The agent must use definitive language for Watch trigger citations — avoiding "may," "could," or "might" — because Rating Watch placements represent affirmative analytical conclusions, not hedged possibilities. All cited numerical values must match the tool output JSON verbatim and be referenced by agent source (Market Signal Scanner, Filing Intelligence, Peer Benchmarking) to support the audit trail.`,
   },
   {
-    name: "Committee Submission Protocol",
-    description: "Manages Fitch rating committee submissions: queue depth monitoring, approval track selection (standard vs. expedited), decision retrieval, and dissenting vote escalation handling.",
+    name: "Fitch Methodology Application",
+    description: "Applies Fitch's rating committee submission methodology: queue validation, approval track selection (standard vs. expedited), decision retrieval, and dissenting vote escalation handling.",
     domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
     tags: ["committee", "workflow", "approval", "governance", "fitch"],
     yamlFrontmatter: { skillId: "fitch-rw-committee-workflow", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["get_validator_queue", "get_committee_decision"] },
-    markdownBody: `## Committee Submission Protocol
+    markdownBody: `## Fitch Methodology Application
 
 Committee Submission Protocol manages the end-to-end rating committee approval workflow for a Rating Watch action, from initial queue validation through decision retrieval and dissenting vote handling. Before submitting any memo, the agent must check the committee queue depth using the get_validator_queue tool; if queue depth exceeds the threshold for standard processing, the submission should be flagged for priority routing to avoid Watch placement delays that would themselves constitute a regulatory compliance risk. The EXPEDITED approval track, which compresses the review window from 24 hours to 2 hours, is mandated when any of the following conditions are met: CDS spread widening exceeding 30 basis points in 30 days, year-to-date equity decline exceeding 20%, or management disclosure of a covenant waiver or active liquidity management program. The submit_rating_memo call must include the issuer identifier, proposed action type, current rating, structured rationale text, and urgency classification, all drawn from the Evidence Citation skill output; incomplete submissions will be rejected by the validator without entering the approval queue. After submission, the agent must call get_committee_decision with the returned memo_id to retrieve the APPROVED, CONDITIONAL, or REJECTED outcome before proceeding to regulatory filing, because filing a disclosure before committee approval is a compliance violation. If the decision includes any dissenting votes (vote count greater than zero), the agent must flag this in its output for human review and append supporting analysis before the memo can proceed to regulatory disclosure.`,
   },
   {
-    name: "Regulatory Filing Execution",
-    description: "Executes mandatory regulatory disclosure filings for Rating Watch actions under SEC Rule 17g-7 and EU CRA III Article 11, with timing compliance and 7-year record retention.",
+    name: "Structured Report Generation",
+    description: "Generates and files structured regulatory disclosure reports for Rating Watch actions under SEC Rule 17g-7 and EU CRA III Article 11, with timing compliance and 7-year record retention.",
     domain: "credit_ratings",
     industry: "financial_services",
     version: "1.0.0",
     tags: ["sec_17g7", "eu_cra_iii", "disclosure_execution", "compliance", "fitch"],
     yamlFrontmatter: { skillId: "fitch-rw-disclosure-execution", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["log_regulatory_disclosure"] },
-    markdownBody: `## Regulatory Filing Execution
+    markdownBody: `## Structured Report Generation
 
 Regulatory Filing Execution manages the mandatory post-committee disclosure obligations that arise whenever Fitch places an issuer on Rating Watch, ensuring compliance with both U.S. and EU credit rating agency regulatory frameworks. SEC Rule 17g-7 requires nationally recognized statistical rating organizations to disclose rating methodology, the form of the rating, and the assumptions underlying the action within 24 hours of committee approval for standard actions, or within 4 hours for expedited actions involving market-sensitive issuers. EU CRA III Article 11 requires publication of the rating action on the ESMA CEREP platform, with identical timing constraints, whenever the issuer has material debt listed on EU-regulated markets. The log_regulatory_disclosure tool must be called once per applicable jurisdiction, and for dual-listed issuers such as Boeing Co., both SEC-17g-7 and EU-CRA-III-Art11 disclosures must be filed independently and recorded with separate filing identifiers. The agent must confirm that committee_decision equals APPROVED before initiating any disclosure filing, because premature disclosure constitutes a regulatory violation that triggers enforcement review under both jurisdictions. All disclosure filing identifiers, submission timestamps, and the regulatory citation (SEC-17g-7 or EU-CRA-III-Art11) must be recorded in the output JSON and retained in the Fitch audit log for a minimum of seven years per Fitch records management policy, providing the evidentiary trail required for regulatory examination.`,
   },
@@ -1200,9 +1200,13 @@ export async function getFitchRWAgentRuns(_req: Request, res: Response): Promise
         }
 
         const allRuns = await storage.getAgentRuntimeRuns(agentId).catch((): Awaited<ReturnType<typeof storage.getAgentRuntimeRuns>> => []);
+        // Return the most recent run regardless of status (completed or failed) so the UI
+        // always shows the latest execution result even when the run did not succeed.
+        const getRunTime = (run: (typeof allRuns)[number]) =>
+          new Date(run.completedAt ?? run.startedAt ?? 0).getTime();
         const lastRun = allRuns
-          .filter(r => r.status === "completed" && r.completedAt)
-          .sort((a, b) => new Date(b.completedAt!).getTime() - new Date(a.completedAt!).getTime())[0] ?? null;
+          .filter(r => r.startedAt || r.completedAt)
+          .sort((a, b) => getRunTime(b) - getRunTime(a))[0] ?? null;
 
         return {
           key:           def.key,
