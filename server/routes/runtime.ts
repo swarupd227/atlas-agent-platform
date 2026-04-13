@@ -83,6 +83,9 @@ import {
   type RuntimeProgressEvent,
 } from "../agent-runtime";
 import { getProvider, getDefaultProvider, getAvailableProviders, type LLMProvider } from "../llm-provider";
+import { PIIMaskingEngine, DEFAULT_ENTITY_TYPES, type MaskingReport } from "../services/pii/pii-masking-engine";
+import { PIIRehydrationEngine } from "../services/pii/pii-rehydration-engine";
+import { piiMaskingConfigs, piiMaskingRuns } from "@shared/schema";
 import { hearstLiveRunHandler, ensureHearstAgents } from "../hearst-live-run";
 import { fitchLiveRunHandler, ensureFitchAgents, getFitchPipelineAgentNames, getFitchAgentIdByName } from "../fitch-live-run";
 import { seedPartnerPortalRegistry, PARTNER_PORTAL_REGISTRY_SERVER_NAME } from "../seed-blackrock2-partner-portal";
@@ -14087,6 +14090,143 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
           });
           return res.status(500).json({ error: `Composite stage DAG failed: ${dagErr.message}` });
         }
+      }
+
+      // ── pii_mask stage ─────────────────────────────────────────────────────
+      if (currentStage.stageType === "pii_mask") {
+        const piiStart = performance.now();
+        const [piiConfig] = await db.select().from(piiMaskingConfigs)
+          .where(eq(piiMaskingConfigs.pipelineId, pipeline.id))
+          .limit(1);
+
+        const inputField: string  = currentStage.config?.inputField  || piiConfig?.inputField  || "artifact_texts";
+        const outputField: string = currentStage.config?.outputField || piiConfig?.outputField || "masked_artifact_texts";
+        const reportField: string = currentStage.config?.reportField || piiConfig?.reportField || "pii_masking_reports";
+
+        const rawInput = currentStateObj[inputField];
+        const inputTexts: Array<{ text: string; artifactId: string }> = Array.isArray(rawInput)
+          ? rawInput.map((t: any, i: number) => ({ text: typeof t === "string" ? t : JSON.stringify(t), artifactId: `artifact_${i}` }))
+          : typeof rawInput === "string" ? [{ text: rawInput, artifactId: "artifact_0" }] : [];
+
+        const engine = new PIIMaskingEngine({
+          engine: "regex",
+          entityTypes: (piiConfig?.entityTypes as string[] | null) || DEFAULT_ENTITY_TYPES,
+          customPatterns: (piiConfig?.customPatterns as any[] | null) || [],
+          failOnError: piiConfig?.failOnError ?? true,
+        });
+
+        let results: Array<{ maskedText: string; report: MaskingReport }> = [];
+        try {
+          results = inputTexts.length ? await engine.maskBatch(inputTexts) : [];
+        } catch (maskErr: any) {
+          if (piiConfig?.failOnError !== false) throw maskErr;
+          results = inputTexts.map(item => ({
+            maskedText: item.text,
+            report: { artifactId: item.artifactId, entitiesFound: {}, totalReplacements: 0, engine: "regex", maskedAt: new Date().toISOString(), durationMs: 0, tokenMap: {} },
+          }));
+        }
+
+        const rehydrationEngine = new PIIRehydrationEngine();
+        const mergedTokenMap    = rehydrationEngine.mergeTokenMaps(results.map(r => r.report));
+        const sanitizedReports  = rehydrationEngine.sanitizeReportsForStorage(results.map(r => r.report));
+        const entityBreakdown   = rehydrationEngine.aggregateEntityCounts(results.map(r => r.report));
+        const totalReplacements = results.reduce((s, r) => s + r.report.totalReplacements, 0);
+        const maskedTexts       = results.map(r => r.maskedText);
+        const durationMs        = Math.round(performance.now() - piiStart);
+
+        // Merge masked outputs + ephemeral token map into workflow state
+        const stateUpdates: Record<string, any> = {
+          [outputField]: inputTexts.length === 1 ? maskedTexts[0] : maskedTexts,
+          [reportField]: sanitizedReports,
+          _pii_token_map: mergedTokenMap,   // ephemeral — stays in currentState, not checkpoints
+        };
+        if (stateEnabled) {
+          const { merged: newState } = mergeIntoWorkflowState(currentStateObj, stateUpdates, wfSchemaFields, currentStage.label);
+          currentStateObj = newState;
+          await storage.updatePipelineRun(run.id, { currentState: currentStateObj } as any, { atomicIncrementStateVersion: true });
+        } else {
+          currentStateObj = { ...currentStateObj, ...stateUpdates };
+        }
+
+        // Persist sanitized run record (no token maps stored)
+        await db.insert(piiMaskingRuns).values({
+          pipelineRunId: run.id,
+          configId: piiConfig?.id || null,
+          engineUsed: "regex",
+          artifactCount: inputTexts.length,
+          totalReplacements,
+          entityBreakdown: entityBreakdown as any,
+          durationMs,
+          artifactReports: sanitizedReports as any,
+          rehydrationApplied: false,
+          rehydrationTokens: 0,
+          rehydrationFields: [] as any,
+          status: "completed",
+        });
+
+        return res.json({
+          output: `PII Masking complete — ${inputTexts.length} artifact(s), ${totalReplacements} replacement(s) across ${Object.keys(entityBreakdown).length} entity type(s). Duration: ${durationMs}ms.`,
+          requiresApproval: false,
+          piiMaskingResult: { artifactCount: inputTexts.length, totalReplacements, entityBreakdown, durationMs, outputField, reportField },
+          ...(stateEnabled ? { workflowState: currentStateObj } : {}),
+        });
+      }
+
+      // ── pii_rehydrate stage ─────────────────────────────────────────────────
+      if (currentStage.stageType === "pii_rehydrate") {
+        const piiStart = performance.now();
+        const [piiConfig] = await db.select().from(piiMaskingConfigs)
+          .where(eq(piiMaskingConfigs.pipelineId, pipeline.id))
+          .limit(1);
+
+        const tokenMap        = (currentStateObj._pii_token_map as Record<string, string> | null) || {};
+        const rehydrationFields: string[] = (currentStage.config as any)?.rehydrationFields
+          || (piiConfig?.rehydrationFields as string[] | null)
+          || [];
+        const tokenCount = Object.keys(tokenMap).length;
+
+        const rehydrationEngine = new PIIRehydrationEngine();
+        let rehydrationTokens = 0;
+
+        if (tokenCount > 0 && rehydrationFields.length > 0) {
+          currentStateObj = rehydrationEngine.rehydrateStateFields(currentStateObj, rehydrationFields, tokenMap);
+          rehydrationTokens = tokenCount;
+        }
+
+        // Remove ephemeral token map from state after rehydration
+        const { _pii_token_map: _dropped, ...cleanState } = currentStateObj;
+        currentStateObj = cleanState;
+        const durationMs = Math.round(performance.now() - piiStart);
+
+        if (stateEnabled) {
+          const { merged: newState } = mergeIntoWorkflowState(
+            ((run as any).currentState as Record<string, any>) || {},
+            currentStateObj,
+            wfSchemaFields,
+            currentStage.label,
+          );
+          currentStateObj = newState;
+          await storage.updatePipelineRun(run.id, { currentState: currentStateObj } as any, { atomicIncrementStateVersion: true });
+        }
+
+        // Update the most recent masking run record for this pipeline run
+        await db.execute(sql`
+          UPDATE pii_masking_runs SET
+            rehydration_applied = TRUE,
+            rehydration_tokens  = ${rehydrationTokens},
+            rehydration_fields  = ${JSON.stringify(rehydrationFields)}::jsonb
+          WHERE id = (
+            SELECT id FROM pii_masking_runs WHERE pipeline_run_id = ${run.id}
+            ORDER BY created_at DESC LIMIT 1
+          )
+        `);
+
+        return res.json({
+          output: `PII Rehydration complete — ${rehydrationTokens} token(s) restored across ${rehydrationFields.length} field path(s). Token map cleared. Duration: ${durationMs}ms.`,
+          requiresApproval: false,
+          piiRehydrationResult: { rehydrationTokens, rehydrationFields, durationMs, tokenMapCleared: true },
+          ...(stateEnabled ? { workflowState: currentStateObj } : {}),
+        });
       }
 
       const agent = currentStage.agentId ? await storage.getAgent(currentStage.agentId, getOrgId(req)) : null;

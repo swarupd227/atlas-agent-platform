@@ -7,6 +7,8 @@ import type { AgentPipeline, PipelineRun, Agent } from "@shared/schema";
 import { StructuredInterruptReview } from "@/components/structured-interrupt-review";
 import { InterruptDefConfigurator } from "@/components/interrupt-def-configurator";
 import { InterruptHistoryTimeline } from "@/components/interrupt-history-timeline";
+import { PiiMaskingConfigPanel } from "@/components/pii-masking-config-panel";
+import { PiiMaskingDashboard } from "@/components/pii-masking-dashboard";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -71,13 +73,14 @@ import {
   RotateCcw,
   ChevronRight,
   GitCompare,
+  ShieldOff,
 } from "lucide-react";
 
 interface PipelineStage {
   id: string;
   agentId: string | null;
   label: string;
-  stageType: "agent" | "approval_gate" | "parallel_group" | "composite";
+  stageType: "agent" | "approval_gate" | "parallel_group" | "composite" | "pii_mask" | "pii_rehydrate";
   order: number;
   parentGroupId?: string;
   children?: string[];
@@ -457,7 +460,7 @@ export default function Pipelines() {
   const [addStageOpen, setAddStageOpen] = useState(false);
   const [newStageLabel, setNewStageLabel] = useState("");
   const [newStageAgentId, setNewStageAgentId] = useState<string | null>(null);
-  const [newStageType, setNewStageType] = useState<"agent" | "approval_gate" | "composite">("agent");
+  const [newStageType, setNewStageType] = useState<"agent" | "approval_gate" | "composite" | "pii_mask" | "pii_rehydrate">("agent");
   const [newStageTeamAgentId, setNewStageTeamAgentId] = useState<string | null>(null);
   const [newStageErrorStrategy, setNewStageErrorStrategy] = useState<"fail_fast" | "best_effort">("fail_fast");
 
@@ -905,9 +908,13 @@ export default function Pipelines() {
     onError: (e: unknown) => toast({ title: "Restore failed", description: e instanceof Error ? e.message : "Unknown error", variant: "destructive" }),
   });
 
-  function handleAddStage(type: "agent" | "approval_gate" | "composite") {
+  function handleAddStage(type: "agent" | "approval_gate" | "composite" | "pii_mask" | "pii_rehydrate") {
     setNewStageType(type);
-    setNewStageLabel(type === "agent" ? "Agent Stage" : type === "composite" ? "Composite Stage" : "Approval Gate");
+    const labelMap: Record<string, string> = {
+      agent: "Agent Stage", composite: "Composite Stage", approval_gate: "Approval Gate",
+      pii_mask: "PII Masking", pii_rehydrate: "PII Rehydration",
+    };
+    setNewStageLabel(labelMap[type] || "Stage");
     setNewStageAgentId(null);
     setNewStageTeamAgentId(null);
     setNewStageErrorStrategy("fail_fast");
@@ -1084,7 +1091,8 @@ export default function Pipelines() {
     if (!selectedPipeline) return;
     const currentStages = (selectedPipeline.stages as PipelineStage[]) || [];
     const topLevel = currentStages.filter((s) => !s.parentGroupId);
-    const defaultLabel = newStageType === "agent" ? "Agent Stage" : newStageType === "composite" ? "Composite Stage" : "Approval Gate";
+    const stageLabelMap: Record<string, string> = { agent: "Agent Stage", composite: "Composite Stage", approval_gate: "Approval Gate", pii_mask: "PII Masking", pii_rehydrate: "PII Rehydration" };
+    const defaultLabel = stageLabelMap[newStageType] || "Stage";
     const newStage: PipelineStage = {
       id: generateId(),
       agentId: newStageType === "agent" ? newStageAgentId : null,
@@ -1404,6 +1412,10 @@ export default function Pipelines() {
             <Play className="w-3.5 h-3.5 mr-1.5" />
             Runs
           </TabsTrigger>
+          <TabsTrigger value="pii" data-testid="tab-pii">
+            <ShieldOff className="w-3.5 h-3.5 mr-1.5" />
+            PII
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="designer" className="mt-4">
@@ -1588,6 +1600,10 @@ export default function Pipelines() {
                             <div className="mt-0.5">
                               {stage.stageType === "approval_gate" ? (
                                 <ShieldCheck className="w-5 h-5 text-amber-600 dark:text-amber-400" />
+                              ) : stage.stageType === "pii_mask" ? (
+                                <ShieldOff className="w-5 h-5 text-rose-600 dark:text-rose-400" />
+                              ) : stage.stageType === "pii_rehydrate" ? (
+                                <ShieldAlert className="w-5 h-5 text-purple-600 dark:text-purple-400" />
                               ) : (
                                 <Bot className="w-5 h-5 text-blue-600 dark:text-blue-400" />
                               )}
@@ -1596,7 +1612,10 @@ export default function Pipelines() {
                               <div className="flex items-center gap-2">
                                 <span className="text-xs text-muted-foreground">Stage {index + 1}</span>
                                 <Badge variant="outline" className="text-[10px]">
-                                  {stage.stageType === "approval_gate" ? "Approval Gate" : "Agent"}
+                                  {stage.stageType === "approval_gate" ? "Approval Gate"
+                                    : stage.stageType === "pii_mask" ? "PII Mask"
+                                    : stage.stageType === "pii_rehydrate" ? "PII Rehydrate"
+                                    : "Agent"}
                                 </Badge>
                               </div>
                               <p className="text-sm font-medium mt-0.5" data-testid={`text-stage-label-${stage.id}`}>
@@ -1611,6 +1630,18 @@ export default function Pipelines() {
                                 <div className="flex items-center gap-1.5 mt-1">
                                   <ShieldCheck className="w-3 h-3 text-amber-600 dark:text-amber-400" />
                                   <span className="text-xs text-muted-foreground">Human Approval Required</span>
+                                </div>
+                              )}
+                              {stage.stageType === "pii_mask" && (
+                                <div className="flex items-center gap-1.5 mt-1">
+                                  <ShieldOff className="w-3 h-3 text-rose-600 dark:text-rose-400" />
+                                  <span className="text-xs text-muted-foreground">Masks PII in workflow state</span>
+                                </div>
+                              )}
+                              {stage.stageType === "pii_rehydrate" && (
+                                <div className="flex items-center gap-1.5 mt-1">
+                                  <ShieldAlert className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+                                  <span className="text-xs text-muted-foreground">Restores original values from token map</span>
                                 </div>
                               )}
                             </div>
@@ -1671,6 +1702,14 @@ export default function Pipelines() {
                   <DropdownMenuItem onClick={() => handleAddStage("composite")} data-testid="menu-add-composite-stage">
                     <Network className="w-4 h-4 mr-2" />
                     Add Composite Stage
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleAddStage("pii_mask")} data-testid="menu-add-pii-mask">
+                    <ShieldOff className="w-4 h-4 mr-2" />
+                    Add PII Masking Stage
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleAddStage("pii_rehydrate")} data-testid="menu-add-pii-rehydrate">
+                    <ShieldAlert className="w-4 h-4 mr-2" />
+                    Add PII Rehydration Stage
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -1949,10 +1988,22 @@ export default function Pipelines() {
                                       <span className="text-xs text-muted-foreground">Human Approval Required</span>
                                     </div>
                                   )}
+                                  {stage.stageType === "pii_mask" && (
+                                    <div className="flex items-center gap-1.5 mt-0.5">
+                                      <ShieldOff className="w-3 h-3 text-rose-600 dark:text-rose-400" />
+                                      <span className="text-xs text-muted-foreground">PII Masking</span>
+                                    </div>
+                                  )}
+                                  {stage.stageType === "pii_rehydrate" && (
+                                    <div className="flex items-center gap-1.5 mt-0.5">
+                                      <ShieldAlert className="w-3 h-3 text-purple-600 dark:text-purple-400" />
+                                      <span className="text-xs text-muted-foreground">PII Rehydration</span>
+                                    </div>
+                                  )}
                                 </div>
                               </div>
                               <div className="flex items-center gap-1">
-                                {isCurrent && (stage.stageType === "agent" || stage.stageType === "composite") && (status === "running" || status === "pending") && (
+                                {isCurrent && (stage.stageType === "agent" || stage.stageType === "composite" || stage.stageType === "pii_mask" || stage.stageType === "pii_rehydrate") && (status === "running" || status === "pending") && (
                                   <Button
                                     variant="outline"
                                     size="sm"
@@ -2162,6 +2213,10 @@ export default function Pipelines() {
 
                             {stage.stageType === "composite" && (dagRunIds[`${activeRun.id}_${stage.id}`] || result?.dagRunId) && (
                               <DAGExecutionView dagRunId={(dagRunIds[`${activeRun.id}_${stage.id}`] || result?.dagRunId)!} />
+                            )}
+
+                            {(stage.stageType === "pii_mask" || stage.stageType === "pii_rehydrate") && result?.status === "completed" && (
+                              <PiiMaskingDashboard pipelineRunId={activeRun.id} />
                             )}
 
                             {result?.duration != null && (
@@ -2554,13 +2609,32 @@ export default function Pipelines() {
             </div>
           )}
         </TabsContent>
+
+        <TabsContent value="pii" className="mt-4">
+          <ScrollArea className="h-[calc(100vh-240px)]">
+            <div className="px-1">
+              {selectedPipelineId ? (
+                <PiiMaskingConfigPanel pipelineId={selectedPipelineId} />
+              ) : (
+                <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
+                  <ShieldOff className="w-8 h-8 mb-3 opacity-40" />
+                  <p className="text-sm">Select a pipeline to configure PII masking</p>
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+        </TabsContent>
       </Tabs>
 
       <Dialog open={addStageOpen} onOpenChange={setAddStageOpen}>
         <DialogContent data-testid="dialog-add-stage">
           <DialogHeader>
             <DialogTitle>
-              {newStageType === "agent" ? "Add Agent Stage" : newStageType === "composite" ? "Add Composite Stage" : "Add Approval Gate"}
+              {newStageType === "agent" ? "Add Agent Stage"
+                : newStageType === "composite" ? "Add Composite Stage"
+                : newStageType === "pii_mask" ? "Add PII Masking Stage"
+                : newStageType === "pii_rehydrate" ? "Add PII Rehydration Stage"
+                : "Add Approval Gate"}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
