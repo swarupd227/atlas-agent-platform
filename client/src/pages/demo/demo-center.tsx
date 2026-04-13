@@ -136,6 +136,22 @@ const DEMOS: Demo[] = [
     tags: ["Risk Monitoring", "Early Warning", "Portfolio Analytics"],
   },
   {
+    id: "fitch-rw-rating-watch",
+    title: "Automated Rating Watch Intelligence",
+    client: "Fitch Ratings",
+    description:
+      "SCN-1.1: Four live AI agents screen 847 IG corporate issuers in real time, flag Boeing Co. (BA) for CDS spread widening (+42 bps) and fundamental deterioration, and autonomously draft a BBB- Rating Watch Negative committee memo — from market signal to approval queue in under 4 minutes.",
+    industry: "Financial Services",
+    industryId: "financial_services",
+    route: "/demo/fitch-rw",
+    icon: Shield,
+    iconColor: "#1B5FAA",
+    duration: "8 min",
+    screens: 4,
+    tags: ["Credit Ratings", "Rating Watch", "CDS Analysis", "Memo Generation"],
+    badge: "SCN-1.1",
+  },
+  {
     id: "blackbook-valuation",
     title: "Valuation Intelligence Platform",
     client: "Black Book",

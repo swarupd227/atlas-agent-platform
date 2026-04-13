@@ -1312,6 +1312,14 @@ export async function getFitchRWAgentRuns(_req: Request, res: Response): Promise
 
 // ─── Setup endpoint handler ───────────────────────────────────────────────────
 
+export async function fitchRWResetHandler(_req: Request, res: Response): Promise<void> {
+  try {
+    res.json({ success: true, message: "Fitch RW demo reset." });
+  } catch (err: unknown) {
+    res.status(500).json({ success: false, error: err instanceof Error ? err.message : "Reset failed" });
+  }
+}
+
 export async function fitchRWSetupHandler(_req: Request, res: Response): Promise<void> {
   try {
     _fitchRWSetupDone = false;
