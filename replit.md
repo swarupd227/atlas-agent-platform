@@ -137,6 +137,58 @@ The Nous Agent Orchestrator uses a modern web stack: React, Vite, Tailwind CSS, 
 ### Export Frameworks (agent-export.tsx)
 Generic (ReAct Agent Loop), LangGraph, CrewAI, AutoGen, Semantic Kernel, Azure AI Foundry, OpenAI Assistants API, AWS Bedrock, Vertex AI, n8n, Databricks.
 Python-only frameworks (foundry, autogen, semantic-kernel) auto-switch language to Python via `useEffect`.
+---
+
+## Advantive SCN-1.1 — Packaging Scheduling Demo
+
+**Demo**: Predictive Production Scheduling & Capacity Optimization (Packaging Manufacturing vertical)
+**Client**: Advantive | **Plant**: Westfield Packaging (corrugated)
+**Route**: `/demo/pkg-sched` | **Demo Center card**: teal `#00838F`, 8 min, 3 screens
+
+### Architecture
+| File | Purpose |
+|---|---|
+| `server/pkg-sched-shared-defs.ts` | Canonical defs: 4 agents, 12 skills, 3 KBs, 6 policies, 15 ontology concepts, 4 MCP server defs |
+| `server/pkg-sched-live-run.ts` | SSE handler + `ensurePackagingSchedAgents()` (lazy init on first request) |
+| `server/mock-mcp/pkg-kiwiplan-esp.ts` | Mock Kiwiplan ESP — order queue, RUSH orders, delivery risk, substrate validation, shift context |
+| `server/mock-mcp/pkg-kiwiplan-machine.ts` | Mock Kiwiplan Machine — machine availability, roll stock, changeover matrix, OEE estimation |
+| `server/mock-mcp/pkg-schedule-optimizer.ts` | Mock Schedule Optimizer — constraint solver (3 alternatives), Pareto ranking, evaluation |
+| `server/mock-mcp/pkg-schedule-proposal.ts` | Mock Proposal/Approval — Gantt format, KPI projections, approval queue, Kiwiplan commit |
+| `client/src/pages/demo/pkg-sched-constants.ts` | Frontend hook, state types, constants |
+| `client/src/pages/demo/pkg-sched-s1-orders.tsx` | Screen 1: Order intelligence + capacity map |
+| `client/src/pages/demo/pkg-sched-s2-optimize.tsx` | Screen 2: 3 alternatives + Pareto ranking |
+| `client/src/pages/demo/pkg-sched-s3-proposal.tsx` | Screen 3: Gantt + KPI projections + approval + Kiwiplan commit |
+| `client/src/pages/demo/pkg-sched-demo.tsx` | Main wrapper with SSE log panel |
+| `scripts/migrate-pkg-sched-to-prod.ts` | Idempotent production migration (6 steps) |
+
+### SSE Endpoints
+- `GET /demo-api/pkg-sched/live-run` — SSE stream (4-agent pipeline, real LLM calls)
+- `GET /demo-api/pkg-sched/agent-runs` — Per-agent run history
+- `POST /demo-api/pkg-sched/reset` — Reset pipeline state
+
+### Mock MCP Base Paths
+- `/api/mock/pkg-kiwiplan-esp` — Order intel & shift context
+- `/api/mock/pkg-kiwiplan-machine` — Machine & inventory data
+- `/api/mock/pkg-schedule-optimizer` — Schedule optimization
+- `/api/mock/pkg-schedule-proposal` — Proposal, approval & Kiwiplan commit
+
+### Agents (4)
+| Code | Name | Role |
+|---|---|---|
+| PKG-001 | Production Order Intelligence Agent | Analyses 47-order queue, RUSH risk, substrate validation |
+| PKG-002 | Capacity & Constraint Mapping Agent | Maps 8-machine capacity, roll stock, changeover matrix |
+| PKG-003 | Schedule Optimization Agent | Generates 3 alternatives (ALT-A wins: OEE +11.2%, OTIF +4 orders) |
+| PKG-004 | Schedule Proposal & Approval Agent | Formats Gantt, publishes for approval, commits to Kiwiplan |
+
+### Key Result
+Alternative A wins: OEE 71→82.2% (+11.2pp), OTIF +4 orders, changeovers -3, all 3 RUSH orders on time.
+Kiwiplan Schedule ID: `KWP-SCHED-2026-0415-D`
+
+### Important Notes
+- **Lazy initialization**: `ensurePackagingSchedAgents()` called on first SSE request (not at startup), to avoid race with `setDefaultOrgId`.
+- **Zero simulation mandate**: Real OpenAI `gpt-4.1` calls only. No fallbacks, no fake delays.
+- **Model**: `openai/gpt-4.1`, `autonomyMode: "autonomous"`, `maxToolIterations: 6`
+
 ### OTC Agent Fix Script
 - `scripts/fix-otc-agents-complete.mjs` — Comprehensive PATCH for both OTC agents to populate all missing fields: blueprintJson (12-node workflow), toolsConfig (MCP servers + allowed tools), ontologyTags (6 domain concepts), policyBindings (6 policies linked), evalBindings (2 eval suites with schedule), memoryRagConfig, permissionsConfig, memoryGovernanceRules (3 rules), maturityScore, costPerRun, rollbackPlan. Parameterized: `node scripts/fix-otc-agents-complete.mjs [BASE_URL]`. Run without args for dev, supply prod URL for production.
 - `scripts/fix-otc-agent-tasks.mjs` — Patches `runtimeConfig.prompt` for both OTC agents to populate the "Agent Task" section in the UI. Uses labeled sections (Role/Goal/Workflow Steps/Available Tools/KPIs/Expected Impact/Compliance/Constraints/Error Handling/Schedule). Parameterized for any env.

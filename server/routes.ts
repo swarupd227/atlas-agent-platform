@@ -49,6 +49,10 @@ import fitchRwApprovalGateRouter from "./mock-mcp/fitch-rw-approval-gate";
 import otcOrderOmsRouter from "./mock-mcp/otc-order-oms";
 import otcOrderCreditRouter from "./mock-mcp/otc-order-credit";
 import otcOrderInventoryRouter from "./mock-mcp/otc-order-inventory";
+import pkgKiwiplanEspRouter from "./mock-mcp/pkg-kiwiplan-esp";
+import pkgKiwiplanMachineRouter from "./mock-mcp/pkg-kiwiplan-machine";
+import pkgScheduleOptimizerRouter from "./mock-mcp/pkg-schedule-optimizer";
+import pkgScheduleProposalRouter from "./mock-mcp/pkg-schedule-proposal";
 import { bbLiveRunHandler, getBBAgentRuns, getBBOutcomeData, getBBSelfHealingStatus, resetBBDemo, ensureBBAgents } from "./blackbook-live-run";
 import { registerMockMcpServers } from "./mock-mcp/register";
 import piiRouter from "./routes/pii";
@@ -167,6 +171,10 @@ export async function registerRoutes(
   app.use("/api/mock/otc-order-oms", otcOrderOmsRouter);
   app.use("/api/mock/otc-order-credit", otcOrderCreditRouter);
   app.use("/api/mock/otc-order-inventory", otcOrderInventoryRouter);
+  app.use("/api/mock/pkg-kiwiplan-esp", pkgKiwiplanEspRouter);
+  app.use("/api/mock/pkg-kiwiplan-machine", pkgKiwiplanMachineRouter);
+  app.use("/api/mock/pkg-schedule-optimizer", pkgScheduleOptimizerRouter);
+  app.use("/api/mock/pkg-schedule-proposal", pkgScheduleProposalRouter);
 
   app.get("/demo-api/blackbook/live-run",    bbLiveRunHandler);
   app.get("/demo-api/blackbook/agent-runs",  getBBAgentRuns);
@@ -238,6 +246,7 @@ export async function registerRoutes(
   ensureFitchAgents().catch((err: any) => console.error("[startup] ensureFitchAgents:", err?.message));
   ensureBBAgents().catch((err: any) => console.error("[startup] ensureBBAgents:", err?.message));
   // OTC Order agents use lazy initialization (ensureOtcOrderAgents is called inside the live-run handler)
+  // PKG Sched agents use lazy initialization (ensurePackagingSchedAgents is called inside pkgSchedLiveRunHandler)
 
   // Backfill AAR configs for all already-deployed agents
   backfillAarConfigs().catch((err: any) => console.error("[startup] backfillAarConfigs:", err?.message));

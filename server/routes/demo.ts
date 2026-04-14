@@ -5,6 +5,7 @@ import { fitchRWLiveRunHandler, fitchRWSetupHandler, fitchRWResetHandler, getFit
 import { littlerLiveRunHandler } from "../littler-live-run";
 import { otcQuoteLiveRunHandler } from "../otc-quote-live-run";
 import { otcOrderLiveRunHandler, getOtcOrderAgentRuns, resetOtcOrderDemo, ensureOtcOrderAgents } from "../otc-order-live-run";
+import { pkgSchedLiveRunHandler, resetPkgSchedDemo, getPkgSchedAgentRuns } from "../pkg-sched-live-run";
 
 import { seedPartnerPortalRegistry } from "../seed-blackrock2-partner-portal";
 import { storage } from "../storage";
@@ -1197,6 +1198,33 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
 
   // ============================================================
   // END OTC ORDER DEMO ROUTES
+  // ============================================================
+
+  // ============================================================
+  // ADVANTIVE SCN-1.1 — PACKAGING SCHEDULING DEMO ROUTES
+  // ============================================================
+
+  // GET /demo-api/pkg-sched/live-run  — SSE stream (4-agent pipeline)
+  router.get("/demo-api/pkg-sched/live-run",   pkgSchedLiveRunHandler);
+
+  // GET /demo-api/pkg-sched/agent-runs  — Per-agent run history
+  router.get("/demo-api/pkg-sched/agent-runs", async (_req, res) => {
+    try {
+      const runs = await getPkgSchedAgentRuns();
+      return res.json({ runs });
+    } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST /demo-api/pkg-sched/reset  — Reset pipeline state
+  router.post("/demo-api/pkg-sched/reset", (_req, res) => {
+    resetPkgSchedDemo();
+    return res.json({ ok: true, message: "PKG scheduling demo state reset." });
+  });
+
+  // ============================================================
+  // END ADVANTIVE SCN-1.1 PACKAGING SCHEDULING DEMO ROUTES
   // ============================================================
 
 

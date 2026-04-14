@@ -216,6 +216,23 @@ const DEMOS: Demo[] = [
     badge: "New",
   },
   {
+    id: "pkg-sched",
+    title: "Predictive Production Scheduling & Capacity Optimization",
+    client: "Advantive",
+    description:
+      "Westfield Packaging corrugated plant — Day Shift (07:00–15:00), 47 orders, 8 machines, 3 RUSH orders at delivery risk, B-Flute roll stock at 62%. PKG-001 (Order Intelligence) + PKG-002 (Capacity Mapper) analyse in parallel → PKG-003 generates 3 schedule alternatives → Alternative A: OEE +11.2pp (71→82.2%), OTIF +4 orders, changeovers -3, all RUSH orders covered. PKG-004 formats the Gantt proposal, publishes for plant planner approval, and commits Kiwiplan Schedule ID: KWP-SCHED-2026-0415-D.",
+    industry: "Manufacturing",
+    industryId: "manufacturing",
+    stage: "Production Planning",
+    route: "/demo/pkg-sched",
+    icon: Factory,
+    iconColor: "#00838F",
+    duration: "8 min",
+    screens: 3,
+    tags: ["Scheduling", "OEE", "OTIF", "Kiwiplan", "Corrugated Packaging", "Capacity Optimization"],
+    badge: "New",
+  },
+  {
     id: "sh-healthcare",
     title: "Clinical Data Integrity Self-Healing",
     client: "SH-HEALTH-001",
