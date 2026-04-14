@@ -726,18 +726,21 @@ export async function ensureFitchRWAgents(): Promise<void> {
 
   const allConcepts = await storage.getOntologyConcepts("financial_services").catch((): Awaited<ReturnType<typeof storage.getOntologyConcepts>> => []);
   const existingConceptLabels = new Set(allConcepts.map(c => c.label));
+  const { randomUUID } = await import("crypto");
   for (const concept of ONTOLOGY_CONCEPTS) {
     if (existingConceptLabels.has(concept.label)) continue;
     await storage.createOntologyConcept({
+      id:            randomUUID(),          // required — no DB default on this column
+      industryId:    "financial_services",  // correct field name (not "industry")
+      ontologyName:  "Fitch Rating Watch",  // required notNull field
       label:         concept.label,
       category:      concept.category,
       description:   concept.description,
-      industry:      "financial_services",
       tags:          concept.tags,
-      status:        "active",
-      properties:    {},
+      properties:    [],
       relationships: [],
       synonyms:      [],
+      source:        "industry-standard",
     });
   }
 
