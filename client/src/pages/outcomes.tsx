@@ -22,6 +22,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -46,7 +47,7 @@ import {
   RiskHeatBadge,
 } from "@/components/outcome-cockpit";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
-import { usePermission, PermissionGate } from "@/components/role-provider";
+import { usePermission, PermissionGate, useRole } from "@/components/role-provider";
 import { useIndustry } from "@/components/industry-provider";
 
 import { useToast } from "@/hooks/use-toast";
@@ -189,6 +190,7 @@ export default function Outcomes() {
   const [expandedKpis, setExpandedKpis] = useState(false);
   const { toast } = useToast();
   const outcomesPerm = usePermission("create_modify_outcomes");
+  const { isBusinessMode } = useRole();
   const { industry } = useIndustry();
   const industryId = industry?.id || "";
 
@@ -368,6 +370,197 @@ export default function Outcomes() {
             <Card key={i}><CardContent className="p-4"><Skeleton className="h-20 w-full" /></CardContent></Card>
           ))}
         </div>
+      </div>
+    );
+  }
+
+  if (isBusinessMode) {
+    const businessSorted = [...(outcomes || [])].sort((a, b) => {
+      const dateA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const dateB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return dateB - dateA;
+    });
+
+    function getBusinessStatus(outcomeId: string): "on-track" | "at-risk" | "paused" {
+      const outcomeKpis = kpis?.filter((k) => k.outcomeId === outcomeId) || [];
+      const outcomeObj = outcomes?.find((o) => o.id === outcomeId);
+      if (outcomeObj?.status === "paused") return "paused";
+      if (outcomeKpis.length === 0) return "on-track";
+      const avgPct = outcomeKpis.reduce((s, k) => s + (k.target > 0 ? ((k.currentValue || 0) / k.target) * 100 : 100), 0) / outcomeKpis.length;
+      return avgPct >= 75 ? "on-track" : "at-risk";
+    }
+
+    const statusConfig = {
+      "on-track": { label: "On Track", pillCls: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/20", barCls: "bg-emerald-500" },
+      "at-risk": { label: "At Risk", pillCls: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/20", barCls: "bg-amber-500" },
+      "paused": { label: "Paused", pillCls: "bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20", barCls: "bg-slate-400" },
+    };
+
+    const activeCount = businessSorted.filter((o) => o.status === "active" || o.status === "agents_assigned").length;
+    const atRiskCount = businessSorted.filter((o) => getBusinessStatus(o.id) === "at-risk").length;
+    const totalValue = invoices?.filter((i) => i.status === "paid").reduce((s, i) => s + (i.amount || 0), 0) || 0;
+
+    return (
+      <div className="flex flex-col gap-5 p-6" data-testid="page-outcomes">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div className="flex flex-col gap-1">
+            <h1 className="text-xl font-semibold tracking-tight" data-testid="text-page-title">Your AI Initiatives</h1>
+            <p className="text-sm text-muted-foreground">
+              {activeCount} running{atRiskCount > 0 && (
+                <span className="ml-1.5 text-amber-600 dark:text-amber-400 font-medium">· {atRiskCount} need{atRiskCount === 1 ? "s" : ""} attention</span>
+              )}
+            </p>
+          </div>
+          <Button onClick={() => navigate("/outcomes/discover")} data-testid="button-start-outcome">
+            <Plus className="w-4 h-4 mr-1.5" />
+            Start a new outcome
+          </Button>
+        </div>
+
+        <div className="grid grid-cols-2 xl:grid-cols-3 gap-3" data-testid="section-business-summary">
+          <div className="flex items-center gap-3 px-4 py-3 rounded-lg border bg-card">
+            <div className="flex items-center justify-center w-8 h-8 rounded-md bg-primary/10 shrink-0">
+              <Target className="w-4 h-4 text-primary" />
+            </div>
+            <div className="flex flex-col min-w-0">
+              <span className="text-xs text-muted-foreground">Active initiatives</span>
+              <span className="text-xl font-semibold text-primary">{activeCount}</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 px-4 py-3 rounded-lg border bg-card">
+            <div className="flex items-center justify-center w-8 h-8 rounded-md bg-emerald-500/10 shrink-0">
+              <DollarSign className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+            </div>
+            <div className="flex flex-col min-w-0">
+              <span className="text-xs text-muted-foreground">Value generated</span>
+              <span className="text-xl font-semibold text-emerald-600 dark:text-emerald-400">
+                {totalValue > 0 ? `$${Math.round(totalValue).toLocaleString()}` : "—"}
+              </span>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 px-4 py-3 rounded-lg border bg-card col-span-2 xl:col-span-1">
+            <div className="flex items-center justify-center w-8 h-8 rounded-md bg-amber-500/10 shrink-0">
+              <BarChart3 className="w-4 h-4 text-amber-600 dark:text-amber-400" />
+            </div>
+            <div className="flex flex-col min-w-0">
+              <span className="text-xs text-muted-foreground">Overall goal attainment</span>
+              <span className="text-xl font-semibold">{overallAttainment.toFixed(0)}%</span>
+            </div>
+          </div>
+        </div>
+
+        {businessSorted.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 gap-4" data-testid="empty-state-outcomes">
+            <div className="flex items-center justify-center w-14 h-14 rounded-md bg-primary/10">
+              <Target className="w-7 h-7 text-primary" />
+            </div>
+            <div className="text-center flex flex-col gap-1">
+              <p className="text-base font-medium">No AI initiatives yet</p>
+              <p className="text-sm text-muted-foreground max-w-md">
+                Start by defining an outcome — what business goal should AI help you achieve?
+              </p>
+            </div>
+            <Button onClick={() => navigate("/outcomes/discover")} data-testid="button-create-first-outcome">
+              <Sparkles className="w-4 h-4 mr-1.5" />
+              Start a new outcome
+            </Button>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <h2 className="text-sm font-semibold text-foreground">All initiatives</h2>
+            <div className="flex flex-col gap-2" data-testid="section-business-outcomes">
+              {businessSorted.map((outcome) => {
+                const outcomeKpis = kpis?.filter((k) => k.outcomeId === outcome.id) || [];
+                const status = getBusinessStatus(outcome.id);
+                const cfg = statusConfig[status];
+                const avgPct = outcomeKpis.length
+                  ? Math.round(outcomeKpis.reduce((s, k) => s + (k.target > 0 ? Math.min(100, ((k.currentValue || 0) / k.target) * 100) : 100), 0) / outcomeKpis.length)
+                  : 0;
+                const topKpi = outcomeKpis[0];
+                const outcomeInvoices = (invoices || []).filter((i) => i.outcomeId === outcome.id && i.status === "paid");
+                const valueGenerated = outcomeInvoices.reduce((s, i) => s + (i.amount || 0), 0);
+
+                return (
+                  <Link key={outcome.id} href={`/outcomes/${outcome.id}`}>
+                    <div
+                      className="rounded-lg border bg-card px-4 py-3 hover:bg-accent/20 cursor-pointer transition-colors"
+                      data-testid={`card-outcome-business-${outcome.id}`}
+                    >
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                            <span className="text-sm font-semibold truncate">{outcome.name}</span>
+                            <span className={`text-[10px] px-2 py-0.5 rounded-full border font-medium ${cfg.pillCls}`}>{cfg.label}</span>
+                          </div>
+                          {topKpi && (
+                            <p className="text-xs text-muted-foreground">
+                              Goal: {topKpi.name} — currently at{" "}
+                              <span className="font-medium text-foreground">{(topKpi.currentValue || 0).toLocaleString()} {topKpi.unit}</span>
+                              {" "}(target: {topKpi.target.toLocaleString()})
+                            </p>
+                          )}
+                        </div>
+                        <div className="text-right shrink-0 flex flex-col items-end gap-0.5">
+                          <span className={`text-lg font-bold ${status === "at-risk" ? "text-amber-600 dark:text-amber-400" : status === "paused" ? "text-muted-foreground" : "text-emerald-600 dark:text-emerald-400"}`}>
+                            {avgPct}%
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">to target</span>
+                          {valueGenerated > 0 && (
+                            <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400">${Math.round(valueGenerated).toLocaleString()} generated</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                        <div className={`h-1.5 rounded-full transition-all ${cfg.barCls}`} style={{ width: `${Math.min(avgPct, 100)}%` }} />
+                      </div>
+                      {outcomeKpis.length > 1 && (
+                        <div className="flex items-center gap-3 mt-2 pt-2 border-t">
+                          {outcomeKpis.slice(0, 3).map((k) => {
+                            const pct = k.target > 0 ? Math.min(100, ((k.currentValue || 0) / k.target) * 100) : 0;
+                            return (
+                              <div key={k.id} className="flex items-center gap-1 text-xs text-muted-foreground">
+                                {pct >= 75
+                                  ? <TrendingUp className="w-3 h-3 text-emerald-500 shrink-0" />
+                                  : <TrendingDown className="w-3 h-3 text-amber-500 shrink-0" />}
+                                <span className="truncate max-w-[120px]">{k.name}</span>
+                              </div>
+                            );
+                          })}
+                          <ArrowRight className="w-3 h-3 text-muted-foreground ml-auto shrink-0" />
+                        </div>
+                      )}
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <Dialog open={!!deleteConfirmId} onOpenChange={(open) => { if (!open) setDeleteConfirmId(null); }}>
+          <DialogContent className="max-w-sm" data-testid="dialog-delete-outcome">
+            <DialogHeader>
+              <DialogTitle className="text-base">Remove Initiative</DialogTitle>
+            </DialogHeader>
+            <div className="flex flex-col gap-3">
+              <p className="text-sm text-muted-foreground">
+                Are you sure you want to remove <span className="font-medium text-foreground">{deleteConfirmOutcome?.name}</span>? All associated data will be removed.
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" size="sm" onClick={() => setDeleteConfirmId(null)} data-testid="button-cancel-delete">Cancel</Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={deleteMutation.isPending}
+                  onClick={() => { if (deleteConfirmId) deleteMutation.mutate(deleteConfirmId); }}
+                  data-testid="button-confirm-delete"
+                >
+                  {deleteMutation.isPending ? "Removing..." : "Remove"}
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     );
   }

@@ -110,7 +110,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { StatCard } from "@/components/stat-card";
 import { ProgressRing } from "@/components/outcome-cockpit";
 import { useIndustry } from "@/components/industry-provider";
-import { usePermission } from "@/components/role-provider";
+import { usePermission, useRole } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { OutcomeContract, KpiDefinition, Approval, OutcomeEvent, Agent, Policy, Skill, OntologyConcept } from "@shared/schema";
@@ -412,6 +412,8 @@ export default function OutcomeDetail() {
   const outcomeId = params?.id;
   const { toast } = useToast();
   const { industry } = useIndustry();
+  const { isBusinessMode } = useRole();
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
   const initialTab = searchParams?.get("tab") === "agent-map" ? "agent-map" : "kpi-delivery";
   const initialTemplateId = searchParams?.get("template") || null;
@@ -1234,13 +1236,17 @@ export default function OutcomeDetail() {
               </form>
             </DialogContent>
           </Dialog>
-          <Button variant="outline" onClick={recomputeKpis} disabled={recomputing} data-testid="button-recompute-now">
-            <RefreshCw className={`w-4 h-4 mr-1.5 ${recomputing ? "animate-spin" : ""}`} />
-            {recomputing ? "Recomputing..." : "Recompute"}
-          </Button>
-          <Button variant="outline" onClick={exportAuditBundle} data-testid="button-export-audit-bundle">
-            <Download className="w-4 h-4 mr-1.5" /> Export Audit
-          </Button>
+          {!isBusinessMode && (
+            <Button variant="outline" onClick={recomputeKpis} disabled={recomputing} data-testid="button-recompute-now">
+              <RefreshCw className={`w-4 h-4 mr-1.5 ${recomputing ? "animate-spin" : ""}`} />
+              {recomputing ? "Recomputing..." : "Recompute"}
+            </Button>
+          )}
+          {!isBusinessMode && (
+            <Button variant="outline" onClick={exportAuditBundle} data-testid="button-export-audit-bundle">
+              <Download className="w-4 h-4 mr-1.5" /> Export Audit
+            </Button>
+          )}
           <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
             <DialogTrigger asChild>
               <Button variant="outline" className="text-red-500 hover:text-red-600 hover:bg-red-500/10 border-red-200 dark:border-red-800" data-testid="button-delete-outcome">
@@ -1759,7 +1765,101 @@ export default function OutcomeDetail() {
         );
       })()}
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+      {isBusinessMode && (() => {
+        const bStatus: "on-track" | "at-risk" | "paused" = outcome.status === "paused" ? "paused" : avgProgress >= 75 ? "on-track" : "at-risk";
+        const bStatusConfig = {
+          "on-track": { label: "On Track", cls: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/20", dotCls: "bg-emerald-500" },
+          "at-risk": { label: "At Risk", cls: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/20", dotCls: "bg-amber-500" },
+          "paused": { label: "Paused", cls: "bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20", dotCls: "bg-slate-400" },
+        }[bStatus];
+        const roi = outcome.roiEstimate as { annualizedSavingsMin: number; annualizedSavingsMax: number; paybackPeriodMonths: number | null; assumptionsSummary: string } | null | undefined;
+        const fmtK = (n: number) => n >= 1000000 ? `$${(n / 1000000).toFixed(1)}M` : `$${Math.round(n / 1000)}K`;
+
+        const narrativeParts: string[] = [];
+        if (kpis && kpis.length > 0) {
+          const topKpi = kpis[0];
+          const pct = topKpi.target > 0 ? Math.round(((topKpi.currentValue || 0) / topKpi.target) * 100) : 0;
+          narrativeParts.push(`Your Digital Workers are delivering against "${topKpi.name}" — currently at ${pct}% of target.`);
+        }
+        if (boundAgents.length > 0) {
+          narrativeParts.push(`${boundAgents.length} Digital Worker${boundAgents.length !== 1 ? "s" : ""} ${boundAgents.length === 1 ? "is" : "are"} actively running.`);
+        }
+        if (estimatedRevenue > 0) {
+          narrativeParts.push(`Estimated value generated: ${outcome.currency || "USD"} ${estimatedRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}.`);
+        }
+        if (bStatus === "at-risk") {
+          narrativeParts.push("Some goals need attention — review the details below.");
+        }
+        const narrative = narrativeParts.join(" ");
+
+        return (
+          <div className="rounded-lg border bg-card px-5 py-4 flex flex-col gap-4" data-testid="section-business-summary">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-3">
+                <span className={`text-[11px] px-2.5 py-1 rounded-full border font-semibold ${bStatusConfig.cls}`}>{bStatusConfig.label}</span>
+                <span className="text-sm font-semibold text-foreground">Overall Progress: {Math.round(avgProgress)}%</span>
+              </div>
+              {roi && roi.annualizedSavingsMin != null && (
+                <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400" data-testid="text-business-roi">
+                  <TrendingUp className="w-3.5 h-3.5" />
+                  {fmtK(roi.annualizedSavingsMin)} – {fmtK(roi.annualizedSavingsMax)} / yr estimated
+                </span>
+              )}
+            </div>
+
+            {narrative && (
+              <p className="text-sm text-muted-foreground leading-relaxed" data-testid="text-business-narrative">{narrative}</p>
+            )}
+
+            {kpis && kpis.length > 0 && (
+              <div className="flex flex-col gap-2.5" data-testid="section-business-kpi-bars">
+                {kpis.map((kpi) => {
+                  const pct = kpiProgress(kpi);
+                  const isOnTrack = pct >= 75;
+                  return (
+                    <div key={kpi.id} className="flex flex-col gap-1" data-testid={`business-kpi-bar-${kpi.id}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-medium text-foreground truncate">{kpi.name}</span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className="text-xs text-muted-foreground">
+                            {(kpi.currentValue || 0).toLocaleString()} / {kpi.target.toLocaleString()} {kpi.unit}
+                          </span>
+                          <span className={`text-xs font-semibold ${isOnTrack ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
+                            {Math.round(pct)}%
+                          </span>
+                        </div>
+                      </div>
+                      <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                        <div
+                          className={`h-1.5 rounded-full transition-all ${isOnTrack ? "bg-emerald-500" : "bg-amber-500"}`}
+                          style={{ width: `${Math.min(pct, 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {isBusinessMode && (
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen(!advancedOpen)}
+          className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+          data-testid="button-toggle-advanced-details"
+        >
+          <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${advancedOpen ? "rotate-180" : ""}`} />
+          Advanced Details
+          {!advancedOpen && (
+            <span className="text-xs text-muted-foreground/60">(KPI delivery, agents, governance…)</span>
+          )}
+        </button>
+      )}
+
+      <Tabs value={activeTab} onValueChange={setActiveTab} className={`space-y-4${isBusinessMode && !advancedOpen ? " hidden" : ""}`}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="kpi-delivery" data-testid="tab-kpi-delivery">KPI Delivery</TabsTrigger>
           <TabsTrigger value="agent-map" data-testid="tab-agent-map">Agent Plan</TabsTrigger>
