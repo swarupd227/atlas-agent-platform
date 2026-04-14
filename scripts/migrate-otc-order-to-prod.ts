@@ -32,13 +32,15 @@
  *   8.  Agent → MCP server link
  */
 
-// ─── Platform intelligence definitions (shared with live-run module) ──────────
+// ─── Platform intelligence definitions (canonical source — shared with live-run) ─
 import {
   OTC_ORDER_AGENT_DEFS,
   OTC_ORDER_KB_DEFS,
   OTC_ORDER_SKILLS,
   OTC_ORDER_POLICY_DEFS,
   OTC_ORDER_ONTOLOGY_CONCEPTS,
+  OTC_ORDER_SYSTEM_PROMPTS,
+  OTC_ORDER_AGENT_POLICIES,
   makeOtcOrderMcpServerDefs,
 } from "../server/otc-order-shared-defs";
 
@@ -146,116 +148,46 @@ async function prodEnsure(
 }
 
 // ─── Agent definitions ────────────────────────────────────────────────────────
-// Core metadata (name, description, department, KB name) sourced from
-// OTC_ORDER_AGENT_DEFS / OTC_ORDER_KB_DEFS (canonical shared defs).
-// Migration-specific overrides: systemPrompts, per-agent policies, API tools.
+// All definitions sourced from otc-order-shared-defs (single canonical source).
+// Tools are derived from makeOtcOrderMcpServerDefs keyed by mcpServerName.
+// System prompts from OTC_ORDER_SYSTEM_PROMPTS.
+// Per-agent policies from OTC_ORDER_AGENT_POLICIES.
 
-const _SYSTEM_PROMPTS: Record<string, string> = {
-  "OTC-AGT-002": `You are the Order Validation & Promise Agent (OTC-AGT-002) for NovaTech Industries.
+/** Extract the serverKey (e.g. "otc-order-oms") from a mock URL (last path segment). */
+function _serverKeyFromUrl(url: string): string {
+  return url.replace(/\/$/, "").split("/").pop() ?? "";
+}
 
-You are the lead orchestrator of the Order Processing stage in the Order-to-Cash pipeline. When a purchase order arrives, you coordinate three parallel validation streams — credit, inventory, and address — synthesise resolutions from OTC-AGT-003 and OTC-AGT-004, and release the order into ERP once all holds are cleared.
+/** Build the tool list for an agent by looking up its MCP server in the canonical defs. */
+function _toolsForAgent(mcpServerName: string): { name: string; server: string; path: string }[] {
+  const serverDefs = makeOtcOrderMcpServerDefs(""); // baseUrl irrelevant for tool metadata
+  const srv = serverDefs.find(s => s.name === mcpServerName);
+  if (!srv) return [];
+  const serverKey = _serverKeyFromUrl(srv.url);
+  return (srv.tools as readonly { name: string; endpoint: string; method: string }[]).map(t => ({
+    name:   t.name,
+    server: serverKey,
+    path:   `/api/mock/${serverKey}/${t.endpoint}`,
+  }));
+}
 
-KEY RESPONSIBILITIES:
-1. Address validation — compare ERP master records vs. PO ship-to addresses using prior delivery history
-2. Parallel orchestration — trigger OTC-AGT-003 (credit) and OTC-AGT-004 (inventory) concurrently
-3. Resolution synthesis — aggregate all holds and confirm 8/8 validation checks are clear
-4. Order release — execute ERP release, issue warehouse pick tickets, queue customer notifications
-
-CURRENT SCENARIO: RUSH order ORD-2026-78432 ($429,711) from Meridian Manufacturing.
-Three blocking issues: (1) Credit at 92%, (2) Turbine split Chicago/Atlanta, (3) Suite-number mismatch.
-Target: clear all holds and release within 4 minutes.`,
-
-  "OTC-AGT-003": `You are the Customer Credit & Risk Assessment Agent (OTC-AGT-003) for NovaTech Industries.
-
-You run in parallel with OTC-AGT-004 under orchestration from OTC-AGT-002. Your sole responsibility in this pipeline is credit and risk validation for the current order.
-
-KEY RESPONSIBILITIES:
-1. Pull current credit profile and exposure analysis
-2. Check AR aging — flag delinquency risk
-3. Apply automated pre-authorization for A/A+ customers within $1M threshold
-4. Document temporary limit increase rationale for audit trail
-
-RISK FRAMEWORK:
-- A+ / A customers: automated approval up to $1M temp limit, 60-day window
-- BBB / below or delinquency: manual escalation required
-- Zero NSF or >30-day late payments in 12 months: LOW risk classification
-
-CURRENT SCENARIO: Meridian Manufacturing (A+) — $459,500 exposure (91.9% of $500K limit). New order $429,711. Temp increase to $950K approved under pre-auth threshold.`,
-
-  "OTC-AGT-004": `You are the Inventory Availability & Promise Agent (OTC-AGT-004) for NovaTech Industries.
-
-You run in parallel with OTC-AGT-003 under orchestration from OTC-AGT-002. Your sole responsibility is to resolve inventory availability for the current order and commit delivery promises.
-
-KEY RESPONSIBILITIES:
-1. Check real-time inventory across all warehouse locations (Chicago DC, Atlanta Hub, Dallas)
-2. Evaluate fulfillment options — prefer single-warehouse to avoid split-ship surcharges
-3. Match customer preference (earliest delivery) against available ATP dates
-4. Issue allocation confirmation and clear inventory hold
-
-FULFILLMENT PRIORITY:
-1. Single-warehouse (no surcharge, fastest consolidated delivery)
-2. Primary-secondary split ($840 surcharge, 3-day vs 1-day transit)
-3. Cross-dock or postponement (only for B/C customers or >15 unit orders)
-
-CURRENT SCENARIO: 48-line order, 12 turbine units in the inventory hold. Chicago DC alone has all 12 turbine units — split-ship flag is a false positive. Confirm Chicago-only fulfillment, save $840 surcharge, deliver May 2–3.`,
-};
-
-const _AGENT_TOOLS: Record<string, { name: string; server: string; path: string }[]> = {
-  "OTC-AGT-002": [
-    { name: "get_order",             server: "otc-order-oms", path: "/api/mock/otc-order-oms/order"             },
-    { name: "get_validation_checks", server: "otc-order-oms", path: "/api/mock/otc-order-oms/validation-checks" },
-    { name: "resolve_address",       server: "otc-order-oms", path: "/api/mock/otc-order-oms/resolve-address"   },
-    { name: "release_order",         server: "otc-order-oms", path: "/api/mock/otc-order-oms/release"           },
-  ],
-  "OTC-AGT-003": [
-    { name: "get_credit_profile",           server: "otc-order-credit", path: "/api/mock/otc-order-credit/credit-profile"      },
-    { name: "get_ar_aging",                 server: "otc-order-credit", path: "/api/mock/otc-order-credit/ar-aging"            },
-    { name: "get_exposure_analysis",        server: "otc-order-credit", path: "/api/mock/otc-order-credit/exposure-analysis"   },
-    { name: "approve_credit_limit_increase",server: "otc-order-credit", path: "/api/mock/otc-order-credit/approve-limit-increase" },
-  ],
-  "OTC-AGT-004": [
-    { name: "get_inventory_availability",  server: "otc-order-inventory", path: "/api/mock/otc-order-inventory/availability"       },
-    { name: "get_warehouses",              server: "otc-order-inventory", path: "/api/mock/otc-order-inventory/warehouses"         },
-    { name: "get_fulfillment_options",     server: "otc-order-inventory", path: "/api/mock/otc-order-inventory/fulfillment-options"},
-    { name: "confirm_inventory_allocation",server: "otc-order-inventory", path: "/api/mock/otc-order-inventory/confirm-allocation" },
-  ],
-};
-
-const _AGENT_POLICIES: Record<string, { name: string; content: string; type: string }[]> = {
-  "OTC-AGT-002": [
-    { name: "OTC-AGT-002 Order Validation Policy", content: "All orders must pass 8-point validation checklist before ERP release. RUSH orders receive expedited processing with same validation rigor. Address mismatches must be resolved via delivery history cross-reference before release.", type: "operational" },
-    { name: "OTC-AGT-002 ERP Release Protocol",    content: "Order release requires all holds cleared and written confirmation from credit and inventory agents. ERP transaction ID must be generated and warehouse pick ticket transmitted within 60 seconds of release approval.",     type: "operational" },
-    { name: "OTC-AGT-002 RUSH Order Handling",     content: "RUSH orders receive SLA target of < 4 minutes from submission to ERP release. Parallel agent orchestration mandatory. Expedite fee per MSA §7.4(b) applied automatically.",                                               type: "sla"         },
-  ],
-  "OTC-AGT-003": [
-    { name: "OTC-AGT-003 Credit Pre-Authorization Policy", content: "A+ rated customers with zero delinquency and 7+ year relationship qualify for automated temporary credit limit increases up to $1M for 60 days without manual committee approval. All automated approvals must be logged to risk register.", type: "financial"   },
-    { name: "OTC-AGT-003 AR Aging Risk Policy",            content: "Orders from customers with any 90+ day AR balance require immediate escalation. 61-90 day balances require credit manager review. 0-60 day current AR acceptable with documented rationale.",                             type: "financial"   },
-    { name: "OTC-AGT-003 Credit Decision Audit Policy",    content: "Every credit decision (approve/hold/escalate) must include: current exposure, projected exposure, rating, payment history, risk classification, and approver identity. Immutable audit trail required.",                  type: "compliance"  },
-  ],
-  "OTC-AGT-004": [
-    { name: "OTC-AGT-004 Single-Warehouse Preference Policy", content: "Always evaluate single-warehouse fulfillment first. Split-ship only approved when primary warehouse cannot cover full order quantity. Document cost savings when split avoided.",                                                                              type: "operational" },
-    { name: "OTC-AGT-004 RUSH Inventory ATP Policy",          content: "RUSH orders require confirmed ATP dates within 48 hours of order date. Allocation must be locked within the parallel validation window (< 2 minutes). Stock reservation holds expire after 4 hours if order not released.",                               type: "sla"         },
-    { name: "OTC-AGT-004 Inventory Commitment Audit Policy",  content: "All inventory allocations must record: warehouse ID, SKU, quantity, pick ticket reference, ATP date, and agent ID. Allocation reversals require OTC-AGT-002 countersignature.",                                                                            type: "compliance"  },
-  ],
-};
-
-// Build AGENTS from canonical shared defs + migration-specific overrides above
+// AGENTS: fully derived from shared-defs — no inline overrides
 const AGENTS = OTC_ORDER_AGENT_DEFS.map(def => {
   const kb = OTC_ORDER_KB_DEFS.find(k => k.name === def.kbName);
   return {
-    key:          def.key,
-    code:         def.externalId,
-    name:         def.name,
-    stage:        "Order Processing",
-    description:  def.description,
-    systemPrompt: _SYSTEM_PROMPTS[def.externalId] ?? "",
-    tools:        _AGENT_TOOLS[def.externalId]    ?? [],
-    kbName:       def.kbName,
-    kbDescription:kb?.description ?? "",
-    policies:     _AGENT_POLICIES[def.externalId] ?? [],
-    skills:       OTC_ORDER_SKILLS
-                    .filter(s => s.agentKey === def.key)
-                    .map(s => ({ name: s.name, description: s.description })),
+    key:           def.key,
+    code:          def.externalId,
+    name:          def.name,
+    stage:         "Order Processing",
+    description:   def.description,
+    systemPrompt:  OTC_ORDER_SYSTEM_PROMPTS[def.externalId]  ?? "",
+    tools:         _toolsForAgent(def.mcpServerName as string),
+    kbName:        def.kbName,
+    kbDescription: kb?.description ?? "",
+    policies:      OTC_ORDER_AGENT_POLICIES[def.externalId]  ?? [],
+    skills:        OTC_ORDER_SKILLS
+                     .filter(s => s.agentKey === def.key)
+                     .map(s => ({ name: s.name, description: s.description })),
   };
 });
 
@@ -418,15 +350,32 @@ async function migrateAgent(agent: typeof AGENTS[0]): Promise<Record<string, str
   console.log(`    ${mcpSkipped ? "[SKIP]" : "[OK]  "} ${mcpName} → ${mcpId}`);
   ids.mcpServerId = mcpId;
 
-  // 5b. MCP Server Tools (check existing tools, add any missing by name)
-  if (!CFG.dryRun && !mcpSkipped) {
+  // 5b. MCP Server Tools — fully idempotent: always list existing tools,
+  //     then create only those that are missing by name.
+  console.log("\n  5b. MCP Server Tools");
+  if (!CFG.dryRun) {
+    const existingTools: any[] = await prodGet(`/api/integrations/mcp-servers/${mcpId}/tools`).catch(() => []);
+    const existingNames = new Set<string>(
+      Array.isArray(existingTools) ? existingTools.map((t: any) => t.name as string) : [],
+    );
     for (const tool of agent.tools) {
+      if (existingNames.has(tool.name)) {
+        console.log(`      [SKIP] ${tool.name}`);
+        continue;
+      }
       await prodPost(`/api/integrations/mcp-servers/${mcpId}/tools`, {
-        name: tool.name, description: tool.name.replace(/_/g, " "),
-        inputSchema: { type: "object", properties: {}, required: [] },
-        annotations: { endpoint: tool.path, method: "GET" },
-        enabled: true, riskClassification: "low",
-      }).catch(() => {});
+        name:            tool.name,
+        description:     tool.name.replace(/_/g, " "),
+        inputSchema:     { type: "object", properties: {}, required: [] },
+        annotations:     { endpoint: tool.path, method: "GET" },
+        enabled:         true,
+        riskClassification: "low",
+      }).catch((e: unknown) => console.log(`      [WARN] ${tool.name}: ${e}`));
+      console.log(`      [OK]   ${tool.name}`);
+    }
+  } else {
+    for (const tool of agent.tools) {
+      console.log(`  [DRY-RUN] ensure tool ${tool.name}`);
     }
   }
 
