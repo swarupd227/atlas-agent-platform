@@ -1,0 +1,68 @@
+SCN-1.1  Predictive Production Scheduling & Capacity Optimization
+Advantive Products: Kiwiplan ERP/MES, Advantzware ERP   |   Industry: Corrugated, Folding Carton & Specialty Packaging
+🔗 Atlas ↔ Advantive Co-Existence: Kiwiplan and Advantzware remain the systems of record for all orders, production data, and shop floor transactions. Atlas agents read live order queues, machine capacity, and shift data from Kiwiplan/Advantzware via MCP, apply multi-variable optimization reasoning, and propose optimized schedules — which are reviewed and committed back into Kiwiplan by the planning team. Atlas never bypasses the ERP; it amplifies it.
+
+Business Problem
+Packaging plant schedulers at corrugated and folding carton manufacturers manually balance 50–200 daily orders across die-cutters, corrugators, laminators, and finishing lines — juggling substrate availability, order priority, maintenance windows, and delivery commitments. Manual scheduling consumes 3–5 hours daily, produces sub-optimal machine utilization (typically 65–75%), and frequently misses on-time delivery windows when order mix shifts late in the shift.
+Demo Narrative & Story Arc
+Atlas deploys a real-time scheduling intelligence pipeline that reads live state from Kiwiplan/Advantzware, optimizes the shift schedule across machines and order priority, flags material constraints before they become production stops, and submits approved schedule proposals back into the ERP — turning the planner's role from manual juggler to exception handler.
+1.	Order Intelligence Agent ingests the current order queue from Kiwiplan's ESP module — extracting order specifications, due dates, priority flags, and substrate requirements.
+2.	Capacity & Constraint Mapper reads machine availability (planned downtime, maintenance locks), active shift rosters, and roll-stock inventory from Kiwiplan's inventory modules.
+3.	Schedule Optimizer Agent applies multi-variable constraint optimization: balances OEE, changeover minimization, due-date adherence, and substrate efficiency across all available production lines.
+4.	Schedule Proposal Agent generates a human-readable optimized shift schedule with change rationale, predicted OEE improvement, and risk flags — routing to the plant scheduler for approval before Kiwiplan commit.
+
+Agent Pipeline
+Agent ID	Agent Name	Model	Role	MCP Tools / Integrations	Skills
+PKG-001	Order Intelligence Agent	claude-sonnet-4-5	Pulls live order queue from Kiwiplan ESP; extracts substrate specs, order priority, due dates, and constraint flags; identifies late-risk orders and capacity conflicts for the upcoming 48-hour window	• kiwiplan_esp_api
+• order_priority_ranker
+• substrate_constraint_extractor
+• delivery_risk_scorer	• Packaging Order Analysis
+• Substrate Requirement Mapping
+• Delivery Risk Assessment
+PKG-002	Capacity & Constraint Mapper	claude-sonnet-4-5	Reads machine availability, maintenance schedules, and roll-stock inventory from Kiwiplan; builds real-time capacity map identifying bottlenecks, changeover conflicts, and material shortfalls before they impact production	• kiwiplan_machine_api
+• maintenance_schedule_reader
+• roll_stock_inventory_api
+• constraint_map_builder	• Machine Capacity Modeling
+• Production Constraint Analysis
+• Material Availability Forecasting
+PKG-003	Schedule Optimizer Agent	claude-opus-4-5	Applies multi-variable constraint satisfaction across order priority, machine capability, changeover cost, substrate efficiency, and shift capacity; generates 2–3 ranked schedule alternatives with predicted OEE and OTIF metrics for each	• constraint_solver_engine
+• oee_estimator
+• changeover_matrix_tool
+• schedule_simulation_api	• Production Schedule Optimization
+• OEE Modeling
+• Changeover Minimization
+• Multi-constraint Balancing
+PKG-004	Schedule Proposal Agent	claude-sonnet-4-5	Formats winning schedule as human-readable proposal with Gantt-style summary, rationale per change, risk flags, and projected KPI improvements; routes to plant planner via Atlas Approvals; on approval, commits schedule back to Kiwiplan via API	• schedule_formatter
+• approval_gate_publisher
+• kiwiplan_schedule_commit_api
+• planner_notification_tool	• Schedule Communication
+• Production Plan Formatting
+• Approval Workflow Management
+
+⚙  Platform Intelligence Setup in Atlas
+Outcome Contract
+  Contract Name: Shift Schedule Optimization — Packaging Plant Operations
+  Risk Tier: Medium
+  Pricing Model: Per-shift schedule optimized; outcome bonus for OEE improvement >5% sustained over 30 days
+  KPIs: Machine OEE Improvement (target +8%) | On-Time-In-Full Delivery Rate (>95%) | Planner Time Savings (>2.5 hrs/day) | Schedule Approval Cycle Time (<30 min)
+  Drift Threshold: OEE improvement drop below 3% over 5-day rolling window triggers self-healing recalibration
+Knowledge Bases
+  Packaging Machine Capability Reference: Per-machine specifications: speed ranges, substrate compatibility, changeover times, maintenance history patterns — partitioned by plant and machine type
+  Kiwiplan Order History Archive: 2-year rolling archive of completed orders, actual vs. planned cycle times, and substrate yield data for run-time benchmarking
+  Plant Layout & Routing Reference: Plant routing rules, machine sequencing logic, and floor layout per facility for constraint-aware scheduling
+MCP Server Integrations (Advantive Product APIs)
+  Kiwiplan ERP/MES MCP: Full Kiwiplan API — Order Management (ESP), Shop Floor, Machine Status, Inventory & Logistics, Reporting modules
+  Advantzware ERP MCP: Advantzware order queue, inventory levels, production scheduling, and financial data API
+  Atlas Approval Gate MCP: Routes completed schedule proposals to plant planner approval queue with OEE impact summary
+Ontology / Knowledge Graph
+  Manufacturing domain — ProductionOrder, MachineCapacity, SubstrateInventory, ChangeoverMatrix, OEEMetric
+  Packaging taxonomy — CorrugatorSpec, DieCutterConfig, LaminatorPass, FinishingLine, RollStock
+Governance & Compliance Policies
+  Planner Override Policy — all optimized schedules require plant planner approval before Kiwiplan commit; Atlas never auto-commits
+  Maintenance Lock Policy — scheduled maintenance windows are immutable constraints; optimizer cannot schedule production over them
+  Audit Trail — all schedule proposals, approval decisions, and Kiwiplan commits logged with timestamps for shift-report traceability
+Key Atlas Screens to Demo
+  Outcome Builder → Packaging Schedule Optimization via AI conversational discovery (Manufacturing industry preset)
+  Multi-Agent Pipeline Orchestrator → 4-stage scheduling pipeline with Approval Gate between PKG-003 and PKG-004
+  Monitor → Live Runs: structured schedule proposal output with Gantt summary rendering in Trace Detail
+  Approvals → Plant planner queue with schedule change rationale and KPI improvement preview
