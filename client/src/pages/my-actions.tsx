@@ -25,15 +25,22 @@ import {
   CheckCheck,
   CircleX,
   Filter,
+  ShieldAlert,
+  Zap,
 } from "lucide-react";
+import type { OutcomeContract } from "@shared/schema";
+
+type ItemCategory = "approval" | "alert" | "recommendation" | "autonomy_escalation" | "governance";
 
 interface ActionItem {
   id: string;
   source: "approval" | "alert" | "recommendation";
+  category: ItemCategory;
   sourceId: string;
   title: string;
   context: string;
   urgency: "urgent" | "today" | "this_week";
+  businessImpact: string | null;
   agentAttribution: string | null;
   agentId: string | null;
   outcomeId: string | null;
@@ -83,6 +90,34 @@ const urgencyConfig = {
   },
 };
 
+const categoryConfig: Record<ItemCategory, { label: string; icon: typeof ShieldAlert; className: string }> = {
+  autonomy_escalation: {
+    label: "Digital Worker request",
+    icon: Zap,
+    className: "bg-purple-500/10 text-purple-600 dark:text-purple-400",
+  },
+  governance: {
+    label: "Policy",
+    icon: ShieldAlert,
+    className: "bg-orange-500/10 text-orange-600 dark:text-orange-400",
+  },
+  approval: {
+    label: "Review needed",
+    icon: CheckCircle2,
+    className: "bg-muted text-muted-foreground",
+  },
+  alert: {
+    label: "Alert",
+    icon: AlertTriangle,
+    className: "bg-muted text-muted-foreground",
+  },
+  recommendation: {
+    label: "Suggestion",
+    icon: Info,
+    className: "bg-muted text-muted-foreground",
+  },
+};
+
 function actionLink(item: ActionItem): string {
   if (item.source === "approval") return `/approvals/${item.sourceId}`;
   if (item.source === "alert") return `/observability`;
@@ -92,6 +127,7 @@ function actionLink(item: ActionItem): string {
 function NeedsDecisionCard({ item }: { item: ActionItem }) {
   const { toast } = useToast();
   const cfg = urgencyConfig[item.urgency];
+  const cat = categoryConfig[item.category];
 
   const approveMutation = useMutation({
     mutationFn: async () => {
@@ -161,6 +197,14 @@ function NeedsDecisionCard({ item }: { item: ActionItem }) {
               <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
               {cfg.label}
             </span>
+            {(item.category === "autonomy_escalation" || item.category === "governance") && (
+              <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full flex items-center gap-1 ${cat.className}`}
+                data-testid={`badge-category-${item.id}`}
+              >
+                <cat.icon className="w-2.5 h-2.5" />
+                {cat.label}
+              </span>
+            )}
             {item.agentAttribution && (
               <span className="text-[10px] text-muted-foreground">
                 {item.source === "approval" ? "Needs your review" : `from ${item.agentAttribution}`}
@@ -173,6 +217,12 @@ function NeedsDecisionCard({ item }: { item: ActionItem }) {
           <p className="text-xs text-muted-foreground leading-relaxed" data-testid={`text-context-${item.id}`}>
             {item.context}
           </p>
+          {item.businessImpact && (
+            <p className="text-xs font-medium text-foreground/70 mt-1 flex items-center gap-1" data-testid={`text-impact-${item.id}`}>
+              <span className="w-1 h-1 rounded-full bg-current shrink-0" />
+              {item.businessImpact}
+            </p>
+          )}
         </div>
         <span className="text-[10px] text-muted-foreground shrink-0 mt-1">{timeAgo(item.createdAt)}</span>
       </div>
@@ -307,6 +357,12 @@ function FyiCard({ item }: { item: ActionItem }) {
         <p className="text-xs text-muted-foreground mt-0.5" data-testid={`text-fyi-context-${item.id}`}>
           {item.context}
         </p>
+        {item.businessImpact && (
+          <p className="text-xs font-medium text-foreground/70 mt-1 flex items-center gap-1" data-testid={`text-fyi-impact-${item.id}`}>
+            <span className="w-1 h-1 rounded-full bg-current shrink-0" />
+            {item.businessImpact}
+          </p>
+        )}
       </div>
       <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
         <span className="text-[10px] text-muted-foreground">{timeAgo(item.createdAt)}</span>
@@ -381,11 +437,17 @@ type UrgencyFilter = "all" | "urgent" | "today" | "this_week";
 
 export default function MyActions() {
   const [urgencyFilter, setUrgencyFilter] = useState<UrgencyFilter>("all");
+  const [outcomeFilter, setOutcomeFilter] = useState<string>("all");
 
   const { data, isLoading } = useQuery<MyActionsData>({
     queryKey: ["/api/my-actions"],
     refetchInterval: 60000,
     staleTime: 30000,
+  });
+
+  const { data: outcomes } = useQuery<OutcomeContract[]>({
+    queryKey: ["/api/outcomes"],
+    staleTime: 120000,
   });
 
   const allNeedsDecision = data?.needsDecision ?? [];
@@ -395,6 +457,7 @@ export default function MyActions() {
 
   const filterItem = (item: ActionItem) => {
     if (urgencyFilter !== "all" && item.urgency !== urgencyFilter) return false;
+    if (outcomeFilter !== "all" && item.outcomeId !== outcomeFilter) return false;
     return true;
   };
 
@@ -403,6 +466,9 @@ export default function MyActions() {
 
   const hasAnything = allNeedsDecision.length > 0 || allFyi.length > 0 || completedToday.length > 0;
   const hasFiltered = needsDecision.length > 0 || fyi.length > 0 || completedToday.length > 0;
+  const isFiltering = urgencyFilter !== "all" || outcomeFilter !== "all";
+
+  const outcomeOptions = outcomes ?? [];
 
   return (
     <div className="flex flex-col gap-6 p-6 max-w-2xl" data-testid="page-my-actions">
@@ -431,26 +497,49 @@ export default function MyActions() {
       </div>
 
       {!isLoading && hasAnything && (
-        <div className="flex items-center gap-2" data-testid="filter-bar">
+        <div className="flex items-center gap-2 flex-wrap" data-testid="filter-bar">
           <Filter className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-          <span className="text-xs text-muted-foreground">Urgency:</span>
           <Select
             value={urgencyFilter}
             onValueChange={(v) => setUrgencyFilter(v as UrgencyFilter)}
           >
-            <SelectTrigger
-              className="h-7 w-36 text-xs"
-              data-testid="select-urgency-filter"
-            >
-              <SelectValue />
+            <SelectTrigger className="h-7 w-32 text-xs" data-testid="select-urgency-filter">
+              <SelectValue placeholder="Urgency" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All</SelectItem>
-              <SelectItem value="urgent">Urgent only</SelectItem>
+              <SelectItem value="all">All urgency</SelectItem>
+              <SelectItem value="urgent">Urgent</SelectItem>
               <SelectItem value="today">Today</SelectItem>
               <SelectItem value="this_week">This week</SelectItem>
             </SelectContent>
           </Select>
+          {outcomeOptions.length > 0 && (
+            <Select
+              value={outcomeFilter}
+              onValueChange={(v) => setOutcomeFilter(v)}
+            >
+              <SelectTrigger className="h-7 w-44 text-xs" data-testid="select-outcome-filter">
+                <SelectValue placeholder="All goals" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All goals</SelectItem>
+                {outcomeOptions.map((o) => (
+                  <SelectItem key={o.id} value={o.id}>
+                    {o.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {isFiltering && (
+            <button
+              className="text-xs text-muted-foreground hover:text-foreground underline transition-colors"
+              onClick={() => { setUrgencyFilter("all"); setOutcomeFilter("all"); }}
+              data-testid="button-clear-filters"
+            >
+              Clear
+            </button>
+          )}
         </div>
       )}
 
@@ -477,13 +566,13 @@ export default function MyActions() {
         </div>
       ) : !hasFiltered ? (
         <div className="flex flex-col items-center justify-center gap-2 py-10 rounded-xl border border-dashed bg-muted/10" data-testid="empty-filtered">
-          <p className="text-sm text-muted-foreground">No items match this filter.</p>
+          <p className="text-sm text-muted-foreground">No items match these filters.</p>
           <button
             className="text-xs underline text-muted-foreground hover:text-foreground transition-colors"
-            onClick={() => setUrgencyFilter("all")}
+            onClick={() => { setUrgencyFilter("all"); setOutcomeFilter("all"); }}
             data-testid="button-clear-filter"
           >
-            Clear filter
+            Clear filters
           </button>
         </div>
       ) : (

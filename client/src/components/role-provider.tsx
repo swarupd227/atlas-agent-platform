@@ -46,7 +46,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "OO",
     description: "Defines KPIs, sees ROI, approves outcome contracts",
     icon: Target,
-    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/knowledge-bases", "/monitor", "/approvals", "/billing", "/my-actions", "/business-settings"],
+    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/knowledge-bases", "/monitor", "/approvals", "/billing", "/my-actions", "/actions", "/business-settings"],
   },
   {
     id: "agent_engineer",

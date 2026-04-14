@@ -399,13 +399,14 @@ function BusinessModeSidebar() {
 
   const isActive = (url: string) => {
     if (url === "/dashboard") return location === "/dashboard";
+    if (url === "/actions") return location === "/actions" || location === "/my-actions";
     return location.startsWith(url);
   };
 
   const navItems = [
     { title: "Home", url: "/dashboard", icon: Home },
     { title: "Outcomes", url: "/outcomes", icon: Target },
-    { title: "My Actions", url: "/my-actions", icon: CheckCircle2, badge: pendingActions > 0 ? pendingActions : undefined },
+    { title: "My Actions", url: "/actions", icon: CheckCircle2, badge: pendingActions > 0 ? pendingActions : undefined },
     { title: "Settings", url: "/business-settings", icon: Settings },
   ];
 

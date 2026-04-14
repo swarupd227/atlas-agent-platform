@@ -229,6 +229,7 @@ function DashboardRouter() {
     <Switch>
       <Route path="/dashboard" component={DashboardHome} />
       <Route path="/my-actions" component={MyActions} />
+      <Route path="/actions" component={MyActions} />
       <Route path="/business-settings" component={BusinessSettings} />
       <Route path="/outcomes" component={Outcomes} />
       <Route path="/outcomes/discover" component={OutcomeDiscover} />
