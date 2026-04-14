@@ -212,10 +212,18 @@ export function SidebarComparison() {
                   </div>
                 ))}
               </div>
-              <div className="border-t border-slate-800 px-2 py-2 mx-1.5 mb-1.5">
+              <div className="border-t border-slate-800 px-2 py-2 mx-1.5 mb-1.5 space-y-0.5">
+                <div className="px-2 py-1">
+                  <span className="text-[9px] font-medium text-slate-600 uppercase tracking-wider">Switch Mode</span>
+                </div>
+                <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-slate-500 hover:bg-slate-800 cursor-pointer">
+                  <Activity className="w-3 h-3" />
+                  <span className="text-[11px] flex-1">Operator View</span>
+                  <ChevronRight className="w-3 h-3" />
+                </div>
                 <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-slate-500 hover:bg-slate-800 cursor-pointer">
                   <MoreHorizontal className="w-3 h-3" />
-                  <span className="text-[11px] flex-1">Advanced View</span>
+                  <span className="text-[11px] flex-1">Builder / IT View</span>
                   <ChevronRight className="w-3 h-3" />
                 </div>
               </div>
@@ -223,8 +231,15 @@ export function SidebarComparison() {
 
             {/* Mode toggle concept */}
             <div className="mt-3 bg-violet-900/20 border border-violet-500/20 rounded-xl px-3 py-3">
-              <p className="text-[11px] text-violet-300 font-medium mb-1">Mode toggle (footer)</p>
-              <p className="text-[10px] text-slate-500 leading-relaxed">Persistent "Advanced View →" link in the sidebar footer lets business users escalate to the IT app when needed. No data loss, opens in new tab.</p>
+              <p className="text-[11px] text-violet-300 font-medium mb-1">3-way mode switching (footer)</p>
+              <p className="text-[10px] text-slate-500 leading-relaxed mb-1.5">Business Owner → Operator View (in-app, same vocab) or Builder/IT View (new tab, full platform). Switching up requires the matching role in your org.</p>
+              <div className="flex gap-1.5 flex-wrap">
+                <span className="text-[10px] px-2 py-0.5 bg-violet-500/10 text-violet-400 rounded-md">Business (4 items)</span>
+                <span className="text-[10px] text-slate-600">→</span>
+                <span className="text-[10px] px-2 py-0.5 bg-blue-500/10 text-blue-400 rounded-md">Operator (7 items)</span>
+                <span className="text-[10px] text-slate-600">→</span>
+                <span className="text-[10px] px-2 py-0.5 bg-slate-700 text-slate-400 rounded-md">Builder/IT (33+)</span>
+              </div>
             </div>
           </div>
 

@@ -184,13 +184,40 @@ Every Business Mode view shows a persistent but unobtrusive toggle in the footer
 
 ## 6. Mode Switching Concept
 
-The Business Mode and IT Mode are separate surfaces (separate Replit deployments) but share the same backend data. Mode switching is implemented as:
+There are three distinct modes, each a role-appropriate surface for the same underlying data:
 
-1. **Cross-domain link** — "Switch to IT View" opens `agent-lifecycle-management-platform.replit.app` in a new tab
-2. **Role preservation** — The user's role and org context are preserved via shared cookies/tokens
-3. **No data divergence** — Both modes write to the same database; no sync required
+```
+Business Owner Mode  ←→  Operator Mode  ←→  Builder / IT Mode
+     (4 nav items)          (7 nav items)        (33+ nav items)
+```
 
-Business users can always escalate to IT view. IT users can access Business Mode to understand what their clients see.
+### The Three Modes
+
+| Mode | Who | Access to switch to |
+|---|---|---|
+| **Business Owner** | VP, Director, Exec | Operator, Builder/IT |
+| **Operator** | Ops Manager, Chief of Staff | Business Owner, Builder/IT |
+| **Builder / IT** | AI Engineer, Platform Admin | Business Owner, Operator |
+
+### How Switching Works
+
+The Business Mode sidebar always shows a **"Switch Mode"** section in its footer with two links:
+- **Operator View** — expands operational monitoring (Activity, Escalations, Reports); same business vocabulary
+- **Builder / IT View** — opens the full ATLAS IT platform in a new tab
+
+Permission logic:
+- **Any user can switch down** (to a simpler view) at any time
+- **Switching up** (to a more powerful view) requires the user to have that role assigned in their org
+- If a user lacks the role for the target mode, they see the link greyed out with tooltip: "Contact your IT admin to enable access"
+
+Implementation:
+1. **Same backend, different surfaces** — All modes share the same database and API
+2. **Role stored in JWT claim** — `user.businessMode` ∈ `["business", "operator", "builder"]`
+3. **Business ↔ Operator** — In-app transition (same origin, different route prefix)
+4. **→ Builder/IT** — Cross-domain link to the IT app (`agent-lifecycle-management-platform.replit.app`)
+5. **Role preservation** — Org context and auth tokens are preserved across all transitions
+
+Business users can always escalate upward to see more. IT users can access Business Mode to understand what their clients see and verify the business-friendly experience.
 
 ---
 
