@@ -566,14 +566,14 @@ export async function ensureFitchRWAgents(): Promise<void> {
     let kb = allKbs.find(k => k.name === kbDef.name);
     if (!kb) {
       kb = await storage.createKnowledgeBase({
-        name:        kbDef.name,
-        description: kbDef.description,
-        industry:    "financial_services",
-        status:      "active",
-        sourceType:  "manual",
-        chunkingStrategy: "paragraph",
-        embeddingModel:   "text-embedding-3-small",
-        vectorDimensions: 1536,
+        name:               kbDef.name,
+        description:        kbDef.description,
+        industry:           "financial_services",
+        status:             "active",
+        embeddingModel:     "text-embedding-3-small",
+        embeddingDimensions: 1536,   // correct column name (not vectorDimensions)
+        chunkSize:          512,
+        chunkOverlap:       50,
       });
     }
     kbIdByName[kbDef.name] = kb.id;
@@ -802,17 +802,19 @@ export async function ensureFitchRWAgents(): Promise<void> {
     let bp = allBlueprints.find(b => b.name === bpDef.name);
     if (!bp) {
       bp = await storage.createBlueprint({
-        name:               bpDef.name,
-        description:        bpDef.description,
-        version:            "1.0.0",
-        status:             "active",
-        industry:           "financial_services",
-        blueprintType:      "pipeline",
-        workflowSteps:      bpDef.workflowSteps,
-        requiredTools:      bpDef.requiredTools,
-        escalationTriggers: ["CDS widening >30 bps", "Net Debt/EBITDA >4.5x", "Going concern opinion"],
-        complianceNodes:    ["SEC-17g-7", "EU-CRA-III-Art11", "MNPI-Containment", "Human-in-Loop-Gate"],
-        outputFormat:       "Rating Action Memo + JSON pipeline summary",
+        name:        bpDef.name,
+        description: bpDef.description,
+        version:     1,           // integer column — must not be a semver string
+        status:      "active",
+        patternType: "pipeline",  // patternType is the correct blueprints column
+        blueprintJson: {          // non-schema fields go here
+          industry:           "financial_services",
+          workflowSteps:      bpDef.workflowSteps,
+          requiredTools:      bpDef.requiredTools,
+          escalationTriggers: ["CDS widening >30 bps", "Net Debt/EBITDA >4.5x", "Going concern opinion"],
+          complianceNodes:    ["SEC-17g-7", "EU-CRA-III-Art11", "MNPI-Containment", "Human-in-Loop-Gate"],
+          outputFormat:       "Rating Action Memo + JSON pipeline summary",
+        },
       });
     }
     blueprintIdByKey[bpDef.key] = bp.id;
@@ -943,7 +945,6 @@ export async function ensureFitchRWAgents(): Promise<void> {
         preloadedSkills:   preloadedSkills as { skillId: string }[],
         blueprintId:       agentBlueprintId,
         complianceTags:    ["SEC-17g-7", "EU-CRA-III", "FITCH-NRSRO"],
-        industry:          "financial_services",
         policyBindings:    AGENT_POLICY_BINDINGS,
         ontologyTags:      agentOntologyTags,
         evalBindings:      [{ suiteName: agentEvalSuiteName, schedule: "weekly" }],
