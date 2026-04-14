@@ -45,8 +45,8 @@ const INVENTORY = [
       { warehouseId: "WH-ATL", onHand: 4,  available: 4,  reserved: 0, atpDate: "2026-05-04" },
     ],
     totalAvailable: 12,
-    allocationStatus: "SPLIT_SHIP",
-    splitDetail: "8 units from Chicago DC (1-day transit), 4 units surplus in Atlanta. Chicago fully covers this order.",
+    allocationStatus: "SINGLE_SOURCE",
+    splitDetail: "Chicago DC has all 8 required units. Atlanta's 4 units are surplus — ERP incorrectly flagged split-ship due to Atlanta stock visibility. Single-source from Chicago confirmed.",
   },
   {
     sku: "TX-7250-B",
@@ -146,12 +146,15 @@ const FULFILLMENT_OPTIONS = [
 router.get("/get-inventory-by-location", (_req: Request, res: Response) => {
   const allAvailable = INVENTORY.every(i => i.totalAvailable >= i.requested);
   const splitShipItems = INVENTORY.filter(i => i.allocationStatus === "SPLIT_SHIP");
+  const erpFlaggedSplitShip = ["TX-7250-A"]; // ERP incorrectly flagged due to Atlanta stock visibility
   res.json({
     orderId: "ORD-2026-78432",
     items: INVENTORY,
     warehouses: WAREHOUSES,
     allAvailable,
-    splitShipRequired: splitShipItems.length > 0,
+    splitShipRequired: false, // Chicago covers all units — split-ship unnecessary
+    erpFlaggedSplitShip,
+    erpFlagNote: "ERP system flagged TX-7250-A for split-ship due to Atlanta stock. Agent analysis confirms Chicago holds all 8 required units — Atlanta is surplus.",
     splitShipItems: splitShipItems.map(i => i.sku),
     retrievedAt: new Date().toISOString(),
   });
@@ -219,7 +222,7 @@ router.get("/availability", (_req: Request, res: Response) => {
     items: INVENTORY,
     warehouses: WAREHOUSES,
     allAvailable,
-    splitShipRequired: splitShipItems.length > 0,
+    splitShipRequired: false,
     splitShipItems: splitShipItems.map(i => i.sku),
     retrievedAt: new Date().toISOString(),
   });
@@ -266,7 +269,7 @@ router.post("/confirm-allocation", (_req: Request, res: Response) => {
 export const toolManifest = [
   {
     name: "get_inventory_by_location",
-    description: "Returns SKU-level inventory across all warehouse locations for ORD-2026-78432 (Chicago: 8+4+2+3 units, Atlanta: 4+3 units). Shows on-hand, available, reserved quantities and ATP dates.",
+    description: "Returns SKU-level inventory for ORD-2026-78432. Chicago DC: TX-7250-A ×8, TX-7250-B ×4 avail (6 on-hand), TX-7300-HD ×1, CE-CX450-ENH ×2 avail. Atlanta: TX-7250-A ×4 surplus (not needed). ERP split-ship flag for TX-7250-A is a false positive — Chicago fully covers all 12 turbine units.",
     parameters: { type: "object", properties: {}, required: [] },
   },
   {

@@ -171,11 +171,11 @@ export const CREDIT_PROFILE = {
 
 // ─── Order release downstream actions ──────────────────────────────────────
 export const RELEASE_ACTIONS = [
-  { id: "ACT-001", agentCode: "OTC-AGT-002", label: "ERP Release & Pick Tickets", detail: "ERP-TXN-2026-78432 confirmed. Pick tickets PT-CHI-7842-A/B/C issued to Chicago DC. 2-wave ship May 2–3.", icon: "server",   status: "complete" as const },
-  { id: "ACT-002", agentCode: "OTC-AGT-005", label: "Customer Confirmation",      detail: "Confirmation email queued to j.davis@meridian-mfg.com. Delivery promise: May 2–3, 2026.",                  icon: "mail",     status: "complete" as const },
-  { id: "ACT-003", agentCode: "OTC-AGT-006", label: "Invoice Draft",              detail: "Invoice $429,711 + RUSH surcharge $1,840 (2-wave freight). Pending ship confirmation.",                     icon: "file",     status: "pending"  as const },
-  { id: "ACT-004", agentCode: "OTC-AGT-007", label: "Credit Memo",                detail: "Temp limit $950K / 60 days logged to risk register. Auto-reverts Jun 13.",                                  icon: "shield",   status: "complete" as const },
-  { id: "ACT-005", agentCode: "OTC-AGT-012", label: "AR Update",                  detail: "Expected AR $200,600 inbound within 30 days — reduces exposure post-payment.",                               icon: "trending", status: "pending"  as const },
+  { id: "ACT-001", agentCode: "OTC-AGT-005", label: "Customer Order Confirmation", detail: "Confirmation email queued to j.davis@meridian-mfg.com. Delivery promise: May 2–3, 2026. ERP-TXN-2026-78432 reference included.", icon: "mail",     status: "complete" as const },
+  { id: "ACT-002", agentCode: "OTC-AGT-005", label: "Carrier Booking Confirmed",   detail: "2-wave ground booking confirmed. Chicago DC pick waves scheduled May 2 (8 units) + May 3 (4 units). Tracking IDs pending.",         icon: "truck",    status: "complete" as const },
+  { id: "ACT-003", agentCode: "OTC-AGT-007", label: "Risk Register Update",        detail: "Temp credit limit $950K / 60 days logged to risk register. Auto-reverts Jun 13, 2026. LOW risk classification applied.",            icon: "shield",   status: "complete" as const },
+  { id: "ACT-004", agentCode: "OTC-AGT-012", label: "AR Update",                   detail: "New receivable $429,711 + $1,840 RUSH surcharge created. Expected inbound within 30 days — reduces exposure post-payment.",          icon: "trending", status: "pending"  as const },
+  { id: "ACT-005", agentCode: "OTC-AGT-006", label: "Invoice Draft Scheduled",     detail: "Invoice $429,711 + RUSH surcharge $1,840 drafted. Release-to-billing triggered on first pick scan at Chicago DC.",                   icon: "file",     status: "pending"  as const },
 ];
 
 // ─── Pipeline step definitions ──────────────────────────────────────────────

@@ -197,7 +197,7 @@ FULFILLMENT PRIORITY:
 2. Primary-secondary split ($840 surcharge, 3-day vs 1-day transit)
 3. Cross-dock or postponement (only for B/C customers or >15 unit orders)
 
-CURRENT SCENARIO: 12 turbine units requested. Chicago DC alone has all 12 — split-ship unnecessary. Confirm Chicago-only fulfillment, save $840 surcharge, ship April 21.`,
+CURRENT SCENARIO: 48-line order, 12 turbine units in the inventory hold. Chicago DC alone has all 12 turbine units — split-ship flag is a false positive. Confirm Chicago-only fulfillment, save $840 surcharge, deliver May 2–3.`,
 };
 
 const _AGENT_TOOLS: Record<string, { name: string; server: string; path: string }[]> = {

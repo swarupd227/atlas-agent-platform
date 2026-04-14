@@ -9,6 +9,7 @@ interface Props {
 const ACTION_ICONS: Record<string, any> = {
   server:    Server,
   warehouse: Warehouse,
+  truck:     Truck,
   mail:      Mail,
   file:      FileText,
   shield:    Shield,
