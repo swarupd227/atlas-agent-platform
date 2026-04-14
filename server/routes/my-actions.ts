@@ -2,7 +2,7 @@ import { Router } from "express";
 import { storage } from "../storage";
 import { db } from "../db";
 import { eq, inArray } from "drizzle-orm";
-import { agentAlerts, agents, improvementRecommendations } from "@shared/schema";
+import { agentAlerts, agents, improvementRecommendations, policyExceptions, mcpElicitations } from "@shared/schema";
 import { getOrgId } from "../auth";
 
 const router = Router();
@@ -11,7 +11,7 @@ type ItemCategory = "approval" | "alert" | "recommendation" | "autonomy_escalati
 
 interface ActionItem {
   id: string;
-  source: "approval" | "alert" | "recommendation";
+  source: "approval" | "alert" | "recommendation" | "governance" | "autonomy";
   category: ItemCategory;
   sourceId: string;
   title: string;
@@ -252,21 +252,31 @@ router.get("/api/my-actions", async (req, res) => {
         .orderBy(agentAlerts.triggeredAt),
     ]);
 
-    let orgRecommendations: typeof improvementRecommendations.$inferSelect[] = [];
+    let orgAgentIds: string[] = [];
     if (orgId) {
       const orgAgents = await db
         .select({ id: agents.id })
         .from(agents)
         .where(eq(agents.organizationId, orgId));
-      const orgAgentIds = orgAgents.map((a) => a.id);
-      if (orgAgentIds.length > 0) {
-        orgRecommendations = await db
-          .select()
-          .from(improvementRecommendations)
-          .where(inArray(improvementRecommendations.agentId, orgAgentIds));
-      }
-    } else {
-      orgRecommendations = await db.select().from(improvementRecommendations);
+      orgAgentIds = orgAgents.map((a) => a.id);
+    }
+
+    let orgRecommendations: typeof improvementRecommendations.$inferSelect[] = [];
+    let orgPolicyExceptions: typeof policyExceptions.$inferSelect[] = [];
+    let orgMcpElicitations: typeof mcpElicitations.$inferSelect[] = [];
+
+    if (orgId && orgAgentIds.length > 0) {
+      [orgRecommendations, orgPolicyExceptions, orgMcpElicitations] = await Promise.all([
+        db.select().from(improvementRecommendations).where(inArray(improvementRecommendations.agentId, orgAgentIds)),
+        db.select().from(policyExceptions).where(inArray(policyExceptions.agentId, orgAgentIds)),
+        db.select().from(mcpElicitations).where(inArray(mcpElicitations.agentId, orgAgentIds)),
+      ]);
+    } else if (!orgId) {
+      [orgRecommendations, orgPolicyExceptions, orgMcpElicitations] = await Promise.all([
+        db.select().from(improvementRecommendations),
+        db.select().from(policyExceptions),
+        db.select().from(mcpElicitations),
+      ]);
     }
 
     const needsDecision: ActionItem[] = [];
@@ -412,7 +422,7 @@ router.get("/api/my-actions", async (req, res) => {
 
     for (const rec of resolvedTodayRecs) {
       const { title } = translateRecommendationType(rec.title, rec.source, "");
-      const resolvedAt = rec.appliedAt ?? rec.dismissedAt;
+      const resolvedAt = rec.appliedAt ?? rec.dismissedAt ?? rec.updatedAt;
       completedToday.push({
         id: `rec-${rec.id}`,
         source: "recommendation",
@@ -428,6 +438,46 @@ router.get("/api/my-actions", async (req, res) => {
         createdAt: rec.createdAt ? rec.createdAt.toISOString() : null,
         decidedAt: resolvedAt ? resolvedAt.toISOString() : null,
         decision: rec.status === "applied" ? "approved" : "dismissed",
+      });
+    }
+
+    for (const pe of orgPolicyExceptions) {
+      if (pe.status !== "pending") continue;
+      needsDecision.push({
+        id: `pe-${pe.id}`,
+        source: "governance",
+        category: "governance",
+        sourceId: pe.id,
+        title: `Safety rule exception requested`,
+        context: pe.reason || "An agent needs an exception to a governance guardrail. Review to confirm this is acceptable.",
+        urgency: "today",
+        businessImpact: pe.requiresExpertValidation ? "Expert validation required before approving" : null,
+        agentAttribution: null,
+        agentId: pe.agentId || null,
+        outcomeId: null,
+        createdAt: pe.createdAt ? pe.createdAt.toISOString() : null,
+      });
+    }
+
+    for (const me of orgMcpElicitations) {
+      if (me.status !== "pending") continue;
+      const toolLabel = me.toolName ? `"${me.toolName}"` : "a tool";
+      const serverLabel = me.serverName ? ` on ${me.serverName}` : "";
+      needsDecision.push({
+        id: `me-${me.id}`,
+        source: "autonomy",
+        category: "autonomy_escalation",
+        sourceId: me.id,
+        title: `Your Digital Worker wants to use ${toolLabel}${serverLabel}`,
+        context: me.reason || `A Digital Worker is requesting permission to invoke ${toolLabel}. Approve if this looks expected.`,
+        urgency: "urgent",
+        businessImpact: me.riskFlags && me.riskFlags.length > 0
+          ? `Risk flags: ${me.riskFlags.slice(0, 2).join(", ")}`
+          : null,
+        agentAttribution: null,
+        agentId: me.agentId || null,
+        outcomeId: null,
+        createdAt: me.createdAt ? me.createdAt.toISOString() : null,
       });
     }
 
@@ -465,7 +515,7 @@ router.post("/api/my-actions/decide", async (req, res) => {
   try {
     const orgId = getOrgId(req);
     const { source, sourceId, decision } = req.body as {
-      source: "approval" | "alert" | "recommendation";
+      source: "approval" | "alert" | "recommendation" | "governance" | "autonomy";
       sourceId: string;
       decision: "approved" | "rejected" | "dismissed" | "acknowledged";
     };
@@ -525,11 +575,70 @@ router.post("/api/my-actions/decide", async (req, res) => {
         }
       }
 
+      const now = new Date();
       const status = decision === "approved" ? "applied" : "dismissed";
       await db
         .update(improvementRecommendations)
-        .set({ status, updatedAt: new Date() })
+        .set({
+          status,
+          appliedAt: decision === "approved" ? now : undefined,
+          dismissedAt: decision !== "approved" ? now : undefined,
+        })
         .where(eq(improvementRecommendations.id, sourceId));
+      return res.json({ ok: true });
+    }
+
+    if (source === "governance") {
+      const rows = await db
+        .select()
+        .from(policyExceptions)
+        .where(eq(policyExceptions.id, sourceId));
+      const pe = rows[0];
+      if (!pe) return res.status(404).json({ error: "Policy exception not found" });
+
+      if (orgId && pe.agentId) {
+        const ownerRows = await db
+          .select({ id: agents.id })
+          .from(agents)
+          .where(eq(agents.organizationId, orgId));
+        const ownerIds = new Set(ownerRows.map((a) => a.id));
+        if (!ownerIds.has(pe.agentId)) {
+          return res.status(403).json({ error: "Forbidden" });
+        }
+      }
+
+      const status = decision === "approved" ? "approved" : "rejected";
+      await db
+        .update(policyExceptions)
+        .set({ status, approvedBy: decision === "approved" ? "outcome_owner" : undefined })
+        .where(eq(policyExceptions.id, sourceId));
+      return res.json({ ok: true });
+    }
+
+    if (source === "autonomy") {
+      const rows = await db
+        .select()
+        .from(mcpElicitations)
+        .where(eq(mcpElicitations.id, sourceId));
+      const me = rows[0];
+      if (!me) return res.status(404).json({ error: "Elicitation not found" });
+
+      if (orgId && me.agentId) {
+        const ownerRows = await db
+          .select({ id: agents.id })
+          .from(agents)
+          .where(eq(agents.organizationId, orgId));
+        const ownerIds = new Set(ownerRows.map((a) => a.id));
+        if (!ownerIds.has(me.agentId)) {
+          return res.status(403).json({ error: "Forbidden" });
+        }
+      }
+
+      const status = decision === "approved" ? "approved" : "rejected";
+      await db
+        .update(mcpElicitations)
+        .set({ status, decidedBy: "outcome_owner", decidedAt: new Date() })
+        .where(eq(mcpElicitations.id, sourceId));
       return res.json({ ok: true });
     }
 

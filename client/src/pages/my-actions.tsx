@@ -34,7 +34,7 @@ type ItemCategory = "approval" | "alert" | "recommendation" | "autonomy_escalati
 
 interface ActionItem {
   id: string;
-  source: "approval" | "alert" | "recommendation";
+  source: "approval" | "alert" | "recommendation" | "governance" | "autonomy";
   category: ItemCategory;
   sourceId: string;
   title: string;
@@ -150,7 +150,7 @@ function NeedsDecisionCard({ item }: { item: ActionItem }) {
       apiRequest("POST", "/api/my-actions/decide", {
         source: item.source,
         sourceId: item.sourceId,
-        decision: item.source === "approval" ? "rejected" : "dismissed",
+        decision: (item.source === "approval" || item.source === "governance" || item.source === "autonomy") ? "rejected" : "dismissed",
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/my-actions"] });
@@ -216,7 +216,7 @@ function NeedsDecisionCard({ item }: { item: ActionItem }) {
       </div>
 
       <div className="flex items-center gap-2 pl-10">
-        {item.source === "approval" ? (
+        {(item.source === "approval" || item.source === "governance" || item.source === "autonomy") ? (
           <>
             <Button
               size="sm"
