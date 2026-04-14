@@ -600,6 +600,12 @@ export async function pkgSchedLiveRunHandler(req: Request, res: Response) {
     [dep3Id, PKG_AGT_003_NAME],
     [dep4Id, PKG_AGT_004_NAME],
   ]);
+  const deploymentIdToCode = new Map<string, string>([
+    [dep1Id, "PKG-001"],
+    [dep2Id, "PKG-002"],
+    [dep3Id, "PKG-003"],
+    [dep4Id, "PKG-004"],
+  ]);
 
   let aborted = false;
 
@@ -609,11 +615,13 @@ export async function pkgSchedLiveRunHandler(req: Request, res: Response) {
   const onRuntimeEvent = (evt: { deploymentId: string; agentId: string; runId: string; result: any }) => {
     if (aborted || !activeDeploymentIds.has(evt.deploymentId)) return;
     const agentName = deploymentIdToName.get(evt.deploymentId) ?? "Atlas PKG Agent";
+    const agentCode = deploymentIdToCode.get(evt.deploymentId) ?? "PKG";
     const steps: any[] = evt.result?.steps ?? [];
     for (const step of steps) {
       if (step.type === "api_call" && step.mcpTool) {
         send("agent_event", {
           agentName,
+          agentCode,
           deploymentId: evt.deploymentId,
           runId:        evt.runId,
           type:         "tool_call_result",
