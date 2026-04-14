@@ -1,3 +1,11 @@
+## ⛔ CLOSED FEATURES — NEVER REOPEN
+
+| Feature | Status | Canonical paths | Rule |
+|---|---|---|---|
+| **Bundle Export** (`POST /api/agents/:id/export-code/bundle` + agent-export.tsx bundle UI toggle) | PERMANENTLY CLOSED ✅ | `server/routes/runtime.ts:5479` · `client/src/pages/agent-export.tsx` | NEVER plan, estimate, propose, re-implement, or reference as work-to-do. Treat as maintenance-only break/fix if regressions appear. |
+
+---
+
 # Nous Agent Orchestrator
 
 ## Overview
@@ -34,7 +42,7 @@ The Nous Agent Orchestrator uses a modern web stack: React, Vite, Tailwind CSS, 
 - **Configurable Tool Iterations**: Per-agent `maxToolIterations` setting.
 - **Deployment Activation Flow**: Pending/inactive deployments can be activated directly from the release detail page.
 - **Product Intelligence in Code Generation**: Exported code incorporates Product Intelligence data, including `maxIterations`, matched skills, KB retrieval config, outcome contract, policy module, and agent metadata.
-- **Full-Screen Export Page**: Dedicated full-screen page for agent code export with configure, preview, and deliver steps. Includes file search palette, per-file regeneration, diff view, dynamic deployment checklist, export presets, CI/CD manifest generation, and bundle export for team agents (maintenance-only break/fix only).
+- **Full-Screen Export Page**: Dedicated full-screen page for agent code export with configure, preview, and deliver steps. Includes file search palette, per-file regeneration, diff view, dynamic deployment checklist, export presets, CI/CD manifest generation, and bundle export for team agents (maintenance-only — see CLOSED FEATURES above).
 - **Table-Aware Document Chunking**: Knowledge base ingestion preserves tabular data structure from Word documents and HTML, converting tables to Markdown.
 - **Eval Dataset Transformation**: Supports structured Data Records, AI-generated evaluation data, and performance benchmarks.
 - **LLM Provider Abstraction Layer**: Multi-provider LLM support (OpenAI, Anthropic) for uniform interfaces and per-agent provider selection.
