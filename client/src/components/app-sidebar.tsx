@@ -382,20 +382,20 @@ function CollapsibleNavGroup({
   );
 }
 
-interface OverviewForBadge {
-  approvalQueue: { totalPending: number };
+interface MyActionsBadge {
+  totalUnread: number;
 }
 
 function BusinessModeSidebar() {
   const [location] = useLocation();
   const { setRole } = useRole();
 
-  const { data: overviewData } = useQuery<OverviewForBadge>({
-    queryKey: ["/api/overview"],
+  const { data: myActionsData } = useQuery<MyActionsBadge>({
+    queryKey: ["/api/my-actions"],
     refetchInterval: 60000,
     staleTime: 30000,
   });
-  const pendingActions = overviewData?.approvalQueue.totalPending ?? 0;
+  const pendingActions = myActionsData?.totalUnread ?? 0;
 
   const isActive = (url: string) => {
     if (url === "/dashboard") return location === "/dashboard";
