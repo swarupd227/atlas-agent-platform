@@ -493,24 +493,42 @@ async function migrate() {
     }
   }
 
-  // ── Done ──────────────────────────────────────────────────────────────────────
+  // ── Summary table ──────────────────────────────────────────────────────────────
+  const totalPolicies  = PKG_SCHED_POLICY_DEFS.length +
+    Object.values(PKG_SCHED_AGENT_POLICIES).reduce((n, arr) => n + arr.length, 0);
+  const totalSkills    = PKG_SCHED_SKILLS.length;
+  const totalConcepts  = PKG_SCHED_ONTOLOGY_CONCEPTS.length;
+  const totalKBs       = PKG_SCHED_KB_DEFS.length;
+  const totalMcpSvrs   = PKG_SCHED_MCP_SERVERS.length;
+  const totalBlueps    = PKG_BLUEPRINT_DEFS.length;
+  const totalAgents    = PKG_SCHED_AGENT_DEFS.length;
+
+  const pad = (label: string, n: number, note = ""): string => {
+    const l = label.padEnd(24, " ");
+    const c = String(n).padStart(4, " ");
+    return `│  ${l}${c}  ${note}`;
+  };
+
   console.log("\n┌─────────────────────────────────────────────────────────────────────────");
+  console.log(`│  ${dryRun ? "DRY-RUN" : "MIGRATION"} COMPLETE  —  Advantive SCN-1.1 · Westfield Packaging`);
+  console.log(`│  Target: ${prodUrl}  (org: ${prodOrgId})`);
+  console.log("├──────────────────────────────────────────────────────────────────────────");
+  console.log("│  Resource                 Count  Notes");
+  console.log("├──────────────────────────────────────────────────────────────────────────");
+  console.log(pad("Ontology Concepts",   totalConcepts,  "15 manufacturing domain terms"));
+  console.log(pad("Policies",            totalPolicies,  `${PKG_SCHED_POLICY_DEFS.length} global org-scoped + ${totalPolicies - PKG_SCHED_POLICY_DEFS.length} agent-scoped`));
+  console.log(pad("Knowledge Bases",     totalKBs,       "Operations / Sustainability / Quality"));
+  console.log(pad("Skills",              totalSkills,    "3 per agent (blueprint, MES integration, SLA)"));
+  console.log(pad("MCP Servers",         totalMcpSvrs,   "Kiwiplan ESP · Optimizer · Proposal · Commit"));
+  console.log(pad("Blueprints",          totalBlueps,    "1 per agent — pipeline pattern"));
+  console.log(pad("Agents",              totalAgents,    `${PKG_AGT_001_NAME.slice(0,7)} · ${PKG_AGT_002_NAME.slice(0,7)} · ${PKG_AGT_003_NAME.slice(0,7)} · ${PKG_AGT_004_NAME.slice(0,7)}`));
+  console.log(pad("Deployment Records",  totalAgents,    "1 per agent — canary / production"));
+  console.log("├──────────────────────────────────────────────────────────────────────────");
   if (dryRun) {
-    console.log("│ DRY-RUN COMPLETE — no changes were written to the platform.");
-    console.log("│ Remove --dry-run to apply the migration.");
+    console.log("│  No changes written — remove --dry-run to apply.");
   } else {
-    console.log("│ MIGRATION COMPLETE");
-    console.log("│ Advantive SCN-1.1 Predictive Production Scheduling demo is now live");
-    console.log(`│ on ${prodUrl} for org ${prodOrgId}`);
-    console.log("│");
-    console.log("│ Agents provisioned:");
-    console.log(`│   ${PKG_AGT_001_NAME}`);
-    console.log(`│   ${PKG_AGT_002_NAME}`);
-    console.log(`│   ${PKG_AGT_003_NAME}`);
-    console.log(`│   ${PKG_AGT_004_NAME}`);
-    console.log("│");
-    console.log("│ To run the live demo, navigate to the Demo Center and select");
-    console.log('│ "Predictive Production Scheduling" (Advantive · SCN-1.1).');
+    console.log("│  All resources are idempotent: existing items were skipped, not overwritten.");
+    console.log("│  To run the live demo: Demo Center → Predictive Production Scheduling.");
   }
   console.log("└─────────────────────────────────────────────────────────────────────────");
 }

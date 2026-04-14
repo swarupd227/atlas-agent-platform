@@ -436,6 +436,48 @@ Execute these steps:
 
 Present a clear summary: Gantt overview, KPI delta table, approval status, Kiwiplan Schedule ID.`;
 
+// ── Dynamic task builders (inject actual phase-1/2 outputs as context) ───────
+
+function buildPkgOptimizerTask(orderBrief: string, capacityBrief: string): string {
+  const orderCtx    = orderBrief.trim() || "(PKG-001 order intelligence brief not captured)";
+  const capacityCtx = capacityBrief.trim() || "(PKG-002 capacity constraint map not captured)";
+  return `You are PKG-003 (Schedule Optimization Agent) for Westfield Packaging Day Shift (April 15, 2026).
+
+CONTEXT FROM PKG-001 (Order Intelligence Agent) — ACTUAL OUTPUT:
+${orderCtx}
+
+CONTEXT FROM PKG-002 (Capacity & Constraint Mapping Agent) — ACTUAL OUTPUT:
+${capacityCtx}
+
+TASK: Using the above actual order intelligence brief and capacity constraint map from your parallel phase-1 agents, run the constraint-based schedule optimizer to generate 3 ranked alternative schedules and recommend the Pareto-optimal solution.
+
+Execute these steps:
+1. Call run_constraint_solver to generate 3 alternative schedules (OEE-priority, OTIF-priority, Balanced)
+2. Call evaluate_alternative for each of the 3 alternatives
+3. Call get_rush_coverage to verify RUSH order coverage in the recommended alternative
+4. Call compute_pareto_rank to rank alternatives and select the recommendation
+
+Document your recommendation clearly — Alternative A (OEE-Priority, +11.2pp OEE, +4 OTIF, all RUSH covered) is the expected winner. This recommendation is passed to PKG-004 for proposal formatting.`;
+}
+
+function buildPkgProposalTask(optimizerBrief: string): string {
+  const optimizerCtx = optimizerBrief.trim() || "(PKG-003 optimizer recommendation not captured)";
+  return `You are PKG-004 (Schedule Proposal & Approval Agent) for Westfield Packaging Day Shift (April 15, 2026).
+
+RECOMMENDATION FROM PKG-003 (Schedule Optimizer) — ACTUAL OUTPUT:
+${optimizerCtx}
+
+TASK: Using the above actual optimizer recommendation from PKG-003, format the winning schedule into a human-readable Gantt proposal, compute KPI projections vs. baseline, publish for plant planner approval, and commit to Kiwiplan.
+
+Execute these steps:
+1. Call format_gantt_proposal to generate the per-machine Gantt schedule for Alternative A
+2. Call compute_kpi_projections to quantify shift-level impact vs. baseline (OEE, OTIF, changeovers)
+3. Call publish_for_approval to submit to Plant Planner Sarah Kowalski (15-min SLA, approval gate)
+4. Call commit_to_kiwiplan to finalise the schedule (approval assumed granted in demo)
+
+Present a clear summary: Gantt overview, KPI delta table (OEE +11.2pp, OTIF +4, changeovers -3), approval status ("Awaiting Plant Planner Approval — Sarah Kowalski"), Kiwiplan Schedule ID: KWP-SCHED-2026-0415-D.`;
+}
+
 // ── Reset state ─────────────────────────────────────────────────────────────
 let _pkgSchedRunActive = false;
 
@@ -537,17 +579,25 @@ export async function pkgSchedLiveRunHandler(req: Request, res: Response) {
 
   let aborted = false;
 
-  // Forward agent_execution runtime events (OTC Order pattern: event name = "agent_execution")
+  // Forward agent_execution runtime events — parse result.steps, emit one structured
+  // agent_event per tool-call step so the frontend log shows real trace entries
+  // (OTC Order pattern: event name = "agent_execution", step type check = "api_call")
   const onRuntimeEvent = (evt: { deploymentId: string; agentId: string; runId: string; result: any }) => {
     if (aborted || !activeDeploymentIds.has(evt.deploymentId)) return;
     const agentName = deploymentIdToName.get(evt.deploymentId) ?? "Atlas PKG Agent";
-    send("agent_event", {
-      agentName,
-      deploymentId: evt.deploymentId,
-      runId:        evt.runId,
-      type:         "tool_result",
-      data:         evt.result,
-    });
+    const steps: any[] = evt.result?.steps ?? [];
+    for (const step of steps) {
+      if (step.type === "api_call" && step.mcpTool) {
+        send("agent_event", {
+          agentName,
+          deploymentId: evt.deploymentId,
+          runId:        evt.runId,
+          type:         "tool_call_result",
+          tool:         step.mcpTool,
+          label:        step.name ?? `${step.mcpTool} → ${step.status ?? "ok"}`,
+        });
+      }
+    }
   };
   runtimeEvents.on("agent_execution", onRuntimeEvent);
 
@@ -563,33 +613,48 @@ export async function pkgSchedLiveRunHandler(req: Request, res: Response) {
     phase:   1,
   });
 
+  // Extract the LLM's natural-language output from an agent run result for context injection
+  const extractAgentOutput = (result: any): string => {
+    if (result?.conversationalResponse) return String(result.conversationalResponse).slice(0, 2000);
+    const steps: any[] = result?.steps ?? [];
+    const lastAnalysis = [...steps].reverse().find((s: any) =>
+      s.status === "completed" && s.type !== "api_call" && s.output?.analysis);
+    if (lastAnalysis?.output?.analysis) return String(lastAnalysis.output.analysis).slice(0, 2000);
+    const lastTool = [...steps].reverse().find((s: any) =>
+      s.type === "api_call" && s.status === "completed");
+    if (lastTool?.output?.result) return JSON.stringify(lastTool.output.result).slice(0, 2000);
+    return "(phase completed — no structured brief captured)";
+  };
+
   let phase1Ok = false;
+  let phase1OrderBrief    = "";
+  let phase1CapacityBrief = "";
   try {
     send("agent_start", { role: "order_intelligence",  agentName: PKG_AGT_001_NAME, label: "Order Queue Analysis & RUSH Risk Scoring", parallel: true });
     send("agent_start", { role: "capacity_mapping",    agentName: PKG_AGT_002_NAME, label: "Machine Capacity & Constraint Mapping",    parallel: true });
 
-    await Promise.all([
-      runAgentOnce(dep1Id, PKG_ORDER_TASK,    6).then(result => {
-        send("agent_complete", {
-          role:      "order_intelligence",
-          agentName: PKG_AGT_001_NAME,
-          success:   true,
-          message:   "Order Intelligence complete — 47 orders analysed, 3 RUSH flagged, B-Flute AT_RISK confirmed",
-          parallel:  true,
-        });
-        return result;
-      }),
-      runAgentOnce(dep2Id, PKG_CAPACITY_TASK, 6).then(result => {
-        send("agent_complete", {
-          role:      "capacity_mapping",
-          agentName: PKG_AGT_002_NAME,
-          success:   true,
-          message:   "Capacity Map complete — M3 offline 10:00–11:30, B-Flute depletion curve computed, constraint map assembled",
-          parallel:  true,
-        });
-        return result;
-      }),
+    const [r1, r2] = await Promise.all([
+      runAgentOnce(dep1Id, PKG_ORDER_TASK,    6),
+      runAgentOnce(dep2Id, PKG_CAPACITY_TASK, 6),
     ]);
+
+    phase1OrderBrief    = extractAgentOutput(r1);
+    phase1CapacityBrief = extractAgentOutput(r2);
+
+    send("agent_complete", {
+      role:      "order_intelligence",
+      agentName: PKG_AGT_001_NAME,
+      success:   true,
+      message:   "Order Intelligence complete — 47 orders analysed, 3 RUSH flagged, B-Flute AT_RISK confirmed",
+      parallel:  true,
+    });
+    send("agent_complete", {
+      role:      "capacity_mapping",
+      agentName: PKG_AGT_002_NAME,
+      success:   true,
+      message:   "Capacity Map complete — M3 offline 10:00–11:30, B-Flute depletion curve computed, constraint map assembled",
+      parallel:  true,
+    });
 
     phase1Ok = true;
     send("parallel_complete", {
@@ -615,8 +680,10 @@ export async function pkgSchedLiveRunHandler(req: Request, res: Response) {
   });
 
   let phase2Ok = false;
+  let phase2OptimizerBrief = "";
   try {
-    await runAgentOnce(dep3Id, PKG_OPTIMIZER_TASK, 6);
+    const r3 = await runAgentOnce(dep3Id, buildPkgOptimizerTask(phase1OrderBrief, phase1CapacityBrief), 6);
+    phase2OptimizerBrief = extractAgentOutput(r3);
     phase2Ok = true;
     send("agent_complete", {
       role:      "schedule_optimization",
@@ -644,7 +711,7 @@ export async function pkgSchedLiveRunHandler(req: Request, res: Response) {
   });
 
   try {
-    await runAgentOnce(dep4Id, PKG_PROPOSAL_TASK, 6);
+    await runAgentOnce(dep4Id, buildPkgProposalTask(phase2OptimizerBrief), 6);
     send("agent_complete", {
       role:      "schedule_proposal",
       agentName: PKG_AGT_004_NAME,
