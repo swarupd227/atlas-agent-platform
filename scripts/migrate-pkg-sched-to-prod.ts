@@ -463,7 +463,9 @@ async function migrate() {
 
     // ── Link Knowledge Base ───────────────────────────────────────────────────
     if (agent.id && kbId) {
-      const existingKbLinks: any[] = await api.get(`/api/agents/${agent.id}/knowledge-bases`).catch(() => []);
+      // Response shape: { links: [...], knowledgeBases: [...] }
+      const kbLinkResult: any = await api.get(`/api/agents/${agent.id}/knowledge-bases`).catch(() => ({ links: [] }));
+      const existingKbLinks: any[] = Array.isArray(kbLinkResult) ? kbLinkResult : (kbLinkResult.links ?? []);
       const kbLinked = existingKbLinks.some((l: any) => l.knowledgeBaseId === kbId);
       if (!kbLinked) {
         await api.post(`/api/agents/${agent.id}/knowledge-bases`, { agentId: agent.id, knowledgeBaseId: kbId });
@@ -473,7 +475,9 @@ async function migrate() {
 
     // ── Deployment record ─────────────────────────────────────────────────────
     if (agent.id) {
-      const existingDeps: any[] = await api.get(`/api/agents/${agent.id}/deployments`).catch(() => []);
+      // /api/agents/:id/deployments doesn't exist — use /api/deployments and filter
+      const allDeps: any[] = await api.get(`/api/deployments`).catch(() => []);
+      const existingDeps = Array.isArray(allDeps) ? allDeps.filter((d: any) => d.agentId === agent.id) : [];
       if (existingDeps.length === 0) {
         await api.post("/api/deployments", {
           agentId:          agent.id,
@@ -484,7 +488,6 @@ async function migrate() {
           rolloutStrategy:  "canary",
           canaryPercent:    100,
           pipelineComplete: true,
-          deployedAt:       new Date().toISOString(),
         });
         console.log(`    created deployment record`);
       } else {
