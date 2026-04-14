@@ -12,7 +12,15 @@ import {
   Home,
   Settings,
   Bell,
+  type LucideIcon,
 } from "lucide-react";
+
+interface NavItem {
+  icon: LucideIcon;
+  label: string;
+  active?: boolean;
+  badge?: number;
+}
 
 const outcomes = [
   { name: "Reduce invoice cycle time", progress: 83, target: "Cut from 14 days to 3 days", status: "on-track", saved: "$42K/mo", trend: "+8% this week" },
@@ -86,7 +94,7 @@ export function CommandCenter() {
               badge: 2,
             },
             { icon: Settings, label: "Settings" },
-          ].map(({ icon: Icon, label, active, badge }: any) => (
+          ].map(({ icon: Icon, label, active, badge }: NavItem) => (
             <div
               key={label}
               className={`flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer text-sm transition-colors ${active ? "bg-violet-600/20 text-violet-300" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"}`}

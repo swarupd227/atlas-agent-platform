@@ -5,15 +5,21 @@ import {
   CheckCircle2,
   AlertTriangle,
   Lightbulb,
-  Clock,
   ChevronRight,
   Zap,
   Target,
   Settings,
   Home,
   Filter,
-  Bell,
+  type LucideIcon,
 } from "lucide-react";
+
+interface NavItem {
+  icon: LucideIcon;
+  label: string;
+  active?: boolean;
+  badge?: number;
+}
 
 type ActionType = "approval" | "anomaly" | "recommendation" | "learning";
 
@@ -99,7 +105,7 @@ const actions: Array<{
   },
 ];
 
-const typeConfig: Record<ActionType, { icon: any; color: string; bg: string; label: string }> = {
+const typeConfig: Record<ActionType, { icon: LucideIcon; color: string; bg: string; label: string }> = {
   approval: { icon: CheckCircle2, color: "text-violet-400", bg: "bg-violet-500/10", label: "Needs approval" },
   anomaly: { icon: AlertTriangle, color: "text-amber-400", bg: "bg-amber-500/10", label: "Something to review" },
   recommendation: { icon: Lightbulb, color: "text-blue-400", bg: "bg-blue-500/10", label: "Recommendation" },
@@ -188,7 +194,7 @@ export function MyActions() {
             { icon: Target, label: "Outcomes" },
             { icon: CheckCircle2, label: "My Actions", active: true, badge: 2 },
             { icon: Settings, label: "Settings" },
-          ].map(({ icon: Icon, label, active, badge }: any) => (
+          ].map(({ icon: Icon, label, active, badge }: NavItem) => (
             <div
               key={label}
               className={`flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer text-sm transition-colors ${active ? "bg-violet-600/20 text-violet-300" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"}`}

@@ -9,10 +9,16 @@ import {
   Target,
   Settings,
   Home,
-  ChevronDown,
   DollarSign,
-  Clock,
+  type LucideIcon,
 } from "lucide-react";
+
+interface NavItem {
+  icon: LucideIcon;
+  label: string;
+  active?: boolean;
+  badge?: number;
+}
 
 const outcomes = [
   {
@@ -53,7 +59,7 @@ const outcomes = [
     id: 3,
     name: "Automate supplier onboarding",
     description: "Onboard new suppliers in under 48 hours, down from the current average of 9 days",
-    status: "exceeded",
+    status: "needs-review",
     progress: 94,
     saved: "$28,000",
     savedUnit: "/month",
@@ -72,7 +78,7 @@ function StatusPill({ status }: { status: string }) {
   const configs: Record<string, { label: string; cls: string }> = {
     "on-track": { label: "On Track", cls: "bg-emerald-500/15 text-emerald-400 border-emerald-500/20" },
     "at-risk": { label: "At Risk — Needs Attention", cls: "bg-amber-500/15 text-amber-400 border-amber-500/20" },
-    "exceeded": { label: "Exceeding Target", cls: "bg-violet-500/15 text-violet-400 border-violet-500/20" },
+    "needs-review": { label: "Needs Review", cls: "bg-violet-500/15 text-violet-400 border-violet-500/20" },
   };
   const { label, cls } = configs[status] || configs["on-track"];
   return (
@@ -179,7 +185,7 @@ export function Outcomes() {
             { icon: Target, label: "Outcomes", active: true },
             { icon: CheckCircle2, label: "My Actions", badge: 2 },
             { icon: Settings, label: "Settings" },
-          ].map(({ icon: Icon, label, active, badge }: any) => (
+          ].map(({ icon: Icon, label, active, badge }: NavItem) => (
             <div
               key={label}
               className={`flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer text-sm transition-colors ${active ? "bg-violet-600/20 text-violet-300" : "text-slate-400 hover:bg-slate-800 hover:text-slate-200"}`}
