@@ -202,7 +202,7 @@ async function migrate() {
 
   // ── Step 2: Ontology Concepts ────────────────────────────────────────────────
   console.log("\n[2/8] Ontology concepts…");
-  const existingConcepts: any[] = await api.get("/api/ontology-concepts").catch(() => []);
+  const existingConcepts: any[] = await api.get("/api/ontology-concepts/all").catch(() => []);
   const conceptIdByLabel: Record<string, string> = {};
   for (const c of PKG_SCHED_ONTOLOGY_CONCEPTS) {
     const existing = existingConcepts.find((x: any) => x.label === c.label);

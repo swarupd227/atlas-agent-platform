@@ -135,6 +135,31 @@ Return ONLY a valid JSON object with an enriched "rules" array. Do not include m
     res.json(concepts);
   });
 
+  router.post("/api/ontology-concepts", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      const { label, category, description, tags, industryId, ontologyName, properties, relationships } = req.body;
+      if (!label || !category) {
+        return res.status(400).json({ message: "label and category are required" });
+      }
+      const { randomUUID } = await import("crypto");
+      const concept = await storage.createOntologyConcept({
+        id: randomUUID(),
+        label,
+        category,
+        description: description || label,
+        industryId: industryId || "manufacturing",
+        ontologyName: ontologyName || "Manufacturing Ontology",
+        tags: Array.isArray(tags) ? tags : [],
+        properties: properties ?? [],
+        relationships: relationships ?? [],
+      });
+      res.status(201).json(concept);
+    } catch (e: any) {
+      console.error("[POST /api/ontology-concepts] error:", e);
+      res.status(500).json({ message: "Failed to create ontology concept" });
+    }
+  });
+
   router.post("/api/ai/enhance-ontology-concept", checkPermission("create_modify_policies"), async (req, res) => {
     try {
       if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
