@@ -216,6 +216,7 @@ export interface OrderRunResult {
   success: boolean;
   message: string | null;
   completedAt: string;
+  usedFallback?: boolean;
 }
 
 export interface OrderLogEntry {
@@ -364,6 +365,7 @@ export interface OtcOrderPipelineHook {
   currentStep: number;
   isRunning: boolean;
   trigger: () => void;
+  reset: () => void;
   state: OrderPipelineState;
 }
 
@@ -380,6 +382,29 @@ export function useOtcOrderPipeline(): OtcOrderPipelineHook {
     const listener: Listener = (s) => setState({ ...s });
     _listeners.add(listener);
     return () => { _listeners.delete(listener); };
+  }, []);
+
+  const reset = useCallback(() => {
+    if (_cache.status === "running") return;
+    _cache.status = "idle";
+    _cache.currentRole = null;
+    _cache.currentStep = 0;
+    _cache.results = [];
+    _cache.logEntries = [];
+    _cache.startedAt = null;
+    _cache.completedAt = null;
+    _cache.elapsedSeconds = 0;
+    _cache.error = null;
+    _cache.parallelAgentsRunning = [];
+    _cache.resolvedChecks = [];
+    _cache.validationSteps = _initialValidationSteps();
+    _cache.creditPanel    = { ..._initialCreditPanel };
+    _cache.inventoryPanel = { ..._initialInventoryPanel, pickTickets: [] };
+    _cache.addressPanel   = { ..._initialAddressPanel };
+    _cache.auditTimeline  = [];
+    if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
+    notify();
+    fetch("/demo-api/otc-order/reset", { method: "POST" }).catch(() => {});
   }, []);
 
   const trigger = useCallback(() => {
@@ -454,7 +479,7 @@ export function useOtcOrderPipeline(): OtcOrderPipelineHook {
       const d = JSON.parse(e.data);
       const code = agentCodeFromName(d.agentName);
       const msg = d.type === "tool_call_result"
-        ? `${d.tool || "check"} → ${d.data?.success ? "ok" : "error"}`
+        ? (d.label ?? `${d.tool || "check"} → ${d.data?.success ? "ok" : "error"}`)
         : "Processing…";
       addLog(code, d.agentName, msg, "progress");
     });
@@ -469,6 +494,7 @@ export function useOtcOrderPipeline(): OtcOrderPipelineHook {
         _cache.results.push({
           role: d.role, agentCode: code, success: d.success,
           message: d.message || null, completedAt: now,
+          usedFallback: d.usedFallback ?? false,
         });
       }
 
@@ -579,6 +605,7 @@ export function useOtcOrderPipeline(): OtcOrderPipelineHook {
   return {
     state,
     trigger,
+    reset,
     status: state.status,
     logs: state.logEntries,
     currentStep: state.currentStep,

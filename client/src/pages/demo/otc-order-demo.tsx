@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
-import { Factory, ChevronRight, ShieldCheck, Package, Send } from "lucide-react";
-import { useOtcOrderPipeline } from "./otc-order-constants";
+import { Factory, ChevronRight, ShieldCheck, Package, Send, Terminal, RotateCcw, Cpu, Zap } from "lucide-react";
+import { useOtcOrderPipeline, OrderLogEntry } from "./otc-order-constants";
 import OtcOrderS1Validation from "./otc-order-s1-validation";
 import OtcOrderS2Inventory from "./otc-order-s2-inventory";
 import OtcOrderS3Release from "./otc-order-s3-release";
@@ -10,18 +10,108 @@ import OtcOrderS3Release from "./otc-order-s3-release";
 const OTC_COLOR = "#FF6B35";
 
 const SCREENS = [
-  { id: 1, label: "Order Validation",   shortLabel: "3.1 Validation",  Icon: ShieldCheck },
-  { id: 2, label: "Inventory Promise",  shortLabel: "3.2 Inventory",   Icon: Package },
-  { id: 3, label: "Order Release",      shortLabel: "3.3 Release",     Icon: Send },
+  { id: 1, label: "Order Validation",  shortLabel: "3.1 Validation", Icon: ShieldCheck },
+  { id: 2, label: "Inventory Promise", shortLabel: "3.2 Inventory",  Icon: Package },
+  { id: 3, label: "Order Release",     shortLabel: "3.3 Release",    Icon: Send },
 ];
 
-export default function OtcOrderDemo() {
-  const [screen, setScreen] = useState(1);
-  const { state, trigger } = useOtcOrderPipeline();
+const LOG_TYPE_COLOR: Record<OrderLogEntry["type"], string> = {
+  info:     "text-sky-400",
+  progress: "text-amber-400",
+  complete: "text-emerald-400",
+  error:    "text-rose-400",
+};
 
-  const isRunning = state.status === "running";
+function AgentLogPanel({ entries, open }: { entries: OrderLogEntry[]; open: boolean }) {
+  const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (open && bottomRef.current) {
+      bottomRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [entries.length, open]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="shrink-0 border-t border-border/40 bg-black/60 backdrop-blur-sm overflow-y-auto"
+      style={{ height: 192 }}
+      data-testid="panel-agent-logs"
+    >
+      <div className="px-4 py-2 flex items-center gap-2 border-b border-border/20 sticky top-0 bg-black/80">
+        <Terminal className="w-3 h-3 text-muted-foreground/60" />
+        <span className="text-[10px] font-mono text-muted-foreground/70 uppercase tracking-widest">Atlas Agent Log Stream</span>
+        {entries.length > 0 && (
+          <span className="ml-auto text-[9px] font-mono text-muted-foreground/40">{entries.length} events</span>
+        )}
+      </div>
+      {entries.length === 0 ? (
+        <div className="px-4 py-3 text-[10px] font-mono text-muted-foreground/30 italic">
+          Waiting for Atlas agents… press ▶ Run Atlas to begin.
+        </div>
+      ) : (
+        <div className="px-4 py-2 flex flex-col gap-0.5">
+          {entries.map((entry, i) => {
+            const ts = new Date(entry.timestamp).toISOString().slice(11, 23);
+            return (
+              <div key={i} className="flex items-start gap-2 leading-tight" data-testid={`log-entry-${i}`}>
+                <span className="text-[9px] font-mono text-muted-foreground/30 shrink-0 pt-px">{ts}</span>
+                <span
+                  className="text-[10px] font-mono shrink-0 pt-px"
+                  style={{ color: `${OTC_COLOR}bb`, minWidth: 84 }}
+                >
+                  [{entry.agentCode}]
+                </span>
+                <span className={`text-[10px] font-mono ${LOG_TYPE_COLOR[entry.type]}`}>
+                  {entry.message}
+                </span>
+              </div>
+            );
+          })}
+          <div ref={bottomRef} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LiveVsFallbackBadge({ usedFallback }: { usedFallback?: boolean }) {
+  if (usedFallback === undefined) return null;
+  return usedFallback ? (
+    <span
+      className="inline-flex items-center gap-0.5 text-[8px] font-mono px-1.5 py-0.5 rounded border"
+      style={{ background: "rgba(148,163,184,0.08)", borderColor: "rgba(148,163,184,0.15)", color: "#94a3b8" }}
+      title="Scripted fallback — live agent call failed or agent unavailable"
+    >
+      <Zap className="w-2 h-2" /> SIMULATED
+    </span>
+  ) : (
+    <span
+      className="inline-flex items-center gap-0.5 text-[8px] font-mono px-1.5 py-0.5 rounded border"
+      style={{ background: "rgba(34,197,94,0.08)", borderColor: "rgba(34,197,94,0.2)", color: "#4ade80" }}
+      title="Real LLM agent call completed successfully"
+    >
+      <Cpu className="w-2 h-2" /> LIVE
+    </span>
+  );
+}
+
+export { LiveVsFallbackBadge };
+
+export default function OtcOrderDemo() {
+  const [screen, setScreen]   = useState(1);
+  const [logOpen, setLogOpen] = useState(false);
+  const { state, trigger, reset } = useOtcOrderPipeline();
+
+  const isRunning  = state.status === "running";
   const isComplete = state.status === "complete";
   const lastAdvancedRef = useRef(0);
+
+  // Auto-open log panel when run starts
+  useEffect(() => {
+    if (isRunning) setLogOpen(true);
+  }, [isRunning]);
 
   // Auto-advance screens as pipeline progresses
   useEffect(() => {
@@ -44,7 +134,9 @@ export default function OtcOrderDemo() {
     if (id === screen) return "active";
     if (id === 1) return isComplete ? "complete" : "available";
     if (id === 2) {
-      const unlocked = state.results.some(r => r.role === "inventory_validation" || r.role === "resolution_synthesis" || isComplete);
+      const unlocked = state.results.some(r =>
+        r.role === "inventory_validation" || r.role === "resolution_synthesis" || isComplete
+      );
       if (!unlocked && !isRunning) return "locked";
       return screen > 2 ? "complete" : "available";
     }
@@ -57,11 +149,17 @@ export default function OtcOrderDemo() {
     return "locked";
   };
 
-  const handleRunAndNavigate = () => {
-    trigger();
+  const handleReset = () => {
+    lastAdvancedRef.current = 0;
+    setScreen(1);
+    reset();
   };
 
-  const lastLogs = state.logEntries.slice(-2);
+  const anyFallback   = state.results.some(r => r.usedFallback);
+  const anyLive       = state.results.some(r => r.usedFallback === false);
+  const validationResults = state.results.filter(r =>
+    ["credit_validation", "inventory_validation", "address_validation"].includes(r.role)
+  );
 
   return (
     <div className="flex flex-col h-screen max-h-screen bg-background overflow-hidden">
@@ -76,17 +174,20 @@ export default function OtcOrderDemo() {
           <div>
             <h1 className="text-sm font-bold text-foreground">Order Validation & Promise Engine</h1>
             <p className="text-[10px] text-muted-foreground">
-              NovaTech Industries · Meridian Manufacturing ORD-2026-78432 · OTC-AGT-002 · OTC-AGT-003 · OTC-AGT-004 · Order Processing
+              NovaTech Industries · Meridian Manufacturing ORD-2026-78432 · OTC-AGT-002 · OTC-AGT-003 · OTC-AGT-004
             </p>
           </div>
 
-          {/* Mini SSE log strip */}
-          {isRunning && lastLogs.length > 0 && (
-            <div className="hidden xl:flex flex-col gap-0.5 ml-2 max-w-xs">
-              {lastLogs.map((l, i) => (
-                <span key={i} className="text-[9px] text-muted-foreground/70 font-mono truncate">
-                  <span style={{ color: `${OTC_COLOR}cc` }}>[{l.agentCode}]</span> {l.message}
-                </span>
+          {/* Agent mode summary — live vs simulated */}
+          {validationResults.length > 0 && (
+            <div className="hidden lg:flex items-center gap-1.5 ml-3 pl-3 border-l border-border/30">
+              {validationResults.map(r => (
+                <div key={r.role} className="flex items-center gap-1">
+                  <span className="text-[9px] font-mono text-muted-foreground/50">
+                    {r.agentCode}:
+                  </span>
+                  <LiveVsFallbackBadge usedFallback={r.usedFallback} />
+                </div>
               ))}
             </div>
           )}
@@ -94,9 +195,9 @@ export default function OtcOrderDemo() {
           {/* Step tabs */}
           <div className="flex items-center gap-1 ml-auto">
             {SCREENS.map((s, i) => {
-              const status = getScreenStatus(s.id);
+              const status   = getScreenStatus(s.id);
               const isActive = status === "active";
-              const isDone = status === "complete";
+              const isDone   = status === "complete";
               const isLocked = status === "locked";
               return (
                 <div key={s.id} className="flex items-center gap-1">
@@ -145,10 +246,20 @@ export default function OtcOrderDemo() {
                 ✓ ORD-2026-78432 Released
               </Badge>
             )}
+            {isComplete && anyFallback && !anyLive && (
+              <Badge className="text-[9px] bg-slate-500/10 text-slate-400 border-slate-500/20">
+                Scripted Agents
+              </Badge>
+            )}
+            {isComplete && anyLive && (
+              <Badge className="text-[9px] bg-green-500/10 text-green-400 border-green-500/20">
+                Live LLM Agents
+              </Badge>
+            )}
             {!isRunning && !isComplete && (
               <button
                 data-testid="button-run-atlas"
-                onClick={handleRunAndNavigate}
+                onClick={trigger}
                 className="flex items-center gap-1.5 text-[10px] h-7 px-3 rounded-lg font-semibold text-white"
                 style={{ background: OTC_COLOR }}
               >
@@ -160,8 +271,47 @@ export default function OtcOrderDemo() {
                 {state.elapsedSeconds}s
               </span>
             )}
+
+            {/* Log panel toggle */}
+            <button
+              data-testid="button-toggle-logs"
+              onClick={() => setLogOpen(v => !v)}
+              className={`flex items-center gap-1 text-[10px] px-2 h-7 rounded-md border transition-all ${
+                logOpen
+                  ? "border-orange-500/30 text-orange-400 bg-orange-500/8"
+                  : "border-border/30 text-muted-foreground hover:text-foreground hover:border-border/60"
+              }`}
+              title="Toggle agent log stream"
+            >
+              <Terminal className="w-3 h-3" />
+              <span className="hidden sm:inline">Logs</span>
+              {state.logEntries.length > 0 && (
+                <span
+                  className="text-[8px] font-mono rounded px-1"
+                  style={{ background: "rgba(255,107,53,0.15)", color: OTC_COLOR }}
+                >
+                  {state.logEntries.length}
+                </span>
+              )}
+            </button>
+
+            {/* Reset button — only when not running */}
+            {!isRunning && (isComplete || state.status === "error") && (
+              <button
+                data-testid="button-reset-demo"
+                onClick={handleReset}
+                className="flex items-center gap-1 text-[10px] px-2 h-7 rounded-md border border-border/30 text-muted-foreground hover:text-foreground hover:border-border/60 transition-all"
+                title="Reset demo to initial state"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span className="hidden sm:inline">Reset</span>
+              </button>
+            )}
+
             <Link href="/demo">
-              <button className="text-[11px] text-muted-foreground hover:text-foreground transition-colors ml-1" data-testid="link-back-demo-hub">← Demo Hub</button>
+              <button className="text-[11px] text-muted-foreground hover:text-foreground transition-colors ml-1" data-testid="link-back-demo-hub">
+                ← Demo Hub
+              </button>
             </Link>
           </div>
         </div>
@@ -172,7 +322,7 @@ export default function OtcOrderDemo() {
         {screen === 1 && (
           <OtcOrderS1Validation
             pipelineState={state}
-            onRunAndNavigate={handleRunAndNavigate}
+            onRunAndNavigate={trigger}
           />
         )}
         {screen === 2 && (
@@ -182,6 +332,9 @@ export default function OtcOrderDemo() {
           <OtcOrderS3Release pipelineState={state} />
         )}
       </div>
+
+      {/* ── Agent SSE log panel ──────────────────────────────────────────── */}
+      <AgentLogPanel entries={state.logEntries} open={logOpen} />
     </div>
   );
 }

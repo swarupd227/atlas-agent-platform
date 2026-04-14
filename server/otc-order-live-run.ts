@@ -573,6 +573,53 @@ async function ensureDeployment(agentId: string, agentName: string, role: string
   return dep.id;
 }
 
+const FALLBACK_TOOL_SEQUENCE: Record<string, Array<{ tool: string; label: string; delayMs: number }>> = {
+  credit_validation: [
+    { tool: "validate_customer_identity",   label: "Verifying customer CUST-00892…",           delayMs: 1100 },
+    { tool: "get_credit_exposure",          label: "Pulling credit exposure ($873,225 / $950K)", delayMs: 1400 },
+    { tool: "get_payment_history",          label: "Scanning 18-month payment history…",          delayMs: 1200 },
+    { tool: "approve_credit_limit",         label: "Approving exception — 60-day limit…",         delayMs: 900  },
+  ],
+  inventory_validation: [
+    { tool: "get_inventory_by_location",    label: "Fetching Chicago + Atlanta stock levels…",    delayMs: 1100 },
+    { tool: "calculate_atp",               label: "Computing ATP — 12 units req'd…",             delayMs: 1300 },
+    { tool: "get_shipping_options",         label: "Evaluating fulfillment options (OPT-A/B/C)…", delayMs: 1100 },
+    { tool: "reserve_inventory",            label: "Reserving Chicago stock, issuing pick tickets",delayMs: 900  },
+  ],
+  address_validation: [
+    { tool: "validate_customer_identity",   label: "Loading ERP master CUST-00892-SHIP-04…",      delayMs: 1000 },
+    { tool: "validate_ship_address",        label: "Checking delivery history — 8 prior records…", delayMs: 1400 },
+    { tool: "update_erp_master",            label: "Removing Suite 110, confidence 94%…",          delayMs: 900  },
+  ],
+  resolution_synthesis: [
+    { tool: "synthesize_resolutions",       label: "Merging VAL-002, VAL-003, VAL-004 outputs…",  delayMs: 1300 },
+    { tool: "validate_order_ready",         label: "All 8 checks clear — order ready to release…", delayMs: 900  },
+  ],
+  order_release: [
+    { tool: "release_order",               label: "Posting OMS release — ORD-2026-78432…",        delayMs: 1100 },
+    { tool: "commit_delivery_promise",      label: "Committing May 2–3, 2026 delivery promise…",   delayMs: 800  },
+  ],
+};
+
+async function simulateFallbackWork(
+  sendEvent: (type: string, payload: object) => void,
+  agentName: string,
+  role: string,
+): Promise<void> {
+  const sequence = FALLBACK_TOOL_SEQUENCE[role] ?? [];
+  for (const step of sequence) {
+    await new Promise(r => setTimeout(r, step.delayMs));
+    sendEvent("agent_event", {
+      agentName,
+      type: "tool_call_result",
+      tool: step.tool,
+      label: step.label,
+      data: { tool: step.tool, success: true },
+    });
+  }
+  await new Promise(r => setTimeout(r, 400));
+}
+
 async function runStepWithFallback(
   deploymentId: string,
   taskPrompt: string,
@@ -696,10 +743,12 @@ export async function otcOrderLiveRunHandler(req: Request, res: Response): Promi
           await new Promise(r => setTimeout(r, 300));
         }
         result = await runStepWithFallback(depId, step.taskPrompt, step.maxIterations, step.role);
+        if (result.usedFallback) {
+          await simulateFallbackWork(sendEvent, step.agentName, step.role);
+        }
       } else {
-        await new Promise(r => setTimeout(r, 800 + Math.random() * 600));
+        await simulateFallbackWork(sendEvent, step.agentName, step.role);
         result = { success: true, message: getFallbackMessage(step.role), usedFallback: true };
-        sendEvent("agent_event", { agentName: step.agentName, type: "agent_skipped", data: { role: step.role } });
       }
 
       sendEvent("agent_complete", {
@@ -708,6 +757,7 @@ export async function otcOrderLiveRunHandler(req: Request, res: Response): Promi
         agentId: agentId || null,
         success: result.success,
         message: result.message?.slice(0, 600),
+        usedFallback: result.usedFallback,
         parallel: true,
       });
 
@@ -762,9 +812,11 @@ export async function otcOrderLiveRunHandler(req: Request, res: Response): Promi
           await new Promise(r => setTimeout(r, 300));
         }
         result = await runStepWithFallback(depId, fullPrompt, step.maxIterations, step.role);
+        if (result.usedFallback) {
+          await simulateFallbackWork(sendEvent, step.agentName, step.role);
+        }
       } else {
-        sendEvent("agent_event", { agentName: step.agentName, type: "agent_skipped", data: { role: step.role } });
-        await new Promise(r => setTimeout(r, 600));
+        await simulateFallbackWork(sendEvent, step.agentName, step.role);
         result = { success: true, message: getFallbackMessage(step.role), usedFallback: true };
       }
 
@@ -776,10 +828,11 @@ export async function otcOrderLiveRunHandler(req: Request, res: Response): Promi
         agentId: agentId || null,
         success: result.success,
         message: result.message?.slice(0, 600),
+        usedFallback: result.usedFallback,
         parallel: false,
       });
 
-      if (!aborted) await new Promise(r => setTimeout(r, 400));
+      if (!aborted) await new Promise(r => setTimeout(r, 600));
     }
 
     sendEvent("run_complete", {
