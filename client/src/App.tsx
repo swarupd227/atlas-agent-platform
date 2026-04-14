@@ -152,10 +152,17 @@ function HeaderControls() {
   }
 
   return (
+    <BusinessModeAwareHeaderControls />
+  );
+}
+
+function BusinessModeAwareHeaderControls() {
+  const { isBusinessMode } = useRole();
+  return (
     <div className="flex items-center gap-2 flex-wrap">
       <IndustrySelector />
       <EnvironmentSelector />
-      <RoleSwitcher />
+      {!isBusinessMode && <RoleSwitcher />}
       <BusinessModeBadge />
       <span className="inline-flex items-center gap-1 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-md border" data-testid="badge-security-mode">
         <Shield className="h-3 w-3" />
