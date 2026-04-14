@@ -58,7 +58,7 @@ function fmtMs(ms: number): string {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-// ─── Credit Exposure Bar ──────────────────────────────────────────────────────
+// ─── Credit Exposure Bar + Payment History ────────────────────────────────────
 function CreditExposureBar({ exposurePct, projectedPct, approvedLimit, approvedLimitDays, riskScore, released }: {
   exposurePct: number | null;
   projectedPct: number | null;
@@ -67,18 +67,20 @@ function CreditExposureBar({ exposurePct, projectedPct, approvedLimit, approvedL
   riskScore: string | null;
   released: boolean;
 }) {
-  const current = exposurePct ?? 91.9;
-  const limit   = approvedLimit ?? 500_000;
+  const current  = exposurePct ?? 91.9;
   const newLimit = released ? (approvedLimit ?? 950_000) : 500_000;
-  const barPct  = released ? Math.min((459_500 / newLimit) * 100, 100) : Math.min(current, 100);
+  const barPct   = released ? Math.min((459_500 / newLimit) * 100, 100) : Math.min(current, 100);
   const barColor = released ? "bg-green-500" : barPct > 90 ? "bg-red-400" : "bg-yellow-400";
 
   return (
     <div className="mt-2 space-y-1.5">
+      {/* Exposure bar */}
       <div className="flex items-center justify-between text-[9px]">
-        <span className="text-muted-foreground/70">Current Exposure</span>
+        <span className="text-muted-foreground/70">Credit Exposure</span>
         <span className={`font-semibold ${released ? "text-green-400" : "text-red-400"}`}>
-          {released ? `${((459_500 / newLimit) * 100).toFixed(1)}% of $${(newLimit/1000).toFixed(0)}K` : `${current}% of $${(limit/1000).toFixed(0)}K`}
+          {released
+            ? `${((459_500 / newLimit) * 100).toFixed(1)}% of $${(newLimit / 1000).toFixed(0)}K`
+            : `${current}% of $${(newLimit / 1000).toFixed(0)}K`}
         </span>
       </div>
       <div className="h-1.5 w-full rounded-full bg-muted/30 overflow-hidden">
@@ -89,17 +91,38 @@ function CreditExposureBar({ exposurePct, projectedPct, approvedLimit, approvedL
       </div>
       <div className="flex justify-between text-[8px] text-muted-foreground/50">
         <span>$0</span>
-        <span>Limit: ${(newLimit/1000).toFixed(0)}K{released && approvedLimitDays ? ` (${approvedLimitDays}-day temp)` : ""}</span>
+        <span>Limit: ${(newLimit / 1000).toFixed(0)}K{released && approvedLimitDays ? ` (${approvedLimitDays}-day temp)` : ""}</span>
       </div>
-      {released && riskScore && (
-        <div className="flex items-center gap-1.5 mt-1">
-          <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
-          <span className="text-[9px] text-green-400 font-medium">{riskScore} Risk — Pre-auth approved</span>
+
+      {/* Payment history snippet */}
+      <div className="mt-1.5 rounded border border-border/20 bg-muted/10 px-2 py-1.5">
+        <p className="text-[8px] font-semibold text-muted-foreground/70 mb-1 uppercase tracking-wide">Payment History</p>
+        <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+          {[
+            ["Rating",     "A+ (EXCELLENT)"],
+            ["Avg Pay",    "32 days"],
+            ["Tenure",     "7 years"],
+            ["NSF / Late", "0 / 0 (12 mo)"],
+          ].map(([k, v]) => (
+            <div key={k} className="flex items-center justify-between">
+              <span className="text-[8px] text-muted-foreground/55">{k}</span>
+              <span className={`text-[8px] font-medium ${released ? "text-green-400" : "text-foreground/70"}`}>{v}</span>
+            </div>
+          ))}
         </div>
-      )}
-      {!released && (
+      </div>
+
+      {/* Recommendation */}
+      {released ? (
+        <div className="flex items-center gap-1.5">
+          <div className="w-1.5 h-1.5 rounded-full bg-green-400" />
+          <span className="text-[9px] text-green-400 font-medium">
+            {riskScore ?? "LOW"} Risk — Auto pre-auth approved · 60-day window
+          </span>
+        </div>
+      ) : (
         <div className="flex items-center gap-1 text-[9px] text-red-400/80">
-          <span>⚠ 91.9% utilisation — VAL-002 HOLD</span>
+          <span>⚠ 91.9% utilisation — VAL-002 HOLD · awaiting credit agent</span>
         </div>
       )}
     </div>
@@ -151,7 +174,13 @@ function AddressDiff({ originalAddress, correctedAddress, confidenceScore, relea
   );
 }
 
-// ─── Inventory Pick Tickets ────────────────────────────────────────────────────
+// ─── Inventory Warehouse Summary + Pick Tickets ───────────────────────────────
+const _WH_STOCK = [
+  { id: "CHI", label: "Chicago DC",   units: 8,  transit: "1 day",  recommended: true  },
+  { id: "ATL", label: "Atlanta Hub",  units: 4,  transit: "3 days", recommended: false },
+  { id: "DAL", label: "Dallas DC",    units: 0,  transit: "2 days", recommended: false },
+];
+
 function InventoryPickTickets({ pickTickets, atpDate, savingsAmount, released }: {
   pickTickets: string[];
   atpDate: string | null;
@@ -162,6 +191,29 @@ function InventoryPickTickets({ pickTickets, atpDate, savingsAmount, released }:
 
   return (
     <div className="mt-2 space-y-1.5">
+      {/* Warehouse stock summary — always visible */}
+      <div className="rounded border border-border/20 bg-muted/10 px-2 py-1.5">
+        <p className="text-[8px] font-semibold text-muted-foreground/70 mb-1 uppercase tracking-wide">Warehouse Stock</p>
+        <div className="flex gap-1.5">
+          {_WH_STOCK.map(wh => (
+            <div
+              key={wh.id}
+              className={`flex-1 rounded border text-center px-1 py-1 transition-all ${
+                released && wh.recommended
+                  ? "border-green-500/30 bg-green-500/8"
+                  : wh.units > 0
+                  ? "border-border/25 bg-muted/8"
+                  : "border-border/15 bg-muted/5 opacity-40"
+              }`}
+            >
+              <p className={`text-[8px] font-semibold ${released && wh.recommended ? "text-green-400" : "text-muted-foreground/60"}`}>{wh.id}</p>
+              <p className={`text-[11px] font-bold font-mono leading-tight ${released && wh.recommended ? "text-green-400" : wh.units > 0 ? "text-foreground" : "text-muted-foreground/30"}`}>{wh.units}</p>
+              <p className={`text-[7px] ${released && wh.recommended ? "text-green-400/70" : "text-muted-foreground/40"}`}>{wh.transit}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {released ? (
         <>
           <div className="flex flex-wrap gap-1">
