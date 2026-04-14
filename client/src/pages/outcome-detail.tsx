@@ -1308,66 +1308,68 @@ export default function OutcomeDetail() {
         })()}
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-        <StatCard
-          title="Weighted Progress"
-          value={`${Math.round(weightedProgress)}%`}
-          icon={Target}
-          subtitle={weightedProgress === 0 ? "Add KPI targets to track" : undefined}
-          variant={weightedProgress >= 80 ? "success" : weightedProgress >= 50 ? "warning" : "danger"}
-          testId="stat-weighted-progress"
-          tooltip="Aggregate progress across all KPIs, weighted by importance. Set KPI targets to see progress."
-        />
-        <StatCard
-          title="KPIs Tracked"
-          value={kpis?.length || 0}
-          icon={BarChart3}
-          subtitle={!kpis?.length ? "Define KPIs below" : (() => {
-            const driftThreatenedCount = killChainAlerts?.alerts ? new Set(killChainAlerts.alerts.flatMap(a => a.threatenedKpis.map(t => t.kpiName))).size : 0;
-            const parts: string[] = [];
-            if (breachCount > 0) parts.push(`${breachCount} breaching SLA`);
-            if (driftThreatenedCount > 0) parts.push(`${driftThreatenedCount} threatened by drift`);
-            return parts.length > 0 ? parts.join(", ") : "All within SLA";
-          })()}
-          variant={breachCount > 0 ? "danger" : (killChainAlerts?.summary?.critical || 0) > 0 ? "danger" : (killChainAlerts?.summary?.warning || 0) > 0 ? "warning" : "default"}
-          testId="stat-kpis-count"
-          tooltip="Number of Key Performance Indicators being monitored for this outcome."
-        />
-        <StatCard
-          title="Bound Agents"
-          value={boundAgents.length}
-          icon={Bot}
-          subtitle={boundAgents.length === 0 ? "Assign agents via Create Agent" : (() => {
-            const driftingCount = killChainAlerts?.alerts ? new Set(killChainAlerts.alerts.map(a => a.agentId)).size : 0;
-            if (driftingCount > 0) return `${driftingCount} drifting`;
-            if (agentContributions?.summary?.underperformingCount) return `${agentContributions.summary.underperformingCount} underperforming`;
-            return "All healthy";
-          })()}
-          variant={boundAgents.length === 0 ? "default" : (killChainAlerts?.summary?.critical || 0) > 0 ? "danger" : (killChainAlerts?.summary?.warning || 0) > 0 ? "warning" : agentContributions?.summary?.underperformingCount ? "warning" : "success"}
-          testId="stat-bound-agents"
-          tooltip="Agents assigned to deliver this outcome. Use the Agent Development Plan to create a team."
-        />
-        <StatCard
-          title="Estimated Revenue"
-          value={`${outcome.currency || "USD"} ${estimatedRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
-          icon={DollarSign}
-          subtitle={billableEventsCount === 0 ? "Tracked from agent events" : `${billableEventsCount} billable events`}
-          variant="default"
-          testId="stat-estimated-revenue"
-          tooltip="Revenue estimate based on billable agent events and the outcome's pricing model."
-        />
-        <StatCard
-          title="Risk Threshold"
-          value={`${((outcome.riskThreshold || 0) * 100).toFixed(0)}%`}
-          icon={Shield}
-          subtitle={outcome.autoPauseTrigger ? "Auto-pause ON" : "Auto-pause OFF"}
-          variant={outcome.autoPauseTrigger ? "warning" : "default"}
-          testId="stat-risk-threshold"
-          tooltip="Maximum acceptable risk level. Agents auto-pause if risk exceeds this threshold."
-        />
-      </div>
+      {!isBusinessMode && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          <StatCard
+            title="Weighted Progress"
+            value={`${Math.round(weightedProgress)}%`}
+            icon={Target}
+            subtitle={weightedProgress === 0 ? "Add KPI targets to track" : undefined}
+            variant={weightedProgress >= 80 ? "success" : weightedProgress >= 50 ? "warning" : "danger"}
+            testId="stat-weighted-progress"
+            tooltip="Aggregate progress across all KPIs, weighted by importance. Set KPI targets to see progress."
+          />
+          <StatCard
+            title="KPIs Tracked"
+            value={kpis?.length || 0}
+            icon={BarChart3}
+            subtitle={!kpis?.length ? "Define KPIs below" : (() => {
+              const driftThreatenedCount = killChainAlerts?.alerts ? new Set(killChainAlerts.alerts.flatMap(a => a.threatenedKpis.map(t => t.kpiName))).size : 0;
+              const parts: string[] = [];
+              if (breachCount > 0) parts.push(`${breachCount} breaching SLA`);
+              if (driftThreatenedCount > 0) parts.push(`${driftThreatenedCount} threatened by drift`);
+              return parts.length > 0 ? parts.join(", ") : "All within SLA";
+            })()}
+            variant={breachCount > 0 ? "danger" : (killChainAlerts?.summary?.critical || 0) > 0 ? "danger" : (killChainAlerts?.summary?.warning || 0) > 0 ? "warning" : "default"}
+            testId="stat-kpis-count"
+            tooltip="Number of Key Performance Indicators being monitored for this outcome."
+          />
+          <StatCard
+            title="Bound Agents"
+            value={boundAgents.length}
+            icon={Bot}
+            subtitle={boundAgents.length === 0 ? "Assign agents via Create Agent" : (() => {
+              const driftingCount = killChainAlerts?.alerts ? new Set(killChainAlerts.alerts.map(a => a.agentId)).size : 0;
+              if (driftingCount > 0) return `${driftingCount} drifting`;
+              if (agentContributions?.summary?.underperformingCount) return `${agentContributions.summary.underperformingCount} underperforming`;
+              return "All healthy";
+            })()}
+            variant={boundAgents.length === 0 ? "default" : (killChainAlerts?.summary?.critical || 0) > 0 ? "danger" : (killChainAlerts?.summary?.warning || 0) > 0 ? "warning" : agentContributions?.summary?.underperformingCount ? "warning" : "success"}
+            testId="stat-bound-agents"
+            tooltip="Agents assigned to deliver this outcome. Use the Agent Development Plan to create a team."
+          />
+          <StatCard
+            title="Estimated Revenue"
+            value={`${outcome.currency || "USD"} ${estimatedRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+            icon={DollarSign}
+            subtitle={billableEventsCount === 0 ? "Tracked from agent events" : `${billableEventsCount} billable events`}
+            variant="default"
+            testId="stat-estimated-revenue"
+            tooltip="Revenue estimate based on billable agent events and the outcome's pricing model."
+          />
+          <StatCard
+            title="Risk Threshold"
+            value={`${((outcome.riskThreshold || 0) * 100).toFixed(0)}%`}
+            icon={Shield}
+            subtitle={outcome.autoPauseTrigger ? "Auto-pause ON" : "Auto-pause OFF"}
+            variant={outcome.autoPauseTrigger ? "warning" : "default"}
+            testId="stat-risk-threshold"
+            tooltip="Maximum acceptable risk level. Agents auto-pause if risk exceeds this threshold."
+          />
+        </div>
+      )}
 
-      {killChainAlerts && killChainAlerts.alerts.length > 0 && killChainAlerts.alerts.some(a => a.severity === "critical" || a.severity === "warning") && (
+      {!isBusinessMode && killChainAlerts && killChainAlerts.alerts.length > 0 && killChainAlerts.alerts.some(a => a.severity === "critical" || a.severity === "warning") && (
         <Card
           className={`border ${killChainAlerts.summary.critical > 0 ? "border-destructive/50 bg-destructive/5" : "border-amber-500/50 bg-amber-500/5"}`}
           data-testid="banner-kill-chain-alerts"
@@ -1460,7 +1462,7 @@ export default function OutcomeDetail() {
         </Card>
       )}
 
-      {downstreamImpact && downstreamImpact.nonCompliantCount > 0 && (
+      {!isBusinessMode && downstreamImpact && downstreamImpact.nonCompliantCount > 0 && (
         <Card
           className="border border-amber-500/50 bg-amber-500/5"
           data-testid="banner-downstream-impact"
@@ -1549,7 +1551,7 @@ export default function OutcomeDetail() {
         </Card>
       )}
 
-      <OutcomeProgressStepper outcome={outcome} hasAgentPlan={hasAgentPlan} hasDeployedAgents={hasDeployedAgents} />
+      {!isBusinessMode && <OutcomeProgressStepper outcome={outcome} hasAgentPlan={hasAgentPlan} hasDeployedAgents={hasDeployedAgents} />}
 
       <Dialog open={impactNetworkOpen} onOpenChange={setImpactNetworkOpen}>
         <DialogContent className="max-w-[95vw] w-[95vw] h-[90vh] flex flex-col" data-testid="dialog-impact-network">
@@ -1606,7 +1608,7 @@ export default function OutcomeDetail() {
         </DialogContent>
       </Dialog>
 
-      {outcome.status === "awaiting_agent_plan" && !hasAgentPlan && (
+      {!isBusinessMode && outcome.status === "awaiting_agent_plan" && !hasAgentPlan && (
         <Card className="border-blue-500/30 bg-blue-500/5" data-testid="banner-awaiting-agent-plan">
           <CardContent className="flex items-center gap-4 p-4">
             <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0">
