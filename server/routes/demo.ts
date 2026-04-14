@@ -4,6 +4,7 @@ import { fitchLiveRunHandler, ensureFitchAgents, getFitchPipelineAgentNames, get
 import { fitchRWLiveRunHandler, fitchRWSetupHandler, fitchRWResetHandler, getFitchRWAgentRuns } from "../fitch-rw-live-run";
 import { littlerLiveRunHandler } from "../littler-live-run";
 import { otcQuoteLiveRunHandler } from "../otc-quote-live-run";
+import { otcOrderLiveRunHandler, getOtcOrderAgentRuns, resetOtcOrderDemo, ensureOtcOrderAgents } from "../otc-order-live-run";
 
 import { seedPartnerPortalRegistry } from "../seed-blackrock2-partner-portal";
 import { storage } from "../storage";
@@ -1175,6 +1176,19 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
 
   // ============================================================
   // END OTC QUOTE DEMO ROUTES
+  // ============================================================
+
+  // ============================================================
+  // OTC ORDER DEMO ROUTES — Order Validation & Promise Engine
+  // NovaTech Industries · Meridian Manufacturing · ORD-2026-78432
+  // ============================================================
+
+  router.get("/demo-api/otc-order/live-run",   otcOrderLiveRunHandler);
+  router.get("/demo-api/otc-order/agent-runs", getOtcOrderAgentRuns);
+  router.post("/demo-api/otc-order/reset",     resetOtcOrderDemo);
+
+  // ============================================================
+  // END OTC ORDER DEMO ROUTES
   // ============================================================
 
 

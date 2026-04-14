@@ -99,6 +99,7 @@ import FitchRWDemo from "@/pages/demo/fitch-rw-demo";
 import BlackBookDemo from "@/pages/demo/blackbook-demo";
 import LittlerDemo from "@/pages/demo/littler-demo";
 import OtcQuoteDemo from "@/pages/demo/otc-quote-demo";
+import OtcOrderDemo from "@/pages/demo/otc-order-demo";
 import SHHealthcareDemo from "@/pages/demo/sh-healthcare-demo";
 import SHFinancialDemo from "@/pages/demo/sh-financial-demo";
 import SHManufacturingDemo from "@/pages/demo/sh-manufacturing-demo";
@@ -238,6 +239,7 @@ function DashboardRouter() {
       <Route path="/demo/blackbook" component={BlackBookDemo} />
       <Route path="/demo/littler" component={LittlerDemo} />
       <Route path="/demo/otc-quote" component={OtcQuoteDemo} />
+      <Route path="/demo/otc-order" component={OtcOrderDemo} />
       <Route path="/demo/sh-healthcare" component={SHHealthcareDemo} />
       <Route path="/demo/sh-financial" component={SHFinancialDemo} />
       <Route path="/demo/sh-manufacturing" component={SHManufacturingDemo} />

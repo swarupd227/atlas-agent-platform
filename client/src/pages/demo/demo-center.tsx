@@ -199,6 +199,23 @@ const DEMOS: Demo[] = [
     tags: ["Order-to-Cash", "Pre-Order", "CPQ", "B2B Manufacturing"],
   },
   {
+    id: "otc-order",
+    title: "Order Validation & Promise Engine",
+    client: "NovaTech Industries",
+    description:
+      "Order Processing stage of the Order-to-Cash cycle. Meridian Manufacturing submits RUSH order ORD-2026-78432 ($429K). Three Atlas agents run in parallel — OTC-AGT-002 (Order Validation), OTC-AGT-003 (Credit & Risk), OTC-AGT-004 (Inventory Promise) — to resolve credit exposure at 92%, inventory split across Chicago & Atlanta, and ship-to address mismatch. Order released in under 4 minutes.",
+    industry: "Manufacturing",
+    industryId: "manufacturing",
+    stage: "Order Processing",
+    route: "/demo/otc-order",
+    icon: Factory,
+    iconColor: "#FF6B35",
+    duration: "6 min",
+    screens: 3,
+    tags: ["Order-to-Cash", "Order Processing", "Credit", "Inventory"],
+    badge: "New",
+  },
+  {
     id: "sh-healthcare",
     title: "Clinical Data Integrity Self-Healing",
     client: "SH-HEALTH-001",

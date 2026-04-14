@@ -46,6 +46,9 @@ import fitchRwBloombergRouter from "./mock-mcp/fitch-rw-bloomberg";
 import fitchRwSecEdgarRouter from "./mock-mcp/fitch-rw-sec-edgar";
 import fitchRwAnalyticsRouter from "./mock-mcp/fitch-rw-analytics";
 import fitchRwApprovalGateRouter from "./mock-mcp/fitch-rw-approval-gate";
+import otcOrderOmsRouter from "./mock-mcp/otc-order-oms";
+import otcOrderCreditRouter from "./mock-mcp/otc-order-credit";
+import otcOrderInventoryRouter from "./mock-mcp/otc-order-inventory";
 import { bbLiveRunHandler, getBBAgentRuns, getBBOutcomeData, getBBSelfHealingStatus, resetBBDemo, ensureBBAgents } from "./blackbook-live-run";
 import { registerMockMcpServers } from "./mock-mcp/register";
 import piiRouter from "./routes/pii";
@@ -161,6 +164,9 @@ export async function registerRoutes(
   app.use("/api/mock/fitch-rw-sec-edgar", fitchRwSecEdgarRouter);
   app.use("/api/mock/fitch-rw-analytics", fitchRwAnalyticsRouter);
   app.use("/api/mock/fitch-rw-approval-gate", fitchRwApprovalGateRouter);
+  app.use("/api/mock/otc-order-oms", otcOrderOmsRouter);
+  app.use("/api/mock/otc-order-credit", otcOrderCreditRouter);
+  app.use("/api/mock/otc-order-inventory", otcOrderInventoryRouter);
 
   app.get("/demo-api/blackbook/live-run",    bbLiveRunHandler);
   app.get("/demo-api/blackbook/agent-runs",  getBBAgentRuns);
