@@ -7825,16 +7825,22 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
     try {
       const data = insertMcpServerSchema.parse(req.body);
       const server = await storage.createMcpServer(data);
-      await storage.createAuditEvent({
+      res.status(201).json(server);
+      // Audit event is fire-and-forget — must not block or fail the response
+      const orgId = (req.headers["x-organization-id"] as string) || undefined;
+      storage.createAuditEvent({
         action: "mcp_server.created",
         objectType: "mcp_server",
         objectId: server.id,
+        organizationId: orgId,
         actorId: data.addedBy || "system",
         details: JSON.stringify({ name: server.name, transportType: server.transportType }),
+      }).catch((err: unknown) => {
+        console.error("[mcp-server.created] audit event failed (non-fatal):", err);
       });
-      res.status(201).json(server);
     } catch (e: any) {
       if (e instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: e.errors });
+      console.error("[POST /api/mcp-servers] error:", e);
       res.status(500).json({ message: "Failed to create MCP server" });
     }
   });
