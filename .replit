@@ -10,6 +10,10 @@ localPort = 5000
 externalPort = 80
 
 [[ports]]
+localPort = 5001
+externalPort = 3000
+
+[[ports]]
 localPort = 5173
 externalPort = 5173
 
@@ -54,13 +58,13 @@ waitForPort = 5000
 name = "Business App"
 author = "agent"
 
+[workflows.workflow.metadata]
+outputType = "console"
+
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "npx vite --config vite.business.config.ts"
-waitForPort = 5173
-
-[workflows.workflow.metadata]
-outputType = "console"
+waitForPort = 5001
 
 [agent]
 integrations = ["javascript_openai_ai_integrations:2.0.0", "javascript_anthropic_ai_integrations:2.0.0"]

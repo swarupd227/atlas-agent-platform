@@ -29,6 +29,21 @@ function getHeaders(): Record<string, string> {
   return headers;
 }
 
+/**
+ * Resolve an API path to a full URL.
+ * - In dev: path is passed as-is; Vite's proxy routes /api/* → localhost:5000.
+ * - In production: VITE_API_BASE_URL is prefixed so /api/* goes to the IT
+ *   deployment (e.g. https://agent-lifecycle-management-platform.replit.app).
+ */
+function resolveUrl(path: string): string {
+  const base = import.meta.env.VITE_API_BASE_URL;
+  if (base && !import.meta.env.DEV) {
+    // Remove trailing slash from base, ensure path starts with /
+    return `${base.replace(/\/$/, "")}${path.startsWith("/") ? "" : "/"}${path}`;
+  }
+  return path;
+}
+
 async function throwIfResNotOk(res: Response) {
   if (!res.ok) {
     const text = (await res.text()) || res.statusText;
@@ -41,11 +56,12 @@ export async function apiRequest(
   url: string,
   data?: unknown | undefined,
 ): Promise<Response> {
+  const resolvedUrl = resolveUrl(url);
   const headers: Record<string, string> = { ...getHeaders() };
   if (data) {
     headers["Content-Type"] = "application/json";
   }
-  const res = await fetch(url, {
+  const res = await fetch(resolvedUrl, {
     method,
     headers,
     body: data ? JSON.stringify(data) : undefined,
@@ -62,7 +78,8 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(queryKey.join("/") as string, {
+    const path = queryKey.join("/") as string;
+    const res = await fetch(resolveUrl(path), {
       credentials: "include",
       headers: getHeaders(),
     });
