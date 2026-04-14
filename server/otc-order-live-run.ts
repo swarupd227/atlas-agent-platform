@@ -182,13 +182,13 @@ Confirm Chicago-only fulfillment, issue allocation confirmation, and clear VAL-0
 URGENT: Address discrepancy on RUSH order ORD-2026-78432 (running this sub-task in parallel with credit and inventory agents).
 
 DISCREPANCY:
-- ERP Master Record: "4820 W Grand Ave Suite 110, Chicago IL 60639"
-- PO Ship-To:        "4820 W Grand Ave, Chicago IL 60639" (no suite)
+- ERP Master Record: "2847 Industrial Parkway Suite 110, Detroit MI 48210"
+- PO Ship-To:        "2847 Industrial Parkway, Detroit MI 48210" (no suite)
 
 CONTEXT:
-- Meridian's Chicago plant is an industrial manufacturing facility
-- Prior delivery record: 8 successful shipments to 4820 W Grand Ave Chicago IL 60639 (no suite) in past 4 years
-- Suite 110 does not appear in any prior delivery manifest
+- Meridian's Detroit plant is an industrial manufacturing facility
+- Prior delivery record: 8 successful shipments to 2847 Industrial Parkway Detroit MI 48210 (no suite) in past 4 years
+- Suite 110 does not appear in any prior delivery manifest for CUST-00892
 - Industrial facilities typically do not have suite numbers
 
 RESOLUTION: Remove "Suite 110" from ship-to. Update ERP master record CUST-00892-SHIP-04. Confidence: 94%.
@@ -827,7 +827,7 @@ function getFallbackMessage(role: string): string {
   const msgs: Record<string, string> = {
     credit_validation: "OTC-AGT-003: Credit analysis complete. Meridian A+ rated, 7yr relationship, $28.4M annual spend. Current exposure $459,500 (91.9% of $500K limit). Temporary increase to $950K approved for 60 days — within automated pre-auth threshold. VAL-002 CLEARED. Risk: LOW.",
     inventory_validation: "OTC-AGT-004: Inventory analysis complete. Chicago DC stocks all 12 units needed (TX-7250-A ×8, TX-7250-B ×4, TX-7300-HD ×1). Atlanta flag was a false positive — single-warehouse fulfillment confirmed. OPT-A: 2-wave ship May 2–3. Pick tickets PT-CHI-7842-A/B/C issued. $840 split-ship surcharge avoided. VAL-003 CLEARED.",
-    address_validation: "OTC-AGT-002: Address validated. ERP master CUST-00892-SHIP-04 had spurious 'Suite 110' suffix. Industrial facility confirmed via 8 prior delivery records (2022–2026) to 4820 W Grand Ave Chicago IL 60639. ERP record corrected. VAL-004 CLEARED. Confidence: 94%.",
+    address_validation: "OTC-AGT-002: Address validated. ERP master CUST-00892-SHIP-04 had spurious 'Suite 110' suffix. Industrial facility confirmed via 8 prior delivery records (2022–2026) to 2847 Industrial Parkway Detroit MI 48210. Suite 110 removed. VAL-004 CLEARED. Confidence: 94%.",
     resolution_synthesis: "OTC-AGT-002: All 3 parallel agents complete. Resolutions confirmed: (1) Credit limit temp-increased to $950K — 60 days — LOW risk; (2) Inventory allocated from Chicago DC — single warehouse — no surcharge; (3) Address corrected — Suite 110 removed. 8/8 validation checks now PASS. Ready for ERP release.",
     order_release: "OTC-AGT-002: ORD-2026-78432 released. ERP-TXN-2026-78432 confirmed. Pick tickets PT-CHI-7842-A/B/C issued to Chicago DC. 2-wave ship May 2–3, 2026. Customer confirmation queued to j.davis@meridian-mfg.com. Invoice draft created. Total elapsed: < 4 minutes.",
   };

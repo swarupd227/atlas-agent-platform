@@ -126,10 +126,10 @@ router.post("/validate-ship-address", (_req: Request, res: Response) => {
 router.post("/calculate-taxes", (_req: Request, res: Response) => {
   res.json({
     orderId: ORDER.orderId,
-    shipToState: "IL",
-    taxRate: 0.1025,
+    shipToState: "MI",
+    taxRate: 0.06,
     taxableAmount: 429_711,
-    taxAmount: 44_053.38,
+    taxAmount: 25_782.66,
     exemptionCode: "MANUFACTURING_EXEMPTION",
     nexusState: true,
     checkId: "VAL-005",
