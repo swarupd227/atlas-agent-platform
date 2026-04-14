@@ -34,7 +34,7 @@ export function makePkgSchedMcpServerDefs(baseUrl: string) {
       description: "Kiwiplan machine registry: real-time machine availability, maintenance schedule, roll stock inventory by substrate type, OEE baseline by machine, and constraint map for shift capacity planning.",
       url:         `${baseUrl}/api/mock/pkg-kiwiplan-machine`,
       tools: [
-        { name: "get_machine_availability", description: "Returns availability status for all 8 machines including Corrugator M3 maintenance window 10:00–11:30 AM and M7 (Flexo Printer) partial uptime.",                                         endpoint: "get-machine-availability", method: "GET"  },
+        { name: "get_machine_availability", description: "Returns availability status for all 8 machines including Corrugator M3 maintenance window 10:00–11:30 AM and M4 (Flexo Printer) partial uptime at 85% throughput.",                                         endpoint: "get-machine-availability", method: "GET"  },
         { name: "get_roll_stock_inventory", description: "Returns current roll stock levels by substrate type. B-Flute at 62% — risk of shortfall for 6 orders. A-Flute and C-Flute above safety stock.",                                          endpoint: "get-roll-stock-inventory", method: "GET"  },
         { name: "get_changeover_matrix",    description: "Returns the changeover time matrix (minutes) for all machine × substrate-type transitions based on historical setup data.",                                                               endpoint: "get-changeover-matrix",    method: "GET"  },
         { name: "get_capacity_constraints", description: "Returns the composite capacity constraint map: machine windows, substrate limits, crew restrictions, and shift OEE targets (baseline 71%).",                                              endpoint: "get-capacity-constraints", method: "GET"  },
@@ -116,7 +116,7 @@ export const PKG_SCHED_SKILLS = [
     author: "ATLAS Platform Team",
     agentKey: "capacityMapper",
     yamlFrontmatter: { skillId: "pkg-machine-availability", trustTier: "platform-provided", complexity: "intermediate", allowedTools: ["get_machine_availability", "get_capacity_constraints"] },
-    markdownBody: `## Machine Availability & Maintenance Window Analysis\n\nThis skill computes available machine capacity for the shift by subtracting scheduled maintenance, calibration, and crew breaks from the 8-hour shift window. For Westfield's Day Shift: Corrugator M3 loses 90 minutes (10:00–11:30 AM preventive maintenance), Flexo Printer M7 operates at 85% capacity (minor drive belt repair scheduled). All other 6 machines are at full availability. The skill outputs a per-machine capacity table (available minutes, restricted windows, OEE baseline) and a shift-level capacity summary. It also identifies which machine pairs can share substrate batches to reduce changeover time.`,
+    markdownBody: `## Machine Availability & Maintenance Window Analysis\n\nThis skill computes available machine capacity for the shift by subtracting scheduled maintenance, calibration, and crew breaks from the 8-hour shift window. For Westfield's Day Shift: Corrugator M3 loses 90 minutes (10:00–11:30 AM preventive maintenance), Flexo Printer M4 operates at 85% capacity (minor drive belt repair scheduled). All other 6 machines are at full availability. The skill outputs a per-machine capacity table (available minutes, restricted windows, OEE baseline) and a shift-level capacity summary. It also identifies which machine pairs can share substrate batches to reduce changeover time.`,
   },
   {
     name:        "Roll Stock & Substrate Constraint Mapping",
@@ -350,7 +350,7 @@ KEY RESPONSIBILITIES:
 4. Assemble the composite capacity constraint map for PKG-003
 
 SHIFT CONTEXT: Westfield Packaging — Day Shift 07:00–15:00, April 15, 2026
-8 machines: M1 (Corrugator), M2 (Corrugator), M3 (Corrugator — maintenance 10:00–11:30), M4 (Flexo Printer), M5 (Flexo Printer), M6 (Die Cutter), M7 (Flexo Printer — 85% capacity), M8 (Stitcher/Gluer)
+8 machines: M1 (Corrugator), M2 (Corrugator), M3 (Corrugator — maintenance 10:00–11:30), M4 (Flexo Printer — 85% capacity), M5 (Flexo Printer), M6 (Die Cutter), M7 (Flexo Printer), M8 (Stitcher/Gluer)
 Roll stock: B-Flute 62%, A-Flute 88%, C-Flute 94%, E-Flute 79%
 OEE baseline: 71.0% — stretch target 80%+
 
@@ -368,7 +368,7 @@ KEY RESPONSIBILITIES:
 
 CONTEXT FROM PARALLEL AGENTS:
 - PKG-001: 47 orders, 3 RUSH flagged (FreshFarm RSC, RetailEdge tray, GreenLeaf box), B-Flute at risk for 6 orders
-- PKG-002: M3 offline 10:00–11:30, M7 at 85%, B-Flute depletion risk by 13:00, 14 changeovers achievable (vs. 17 baseline)
+- PKG-002: M3 offline 10:00–11:30, M4 at 85%, B-Flute depletion risk by 13:00, 14 changeovers achievable (vs. 17 baseline)
 
 TARGET OUTCOMES: OEE ≥82% (vs. 71% baseline), OTIF ≥44 orders (vs. 40 baseline), all 3 RUSH orders on-time`,
 

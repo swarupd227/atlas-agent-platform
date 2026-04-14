@@ -111,7 +111,7 @@ router.post("/estimate-oee", (_req: Request, res: Response) => {
 });
 
 export const toolManifest = [
-  { name: "get_machine_availability", description: "Returns all 8 machine availability statuses including M3 maintenance window (10:00–11:30) and M7 85% throughput.",                    parameters: { type: "object", properties: {}, required: [] } },
+  { name: "get_machine_availability", description: "Returns all 8 machine availability statuses including M3 maintenance window (10:00–11:30) and M4 85% throughput.",                    parameters: { type: "object", properties: {}, required: [] } },
   { name: "get_roll_stock_inventory", description: "Returns roll stock by substrate: B-Flute 62% (AT_RISK), A-Flute 88%, C-Flute 94%, E-Flute 79%.",                                     parameters: { type: "object", properties: {}, required: [] } },
   { name: "get_changeover_matrix",    description: "Returns substrate changeover times (minutes) per machine type — baseline 17 changeovers/shift, target 14.",                            parameters: { type: "object", properties: {}, required: [] } },
   { name: "get_capacity_constraints", description: "Returns composite capacity constraint map including machines, substrates, crew, OEE targets, and RUSH order hard constraints.",         parameters: { type: "object", properties: {}, required: [] } },
