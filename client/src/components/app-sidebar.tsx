@@ -383,7 +383,7 @@ function CollapsibleNavGroup({
 }
 
 interface MyActionsBadge {
-  totalUnread: number;
+  needsDecisionCount: number;
 }
 
 function BusinessModeSidebar() {
@@ -395,7 +395,7 @@ function BusinessModeSidebar() {
     refetchInterval: 60000,
     staleTime: 30000,
   });
-  const pendingActions = myActionsData?.totalUnread ?? 0;
+  const pendingActions = myActionsData?.needsDecisionCount ?? 0;
 
   const isActive = (url: string) => {
     if (url === "/dashboard") return location === "/dashboard";

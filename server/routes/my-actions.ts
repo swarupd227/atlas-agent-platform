@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { storage } from "../storage";
 import { db } from "../db";
-import { eq, and, isNull } from "drizzle-orm";
-import { agentAlerts } from "@shared/schema";
+import { eq, inArray } from "drizzle-orm";
+import { agentAlerts, agents, improvementRecommendations } from "@shared/schema";
 import { getOrgId } from "../auth";
 
 const router = Router();
@@ -10,34 +10,58 @@ const router = Router();
 function translateApprovalType(type: string, objectName: string | null): { title: string; context: string } {
   const name = objectName || "this item";
   const t = type.toLowerCase();
-  if (t.includes("blueprint_review") || t.includes("blueprint")) {
+  if (t === "blueprint_review" || t.includes("blueprint")) {
     return {
       title: `Approve improvement plan for "${name}"`,
       context: "Your Digital Worker proposed a change to how it works. Review and approve to activate it.",
     };
   }
-  if (t.includes("deployment") || t.includes("deploy")) {
+  if (t === "deployment" || t.includes("deploy")) {
     return {
       title: `Approve go-live for "${name}"`,
       context: "A change is ready to go live. Review it before it reaches your customers.",
     };
   }
-  if (t.includes("policy")) {
+  if (t === "policy_exception" || t.includes("policy")) {
     return {
       title: `Confirm safety rule update for "${name}"`,
       context: "A guardrail has changed — confirm it still matches your expectations.",
     };
   }
-  if (t.includes("auto_patch") || t.includes("patch")) {
+  if (t === "auto_patch" || t === "patch_approval" || t.includes("patch")) {
     return {
       title: `Review proposed fix for "${name}"`,
       context: "Your Digital Worker spotted an issue and prepared a fix. Approve it to apply automatically.",
     };
   }
-  if (t.includes("agent")) {
+  if (t === "tool-invocation" || t === "tool_permission") {
     return {
-      title: `Review your Digital Worker: "${name}"`,
-      context: "This Digital Worker needs your sign-off before it can continue.",
+      title: `Approve tool access for "${name}"`,
+      context: "A Digital Worker is requesting permission to use a tool. Review and approve if this looks right.",
+    };
+  }
+  if (t === "model_upgrade") {
+    return {
+      title: `Approve model upgrade for "${name}"`,
+      context: "A Digital Worker is requesting to use an upgraded model. Approving may improve results.",
+    };
+  }
+  if (t === "outcome_review") {
+    return {
+      title: `Review goal contract: "${name}"`,
+      context: "A goal contract needs your confirmation before it takes effect.",
+    };
+  }
+  if (t === "agent_change") {
+    return {
+      title: `Approve change to Digital Worker: "${name}"`,
+      context: "A change to one of your Digital Workers needs your sign-off.",
+    };
+  }
+  if (t === "export_review") {
+    return {
+      title: `Review data export: "${name}"`,
+      context: "A data export was requested and needs your approval.",
     };
   }
   return {
@@ -122,7 +146,7 @@ function severityToUrgency(severity: string): "urgent" | "today" | "this_week" {
   return "this_week";
 }
 
-function isToday(date: Date | string | null): boolean {
+function isToday(date: Date | string | null | undefined): boolean {
   if (!date) return false;
   const d = new Date(date);
   const now = new Date();
@@ -133,36 +157,54 @@ function isToday(date: Date | string | null): boolean {
   );
 }
 
+interface ActionItem {
+  id: string;
+  source: "approval" | "alert" | "recommendation";
+  sourceId: string;
+  title: string;
+  context: string;
+  urgency: "urgent" | "today" | "this_week";
+  agentAttribution: string | null;
+  agentId: string | null;
+  outcomeId: string | null;
+  createdAt: string | null;
+}
+
+interface CompletedItem extends ActionItem {
+  decidedAt: string | null;
+  decision: "approved" | "dismissed";
+}
+
+const URGENCY_ORDER: Record<string, number> = { urgent: 0, today: 1, this_week: 2 };
+
 router.get("/api/my-actions", async (req, res) => {
   try {
     const orgId = getOrgId(req);
 
-    const [approvals, allAlerts, recommendations] = await Promise.all([
+    const [approvals, allAlerts] = await Promise.all([
       storage.getApprovals(orgId),
       db
         .select()
         .from(agentAlerts)
         .where(orgId ? eq(agentAlerts.orgId, orgId) : undefined)
         .orderBy(agentAlerts.triggeredAt),
-      storage.getImprovementRecommendations(),
     ]);
 
-    interface ActionItem {
-      id: string;
-      source: "approval" | "alert" | "recommendation";
-      sourceId: string;
-      title: string;
-      context: string;
-      urgency: "urgent" | "today" | "this_week";
-      agentAttribution: string | null;
-      agentId: string | null;
-      outcomeId: string | null;
-      createdAt: string | null;
-    }
-
-    interface CompletedItem extends ActionItem {
-      decidedAt: string | null;
-      decision: "approved" | "dismissed";
+    let orgRecommendations: typeof improvementRecommendations.$inferSelect[] = [];
+    if (orgId) {
+      const orgAgents = await db
+        .select({ id: agents.id })
+        .from(agents)
+        .where(eq(agents.organizationId, orgId));
+      const orgAgentIds = orgAgents.map((a) => a.id);
+      if (orgAgentIds.length > 0) {
+        orgRecommendations = await db
+          .select()
+          .from(improvementRecommendations)
+          .where(inArray(improvementRecommendations.agentId, orgAgentIds));
+      }
+    } else {
+      orgRecommendations = await db.select().from(improvementRecommendations);
     }
 
     const needsDecision: ActionItem[] = [];
@@ -200,11 +242,7 @@ router.get("/api/my-actions", async (req, res) => {
 
     const unacknowledgedAlerts = allAlerts.filter((a) => !a.acknowledgedAt);
     for (const alert of unacknowledgedAlerts) {
-      const { title, context } = translateAlertType(
-        alert.alertType,
-        alert.agentName,
-        alert.message
-      );
+      const { title, context } = translateAlertType(alert.alertType, alert.agentName, alert.message);
       const urgency = severityToUrgency(alert.severity);
       const item: ActionItem = {
         id: `alert-${alert.id}`,
@@ -225,7 +263,7 @@ router.get("/api/my-actions", async (req, res) => {
       }
     }
 
-    const pendingRecs = recommendations.filter((r) => r.status === "pending");
+    const pendingRecs = orgRecommendations.filter((r) => r.status === "pending");
     for (const rec of pendingRecs) {
       const { title, context } = translateRecommendationType(rec.title, rec.source, rec.description || "");
       const urgency = severityToUrgency(rec.severity);
@@ -248,15 +286,21 @@ router.get("/api/my-actions", async (req, res) => {
       }
     }
 
-    needsDecision.sort((a, b) => {
-      const order = { urgent: 0, today: 1, this_week: 2 };
-      return order[a.urgency] - order[b.urgency];
-    });
-
-    const totalUnread = needsDecision.length + fyi.length;
+    needsDecision.sort(
+      (a, b) =>
+        URGENCY_ORDER[a.urgency] - URGENCY_ORDER[b.urgency] ||
+        new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime()
+    );
+    fyi.sort(
+      (a, b) =>
+        URGENCY_ORDER[a.urgency] - URGENCY_ORDER[b.urgency] ||
+        new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime()
+    );
 
     res.json({
-      totalUnread,
+      needsDecisionCount: needsDecision.length,
+      fyiCount: fyi.length,
+      completedTodayCount: completedToday.length,
       needsDecision,
       fyi,
       completedToday,

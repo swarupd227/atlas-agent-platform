@@ -7,18 +7,24 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   CheckCircle2,
   AlertTriangle,
   Info,
-  Clock,
   ThumbsUp,
   ThumbsDown,
   ChevronRight,
-  Zap,
   Bell,
   ArrowRight,
   CheckCheck,
   CircleX,
+  Filter,
 } from "lucide-react";
 
 interface ActionItem {
@@ -40,7 +46,9 @@ interface CompletedItem extends ActionItem {
 }
 
 interface MyActionsData {
-  totalUnread: number;
+  needsDecisionCount: number;
+  fyiCount: number;
+  completedTodayCount: number;
   needsDecision: ActionItem[];
   fyi: ActionItem[];
   completedToday: CompletedItem[];
@@ -78,8 +86,7 @@ const urgencyConfig = {
 function actionLink(item: ActionItem): string {
   if (item.source === "approval") return `/approvals/${item.sourceId}`;
   if (item.source === "alert") return `/observability`;
-  if (item.source === "recommendation") return `/improvements`;
-  return "/";
+  return `/improvements`;
 }
 
 function NeedsDecisionCard({ item }: { item: ActionItem }) {
@@ -199,7 +206,7 @@ function NeedsDecisionCard({ item }: { item: ActionItem }) {
                 className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors ml-1"
                 data-testid={`link-view-${item.id}`}
               >
-                View details
+                Details
                 <ChevronRight className="w-3 h-3" />
               </button>
             </Link>
@@ -244,7 +251,7 @@ function NeedsDecisionCard({ item }: { item: ActionItem }) {
                 className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
                 data-testid={`link-view-alert-${item.id}`}
               >
-                View details
+                Details
                 <ChevronRight className="w-3 h-3" />
               </button>
             </Link>
@@ -370,19 +377,32 @@ function SectionHeader({ label, count, icon: Icon, color }: {
   );
 }
 
+type UrgencyFilter = "all" | "urgent" | "today" | "this_week";
+
 export default function MyActions() {
+  const [urgencyFilter, setUrgencyFilter] = useState<UrgencyFilter>("all");
+
   const { data, isLoading } = useQuery<MyActionsData>({
     queryKey: ["/api/my-actions"],
     refetchInterval: 60000,
     staleTime: 30000,
   });
 
-  const needsDecision = data?.needsDecision ?? [];
-  const fyi = data?.fyi ?? [];
+  const allNeedsDecision = data?.needsDecision ?? [];
+  const allFyi = data?.fyi ?? [];
   const completedToday = data?.completedToday ?? [];
-  const totalUnread = data?.totalUnread ?? 0;
+  const needsDecisionCount = data?.needsDecisionCount ?? 0;
 
-  const hasAnything = needsDecision.length > 0 || fyi.length > 0 || completedToday.length > 0;
+  const filterItem = (item: ActionItem) => {
+    if (urgencyFilter !== "all" && item.urgency !== urgencyFilter) return false;
+    return true;
+  };
+
+  const needsDecision = allNeedsDecision.filter(filterItem);
+  const fyi = allFyi.filter(filterItem);
+
+  const hasAnything = allNeedsDecision.length > 0 || allFyi.length > 0 || completedToday.length > 0;
+  const hasFiltered = needsDecision.length > 0 || fyi.length > 0 || completedToday.length > 0;
 
   return (
     <div className="flex flex-col gap-6 p-6 max-w-2xl" data-testid="page-my-actions">
@@ -394,21 +414,45 @@ export default function MyActions() {
           <p className="text-sm text-muted-foreground mt-0.5" data-testid="text-my-actions-subtitle">
             {isLoading
               ? "Loading…"
-              : totalUnread > 0
-              ? `${totalUnread} item${totalUnread !== 1 ? "s" : ""} waiting for your attention`
-              : "Nothing needs your attention right now"}
+              : needsDecisionCount > 0
+              ? `${needsDecisionCount} item${needsDecisionCount !== 1 ? "s" : ""} waiting for your decision`
+              : "Nothing needs your decision right now"}
           </p>
         </div>
-        {!isLoading && totalUnread > 0 && (
+        {!isLoading && needsDecisionCount > 0 && (
           <span
             className="flex items-center gap-1.5 text-xs font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 px-2.5 py-1.5 rounded-full"
-            data-testid="badge-total-unread"
+            data-testid="badge-needs-decision-count"
           >
             <Bell className="w-3 h-3" />
-            {totalUnread} pending
+            {needsDecisionCount} pending
           </span>
         )}
       </div>
+
+      {!isLoading && hasAnything && (
+        <div className="flex items-center gap-2" data-testid="filter-bar">
+          <Filter className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+          <span className="text-xs text-muted-foreground">Urgency:</span>
+          <Select
+            value={urgencyFilter}
+            onValueChange={(v) => setUrgencyFilter(v as UrgencyFilter)}
+          >
+            <SelectTrigger
+              className="h-7 w-36 text-xs"
+              data-testid="select-urgency-filter"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All</SelectItem>
+              <SelectItem value="urgent">Urgent only</SelectItem>
+              <SelectItem value="today">Today</SelectItem>
+              <SelectItem value="this_week">This week</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      )}
 
       {isLoading ? (
         <div className="flex flex-col gap-3">
@@ -430,6 +474,17 @@ export default function MyActions() {
               Your Digital Workers will notify you when something needs attention.
             </p>
           </div>
+        </div>
+      ) : !hasFiltered ? (
+        <div className="flex flex-col items-center justify-center gap-2 py-10 rounded-xl border border-dashed bg-muted/10" data-testid="empty-filtered">
+          <p className="text-sm text-muted-foreground">No items match this filter.</p>
+          <button
+            className="text-xs underline text-muted-foreground hover:text-foreground transition-colors"
+            onClick={() => setUrgencyFilter("all")}
+            data-testid="button-clear-filter"
+          >
+            Clear filter
+          </button>
         </div>
       ) : (
         <div className="flex flex-col gap-8">
@@ -482,9 +537,7 @@ export default function MyActions() {
           )}
 
           <div className="flex items-center justify-between pt-2 border-t">
-            <span className="text-xs text-muted-foreground">
-              Need more detail?
-            </span>
+            <span className="text-xs text-muted-foreground">Need more detail?</span>
             <div className="flex items-center gap-3">
               <Link href="/approvals">
                 <button
