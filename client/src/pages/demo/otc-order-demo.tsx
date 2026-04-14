@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
-import { Factory, ChevronRight, ShieldCheck, Package, Send, Terminal, RotateCcw, Cpu, Zap } from "lucide-react";
+import { Factory, ChevronRight, ShieldCheck, Package, Send, Terminal, RotateCcw } from "lucide-react";
 import { useOtcOrderPipeline, OrderLogEntry } from "./otc-order-constants";
 import OtcOrderS1Validation from "./otc-order-s1-validation";
 import OtcOrderS2Inventory from "./otc-order-s2-inventory";
@@ -76,28 +76,6 @@ function AgentLogPanel({ entries, open }: { entries: OrderLogEntry[]; open: bool
   );
 }
 
-function LiveVsFallbackBadge({ usedFallback }: { usedFallback?: boolean }) {
-  if (usedFallback === undefined) return null;
-  return usedFallback ? (
-    <span
-      className="inline-flex items-center gap-0.5 text-[8px] font-mono px-1.5 py-0.5 rounded border"
-      style={{ background: "rgba(148,163,184,0.08)", borderColor: "rgba(148,163,184,0.15)", color: "#94a3b8" }}
-      title="Scripted fallback — live agent call failed or agent unavailable"
-    >
-      <Zap className="w-2 h-2" /> SIMULATED
-    </span>
-  ) : (
-    <span
-      className="inline-flex items-center gap-0.5 text-[8px] font-mono px-1.5 py-0.5 rounded border"
-      style={{ background: "rgba(34,197,94,0.08)", borderColor: "rgba(34,197,94,0.2)", color: "#4ade80" }}
-      title="Real LLM agent call completed successfully"
-    >
-      <Cpu className="w-2 h-2" /> LIVE
-    </span>
-  );
-}
-
-export { LiveVsFallbackBadge };
 
 export default function OtcOrderDemo() {
   const [screen, setScreen]   = useState(1);
@@ -155,12 +133,6 @@ export default function OtcOrderDemo() {
     reset();
   };
 
-  const anyFallback   = state.results.some(r => r.usedFallback);
-  const anyLive       = state.results.some(r => r.usedFallback === false);
-  const validationResults = state.results.filter(r =>
-    ["credit_validation", "inventory_validation", "address_validation"].includes(r.role)
-  );
-
   return (
     <div className="flex flex-col h-screen max-h-screen bg-background overflow-hidden">
 
@@ -177,20 +149,6 @@ export default function OtcOrderDemo() {
               NovaTech Industries · Meridian Manufacturing ORD-2026-78432 · OTC-AGT-002 · OTC-AGT-003 · OTC-AGT-004
             </p>
           </div>
-
-          {/* Agent mode summary — live vs simulated */}
-          {validationResults.length > 0 && (
-            <div className="hidden lg:flex items-center gap-1.5 ml-3 pl-3 border-l border-border/30">
-              {validationResults.map(r => (
-                <div key={r.role} className="flex items-center gap-1">
-                  <span className="text-[9px] font-mono text-muted-foreground/50">
-                    {r.agentCode}:
-                  </span>
-                  <LiveVsFallbackBadge usedFallback={r.usedFallback} />
-                </div>
-              ))}
-            </div>
-          )}
 
           {/* Step tabs */}
           <div className="flex items-center gap-1 ml-auto">

@@ -526,9 +526,13 @@ export async function ensureOtcOrderAgents(): Promise<void> {
       } as Parameters<typeof storage.createAgent>[0]);
     } else {
       await storage.updateAgent(agent.id, {
-        systemPrompt:    `You are ${def.name}, an AI agent for NovaTech Industries Order-to-Cash pipeline. You have access to real-time ERP, credit, and warehouse data via MCP tools. Always call your tools in sequence and produce a structured JSON summary at the end of your response.`,
-        preloadedSkills: preloadedSkills as { skillId: string }[],
-        blueprintId:     agentBlueprintId,
+        systemPrompt:      `You are ${def.name}, an AI agent for NovaTech Industries Order-to-Cash pipeline. You have access to real-time ERP, credit, and warehouse data via MCP tools. Always call your tools in sequence and produce a structured JSON summary at the end of your response.`,
+        preloadedSkills:   preloadedSkills as { skillId: string }[],
+        blueprintId:       agentBlueprintId,
+        modelProvider:     "openai",
+        modelName:         "gpt-4.1",
+        autonomyMode:      "autonomous",
+        maxToolIterations: 6,
       }).catch(() => {});
     }
 
@@ -573,66 +577,12 @@ async function ensureDeployment(agentId: string, agentName: string, role: string
   return dep.id;
 }
 
-const FALLBACK_TOOL_SEQUENCE: Record<string, Array<{ tool: string; label: string; delayMs: number }>> = {
-  credit_validation: [
-    { tool: "validate_customer_identity",   label: "Verifying customer CUST-00892…",           delayMs: 1100 },
-    { tool: "get_credit_exposure",          label: "Pulling credit exposure ($873,225 / $950K)", delayMs: 1400 },
-    { tool: "get_payment_history",          label: "Scanning 18-month payment history…",          delayMs: 1200 },
-    { tool: "approve_credit_limit",         label: "Approving exception — 60-day limit…",         delayMs: 900  },
-  ],
-  inventory_validation: [
-    { tool: "get_inventory_by_location",    label: "Fetching Chicago + Atlanta stock levels…",    delayMs: 1100 },
-    { tool: "calculate_atp",               label: "Computing ATP — 12 units req'd…",             delayMs: 1300 },
-    { tool: "get_shipping_options",         label: "Evaluating fulfillment options (OPT-A/B/C)…", delayMs: 1100 },
-    { tool: "reserve_inventory",            label: "Reserving Chicago stock, issuing pick tickets",delayMs: 900  },
-  ],
-  address_validation: [
-    { tool: "validate_customer_identity",   label: "Loading ERP master CUST-00892-SHIP-04…",      delayMs: 1000 },
-    { tool: "validate_ship_address",        label: "Checking delivery history — 8 prior records…", delayMs: 1400 },
-    { tool: "update_erp_master",            label: "Removing Suite 110, confidence 94%…",          delayMs: 900  },
-  ],
-  resolution_synthesis: [
-    { tool: "synthesize_resolutions",       label: "Merging VAL-002, VAL-003, VAL-004 outputs…",  delayMs: 1300 },
-    { tool: "validate_order_ready",         label: "All 8 checks clear — order ready to release…", delayMs: 900  },
-  ],
-  order_release: [
-    { tool: "release_order",               label: "Posting OMS release — ORD-2026-78432…",        delayMs: 1100 },
-    { tool: "commit_delivery_promise",      label: "Committing May 2–3, 2026 delivery promise…",   delayMs: 800  },
-  ],
-};
-
-async function simulateFallbackWork(
-  sendEvent: (type: string, payload: object) => void,
-  agentName: string,
-  role: string,
-): Promise<void> {
-  const sequence = FALLBACK_TOOL_SEQUENCE[role] ?? [];
-  for (const step of sequence) {
-    await new Promise(r => setTimeout(r, step.delayMs));
-    sendEvent("agent_event", {
-      agentName,
-      type: "tool_call_result",
-      tool: step.tool,
-      label: step.label,
-      data: { tool: step.tool, success: true },
-    });
-  }
-  await new Promise(r => setTimeout(r, 400));
-}
-
-async function runStepWithFallback(
+async function runStep(
   deploymentId: string,
   taskPrompt: string,
   maxIterations: number,
-  role: string,
-): Promise<{ success: boolean; message: string; usedFallback: boolean }> {
-  try {
-    const result = await runAgentOnce(deploymentId, taskPrompt, maxIterations);
-    return { ...result, usedFallback: false };
-  } catch (err: any) {
-    console.warn(`[otc-order-live] Step "${role}" failed, using fallback:`, err?.message);
-    return { success: true, message: getFallbackMessage(role), usedFallback: true };
-  }
+): Promise<{ success: boolean; message: string }> {
+  return runAgentOnce(deploymentId, taskPrompt, maxIterations);
 }
 
 export async function otcOrderLiveRunHandler(req: Request, res: Response): Promise<void> {
@@ -699,7 +649,7 @@ export async function otcOrderLiveRunHandler(req: Request, res: Response): Promi
     const agt004Id = _orderAgentIdByName[OTC_AGT_004_NAME];
 
     sendEvent("setup", {
-      message: `Agents: ${agt002Id ? "OTC-AGT-002 ✓" : "OTC-AGT-002 ✗ (fallback)"} · ${agt003Id ? "OTC-AGT-003 ✓" : "OTC-AGT-003 ✗ (fallback)"} · ${agt004Id ? "OTC-AGT-004 ✓" : "OTC-AGT-004 ✗ (fallback)"}`,
+      message: `Agents: ${agt002Id ? "OTC-AGT-002 ✓" : "OTC-AGT-002 ✗ (not found)"} · ${agt003Id ? "OTC-AGT-003 ✓" : "OTC-AGT-003 ✗ (not found)"} · ${agt004Id ? "OTC-AGT-004 ✓" : "OTC-AGT-004 ✗ (not found)"}`,
     });
 
     const priorContext: Record<string, string> = {};
@@ -732,9 +682,13 @@ export async function otcOrderLiveRunHandler(req: Request, res: Response): Promi
         parallel: true,
       });
 
-      let result: { success: boolean; message: string; usedFallback: boolean };
+      let result: { success: boolean; message: string };
 
-      if (agentId) {
+      if (!agentId) {
+        const msg = `Agent ${step.agentName} not found — run setup first`;
+        sendEvent("agent_error", { role: step.role, agentName: step.agentName, message: msg });
+        result = { success: false, message: msg };
+      } else {
         const depId = await ensureDeployment(agentId, step.agentName, step.role);
         deploymentIds.add(depId);
         deploymentIdToAgent.set(depId, step.agentName);
@@ -742,13 +696,7 @@ export async function otcOrderLiveRunHandler(req: Request, res: Response): Promi
           await stopAgentRuntime(depId).catch(() => {});
           await new Promise(r => setTimeout(r, 300));
         }
-        result = await runStepWithFallback(depId, step.taskPrompt, step.maxIterations, step.role);
-        if (result.usedFallback) {
-          await simulateFallbackWork(sendEvent, step.agentName, step.role);
-        }
-      } else {
-        await simulateFallbackWork(sendEvent, step.agentName, step.role);
-        result = { success: true, message: getFallbackMessage(step.role), usedFallback: true };
+        result = await runStep(depId, step.taskPrompt, step.maxIterations);
       }
 
       sendEvent("agent_complete", {
@@ -757,7 +705,6 @@ export async function otcOrderLiveRunHandler(req: Request, res: Response): Promi
         agentId: agentId || null,
         success: result.success,
         message: result.message?.slice(0, 600),
-        usedFallback: result.usedFallback,
         parallel: true,
       });
 
@@ -776,8 +723,6 @@ export async function otcOrderLiveRunHandler(req: Request, res: Response): Promi
       message: "All 3 validation agents complete — synthesising resolutions…",
       resolvedChecks: ["VAL-002 Credit", "VAL-003 Inventory", "VAL-004 Address"],
     });
-
-    if (!aborted) await new Promise(r => setTimeout(r, 400));
 
     // ── STEPS 2 & 3: Sequential (synthesis → release) ────────────────────────
     for (const step of sequentialSteps) {
@@ -801,9 +746,13 @@ export async function otcOrderLiveRunHandler(req: Request, res: Response): Promi
         parallel: false,
       });
 
-      let result: { success: boolean; message: string; usedFallback: boolean };
+      let result: { success: boolean; message: string };
 
-      if (agentId) {
+      if (!agentId) {
+        const msg = `Agent ${step.agentName} not found — run setup first`;
+        sendEvent("agent_error", { role: step.role, agentName: step.agentName, message: msg });
+        result = { success: false, message: msg };
+      } else {
         const depId = await ensureDeployment(agentId, step.agentName, step.role);
         deploymentIds.add(depId);
         deploymentIdToAgent.set(depId, step.agentName);
@@ -811,13 +760,7 @@ export async function otcOrderLiveRunHandler(req: Request, res: Response): Promi
           await stopAgentRuntime(depId).catch(() => {});
           await new Promise(r => setTimeout(r, 300));
         }
-        result = await runStepWithFallback(depId, fullPrompt, step.maxIterations, step.role);
-        if (result.usedFallback) {
-          await simulateFallbackWork(sendEvent, step.agentName, step.role);
-        }
-      } else {
-        await simulateFallbackWork(sendEvent, step.agentName, step.role);
-        result = { success: true, message: getFallbackMessage(step.role), usedFallback: true };
+        result = await runStep(depId, fullPrompt, step.maxIterations);
       }
 
       if (result.message) priorContext[step.role] = result.message.slice(0, 1200);
@@ -828,11 +771,8 @@ export async function otcOrderLiveRunHandler(req: Request, res: Response): Promi
         agentId: agentId || null,
         success: result.success,
         message: result.message?.slice(0, 600),
-        usedFallback: result.usedFallback,
         parallel: false,
       });
-
-      if (!aborted) await new Promise(r => setTimeout(r, 600));
     }
 
     sendEvent("run_complete", {
@@ -876,13 +816,3 @@ export async function resetOtcOrderDemo(_req: Request, res: Response): Promise<v
   res.json({ success: true, message: "OTC Order demo reset" });
 }
 
-function getFallbackMessage(role: string): string {
-  const msgs: Record<string, string> = {
-    credit_validation: "OTC-AGT-003: Credit analysis complete. Meridian A+ rated, 7yr relationship, $28.4M annual spend. Current exposure $459,500 (91.9% of $500K limit). Temporary increase to $950K approved for 60 days — within automated pre-auth threshold. VAL-002 CLEARED. Risk: LOW.",
-    inventory_validation: "OTC-AGT-004: Inventory analysis complete. Chicago DC stocks all 12 units needed (TX-7250-A ×8, TX-7250-B ×4, TX-7300-HD ×1). Atlanta flag was a false positive — single-warehouse fulfillment confirmed. OPT-A: 2-wave ship May 2–3. Pick tickets PT-CHI-7842-A/B/C issued. $840 split-ship surcharge avoided. VAL-003 CLEARED.",
-    address_validation: "OTC-AGT-002: Address validated. ERP master CUST-00892-SHIP-04 had spurious 'Suite 110' suffix. Industrial facility confirmed via 8 prior delivery records (2022–2026) to 2847 Industrial Parkway Detroit MI 48210. Suite 110 removed. VAL-004 CLEARED. Confidence: 94%.",
-    resolution_synthesis: "OTC-AGT-002: All 3 parallel agents complete. Resolutions confirmed: (1) Credit limit temp-increased to $950K — 60 days — LOW risk; (2) Inventory allocated from Chicago DC — single warehouse — no surcharge; (3) Address corrected — Suite 110 removed. 8/8 validation checks now PASS. Ready for ERP release.",
-    order_release: "OTC-AGT-002: ORD-2026-78432 released. ERP-TXN-2026-78432 confirmed. Pick tickets PT-CHI-7842-A/B/C issued to Chicago DC. 2-wave ship May 2–3, 2026. Customer confirmation queued to j.davis@meridian-mfg.com. Invoice draft created. Total elapsed: < 4 minutes.",
-  };
-  return msgs[role] ?? `[Computed fallback for ${role}]`;
-}

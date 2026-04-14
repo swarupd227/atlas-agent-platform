@@ -216,7 +216,6 @@ export interface OrderRunResult {
   success: boolean;
   message: string | null;
   completedAt: string;
-  usedFallback?: boolean;
 }
 
 export interface OrderLogEntry {
@@ -494,7 +493,6 @@ export function useOtcOrderPipeline(): OtcOrderPipelineHook {
         _cache.results.push({
           role: d.role, agentCode: code, success: d.success,
           message: d.message || null, completedAt: now,
-          usedFallback: d.usedFallback ?? false,
         });
       }
 
