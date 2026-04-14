@@ -130,20 +130,14 @@ function NeedsDecisionCard({ item }: { item: ActionItem }) {
   const cat = categoryConfig[item.category];
 
   const approveMutation = useMutation({
-    mutationFn: async () => {
-      if (item.source === "approval") {
-        await apiRequest("PATCH", `/api/approvals/${item.sourceId}`, { status: "approved", decidedBy: "outcome_owner" });
-      } else if (item.source === "alert") {
-        await apiRequest("POST", `/api/observability/alerts/${item.sourceId}/acknowledge`);
-      } else if (item.source === "recommendation") {
-        await apiRequest("PATCH", `/api/recommendations/${item.sourceId}`, { status: "applied" });
-      }
-    },
+    mutationFn: () =>
+      apiRequest("POST", "/api/my-actions/decide", {
+        source: item.source,
+        sourceId: item.sourceId,
+        decision: "approved",
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/my-actions"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/recommendations"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/observability/alerts"] });
       toast({ title: "Done", description: "Your decision has been saved." });
     },
     onError: (err: Error) => {
@@ -152,20 +146,14 @@ function NeedsDecisionCard({ item }: { item: ActionItem }) {
   });
 
   const dismissMutation = useMutation({
-    mutationFn: async () => {
-      if (item.source === "approval") {
-        await apiRequest("PATCH", `/api/approvals/${item.sourceId}`, { status: "rejected", decidedBy: "outcome_owner" });
-      } else if (item.source === "alert") {
-        await apiRequest("POST", `/api/observability/alerts/${item.sourceId}/acknowledge`);
-      } else if (item.source === "recommendation") {
-        await apiRequest("PATCH", `/api/recommendations/${item.sourceId}`, { status: "dismissed" });
-      }
-    },
+    mutationFn: () =>
+      apiRequest("POST", "/api/my-actions/decide", {
+        source: item.source,
+        sourceId: item.sourceId,
+        decision: item.source === "approval" ? "rejected" : "dismissed",
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/my-actions"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/recommendations"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/observability/alerts"] });
       toast({ title: "Dismissed", description: "Item marked as not needed." });
     },
     onError: (err: Error) => {
@@ -317,17 +305,14 @@ function FyiCard({ item }: { item: ActionItem }) {
   const cfg = urgencyConfig[item.urgency];
 
   const dismissMutation = useMutation({
-    mutationFn: async () => {
-      if (item.source === "alert") {
-        await apiRequest("POST", `/api/observability/alerts/${item.sourceId}/acknowledge`);
-      } else if (item.source === "recommendation") {
-        await apiRequest("PATCH", `/api/recommendations/${item.sourceId}`, { status: "dismissed" });
-      }
-    },
+    mutationFn: () =>
+      apiRequest("POST", "/api/my-actions/decide", {
+        source: item.source,
+        sourceId: item.sourceId,
+        decision: "dismissed",
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/my-actions"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/observability/alerts"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/recommendations"] });
     },
     onError: (err: Error) => {
       toast({ title: "Couldn't dismiss", description: err.message, variant: "destructive" });

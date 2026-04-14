@@ -206,6 +206,13 @@ function translateRecommendationType(
   };
 }
 
+function normalizeRiskScore(raw: number | null | undefined): number {
+  if (raw == null) return 0;
+  if (raw <= 1) return raw;
+  if (raw <= 10) return raw / 10;
+  return Math.min(raw / 100, 1);
+}
+
 function severityToUrgency(severity: string): "urgent" | "today" | "this_week" {
   if (severity === "critical") return "urgent";
   if (severity === "high") return "today";
@@ -271,15 +278,15 @@ router.get("/api/my-actions", async (req, res) => {
         approval.type,
         approval.objectName
       );
-      const riskScore = approval.riskScore ?? 0;
+      const riskScore = normalizeRiskScore(approval.riskScore);
       const urgency: ActionItem["urgency"] =
         riskScore >= 0.8 ? "urgent" : riskScore >= 0.5 ? "today" : "this_week";
 
       const businessImpact =
         riskScore >= 0.8
-          ? `High risk (score ${(riskScore * 100).toFixed(0)}%) — requires careful review`
+          ? `High risk (${(riskScore * 100).toFixed(0)}%) — requires careful review`
           : riskScore >= 0.5
-          ? `Medium risk (score ${(riskScore * 100).toFixed(0)}%)`
+          ? `Medium risk (${(riskScore * 100).toFixed(0)}%)`
           : null;
 
       const item: ActionItem = {
@@ -451,6 +458,86 @@ router.get("/api/my-actions", async (req, res) => {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("[my-actions] Error:", message);
     res.status(500).json({ error: "Failed to fetch actions" });
+  }
+});
+
+router.post("/api/my-actions/decide", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const { source, sourceId, decision } = req.body as {
+      source: "approval" | "alert" | "recommendation";
+      sourceId: string;
+      decision: "approved" | "rejected" | "dismissed" | "acknowledged";
+    };
+
+    if (!source || !sourceId || !decision) {
+      return res.status(400).json({ error: "source, sourceId, and decision are required" });
+    }
+
+    if (source === "approval") {
+      const approval = await storage.getApproval(sourceId);
+      if (!approval) return res.status(404).json({ error: "Approval not found" });
+      if (orgId && approval.organizationId !== orgId) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+      const status = decision === "approved" ? "approved" : "rejected";
+      await storage.updateApproval(sourceId, {
+        status,
+        decidedBy: "outcome_owner",
+        decidedAt: new Date(),
+      });
+      return res.json({ ok: true });
+    }
+
+    if (source === "alert") {
+      const rows = await db
+        .select()
+        .from(agentAlerts)
+        .where(eq(agentAlerts.id, sourceId));
+      const alert = rows[0];
+      if (!alert) return res.status(404).json({ error: "Alert not found" });
+      if (orgId && alert.orgId !== orgId) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+      await db
+        .update(agentAlerts)
+        .set({ acknowledgedAt: new Date() })
+        .where(eq(agentAlerts.id, sourceId));
+      return res.json({ ok: true });
+    }
+
+    if (source === "recommendation") {
+      const rows = await db
+        .select()
+        .from(improvementRecommendations)
+        .where(eq(improvementRecommendations.id, sourceId));
+      const rec = rows[0];
+      if (!rec) return res.status(404).json({ error: "Recommendation not found" });
+
+      if (orgId) {
+        const orgAgents = await db
+          .select({ id: agents.id })
+          .from(agents)
+          .where(eq(agents.organizationId, orgId));
+        const orgAgentIds = new Set(orgAgents.map((a) => a.id));
+        if (!orgAgentIds.has(rec.agentId ?? "")) {
+          return res.status(403).json({ error: "Forbidden" });
+        }
+      }
+
+      const status = decision === "approved" ? "applied" : "dismissed";
+      await db
+        .update(improvementRecommendations)
+        .set({ status, updatedAt: new Date() })
+        .where(eq(improvementRecommendations.id, sourceId));
+      return res.json({ ok: true });
+    }
+
+    return res.status(400).json({ error: "Unknown source type" });
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("[my-actions/decide] Error:", message);
+    res.status(500).json({ error: "Failed to record decision" });
   }
 });
 
