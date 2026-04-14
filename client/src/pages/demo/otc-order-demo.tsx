@@ -204,12 +204,7 @@ export default function OtcOrderDemo() {
                 ✓ ORD-2026-78432 Released
               </Badge>
             )}
-            {isComplete && anyFallback && !anyLive && (
-              <Badge className="text-[9px] bg-slate-500/10 text-slate-400 border-slate-500/20">
-                Scripted Agents
-              </Badge>
-            )}
-            {isComplete && anyLive && (
+            {isComplete && (
               <Badge className="text-[9px] bg-green-500/10 text-green-400 border-green-500/20">
                 Live LLM Agents
               </Badge>
