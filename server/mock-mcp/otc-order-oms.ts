@@ -96,19 +96,71 @@ router.post("/resolve-address", (_req: Request, res: Response) => {
   });
 });
 
+// Spec tool name aliases — map to same deterministic data
+router.post("/validate-customer-identity", (_req: Request, res: Response) => {
+  res.json({
+    customerId: ORDER.customerId,
+    customerName: ORDER.customer,
+    identityVerified: true,
+    accountStatus: "ACTIVE",
+    contractRef: "MSA-2024-0892",
+    creditRating: "A+",
+    sanctionsCheck: "CLEAR",
+    retrievedAt: new Date().toISOString(),
+  });
+});
+
+router.post("/validate-ship-address", (_req: Request, res: Response) => {
+  res.json({
+    orderId: ORDER.orderId,
+    resolution: "SUITE_REMOVED",
+    resolvedAddress: { ...ORDER.shipTo, address2: "" },
+    rationale: "Industrial facility confirmed via prior delivery records (8 successful shipments to 4820 W Grand Ave Chicago IL 60639). Suite 110 does not exist — removed from ERP master.",
+    atlasConfidence: 0.94,
+    checkId: "VAL-004",
+    newStatus: "PASS",
+    resolvedAt: new Date().toISOString(),
+  });
+});
+
+router.post("/calculate-taxes", (_req: Request, res: Response) => {
+  res.json({
+    orderId: ORDER.orderId,
+    shipToState: "IL",
+    taxRate: 0.1025,
+    taxableAmount: 429_711,
+    taxAmount: 44_053.38,
+    exemptionCode: "MANUFACTURING_EXEMPTION",
+    nexusState: true,
+    checkId: "VAL-005",
+    retrievedAt: new Date().toISOString(),
+  });
+});
+
+router.post("/check-compliance", (_req: Request, res: Response) => {
+  res.json({
+    orderId: ORDER.orderId,
+    exportControl: { status: "CLEAR", classification: "EAR99", restrictedParty: false },
+    ofac: { status: "CLEAR", hits: 0 },
+    revenueRecognition: { status: "PASS", treatment: "ship-and-bill", asc606Memo: "Generated" },
+    checkId: "VAL-006",
+    allClear: true,
+    retrievedAt: new Date().toISOString(),
+  });
+});
+
 router.post("/release", (_req: Request, res: Response) => {
   res.json({
     orderId: ORDER.orderId,
     status: "RELEASED",
     releasedAt: new Date().toISOString(),
     releasedBy: "Atlas OTC-AGT-002 (automated — all holds cleared)",
-    erpConfirmation: "ERP-TXN-2026-" + Math.floor(Math.random() * 90000 + 10000),
-    warehousePickTicket: "WH-CHI-" + Math.floor(Math.random() * 9000 + 1000),
+    erpConfirmation: "ERP-TXN-2026-78432",
+    warehousePickTicket: "WH-CHI-7842",
     estimatedShipDate: "2026-04-21",
-    estimatedDeliveryDate: "2026-04-24",
+    estimatedDeliveryDate: "2026-04-22",
     nextSteps: [
       "Warehouse pick list transmitted to Chicago DC",
-      "Atlanta partial shipment (4 units) notified for consolidation",
       "Customer confirmation email queued for dispatch",
       "Invoice draft created — pending ship confirmation",
     ],
@@ -117,6 +169,31 @@ router.post("/release", (_req: Request, res: Response) => {
 
 export const toolManifest = [
   {
+    name: "validate_customer_identity",
+    description: "Validates Meridian Manufacturing customer identity, account standing, MSA contract reference, A+ credit rating, and OFAC sanctions screening for ORD-2026-78432.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "validate_ship_address",
+    description: "Resolves ship-to address discrepancy for ORD-2026-78432: removes spurious Suite 110 from ERP master record using prior delivery history. Returns corrected address and VAL-004 PASS status.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "calculate_taxes",
+    description: "Computes Illinois sales tax for ORD-2026-78432, applies manufacturing exemption where applicable, and confirms ASC 606 revenue recognition treatment.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "check_compliance",
+    description: "Runs export control screening (EAR99), OFAC restricted-party check, and ASC 606 revenue recognition validation for all 12 SKUs on ORD-2026-78432.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
+  {
+    name: "release_order",
+    description: "Releases order ORD-2026-78432 into ERP once all 8 validation holds are cleared. Returns deterministic ERP transaction ID, warehouse pick ticket, and estimated ship/delivery dates.",
+    parameters: { type: "object", properties: {}, required: [] },
+  },
+  {
     name: "get_order",
     description: "Retrieves the full purchase order details for ORD-2026-78432 including line items, ship-to address, order type, and internal references.",
     parameters: { type: "object", properties: {}, required: [] },
@@ -124,16 +201,6 @@ export const toolManifest = [
   {
     name: "get_validation_checks",
     description: "Returns the 8-point order validation checklist for ORD-2026-78432 with PASS/HOLD/WARN status for each check and a canRelease flag.",
-    parameters: { type: "object", properties: {}, required: [] },
-  },
-  {
-    name: "resolve_address",
-    description: "Resolves the ship-to address discrepancy (Suite 110 in ERP vs. none on PO) using prior delivery history. Returns corrected address and PASS status for VAL-004.",
-    parameters: { type: "object", properties: {}, required: [] },
-  },
-  {
-    name: "release_order",
-    description: "Releases order ORD-2026-78432 into ERP once all validation holds are cleared. Returns ERP confirmation, warehouse pick ticket, and estimated ship date.",
     parameters: { type: "object", properties: {}, required: [] },
   },
 ];
