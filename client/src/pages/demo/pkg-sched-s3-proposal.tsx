@@ -202,11 +202,9 @@ export default function PkgSchedS3Proposal({ pipelineState }: Props) {
               </div>
               <div className="flex justify-between items-center text-[10px] mt-1">
                 <span className="text-muted-foreground/60">Status</span>
-                {isComplete ? (
-                  <Badge className="text-[9px] bg-emerald-500/15 text-emerald-400 border-emerald-500/25">✓ APPROVED</Badge>
-                ) : (
-                  <Badge className="text-[9px] bg-amber-500/15 text-amber-400 border-amber-500/25 animate-pulse">PENDING</Badge>
-                )}
+                <Badge className="text-[9px] bg-amber-500/15 text-amber-400 border-amber-500/25 animate-pulse" data-testid="badge-approval-status">
+                  Awaiting Plant Planner Approval
+                </Badge>
               </div>
             </div>
           </div>

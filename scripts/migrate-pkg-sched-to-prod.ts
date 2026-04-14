@@ -34,6 +34,9 @@ import {
   PKG_AGT_001_NAME, PKG_AGT_002_NAME, PKG_AGT_003_NAME, PKG_AGT_004_NAME,
 } from "../server/pkg-sched-shared-defs";
 
+type PolicyDef = { name: string; domain: string; description: string; policyJson: any };
+type AgentPolicyEntry = { name: string; content: string; type: string };
+
 // ── CLI argument parsing ───────────────────────────────────────────────────────
 
 function parseArgs(): { prodUrl: string; prodOrgId: string; dryRun: boolean } {
@@ -219,11 +222,13 @@ async function migrate() {
     }
   }
 
-  // ── Step 3: Policies ──────────────────────────────────────────────────────────
-  console.log("\n[3/8] Global policies…");
+  // ── Step 3: Policies (6 global + 12 agent-specific = 18 total) ──────────────
+  console.log("\n[3/8] Policies (18 total: 6 global + 12 agent-specific)…");
   const existingPolicies: any[] = await api.get("/api/policies").catch(() => []);
   const policyIdByName: Record<string, string> = {};
-  for (const p of PKG_SCHED_POLICY_DEFS) {
+
+  // 3a. Global policies (from PKG_SCHED_POLICY_DEFS)
+  for (const p of PKG_SCHED_POLICY_DEFS as unknown as PolicyDef[]) {
     const existing = existingPolicies.find((x: any) => x.name === p.name);
     if (existing) {
       policyIdByName[p.name] = existing.id;
@@ -231,14 +236,41 @@ async function migrate() {
     } else {
       const created = await api.post("/api/policies", {
         name:        p.name,
+        domain:      p.domain,
         description: p.description,
-        content:     p.content,
-        type:        p.type,
         status:      "active",
         version:     1,
+        scopeType:   "org",
+        policyJson:  p.policyJson,
       });
       if (!dryRun) policyIdByName[p.name] = created.id;
       console.log(`  create ${p.name}`);
+    }
+  }
+
+  // 3b. Agent-specific policies (3 per agent × 4 agents = 12)
+  for (const [, agentPolicies] of Object.entries(PKG_SCHED_AGENT_POLICIES) as [string, AgentPolicyEntry[]][]) {
+    for (const ap of agentPolicies) {
+      const existing = existingPolicies.find((x: any) => x.name === ap.name);
+      if (existing) {
+        policyIdByName[ap.name] = existing.id;
+        console.log(`  skip  ${ap.name}`);
+      } else {
+        const created = await api.post("/api/policies", {
+          name:        ap.name,
+          domain:      "agent_governance",
+          description: ap.content,
+          status:      "active",
+          version:     1,
+          scopeType:   "agent",
+          policyJson:  {
+            enforcement: ["sla", "safety", "governance"].includes(ap.type) ? "hard" : "soft",
+            rules:       [{ name: ap.name, description: ap.content }],
+          },
+        });
+        if (!dryRun) policyIdByName[ap.name] = created.id;
+        console.log(`  create ${ap.name}`);
+      }
     }
   }
 

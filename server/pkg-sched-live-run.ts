@@ -101,6 +101,29 @@ export async function ensurePackagingSchedAgents(): Promise<void> {
     policyIdByName[pDef.name] = policy.id;
   }
 
+  // ── 3b. Agent-specific policies (3 per agent = 12 total) ────────────────────
+  // PKG_SCHED_AGENT_POLICIES maps each agent externalId to 3 operational/sla/compliance
+  // policies.  These must be stored as policy records (not just policyBindings metadata)
+  // to appear in the Agent Registry policy panel and agent detail view.
+  for (const [_externalId, agentPolicies] of Object.entries(PKG_SCHED_AGENT_POLICIES)) {
+    for (const ap of agentPolicies) {
+      if (allPolicies.find(p => p.name === ap.name)) {
+        policyIdByName[ap.name] = allPolicies.find(p => p.name === ap.name)!.id;
+        continue;
+      }
+      const created = await storage.createPolicy({
+        name:        ap.name,
+        domain:      "agent_governance",
+        description: ap.content,
+        status:      "active",
+        version:     1,
+        scopeType:   "agent",
+        policyJson:  { enforcement: ap.type === "sla" || ap.type === "safety" || ap.type === "governance" ? "hard" : "soft", rules: [{ name: ap.name, description: ap.content }] },
+      });
+      policyIdByName[ap.name] = created.id;
+    }
+  }
+
   // ── 4. Skills ───────────────────────────────────────────────────────────────
   const skillIdByName: Record<string, string> = {};
   const allSkills = await storage.getSkills().catch((): Awaited<ReturnType<typeof storage.getSkills>> => []);
@@ -321,7 +344,7 @@ export async function ensurePackagingSchedAgents(): Promise<void> {
   }
 
   _pkgSchedSetupDone = true;
-  console.log("[pkg-sched] ensurePackagingSchedAgents() complete — 4 agents, 4 blueprints, 3 KBs, 4 MCP servers, 12 skills, 6 policies, 15 ontology concepts provisioned.");
+  console.log("[pkg-sched] ensurePackagingSchedAgents() complete — 4 agents, 4 blueprints, 3 KBs, 4 MCP servers, 12 skills, 18 policies (6 global + 12 agent-specific), 15 ontology concepts provisioned.");
 }
 
 // ── Deployment resolution (mirrors OTC Order pattern) ───────────────────────
