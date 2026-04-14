@@ -20,6 +20,8 @@ import {
   Gavel,
   Bot,
   Trash2,
+  TrendingUp,
+  TrendingDown,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
