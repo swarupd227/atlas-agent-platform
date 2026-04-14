@@ -1636,8 +1636,8 @@ export default function OutcomeDetail() {
         </Card>
       )}
 
-      {/* Platform Intelligence Strip — always visible */}
-      {(() => {
+      {/* Platform Intelligence Strip — hidden in business mode */}
+      {!isBusinessMode && (() => {
         const avgHealth = boundAgents.length > 0
           ? Math.round(boundAgents.reduce((s, a) => s + (a.healthScore || 0), 0) / boundAgents.length)
           : null;
