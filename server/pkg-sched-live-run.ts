@@ -19,6 +19,7 @@ const PKG_SCHED_MCP_SERVERS = makePkgSchedMcpServerDefs(BASE_URL);
 let _pkgSchedSetupDone = false;
 const _pkgAgentIdByName: Record<string, string> = {};
 const _pkgMcpServerIdByName: Record<string, string> = {};
+const _pkgDeploymentIdByName: Record<string, string> = {};
 
 async function _refreshPkgMcpServerIds(): Promise<void> {
   const allServers = await storage.getMcpServers().catch((): Awaited<ReturnType<typeof storage.getMcpServers>> => []);
@@ -163,47 +164,140 @@ export async function ensurePackagingSchedAgents(): Promise<void> {
     }
   }
 
-  // ── 6. Agents ───────────────────────────────────────────────────────────────
-  const allAgents = await storage.getAgents().catch(() => [] as any[]);
+  // ── 6. Blueprints ───────────────────────────────────────────────────────────
+  const PKG_BLUEPRINT_DEFS = [
+    {
+      externalId:    "PKG-001",
+      name:          "PKG — Order Intelligence Blueprint",
+      description:   "5-step order analysis pipeline: shift context, RUSH order retrieval, delivery risk scoring, substrate spec validation, and synthesis into the order intelligence brief for Schedule Optimizer.",
+      workflowSteps: [
+        "Step 1: Get shift context (get_shift_context)",
+        "Step 2: Retrieve RUSH orders at risk (get_rush_orders)",
+        "Step 3: Score delivery risk across all 47 orders (score_delivery_risk)",
+        "Step 4: Validate substrate specifications vs. roll stock (validate_substrate_specs)",
+        "Step 5: Synthesise order intelligence brief for PKG-003",
+      ],
+      requiredTools: ["get_shift_context", "get_rush_orders", "score_delivery_risk", "validate_substrate_specs", "get_order_queue"],
+    },
+    {
+      externalId:    "PKG-002",
+      name:          "PKG — Capacity Constraint Mapping Blueprint",
+      description:   "6-step capacity mapping pipeline: machine availability check (incl. M3 maintenance), roll stock levels, changeover matrix, composite constraint assembly, and OEE baseline estimation.",
+      workflowSteps: [
+        "Step 1: Check all 8 machine availability windows (get_machine_availability)",
+        "Step 2: Retrieve roll stock levels by substrate type (get_roll_stock_inventory)",
+        "Step 3: Retrieve changeover time matrix (get_changeover_matrix)",
+        "Step 4: Assemble composite capacity constraints (get_capacity_constraints)",
+        "Step 5: Estimate OEE baseline and target (estimate_oee)",
+        "Step 6: Assemble constraint map for PKG-003",
+      ],
+      requiredTools: ["get_machine_availability", "get_roll_stock_inventory", "get_changeover_matrix", "get_capacity_constraints", "estimate_oee"],
+    },
+    {
+      externalId:    "PKG-003",
+      name:          "PKG — Schedule Optimization Blueprint",
+      description:   "4-step constraint solver pipeline: run constraint solver to generate 3 alternatives, evaluate each alternative, check RUSH coverage, compute Pareto rank, and recommend Alternative A.",
+      workflowSteps: [
+        "Step 1: Run constraint solver for 3 alternatives (run_constraint_solver)",
+        "Step 2: Evaluate each alternative across OEE/OTIF/changeovers (evaluate_alternative)",
+        "Step 3: Verify RUSH order coverage in winning alternative (get_rush_coverage)",
+        "Step 4: Compute Pareto rank and produce recommendation (compute_pareto_rank)",
+      ],
+      requiredTools: ["run_constraint_solver", "evaluate_alternative", "get_rush_coverage", "compute_pareto_rank"],
+    },
+    {
+      externalId:    "PKG-004",
+      name:          "PKG — Schedule Proposal & Approval Blueprint",
+      description:   "4-step proposal pipeline: format Gantt proposal, compute KPI projections, publish for plant planner approval, and commit to Kiwiplan ERP on approval.",
+      workflowSteps: [
+        "Step 1: Format winning schedule as Gantt proposal (format_gantt_proposal)",
+        "Step 2: Compute shift-level KPI projections vs. baseline (compute_kpi_projections)",
+        "Step 3: Publish proposal for plant planner approval (publish_for_approval)",
+        "Step 4: Commit approved schedule to Kiwiplan (commit_to_kiwiplan)",
+      ],
+      requiredTools: ["format_gantt_proposal", "compute_kpi_projections", "publish_for_approval", "commit_to_kiwiplan"],
+    },
+  ];
+
+  const allBlueprints = await storage.getBlueprints().catch((): Awaited<ReturnType<typeof storage.getBlueprints>> => []);
+  const blueprintIdByExternalId: Record<string, string> = {};
+  for (const bpDef of PKG_BLUEPRINT_DEFS) {
+    let bp = allBlueprints.find(b => b.name === bpDef.name);
+    if (!bp) {
+      bp = await storage.createBlueprint({
+        name:        bpDef.name,
+        description: bpDef.description,
+        version:     1,
+        status:      "active",
+        patternType: "pipeline",
+        blueprintJson: {
+          industry:      "manufacturing",
+          workflowSteps: bpDef.workflowSteps,
+          requiredTools: bpDef.requiredTools,
+          outputFormat:  "Structured JSON brief passed to next agent in pipeline",
+        },
+      });
+    }
+    blueprintIdByExternalId[bpDef.externalId] = bp.id;
+  }
+
+  // ── 7. Agents ───────────────────────────────────────────────────────────────
+  const allAgents = await storage.getAgents().catch((): Awaited<ReturnType<typeof storage.getAgents>> => []);
   for (const def of PKG_SCHED_AGENT_DEFS) {
     let agent = allAgents.find((a: any) => a.name === def.name);
-    const serverId     = _pkgMcpServerIdByName[def.mcpServerName];
-    const kbId         = kbIdByName[def.kbName];
-    const systemPrompt = PKG_SCHED_SYSTEM_PROMPTS[def.externalId] || "";
+    const serverId      = _pkgMcpServerIdByName[def.mcpServerName];
+    const kbId          = kbIdByName[def.kbName];
+    const systemPrompt  = PKG_SCHED_SYSTEM_PROMPTS[def.externalId] || "";
     const agentPolicies = PKG_SCHED_AGENT_POLICIES[def.externalId] || [];
+    const blueprintId   = blueprintIdByExternalId[def.externalId];
 
-    // Build preloadedSkills array — skills are stored inline on the agent record
     const preloadedSkills = def.skillNames
       .map((sn: string) => skillIdByName[sn])
       .filter(Boolean)
       .map((skillId: string) => ({ skillId }));
+
+    const ontologyTags = (def.ontologyTags as string[]).map((label: string) => ({ label }));
 
     if (!agent) {
       agent = await storage.createAgent({
         name:             def.name,
         description:      def.description,
         status:           "active",
+        agentType:        "operational",
+        environment:      "production",
         systemPrompt,
         industry:         "manufacturing",
         department:       def.department,
         autonomyMode:     "autonomous",
         maxToolIterations: 6,
         model:            "openai/gpt-4.1",
+        modelProvider:    "openai",
+        modelName:        "gpt-4.1",
         riskTier:         "MEDIUM",
+        currentVersion:   "1.0.0",
+        toolAccessClass:  "standard",
+        owner:            "Advantive — Westfield Packaging Engineering",
+        healthScore:      0.94,
+        successRate:      0.94,
+        maturityFactors:  {},
         complianceTags:   def.complianceTags as unknown as string[],
-        ontologyTags:     def.ontologyTags as unknown as string[],
+        ontologyTags,
         policyBindings:   agentPolicies.map((p: any) => ({ name: p.name, type: p.type })),
         preloadedSkills:  preloadedSkills as { skillId: string }[],
-        runtimeConfig:    {
-          externalId:   def.externalId,
-          demo:         "pkg-sched",
-        },
+        blueprintId,
+        evalBindings:     [{ suiteName: "PKG Scheduling Regression Suite", schedule: "weekly" }],
+        runtimeConfig:    { prompt: def.name, scheduleIntervalMinutes: 0 },
       } as Parameters<typeof storage.createAgent>[0]);
     } else {
       await storage.updateAgent((agent as any).id, {
         systemPrompt,
-        preloadedSkills: preloadedSkills as { skillId: string }[],
-      });
+        preloadedSkills:  preloadedSkills as { skillId: string }[],
+        blueprintId,
+        modelProvider:    "openai",
+        modelName:        "gpt-4.1",
+        autonomyMode:     "autonomous",
+        maxToolIterations: 6,
+      }).catch(() => {});
     }
     _pkgAgentIdByName[def.name] = (agent as any).id;
 
@@ -227,7 +321,30 @@ export async function ensurePackagingSchedAgents(): Promise<void> {
   }
 
   _pkgSchedSetupDone = true;
-  console.log("[pkg-sched] ensurePackagingSchedAgents() complete — all 4 agents provisioned.");
+  console.log("[pkg-sched] ensurePackagingSchedAgents() complete — 4 agents, 4 blueprints, 3 KBs, 4 MCP servers, 12 skills, 6 policies, 15 ontology concepts provisioned.");
+}
+
+// ── Deployment resolution (mirrors OTC Order pattern) ───────────────────────
+async function ensurePkgDeployment(agentId: string, agentName: string): Promise<string> {
+  const deps = await storage.getDeploymentsByAgentId(agentId).catch(() => [] as any[]);
+  let dep = (deps as any[])[0];
+  if (!dep) {
+    dep = await storage.createDeployment({
+      agentId,
+      agentName,
+      environment:      "production",
+      status:           "pending",
+      version:          "1.0.0",
+      rolloutStrategy:  "canary",
+      canaryPercent:    100,
+      pipelineComplete: true,
+      deployedAt:       new Date(),
+    });
+  } else if ((dep as any).status === "deployed") {
+    await storage.updateDeployment((dep as any).id, { status: "pending" }).catch(() => {});
+  }
+  _pkgDeploymentIdByName[agentName] = (dep as any).id;
+  return (dep as any).id;
 }
 
 // ── Pipeline task prompts ───────────────────────────────────────────────────
@@ -358,7 +475,7 @@ export async function pkgSchedLiveRunHandler(req: Request, res: Response) {
     return;
   }
 
-  // Validate agents exist
+  // Validate agents exist in registry
   const agent1Id = _pkgAgentIdByName[PKG_AGT_001_NAME];
   const agent2Id = _pkgAgentIdByName[PKG_AGT_002_NAME];
   const agent3Id = _pkgAgentIdByName[PKG_AGT_003_NAME];
@@ -370,7 +487,51 @@ export async function pkgSchedLiveRunHandler(req: Request, res: Response) {
     return;
   }
 
-  send("setup", { message: `PKG-001 ✓ · PKG-002 ✓ · PKG-003 ✓ · PKG-004 ✓  — All agents found in registry` });
+  // Resolve deployment IDs (OTC Order pattern — run via deployment, not agent ID)
+  let dep1Id: string, dep2Id: string, dep3Id: string, dep4Id: string;
+  try {
+    [dep1Id, dep2Id, dep3Id, dep4Id] = await Promise.all([
+      ensurePkgDeployment(agent1Id, PKG_AGT_001_NAME),
+      ensurePkgDeployment(agent2Id, PKG_AGT_002_NAME),
+      ensurePkgDeployment(agent3Id, PKG_AGT_003_NAME),
+      ensurePkgDeployment(agent4Id, PKG_AGT_004_NAME),
+    ]);
+    send("setup", { message: `PKG-001 ✓ · PKG-002 ✓ · PKG-003 ✓ · PKG-004 ✓  — All agents deployed · Deployment IDs resolved` });
+  } catch (err: any) {
+    _pkgSchedRunActive = false;
+    sendError(`Deployment resolution failed: ${err.message}`);
+    return;
+  }
+
+  // Track which deployment IDs belong to this run so runtime events are filtered correctly
+  const activeDeploymentIds = new Set<string>([dep1Id, dep2Id, dep3Id, dep4Id]);
+  const deploymentIdToName = new Map<string, string>([
+    [dep1Id, PKG_AGT_001_NAME],
+    [dep2Id, PKG_AGT_002_NAME],
+    [dep3Id, PKG_AGT_003_NAME],
+    [dep4Id, PKG_AGT_004_NAME],
+  ]);
+
+  let aborted = false;
+
+  // Forward agent_execution runtime events (OTC Order pattern: event name = "agent_execution")
+  const onRuntimeEvent = (evt: { deploymentId: string; agentId: string; runId: string; result: any }) => {
+    if (aborted || !activeDeploymentIds.has(evt.deploymentId)) return;
+    const agentName = deploymentIdToName.get(evt.deploymentId) ?? "Atlas PKG Agent";
+    send("agent_event", {
+      agentName,
+      deploymentId: evt.deploymentId,
+      runId:        evt.runId,
+      type:         "tool_result",
+      data:         evt.result,
+    });
+  };
+  runtimeEvents.on("agent_execution", onRuntimeEvent);
+
+  req.on("close", () => {
+    aborted = true;
+    runtimeEvents.off("agent_execution", onRuntimeEvent);
+  });
 
   // ── Phase 1: Parallel — PKG-001 + PKG-002 ─────────────────────────────────
   send("parallel_start", {
@@ -379,25 +540,13 @@ export async function pkgSchedLiveRunHandler(req: Request, res: Response) {
     phase:   1,
   });
 
-  // Forward runtime events for parallel phase
-  const runtimeForwarder = (event: any) => {
-    send("agent_event", {
-      agentName: event.agentName || "Atlas",
-      type:      event.type || "info",
-      tool:      event.tool,
-      label:     event.label,
-      data:      event.data,
-    });
-  };
-  runtimeEvents.on("event", runtimeForwarder);
-
   let phase1Ok = false;
   try {
     send("agent_start", { role: "order_intelligence",  agentName: PKG_AGT_001_NAME, label: "Order Queue Analysis & RUSH Risk Scoring", parallel: true });
     send("agent_start", { role: "capacity_mapping",    agentName: PKG_AGT_002_NAME, label: "Machine Capacity & Constraint Mapping",    parallel: true });
 
     await Promise.all([
-      runAgentOnce(agent1Id, PKG_ORDER_TASK,    6).then(result => {
+      runAgentOnce(dep1Id, PKG_ORDER_TASK,    6).then(result => {
         send("agent_complete", {
           role:      "order_intelligence",
           agentName: PKG_AGT_001_NAME,
@@ -407,7 +556,7 @@ export async function pkgSchedLiveRunHandler(req: Request, res: Response) {
         });
         return result;
       }),
-      runAgentOnce(agent2Id, PKG_CAPACITY_TASK, 6).then(result => {
+      runAgentOnce(dep2Id, PKG_CAPACITY_TASK, 6).then(result => {
         send("agent_complete", {
           role:      "capacity_mapping",
           agentName: PKG_AGT_002_NAME,
@@ -425,7 +574,8 @@ export async function pkgSchedLiveRunHandler(req: Request, res: Response) {
       phase:   1,
     });
   } catch (err: any) {
-    runtimeEvents.off("event", runtimeForwarder);
+    aborted = true;
+    runtimeEvents.off("agent_execution", onRuntimeEvent);
     _pkgSchedRunActive = false;
     send("agent_error", { role: "parallel_phase", message: `Phase 1 error: ${err.message}` });
     res.end();
@@ -443,7 +593,7 @@ export async function pkgSchedLiveRunHandler(req: Request, res: Response) {
 
   let phase2Ok = false;
   try {
-    await runAgentOnce(agent3Id, PKG_OPTIMIZER_TASK, 6);
+    await runAgentOnce(dep3Id, PKG_OPTIMIZER_TASK, 6);
     phase2Ok = true;
     send("agent_complete", {
       role:      "schedule_optimization",
@@ -453,7 +603,8 @@ export async function pkgSchedLiveRunHandler(req: Request, res: Response) {
       phase:     2,
     });
   } catch (err: any) {
-    runtimeEvents.off("event", runtimeForwarder);
+    aborted = true;
+    runtimeEvents.off("agent_execution", onRuntimeEvent);
     _pkgSchedRunActive = false;
     send("agent_error", { role: "schedule_optimization", message: `PKG-003 error: ${err.message}` });
     res.end();
@@ -470,7 +621,7 @@ export async function pkgSchedLiveRunHandler(req: Request, res: Response) {
   });
 
   try {
-    await runAgentOnce(agent4Id, PKG_PROPOSAL_TASK, 6);
+    await runAgentOnce(dep4Id, PKG_PROPOSAL_TASK, 6);
     send("agent_complete", {
       role:      "schedule_proposal",
       agentName: PKG_AGT_004_NAME,
@@ -479,14 +630,16 @@ export async function pkgSchedLiveRunHandler(req: Request, res: Response) {
       phase:     3,
     });
   } catch (err: any) {
-    runtimeEvents.off("event", runtimeForwarder);
+    aborted = true;
+    runtimeEvents.off("agent_execution", onRuntimeEvent);
     _pkgSchedRunActive = false;
     send("agent_error", { role: "schedule_proposal", message: `PKG-004 error: ${err.message}` });
     res.end();
     return;
   }
 
-  runtimeEvents.off("event", runtimeForwarder);
+  aborted = true;
+  runtimeEvents.off("agent_execution", onRuntimeEvent);
   _pkgSchedRunActive = false;
 
   send("run_complete", {
