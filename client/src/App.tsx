@@ -18,6 +18,14 @@ import { IndustryProvider } from "@/components/industry-provider";
 import { IndustryWorkspaceSelector } from "@/components/industry-workspace-selector";
 import { IndustrySelector } from "@/components/industry-selector";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { AuthProvider, useAuth } from "@/components/auth-provider";
 import LoginPage from "@/pages/login";
 import NotFound from "@/pages/not-found";
@@ -165,16 +173,47 @@ function DashboardHome() {
 }
 
 function BusinessModeBadge() {
-  const { isBusinessMode } = useRole();
+  const { isBusinessMode, setRole } = useRole();
   if (!isBusinessMode) return null;
   return (
-    <span
-      className="inline-flex items-center gap-1 text-xs font-medium bg-primary/10 text-primary px-2 py-1 rounded-md border border-primary/20"
-      data-testid="badge-business-mode"
-    >
-      <Briefcase className="h-3 w-3" />
-      Business View
-    </span>
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          className="inline-flex items-center gap-1.5 text-xs font-medium bg-primary/10 text-primary hover:bg-primary/20 px-2.5 py-1 rounded-md border border-primary/20 transition-colors cursor-pointer"
+          data-testid="badge-business-mode"
+        >
+          <Briefcase className="h-3 w-3" />
+          Business View
+          <svg className="h-3 w-3 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+          </svg>
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-44">
+        <DropdownMenuLabel className="text-xs">Switch view</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem className="text-xs opacity-50 cursor-default" data-testid="menu-view-business">
+          <Briefcase className="h-3 w-3 mr-2" />
+          Business View ✓
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className="text-xs cursor-pointer"
+          onClick={() => setRole("ops_sre")}
+          data-testid="menu-view-operator"
+        >
+          <LogOut className="h-3 w-3 mr-2 rotate-180" />
+          Operator View
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          className="text-xs cursor-pointer"
+          onClick={() => setRole("agent_engineer")}
+          data-testid="menu-view-builder"
+        >
+          <Shield className="h-3 w-3 mr-2" />
+          Builder / IT View
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

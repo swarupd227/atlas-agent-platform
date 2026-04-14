@@ -31,16 +31,16 @@ interface ApprovalQueue {
 function friendlyLabel(item: ApprovalItem): string {
   const name = item.objectName || "action";
   const type = item.type.replace(/_/g, " ").toLowerCase();
-  if (type.includes("deploy")) return `Review deployment of "${name}"`;
-  if (type.includes("policy")) return `Review policy change for "${name}"`;
-  if (type.includes("blueprint")) return `Approve design change for "${name}"`;
+  if (type.includes("deploy")) return `Review go-live for "${name}"`;
+  if (type.includes("policy")) return `Review safety rule change for "${name}"`;
+  if (type.includes("blueprint")) return `Approve improvement plan for "${name}"`;
   if (type.includes("agent")) return `Your Digital Worker "${name}" needs a decision`;
   return `Review: ${name}`;
 }
 
 function friendlyDetail(item: ApprovalItem): string {
   const type = item.type.replace(/_/g, " ").toLowerCase();
-  if (type.includes("deploy")) return "A change is ready to go live and needs your approval";
+  if (type.includes("deploy")) return "A change is ready to go live and needs your sign-off";
   if (type.includes("policy")) return "A safety rule has been updated — confirm it matches your expectations";
   if (type.includes("blueprint")) return "An improvement has been proposed — review and approve to activate it";
   return "Something needs your approval before it can continue";

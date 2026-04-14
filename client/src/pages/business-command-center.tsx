@@ -10,9 +10,10 @@ import {
   ChevronRight,
   Zap,
   DollarSign,
-  Clock,
   ThumbsUp,
   ThumbsDown,
+  Activity,
+  Sparkles,
 } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
@@ -47,6 +48,71 @@ interface ApprovalItem {
   requestedBy: string | null;
   dueDate: string | null;
   createdAt: string | null;
+}
+
+interface AuditEvent {
+  id: string;
+  action: string;
+  actorType: string;
+  actorId: string;
+  objectType: string;
+  objectId: string | null;
+  details: string | null;
+  createdAt: string;
+}
+
+interface AuditEventDetails {
+  agentName?: string;
+  agentId?: string;
+  toolCount?: number;
+  kbRetrievalCount?: number;
+}
+
+function parseDetails(details: string | null): AuditEventDetails {
+  if (!details) return {};
+  try { return JSON.parse(details); } catch { return {}; }
+}
+
+function activityMessage(event: AuditEvent): string | null {
+  const d = parseDetails(event.details);
+  const workerName = d.agentName ? `"${d.agentName}"` : "A Digital Worker";
+  const action = event.action;
+  if (action === "provenance.captured" && event.objectType === "run_trace") {
+    const toolCount = d.toolCount ?? 0;
+    return `${workerName} completed a task${toolCount > 0 ? ` using ${toolCount} tool${toolCount !== 1 ? "s" : ""}` : ""}`;
+  }
+  if (action.startsWith("approval.") && action.includes("approved")) return "An action you reviewed was approved";
+  if (action.startsWith("approval.") && action.includes("rejected")) return "An action was declined";
+  if (action.startsWith("approval.") && action.includes("submitted")) return "A new item needs your review";
+  if (action === "agent.created" || action === "agent.updated") return `${workerName} was updated`;
+  if (action === "blueprint.created") return "A new improvement plan was created";
+  if (action === "kpi.updated" || action === "kpi.created") return "A goal metric was updated";
+  if (action === "outcome.created" || action === "outcome.updated") return "An AI initiative was updated";
+  return null;
+}
+
+const WINDOW_24H = 24 * 60 * 60 * 1000;
+const WINDOW_7D = 7 * 24 * 60 * 60 * 1000;
+
+function buildActivityFeed(events: AuditEvent[]): { messages: string[]; windowLabel: string } {
+  const now = Date.now();
+  const last24h = events.filter((e) => now - new Date(e.createdAt).getTime() <= WINDOW_24H);
+  const pool = last24h.length >= 2 ? last24h : events.filter((e) => now - new Date(e.createdAt).getTime() <= WINDOW_7D);
+  const windowLabel = last24h.length >= 2 ? "in the last 24 hours" : "in the last 7 days";
+  const messages = pool
+    .map((e) => activityMessage(e))
+    .filter((m): m is string => m !== null)
+    .slice(0, 5);
+  return { messages, windowLabel };
+}
+
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
 
 interface OverviewData {
@@ -95,18 +161,18 @@ const STATUS_CONFIG = {
 function friendlyApprovalLabel(item: ApprovalItem): string {
   const name = item.objectName || "action";
   const type = item.type.replace(/_/g, " ").toLowerCase();
-  if (type.includes("deploy")) return `Review deployment of ${name}`;
-  if (type.includes("policy")) return `Review policy change for ${name}`;
-  if (type.includes("blueprint")) return `Approve design change for ${name}`;
+  if (type.includes("deploy")) return `Review go-live for "${name}"`;
+  if (type.includes("policy")) return `Review safety rule change for "${name}"`;
+  if (type.includes("blueprint")) return `Approve improvement plan for "${name}"`;
   if (type.includes("agent")) return `Your Digital Worker "${name}" needs a decision`;
   return `Review: ${name}`;
 }
 
 function friendlyApprovalDetail(item: ApprovalItem): string {
   const type = item.type.replace(/_/g, " ").toLowerCase();
-  if (type.includes("deploy")) return "A change is ready to go live";
-  if (type.includes("policy")) return "A safety rule has been updated";
-  if (type.includes("blueprint")) return "An improvement has been proposed";
+  if (type.includes("deploy")) return "A change is ready to go live and needs your sign-off";
+  if (type.includes("policy")) return "A safety rule has been updated — confirm it matches your expectations";
+  if (type.includes("blueprint")) return "An improvement has been proposed — review and approve to activate it";
   return "Something needs your approval before it can continue";
 }
 
@@ -271,6 +337,11 @@ export default function BusinessCommandCenter() {
     queryKey: ["/api/overview"],
   });
 
+  const { data: auditEvents = [] } = useQuery<AuditEvent[]>({
+    queryKey: ["/api/audit-events"],
+    staleTime: 120000,
+  });
+
   if (overviewLoading || !overviewData) {
     return <CommandCenterSkeleton />;
   }
@@ -288,6 +359,8 @@ export default function BusinessCommandCenter() {
   const urgentActions = approvalQueue.items.filter((a) => isOverdue(a.dueDate));
   const otherActions = approvalQueue.items.filter((a) => !isOverdue(a.dueDate));
   const visibleActions = [...urgentActions, ...otherActions].slice(0, 3);
+
+  const { messages: activityMessages, windowLabel } = buildActivityFeed(auditEvents);
 
   const today = new Date();
   const dayName = today.toLocaleDateString("en-US", { weekday: "long" });
@@ -437,45 +510,36 @@ export default function BusinessCommandCenter() {
             )}
           </div>
 
-          {/* What's running */}
+          {/* Recent accomplishments */}
           <div className="flex flex-col gap-3" data-testid="section-business-activity">
-            <h2 className="text-sm font-semibold text-foreground">What's running now</h2>
-            <div className="rounded-lg border bg-card px-4 py-3 flex flex-col gap-2.5">
-              {digitalWorkersRunning === 0 ? (
-                <p className="text-sm text-muted-foreground">No Digital Workers are active right now.</p>
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm font-semibold text-foreground">
+                What got done
+                <span className="ml-1.5 text-[10px] font-normal text-muted-foreground">{windowLabel}</span>
+              </h2>
+            </div>
+            <div className="rounded-lg border bg-card divide-y" data-testid="list-activity-feed">
+              {activityMessages.length === 0 ? (
+                <div className="flex items-center gap-2.5 px-4 py-3">
+                  <Activity className="w-3.5 h-3.5 text-muted-foreground/50 shrink-0" />
+                  <p className="text-xs text-muted-foreground">Your Digital Workers haven't logged activity recently</p>
+                </div>
               ) : (
-                <>
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />
-                    <p className="text-sm text-muted-foreground">
-                      <span className="font-medium text-foreground">{digitalWorkersRunning}</span> Digital Worker{digitalWorkersRunning !== 1 ? "s" : ""} currently active
-                    </p>
+                activityMessages.map((msg, idx) => (
+                  <div key={idx} className="flex items-start gap-2.5 px-4 py-2.5">
+                    <Sparkles className="w-3.5 h-3.5 text-primary/60 shrink-0 mt-0.5" />
+                    <p className="text-xs text-foreground/80">{msg}</p>
                   </div>
-                  {onTrackOutcomes.length > 0 && (
-                    <div className="flex items-center gap-2.5">
-                      <TrendingUp className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                      <p className="text-sm text-muted-foreground">
-                        <span className="font-medium text-foreground">{onTrackOutcomes.length}</span> initiative{onTrackOutcomes.length !== 1 ? "s" : ""} on track toward goals
-                      </p>
-                    </div>
-                  )}
-                  {atRiskOutcomes.length > 0 && (
-                    <div className="flex items-center gap-2.5">
-                      <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0" />
-                      <p className="text-sm text-muted-foreground">
-                        <span className="font-medium text-amber-600 dark:text-amber-400">{atRiskOutcomes.length}</span> initiative{atRiskOutcomes.length !== 1 ? "s" : ""} need{atRiskOutcomes.length === 1 ? "s" : ""} attention
-                      </p>
-                    </div>
-                  )}
-                </>
+                ))
               )}
-              <div className="pt-1 border-t mt-1">
-                <Link href="/outcomes">
-                  <span className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 transition-colors">
-                    See full status <ChevronRight className="w-3 h-3" />
-                  </span>
-                </Link>
-              </div>
+              {digitalWorkersRunning > 0 && (
+                <div className="flex items-center gap-2.5 px-4 py-2.5 bg-emerald-500/5">
+                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                  <p className="text-xs text-muted-foreground">
+                    <span className="font-medium text-emerald-700 dark:text-emerald-400">{digitalWorkersRunning}</span> Digital Worker{digitalWorkersRunning !== 1 ? "s" : ""} currently active
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
