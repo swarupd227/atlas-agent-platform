@@ -34,7 +34,7 @@ function AgentLogPanel({ entries, open }: { entries: PkgLogEntry[]; open: boolea
   return (
     <div
       className="shrink-0 border-t border-border/40 bg-black/60 backdrop-blur-sm overflow-y-auto"
-      style={{ height: 192 }}
+      style={{ height: 164 }}
       data-testid="panel-pkg-logs"
     >
       <div className="px-4 py-2 flex items-center gap-2 border-b border-border/20 sticky top-0 bg-black/80">
@@ -173,29 +173,10 @@ export default function PkgSchedDemo() {
             })}
           </div>
 
-          {/* Status + CTA */}
+          {/* Status + CTA — one contextual badge at a time */}
           <div className="flex items-center gap-2 ml-3">
-            {isRunning && (
-              <Badge className="text-[9px] border animate-pulse"
-                style={{ background: "rgba(0,131,143,0.12)", borderColor: "rgba(0,131,143,0.30)", color: PKG_COLOR }}>
-                ⬤ Atlas Running
-              </Badge>
-            )}
-            {isRunning && state.parallelRunning.length > 0 && (
-              <Badge className="text-[9px] bg-violet-500/10 text-violet-400 border-violet-500/20">
-                2 parallel agents
-              </Badge>
-            )}
-            {isComplete && (
-              <Badge className="text-[9px] bg-emerald-500/15 text-emerald-400 border-emerald-500/20">
-                ✓ KWP-SCHED-2026-0415-D Committed
-              </Badge>
-            )}
-            {isComplete && (
-              <Badge className="text-[9px] bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
-                Live LLM Agents
-              </Badge>
-            )}
+
+            {/* Idle: run button */}
             {!isRunning && !isComplete && (
               <button
                 data-testid="button-run-pkg-atlas"
@@ -206,13 +187,52 @@ export default function PkgSchedDemo() {
                 ▶ Run Atlas
               </button>
             )}
-            {(isRunning || isComplete) && (
-              <span className="text-[10px] text-muted-foreground font-mono">
-                {state.elapsedSeconds}s
-              </span>
+
+            {/* Running: single status badge + timer */}
+            {isRunning && (
+              <>
+                <Badge className="text-[9px] border animate-pulse"
+                  style={{ background: "rgba(0,131,143,0.12)", borderColor: "rgba(0,131,143,0.30)", color: PKG_COLOR }}>
+                  {state.parallelRunning.length > 0
+                    ? `⬤ PKG-001 ∥ PKG-002 parallel`
+                    : "⬤ Atlas Running"}
+                </Badge>
+                <span className="text-[10px] text-muted-foreground/60 font-mono">{state.elapsedSeconds}s</span>
+              </>
             )}
 
-            {/* Log toggle */}
+            {/* Complete: single success badge + timer */}
+            {isComplete && (
+              <>
+                <Badge className="text-[9px] bg-emerald-500/15 text-emerald-400 border-emerald-500/20">
+                  ✓ Pipeline complete · {state.elapsedSeconds}s
+                </Badge>
+                <button
+                  data-testid="button-reset-pkg-demo"
+                  onClick={handleReset}
+                  className="flex items-center gap-1 text-[10px] px-2 h-7 rounded-md border border-border/30 text-muted-foreground hover:text-foreground hover:border-border/60 transition-all"
+                  title="Reset demo to initial state"
+                >
+                  <RotateCcw className="w-3 h-3" />
+                  <span className="hidden sm:inline">Reset</span>
+                </button>
+              </>
+            )}
+
+            {/* Error reset */}
+            {!isRunning && !isComplete && state.status === "error" && (
+              <button
+                data-testid="button-reset-pkg-demo"
+                onClick={handleReset}
+                className="flex items-center gap-1 text-[10px] px-2 h-7 rounded-md border border-rose-500/30 text-rose-400 hover:border-rose-400/60 transition-all"
+                title="Reset demo to initial state"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span className="hidden sm:inline">Reset</span>
+              </button>
+            )}
+
+            {/* Log toggle — always visible */}
             <button
               data-testid="button-toggle-pkg-logs"
               onClick={() => setLogOpen(v => !v)}
@@ -232,22 +252,9 @@ export default function PkgSchedDemo() {
               )}
             </button>
 
-            {/* Reset */}
-            {!isRunning && (isComplete || state.status === "error") && (
-              <button
-                data-testid="button-reset-pkg-demo"
-                onClick={handleReset}
-                className="flex items-center gap-1 text-[10px] px-2 h-7 rounded-md border border-border/30 text-muted-foreground hover:text-foreground hover:border-border/60 transition-all"
-                title="Reset demo to initial state"
-              >
-                <RotateCcw className="w-3 h-3" />
-                <span className="hidden sm:inline">Reset</span>
-              </button>
-            )}
-
             <Link href="/demo">
-              <button className="text-[11px] text-muted-foreground hover:text-foreground transition-colors ml-1" data-testid="link-back-demo-hub-pkg">
-                ← Demo Hub
+              <button className="text-[11px] text-muted-foreground hover:text-foreground transition-colors" data-testid="link-back-demo-hub-pkg">
+                ← Hub
               </button>
             </Link>
           </div>
