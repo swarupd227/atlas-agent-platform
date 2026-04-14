@@ -293,14 +293,15 @@ async function migrateAgent(agent: typeof AGENTS[0]): Promise<Record<string, str
       {
         name:        skill.name,
         description: skill.description,
-        domain:      "order_management",
-        industry:    "manufacturing",
-        version:     "1.0.0",
+        domain:      skill.domain ?? "order_management",
+        industry:    skill.industry ?? "manufacturing",
+        version:     skill.version ?? "1.0.0",
+        author:      "ATLAS Platform Team",
         status:      "active",
         trustTier:   "platform-provided",
         complexity:  "intermediate",
         contextMode: "summary",
-        tags:        ["order_processing", "manufacturing"],
+        tags:        skill.tags ?? ["order_processing", "manufacturing"],
         organizationId: CFG.prodOrgId,
       },
     );
@@ -333,8 +334,8 @@ async function migrateAgent(agent: typeof AGENTS[0]): Promise<Record<string, str
   const serverKey = agent.tools[0]?.server ?? `otc-order-${agent.key}`;
   const mcpName   = `NovaTech ${agent.code} MCP Server`;
   const { id: mcpId, skipped: mcpSkipped } = await prodEnsure(
-    "/api/integrations/mcp-servers",
-    "/api/integrations/mcp-servers",
+    "/api/mcp-servers",
+    "/api/mcp-servers",
     {
       name:          mcpName,
       description:   `Mock MCP server for ${agent.name}`,
@@ -355,7 +356,7 @@ async function migrateAgent(agent: typeof AGENTS[0]): Promise<Record<string, str
   //     then create only those that are missing by name.
   console.log("\n  5b. MCP Server Tools");
   if (!CFG.dryRun) {
-    const existingTools: any[] = await prodGet(`/api/integrations/mcp-servers/${mcpId}/tools`).catch(() => []);
+    const existingTools: any[] = await prodGet(`/api/mcp-servers/${mcpId}/tools`).catch(() => []);
     const existingNames = new Set<string>(
       Array.isArray(existingTools) ? existingTools.map((t: any) => t.name as string) : [],
     );
@@ -364,7 +365,7 @@ async function migrateAgent(agent: typeof AGENTS[0]): Promise<Record<string, str
         console.log(`      [SKIP] ${tool.name}`);
         continue;
       }
-      await prodPost(`/api/integrations/mcp-servers/${mcpId}/tools`, {
+      await prodPost(`/api/mcp-servers/${mcpId}/tools`, {
         name:            tool.name,
         description:     tool.name.replace(/_/g, " "),
         inputSchema:     { type: "object", properties: {}, required: [] },
