@@ -159,7 +159,7 @@ function _serverKeyFromUrl(url: string): string {
 }
 
 /** Build the tool list for an agent by looking up its MCP server in the canonical defs. */
-function _toolsForAgent(mcpServerName: string): { name: string; server: string; path: string }[] {
+function _toolsForAgent(mcpServerName: string): { name: string; server: string; path: string; method: string }[] {
   const serverDefs = makeOtcOrderMcpServerDefs(""); // baseUrl irrelevant for tool metadata
   const srv = serverDefs.find(s => s.name === mcpServerName);
   if (!srv) return [];
@@ -168,6 +168,7 @@ function _toolsForAgent(mcpServerName: string): { name: string; server: string; 
     name:   t.name,
     server: serverKey,
     path:   `/api/mock/${serverKey}/${t.endpoint}`,
+    method: t.method,
   }));
 }
 
@@ -367,7 +368,7 @@ async function migrateAgent(agent: typeof AGENTS[0]): Promise<Record<string, str
         name:            tool.name,
         description:     tool.name.replace(/_/g, " "),
         inputSchema:     { type: "object", properties: {}, required: [] },
-        annotations:     { endpoint: tool.path, method: "GET" },
+        annotations:     { endpoint: tool.path, method: tool.method },
         enabled:         true,
         riskClassification: "low",
       }).catch((e: unknown) => console.log(`      [WARN] ${tool.name}: ${e}`));

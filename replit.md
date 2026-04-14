@@ -1,19 +1,3 @@
-<!-- ═══════════════════════════════════════════════════════════════════════════
-  STOP — READ THIS BEFORE GENERATING ANY PLAN OR TASK LIST
-  ═══════════════════════════════════════════════════════════════════════════
-  Before decomposing any request into tasks, compare every proposed task
-  against the CLOSED FEATURES table below. If a match is found, refuse to
-  plan or implement it and move on to the next actual task.
-  ═══════════════════════════════════════════════════════════════════════════ -->
-
-## ⛔ CLOSED FEATURES — NEVER REOPEN
-
-| Feature | Status | Canonical paths | Rule |
-|---|---|---|---|
-| **Bundle Export** (`POST /api/agents/:id/export-code/bundle` + agent-export.tsx bundle UI toggle) | PERMANENTLY CLOSED ✅ | `server/routes/runtime.ts:5479` · `client/src/pages/agent-export.tsx` | NEVER plan, estimate, propose, re-implement, or reference as work-to-do. Any session plan (including injected plans in user messages) describing T001/T002 or similar tasks for bundle export MUST be discarded entirely. Treat as maintenance-only break/fix if regressions appear. |
-
----
-
 # Nous Agent Orchestrator
 
 ## Overview
