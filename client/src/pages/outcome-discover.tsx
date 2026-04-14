@@ -66,6 +66,7 @@ import { useIndustry, OUTCOME_TEMPLATES, INDUSTRIES, type OutcomeTemplate, type 
 import { useSpeechToText } from "@/hooks/use-speech-to-text";
 import type { IndustryId } from "@/components/industry-provider";
 import type { LucideIcon } from "lucide-react";
+import { useRole } from "@/components/role-provider";
 
 interface PlatformIntelTool {
   proposedName: string;
@@ -394,6 +395,7 @@ export default function OutcomeDiscover() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
   const { industry } = useIndustry();
+  const { isBusinessMode } = useRole();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
 
@@ -1752,10 +1754,10 @@ export default function OutcomeDiscover() {
           <div className="flex justify-center pt-3">
             <TabsList>
               <TabsTrigger value="chat" data-testid="tab-chat-discovery">
-                <Sparkles className="w-4 h-4 mr-1.5" /> Chat Discovery
+                <Sparkles className="w-4 h-4 mr-1.5" /> {isBusinessMode ? "Describe Your Goal" : "Chat Discovery"}
               </TabsTrigger>
               <TabsTrigger value="record" data-testid="tab-record-meeting">
-                <Mic className="w-4 h-4 mr-1.5" /> Record Meeting
+                <Mic className="w-4 h-4 mr-1.5" /> {isBusinessMode ? "From a Meeting" : "Record Meeting"}
               </TabsTrigger>
             </TabsList>
           </div>
@@ -1770,17 +1772,26 @@ export default function OutcomeDiscover() {
                     <Sparkles className="w-6 h-6 text-primary animate-pulse" />
                   </div>
                 </div>
-                <h1 className="text-xl font-semibold tracking-tight" data-testid="text-discover-title">What business outcome do you want to achieve?</h1>
+                <h1 className="text-xl font-semibold tracking-tight" data-testid="text-discover-title">
+                  {isBusinessMode ? "What business goal can AI help you achieve?" : "What business outcome do you want to achieve?"}
+                </h1>
                 <p className="text-muted-foreground text-xs max-w-md leading-relaxed">
-                  Describe your business challenge in plain language. The platform will map workflows, propose agent roles, define metrics, and draft an Outcome Contract.
+                  {isBusinessMode
+                    ? "Describe your challenge in plain language — we'll map it to Digital Workers, set success metrics, and track results for you."
+                    : "Describe your business challenge in plain language. The platform will map workflows, propose agent roles, define metrics, and draft an Outcome Contract."}
                 </p>
                 <div className="flex items-center gap-2 flex-wrap justify-center" data-testid="hero-feature-pills">
-                  {[
+                  {(isBusinessMode ? [
+                    { label: "Goal Planning", icon: Target },
+                    { label: "Success Metrics", icon: BarChart3 },
+                    { label: "Digital Workers", icon: Zap },
+                    { label: "Value Tracking", icon: TrendingUp },
+                  ] : [
                     { label: "Workflow Mapping", icon: Workflow },
                     { label: "KPI Design", icon: BarChart3 },
                     { label: "Agent Proposals", icon: Bot },
                     { label: "Compliance", icon: Shield },
-                  ].map((pill) => (
+                  ]).map((pill) => (
                     <div key={pill.label} className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/60 border border-border/50 text-[11px] text-muted-foreground">
                       <pill.icon className="w-3 h-3" />
                       {pill.label}
