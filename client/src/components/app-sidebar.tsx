@@ -10,6 +10,7 @@ import {
   Shield,
   CreditCard,
   CheckCircle,
+  CheckCircle2,
   Zap,
   Library,
   FlaskConical,
@@ -39,6 +40,7 @@ import {
   Code2,
   PlayCircle,
   MonitorCheck,
+  Home,
 } from "lucide-react";
 import {
   Sidebar,
@@ -74,6 +76,12 @@ interface NavGroup {
 }
 
 export function AppSidebar() {
+  const { isBusinessMode } = useRole();
+  if (isBusinessMode) return <BusinessModeSidebar />;
+  return <FullAppSidebar />;
+}
+
+function FullAppSidebar() {
   const [location] = useLocation();
   const { role, isRouteAllowed } = useRole();
 
@@ -371,5 +379,104 @@ function CollapsibleNavGroup({
         </CollapsibleContent>
       </SidebarGroup>
     </Collapsible>
+  );
+}
+
+interface OverviewForBadge {
+  approvalQueue: { totalPending: number };
+}
+
+function BusinessModeSidebar() {
+  const [location] = useLocation();
+  const { setRole } = useRole();
+
+  const { data: overviewData } = useQuery<OverviewForBadge>({
+    queryKey: ["/api/overview"],
+    refetchInterval: 60000,
+    staleTime: 30000,
+  });
+  const pendingActions = overviewData?.approvalQueue.totalPending ?? 0;
+
+  const isActive = (url: string) => {
+    if (url === "/dashboard") return location === "/dashboard";
+    return location.startsWith(url);
+  };
+
+  const navItems = [
+    { title: "Home", url: "/dashboard", icon: Home },
+    { title: "Outcomes", url: "/outcomes", icon: Target },
+    { title: "My Actions", url: "/my-actions", icon: CheckCircle2, badge: pendingActions > 0 ? pendingActions : undefined },
+    { title: "Settings", url: "/business-settings", icon: Settings },
+  ];
+
+  return (
+    <Sidebar>
+      <SidebarHeader className="p-4">
+        <Link href="/dashboard">
+          <div className="flex items-center gap-2 cursor-pointer">
+            <div className="flex items-center justify-center w-8 h-8 rounded-md bg-primary">
+              <Zap className="w-4 h-4 text-primary-foreground" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-sm font-semibold text-sidebar-foreground" data-testid="text-app-name-business">ATLAS</span>
+              <span className="text-[10px] text-muted-foreground leading-tight">Business</span>
+            </div>
+          </div>
+        </Link>
+      </SidebarHeader>
+
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {navItems.map((item) => (
+                <SidebarMenuItem key={item.title}>
+                  <SidebarMenuButton asChild data-active={isActive(item.url)}>
+                    <Link href={item.url} data-testid={`link-business-nav-${item.title.toLowerCase().replace(/\s+/g, "-")}`}>
+                      <item.icon className="w-4 h-4" />
+                      <span className="flex-1">{item.title}</span>
+                      {item.badge !== undefined && (
+                        <span
+                          className="ml-auto text-[10px] font-bold bg-amber-500 text-white rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-none"
+                          data-testid="badge-my-actions-count"
+                        >
+                          {item.badge > 99 ? "99+" : item.badge}
+                        </span>
+                      )}
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+
+      <SidebarFooter className="pb-3 pt-1 px-2 border-t mt-1">
+        <div className="flex flex-col gap-0.5">
+          <p className="px-3 py-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Switch Mode</p>
+          <button
+            type="button"
+            onClick={() => setRole("ops_sre")}
+            className="flex items-center gap-2 w-full px-3 py-2 text-xs text-muted-foreground hover:bg-sidebar-accent/50 rounded-md transition-colors"
+            data-testid="button-switch-operator-mode"
+          >
+            <Activity className="w-3.5 h-3.5" />
+            <span>Operator View</span>
+            <ChevronRight className="w-3.5 h-3.5 ml-auto" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setRole("agent_engineer")}
+            className="flex items-center gap-2 w-full px-3 py-2 text-xs text-muted-foreground hover:bg-sidebar-accent/50 rounded-md transition-colors"
+            data-testid="button-switch-builder-mode"
+          >
+            <MoreHorizontal className="w-3.5 h-3.5" />
+            <span>Builder / IT View</span>
+            <ChevronRight className="w-3.5 h-3.5 ml-auto" />
+          </button>
+        </div>
+      </SidebarFooter>
+    </Sidebar>
   );
 }

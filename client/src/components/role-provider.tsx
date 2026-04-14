@@ -46,7 +46,7 @@ export const ROLES: RoleDefinition[] = [
     initials: "OO",
     description: "Defines KPIs, sees ROI, approves outcome contracts",
     icon: Target,
-    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/knowledge-bases", "/monitor", "/approvals", "/billing"],
+    allowedRoutes: ["/dashboard", "/outcomes", "/agents", "/knowledge-bases", "/monitor", "/approvals", "/billing", "/my-actions", "/business-settings"],
   },
   {
     id: "agent_engineer",
@@ -214,6 +214,7 @@ interface RoleContextType {
   getPermission: (action: PermissionAction) => PermissionEntry;
   canPerform: (action: PermissionAction) => boolean;
   hasFullAccess: (action: PermissionAction) => boolean;
+  isBusinessMode: boolean;
 }
 
 const RoleContext = createContext<RoleContextType | null>(null);
@@ -255,8 +256,10 @@ export function RoleProvider({ children }: { children: ReactNode }) {
     return perm.access === "full";
   }, [getPermission]);
 
+  const isBusinessMode = roleId === "outcome_owner";
+
   return (
-    <RoleContext.Provider value={{ role, setRole, isRouteAllowed, getPermission, canPerform, hasFullAccess }}>
+    <RoleContext.Provider value={{ role, setRole, isRouteAllowed, getPermission, canPerform, hasFullAccess, isBusinessMode }}>
       {children}
     </RoleContext.Provider>
   );

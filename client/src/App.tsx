@@ -110,7 +110,11 @@ import SHInsuranceDemo from "@client-shared/pages/demo/sh-insurance-demo";
 import DemoCenter from "@client-shared/pages/demo/demo-center";
 import ObservabilityPage from "@/pages/observability";
 import FeedbackTracker from "@/pages/feedback";
-import { Shield, LogOut } from "lucide-react";
+import BusinessCommandCenter from "@/pages/business-command-center";
+import MyActions from "@/pages/my-actions";
+import BusinessSettings from "@/pages/business-settings";
+import { Shield, LogOut, Briefcase } from "lucide-react";
+import { useRole } from "@/components/role-provider";
 
 function HeaderControls() {
   const { securityMode, user, logout } = useAuth();
@@ -144,6 +148,7 @@ function HeaderControls() {
       <IndustrySelector />
       <EnvironmentSelector />
       <RoleSwitcher />
+      <BusinessModeBadge />
       <span className="inline-flex items-center gap-1 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-md border" data-testid="badge-security-mode">
         <Shield className="h-3 w-3" />
         Demo
@@ -154,10 +159,31 @@ function HeaderControls() {
   );
 }
 
+function DashboardHome() {
+  const { isBusinessMode } = useRole();
+  return isBusinessMode ? <BusinessCommandCenter /> : <Overview />;
+}
+
+function BusinessModeBadge() {
+  const { isBusinessMode } = useRole();
+  if (!isBusinessMode) return null;
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-xs font-medium bg-primary/10 text-primary px-2 py-1 rounded-md border border-primary/20"
+      data-testid="badge-business-mode"
+    >
+      <Briefcase className="h-3 w-3" />
+      Business View
+    </span>
+  );
+}
+
 function DashboardRouter() {
   return (
     <Switch>
-      <Route path="/dashboard" component={Overview} />
+      <Route path="/dashboard" component={DashboardHome} />
+      <Route path="/my-actions" component={MyActions} />
+      <Route path="/business-settings" component={BusinessSettings} />
       <Route path="/outcomes" component={Outcomes} />
       <Route path="/outcomes/discover" component={OutcomeDiscover} />
       <Route path="/outcomes/:id" component={OutcomeDetail} />
