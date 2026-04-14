@@ -39,7 +39,7 @@ const GANTT_PROPOSAL = {
     {
       id: "M4", label: "Flexo Printer A",
       slots: [
-        { start: "09:00", end: "11:12", orderId: "WP-2026-04150002", customer: "RetailEdge",         product: "Display Tray",     flute: "E", qty: 8500,  type: "RUSH",     highlight: "rush" },
+        { start: "09:00", end: "11:12", orderId: "WP-2026-04150002", customer: "RetailEdge",         product: "Display Tray",     flute: "E", qty: 8500,  type: "RUSH",     highlight: "rush", note: "85% throughput — minor drive belt repair" },
         { start: "11:12", end: "11:28", orderId: null,               customer: null,                 product: "CHANGEOVER",       flute: "E→B", qty: 0,  type: "CHANGEOVER", highlight: "changeover" },
         { start: "11:28", end: "15:00", orderId: "WP-2026-04150007", customer: "FoodMart Chain",    product: "Display Tray",     flute: "E", qty: 6000,  type: "STANDARD", highlight: "standard" },
       ],
@@ -59,7 +59,7 @@ const GANTT_PROPOSAL = {
     {
       id: "M7", label: "Flexo Printer C",
       slots: [
-        { start: "07:00", end: "15:00", orderId: "BATCH-M7",         customer: "Mixed Standard",    product: "Multi-Order Batch",flute: "C", qty: 20000, type: "STANDARD", highlight: "standard", note: "85% throughput" },
+        { start: "07:00", end: "15:00", orderId: "BATCH-M7",         customer: "Mixed Standard",    product: "Multi-Order Batch",flute: "C", qty: 20000, type: "STANDARD", highlight: "standard" },
       ],
     },
     {
