@@ -121,6 +121,8 @@ const categoryConfig: Record<ItemCategory, { label: string; icon: typeof ShieldA
 function actionLink(item: ActionItem): string {
   if (item.source === "approval") return `/approvals/${item.sourceId}`;
   if (item.source === "alert") return `/observability`;
+  if (item.source === "governance") return `/governance`;
+  if (item.source === "autonomy") return `/approvals`;
   return `/improvements`;
 }
 
@@ -437,7 +439,7 @@ export default function MyActions() {
 
   const allNeedsDecision = data?.needsDecision ?? [];
   const allFyi = data?.fyi ?? [];
-  const completedToday = data?.completedToday ?? [];
+  const allCompletedToday = data?.completedToday ?? [];
   const needsDecisionCount = data?.needsDecisionCount ?? 0;
 
   const filterItem = (item: ActionItem) => {
@@ -448,8 +450,11 @@ export default function MyActions() {
 
   const needsDecision = allNeedsDecision.filter(filterItem);
   const fyi = allFyi.filter(filterItem);
+  const completedToday = allCompletedToday.filter((item) =>
+    outcomeFilter === "all" || item.outcomeId === outcomeFilter
+  );
 
-  const hasAnything = allNeedsDecision.length > 0 || allFyi.length > 0 || completedToday.length > 0;
+  const hasAnything = allNeedsDecision.length > 0 || allFyi.length > 0 || allCompletedToday.length > 0;
   const hasFiltered = needsDecision.length > 0 || fyi.length > 0 || completedToday.length > 0;
   const isFiltering = urgencyFilter !== "all" || outcomeFilter !== "all";
 
