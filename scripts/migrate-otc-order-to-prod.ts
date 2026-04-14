@@ -5,6 +5,9 @@
  * Migrates all three OTC Order agents plus supporting resources from Dev to
  * Production using only platform REST API calls (no direct DB access to Prod).
  *
+ * Platform intelligence definitions are imported from:
+ *   ../server/otc-order-shared-defs (canonical source shared with live-run)
+ *
  * Agents migrated:
  *   OTC-AGT-002  Order Validation & Promise Agent   (lead orchestrator)
  *   OTC-AGT-003  Customer Credit & Risk Assessment Agent
@@ -28,6 +31,16 @@
  *   7.  Agent → KB link
  *   8.  Agent → MCP server link
  */
+
+// ─── Platform intelligence definitions (shared with live-run module) ──────────
+import {
+  OTC_ORDER_AGENT_DEFS,
+  OTC_ORDER_KB_DEFS,
+  OTC_ORDER_SKILLS,
+  OTC_ORDER_POLICY_DEFS,
+  OTC_ORDER_ONTOLOGY_CONCEPTS,
+  makeOtcOrderMcpServerDefs,
+} from "../server/otc-order-shared-defs";
 
 // ─── CLI argument parsing ─────────────────────────────────────────────────────
 
@@ -133,15 +146,12 @@ async function prodEnsure(
 }
 
 // ─── Agent definitions ────────────────────────────────────────────────────────
+// Core metadata (name, description, department, KB name) sourced from
+// OTC_ORDER_AGENT_DEFS / OTC_ORDER_KB_DEFS (canonical shared defs).
+// Migration-specific overrides: systemPrompts, per-agent policies, API tools.
 
-const AGENTS = [
-  {
-    key: "agt002",
-    code: "OTC-AGT-002",
-    name: "Order Validation & Promise Agent",
-    stage: "Order Processing",
-    description: "Lead orchestrator for ORD-2026-78432. Coordinates parallel validation (credit, inventory, address), synthesises resolutions, and releases orders into ERP. Resolves all validation holds in under 4 minutes.",
-    systemPrompt: `You are the Order Validation & Promise Agent (OTC-AGT-002) for NovaTech Industries.
+const _SYSTEM_PROMPTS: Record<string, string> = {
+  "OTC-AGT-002": `You are the Order Validation & Promise Agent (OTC-AGT-002) for NovaTech Industries.
 
 You are the lead orchestrator of the Order Processing stage in the Order-to-Cash pipeline. When a purchase order arrives, you coordinate three parallel validation streams — credit, inventory, and address — synthesise resolutions from OTC-AGT-003 and OTC-AGT-004, and release the order into ERP once all holds are cleared.
 
@@ -154,32 +164,8 @@ KEY RESPONSIBILITIES:
 CURRENT SCENARIO: RUSH order ORD-2026-78432 ($429,711) from Meridian Manufacturing.
 Three blocking issues: (1) Credit at 92%, (2) Turbine split Chicago/Atlanta, (3) Suite-number mismatch.
 Target: clear all holds and release within 4 minutes.`,
-    tools: [
-      { name: "get_order",            server: "otc-order-oms",        path: "/api/mock/otc-order-oms/order" },
-      { name: "get_validation_checks", server: "otc-order-oms",       path: "/api/mock/otc-order-oms/validation-checks" },
-      { name: "resolve_address",       server: "otc-order-oms",       path: "/api/mock/otc-order-oms/resolve-address" },
-      { name: "release_order",         server: "otc-order-oms",       path: "/api/mock/otc-order-oms/release" },
-    ],
-    kbName: "Order Validation & Promise KB",
-    kbDescription: "NovaTech order validation procedures, address master data, ERP integration specs, RUSH order protocols, and ASC 606 revenue recognition guidelines.",
-    policies: [
-      { name: "OTC-AGT-002 Order Validation Policy",   content: "All orders must pass 8-point validation checklist before ERP release. RUSH orders receive expedited processing with same validation rigor. Address mismatches must be resolved via delivery history cross-reference before release.", type: "operational" },
-      { name: "OTC-AGT-002 ERP Release Protocol",      content: "Order release requires all holds cleared and written confirmation from credit and inventory agents. ERP transaction ID must be generated and warehouse pick ticket transmitted within 60 seconds of release approval.", type: "operational" },
-      { name: "OTC-AGT-002 RUSH Order Handling",       content: "RUSH orders receive SLA target of < 4 minutes from submission to ERP release. Parallel agent orchestration mandatory. Expedite fee per MSA §7.4(b) applied automatically.", type: "sla" },
-    ],
-    skills: [
-      { name: "Order Header Validation",   description: "Validates PO header completeness, customer standing, and contract alignment against MSA terms" },
-      { name: "Address Master Resolution", description: "Compares ERP master ship-to records against PO addresses using delivery history cross-reference" },
-      { name: "ERP Release Orchestration", description: "Executes order release sequence: ERP confirm, pick ticket, customer notification, invoice draft" },
-    ],
-  },
-  {
-    key: "agt003",
-    code: "OTC-AGT-003",
-    name: "Customer Credit & Risk Assessment Agent",
-    stage: "Order Processing",
-    description: "Specialist credit agent for Order Processing. Analyses customer credit exposure, AR aging, and payment history. Approves temporary limit increases within pre-authorization thresholds for low-risk accounts.",
-    systemPrompt: `You are the Customer Credit & Risk Assessment Agent (OTC-AGT-003) for NovaTech Industries.
+
+  "OTC-AGT-003": `You are the Customer Credit & Risk Assessment Agent (OTC-AGT-003) for NovaTech Industries.
 
 You run in parallel with OTC-AGT-004 under orchestration from OTC-AGT-002. Your sole responsibility in this pipeline is credit and risk validation for the current order.
 
@@ -195,32 +181,8 @@ RISK FRAMEWORK:
 - Zero NSF or >30-day late payments in 12 months: LOW risk classification
 
 CURRENT SCENARIO: Meridian Manufacturing (A+) — $459,500 exposure (91.9% of $500K limit). New order $429,711. Temp increase to $950K approved under pre-auth threshold.`,
-    tools: [
-      { name: "get_credit_profile",          server: "otc-order-credit", path: "/api/mock/otc-order-credit/credit-profile" },
-      { name: "get_ar_aging",                server: "otc-order-credit", path: "/api/mock/otc-order-credit/ar-aging" },
-      { name: "get_exposure_analysis",       server: "otc-order-credit", path: "/api/mock/otc-order-credit/exposure-analysis" },
-      { name: "approve_credit_limit_increase",server: "otc-order-credit",path: "/api/mock/otc-order-credit/approve-limit-increase" },
-    ],
-    kbName: "Customer Credit & Risk KB",
-    kbDescription: "NovaTech credit policy manual, pre-authorization thresholds by rating tier, AR collection procedures, and credit committee escalation guidelines.",
-    policies: [
-      { name: "OTC-AGT-003 Credit Pre-Authorization Policy", content: "A+ rated customers with zero delinquency and 7+ year relationship qualify for automated temporary credit limit increases up to $1M for 60 days without manual committee approval. All automated approvals must be logged to risk register.", type: "financial" },
-      { name: "OTC-AGT-003 AR Aging Risk Policy",            content: "Orders from customers with any 90+ day AR balance require immediate escalation. 61-90 day balances require credit manager review. 0-60 day current AR acceptable with documented rationale.", type: "financial" },
-      { name: "OTC-AGT-003 Credit Decision Audit Policy",    content: "Every credit decision (approve/hold/escalate) must include: current exposure, projected exposure, rating, payment history, risk classification, and approver identity. Immutable audit trail required.", type: "compliance" },
-    ],
-    skills: [
-      { name: "Credit Exposure Analysis",     description: "Computes projected credit exposure including pending orders, open AR, and new order value against credit limit" },
-      { name: "Automated Pre-Authorization",  description: "Applies automated credit limit increase for eligible A/A+ customers within pre-authorization thresholds" },
-      { name: "AR Aging Risk Assessment",     description: "Evaluates AR aging buckets and payment history to classify delinquency risk level" },
-    ],
-  },
-  {
-    key: "agt004",
-    code: "OTC-AGT-004",
-    name: "Inventory Availability & Promise Agent",
-    stage: "Order Processing",
-    description: "Specialist inventory agent for Order Processing. Checks SKU availability across warehouse network, identifies optimal fulfillment strategy (single-warehouse vs. split-ship), and issues allocation confirmations with ATP dates.",
-    systemPrompt: `You are the Inventory Availability & Promise Agent (OTC-AGT-004) for NovaTech Industries.
+
+  "OTC-AGT-004": `You are the Inventory Availability & Promise Agent (OTC-AGT-004) for NovaTech Industries.
 
 You run in parallel with OTC-AGT-003 under orchestration from OTC-AGT-002. Your sole responsibility is to resolve inventory availability for the current order and commit delivery promises.
 
@@ -236,43 +198,68 @@ FULFILLMENT PRIORITY:
 3. Cross-dock or postponement (only for B/C customers or >15 unit orders)
 
 CURRENT SCENARIO: 12 turbine units requested. Chicago DC alone has all 12 — split-ship unnecessary. Confirm Chicago-only fulfillment, save $840 surcharge, ship April 21.`,
-    tools: [
-      { name: "get_inventory_availability", server: "otc-order-inventory", path: "/api/mock/otc-order-inventory/availability" },
-      { name: "get_warehouses",             server: "otc-order-inventory", path: "/api/mock/otc-order-inventory/warehouses" },
-      { name: "get_fulfillment_options",    server: "otc-order-inventory", path: "/api/mock/otc-order-inventory/fulfillment-options" },
-      { name: "confirm_inventory_allocation",server: "otc-order-inventory",path: "/api/mock/otc-order-inventory/confirm-allocation" },
-    ],
-    kbName: "Inventory Availability & Promise KB",
-    kbDescription: "NovaTech warehouse network guide, ATP calculation methodology, split-ship policy and surcharge schedule, and fulfillment SLA commitments by order type.",
-    policies: [
-      { name: "OTC-AGT-004 Single-Warehouse Preference Policy", content: "Always evaluate single-warehouse fulfillment first. Split-ship only approved when primary warehouse cannot cover full order quantity. Document cost savings when split avoided.", type: "operational" },
-      { name: "OTC-AGT-004 RUSH Inventory ATP Policy",          content: "RUSH orders require confirmed ATP dates within 48 hours of order date. Allocation must be locked within the parallel validation window (< 2 minutes). Stock reservation holds expire after 4 hours if order not released.", type: "sla" },
-      { name: "OTC-AGT-004 Inventory Commitment Audit Policy",  content: "All inventory allocations must record: warehouse ID, SKU, quantity, pick ticket reference, ATP date, and agent ID. Allocation reversals require OTC-AGT-002 countersignature.", type: "compliance" },
-    ],
-    skills: [
-      { name: "Multi-Warehouse Availability Check", description: "Queries all DC locations simultaneously for on-hand, available, and reserved quantities with ATP dates" },
-      { name: "Fulfillment Strategy Optimisation",  description: "Evaluates single-warehouse vs. split-ship options against cost, transit, and customer preference" },
-      { name: "Inventory Allocation Commitment",    description: "Issues formal allocation confirmation with pick ticket numbers and ATP commitment dates" },
-    ],
-  },
-];
+};
 
-// ─── Shared ontology concepts (12 total — created once, not per-agent) ────────
+const _AGENT_TOOLS: Record<string, { name: string; server: string; path: string }[]> = {
+  "OTC-AGT-002": [
+    { name: "get_order",             server: "otc-order-oms", path: "/api/mock/otc-order-oms/order"             },
+    { name: "get_validation_checks", server: "otc-order-oms", path: "/api/mock/otc-order-oms/validation-checks" },
+    { name: "resolve_address",       server: "otc-order-oms", path: "/api/mock/otc-order-oms/resolve-address"   },
+    { name: "release_order",         server: "otc-order-oms", path: "/api/mock/otc-order-oms/release"           },
+  ],
+  "OTC-AGT-003": [
+    { name: "get_credit_profile",           server: "otc-order-credit", path: "/api/mock/otc-order-credit/credit-profile"      },
+    { name: "get_ar_aging",                 server: "otc-order-credit", path: "/api/mock/otc-order-credit/ar-aging"            },
+    { name: "get_exposure_analysis",        server: "otc-order-credit", path: "/api/mock/otc-order-credit/exposure-analysis"   },
+    { name: "approve_credit_limit_increase",server: "otc-order-credit", path: "/api/mock/otc-order-credit/approve-limit-increase" },
+  ],
+  "OTC-AGT-004": [
+    { name: "get_inventory_availability",  server: "otc-order-inventory", path: "/api/mock/otc-order-inventory/availability"       },
+    { name: "get_warehouses",              server: "otc-order-inventory", path: "/api/mock/otc-order-inventory/warehouses"         },
+    { name: "get_fulfillment_options",     server: "otc-order-inventory", path: "/api/mock/otc-order-inventory/fulfillment-options"},
+    { name: "confirm_inventory_allocation",server: "otc-order-inventory", path: "/api/mock/otc-order-inventory/confirm-allocation" },
+  ],
+};
 
-const OTC_ONTOLOGY_CONCEPTS = [
-  { label: "Purchase Order",        category: "document",               description: "Formal buyer-issued document committing to purchase goods; triggers OTC validation pipeline.", tags: ["po","order","b2b"] },
-  { label: "RUSH Order",            category: "order_classification",   description: "High-priority order requiring resolution within 4 hours of submission.", tags: ["rush","priority","sla"] },
-  { label: "Credit Exposure",       category: "financial_metric",       description: "Total outstanding customer balance including open AR plus pending approved orders.", tags: ["credit","exposure","ar"] },
-  { label: "Credit Limit",          category: "credit_control",         description: "Maximum approved outstanding balance; may be temporarily increased under pre-authorization matrix.", tags: ["credit_limit","approval","temporary"] },
-  { label: "Available-to-Promise",  category: "inventory_concept",      description: "Earliest date on which confirmed uncommitted inventory can be committed to a customer order.", tags: ["atp","inventory","commitment"] },
-  { label: "Split-Ship",           category: "fulfillment_strategy",   description: "Fulfillment using multiple warehouses for a single order; incurs surcharges vs. single-source.", tags: ["split_ship","warehouse","fulfillment"] },
-  { label: "Ship-To Address",      category: "logistics_data",         description: "Physical delivery address specified in the PO; must be validated against ERP master before release.", tags: ["address","ship_to","logistics"] },
-  { label: "Accounts Receivable",  category: "financial_metric",       description: "Outstanding invoiced amounts by customer, classified by aging buckets for collection risk assessment.", tags: ["ar","aging","receivable"] },
-  { label: "ERP Release",          category: "process_event",          description: "Transmission of validated order to ERP, triggering pick-ticket generation and invoice creation.", tags: ["erp","release","order_management"] },
-  { label: "Warehouse Network",    category: "logistics_infrastructure", description: "Set of fulfillment centers evaluated by distance, transit time, inventory, and cost.", tags: ["warehouse","network","dc"] },
-  { label: "Carbon Footprint",     category: "sustainability_metric",  description: "CO2-equivalent emissions generated by a shipment, used in fulfillment option scoring.", tags: ["carbon","co2","sustainability","esg"] },
-  { label: "Delivery Promise",     category: "commitment",             description: "Formal committed delivery date backed by confirmed inventory ATP and carrier booking.", tags: ["delivery","promise","commitment","sla"] },
-];
+const _AGENT_POLICIES: Record<string, { name: string; content: string; type: string }[]> = {
+  "OTC-AGT-002": [
+    { name: "OTC-AGT-002 Order Validation Policy", content: "All orders must pass 8-point validation checklist before ERP release. RUSH orders receive expedited processing with same validation rigor. Address mismatches must be resolved via delivery history cross-reference before release.", type: "operational" },
+    { name: "OTC-AGT-002 ERP Release Protocol",    content: "Order release requires all holds cleared and written confirmation from credit and inventory agents. ERP transaction ID must be generated and warehouse pick ticket transmitted within 60 seconds of release approval.",     type: "operational" },
+    { name: "OTC-AGT-002 RUSH Order Handling",     content: "RUSH orders receive SLA target of < 4 minutes from submission to ERP release. Parallel agent orchestration mandatory. Expedite fee per MSA §7.4(b) applied automatically.",                                               type: "sla"         },
+  ],
+  "OTC-AGT-003": [
+    { name: "OTC-AGT-003 Credit Pre-Authorization Policy", content: "A+ rated customers with zero delinquency and 7+ year relationship qualify for automated temporary credit limit increases up to $1M for 60 days without manual committee approval. All automated approvals must be logged to risk register.", type: "financial"   },
+    { name: "OTC-AGT-003 AR Aging Risk Policy",            content: "Orders from customers with any 90+ day AR balance require immediate escalation. 61-90 day balances require credit manager review. 0-60 day current AR acceptable with documented rationale.",                             type: "financial"   },
+    { name: "OTC-AGT-003 Credit Decision Audit Policy",    content: "Every credit decision (approve/hold/escalate) must include: current exposure, projected exposure, rating, payment history, risk classification, and approver identity. Immutable audit trail required.",                  type: "compliance"  },
+  ],
+  "OTC-AGT-004": [
+    { name: "OTC-AGT-004 Single-Warehouse Preference Policy", content: "Always evaluate single-warehouse fulfillment first. Split-ship only approved when primary warehouse cannot cover full order quantity. Document cost savings when split avoided.",                                                                              type: "operational" },
+    { name: "OTC-AGT-004 RUSH Inventory ATP Policy",          content: "RUSH orders require confirmed ATP dates within 48 hours of order date. Allocation must be locked within the parallel validation window (< 2 minutes). Stock reservation holds expire after 4 hours if order not released.",                               type: "sla"         },
+    { name: "OTC-AGT-004 Inventory Commitment Audit Policy",  content: "All inventory allocations must record: warehouse ID, SKU, quantity, pick ticket reference, ATP date, and agent ID. Allocation reversals require OTC-AGT-002 countersignature.",                                                                            type: "compliance"  },
+  ],
+};
+
+// Build AGENTS from canonical shared defs + migration-specific overrides above
+const AGENTS = OTC_ORDER_AGENT_DEFS.map(def => {
+  const kb = OTC_ORDER_KB_DEFS.find(k => k.name === def.kbName);
+  return {
+    key:          def.key,
+    code:         def.externalId,
+    name:         def.name,
+    stage:        "Order Processing",
+    description:  def.description,
+    systemPrompt: _SYSTEM_PROMPTS[def.externalId] ?? "",
+    tools:        _AGENT_TOOLS[def.externalId]    ?? [],
+    kbName:       def.kbName,
+    kbDescription:kb?.description ?? "",
+    policies:     _AGENT_POLICIES[def.externalId] ?? [],
+    skills:       OTC_ORDER_SKILLS
+                    .filter(s => s.agentKey === def.key)
+                    .map(s => ({ name: s.name, description: s.description })),
+  };
+});
+
+// OTC_ORDER_ONTOLOGY_CONCEPTS imported from ../server/otc-order-shared-defs
 
 // ─── Migration runner ─────────────────────────────────────────────────────────
 
@@ -283,7 +270,7 @@ async function migrateOntologyOnce(): Promise<void> {
   console.log("\n  ── Shared Ontology Concepts (12 total) ──");
   const { randomUUID } = await import("crypto");
   let created = 0, skipped = 0;
-  for (const concept of OTC_ONTOLOGY_CONCEPTS) {
+  for (const concept of OTC_ORDER_ONTOLOGY_CONCEPTS) {
     const { id, skipped: sk } = await prodEnsure(
       "/api/ontology/concepts?industryId=manufacturing",
       "/api/ontology/concepts",

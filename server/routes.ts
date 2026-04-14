@@ -237,6 +237,7 @@ export async function registerRoutes(
   ensureHearstAgents().catch((err: any) => console.error("[startup] ensureHearstAgents:", err?.message));
   ensureFitchAgents().catch((err: any) => console.error("[startup] ensureFitchAgents:", err?.message));
   ensureBBAgents().catch((err: any) => console.error("[startup] ensureBBAgents:", err?.message));
+  // OTC Order agents use lazy initialization (ensureOtcOrderAgents is called inside the live-run handler)
 
   // Backfill AAR configs for all already-deployed agents
   backfillAarConfigs().catch((err: any) => console.error("[startup] backfillAarConfigs:", err?.message));

@@ -1,4 +1,5 @@
-import { CheckCircle2, AlertCircle, AlertTriangle, Clock, Zap, Users } from "lucide-react";
+import { useState } from "react";
+import { CheckCircle2, AlertCircle, AlertTriangle, Clock, Zap, Users, ChevronDown, ChevronRight, ThumbsUp, ArrowUp, PauseCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   BLOCKING_ISSUES, VALIDATION_CHECKS, ORDER_CONTEXT, OTC_ORDER_PIPELINE_STEPS,
@@ -22,6 +23,30 @@ const SEV_BG: Record<string, string> = {
   LOW:    "bg-yellow-500/8 border-yellow-500/20",
 };
 
+const CHECKLIST_META: Record<string, { agentCode?: string; resolveTime?: string }> = {
+  "VAL-002": { agentCode: "OTC-AGT-003", resolveTime: "~1m12s" },
+  "VAL-003": { agentCode: "OTC-AGT-004", resolveTime: "~38s"   },
+  "VAL-004": { agentCode: "OTC-AGT-002", resolveTime: "~51s"   },
+};
+
+const ISSUE_ACTIONS: Record<string, Array<{ label: string; variant: "approve" | "escalate" | "hold" }>> = {
+  "VAL-002": [
+    { label: "Approve $950K Temp Limit",  variant: "approve"  },
+    { label: "Escalate to Manager",        variant: "escalate" },
+    { label: "Hold Order",                 variant: "hold"     },
+  ],
+  "VAL-003": [
+    { label: "Confirm Chicago-Only",       variant: "approve"  },
+    { label: "Approve Split-Ship",         variant: "escalate" },
+    { label: "Re-evaluate",                variant: "hold"     },
+  ],
+  "VAL-004": [
+    { label: "Confirm Corrected Address",  variant: "approve"  },
+    { label: "Keep Original",              variant: "escalate" },
+    { label: "Manual Review",              variant: "hold"     },
+  ],
+};
+
 function CheckStatusIcon({ status }: { status: "PASS" | "HOLD" | "WARN" | "CLEARED" }) {
   if (status === "PASS" || status === "CLEARED")
     return <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0" />;
@@ -30,7 +55,24 @@ function CheckStatusIcon({ status }: { status: "PASS" | "HOLD" | "WARN" | "CLEAR
   return <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />;
 }
 
+function ActionVariantIcon({ variant }: { variant: "approve" | "escalate" | "hold" }) {
+  if (variant === "approve")  return <ThumbsUp className="w-2.5 h-2.5" />;
+  if (variant === "escalate") return <ArrowUp   className="w-2.5 h-2.5" />;
+  return <PauseCircle className="w-2.5 h-2.5" />;
+}
+
+function actionButtonClass(variant: "approve" | "escalate" | "hold", isResolved: boolean): string {
+  if (isResolved && variant === "approve")
+    return "flex items-center gap-1 px-2 py-1 rounded-md text-[9px] font-semibold border bg-green-500/15 text-green-400 border-green-500/25 cursor-default";
+  if (variant === "approve")
+    return "flex items-center gap-1 px-2 py-1 rounded-md text-[9px] font-semibold border bg-green-500/8 text-green-400/70 border-green-500/20 hover:bg-green-500/15 cursor-pointer";
+  if (variant === "escalate")
+    return "flex items-center gap-1 px-2 py-1 rounded-md text-[9px] font-semibold border bg-amber-500/8 text-amber-400/70 border-amber-500/20 hover:bg-amber-500/15 cursor-pointer";
+  return "flex items-center gap-1 px-2 py-1 rounded-md text-[9px] font-semibold border bg-red-500/8 text-red-400/70 border-red-500/20 hover:bg-red-500/15 cursor-pointer";
+}
+
 export default function OtcOrderS1Validation({ pipelineState, onRunAndNavigate }: Props) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const { status, resolvedChecks, parallelAgentsRunning, elapsedSeconds, results } = pipelineState;
   const isRunning = status === "running";
   const isComplete = status === "complete";
@@ -50,6 +92,8 @@ export default function OtcOrderS1Validation({ pipelineState, onRunAndNavigate }
     const s = getCheckStatus(c.checkId);
     return s === "PASS" || s === "CLEARED";
   }).length;
+
+  const toggleExpand = (id: string) => setExpandedId(prev => prev === id ? null : id);
 
   return (
     <div className="flex h-full min-h-0">
@@ -77,6 +121,7 @@ export default function OtcOrderS1Validation({ pipelineState, onRunAndNavigate }
           {VALIDATION_CHECKS.map(check => {
             const s = getCheckStatus(check.checkId);
             const isBlocking = check.initialStatus !== "PASS";
+            const meta = CHECKLIST_META[check.checkId];
             return (
               <div
                 key={check.checkId}
@@ -90,7 +135,7 @@ export default function OtcOrderS1Validation({ pipelineState, onRunAndNavigate }
               >
                 <CheckStatusIcon status={s} />
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1">
+                  <div className="flex items-center gap-1 flex-wrap">
                     <span className="text-[10px] font-mono text-muted-foreground/60">{check.checkId}</span>
                     {isBlocking && s !== "CLEARED" && (
                       <span className="text-[8px] px-1 rounded bg-red-500/15 text-red-400">HOLD</span>
@@ -100,6 +145,17 @@ export default function OtcOrderS1Validation({ pipelineState, onRunAndNavigate }
                     )}
                   </div>
                   <p className="text-[10px] text-foreground/80 leading-tight mt-0.5">{check.name}</p>
+                  {/* Agent + timing attribution for blocking checks */}
+                  {meta && (
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <span className={`text-[8px] font-mono font-semibold ${s === "CLEARED" ? "text-green-400/70" : "text-orange-400/70"}`}>
+                        {meta.agentCode}
+                      </span>
+                      {s === "CLEARED" && meta.resolveTime && (
+                        <span className="text-[8px] text-muted-foreground/50">{meta.resolveTime}</span>
+                      )}
+                    </div>
+                  )}
                   {isRunning && isBlocking && s !== "CLEARED" && (
                     <div className="flex items-center gap-1 mt-0.5">
                       <div className="w-1.5 h-1.5 rounded-full bg-orange-400 animate-pulse" />
@@ -169,7 +225,7 @@ export default function OtcOrderS1Validation({ pipelineState, onRunAndNavigate }
               </span>
             </div>
             <div className="grid grid-cols-3 gap-2">
-              {OTC_ORDER_PIPELINE_STEPS[0].agents.map((code, i) => {
+              {OTC_ORDER_PIPELINE_STEPS[0].agents.map((code) => {
                 const agentDone = results.some(r =>
                   (code === "OTC-AGT-003" && r.role === "credit_validation") ||
                   (code === "OTC-AGT-004" && r.role === "inventory_validation") ||
@@ -195,22 +251,30 @@ export default function OtcOrderS1Validation({ pipelineState, onRunAndNavigate }
           </div>
         )}
 
-        {/* Three blocking issue panels */}
+        {/* Three blocking issue panels (expandable) */}
         <div className="grid grid-cols-1 gap-3">
           {BLOCKING_ISSUES.map(issue => {
             const resolved = (isRunning || isComplete) && resolvedChecks.includes(issue.checkId);
             const agentRunning = isRunning && parallelAgentsRunning.length > 0 && !resolved;
+            const isExpanded = expandedId === issue.id;
+            const actions = ISSUE_ACTIONS[issue.checkId] ?? [];
+
             return (
               <div
                 key={issue.id}
                 data-testid={`issue-panel-${issue.checkId}`}
-                className={`rounded-lg border p-3 transition-all duration-500 ${
+                className={`rounded-lg border transition-all duration-500 ${
                   resolved ? "border-green-500/20 bg-green-500/5"
                   : agentRunning ? `${issue.borderColor} ${issue.bgColor}`
-                  : `border-border/30 bg-muted/10`
+                  : "border-border/30 bg-muted/10"
                 }`}
               >
-                <div className="flex items-start justify-between gap-3 mb-2">
+                {/* Panel header (always visible) — click to expand */}
+                <button
+                  data-testid={`issue-expand-${issue.checkId}`}
+                  onClick={() => toggleExpand(issue.id)}
+                  className="w-full flex items-start justify-between gap-3 p-3 text-left"
+                >
                   <div className="flex items-center gap-2">
                     {resolved
                       ? <CheckCircle2 className="w-4 h-4 text-green-400 shrink-0" />
@@ -221,33 +285,67 @@ export default function OtcOrderS1Validation({ pipelineState, onRunAndNavigate }
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <span className="text-[9px] font-mono text-muted-foreground/60">{issue.checkId}</span>
                         <span className={`text-[9px] px-1 rounded ${SEV_BG[issue.severity]} ${SEV_COLOR[issue.severity]}`}>{issue.severity}</span>
-                        <span className="text-[9px] text-muted-foreground/60">{issue.agent}</span>
+                        <span className="text-[9px] font-mono font-semibold text-orange-400/80">{issue.agent}</span>
                       </div>
                     </div>
                   </div>
-                  {resolved && (
-                    <Badge className="text-[9px] shrink-0 bg-green-500/15 text-green-400 border-green-500/20">
-                      Resolved ✓
-                    </Badge>
-                  )}
-                  {agentRunning && (
-                    <Badge className="text-[9px] shrink-0 animate-pulse" style={{ background: "rgba(255,107,53,0.12)", color: "#FF6B35", borderColor: "rgba(255,107,53,0.25)" }}>
-                      Agent running…
-                    </Badge>
-                  )}
-                </div>
-
-                <p className="text-[10px] text-muted-foreground mb-2 leading-relaxed">{issue.detail}</p>
-
-                {resolved ? (
-                  <div className="px-2 py-1.5 rounded-md bg-green-500/8 border border-green-500/15">
-                    <p className="text-[10px] text-green-300/90 leading-relaxed">{issue.resolution}</p>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {resolved && (
+                      <Badge className="text-[9px] bg-green-500/15 text-green-400 border-green-500/20">
+                        Resolved ✓
+                      </Badge>
+                    )}
+                    {agentRunning && (
+                      <Badge className="text-[9px] animate-pulse" style={{ background: "rgba(255,107,53,0.12)", color: "#FF6B35", borderColor: "rgba(255,107,53,0.25)" }}>
+                        Agent running…
+                      </Badge>
+                    )}
+                    {isExpanded
+                      ? <ChevronDown className="w-3.5 h-3.5 text-muted-foreground/40" />
+                      : <ChevronRight className="w-3.5 h-3.5 text-muted-foreground/40" />
+                    }
                   </div>
-                ) : !isRunning && !isComplete ? (
-                  <div className="px-2 py-1.5 rounded-md bg-muted/20 border border-border/20">
-                    <p className="text-[10px] text-muted-foreground/60 italic">Awaiting parallel validation run…</p>
+                </button>
+
+                {/* Expandable detail + actions */}
+                {isExpanded && (
+                  <div className="px-3 pb-3 border-t border-border/20 pt-2.5 space-y-2">
+                    <p className="text-[10px] text-muted-foreground leading-relaxed">{issue.detail}</p>
+
+                    {resolved ? (
+                      <div className="px-2 py-1.5 rounded-md bg-green-500/8 border border-green-500/15">
+                        <p className="text-[10px] text-green-300/90 leading-relaxed">{issue.resolution}</p>
+                      </div>
+                    ) : !isRunning && !isComplete ? (
+                      <div className="px-2 py-1.5 rounded-md bg-muted/20 border border-border/20">
+                        <p className="text-[10px] text-muted-foreground/60 italic">Awaiting parallel validation run…</p>
+                      </div>
+                    ) : null}
+
+                    {/* Action buttons */}
+                    {actions.length > 0 && (
+                      <div className="pt-1">
+                        <p className="text-[8px] text-muted-foreground/50 mb-1.5 font-semibold uppercase tracking-wide">
+                          {resolved ? "Agent action taken" : "Available actions"}
+                        </p>
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {actions.map(act => (
+                            <button
+                              key={act.label}
+                              data-testid={`action-${issue.checkId}-${act.variant}`}
+                              className={actionButtonClass(act.variant, resolved)}
+                              disabled={resolved && act.variant !== "approve"}
+                            >
+                              <ActionVariantIcon variant={act.variant} />
+                              {act.label}
+                              {resolved && act.variant === "approve" && " ✓"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                ) : null}
+                )}
               </div>
             );
           })}

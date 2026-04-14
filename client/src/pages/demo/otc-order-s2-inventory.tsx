@@ -1,4 +1,4 @@
-import { CheckCircle2, MapPin, Truck, Package, Leaf, Star, Send } from "lucide-react";
+import { CheckCircle2, Truck, Package, Leaf, Star, Send } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,13 +11,134 @@ interface Props {
 }
 
 const SKU_ROWS = [
-  { sku: "TX-7250-A", desc: "Turbine Assembly X-7250 Series A", qty: 8,  chi: 8,  atl: 4  },
-  { sku: "TX-7250-B", desc: "Turbine Assembly X-7250 Series B", qty: 4,  chi: 4,  atl: 3  },
-  { sku: "TX-7300-HD","desc":"Turbine Assembly X-7300 HD",      qty: 1,  chi: 2,  atl: 0  },
-  { sku: "CE-CX450-ENH","desc":"CX-450 Enhanced Controller",    qty: 2,  chi: 3,  atl: 0  },
-  { sku: "CE-PLC-SAFE","desc":"PLC Safety Controller",          qty: 2,  chi: 4,  atl: 0  },
-  { sku: "TX-LUB-SYS","desc":"Lubrication System Module",       qty: 4,  chi: 5,  atl: 2  },
+  { sku: "TX-7250-A",   desc: "Turbine Assembly X-7250 Series A", qty: 8, chi: 8,  atl: 4  },
+  { sku: "TX-7250-B",   desc: "Turbine Assembly X-7250 Series B", qty: 4, chi: 4,  atl: 3  },
+  { sku: "TX-7300-HD",  desc: "Turbine Assembly X-7300 HD",       qty: 1, chi: 2,  atl: 0  },
+  { sku: "CE-CX450-ENH",desc: "CX-450 Enhanced Controller",       qty: 2, chi: 3,  atl: 0  },
+  { sku: "CE-PLC-SAFE", desc: "PLC Safety Controller",            qty: 2, chi: 4,  atl: 0  },
+  { sku: "TX-LUB-SYS",  desc: "Lubrication System Module",        qty: 4, chi: 5,  atl: 2  },
 ];
+
+// ─── Warehouse Network SVG Map ────────────────────────────────────────────────
+// Schematic US midwest layout: Chicago · Atlanta · Dallas (nodes) + Detroit (destination ★)
+
+function WarehouseNetworkMap({ inventoryOK, isRunning }: { inventoryOK: boolean; isRunning: boolean }) {
+  // Node positions (in 400×210 viewBox)
+  const CHI = { x: 140, y: 90  };   // Chicago DC — recommended source
+  const ATL = { x: 195, y: 165 };   // Atlanta Hub — secondary
+  const DAL = { x:  65, y: 175 };   // Dallas Center — no stock
+  const DET = { x: 315, y:  48 };   // Detroit, MI — destination (customer)
+
+  const chiColor  = inventoryOK ? "#22c55e" : isRunning ? "#FF6B35" : "#6b7280";
+  const chiStroke = inventoryOK ? "#22c55e" : isRunning ? "#FF6B35" : "#374151";
+
+  return (
+    <svg viewBox="0 0 400 210" width="100%" height="100%" style={{ overflow: "visible" }}>
+      <defs>
+        {/* Animated dash for active route */}
+        <style>{`
+          @keyframes dashMove {
+            to { stroke-dashoffset: -24; }
+          }
+          .route-active {
+            animation: dashMove 1.2s linear infinite;
+          }
+        `}</style>
+        {/* Arrow markers */}
+        <marker id="arrow-green" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L6,3 z" fill="#22c55e" opacity="0.8" />
+        </marker>
+        <marker id="arrow-gray" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+          <path d="M0,0 L0,6 L6,3 z" fill="#374151" opacity="0.4" />
+        </marker>
+      </defs>
+
+      {/* ── Background: faint US map silhouette suggestion ── */}
+      <rect x="0" y="0" width="400" height="210" fill="transparent" />
+
+      {/* ── Route lines ── */}
+      {/* Chicago → Detroit (primary, animated when running or resolved) */}
+      <line
+        x1={CHI.x} y1={CHI.y} x2={DET.x} y2={DET.y}
+        stroke={inventoryOK ? "#22c55e" : isRunning ? "#FF6B35" : "#374151"}
+        strokeWidth={inventoryOK || isRunning ? 1.8 : 1}
+        strokeDasharray="8 4"
+        strokeDashoffset="0"
+        opacity={inventoryOK || isRunning ? 0.85 : 0.25}
+        markerEnd={inventoryOK ? "url(#arrow-green)" : undefined}
+        className={inventoryOK || isRunning ? "route-active" : ""}
+      />
+
+      {/* Atlanta → Detroit (secondary, dimmed) */}
+      <line
+        x1={ATL.x} y1={ATL.y} x2={DET.x} y2={DET.y}
+        stroke="#4b5563"
+        strokeWidth="1"
+        strokeDasharray="5 5"
+        opacity="0.2"
+        markerEnd="url(#arrow-gray)"
+      />
+
+      {/* ── Transit annotation on CHI→DET route ── */}
+      {(inventoryOK || isRunning) && (
+        <g>
+          <rect x="190" y="54" width="65" height="13" rx="3" fill="rgba(0,0,0,0.5)" />
+          <text x="222" y="64" textAnchor="middle" fill={inventoryOK ? "#22c55e" : "#FF6B35"} fontSize="7" fontWeight="600">
+            1 day · 273 mi
+          </text>
+        </g>
+      )}
+
+      {/* ── Dallas (no stock — very dimmed) ── */}
+      <circle cx={DAL.x} cy={DAL.y} r="11" fill="rgba(55,65,81,0.3)" stroke="#374151" strokeWidth="1" opacity="0.4" />
+      <text x={DAL.x} y={DAL.y + 4} textAnchor="middle" fill="#4b5563" fontSize="8" fontWeight="600" opacity="0.5">DAL</text>
+      <text x={DAL.x} y={DAL.y + 20} textAnchor="middle" fill="#374151" fontSize="7" opacity="0.4">0 units</text>
+      <text x={DAL.x} y={DAL.y + 29} textAnchor="middle" fill="#374151" fontSize="6.5" opacity="0.4">Dallas, TX</text>
+
+      {/* ── Atlanta (secondary — muted) ── */}
+      <circle cx={ATL.x} cy={ATL.y} r="13" fill="rgba(75,85,99,0.15)" stroke="#4b5563" strokeWidth="1" opacity="0.6" />
+      <text x={ATL.x} y={ATL.y + 4} textAnchor="middle" fill="#6b7280" fontSize="8" fontWeight="600">ATL</text>
+      <text x={ATL.x} y={ATL.y + 20} textAnchor="middle" fill="#4b5563" fontSize="7">4 units</text>
+      <text x={ATL.x} y={ATL.y + 29} textAnchor="middle" fill="#4b5563" fontSize="6.5">Atlanta, GA</text>
+      <text x={ATL.x} y={ATL.y + 37} textAnchor="middle" fill="#4b5563" fontSize="6.5">3-day transit</text>
+
+      {/* ── Chicago (primary source — highlighted) ── */}
+      {inventoryOK && (
+        <circle cx={CHI.x} cy={CHI.y} r="22" fill="rgba(34,197,94,0.06)" stroke="#22c55e" strokeWidth="0.5" opacity="0.5" />
+      )}
+      <circle
+        cx={CHI.x} cy={CHI.y} r="15"
+        fill={inventoryOK ? "rgba(34,197,94,0.12)" : isRunning ? "rgba(255,107,53,0.08)" : "rgba(75,85,99,0.1)"}
+        stroke={chiStroke}
+        strokeWidth={inventoryOK ? "1.8" : "1.2"}
+      />
+      <text x={CHI.x} y={CHI.y + 4} textAnchor="middle" fill={chiColor} fontSize="8.5" fontWeight="700">CHI</text>
+      {inventoryOK && (
+        <text x={CHI.x} y={CHI.y - 2} textAnchor="middle" fill="#22c55e" fontSize="6" opacity="0.7">✓</text>
+      )}
+      <text x={CHI.x} y={CHI.y + 24} textAnchor="middle" fill={inventoryOK ? "#22c55e" : "#9ca3af"} fontSize="7.5" fontWeight="600">12 units</text>
+      <text x={CHI.x} y={CHI.y + 33} textAnchor="middle" fill="#6b7280" fontSize="6.5">Chicago, IL</text>
+      <text x={CHI.x} y={CHI.y + 41} textAnchor="middle" fill={inventoryOK ? "#22c55e" : "#6b7280"} fontSize="6.5">1-day transit</text>
+      {inventoryOK && (
+        <text x={CHI.x} y={CHI.y + 50} textAnchor="middle" fill="#22c55e" fontSize="6.5" fontWeight="600">ATP: Apr 21</text>
+      )}
+
+      {/* ── Detroit (destination ★) ── */}
+      <text x={DET.x} y={DET.y + 6} textAnchor="middle" fill="#FF6B35" fontSize="18" opacity="0.9">★</text>
+      <text x={DET.x} y={DET.y + 22} textAnchor="middle" fill="#FF6B35" fontSize="8" fontWeight="700">DETROIT</text>
+      <text x={DET.x} y={DET.y + 31} textAnchor="middle" fill="#9ca3af" fontSize="6.5">Meridian Mfg</text>
+      <text x={DET.x} y={DET.y + 39} textAnchor="middle" fill="#6b7280" fontSize="6">Detroit, MI</text>
+
+      {/* ── Legend ── */}
+      <g opacity="0.7">
+        <text x="6" y="15" fill="#6b7280" fontSize="6.5" fontWeight="600">WAREHOUSE NETWORK</text>
+        <circle cx="8" cy="22" r="3" fill="rgba(34,197,94,0.2)" stroke="#22c55e" strokeWidth="0.8" />
+        <text x="14" y="25.5" fill="#6b7280" fontSize="6">Source DC</text>
+        <text x="14" y="34" fill="#6b7280" fontSize="6">★ Destination</text>
+      </g>
+    </svg>
+  );
+}
 
 export default function OtcOrderS2Inventory({ pipelineState }: Props) {
   const { status, resolvedChecks } = pipelineState;
@@ -29,15 +150,15 @@ export default function OtcOrderS2Inventory({ pipelineState }: Props) {
   return (
     <div className="flex flex-col h-full min-h-0 overflow-hidden">
 
-      {/* ── TOP 40%: Warehouse network + SKU table ─────────────────────────── */}
+      {/* ── TOP 42%: Warehouse network MAP + SKU table ─────────────────────── */}
       <div className="flex min-h-0 border-b border-border/40" style={{ flex: "0 0 42%" }}>
 
-        {/* Left: Warehouse map */}
-        <div className="w-[52%] border-r border-border/40 px-4 py-3 overflow-y-auto">
-          <div className="flex items-center justify-between mb-3">
+        {/* Left: Warehouse network MAP (SVG-based) */}
+        <div className="w-[52%] border-r border-border/40 px-3 py-3 flex flex-col overflow-hidden">
+          <div className="flex items-center justify-between mb-2 shrink-0">
             <div>
               <h2 className="text-[11px] font-bold">Warehouse Network</h2>
-              <p className="text-[9px] text-muted-foreground mt-0.5">Chicago · Atlanta · Dallas — for {ORDER_CONTEXT.orderId}</p>
+              <p className="text-[9px] text-muted-foreground mt-0.5">Chicago · Atlanta · Dallas → Detroit</p>
             </div>
             {inventoryOK && (
               <Badge className="text-[9px] bg-green-500/15 text-green-400 border-green-500/20">
@@ -51,43 +172,28 @@ export default function OtcOrderS2Inventory({ pipelineState }: Props) {
             )}
           </div>
 
-          <div className="grid grid-cols-3 gap-2">
+          {/* SVG map — takes remaining height */}
+          <div className="flex-1 min-h-0" data-testid="warehouse-network-map">
+            <WarehouseNetworkMap inventoryOK={inventoryOK} isRunning={isRunning} />
+          </div>
+
+          {/* Warehouse status bars below map */}
+          <div className="grid grid-cols-3 gap-1.5 shrink-0 mt-1">
             {WAREHOUSES.map(wh => {
-              const sel     = inventoryOK && wh.recommended;
-              const hasUnits = wh.txUnits > 0;
+              const isSelected = inventoryOK && wh.recommended;
               return (
                 <div
                   key={wh.id}
                   data-testid={`warehouse-card-${wh.id}`}
-                  className={`rounded-lg border p-2.5 transition-all ${
-                    sel      ? "border-green-500/40 bg-green-500/6"
-                    : hasUnits ? "border-border/40 bg-muted/10"
+                  className={`px-1.5 py-1 rounded border text-center transition-all ${
+                    isSelected    ? "border-green-500/30 bg-green-500/6"
+                    : wh.txUnits > 0 ? "border-border/30 bg-muted/8"
                     : "border-border/20 bg-muted/5 opacity-40"
                   }`}
                 >
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-1">
-                      <MapPin className={`w-2.5 h-2.5 ${sel ? "text-green-400" : "text-muted-foreground/50"}`} />
-                      <span className={`text-[10px] font-semibold ${sel ? "text-green-300" : ""}`}>{wh.name}</span>
-                    </div>
-                    {sel && <CheckCircle2 className="w-3 h-3 text-green-400" />}
-                  </div>
-                  <p className="text-[9px] text-muted-foreground mb-1.5">{wh.city}, {wh.state}</p>
-                  <div className="space-y-0.5">
-                    <div className="flex justify-between text-[9px]">
-                      <span className="text-muted-foreground/60">Units</span>
-                      <span className={`font-mono font-bold ${hasUnits ? "text-foreground" : "text-muted-foreground/30"}`}>{wh.txUnits}</span>
-                    </div>
-                    <div className="flex justify-between text-[9px]">
-                      <span className="text-muted-foreground/60">Transit</span>
-                      <span className={`font-mono ${wh.transit === "1 day" ? "text-green-400" : "text-muted-foreground/60"}`}>{wh.transit}</span>
-                    </div>
-                  </div>
-                  {sel && (
-                    <div className="mt-1.5 px-1 py-0.5 rounded bg-green-500/10 border border-green-500/15">
-                      <p className="text-[8px] text-green-400 text-center font-medium">All units here</p>
-                    </div>
-                  )}
+                  <p className={`text-[8px] font-semibold ${isSelected ? "text-green-400" : "text-muted-foreground/60"}`}>{wh.name}</p>
+                  <p className={`text-[10px] font-bold font-mono ${isSelected ? "text-green-400" : wh.txUnits > 0 ? "text-foreground" : "text-muted-foreground/30"}`}>{wh.txUnits}</p>
+                  <p className={`text-[7px] ${isSelected ? "text-green-400/70" : "text-muted-foreground/40"}`}>{wh.transit}</p>
                 </div>
               );
             })}
@@ -177,7 +283,7 @@ export default function OtcOrderS2Inventory({ pipelineState }: Props) {
                   </div>
                   <div className="flex items-center gap-1.5 text-[9px]">
                     <Leaf className="w-2.5 h-2.5 text-emerald-400/60 shrink-0" />
-                    <span className={`font-medium ${opt.carbonKg <= 130 ? "text-emerald-400" : opt.carbonKg <= 150 ? "text-yellow-400" : "text-red-400"}`}>
+                    <span className={`font-medium ${opt.carbonKg <= 130 ? "text-emerald-400" : opt.carbonKg <= 200 ? "text-yellow-400" : "text-red-400"}`}>
                       {opt.carbonKg} kg CO₂
                     </span>
                   </div>

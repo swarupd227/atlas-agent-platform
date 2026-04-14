@@ -171,12 +171,12 @@ export const CREDIT_PROFILE = {
 
 // ─── Order release downstream actions ──────────────────────────────────────
 export const RELEASE_ACTIONS = [
-  { id: "ACT-001", label: "ERP Transaction",        detail: "Order released into ERP. Pick ticket transmitted to Chicago DC.",              icon: "server",   status: "complete" as const },
-  { id: "ACT-002", label: "Warehouse Notification", detail: "Pick list at Chicago DC. All 12 turbine units queued for April 21 ship.",        icon: "warehouse",status: "complete" as const },
-  { id: "ACT-003", label: "Customer Confirmation",  detail: "Confirmation email queued to j.davis@meridian-mfg.com. Est. delivery Apr 22.", icon: "mail",     status: "complete" as const },
-  { id: "ACT-004", label: "Invoice Draft",           detail: "Invoice $429,711 + RUSH surcharge $1,800. Pending ship confirmation.",          icon: "file",     status: "pending"  as const },
-  { id: "ACT-005", label: "Credit Memo",             detail: "Temp limit $950K / 60 days logged to risk register. Auto-reverts May 14.",      icon: "shield",   status: "complete" as const },
-  { id: "ACT-006", label: "AR Update",               detail: "Expected AR $200,600 inbound within 30 days — reduces exposure post-payment.", icon: "trending", status: "pending"  as const },
+  { id: "ACT-001", agentCode: "OTC-AGT-002", label: "ERP Transaction",        detail: "Order released into ERP. Pick ticket transmitted to Chicago DC.",              icon: "server",   status: "complete" as const },
+  { id: "ACT-002", agentCode: "OTC-AGT-002", label: "Warehouse Notification", detail: "Pick list at Chicago DC. All 12 turbine units queued for April 21 ship.",        icon: "warehouse",status: "complete" as const },
+  { id: "ACT-003", agentCode: "OTC-AGT-005", label: "Customer Confirmation",  detail: "Confirmation email queued to j.davis@meridian-mfg.com. Est. delivery Apr 22.", icon: "mail",     status: "complete" as const },
+  { id: "ACT-004", agentCode: "OTC-AGT-006", label: "Invoice Draft",           detail: "Invoice $429,711 + RUSH surcharge $1,800. Pending ship confirmation.",          icon: "file",     status: "pending"  as const },
+  { id: "ACT-005", agentCode: "OTC-AGT-007", label: "Credit Memo",             detail: "Temp limit $950K / 60 days logged to risk register. Auto-reverts May 14.",      icon: "shield",   status: "complete" as const },
+  { id: "ACT-006", agentCode: "OTC-AGT-012", label: "AR Update",               detail: "Expected AR $200,600 inbound within 30 days — reduces exposure post-payment.", icon: "trending", status: "pending"  as const },
 ];
 
 // ─── Pipeline step definitions ──────────────────────────────────────────────
@@ -227,6 +227,41 @@ export interface OrderLogEntry {
   type: "info" | "progress" | "complete" | "error";
 }
 
+/** Per-check typed status — keyed by VAL-00X check ID */
+export type ValidationStepStatus = "pass" | "hold" | "cleared" | "warn";
+
+export interface CreditPanelState {
+  decision: "pending" | "approved" | "escalated";
+  exposurePct: number | null;
+  projectedPct: number | null;
+  approvedLimit: number | null;
+  approvedLimitDays: number | null;
+  riskScore: string | null;
+}
+
+export interface InventoryPanelState {
+  optionSelected: string | null;
+  atpDate: string | null;
+  splitShipAvoided: boolean;
+  savingsAmount: number;
+  pickTickets: string[];
+}
+
+export interface AddressPanelState {
+  confirmed: boolean;
+  originalAddress: string;
+  correctedAddress: string | null;
+  confidenceScore: number | null;
+}
+
+export interface AuditTimelineEvent {
+  time: string;
+  agent: string;
+  role: string;
+  event: string;
+  elapsedMs: number;
+}
+
 export interface OrderPipelineState {
   status: "idle" | "running" | "complete" | "error";
   currentRole: string | null;
@@ -239,6 +274,46 @@ export interface OrderPipelineState {
   error: string | null;
   parallelAgentsRunning: string[];
   resolvedChecks: string[];
+  // ── Typed structured panels ──────────────────────────────────────────────
+  validationSteps: Record<string, ValidationStepStatus>;
+  creditPanel: CreditPanelState;
+  inventoryPanel: InventoryPanelState;
+  addressPanel: AddressPanelState;
+  auditTimeline: AuditTimelineEvent[];
+}
+
+const _initialCreditPanel: CreditPanelState = {
+  decision: "pending",
+  exposurePct: 91.9,
+  projectedPct: 177.8,
+  approvedLimit: null,
+  approvedLimitDays: null,
+  riskScore: null,
+};
+
+const _initialInventoryPanel: InventoryPanelState = {
+  optionSelected: null,
+  atpDate: null,
+  splitShipAvoided: false,
+  savingsAmount: 0,
+  pickTickets: [],
+};
+
+const _initialAddressPanel: AddressPanelState = {
+  confirmed: false,
+  originalAddress: "2847 Industrial Parkway, Suite 110, Detroit, MI 48210",
+  correctedAddress: null,
+  confidenceScore: null,
+};
+
+function _initialValidationSteps(): Record<string, ValidationStepStatus> {
+  const steps: Record<string, ValidationStepStatus> = {};
+  VALIDATION_CHECKS.forEach(c => {
+    steps[c.checkId] = c.initialStatus === "PASS" ? "pass"
+      : c.initialStatus === "HOLD" ? "hold"
+      : "warn";
+  });
+  return steps;
 }
 
 const _cache: OrderPipelineState = {
@@ -253,15 +328,25 @@ const _cache: OrderPipelineState = {
   error: null,
   parallelAgentsRunning: [],
   resolvedChecks: [],
+  validationSteps: _initialValidationSteps(),
+  creditPanel: { ..._initialCreditPanel },
+  inventoryPanel: { ..._initialInventoryPanel },
+  addressPanel: { ..._initialAddressPanel },
+  auditTimeline: [],
 };
 
 export function getCachedOtcOrderPipeline(): OrderPipelineState {
   return {
     ..._cache,
-    results: [..._cache.results],
-    logEntries: [..._cache.logEntries],
+    results:               [..._cache.results],
+    logEntries:            [..._cache.logEntries],
     parallelAgentsRunning: [..._cache.parallelAgentsRunning],
-    resolvedChecks: [..._cache.resolvedChecks],
+    resolvedChecks:        [..._cache.resolvedChecks],
+    validationSteps:       { ..._cache.validationSteps },
+    creditPanel:           { ..._cache.creditPanel },
+    inventoryPanel:        { ..._cache.inventoryPanel, pickTickets: [..._cache.inventoryPanel.pickTickets] },
+    addressPanel:          { ..._cache.addressPanel },
+    auditTimeline:         [..._cache.auditTimeline],
   };
 }
 
@@ -312,6 +397,11 @@ export function useOtcOrderPipeline(): OtcOrderPipelineHook {
     _cache.error = null;
     _cache.parallelAgentsRunning = [];
     _cache.resolvedChecks = [];
+    _cache.validationSteps = _initialValidationSteps();
+    _cache.creditPanel    = { ..._initialCreditPanel };
+    _cache.inventoryPanel = { ..._initialInventoryPanel, pickTickets: [] };
+    _cache.addressPanel   = { ..._initialAddressPanel };
+    _cache.auditTimeline  = [];
     notify();
 
     const startTime = Date.now();
@@ -373,23 +463,64 @@ export function useOtcOrderPipeline(): OtcOrderPipelineHook {
     es.addEventListener("agent_complete", (e: MessageEvent) => {
       const d = JSON.parse(e.data);
       const code = agentCodeFromName(d.agentName);
+      const now  = new Date().toISOString();
+      const elapsed = Date.now() - startTime;
+
       if (!_cache.results.find(r => r.role === d.role)) {
         _cache.results.push({
-          role: d.role,
-          agentCode: code,
-          success: d.success,
-          message: d.message || null,
-          completedAt: new Date().toISOString(),
+          role: d.role, agentCode: code, success: d.success,
+          message: d.message || null, completedAt: now,
         });
       }
+
       const checkMap: Record<string, string> = {
-        credit_validation: "VAL-002",
+        credit_validation:    "VAL-002",
         inventory_validation: "VAL-003",
-        address_validation: "VAL-004",
+        address_validation:   "VAL-004",
       };
       if (checkMap[d.role] && !_cache.resolvedChecks.includes(checkMap[d.role])) {
         _cache.resolvedChecks.push(checkMap[d.role]);
+        _cache.validationSteps[checkMap[d.role]] = "cleared";
       }
+
+      // ── Populate typed structured panels ─────────────────────────────────
+      if (d.role === "credit_validation" && d.success) {
+        _cache.creditPanel = {
+          decision:          "approved",
+          exposurePct:       91.9,
+          projectedPct:      177.8,
+          approvedLimit:     950_000,
+          approvedLimitDays: 60,
+          riskScore:         "LOW",
+        };
+      }
+      if (d.role === "inventory_validation" && d.success) {
+        _cache.inventoryPanel = {
+          optionSelected:   "OPT-A",
+          atpDate:          "2026-04-21",
+          splitShipAvoided: true,
+          savingsAmount:    840,
+          pickTickets:      ["PT-CHI-7842-A", "PT-CHI-7842-B", "PT-CHI-7842-C"],
+        };
+      }
+      if (d.role === "address_validation" && d.success) {
+        _cache.addressPanel = {
+          confirmed:        true,
+          originalAddress:  "2847 Industrial Parkway, Suite 110, Detroit, MI 48210",
+          correctedAddress: "2847 Industrial Parkway, Detroit, MI 48210",
+          confidenceScore:  96,
+        };
+      }
+
+      // ── Append to audit timeline ──────────────────────────────────────────
+      _cache.auditTimeline.push({
+        time:      `T+${Math.floor(elapsed / 60000)}:${String(Math.floor((elapsed % 60000) / 1000)).padStart(2, "0")}`,
+        agent:     code,
+        role:      d.role,
+        event:     `${d.role.replace(/_/g, " ")} — ${d.message || (d.success ? "resolved" : "failed")}`,
+        elapsedMs: elapsed,
+      });
+
       addLog(code, d.agentName, `${d.role.replace(/_/g, " ")} complete — ${d.success ? "✓" : "✗"}`, d.success ? "complete" : "error");
       notify();
     });
@@ -398,6 +529,17 @@ export function useOtcOrderPipeline(): OtcOrderPipelineHook {
       const d = JSON.parse(e.data);
       _cache.parallelAgentsRunning = [];
       _cache.resolvedChecks = ["VAL-002", "VAL-003", "VAL-004"];
+      // Sync validationSteps with resolved checks
+      ["VAL-002", "VAL-003", "VAL-004"].forEach(id => {
+        _cache.validationSteps[id] = "cleared";
+      });
+      // Ensure typed panels have defaults if not already set by agent_complete
+      if (_cache.creditPanel.decision === "pending")
+        _cache.creditPanel = { decision: "approved", exposurePct: 91.9, projectedPct: 177.8, approvedLimit: 950_000, approvedLimitDays: 60, riskScore: "LOW" };
+      if (!_cache.inventoryPanel.optionSelected)
+        _cache.inventoryPanel = { optionSelected: "OPT-A", atpDate: "2026-04-21", splitShipAvoided: true, savingsAmount: 840, pickTickets: ["PT-CHI-7842-A", "PT-CHI-7842-B"] };
+      if (!_cache.addressPanel.confirmed)
+        _cache.addressPanel = { confirmed: true, originalAddress: "2847 Industrial Parkway, Suite 110, Detroit, MI 48210", correctedAddress: "2847 Industrial Parkway, Detroit, MI 48210", confidenceScore: 96 };
       addLog("SYSTEM", "Atlas Orchestrator", d.message, "complete");
       notify();
     });

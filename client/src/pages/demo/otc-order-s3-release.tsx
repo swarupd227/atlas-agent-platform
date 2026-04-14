@@ -1,4 +1,4 @@
-import { CheckCircle2, Clock, Truck, Mail, FileText, Shield, TrendingUp, Server, Warehouse } from "lucide-react";
+import { CheckCircle2, Clock, Truck, Mail, FileText, Shield, TrendingUp, Server, Warehouse, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ORDER_CONTEXT, BLOCKING_ISSUES, RELEASE_ACTIONS, type OrderPipelineState } from "./otc-order-constants";
 
@@ -7,37 +7,85 @@ interface Props {
 }
 
 const ACTION_ICONS: Record<string, any> = {
-  server: Server,
+  server:    Server,
   warehouse: Warehouse,
-  mail: Mail,
-  file: FileText,
-  shield: Shield,
-  trending: TrendingUp,
+  mail:      Mail,
+  file:      FileText,
+  shield:    Shield,
+  trending:  TrendingUp,
+};
+
+const AGENT_COLOR: Record<string, string> = {
+  "OTC-AGT-002": "text-orange-400",
+  "OTC-AGT-003": "text-blue-400",
+  "OTC-AGT-004": "text-violet-400",
+  "OTC-AGT-005": "text-cyan-400",
+  "OTC-AGT-006": "text-pink-400",
+  "OTC-AGT-007": "text-indigo-400",
+  "OTC-AGT-012": "text-teal-400",
+  "SYSTEM":      "text-muted-foreground/60",
 };
 
 const AUDIT_EVENTS = [
-  { time: "T+0:00", agent: "SYSTEM",     event: "RUSH order ORD-2026-78432 received — initiating parallel validation" },
-  { time: "T+0:04", agent: "OTC-AGT-002","event": "Address validation started — comparing ERP master vs. PO ship-to" },
-  { time: "T+0:04", agent: "OTC-AGT-003","event": "Credit exposure analysis started — limit $500K at 91.9% utilisation" },
-  { time: "T+0:04", agent: "OTC-AGT-004","event": "Inventory availability check started — Chicago DC + Atlanta Hub" },
-  { time: "T+0:38", agent: "OTC-AGT-004","event": "VAL-003 CLEARED — Chicago-only fulfillment confirmed, $840 saved" },
-  { time: "T+0:51", agent: "OTC-AGT-002","event": "VAL-004 CLEARED — Suite 110 removed, ERP master updated" },
-  { time: "T+1:12", agent: "OTC-AGT-003","event": "VAL-002 CLEARED — Temp limit $950K approved, 60-day window" },
-  { time: "T+1:18", agent: "OTC-AGT-002","event": "Resolution synthesis complete — 8/8 checks PASS" },
-  { time: "T+1:44", agent: "OTC-AGT-002","event": "Order released — ERP confirmed — pick ticket to Chicago DC" },
-  { time: "T+1:44", agent: "SYSTEM",     "event": "Pipeline complete — order ORD-2026-78432 in fulfilment" },
+  { time: "T+0:00", agent: "SYSTEM",      event: "RUSH order ORD-2026-78432 received — initiating parallel validation" },
+  { time: "T+0:04", agent: "OTC-AGT-002", event: "Address validation started — comparing ERP master vs. PO ship-to" },
+  { time: "T+0:04", agent: "OTC-AGT-003", event: "Credit exposure analysis started — limit $500K at 91.9% utilisation" },
+  { time: "T+0:04", agent: "OTC-AGT-004", event: "Inventory availability check started — Chicago DC + Atlanta Hub" },
+  { time: "T+0:38", agent: "OTC-AGT-004", event: "VAL-003 CLEARED — Chicago-only fulfillment confirmed, $840 saved" },
+  { time: "T+0:51", agent: "OTC-AGT-002", event: "VAL-004 CLEARED — Suite 110 removed, ERP master updated" },
+  { time: "T+1:12", agent: "OTC-AGT-003", event: "VAL-002 CLEARED — Temp limit $950K approved, 60-day window" },
+  { time: "T+1:18", agent: "OTC-AGT-002", event: "Resolution synthesis complete — 8/8 checks PASS" },
+  { time: "T+1:44", agent: "OTC-AGT-002", event: "Order released — ERP confirmed — pick ticket to Chicago DC" },
+  { time: "T+1:44", agent: "SYSTEM",      event: "Pipeline complete — order ORD-2026-78432 in fulfilment" },
 ];
 
 export default function OtcOrderS3Release({ pipelineState }: Props) {
   const { status, elapsedSeconds, results } = pipelineState;
   const isComplete = status === "complete";
-  const isRunning = status === "running";
-  const released = isComplete || results.some(r => r.role === "order_release");
+  const isRunning  = status === "running";
+  const released   = isComplete || results.some(r => r.role === "order_release");
 
-  const releaseResult = results.find(r => r.role === "order_release");
+  const runtimeLabel = elapsedSeconds > 0
+    ? `${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s`
+    : "4 min 12 sec";
 
   return (
     <div className="h-full overflow-y-auto px-6 py-5">
+
+      {/* ── Time-saved comparison callout ────────────────────────────────── */}
+      {released && (
+        <div
+          data-testid="time-saved-callout"
+          className="mb-4 rounded-xl border border-orange-500/25 bg-orange-500/5 px-4 py-3"
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <Zap className="w-3.5 h-3.5 text-orange-400" />
+            <span className="text-[10px] font-semibold text-foreground">Time Saved vs. Manual Process</span>
+          </div>
+          <div className="flex items-center gap-4">
+            {/* Before */}
+            <div className="flex-1 rounded-lg border border-border/30 bg-muted/15 px-3 py-2 text-center">
+              <p className="text-[8px] text-muted-foreground/60 uppercase tracking-wide mb-0.5">Traditional Process</p>
+              <p className="text-[18px] font-bold text-muted-foreground/50 tabular-nums leading-none">~2.3 days</p>
+              <p className="text-[7px] text-muted-foreground/40 mt-0.5">Manual review · email approvals · ERP re-keying</p>
+            </div>
+
+            {/* Arrow */}
+            <div className="flex flex-col items-center gap-0.5 shrink-0">
+              <div className="w-8 h-0.5 bg-gradient-to-r from-muted-foreground/20 to-orange-400/60 rounded" />
+              <span className="text-[8px] text-orange-400 font-semibold">→</span>
+              <div className="text-[7px] text-green-400 font-bold">97.5% faster</div>
+            </div>
+
+            {/* After */}
+            <div className="flex-1 rounded-lg border border-green-500/30 bg-green-500/6 px-3 py-2 text-center">
+              <p className="text-[8px] text-green-400/80 uppercase tracking-wide mb-0.5">AI Agent Orchestration</p>
+              <p className="text-[18px] font-bold text-green-400 tabular-nums leading-none">{runtimeLabel}</p>
+              <p className="text-[7px] text-green-400/50 mt-0.5">3 agents · parallel · fully automated</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Green release banner ─────────────────────────────────────────── */}
       <div className={`rounded-xl border mb-5 p-4 transition-all duration-700 ${
@@ -79,7 +127,7 @@ export default function OtcOrderS3Release({ pipelineState }: Props) {
             </p>
             {released && (
               <p className="text-[10px] text-green-400 mt-1">
-                All 8 validation checks cleared in {elapsedSeconds > 0 ? `${elapsedSeconds}s` : "< 4 min"} · Estimated delivery April 22, 2026 · Chicago DC
+                All 8 validation checks cleared in {runtimeLabel} · Estimated delivery April 22, 2026 · Chicago DC
               </p>
             )}
           </div>
@@ -115,7 +163,7 @@ export default function OtcOrderS3Release({ pipelineState }: Props) {
                     <div className="flex items-center gap-1.5 mb-0.5">
                       <span className="text-[10px] font-semibold text-foreground">{issue.title}</span>
                       <span className="text-[9px] font-mono text-muted-foreground/50">{issue.checkId}</span>
-                      <span className="text-[9px] text-muted-foreground/50">{issue.agent}</span>
+                      <span className={`text-[9px] font-mono font-semibold ${AGENT_COLOR[issue.agent] ?? "text-muted-foreground/50"}`}>{issue.agent}</span>
                     </div>
                     <p className={`text-[10px] leading-relaxed ${released ? "text-green-300/80" : "text-muted-foreground/60"}`}>
                       {released ? issue.resolution : issue.detail}
@@ -126,12 +174,12 @@ export default function OtcOrderS3Release({ pipelineState }: Props) {
             ))}
           </div>
 
-          {/* Downstream actions */}
+          {/* Downstream actions with agent attribution */}
           <h3 className="text-[11px] font-semibold text-foreground mb-3">Downstream Actions</h3>
           <div className="space-y-1.5">
             {RELEASE_ACTIONS.map(action => {
               const Icon = ACTION_ICONS[action.icon] || FileText;
-              const done = released && action.status === "complete";
+              const done    = released && action.status === "complete";
               const pending = action.status === "pending";
               return (
                 <div
@@ -151,6 +199,10 @@ export default function OtcOrderS3Release({ pipelineState }: Props) {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
                       <span className="text-[10px] font-semibold text-foreground/80">{action.label}</span>
+                      {/* Agent attribution */}
+                      <span className={`text-[8px] font-mono font-semibold ${AGENT_COLOR[action.agentCode] ?? "text-muted-foreground/50"}`}>
+                        {action.agentCode}
+                      </span>
                       {pending && (
                         <span className="text-[8px] px-1 rounded bg-muted/30 text-muted-foreground/60 border border-border/20">pending ship</span>
                       )}
@@ -172,20 +224,14 @@ export default function OtcOrderS3Release({ pipelineState }: Props) {
             Audit Timeline
             {released && (
               <span className="ml-2 text-[9px] text-green-400 font-normal">
-                Complete in {elapsedSeconds > 0 ? `${elapsedSeconds}s` : "< 4 min"} ✓
+                Complete in {runtimeLabel} ✓
               </span>
             )}
           </h3>
           <div className="border border-border/30 rounded-lg overflow-hidden">
             {AUDIT_EVENTS.map((ev, i) => {
               const isSystem = ev.agent === "SYSTEM";
-              const isFinal = ev.agent === "SYSTEM" && ev.event.includes("complete");
-              const agentColorMap: Record<string, string> = {
-                "OTC-AGT-002": "text-orange-400",
-                "OTC-AGT-003": "text-blue-400",
-                "OTC-AGT-004": "text-violet-400",
-                "SYSTEM":      "text-muted-foreground/60",
-              };
+              const isFinal  = ev.agent === "SYSTEM" && ev.event.includes("complete");
               return (
                 <div
                   key={i}
@@ -195,7 +241,7 @@ export default function OtcOrderS3Release({ pipelineState }: Props) {
                 >
                   <span className="text-[9px] font-mono text-muted-foreground/50 shrink-0 mt-0.5 w-10">{ev.time}</span>
                   <div className="flex-1 min-w-0">
-                    <span className={`text-[9px] font-mono font-semibold shrink-0 ${agentColorMap[ev.agent] || "text-muted-foreground/60"}`}>
+                    <span className={`text-[9px] font-mono font-semibold shrink-0 ${AGENT_COLOR[ev.agent] ?? "text-muted-foreground/60"}`}>
                       [{ev.agent}]
                     </span>
                     <p className={`text-[10px] mt-0.5 leading-relaxed ${isFinal ? "text-green-300/90 font-medium" : "text-foreground/70"}`}>
@@ -216,12 +262,12 @@ export default function OtcOrderS3Release({ pipelineState }: Props) {
               <p className="text-[10px] font-semibold text-foreground mb-2">Fulfilment Summary</p>
               <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                 {[
-                  ["Fulfillment", "Chicago DC"],
-                  ["Ship Date", "April 21, 2026"],
-                  ["Delivery", "April 22, 2026"],
-                  ["Transit", "1 day"],
-                  ["Split-Ship", "Avoided — $840 saved"],
-                  ["RUSH Surcharge", "$1,800 (MSA §7.4(b))"],
+                  ["Fulfillment",     "Chicago DC"],
+                  ["Ship Date",       "April 21, 2026"],
+                  ["Delivery",        "April 22, 2026"],
+                  ["Transit",         "1 day"],
+                  ["Split-Ship",      "Avoided — $840 saved"],
+                  ["RUSH Surcharge",  "$1,800 (MSA §7.4(b))"],
                 ].map(([k, v]) => (
                   <div key={k} className="flex items-center justify-between">
                     <span className="text-[9px] text-muted-foreground/60">{k}</span>
