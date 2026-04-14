@@ -242,7 +242,7 @@ ORDER SUMMARY:
 - Customer: Meridian Manufacturing (CUST-00892)
 - PO: MER-PO-9921 | Quote: Q-78432
 - Value: $429,711 | Type: RUSH
-- SKUs: 12 line items | Ship-from: Chicago DC
+- SKUs: 48 line items (12 turbine units + accessories) | Ship-from: Chicago DC
 
 RELEASE CHECKLIST:
 ✓ Credit hold cleared (temp limit $950K / 60 days)
@@ -607,16 +607,17 @@ export async function otcOrderLiveRunHandler(req: Request, res: Response): Promi
   }, 15_000);
 
   const deploymentIds = new Set<string>();
-  let currentAgentName = "unknown";
+  const deploymentIdToAgent = new Map<string, string>();
 
   const onRuntimeEvent = (evt: { deploymentId: string; agentId: string; runId: string; result: any }) => {
     if (aborted || !deploymentIds.has(evt.deploymentId)) return;
+    const agentName = deploymentIdToAgent.get(evt.deploymentId) ?? "unknown";
     const steps: any[] = evt.result?.steps ?? [];
     const toolCallSteps = steps.filter((s: any) => s.type === "api_call");
     if (toolCallSteps.length > 0) {
       for (const step of toolCallSteps) {
         sendEvent("agent_event", {
-          agentName: currentAgentName,
+          agentName,
           type: "tool_call_result",
           tool: step.mcpTool || step.name || "order_check",
           data: { tool: step.mcpTool || step.name, success: step.status === "completed" || step.status === "passed" },
@@ -624,7 +625,7 @@ export async function otcOrderLiveRunHandler(req: Request, res: Response): Promi
       }
     } else {
       sendEvent("agent_event", {
-        agentName: currentAgentName,
+        agentName,
         type: "analysis_step",
         data: { steps: steps.length, success: evt.result?.success },
       });
@@ -689,7 +690,7 @@ export async function otcOrderLiveRunHandler(req: Request, res: Response): Promi
       if (agentId) {
         const depId = await ensureDeployment(agentId, step.agentName, step.role);
         deploymentIds.add(depId);
-        currentAgentName = step.agentName;
+        deploymentIdToAgent.set(depId, step.agentName);
         if (await isRuntimeActive(depId).catch(() => false)) {
           await stopAgentRuntime(depId).catch(() => {});
           await new Promise(r => setTimeout(r, 300));
@@ -755,7 +756,7 @@ export async function otcOrderLiveRunHandler(req: Request, res: Response): Promi
       if (agentId) {
         const depId = await ensureDeployment(agentId, step.agentName, step.role);
         deploymentIds.add(depId);
-        currentAgentName = step.agentName;
+        deploymentIdToAgent.set(depId, step.agentName);
         if (await isRuntimeActive(depId).catch(() => false)) {
           await stopAgentRuntime(depId).catch(() => {});
           await new Promise(r => setTimeout(r, 300));
