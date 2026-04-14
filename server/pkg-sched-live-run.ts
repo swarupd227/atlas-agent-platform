@@ -32,10 +32,10 @@ async function _refreshPkgMcpServerIds(): Promise<void> {
 export async function ensurePackagingSchedAgents(): Promise<void> {
   if (_pkgSchedSetupDone) {
     await _refreshPkgMcpServerIds();
-    const allAgents = await storage.getAgents().catch(() => [] as any[]);
+    const allAgents = await storage.getAgents().catch((): Awaited<ReturnType<typeof storage.getAgents>> => []);
     for (const def of PKG_SCHED_AGENT_DEFS) {
-      const agent = allAgents.find((a: any) => a.name === def.name);
-      if (agent) _pkgAgentIdByName[def.name] = (agent as any).id;
+      const agent = allAgents.find(a => a.name === def.name);
+      if (agent) _pkgAgentIdByName[def.name] = agent.id;
     }
     return;
   }
@@ -53,7 +53,7 @@ export async function ensurePackagingSchedAgents(): Promise<void> {
         label:         c.label,
         category:      c.category,
         description:   c.description,
-        tags:          c.tags,
+        tags:          [...c.tags],
         properties:    [],
         relationships: [],
         synonyms:      [],
@@ -140,7 +140,7 @@ export async function ensurePackagingSchedAgents(): Promise<void> {
         trustTier:       "platform-provided",
         complexity:      (skillDef.yamlFrontmatter.complexity as string) || "intermediate",
         status:          "active",
-        tags:            skillDef.tags as unknown as string[],
+        tags:            [...skillDef.tags],
         contextMode:     "summary",
         markdownBody:    skillDef.markdownBody,
         yamlFrontmatter: { ...skillDef.yamlFrontmatter },
@@ -265,9 +265,11 @@ export async function ensurePackagingSchedAgents(): Promise<void> {
   }
 
   // ── 7. Agents ───────────────────────────────────────────────────────────────
+  const PKG_EVAL_BINDINGS = [{ suiteName: "PKG Scheduling Regression Suite", schedule: "weekly" }] as const;
+
   const allAgents = await storage.getAgents().catch((): Awaited<ReturnType<typeof storage.getAgents>> => []);
   for (const def of PKG_SCHED_AGENT_DEFS) {
-    let agent = allAgents.find((a: any) => a.name === def.name);
+    let agent = allAgents.find(a => a.name === def.name);
     const serverId      = _pkgMcpServerIdByName[def.mcpServerName];
     const kbId          = kbIdByName[def.kbName];
     const systemPrompt  = PKG_SCHED_SYSTEM_PROMPTS[def.externalId] || "";
@@ -275,70 +277,88 @@ export async function ensurePackagingSchedAgents(): Promise<void> {
     const blueprintId   = blueprintIdByExternalId[def.externalId];
 
     const preloadedSkills = def.skillNames
-      .map((sn: string) => skillIdByName[sn])
-      .filter(Boolean)
-      .map((skillId: string) => ({ skillId }));
+      .map(sn => skillIdByName[sn])
+      .filter((id): id is string => Boolean(id))
+      .map(skillId => ({ skillId }));
 
-    const ontologyTags = (def.ontologyTags as string[]).map((label: string) => ({ label }));
+    const ontologyTags   = [...def.ontologyTags].map(label => ({ label }));
+    const complianceTags = [...def.complianceTags];
+    const policyBindings = agentPolicies.map(p => ({ name: p.name, type: p.type }));
 
     if (!agent) {
       agent = await storage.createAgent({
-        name:             def.name,
-        description:      def.description,
-        status:           "active",
-        agentType:        "operational",
-        environment:      "production",
+        name:              def.name,
+        description:       def.description,
+        status:            "active",
+        agentType:         "operational",
+        environment:       "production",
         systemPrompt,
-        industry:         "manufacturing",
-        department:       def.department,
-        autonomyMode:     "autonomous",
+        industry:          "manufacturing",
+        department:        def.department,
+        autonomyMode:      "autonomous",
         maxToolIterations: 6,
-        model:            "openai/gpt-4.1",
-        modelProvider:    "openai",
-        modelName:        "gpt-4.1",
-        riskTier:         "MEDIUM",
-        currentVersion:   "1.0.0",
-        toolAccessClass:  "standard",
-        owner:            "Advantive — Westfield Packaging Engineering",
-        healthScore:      0.94,
-        successRate:      0.94,
-        maturityFactors:  {},
-        complianceTags:   def.complianceTags as unknown as string[],
+        model:             "openai/gpt-4.1",
+        modelProvider:     "openai",
+        modelName:         "gpt-4.1",
+        riskTier:          "MEDIUM",
+        currentVersion:    "1.0.0",
+        toolAccessClass:   "standard",
+        owner:             "Advantive — Westfield Packaging Engineering",
+        healthScore:       0.94,
+        successRate:       0.94,
+        maturityFactors:   {},
+        complianceTags,
         ontologyTags,
-        policyBindings:   agentPolicies.map((p: any) => ({ name: p.name, type: p.type })),
-        preloadedSkills:  preloadedSkills as { skillId: string }[],
+        policyBindings,
+        preloadedSkills,
         blueprintId,
-        evalBindings:     [{ suiteName: "PKG Scheduling Regression Suite", schedule: "weekly" }],
-        runtimeConfig:    { prompt: def.name, scheduleIntervalMinutes: 0 },
+        evalBindings:      [...PKG_EVAL_BINDINGS],
+        runtimeConfig:     { prompt: def.name, scheduleIntervalMinutes: 0 },
       } as Parameters<typeof storage.createAgent>[0]);
     } else {
-      await storage.updateAgent((agent as any).id, {
+      // Fully idempotent update — re-ensure ALL platform intelligence fields
+      // so re-runs after schema changes or partial failures converge to spec
+      await storage.updateAgent(agent.id, {
         systemPrompt,
-        preloadedSkills:  preloadedSkills as { skillId: string }[],
+        preloadedSkills,
         blueprintId,
-        modelProvider:    "openai",
-        modelName:        "gpt-4.1",
-        autonomyMode:     "autonomous",
+        ontologyTags,
+        policyBindings,
+        complianceTags,
+        evalBindings:      [...PKG_EVAL_BINDINGS],
+        modelProvider:     "openai",
+        modelName:         "gpt-4.1",
+        autonomyMode:      "autonomous",
         maxToolIterations: 6,
-      }).catch(() => {});
+      }).catch((e: unknown) => {
+        console.warn(`[pkg-sched] updateAgent ${def.name}:`, e instanceof Error ? e.message : e);
+      });
     }
-    _pkgAgentIdByName[def.name] = (agent as any).id;
+    _pkgAgentIdByName[def.name] = agent.id;
 
-    // ── Link MCP Server ────────────────────────────────────────────────────
+    const agentId = agent.id;
+
+    // ── Link MCP Server — idempotent ──────────────────────────────────────
     if (serverId) {
-      const existingMcpLinks = await storage.getAgentMcpServers((agent as any).id).catch(() => [] as any[]);
-      const alreadyLinked = existingMcpLinks.some((l: any) => l.serverId === serverId);
+      const existingMcpLinks = await storage.getAgentMcpServers(agentId)
+        .catch((): Awaited<ReturnType<typeof storage.getAgentMcpServers>> => []);
+      const alreadyLinked = existingMcpLinks.some(l => l.serverId === serverId);
       if (!alreadyLinked) {
-        await storage.createAgentMcpServer({ agentId: (agent as any).id, serverId }).catch(() => {});
+        await storage.createAgentMcpServer({ agentId, serverId }).catch((e: unknown) => {
+          console.warn(`[pkg-sched] createAgentMcpServer ${def.name}:`, e instanceof Error ? e.message : e);
+        });
       }
     }
 
-    // ── Link Knowledge Base ────────────────────────────────────────────────
+    // ── Link Knowledge Base — idempotent ──────────────────────────────────
     if (kbId) {
-      const existingKbLinks = await storage.getAgentKnowledgeBases((agent as any).id).catch(() => [] as any[]);
-      const kbAlreadyLinked = existingKbLinks.some((l: any) => l.knowledgeBaseId === kbId);
+      const existingKbLinks = await storage.getAgentKnowledgeBases(agentId)
+        .catch((): Awaited<ReturnType<typeof storage.getAgentKnowledgeBases>> => []);
+      const kbAlreadyLinked = existingKbLinks.some(l => l.knowledgeBaseId === kbId);
       if (!kbAlreadyLinked) {
-        await storage.createAgentKnowledgeBase({ agentId: (agent as any).id, knowledgeBaseId: kbId }).catch(() => {});
+        await storage.createAgentKnowledgeBase({ agentId, knowledgeBaseId: kbId }).catch((e: unknown) => {
+          console.warn(`[pkg-sched] createAgentKnowledgeBase ${def.name}:`, e instanceof Error ? e.message : e);
+        });
       }
     }
   }
@@ -349,8 +369,9 @@ export async function ensurePackagingSchedAgents(): Promise<void> {
 
 // ── Deployment resolution (mirrors OTC Order pattern) ───────────────────────
 async function ensurePkgDeployment(agentId: string, agentName: string): Promise<string> {
-  const deps = await storage.getDeploymentsByAgentId(agentId).catch(() => [] as any[]);
-  let dep = (deps as any[])[0];
+  const deps = await storage.getDeploymentsByAgentId(agentId)
+    .catch((): Awaited<ReturnType<typeof storage.getDeploymentsByAgentId>> => []);
+  let dep = deps[0];
   if (!dep) {
     dep = await storage.createDeployment({
       agentId,
@@ -363,11 +384,13 @@ async function ensurePkgDeployment(agentId: string, agentName: string): Promise<
       pipelineComplete: true,
       deployedAt:       new Date(),
     });
-  } else if ((dep as any).status === "deployed") {
-    await storage.updateDeployment((dep as any).id, { status: "pending" }).catch(() => {});
+  } else if (dep.status === "deployed") {
+    await storage.updateDeployment(dep.id, { status: "pending" }).catch((e: unknown) => {
+      console.warn(`[pkg-sched] updateDeployment ${agentName}:`, e instanceof Error ? e.message : e);
+    });
   }
-  _pkgDeploymentIdByName[agentName] = (dep as any).id;
-  return (dep as any).id;
+  _pkgDeploymentIdByName[agentName] = dep.id;
+  return dep.id;
 }
 
 // ── Pipeline task prompts ───────────────────────────────────────────────────
@@ -508,7 +531,8 @@ export async function pkgSchedLiveRunHandler(req: Request, res: Response) {
 
   const send = (event: string, data: object) => {
     res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-    if ((res as any).flush) (res as any).flush();
+    const flusher = res as typeof res & { flush?: () => void };
+    if (typeof flusher.flush === "function") flusher.flush();
   };
 
   const sendError = (msg: string) => {

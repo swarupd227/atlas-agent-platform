@@ -72,8 +72,8 @@ interface ApiClient {
 
 function makeApiClient(baseUrl: string, orgId: string, dryRun: boolean): ApiClient {
   const headers = {
-    "Content-Type": "application/json",
-    "x-org-id":     orgId,
+    "Content-Type":    "application/json",
+    "x-organization-id": orgId,
   };
 
   async function request<T>(method: string, path: string, body?: object): Promise<T> {
