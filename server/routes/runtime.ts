@@ -5773,6 +5773,44 @@ clean:
           );
 
           localFiles[`${dirPrefix}/.env.example`] = `DATABRICKS_HOST=https://adb-<workspace-id>.azuredatabricks.net\nDATABRICKS_TOKEN=dapi...\nAGENT_NAME=${agentRec.name}\n`;
+
+          localFiles[`${dirPrefix}/MLproject`] = `name: ${agentSlugDbx}\n\nconda_env: conda.yaml\n\nentry_points:\n  main:\n    parameters:\n      experiment_name:\n        type: str\n        default: /Shared/${agentSlugDbx}_experiment\n    command: "python agent.py --experiment_name {experiment_name}"\n\n  evaluate:\n    command: "python evaluate.py"\n`;
+
+          localFiles[`${dirPrefix}/conda.yaml`] = `name: ${agentSlugDbx}_env\nchannels:\n  - defaults\ndependencies:\n  - python=3.12\n  - pip:\n    # All runtime deps are declared in pyproject.toml — no duplication here.\n    - -e .\n`;
+
+          localFiles[`${dirPrefix}/requirements.txt`] = "-e .[dev]\n";
+
+          localFiles[`${dirPrefix}/tests/__init__.py`] = "";
+
+          if (mcpServerDetails.length > 0) {
+            localFiles[`${dirPrefix}/tools/mcp_client.py`] = (
+              `# Shared MCP (Model Context Protocol) JSON-RPC 2.0 client\n` +
+              `# Generated for: ${agentRec.name}\n` +
+              `# Tool adapters for MCP-backed tools import call_mcp_tool from here.\n` +
+              `import json\nimport uuid\nimport requests\n\n\n` +
+              `def call_mcp_tool(server_url: str, tool_name: str, arguments: dict, timeout: int = 30) -> dict:\n` +
+              `    payload = {"jsonrpc": "2.0", "id": str(uuid.uuid4()), "method": "tools/call", "params": {"name": tool_name, "arguments": {k: v for k, v in arguments.items() if v is not None}}}\n` +
+              `    resp = requests.post(server_url, json=payload, headers={"Content-Type": "application/json"}, timeout=timeout)\n` +
+              `    resp.raise_for_status()\n` +
+              `    rpc = resp.json()\n` +
+              `    if "error" in rpc:\n` +
+              `        err = rpc["error"]\n` +
+              `        raise RuntimeError(f"MCP error {err.get('code')}: {err.get('message')}")\n` +
+              `    result = rpc.get("result", {})\n` +
+              `    content = result.get("content")\n` +
+              `    if isinstance(content, list):\n` +
+              `        texts = [c.get("text", "") for c in content if c.get("type") == "text"]\n` +
+              `        if len(texts) == 1:\n` +
+              `            try:\n` +
+              `                return json.loads(texts[0])\n` +
+              `            except (json.JSONDecodeError, ValueError):\n` +
+              `                return {"result": texts[0]}\n` +
+              `        return {"result": "\\n".join(texts)}\n` +
+              `    return result\n`
+            );
+          }
+
+          localFiles[`${dirPrefix}/.github/workflows/ci.yml`] = `name: CI — ${agentSlugDbx}\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  workflow_dispatch:\n    inputs:\n      wheel_version:\n        description: "Wheel version to deploy to production"\n        required: true\n\nenv:\n  PYTHON_VERSION: "3.12"\n\njobs:\n  test:\n    name: Test\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: \${{ env.PYTHON_VERSION }}\n          cache: "pip"\n      - name: Install dev dependencies\n        run: pip install -e .[dev]\n      - name: Run tests\n        run: python -m pytest tests/ -v\n\n  build:\n    name: Build wheel\n    needs: test\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: \${{ env.PYTHON_VERSION }}\n          cache: "pip"\n      - name: Build wheel\n        run: pip install --quiet build && python -m build\n      - name: Upload wheel artifact\n        uses: actions/upload-artifact@v4\n        with:\n          name: wheel\n          path: dist/\n\n  deploy-staging:\n    name: Deploy to staging\n    needs: build\n    if: github.ref == 'refs/heads/main' && github.event_name == 'push'\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: \${{ env.PYTHON_VERSION }}\n          cache: "pip"\n      - name: Download wheel artifact\n        uses: actions/download-artifact@v4\n        with:\n          name: wheel\n          path: dist/\n      - uses: databricks/setup-databricks@v3\n        with:\n          databricks-host: \${{ secrets.DATABRICKS_HOST }}\n          databricks-token: \${{ secrets.DATABRICKS_TOKEN }}\n      - name: Deploy to staging\n        run: |\n          databricks bundle deploy --target staging\n          databricks bundle run deploy_agent --target staging\n\n  deploy-prod:\n    name: Deploy to production\n    needs: build\n    if: github.event_name == 'workflow_dispatch'\n    runs-on: ubuntu-latest\n    environment: production\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: \${{ env.PYTHON_VERSION }}\n          cache: "pip"\n      - name: Download wheel artifact\n        uses: actions/download-artifact@v4\n        with:\n          name: wheel\n          path: dist/\n      - uses: databricks/setup-databricks@v3\n        with:\n          databricks-host: \${{ secrets.DATABRICKS_HOST_PROD }}\n          databricks-token: \${{ secrets.DATABRICKS_TOKEN_PROD }}\n      - name: Deploy to production\n        run: |\n          databricks bundle deploy --target prod --var "wheel_version=\${{ github.event.inputs.wheel_version }}"\n          databricks bundle run deploy_agent --target prod\n`;
         } else {
           const entrypointPath = format === "typescript" ? `${dirPrefix}/src/runtime/orchestrator.ts` : `${dirPrefix}/src/runtime/orchestrator.py`;
           if (aiResult?.entrypoint && aiResult.entrypoint.length > 200) {
@@ -5821,9 +5859,10 @@ clean:
 
         const allMcpToolNames = mcpServerDetails.flatMap(s => (s.tools || []).map(t => `${t.name} (via ${s.name})`));
         const allToolNames = [...tools.map(t => t.name), ...allMcpToolNames];
-        const installCmd = format === "typescript" ? "npm install" : "pip install -r requirements.txt";
+        const installCmd = framework === "databricks" ? "pip install -e .[dev]" : format === "typescript" ? "npm install" : "pip install -r requirements.txt";
         const runCmd = framework === "claude-code"
           ? "npm start"
+          : framework === "databricks" ? "databricks bundle deploy"
           : format === "typescript" ? "npm start" : "python src/runtime/orchestrator.py";
         localFiles[`${dirPrefix}/README.md`] = `# ${agentRec.name}\n\n${agentRec.description || ""}\n\n## Setup\n\n\`\`\`bash\n${installCmd}\n\`\`\`\n\n## Run\n\n\`\`\`bash\n${runCmd}\n\`\`\`\n\n## Tools\n\n${allToolNames.length > 0 ? allToolNames.map(n => `- \`${n}\``).join("\n") : "_No tools configured._"}\n`;
 
