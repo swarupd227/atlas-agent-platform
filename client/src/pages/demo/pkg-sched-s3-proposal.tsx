@@ -31,15 +31,46 @@ function shortLabel(label: string, type: SlotType): string {
   return m ? m[1].trim() : label.split("·")[0].trim();
 }
 
-interface Props { pipelineState: PkgPipelineState; }
+interface Props {
+  pipelineState: PkgPipelineState;
+  selectedAlt?: string;
+}
 
-export default function PkgSchedS3Proposal({ pipelineState }: Props) {
+const ALT_LABELS: Record<string, string> = {
+  "ALT-A": "Alternative A  ·  OEE-Priority",
+  "ALT-B": "Alternative B  ·  OTIF-Priority",
+  "ALT-C": "Alternative C  ·  Balanced",
+};
+
+export default function PkgSchedS3Proposal({ pipelineState, selectedAlt = "ALT-A" }: Props) {
   const { phase3Done, results, status } = pipelineState;
   const proposalDone = results.some(r => r.role === "schedule_proposal") || phase3Done;
   const isComplete   = status === "complete";
 
+  const altLabel = ALT_LABELS[selectedAlt] ?? ALT_LABELS["ALT-A"];
+  const isRecommended = selectedAlt === "ALT-A";
+
   return (
     <div className="flex flex-col h-full overflow-hidden px-5 py-3 gap-3">
+
+      {/* ── "You chose" context bar ───────────────────────────────────────── */}
+      <div className={`rounded-xl border px-4 py-2.5 flex items-center gap-3 shrink-0 ${
+        isRecommended ? "border-emerald-500/25 bg-emerald-500/5" : "border-amber-500/20 bg-amber-500/5"
+      }`}>
+        <CheckCircle2 className={`w-4 h-4 shrink-0 ${isRecommended ? "text-emerald-400" : "text-amber-400"}`} />
+        <div className="flex-1 min-w-0">
+          <span className="text-[11px] font-semibold text-foreground">Proceeding with: {altLabel}</span>
+          {isRecommended && (
+            <span className="ml-2 text-[10px] text-emerald-400">· PKG-003 recommended choice</span>
+          )}
+          {!isRecommended && (
+            <span className="ml-2 text-[10px] text-amber-400">· Planner override — not the PKG-003 recommendation</span>
+          )}
+        </div>
+        <div className="text-[10px] text-muted-foreground/50 shrink-0">
+          PKG-004 is now formatting this schedule for approval
+        </div>
+      </div>
 
       {/* ── Compact KPI strip — 4 cells in a single row ──────────────────── */}
       <div className={`grid grid-cols-4 gap-3 shrink-0 transition-opacity ${proposalDone ? "opacity-100" : "opacity-30"}`}>
@@ -74,7 +105,7 @@ export default function PkgSchedS3Proposal({ pipelineState }: Props) {
           <div className="flex items-center justify-between mb-2 shrink-0">
             <div className="flex items-center gap-2">
               <FileText className="w-3.5 h-3.5 text-muted-foreground/50" />
-              <span className="text-[11px] font-bold text-foreground">Production Gantt — Day Shift 07:00–15:00 · Alt A</span>
+              <span className="text-[11px] font-bold text-foreground">Production Gantt — Day Shift 07:00–15:00 · {selectedAlt.replace("ALT-", "Alt ")}</span>
             </div>
             {/* Legend */}
             <div className="flex items-center gap-3">

@@ -107,25 +107,20 @@ function AgentLogPanel({
 }
 
 export default function PkgSchedDemo() {
-  const [screen, setScreen]   = useState(1);
-  const [logOpen, setLogOpen] = useState(true);
+  const [screen, setScreen]     = useState(1);
+  const [logOpen, setLogOpen]   = useState(true);
+  const [selectedAlt, setSelectedAlt] = useState("ALT-A");
   const { state, trigger, reset, isRunning, isComplete } = usePkgSchedPipeline();
   const lastAdvancedRef = useRef(0);
 
-  // Auto-advance screens — user controls the log panel themselves
+  // Auto-advance S1 → S2 only (S2 → S3 requires user to click "Proceed")
   useEffect(() => {
     const hasOptimizer = state.phase2Done || state.results.some(r => r.role === "schedule_optimization");
-    const hasProposal  = state.phase3Done || state.results.some(r => r.role === "schedule_proposal");
-
-    if (hasProposal && screen === 2 && lastAdvancedRef.current < 3) {
-      const t = setTimeout(() => { lastAdvancedRef.current = 3; setScreen(3); }, 1800);
-      return () => clearTimeout(t);
-    }
     if (hasOptimizer && screen === 1 && lastAdvancedRef.current < 2) {
       const t = setTimeout(() => { lastAdvancedRef.current = 2; setScreen(2); }, 1800);
       return () => clearTimeout(t);
     }
-  }, [state.results, state.phase2Done, state.phase3Done, screen]);
+  }, [state.results, state.phase2Done, screen]);
 
   // Phase completion — derived once, used everywhere
   const phase1Complete = state.phase1Done
@@ -155,6 +150,7 @@ export default function PkgSchedDemo() {
     lastAdvancedRef.current = 0;
     setScreen(1);
     setLogOpen(true);
+    setSelectedAlt("ALT-A");
     reset();
   };
 
@@ -318,8 +314,15 @@ export default function PkgSchedDemo() {
       {/* ══ SCREEN CONTENT ═══════════════════════════════════════════════════ */}
       <div className="flex-1 min-h-0 overflow-hidden">
         {screen === 1 && <PkgSchedS1Orders pipelineState={state} onRun={trigger} />}
-        {screen === 2 && <PkgSchedS2Optimize pipelineState={state} />}
-        {screen === 3 && <PkgSchedS3Proposal pipelineState={state} />}
+        {screen === 2 && (
+          <PkgSchedS2Optimize
+            pipelineState={state}
+            selectedAlt={selectedAlt}
+            onSelectAlt={setSelectedAlt}
+            onProceed={() => { lastAdvancedRef.current = 3; setScreen(3); }}
+          />
+        )}
+        {screen === 3 && <PkgSchedS3Proposal pipelineState={state} selectedAlt={selectedAlt} />}
       </div>
 
       {/* ══ LOG DRAWER — absolute overlay, zero content reflow ═══════════════ */}

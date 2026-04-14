@@ -1,6 +1,5 @@
-import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { CheckCircle2, TrendingUp, BarChart3, Zap, Lock, ChevronRight, Star } from "lucide-react";
+import { CheckCircle2, TrendingUp, BarChart3, Zap, Lock, ChevronRight, Star, ArrowRight } from "lucide-react";
 import {
   PKG_COLOR, SCHEDULE_ALTERNATIVES, PKG_SCHED_PIPELINE_STEPS, RUSH_ORDERS,
   type PkgPipelineState,
@@ -27,10 +26,14 @@ const ALT_COLORS: Record<string, string> = {
   "ALT-C": "#a78bfa",
 };
 
-interface Props { pipelineState: PkgPipelineState; }
+interface Props {
+  pipelineState: PkgPipelineState;
+  selectedAlt: string;
+  onSelectAlt: (id: string) => void;
+  onProceed: () => void;
+}
 
-export default function PkgSchedS2Optimize({ pipelineState }: Props) {
-  const [selectedAlt, setSelectedAlt] = useState("ALT-A");
+export default function PkgSchedS2Optimize({ pipelineState, selectedAlt, onSelectAlt, onProceed }: Props) {
   const { results, phase1Done, phase2Done, parallelRunning, status } = pipelineState;
 
   const optimizerRunning = !!(
@@ -105,7 +108,7 @@ export default function PkgSchedS2Optimize({ pipelineState }: Props) {
               <button
                 key={alt.id}
                 data-testid={`selector-alt-${alt.id}`}
-                onClick={() => setSelectedAlt(alt.id)}
+                onClick={() => onSelectAlt(alt.id)}
                 className={`w-full text-left rounded-xl border px-4 py-3 transition-all cursor-pointer ${
                   isSelected
                     ? "border-opacity-60 shadow-sm"
@@ -250,23 +253,54 @@ export default function PkgSchedS2Optimize({ pipelineState }: Props) {
             </div>
           </div>
 
-          {/* Pareto recommendation (only if viewing Alt A) */}
-          {optimizerDone && selectedAlt === "ALT-A" && (
-            <div className="rounded-xl border border-emerald-500/25 bg-emerald-500/6 px-5 py-3.5 shrink-0">
-              <div className="flex items-center gap-2 mb-1">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-                <span className="text-sm font-bold text-emerald-400">PKG-003 Recommendation: Alternative A — Pareto-optimal</span>
+          {/* Recommendation banner + Proceed CTA */}
+          {optimizerDone && (
+            <div className="shrink-0 flex gap-3">
+              {/* Banner */}
+              <div className={`flex-1 rounded-xl border px-5 py-3.5 ${
+                selectedAlt === "ALT-A"
+                  ? "border-emerald-500/25 bg-emerald-500/6"
+                  : "border-border/25 bg-card/30"
+              }`}>
+                {selectedAlt === "ALT-A" ? (
+                  <>
+                    <div className="flex items-center gap-2 mb-1">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      <span className="text-sm font-bold text-emerald-400">PKG-003 Recommendation: Alternative A — Pareto-optimal</span>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
+                      Alternative A achieves the highest composite score (87.4) — maximising OEE at 82.2% (+11.2pp) through substrate batch clustering while covering all 3 RUSH orders with 2–3h margins.
+                    </p>
+                  </>
+                ) : (
+                  <div className="text-[11px] text-muted-foreground/70 flex items-start gap-2">
+                    <span className="text-amber-400 shrink-0 mt-0.5">⚠</span>
+                    <span>
+                      <span className="font-semibold text-foreground">{selectedData.label} selected.</span>{" "}
+                      PKG-003 recommends Alternative A (score {SCHEDULE_ALTERNATIVES[0].compositeScore} vs {selectedData.compositeScore}) for the best combined OEE + OTIF outcome. You can proceed with your selection or switch back to A.
+                    </span>
+                  </div>
+                )}
               </div>
-              <p className="text-[11px] text-muted-foreground/80 leading-relaxed">
-                Alternative A achieves the highest composite score (87.4) — maximising OEE at 82.2% (+11.2pp) through substrate batch clustering while covering all 3 RUSH orders with 2–3h margins. Recommendation passed to PKG-004 for approval & Kiwiplan commit.
-              </p>
-            </div>
-          )}
-          {optimizerDone && selectedAlt !== "ALT-A" && (
-            <div className="rounded-xl border border-border/25 bg-card/30 px-5 py-3 shrink-0">
-              <div className="text-[11px] text-muted-foreground/70">
-                <span className="font-semibold text-foreground">Comparing with recommended:</span> Alternative A scores {SCHEDULE_ALTERNATIVES[0].compositeScore} vs {selectedData.compositeScore} for {selectedData.label}. PKG-003 recommends Alternative A for the best combined OEE + OTIF outcome.
-              </div>
+
+              {/* Proceed CTA — primary action */}
+              <button
+                data-testid="button-proceed-to-approve"
+                onClick={onProceed}
+                className="shrink-0 flex flex-col items-center justify-center gap-2 px-6 rounded-xl border font-semibold text-white transition-all hover:opacity-90 active:scale-[0.98]"
+                style={{
+                  background: altColor,
+                  borderColor: `${altColor}80`,
+                  minWidth: 200,
+                }}
+              >
+                <div className="text-[11px] opacity-80">Proceed with</div>
+                <div className="text-sm font-bold">{selectedData.label}</div>
+                <div className="flex items-center gap-1.5 text-[10px] opacity-90">
+                  <span>to Approve & Commit</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </div>
+              </button>
             </div>
           )}
         </div>
