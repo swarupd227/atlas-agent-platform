@@ -11,9 +11,9 @@ import PkgSchedS2Optimize from "./pkg-sched-s2-optimize";
 import PkgSchedS3Proposal from "./pkg-sched-s3-proposal";
 
 const SCREENS = [
-  { id: 1, label: "Order Intelligence", shortLabel: "1.1  Order Intel",  Icon: Package },
-  { id: 2, label: "Schedule Optimizer", shortLabel: "1.2  Optimizer",    Icon: BarChart2 },
-  { id: 3, label: "Schedule Proposal",  shortLabel: "1.3  Proposal",     Icon: FileCheck },
+  { id: 1, label: "Analyze Orders",    shortLabel: "1  Analyze Orders",    Icon: Package },
+  { id: 2, label: "Plan Alternatives", shortLabel: "2  Plan Alternatives", Icon: BarChart2 },
+  { id: 3, label: "Approve & Commit",  shortLabel: "3  Approve & Commit",  Icon: FileCheck },
 ];
 
 const LOG_TYPE_COLOR: Record<PkgLogEntry["type"], string> = {
@@ -108,7 +108,7 @@ function AgentLogPanel({
 
 export default function PkgSchedDemo() {
   const [screen, setScreen]   = useState(1);
-  const [logOpen, setLogOpen] = useState(false);
+  const [logOpen, setLogOpen] = useState(true);
   const { state, trigger, reset, isRunning, isComplete } = usePkgSchedPipeline();
   const lastAdvancedRef = useRef(0);
 
@@ -154,7 +154,7 @@ export default function PkgSchedDemo() {
   const handleReset = () => {
     lastAdvancedRef.current = 0;
     setScreen(1);
-    setLogOpen(false);
+    setLogOpen(true);
     reset();
   };
 

@@ -1,5 +1,5 @@
 import { Badge } from "@/components/ui/badge";
-import { AlertTriangle, CheckCircle2, Clock, Package, Cpu, Layers } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, Package, Cpu, Layers, ArrowRight, Zap } from "lucide-react";
 import {
   PKG_COLOR, SHIFT_CONTEXT, RUSH_ORDERS, MACHINES, ROLL_STOCK, PKG_SCHED_PIPELINE_STEPS,
   PKG_AGT_001_CODE, PKG_AGT_002_CODE,
@@ -34,6 +34,61 @@ export default function PkgSchedS1Orders({ pipelineState, onRun }: Props) {
 
   return (
     <div className="flex flex-col h-full overflow-y-auto px-5 py-4 gap-4">
+
+      {/* ── Mission statement ─────────────────────────────────────────────── */}
+      <div className="rounded-xl border px-5 py-3.5 flex items-center gap-5 shrink-0"
+        style={{ borderColor: "rgba(0,131,143,0.25)", background: "rgba(0,131,143,0.06)" }}>
+        <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+          style={{ background: "rgba(0,131,143,0.15)", border: "1px solid rgba(0,131,143,0.30)" }}>
+          <Zap className="w-4 h-4" style={{ color: PKG_COLOR }} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-bold text-foreground">What is Atlas doing?</div>
+          <div className="text-[11px] text-muted-foreground/80 mt-0.5">
+            Atlas is running <span className="font-semibold text-foreground">4 AI agents</span> to automatically build today's production schedule for Westfield Packaging.
+            It will analyse <span className="font-semibold text-foreground">47 orders</span>, resolve a <span className="font-semibold text-amber-400">B-Flute stock constraint</span>, cover <span className="font-semibold text-red-400">3 RUSH deadlines</span>, then generate and commit an optimised schedule directly to <span className="font-semibold text-foreground">Kiwiplan</span> — all without manual planner intervention.
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0 text-[10px] text-muted-foreground/50">
+          <div className="flex flex-col items-center gap-1">
+            <span className="font-mono text-[9px]">PKG-001</span>
+            <span className="font-mono text-[9px]">PKG-002</span>
+            <span className="text-[8px]">parallel</span>
+          </div>
+          <ArrowRight className="w-3 h-3" />
+          <div className="flex flex-col items-center gap-1">
+            <span className="font-mono text-[9px]">PKG-003</span>
+            <span className="text-[8px]">optimizer</span>
+          </div>
+          <ArrowRight className="w-3 h-3" />
+          <div className="flex flex-col items-center gap-1">
+            <span className="font-mono text-[9px]">PKG-004</span>
+            <span className="text-[8px]">commit</span>
+          </div>
+        </div>
+        {status === "idle" && (
+          <button
+            data-testid="button-run-pkg-mission"
+            onClick={onRun}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-[11px] font-bold text-white shrink-0"
+            style={{ background: PKG_COLOR }}
+          >
+            ▶ Run Atlas
+          </button>
+        )}
+        {isRunning && (
+          <Badge className="text-[9px] border animate-pulse shrink-0"
+            style={{ background: "rgba(0,131,143,0.12)", borderColor: "rgba(0,131,143,0.35)", color: PKG_COLOR }}>
+            ⬤ Agents running…
+          </Badge>
+        )}
+        {phase1Done && (
+          <div className="flex items-center gap-1.5 shrink-0">
+            <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+            <span className="text-[11px] font-semibold text-emerald-400">Phase 1 complete</span>
+          </div>
+        )}
+      </div>
 
       {/* ── Shift context banner ──────────────────────────────────────────── */}
       <div className="rounded-xl border border-border/30 bg-card/40 px-5 py-3.5 flex items-center gap-6 shrink-0">
@@ -152,28 +207,6 @@ export default function PkgSchedS1Orders({ pipelineState, onRun }: Props) {
             </div>
           </div>
 
-          {/* CTA (idle state) */}
-          {status === "idle" && (
-            <div className="rounded-xl border border-border/30 bg-card/30 p-5 flex flex-col items-center gap-3 text-center">
-              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: "rgba(0,131,143,0.15)", border: "1px solid rgba(0,131,143,0.25)" }}>
-                <Cpu className="w-5 h-5" style={{ color: PKG_COLOR }} />
-              </div>
-              <div>
-                <div className="text-sm font-semibold text-foreground">Run the PKG Scheduling Pipeline</div>
-                <div className="text-[11px] text-muted-foreground/70 mt-1">
-                  PKG-001 + PKG-002 analyse orders and capacity in parallel → PKG-003 generates 3 alternatives → PKG-004 publishes and commits to Kiwiplan
-                </div>
-              </div>
-              <button
-                data-testid="button-run-pkg"
-                onClick={onRun}
-                className="px-5 py-2 rounded-lg text-[11px] font-bold text-white"
-                style={{ background: PKG_COLOR }}
-              >
-                ▶ Run Atlas
-              </button>
-            </div>
-          )}
         </div>
 
         {/* Right column — PKG-002 Capacity */}
