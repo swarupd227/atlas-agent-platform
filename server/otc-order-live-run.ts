@@ -255,7 +255,7 @@ RELEASE CHECKLIST:
 ACTIONS TO EXECUTE:
 1. Release order into ERP (generate ERP transaction ID)
 2. Transmit warehouse pick ticket to Chicago DC
-3. Set estimated ship date: April 21, 2026
+3. Set estimated ship date: May 2–3, 2026 (2-wave ground, Chicago DC)
 4. Queue customer confirmation to j.davis@meridian-mfg.com
 5. Create invoice draft (pending ship confirmation)
 
@@ -783,7 +783,7 @@ export async function otcOrderLiveRunHandler(req: Request, res: Response): Promi
 
     sendEvent("run_complete", {
       success: true,
-      message: "ORD-2026-78432 released — all 8 checks cleared in parallel — estimated ship April 21, 2026",
+      message: "ORD-2026-78432 released — all 8 checks cleared in parallel — delivery promise May 2–3, 2026",
       orderId: "ORD-2026-78432",
       orderValue: 429_711,
       checksCleared: 8,
@@ -825,10 +825,10 @@ export async function resetOtcOrderDemo(_req: Request, res: Response): Promise<v
 function getFallbackMessage(role: string): string {
   const msgs: Record<string, string> = {
     credit_validation: "OTC-AGT-003: Credit analysis complete. Meridian A+ rated, 7yr relationship, $28.4M annual spend. Current exposure $459,500 (91.9% of $500K limit). Temporary increase to $950K approved for 60 days — within automated pre-auth threshold. VAL-002 CLEARED. Risk: LOW.",
-    inventory_validation: "OTC-AGT-004: Inventory analysis complete. Chicago DC has all 12 turbine units (TX-7250-A ×8, TX-7250-B ×4, TX-7300-HD ×1). Internal split-ship flag was incorrect — single-warehouse fulfillment confirmed. Pick tickets issued. Split-ship surcharge $840 avoided. VAL-003 CLEARED.",
+    inventory_validation: "OTC-AGT-004: Inventory analysis complete. Chicago DC stocks all 12 units needed (TX-7250-A ×8, TX-7250-B ×4, TX-7300-HD ×1). Atlanta flag was a false positive — single-warehouse fulfillment confirmed. OPT-A: 2-wave ship May 2–3. Pick tickets PT-CHI-7842-A/B/C issued. $840 split-ship surcharge avoided. VAL-003 CLEARED.",
     address_validation: "OTC-AGT-002: Address validated. ERP master CUST-00892-SHIP-04 had spurious 'Suite 110' suffix. Industrial facility confirmed via 8 prior delivery records (2022–2026) to 4820 W Grand Ave Chicago IL 60639. ERP record corrected. VAL-004 CLEARED. Confidence: 94%.",
     resolution_synthesis: "OTC-AGT-002: All 3 parallel agents complete. Resolutions confirmed: (1) Credit limit temp-increased to $950K — 60 days — LOW risk; (2) Inventory allocated from Chicago DC — single warehouse — no surcharge; (3) Address corrected — Suite 110 removed. 8/8 validation checks now PASS. Ready for ERP release.",
-    order_release: "OTC-AGT-002: ORD-2026-78432 released. ERP transaction confirmed. Chicago DC pick ticket issued. Estimated ship: April 21, 2026. Estimated delivery: April 22, 2026 (1-day transit). Customer confirmation queued to j.davis@meridian-mfg.com. Invoice draft created. Total elapsed: < 4 minutes.",
+    order_release: "OTC-AGT-002: ORD-2026-78432 released. ERP-TXN-2026-78432 confirmed. Pick tickets PT-CHI-7842-A/B/C issued to Chicago DC. 2-wave ship May 2–3, 2026. Customer confirmation queued to j.davis@meridian-mfg.com. Invoice draft created. Total elapsed: < 4 minutes.",
   };
   return msgs[role] ?? `[Computed fallback for ${role}]`;
 }

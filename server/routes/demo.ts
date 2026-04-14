@@ -1183,6 +1183,14 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
   // NovaTech Industries · Meridian Manufacturing · ORD-2026-78432
   // ============================================================
 
+  router.post("/demo-api/otc-order/setup", async (req, res) => {
+    try {
+      await ensureOtcOrderAgents();
+      res.json({ ok: true, message: "OTC Order agents and MCP servers ready." });
+    } catch (e: any) {
+      res.status(500).json({ ok: false, message: e?.message ?? "Setup failed" });
+    }
+  });
   router.get("/demo-api/otc-order/live-run",   otcOrderLiveRunHandler);
   router.get("/demo-api/otc-order/agent-runs", getOtcOrderAgentRuns);
   router.post("/demo-api/otc-order/reset",     resetOtcOrderDemo);

@@ -127,7 +127,7 @@ export default function OtcOrderS3Release({ pipelineState }: Props) {
             </p>
             {released && (
               <p className="text-[10px] text-green-400 mt-1">
-                All 8 validation checks cleared in {runtimeLabel} · Estimated delivery April 22, 2026 · Chicago DC
+                All 8 validation checks cleared in {runtimeLabel} · Delivery promise May 2–3, 2026 · Chicago DC
               </p>
             )}
           </div>
@@ -263,8 +263,8 @@ export default function OtcOrderS3Release({ pipelineState }: Props) {
               <div className="grid grid-cols-2 gap-x-4 gap-y-1">
                 {[
                   ["Fulfillment",     "Chicago DC"],
-                  ["Ship Date",       "April 21, 2026"],
-                  ["Delivery",        "April 22, 2026"],
+                  ["Ship Date",       "May 2–3, 2026"],
+                  ["Delivery",        "May 2–3, 2026"],
                   ["Transit",         "1 day"],
                   ["Split-Ship",      "Avoided — $840 saved"],
                   ["RUSH Surcharge",  "$1,800 (MSA §7.4(b))"],

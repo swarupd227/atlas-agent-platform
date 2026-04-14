@@ -116,11 +116,11 @@ function WarehouseNetworkMap({ inventoryOK, isRunning }: { inventoryOK: boolean;
       {inventoryOK && (
         <text x={CHI.x} y={CHI.y - 2} textAnchor="middle" fill="#22c55e" fontSize="6" opacity="0.7">✓</text>
       )}
-      <text x={CHI.x} y={CHI.y + 24} textAnchor="middle" fill={inventoryOK ? "#22c55e" : "#9ca3af"} fontSize="7.5" fontWeight="600">12 units</text>
+      <text x={CHI.x} y={CHI.y + 24} textAnchor="middle" fill={inventoryOK ? "#22c55e" : "#9ca3af"} fontSize="7.5" fontWeight="600">8 units</text>
       <text x={CHI.x} y={CHI.y + 33} textAnchor="middle" fill="#6b7280" fontSize="6.5">Chicago, IL</text>
       <text x={CHI.x} y={CHI.y + 41} textAnchor="middle" fill={inventoryOK ? "#22c55e" : "#6b7280"} fontSize="6.5">1-day transit</text>
       {inventoryOK && (
-        <text x={CHI.x} y={CHI.y + 50} textAnchor="middle" fill="#22c55e" fontSize="6.5" fontWeight="600">ATP: Apr 21</text>
+        <text x={CHI.x} y={CHI.y + 50} textAnchor="middle" fill="#22c55e" fontSize="6.5" fontWeight="600">ATP: May 2</text>
       )}
 
       {/* ── Detroit (destination ★) ── */}
@@ -344,7 +344,7 @@ export default function OtcOrderS2Inventory({ pipelineState }: Props) {
               <p className="text-[8px] text-muted-foreground/60 mb-0.5">To: j.davis@meridian-mfg.com</p>
               <p className="text-[8px] text-foreground/80 leading-relaxed">
                 Your order <span className="font-mono font-bold text-foreground">{ORDER_CONTEXT.orderId}</span> ({ORDER_CONTEXT.poNumber}) is confirmed.
-                Delivery in 2 waves: Wave 1 Apr 21, Wave 2 Apr 22.
+                Delivery in 2 waves: Wave 1 May 2, Wave 2 May 3.
                 Shipping: $1,840 ground. Track at NovaTech portal.
               </p>
             </div>

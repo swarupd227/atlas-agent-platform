@@ -13,11 +13,11 @@ export const ORDER_CONTEXT = {
   customer: "Meridian Manufacturing",
   customerId: "CUST-00892",
   orderDate: "April 14, 2026",
-  requestedShipDate: "April 21, 2026",
+  requestedShipDate: "May 2, 2026",
   orderType: "RUSH" as const,
   value: 429_711,
   valueLabel: "$429,711",
-  lineCount: 12,
+  lineCount: 48,
   salesRep: "Sarah Chen",
   territory: "Midwest",
 };
@@ -46,8 +46,8 @@ export const BLOCKING_ISSUES = [
     severity: "MEDIUM" as const,
     agent: "OTC-AGT-004",
     agentName: OTC_AGT_004_NAME,
-    detail: "System flagged split-ship: Chicago (8 units) + Atlanta (4 units). Chicago alone has all 12 units. Split unnecessary.",
-    resolution: "Chicago-only fulfillment confirmed — 1-day transit, $840 split-ship surcharge avoided",
+    detail: "System flagged split-ship: Chicago DC (8 turbine units) + Atlanta Hub (4 turbine units). Chicago covers all 12 — consolidating May 2–3 ship avoids $840 surcharge.",
+    resolution: "OPT-A confirmed — Chicago-only 2-wave ship May 2–3, $840 split-ship surcharge avoided",
     color: "text-amber-400",
     bgColor: "bg-amber-500/10",
     borderColor: "border-amber-500/25",
@@ -82,45 +82,45 @@ export const VALIDATION_CHECKS = [
 
 // ─── Warehouse locations for inventory map ──────────────────────────────────
 export const WAREHOUSES = [
-  { id: "WH-CHI", name: "Chicago DC",    city: "Chicago",  state: "IL", txUnits: 12, atpDate: "Apr 21",  transit: "1 day",  recommended: true  },
-  { id: "WH-ATL", name: "Atlanta Hub",   city: "Atlanta",  state: "GA", txUnits:  4, atpDate: "Apr 24",  transit: "3 days", recommended: false },
+  { id: "WH-CHI", name: "Chicago DC",    city: "Chicago",  state: "IL", txUnits:  8, atpDate: "May 2",   transit: "1 day",  recommended: true  },
+  { id: "WH-ATL", name: "Atlanta Hub",   city: "Atlanta",  state: "GA", txUnits:  4, atpDate: "May 4",   transit: "3 days", recommended: false },
   { id: "WH-DAL", name: "Dallas Center", city: "Dallas",   state: "TX", txUnits:  0, atpDate: "N/A",     transit: "4 days", recommended: false },
 ];
 
 export const FULFILLMENT_OPTIONS = [
   {
     id: "OPT-A",
-    label: "Priority Split-Ship — Chicago DC",
+    label: "Priority 2-Wave — Chicago DC Only",
     sublabel: "Recommended",
     recommended: true,
-    coverage: "12/12 units (2 waves)",
-    shipDate: "Apr 21 + 22, 2026",
-    deliveryDate: "Apr 21 / Apr 22, 2026",
+    coverage: "12/12 units — 2 waves (8 + 4)",
+    shipDate: "May 2 + May 3, 2026",
+    deliveryDate: "May 2 / May 3, 2026",
     shippingCost: 1_840,
     costLabel: "$1,840",
     transitDays: 2,
     carbonKg: 124,
     csatPct: 87,
     csatLabel: "87% acceptance rate",
-    notes: "Two priority ground waves from Chicago DC. Meets RUSH SLA. Meridian 87% split-ship acceptance.",
+    notes: "Two priority ground waves from Chicago DC — 8 units May 2, 4 units May 3. Avoids split-ship surcharge. Meridian 87% 2-wave acceptance.",
     borderClass: "border-green-500/50",
     badgeClass: "bg-green-500/15 text-green-400",
   },
   {
     id: "OPT-B",
-    label: "Consolidated — Chicago DC",
+    label: "Consolidated Single Wave — Chicago DC",
     sublabel: "Standard",
     recommended: false,
     coverage: "12/12 units (1 wave)",
-    shipDate: "Apr 25, 2026",
-    deliveryDate: "Apr 25, 2026",
+    shipDate: "May 5, 2026",
+    deliveryDate: "May 5, 2026",
     shippingCost: 2_120,
     costLabel: "$2,120",
     transitDays: 4,
     carbonKg: 98,
     csatPct: 74,
     csatLabel: "74% CSAT prediction",
-    notes: "Single consolidated shipment. Lower carbon but misses RUSH window by 4 days.",
+    notes: "Single consolidated shipment. Lower carbon footprint but 3-day later delivery vs. Option A. Misses RUSH delivery window.",
     borderClass: "border-white/10",
     badgeClass: "bg-slate-500/15 text-slate-400",
   },
@@ -130,15 +130,15 @@ export const FULFILLMENT_OPTIONS = [
     sublabel: "Expedite",
     recommended: false,
     coverage: "12/12 units (1 flight)",
-    shipDate: "Apr 20, 2026",
-    deliveryDate: "Apr 20, 2026",
+    shipDate: "May 1, 2026",
+    deliveryDate: "May 1, 2026",
     shippingCost: 3_400,
     costLabel: "$3,400",
     transitDays: 1,
     carbonKg: 412,
     csatPct: 91,
     csatLabel: "91% CSAT prediction",
-    notes: "Next-day air freight. Fastest option. $1,560 premium vs. Option A. 3.3× carbon footprint.",
+    notes: "Next-day air freight from O'Hare. Earliest possible delivery. $1,560 premium vs. Option A. 3.3× carbon footprint.",
     borderClass: "border-white/10",
     badgeClass: "bg-slate-500/15 text-slate-400",
   },
@@ -171,12 +171,11 @@ export const CREDIT_PROFILE = {
 
 // ─── Order release downstream actions ──────────────────────────────────────
 export const RELEASE_ACTIONS = [
-  { id: "ACT-001", agentCode: "OTC-AGT-002", label: "ERP Transaction",        detail: "Order released into ERP. Pick ticket transmitted to Chicago DC.",              icon: "server",   status: "complete" as const },
-  { id: "ACT-002", agentCode: "OTC-AGT-002", label: "Warehouse Notification", detail: "Pick list at Chicago DC. All 12 turbine units queued for April 21 ship.",        icon: "warehouse",status: "complete" as const },
-  { id: "ACT-003", agentCode: "OTC-AGT-005", label: "Customer Confirmation",  detail: "Confirmation email queued to j.davis@meridian-mfg.com. Est. delivery Apr 22.", icon: "mail",     status: "complete" as const },
-  { id: "ACT-004", agentCode: "OTC-AGT-006", label: "Invoice Draft",           detail: "Invoice $429,711 + RUSH surcharge $1,800. Pending ship confirmation.",          icon: "file",     status: "pending"  as const },
-  { id: "ACT-005", agentCode: "OTC-AGT-007", label: "Credit Memo",             detail: "Temp limit $950K / 60 days logged to risk register. Auto-reverts May 14.",      icon: "shield",   status: "complete" as const },
-  { id: "ACT-006", agentCode: "OTC-AGT-012", label: "AR Update",               detail: "Expected AR $200,600 inbound within 30 days — reduces exposure post-payment.", icon: "trending", status: "pending"  as const },
+  { id: "ACT-001", agentCode: "OTC-AGT-002", label: "ERP Release & Pick Tickets", detail: "ERP-TXN-2026-78432 confirmed. Pick tickets PT-CHI-7842-A/B/C issued to Chicago DC. 2-wave ship May 2–3.", icon: "server",   status: "complete" as const },
+  { id: "ACT-002", agentCode: "OTC-AGT-005", label: "Customer Confirmation",      detail: "Confirmation email queued to j.davis@meridian-mfg.com. Delivery promise: May 2–3, 2026.",                  icon: "mail",     status: "complete" as const },
+  { id: "ACT-003", agentCode: "OTC-AGT-006", label: "Invoice Draft",              detail: "Invoice $429,711 + RUSH surcharge $1,840 (2-wave freight). Pending ship confirmation.",                     icon: "file",     status: "pending"  as const },
+  { id: "ACT-004", agentCode: "OTC-AGT-007", label: "Credit Memo",                detail: "Temp limit $950K / 60 days logged to risk register. Auto-reverts Jun 13.",                                  icon: "shield",   status: "complete" as const },
+  { id: "ACT-005", agentCode: "OTC-AGT-012", label: "AR Update",                  detail: "Expected AR $200,600 inbound within 30 days — reduces exposure post-payment.",                               icon: "trending", status: "pending"  as const },
 ];
 
 // ─── Pipeline step definitions ──────────────────────────────────────────────
@@ -497,7 +496,7 @@ export function useOtcOrderPipeline(): OtcOrderPipelineHook {
       if (d.role === "inventory_validation" && d.success) {
         _cache.inventoryPanel = {
           optionSelected:   "OPT-A",
-          atpDate:          "2026-04-21",
+          atpDate:          "2026-05-02",
           splitShipAvoided: true,
           savingsAmount:    840,
           pickTickets:      ["PT-CHI-7842-A", "PT-CHI-7842-B", "PT-CHI-7842-C"],
@@ -537,7 +536,7 @@ export function useOtcOrderPipeline(): OtcOrderPipelineHook {
       if (_cache.creditPanel.decision === "pending")
         _cache.creditPanel = { decision: "approved", exposurePct: 91.9, projectedPct: 177.8, approvedLimit: 950_000, approvedLimitDays: 60, riskScore: "LOW" };
       if (!_cache.inventoryPanel.optionSelected)
-        _cache.inventoryPanel = { optionSelected: "OPT-A", atpDate: "2026-04-21", splitShipAvoided: true, savingsAmount: 840, pickTickets: ["PT-CHI-7842-A", "PT-CHI-7842-B"] };
+        _cache.inventoryPanel = { optionSelected: "OPT-A", atpDate: "2026-05-02", splitShipAvoided: true, savingsAmount: 840, pickTickets: ["PT-CHI-7842-A", "PT-CHI-7842-B", "PT-CHI-7842-C"] };
       if (!_cache.addressPanel.confirmed)
         _cache.addressPanel = { confirmed: true, originalAddress: "2847 Industrial Parkway, Suite 110, Detroit, MI 48210", correctedAddress: "2847 Industrial Parkway, Detroit, MI 48210", confidenceScore: 96 };
       addLog("SYSTEM", "Atlas Orchestrator", d.message, "complete");
@@ -550,7 +549,7 @@ export function useOtcOrderPipeline(): OtcOrderPipelineHook {
       _cache.completedAt = new Date().toISOString();
       _cache.currentStep = 3;
       if (_timerInterval) clearInterval(_timerInterval);
-      addLog("SYSTEM", "Atlas Orchestrator", `ORD-2026-78432 RELEASED — $429,711 — ship Apr 21, 2026 — all 8 checks cleared in ${_cache.elapsedSeconds}s`, "complete");
+      addLog("SYSTEM", "Atlas Orchestrator", `ORD-2026-78432 RELEASED — $429,711 — ship May 2–3, 2026 — all 8 checks cleared in ${_cache.elapsedSeconds}s`, "complete");
       es.close();
       notify();
     });
