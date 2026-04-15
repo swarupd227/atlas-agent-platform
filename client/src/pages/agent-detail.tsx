@@ -105,6 +105,8 @@ import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useIndustry } from "@/components/industry-provider";
 import { formatMs } from "@/components/shared-utils";
+import { OutputContractEditor } from "@/components/output-contract-editor";
+import { GenerationMetadataDashboard } from "@/components/generation-metadata-dashboard";
 
 
 class AgentDetailErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean; error: Error | null }> {
@@ -1757,6 +1759,7 @@ function AgentDetailInner() {
             { value: "channels", label: "Channels" },
             { value: "event-triggers", label: "Event Triggers" },
             { value: "gitops", label: "GitOps" },
+            { value: "output-contracts", label: "Output Contracts" },
             ...(agent.agentType === "remote" ? [{ value: "a2a", label: "A2A Card" }] : []),
             ...(agent.agentType === "team" ? [{ value: "team", label: "Team Members" }] : []),
           ];
@@ -5328,6 +5331,13 @@ function AgentDetailInner() {
 
         <TabsContent value="gitops" className="flex flex-col gap-4 mt-0" data-testid="tab-content-gitops">
           <AgentGitOps agent={agent} />
+        </TabsContent>
+
+        <TabsContent value="output-contracts" className="flex flex-col gap-6 mt-0" data-testid="tab-content-output-contracts">
+          <OutputContractEditor agentId={agentId} />
+          <div className="border-t pt-4">
+            <GenerationMetadataDashboard agentId={agentId} />
+          </div>
         </TabsContent>
 
         <TabsContent value="aar" className="flex flex-col gap-4 mt-0" data-testid="tab-content-aar">

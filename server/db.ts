@@ -279,6 +279,58 @@ export async function runStartupMigrations() {
         resolved_comment     TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback_items(status);
+
+      -- GAP5: Output Contract Enforcer tables
+      CREATE TABLE IF NOT EXISTS output_contracts (
+        id                       VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        agent_id                 VARCHAR,
+        schema_type              VARCHAR NOT NULL DEFAULT 'json_schema',
+        schema_definition        JSONB NOT NULL DEFAULT '{}',
+        normalizers              JSONB DEFAULT '[]',
+        fallback_output          JSONB,
+        enforcement_mode         VARCHAR NOT NULL DEFAULT 'strict',
+        repair_enabled           BOOLEAN NOT NULL DEFAULT TRUE,
+        max_repair_attempts      INTEGER NOT NULL DEFAULT 1,
+        repair_temperature       REAL DEFAULT 0.0,
+        repair_prompt_suffix     TEXT,
+        quality_scorer_enabled   BOOLEAN DEFAULT FALSE,
+        quality_scorer_config    JSONB,
+        quality_failure_threshold REAL DEFAULT 0.68,
+        created_at               TIMESTAMP DEFAULT NOW(),
+        updated_at               TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_output_contracts_agent ON output_contracts(agent_id);
+
+      CREATE TABLE IF NOT EXISTS generation_metadata_records (
+        id                    VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        pipeline_run_id       VARCHAR,
+        agent_id              VARCHAR,
+        dag_node_id           VARCHAR,
+        provider              VARCHAR NOT NULL DEFAULT 'openai',
+        model                 VARCHAR NOT NULL DEFAULT 'gpt-4.1',
+        prompt_id             VARCHAR NOT NULL DEFAULT 'default',
+        prompt_version        VARCHAR NOT NULL DEFAULT '1.0.0',
+        prompt_sha256         VARCHAR NOT NULL DEFAULT '',
+        prompt_tokens         INTEGER NOT NULL DEFAULT 0,
+        completion_tokens     INTEGER NOT NULL DEFAULT 0,
+        total_tokens          INTEGER NOT NULL DEFAULT 0,
+        validation_status     VARCHAR NOT NULL DEFAULT 'passed',
+        repair_attempts       INTEGER DEFAULT 0,
+        validation_errors     JSONB DEFAULT '[]',
+        quality_score         REAL,
+        quality_details       JSONB,
+        trace_id              VARCHAR,
+        span_id               VARCHAR,
+        llm_latency_ms        REAL,
+        validation_latency_ms REAL,
+        total_latency_ms      REAL,
+        created_at            TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_gen_metadata_run ON generation_metadata_records(pipeline_run_id);
+      CREATE INDEX IF NOT EXISTS idx_gen_metadata_agent_id ON generation_metadata_records(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_gen_metadata_prompt ON generation_metadata_records(prompt_id, prompt_version);
+
+      ALTER TABLE team_blueprint_nodes ADD COLUMN IF NOT EXISTS output_contract_id VARCHAR;
     `);
     console.log("[db] Startup migrations complete");
   } catch (err: any) {

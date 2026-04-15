@@ -174,6 +174,8 @@ import {
   workflowStateCheckpoints, type WorkflowStateCheckpoint, type InsertWorkflowStateCheckpoint,
   interruptDefinitions, type InterruptDefinition, type InsertInterruptDefinition,
   interruptInstances, type InterruptInstance, type InsertInterruptInstance,
+  outputContracts, type OutputContract, type InsertOutputContract,
+  generationMetadataRecords, type GenerationMetadataRecord, type InsertGenerationMetadataRecord,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -823,6 +825,18 @@ export interface IStorage {
   getOpenInterruptInstance(pipelineRunId: string): Promise<InterruptInstance | undefined>;
   updateInterruptInstance(id: string, data: Partial<InterruptInstance>): Promise<InterruptInstance | undefined>;
   getMaxLoopIterationForDef(pipelineRunId: string, definitionId: string): Promise<number>;
+
+  // GAP5: Output Contracts
+  getOutputContracts(agentId?: string): Promise<OutputContract[]>;
+  getOutputContract(id: string): Promise<OutputContract | undefined>;
+  createOutputContract(contract: InsertOutputContract): Promise<OutputContract>;
+  updateOutputContract(id: string, data: Partial<InsertOutputContract>): Promise<OutputContract | undefined>;
+  deleteOutputContract(id: string): Promise<boolean>;
+
+  // GAP5: Generation Metadata Records
+  createGenerationMetadataRecord(record: InsertGenerationMetadataRecord): Promise<GenerationMetadataRecord>;
+  getGenerationMetadataRecords(filters: { pipelineRunId?: string; agentId?: string; promptId?: string; limit?: number }): Promise<GenerationMetadataRecord[]>;
+  getGenerationMetadataStats(agentId: string): Promise<{ totalRecords: number; passRate: number; avgQualityScore: number; avgRepairAttempts: number }>;
 }
 
 function resolveOrgId(providedOrgId: string | null | undefined): string {
@@ -3777,6 +3791,77 @@ export class DatabaseStorage implements IStorage {
       .orderBy(desc(interruptInstances.loopIteration))
       .limit(1);
     return rows.length > 0 ? (rows[0].loopIteration ?? 0) : 0;
+  }
+
+  // ── GAP5: Output Contracts ──────────────────────────────────────────────────
+
+  async getOutputContracts(agentId?: string): Promise<OutputContract[]> {
+    if (agentId) {
+      return db.select().from(outputContracts).where(eq(outputContracts.agentId, agentId)).orderBy(desc(outputContracts.createdAt));
+    }
+    return db.select().from(outputContracts).orderBy(desc(outputContracts.createdAt));
+  }
+
+  async getOutputContract(id: string): Promise<OutputContract | undefined> {
+    const [row] = await db.select().from(outputContracts).where(eq(outputContracts.id, id));
+    return row;
+  }
+
+  async createOutputContract(contract: InsertOutputContract): Promise<OutputContract> {
+    const [row] = await db.insert(outputContracts).values(contract).returning();
+    return row;
+  }
+
+  async updateOutputContract(id: string, data: Partial<InsertOutputContract>): Promise<OutputContract | undefined> {
+    const [row] = await db.update(outputContracts)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(outputContracts.id, id))
+      .returning();
+    return row;
+  }
+
+  async deleteOutputContract(id: string): Promise<boolean> {
+    const result = await db.delete(outputContracts).where(eq(outputContracts.id, id)).returning();
+    return result.length > 0;
+  }
+
+  // ── GAP5: Generation Metadata Records ──────────────────────────────────────
+
+  async createGenerationMetadataRecord(record: InsertGenerationMetadataRecord): Promise<GenerationMetadataRecord> {
+    const [row] = await db.insert(generationMetadataRecords).values(record).returning();
+    return row;
+  }
+
+  async getGenerationMetadataRecords(filters: { pipelineRunId?: string; agentId?: string; promptId?: string; limit?: number }): Promise<GenerationMetadataRecord[]> {
+    const conditions = [];
+    if (filters.pipelineRunId) conditions.push(eq(generationMetadataRecords.pipelineRunId, filters.pipelineRunId));
+    if (filters.agentId) conditions.push(eq(generationMetadataRecords.agentId, filters.agentId));
+    if (filters.promptId) conditions.push(eq(generationMetadataRecords.promptId, filters.promptId));
+
+    const query = db.select().from(generationMetadataRecords)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(generationMetadataRecords.createdAt))
+      .limit(filters.limit ?? 100);
+    return query;
+  }
+
+  async getGenerationMetadataStats(agentId: string): Promise<{ totalRecords: number; passRate: number; avgQualityScore: number; avgRepairAttempts: number }> {
+    const rows = await db.select().from(generationMetadataRecords)
+      .where(eq(generationMetadataRecords.agentId, agentId))
+      .limit(1000);
+    if (rows.length === 0) return { totalRecords: 0, passRate: 0, avgQualityScore: 0, avgRepairAttempts: 0 };
+    const passed = rows.filter(r => r.validationStatus === "passed" || r.validationStatus === "repaired").length;
+    const withQuality = rows.filter(r => r.qualityScore !== null && r.qualityScore !== undefined);
+    const avgQualityScore = withQuality.length
+      ? withQuality.reduce((sum, r) => sum + (r.qualityScore ?? 0), 0) / withQuality.length
+      : 0;
+    const avgRepairAttempts = rows.reduce((sum, r) => sum + (r.repairAttempts ?? 0), 0) / rows.length;
+    return {
+      totalRecords: rows.length,
+      passRate: passed / rows.length,
+      avgQualityScore,
+      avgRepairAttempts,
+    };
   }
 }
 

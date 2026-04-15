@@ -6,6 +6,7 @@ import { createHash } from "crypto";
 import { sql } from "drizzle-orm";
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
+import { outputContractEnforcer } from "./services/output-contract-enforcer";
 import { isRealMcpServer, mcpListTools, mcpCallTool as mcpSdkCallTool } from "./mcp-client";
 
 export function canonicalJsonStringify(obj: any): string {
@@ -1598,20 +1599,72 @@ After receiving tool results, provide a structured analysis with key findings, s
         totalCostUsd += analysisResult.costUsd;
 
         const rawContent = analysisResult.content || (isConversational ? "I couldn't generate a response." : "{}");
-        
+        const llmCallEndTime = performance.now();
+
+        // GAP5: Output Contract Enforcement
+        const outputContractId = runtimeConfig?.outputContractId as string | undefined;
+        let generationMetadataId: string | undefined;
+        let contractEnforced = false;
+
         let analysis: any = {};
-        if (isConversational) {
-          analysis = { summary: rawContent, conversational: true };
-        } else {
+        if (!isConversational && outputContractId) {
           try {
-            analysis = JSON.parse(rawContent);
-          } catch {
-            analysis = { summary: rawContent };
+            const contract = await storage.getOutputContract(outputContractId);
+            if (contract) {
+              const enforcedResult = await outputContractEnforcer.enforce(contract, rawContent, {
+                agentId,
+                pipelineRunId: runtimeConfig?.pipelineRunId as string | undefined,
+                dagNodeId: runtimeConfig?.dagNodeId as string | undefined,
+                promptSpec: {
+                  id: runtimeConfig?.promptId as string ?? "agent-analysis",
+                  version: runtimeConfig?.promptVersion as string ?? "1.0.0",
+                  text: analysisPrompt,
+                },
+                originalPayload: { agentId, prompt },
+                llmLatencyMs: llmCallEndTime - (performance.now() - (analysisResult.tokensUsed.total * 0.5)),
+                tokenUsage: {
+                  promptTokens: analysisResult.tokensUsed.prompt,
+                  completionTokens: analysisResult.tokensUsed.completion,
+                },
+                provider: options?.modelProvider ?? "openai",
+                model: modelName,
+              });
+              analysis = { ...enforcedResult.output };
+              generationMetadataId = enforcedResult.generationMetadataId;
+              contractEnforced = true;
+              if (enforcedResult.validationStatus !== "passed") {
+                analysis._contractStatus = enforcedResult.validationStatus;
+                analysis._repairAttempts = enforcedResult.repairAttempts;
+                analysis._validationErrors = enforcedResult.validationErrors;
+              }
+              if (enforcedResult.qualityScore !== undefined) {
+                analysis._qualityScore = enforcedResult.qualityScore;
+              }
+            }
+          } catch (contractErr: unknown) {
+            const msg = contractErr instanceof Error ? contractErr.message : String(contractErr);
+            console.warn("[agent-runtime] Output contract enforcement failed:", msg);
+          }
+        }
+
+        if (!contractEnforced) {
+          if (isConversational) {
+            analysis = { summary: rawContent, conversational: true };
+          } else {
+            try {
+              analysis = JSON.parse(rawContent);
+            } catch {
+              analysis = { summary: rawContent };
+            }
           }
         }
 
         if (analysis.processedRecords && Array.isArray(analysis.processedRecords)) {
           analysis.structuredOutput = analysis.processedRecords;
+        }
+
+        if (generationMetadataId) {
+          analysis._generationMetadataId = generationMetadataId;
         }
 
         analysis.iterationsUsed = iterationsUsed;

@@ -58,6 +58,8 @@ import { registerMockMcpServers } from "./mock-mcp/register";
 import piiRouter from "./routes/pii";
 import feedbackRouter from "./routes/feedback";
 import myActionsRouter from "./routes/my-actions";
+import outputContractsRouter from "./routes/output-contracts";
+import generationMetadataRouter from "./routes/generation-metadata";
 
 export { computeConstraintGraph, recomputeOutcomeKpis };
 export type { KpiReEvalResult };
@@ -230,6 +232,8 @@ export async function registerRoutes(
   app.use(piiRouter);
   app.use(feedbackRouter);
   app.use(myActionsRouter);
+  app.use(outputContractsRouter);
+  app.use(generationMetadataRouter);
 
   // Run idempotent startup SQL migrations (CREATE TABLE IF NOT EXISTS).
   // Awaited before starting the worker so tables are guaranteed to exist before

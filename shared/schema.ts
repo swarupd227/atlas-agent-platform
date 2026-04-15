@@ -1049,6 +1049,7 @@ export const teamBlueprintNodes = pgTable("team_blueprint_nodes", {
   timeoutMs: integer("timeout_ms").default(30000),
   retryPolicy: jsonb("retry_policy"),
   refTeamAgentId: varchar("ref_team_agent_id"),
+  outputContractId: varchar("output_contract_id"),
 });
 
 export const insertTeamBlueprintNodeSchema = createInsertSchema(teamBlueprintNodes).omit({ id: true, createdAt: true });
@@ -2626,3 +2627,64 @@ export type InsertFeedbackItem = z.infer<typeof insertFeedbackItemSchema>;
 export type FeedbackItem = typeof feedbackItems.$inferSelect;
 
 export * from "./models/chat";
+
+// ── GAP5: Output Contracts ────────────────────────────────────────────────────
+
+export const outputContracts = pgTable("output_contracts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  agentId: varchar("agent_id"),
+  schemaType: varchar("schema_type").notNull().default("json_schema"),
+  schemaDefinition: jsonb("schema_definition").notNull().default(sql`'{}'::jsonb`),
+  normalizers: jsonb("normalizers").default(sql`'[]'::jsonb`),
+  fallbackOutput: jsonb("fallback_output"),
+  enforcementMode: varchar("enforcement_mode").notNull().default("strict"),
+  repairEnabled: boolean("repair_enabled").notNull().default(true),
+  maxRepairAttempts: integer("max_repair_attempts").notNull().default(1),
+  repairTemperature: real("repair_temperature").default(0.0),
+  repairPromptSuffix: text("repair_prompt_suffix"),
+  qualityScorerEnabled: boolean("quality_scorer_enabled").default(false),
+  qualityScorerConfig: jsonb("quality_scorer_config"),
+  qualityFailureThreshold: real("quality_failure_threshold").default(0.68),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertOutputContractSchema = createInsertSchema(outputContracts).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertOutputContract = z.infer<typeof insertOutputContractSchema>;
+export type OutputContract = typeof outputContracts.$inferSelect;
+
+// ── GAP5: Generation Metadata Records ────────────────────────────────────────
+
+export const generationMetadataRecords = pgTable("generation_metadata_records", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  pipelineRunId: varchar("pipeline_run_id"),
+  agentId: varchar("agent_id"),
+  dagNodeId: varchar("dag_node_id"),
+  provider: varchar("provider").notNull().default("openai"),
+  model: varchar("model").notNull().default("gpt-4.1"),
+  promptId: varchar("prompt_id").notNull().default("default"),
+  promptVersion: varchar("prompt_version").notNull().default("1.0.0"),
+  promptSha256: varchar("prompt_sha256").notNull().default(""),
+  promptTokens: integer("prompt_tokens").notNull().default(0),
+  completionTokens: integer("completion_tokens").notNull().default(0),
+  totalTokens: integer("total_tokens").notNull().default(0),
+  validationStatus: varchar("validation_status").notNull().default("passed"),
+  repairAttempts: integer("repair_attempts").default(0),
+  validationErrors: jsonb("validation_errors").default(sql`'[]'::jsonb`),
+  qualityScore: real("quality_score"),
+  qualityDetails: jsonb("quality_details"),
+  traceId: varchar("trace_id"),
+  spanId: varchar("span_id"),
+  llmLatencyMs: real("llm_latency_ms"),
+  validationLatencyMs: real("validation_latency_ms"),
+  totalLatencyMs: real("total_latency_ms"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_gen_metadata_run").on(table.pipelineRunId),
+  index("idx_gen_metadata_agent").on(table.agentId),
+  index("idx_gen_metadata_prompt").on(table.promptId, table.promptVersion),
+]);
+
+export const insertGenerationMetadataRecordSchema = createInsertSchema(generationMetadataRecords).omit({ id: true, createdAt: true });
+export type InsertGenerationMetadataRecord = z.infer<typeof insertGenerationMetadataRecordSchema>;
+export type GenerationMetadataRecord = typeof generationMetadataRecords.$inferSelect;
