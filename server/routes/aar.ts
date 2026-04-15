@@ -3,7 +3,7 @@ import { createHash } from "crypto";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
 import type { AarConfig, InsertAarConfig } from "../../shared/schema";
-import { mcpCallTool } from "../mcp-client";
+import { mcpCallTool, buildMcpAuthHeaders } from "../mcp-client";
 
 // ─── Task 1: Token-bucket rate limiter (in-memory, per agentId:toolName) ─────
 interface TokenBucket {
@@ -571,34 +571,51 @@ router.get("/api/agents/:agentId/aar/package", async (req, res) => {
 });
 
 // ─── Helper: dispatch a tool call through MCP, shared by POST and stream ──────
+// CredentialManager.InjectCredentials: loads mcpServerAuth for the resolved
+// server and injects the appropriate HTTP headers (api_key / bearer / basic /
+// oauth2) into the transport before forwarding the call.
 
 async function invokeViaMcp(
   toolName: string,
   serverId: string | undefined,
   args: Record<string, unknown>,
-): Promise<{ result: unknown; error?: string; matchedToolId?: string }> {
+): Promise<{ result: unknown; error?: string; matchedToolId?: string; credentialInjected: boolean }> {
   if (serverId) {
     const mcpServer = await storage.getMcpServer(serverId);
-    if (!mcpServer) return { result: null, error: `MCP server '${serverId}' not found` };
+    if (!mcpServer) return { result: null, error: `MCP server '${serverId}' not found`, credentialInjected: false };
     // Try to find the specific tool record for fingerprinting
     const allTools = await storage.getAllMcpServerTools();
     const matchedTool = allTools.find(t => t.serverId === serverId && t.name === toolName);
+    // CredentialManager: resolve and inject auth headers
+    const serverAuth = await storage.getMcpServerAuth(serverId);
+    const authHeaders = buildMcpAuthHeaders(serverAuth);
+    const credentialInjected = Object.keys(authHeaders).length > 0;
+    if (credentialInjected) {
+      console.log(`[AAR][CredentialManager] Injecting '${serverAuth?.authType}' credentials for MCP server '${serverId}' tool='${toolName}'`);
+    }
     try {
-      return { result: await mcpCallTool(mcpServer, toolName, args), matchedToolId: matchedTool?.id };
+      return { result: await mcpCallTool(mcpServer, toolName, args, serverAuth), matchedToolId: matchedTool?.id, credentialInjected };
     } catch (e: any) {
-      return { result: null, error: e.message, matchedToolId: matchedTool?.id };
+      return { result: null, error: e.message, matchedToolId: matchedTool?.id, credentialInjected };
     }
   }
   // No server_id: locate first MCP server that hosts this tool
   const allTools = await storage.getAllMcpServerTools();
   const matched = allTools.find(t => t.name === toolName);
-  if (!matched) return { result: null, error: `No MCP server tool found for '${toolName}'` };
+  if (!matched) return { result: null, error: `No MCP server tool found for '${toolName}'`, credentialInjected: false };
   const mcpServer = await storage.getMcpServer(matched.serverId);
-  if (!mcpServer) return { result: null, error: `MCP server for tool '${toolName}' not found` };
+  if (!mcpServer) return { result: null, error: `MCP server for tool '${toolName}' not found`, credentialInjected: false };
+  // CredentialManager: resolve and inject auth headers
+  const serverAuth = await storage.getMcpServerAuth(matched.serverId);
+  const authHeaders = buildMcpAuthHeaders(serverAuth);
+  const credentialInjected = Object.keys(authHeaders).length > 0;
+  if (credentialInjected) {
+    console.log(`[AAR][CredentialManager] Injecting '${serverAuth?.authType}' credentials for MCP server '${matched.serverId}' tool='${toolName}'`);
+  }
   try {
-    return { result: await mcpCallTool(mcpServer, toolName, args), matchedToolId: matched.id };
+    return { result: await mcpCallTool(mcpServer, toolName, args, serverAuth), matchedToolId: matched.id, credentialInjected };
   } catch (e: any) {
-    return { result: null, error: e.message, matchedToolId: matched.id };
+    return { result: null, error: e.message, matchedToolId: matched.id, credentialInjected };
   }
 }
 
@@ -893,8 +910,8 @@ router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
     const fingerprintCfg = mcpProxyCfg?.fingerprinting as Record<string, unknown> | null;
     const maxDriftPercent = (fingerprintCfg?.maxDriftPercent as number | undefined) ?? 10;
 
-    // Proceed with the tool call — proxy through MCP via shared helper
-    const { result: toolResult, error: invocationError, matchedToolId } = await invokeViaMcp(tool_name, server_id, args ?? {});
+    // CredentialManager.InjectCredentials + MCPProxy.Forward
+    const { result: toolResult, error: invocationError, matchedToolId, credentialInjected } = await invokeViaMcp(tool_name, server_id, args ?? {});
     if (invocationError) {
       console.error(`[AAR] invoke-tool MCP call failed: ${invocationError}`);
     }
@@ -978,6 +995,7 @@ router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
         postCallFingerprintHash: postCallHash,
         driftDetected,
         driftRatio: driftRatio > 0 ? parseFloat(driftRatio.toFixed(2)) : 0,
+        credentialInjected,
       }),
     });
 
@@ -994,6 +1012,7 @@ router.post("/api/agents/:agentId/aar/invoke-tool", async (req, res) => {
         risk_level: evaluation.riskLevel,
         evaluation_time_us: evaluationTimeUs,
       },
+      credential_injected: credentialInjected,
       ...(driftDetected ? { drift_detected: true, drift_status: "DRIFT_DETECTED" } : {}),
       ...(invocationError ? { invocation_error: invocationError } : {}),
     });
@@ -1074,8 +1093,8 @@ router.get("/api/agents/:agentId/aar/invoke-tool/stream", async (req, res) => {
       return;
     }
 
-    // Invoke via shared MCP helper and stream the result
-    const { result: toolResult, error: invocationError } = await invokeViaMcp(tool_name, server_id, {});
+    // CredentialManager.InjectCredentials + MCPProxy.Forward
+    const { result: toolResult, error: invocationError, credentialInjected: _streamCredInjected } = await invokeViaMcp(tool_name, server_id, {});
 
     if (invocationError) {
       res.write(`data: ${JSON.stringify({ chunk: null, done: true, error: "INVOCATION_ERROR", reason: invocationError })}\n\n`);
