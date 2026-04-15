@@ -1268,6 +1268,8 @@ After receiving tool results, provide a structured analysis with key findings, s
   let contractValidationErrors: string[] | undefined;
   let contractQualityScore: number | undefined;
   let contractTokenUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined;
+  // Hoisted conversational response — replaces (steps as any).__conversationalResponse pattern
+  let conversationalResponseHoisted: string | undefined;
 
   try {
     const planCallStartMs = performance.now();
@@ -1306,18 +1308,10 @@ After receiving tool results, provide a structured analysis with key findings, s
     totalTokens += planResult.tokensUsed.total;
     totalCostUsd += planResult.costUsd;
 
-    // Record per-call metadata for planning LLM call
-    outputContractEnforcer.recordLlmCallMetadata({
-      agentId,
-      pipelineRunId: runtimeConfig?.pipelineRunId as string | undefined,
-      dagNodeId: runtimeConfig?.dagNodeId as string | undefined,
-      promptSpec: { id: runtimeConfig?.promptId as string ?? "planning", version: runtimeConfig?.promptVersion as string ?? "1.0.0", text: systemMessage + "\n" + prompt },
-      originalPayload: { agentId, prompt },
-      llmLatencyMs: planCallLatencyMs,
-      tokenUsage: { promptTokens: planResult.tokensUsed.prompt, completionTokens: planResult.tokensUsed.completion },
-      provider: options?.modelProvider ?? "openai",
-      model: modelName,
-    }, "planning").catch(() => { /* non-fatal */ });
+    // Metadata recording for the planning call is deferred below:
+    // - no-tools-with-contract path: enforce() records it (avoids double-count)
+    // - no-tools-without-contract path: recordLlmCallMetadata() records it after parse
+    // - tool-calls path: recordLlmCallMetadata() records it after this block
 
     if (totalCostUsd >= maxCostPerRunUsd) {
       costCapReached = true;
@@ -1368,6 +1362,7 @@ After receiving tool results, provide a structured analysis with key findings, s
             ? await storage.getOutputContract(noToolsContractId)
             : (await storage.getOutputContracts(agentId))[0];
           if (noToolsContract) {
+            // Contract found: enforce() handles metadata recording — do NOT also call recordLlmCallMetadata
             const noToolsEnforced = await outputContractEnforcer.enforce(noToolsContract, currentContent, {
               agentId,
               pipelineRunId: runtimeConfig?.pipelineRunId as string | undefined,
@@ -1395,7 +1390,19 @@ After receiving tool results, provide a structured analysis with key findings, s
             contractValidationErrors = noToolsEnforced.validationErrors.length > 0 ? noToolsEnforced.validationErrors : undefined;
             contractQualityScore = noToolsEnforced.qualityScore;
           } else {
+            // No contract: parse best-effort and record planning metadata (one row, no duplication)
             try { noToolsOutput = JSON.parse(currentContent); } catch { noToolsOutput = { analysis: currentContent }; }
+            outputContractEnforcer.recordLlmCallMetadata({
+              agentId,
+              pipelineRunId: runtimeConfig?.pipelineRunId as string | undefined,
+              dagNodeId: runtimeConfig?.dagNodeId as string | undefined,
+              promptSpec: { id: runtimeConfig?.promptId as string ?? "planning", version: runtimeConfig?.promptVersion as string ?? "1.0.0", text: systemMessage + "\n" + prompt },
+              originalPayload: { agentId, prompt },
+              llmLatencyMs: planCallLatencyMs,
+              tokenUsage: { promptTokens: planResult.tokensUsed.prompt, completionTokens: planResult.tokensUsed.completion },
+              provider: options?.modelProvider ?? "openai",
+              model: modelName,
+            }, "planning").catch(() => { /* non-fatal */ });
           }
         } else {
           noToolsOutput = { analysis: currentContent, conversational: true };
@@ -1412,8 +1419,24 @@ After receiving tool results, provide a structured analysis with key findings, s
         noToolsStep.error = `Output contract validation failed (strict_with_interrupt): ${(noToolsOutput.contractValidationErrors as string[] | undefined ?? []).slice(0, 3).join("; ")}`;
       }
       if (options?.conversational) {
-        (steps as any).__conversationalResponse = currentContent;
+        conversationalResponseHoisted = currentContent;
       }
+    }
+
+    // Tool-calls path: record planning metadata (single row — not double-counted since
+    // no-tools path handles its own metadata recording inside the block above)
+    if (currentToolCalls.length > 0) {
+      outputContractEnforcer.recordLlmCallMetadata({
+        agentId,
+        pipelineRunId: runtimeConfig?.pipelineRunId as string | undefined,
+        dagNodeId: runtimeConfig?.dagNodeId as string | undefined,
+        promptSpec: { id: runtimeConfig?.promptId as string ?? "planning", version: runtimeConfig?.promptVersion as string ?? "1.0.0", text: systemMessage + "\n" + prompt },
+        originalPayload: { agentId, prompt },
+        llmLatencyMs: planCallLatencyMs,
+        tokenUsage: { promptTokens: planResult.tokensUsed.prompt, completionTokens: planResult.tokensUsed.completion },
+        provider: options?.modelProvider ?? "openai",
+        model: modelName,
+      }, "planning").catch(() => { /* non-fatal */ });
     }
 
     const MAX_TOOL_ITERATIONS = options?.maxToolIterations ?? 5;
@@ -1808,7 +1831,7 @@ After receiving tool results, provide a structured analysis with key findings, s
         });
         
         if (isConversational) {
-          (steps as any).__conversationalResponse = rawContent;
+          conversationalResponseHoisted = rawContent;
         }
       } catch (err: unknown) {
         // Strict-mode contract violations must propagate — do not swallow
@@ -2038,8 +2061,7 @@ After receiving tool results, provide a structured analysis with key findings, s
 
   const promptSummary = prompt.length > 60 ? prompt.substring(0, 57) + "..." : prompt;
 
-  const conversationalResponse = (steps as any).__conversationalResponse as string | undefined;
-  delete (steps as any).__conversationalResponse;
+  const conversationalResponse = conversationalResponseHoisted;
 
   const inputCostPer1k = 0.002;
   const outputCostPer1k = 0.008;
