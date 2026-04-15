@@ -1,0 +1,28 @@
+Action Evaluation Flow
+Agent Process                         AAR (Atlas Agent Runtime)
+     |                                         |
+     |--- EvaluateAction(request) ------------>|
+     |                                         |-- PolicyEngine.Evaluate(request, cached_policies)
+     |                                         |     |-- Check tool_name in allowed_tools
+     |                                         |     |-- Check agent_id rate_limit counters
+     |                                         |     |-- Check autonomy_level vs risk_level
+     |                                         |     |-- Evaluate all attached policy rules
+     |                                         |     |-- Return: ALLOW | BLOCK | REQUIRE_APPROVAL
+     |                                         |
+     |<-- ActionDecision(ALLOW) ---------------|
+     |                                         |-- ProvenanceStore.Record(policy_eval_event)
+     |                                         |-- TelemetryEmitter.Emit(atlas.agent.policy.evaluations)
+     |                                         |
+     |--- InvokeTool(tool_call) -------------->|
+     |                                         |-- MCPProxy.Forward(tool_call)
+     |                                         |     |-- CredentialManager.InjectCredentials(mcp_server)
+     |                                         |     |-- Apply rate_limiter (token bucket per tool)
+     |                                         |     |-- Capture pre-call fingerprint snapshot
+     |                                         |     |-- HTTP POST to MCP server (streamable-http)
+     |                                         |     |<- MCP server response
+     |                                         |     |-- Validate response against baseline fingerprint
+     |                                         |     |-- If drift > threshold: flag DRIFT_DETECTED
+     |                                         |-- ProvenanceStore.Record(tool_call_event)
+     |                                         |-- TelemetryEmitter.Emit(atlas.mcp.tool_calls.total)
+     |<-- ToolCallResponse(result) ------------|
+
