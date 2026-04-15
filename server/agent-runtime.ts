@@ -1262,6 +1262,12 @@ After receiving tool results, provide a structured analysis with key findings, s
   let costCapReached = false;
   const runtimeConfig = options?.runtimeConfig || {};
   const maxCostPerRunUsd: number = typeof runtimeConfig.maxCostPerRunUsd === "number" ? runtimeConfig.maxCostPerRunUsd : 1.0;
+  // GAP5 contract enforcement top-level result fields (hoisted for return-statement visibility)
+  let contractValidationStatus: string | undefined;
+  let contractRepairAttempts: number | undefined;
+  let contractValidationErrors: string[] | undefined;
+  let contractQualityScore: number | undefined;
+  let contractTokenUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | undefined;
 
   try {
     const planCallStartMs = performance.now();
@@ -1633,14 +1639,19 @@ After receiving tool results, provide a structured analysis with key findings, s
         const rawContent = analysisResult.content || (isConversational ? "I couldn't generate a response." : "{}");
 
         // GAP5: Output Contract Enforcement
+        // Resolution order: explicit runtimeConfig.outputContractId → most-recent contract for agentId
+        // Enforcement scope: final analysis LLM call only (planning/continuation tracked via recordLlmCallMetadata)
         const outputContractId = runtimeConfig?.outputContractId as string | undefined;
         let generationMetadataId: string | undefined;
         let contractEnforced = false;
 
-        let analysis: any = {};
-        if (!isConversational && outputContractId) {
+        let analysis: Record<string, unknown> = {};
+        if (!isConversational) {
           try {
-            const contract = await storage.getOutputContract(outputContractId);
+            // Resolve the active contract: explicit ID first, then agent's most-recent
+            const contract = outputContractId
+              ? await storage.getOutputContract(outputContractId)
+              : (await storage.getOutputContracts(agentId))[0];
             if (contract) {
               const enforcedResult = await outputContractEnforcer.enforce(contract, rawContent, {
                 agentId,
@@ -1663,22 +1674,24 @@ After receiving tool results, provide a structured analysis with key findings, s
               analysis = { ...enforcedResult.output };
               generationMetadataId = enforcedResult.generationMetadataId;
               contractEnforced = true;
-              // Surface contract enforcement metadata as first-class result fields
-              analysis.contractValidationStatus = enforcedResult.validationStatus;
-              analysis.contractRepairAttempts = enforcedResult.repairAttempts;
-              if (enforcedResult.validationErrors.length > 0) {
-                analysis.contractValidationErrors = enforcedResult.validationErrors;
-              }
-              if (enforcedResult.qualityScore !== undefined) {
-                analysis.contractQualityScore = enforcedResult.qualityScore;
-              }
+              // Capture top-level contract fields for first-class result surfacing
+              contractValidationStatus = enforcedResult.validationStatus;
+              contractRepairAttempts = enforcedResult.repairAttempts;
+              contractValidationErrors = enforcedResult.validationErrors.length > 0 ? enforcedResult.validationErrors : undefined;
+              contractQualityScore = enforcedResult.qualityScore;
               if (enforcedResult.tokenUsage) {
-                analysis.contractTokenUsage = {
+                contractTokenUsage = {
                   promptTokens: enforcedResult.tokenUsage.promptTokens,
                   completionTokens: enforcedResult.tokenUsage.completionTokens,
                   totalTokens: enforcedResult.tokenUsage.promptTokens + enforcedResult.tokenUsage.completionTokens,
                 };
               }
+              // Also embed in analysis for backward compat
+              analysis.contractValidationStatus = contractValidationStatus;
+              analysis.contractRepairAttempts = contractRepairAttempts;
+              if (contractValidationErrors) analysis.contractValidationErrors = contractValidationErrors;
+              if (contractQualityScore !== undefined) analysis.contractQualityScore = contractQualityScore;
+              if (contractTokenUsage) analysis.contractTokenUsage = contractTokenUsage;
             }
           } catch (contractErr: unknown) {
             // In strict mode, StructuredOutputValidationError must propagate to fail the run
@@ -2084,6 +2097,16 @@ After receiving tool results, provide a structured analysis with key findings, s
     contextSectionMetrics: promptSectionMetrics,
     ...(conversationalResponse ? { conversationalResponse } : {}),
     ...(softPolicyViolations.length > 0 ? { softPolicyViolations } : {}),
+    // GAP5: First-class contract enforcement result fields
+    ...(contractValidationStatus !== undefined ? {
+      contractEnforcement: {
+        validationStatus: contractValidationStatus,
+        repairAttempts: contractRepairAttempts ?? 0,
+        ...(contractValidationErrors ? { validationErrors: contractValidationErrors } : {}),
+        ...(contractQualityScore !== undefined ? { qualityScore: contractQualityScore } : {}),
+        ...(contractTokenUsage ? { tokenUsage: contractTokenUsage } : {}),
+      },
+    } : {}),
   };
 }
 
