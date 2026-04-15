@@ -2551,7 +2551,7 @@ function AgentDetailInner() {
             </CardContent>
           </Card>
           <div className="border-t pt-4" data-testid="traces-generation-metadata-section">
-            <GenerationMetadataDashboard agentId={agentId} />
+            <GenerationMetadataDashboard agentId={agentId} pipelineRunId={expandedTrace ?? undefined} />
           </div>
         </TabsContent>
 

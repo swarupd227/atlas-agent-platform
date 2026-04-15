@@ -1633,13 +1633,21 @@ After receiving tool results, provide a structured analysis with key findings, s
               analysis = { ...enforcedResult.output };
               generationMetadataId = enforcedResult.generationMetadataId;
               contractEnforced = true;
-              if (enforcedResult.validationStatus !== "passed") {
-                analysis._contractStatus = enforcedResult.validationStatus;
-                analysis._repairAttempts = enforcedResult.repairAttempts;
-                analysis._validationErrors = enforcedResult.validationErrors;
+              // Surface contract enforcement metadata as first-class result fields
+              analysis.contractValidationStatus = enforcedResult.validationStatus;
+              analysis.contractRepairAttempts = enforcedResult.repairAttempts;
+              if (enforcedResult.validationErrors.length > 0) {
+                analysis.contractValidationErrors = enforcedResult.validationErrors;
               }
               if (enforcedResult.qualityScore !== undefined) {
-                analysis._qualityScore = enforcedResult.qualityScore;
+                analysis.contractQualityScore = enforcedResult.qualityScore;
+              }
+              if (enforcedResult.tokenUsage) {
+                analysis.contractTokenUsage = {
+                  promptTokens: enforcedResult.tokenUsage.promptTokens,
+                  completionTokens: enforcedResult.tokenUsage.completionTokens,
+                  totalTokens: enforcedResult.tokenUsage.promptTokens + enforcedResult.tokenUsage.completionTokens,
+                };
               }
             }
           } catch (contractErr: unknown) {

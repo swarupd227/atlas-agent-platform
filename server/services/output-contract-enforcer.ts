@@ -83,6 +83,7 @@ export interface EnforcementResult {
   qualityScore?: number;
   qualityDetails?: QualityScore;
   generationMetadataId?: string;
+  tokenUsage?: { promptTokens: number; completionTokens: number };
 }
 
 export class StructuredOutputValidationError extends Error {
@@ -126,10 +127,11 @@ export class OutputContractEnforcer {
           parsed = repairResult.parsed;
           currentResponse = repairResult.rawResponse ?? currentResponse;
         } else {
-          return await this.handleFailure(contract, validationErrors, repairAttempts, context, startTime);
+          // No best-effort output available — JSON parse failed even after repair
+          return await this.handleFailure(contract, validationErrors, repairAttempts, context, startTime, undefined);
         }
       } else {
-        return await this.handleFailure(contract, validationErrors, repairAttempts, context, startTime);
+        return await this.handleFailure(contract, validationErrors, repairAttempts, context, startTime, undefined);
       }
     }
 
@@ -155,13 +157,16 @@ export class OutputContractEnforcer {
             validated = reNormalized;
           } else {
             validationErrors.push(...reErrors.map(e => `[repair] ${e}`));
-            return await this.handleFailure(contract, validationErrors, repairAttempts, context, startTime);
+            // Pass reNormalized as best-effort for monitor mode continuity
+            return await this.handleFailure(contract, validationErrors, repairAttempts, context, startTime, reNormalized);
           }
         } else {
-          return await this.handleFailure(contract, validationErrors, repairAttempts, context, startTime);
+          // Repair call failed — use original normalized as best-effort
+          return await this.handleFailure(contract, validationErrors, repairAttempts, context, startTime, normalized);
         }
       } else {
-        return await this.handleFailure(contract, validationErrors, repairAttempts, context, startTime);
+        // No repair — use normalized as best-effort
+        return await this.handleFailure(contract, validationErrors, repairAttempts, context, startTime, normalized);
       }
     }
 
@@ -200,6 +205,7 @@ export class OutputContractEnforcer {
       qualityScore,
       qualityDetails,
       generationMetadataId: metadataId,
+      tokenUsage: context.tokenUsage,
     };
   }
 
@@ -437,6 +443,7 @@ export class OutputContractEnforcer {
     repairAttempts: number,
     context: EnforcementContext,
     startTime: number,
+    bestEffortOutput?: Record<string, unknown>,
   ): Promise<EnforcementResult> {
     const validationLatencyMs = performance.now() - startTime;
     const metadataId = await this.recordMetadata({
@@ -448,6 +455,7 @@ export class OutputContractEnforcer {
     });
 
     const mode = contract.enforcementMode ?? "strict";
+    const tokenUsage = context.tokenUsage;
 
     switch (mode) {
       case "strict":
@@ -462,6 +470,7 @@ export class OutputContractEnforcer {
           repairAttempts,
           validationErrors,
           generationMetadataId: metadataId,
+          tokenUsage,
         };
 
       case "lenient": {
@@ -472,17 +481,20 @@ export class OutputContractEnforcer {
           repairAttempts,
           validationErrors,
           generationMetadataId: metadataId,
+          tokenUsage,
         };
       }
 
       case "monitor":
-        console.warn("[output-contract-enforcer] Validation failed in monitor mode:", validationErrors);
+        // Log but continue — preserve best-effort parsed output so execution is not blocked
+        console.warn("[output-contract-enforcer] Validation failed in monitor mode (logging only):", validationErrors);
         return {
-          output: {},
+          output: bestEffortOutput ?? {},
           validationStatus: "failed",
           repairAttempts,
           validationErrors,
           generationMetadataId: metadataId,
+          tokenUsage,
         };
 
       default:

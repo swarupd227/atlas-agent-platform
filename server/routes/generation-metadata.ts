@@ -81,7 +81,7 @@ router.get("/api/pipeline-runs/:id/generation-metadata/stats", async (req, res) 
 });
 
 // GET /api/pipeline-runs/:id/token-usage
-// Aggregated token usage for all LLM calls in a pipeline run
+// Aggregated token usage for all LLM calls in a pipeline run, broken down per agent
 router.get("/api/pipeline-runs/:id/token-usage", async (req, res) => {
   try {
     const records = await storage.getGenerationMetadataRecords({ pipelineRunId: req.params.id, limit: 500 });
@@ -89,8 +89,21 @@ router.get("/api/pipeline-runs/:id/token-usage", async (req, res) => {
     const totalCompletionTokens = records.reduce((sum, r) => sum + (r.completionTokens ?? 0), 0);
     const totalTokens = records.reduce((sum, r) => sum + (r.totalTokens ?? 0), 0);
     const totalLlmLatencyMs = records.reduce((sum, r) => sum + (r.llmLatencyMs ?? 0), 0);
+
+    // Aggregate per agent
+    const byAgent: Record<string, { agentId: string; promptTokens: number; completionTokens: number; totalTokens: number; callCount: number }> = {};
+    for (const r of records) {
+      const aid = r.agentId ?? "unknown";
+      if (!byAgent[aid]) byAgent[aid] = { agentId: aid, promptTokens: 0, completionTokens: 0, totalTokens: 0, callCount: 0 };
+      byAgent[aid].promptTokens += r.promptTokens ?? 0;
+      byAgent[aid].completionTokens += r.completionTokens ?? 0;
+      byAgent[aid].totalTokens += r.totalTokens ?? 0;
+      byAgent[aid].callCount += 1;
+    }
+
     const perCall = records.map(r => ({
       id: r.id,
+      agentId: r.agentId,
       promptId: r.promptId,
       promptVersion: r.promptVersion,
       model: r.model,
@@ -102,6 +115,7 @@ router.get("/api/pipeline-runs/:id/token-usage", async (req, res) => {
       validationStatus: r.validationStatus,
       createdAt: r.createdAt,
     }));
+
     res.json({
       pipelineRunId: req.params.id,
       totalPromptTokens,
@@ -109,6 +123,7 @@ router.get("/api/pipeline-runs/:id/token-usage", async (req, res) => {
       totalTokens,
       totalLlmLatencyMs,
       callCount: records.length,
+      byAgent: Object.values(byAgent),
       perCall,
     });
   } catch (err: unknown) {
@@ -118,7 +133,7 @@ router.get("/api/pipeline-runs/:id/token-usage", async (req, res) => {
 });
 
 // GET /api/pipeline-runs/:id/quality-scores
-// Quality scores for all LLM calls in a pipeline run
+// Quality scores for all LLM calls in a pipeline run, with per-section breakdown when scorer is enabled
 router.get("/api/pipeline-runs/:id/quality-scores", async (req, res) => {
   try {
     const records = await storage.getGenerationMetadataRecords({ pipelineRunId: req.params.id, limit: 500 });
@@ -126,22 +141,54 @@ router.get("/api/pipeline-runs/:id/quality-scores", async (req, res) => {
     const avgScore = scored.length > 0
       ? scored.reduce((sum, r) => sum + (r.qualityScore as number), 0) / scored.length
       : null;
+
+    // Aggregate per-section scores across all scored calls
+    interface SectionAgg { sectionId: string; count: number; totalScore: number; totalStructure: number; totalStyle: number; totalTone: number; totalCompleteness: number }
+    const bySection: Record<string, SectionAgg> = {};
+    for (const r of scored) {
+      const details = r.qualityDetails as { sectionScores?: { sectionId: string; score: number; structure: number; style: number; tone: number; completeness: number }[] } | null;
+      if (details?.sectionScores && Array.isArray(details.sectionScores)) {
+        for (const ss of details.sectionScores) {
+          if (!bySection[ss.sectionId]) bySection[ss.sectionId] = { sectionId: ss.sectionId, count: 0, totalScore: 0, totalStructure: 0, totalStyle: 0, totalTone: 0, totalCompleteness: 0 };
+          bySection[ss.sectionId].count += 1;
+          bySection[ss.sectionId].totalScore += ss.score;
+          bySection[ss.sectionId].totalStructure += ss.structure;
+          bySection[ss.sectionId].totalStyle += ss.style;
+          bySection[ss.sectionId].totalTone += ss.tone;
+          bySection[ss.sectionId].totalCompleteness += ss.completeness;
+        }
+      }
+    }
+    const perSectionAvg = Object.values(bySection).map(s => ({
+      sectionId: s.sectionId,
+      avgScore: s.totalScore / s.count,
+      avgStructure: s.totalStructure / s.count,
+      avgStyle: s.totalStyle / s.count,
+      avgTone: s.totalTone / s.count,
+      avgCompleteness: s.totalCompleteness / s.count,
+      sampleCount: s.count,
+    }));
+
     const perCall = records.map(r => ({
       id: r.id,
+      agentId: r.agentId,
       promptId: r.promptId,
       promptVersion: r.promptVersion,
       model: r.model,
       qualityScore: r.qualityScore,
-      qualityDetails: r.qualityDetails,
+      sectionScores: (r.qualityDetails as { sectionScores?: unknown[] } | null)?.sectionScores ?? [],
+      failingSections: (r.qualityDetails as { failingSections?: string[] } | null)?.failingSections ?? [],
       validationStatus: r.validationStatus,
       repairAttempts: r.repairAttempts,
       createdAt: r.createdAt,
     }));
+
     res.json({
       pipelineRunId: req.params.id,
       avgQualityScore: avgScore,
       scoredCallCount: scored.length,
       totalCallCount: records.length,
+      perSectionAvg,
       perCall,
     });
   } catch (err: unknown) {
