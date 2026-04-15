@@ -69,8 +69,24 @@ router.delete("/api/output-contracts/:id", async (req, res) => {
   }
 });
 
-// POST /api/output-contracts/:id/dry-run
-const dryRunSchema = z.object({ sampleJson: z.string().min(1) });
+// POST /api/output-contracts/:id/validate  (also support legacy /dry-run)
+const validateSchema = z.object({ sampleJson: z.string().min(1) });
+
+router.post("/api/output-contracts/:id/validate", async (req, res) => {
+  try {
+    const contract = await storage.getOutputContract(req.params.id);
+    if (!contract) return res.status(404).json({ error: "Not found" });
+
+    const body = validateSchema.safeParse(req.body);
+    if (!body.success) return res.status(400).json({ error: body.error.flatten() });
+
+    const result = outputContractEnforcer.dryRun(contract, body.data.sampleJson);
+    res.json(result);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: msg });
+  }
+});
 
 router.post("/api/output-contracts/:id/dry-run", async (req, res) => {
   try {

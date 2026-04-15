@@ -1759,7 +1759,6 @@ function AgentDetailInner() {
             { value: "channels", label: "Channels" },
             { value: "event-triggers", label: "Event Triggers" },
             { value: "gitops", label: "GitOps" },
-            { value: "output-contracts", label: "Output Contracts" },
             ...(agent.agentType === "remote" ? [{ value: "a2a", label: "A2A Card" }] : []),
             ...(agent.agentType === "team" ? [{ value: "team", label: "Team Members" }] : []),
           ];
@@ -2551,6 +2550,9 @@ function AgentDetailInner() {
               )}
             </CardContent>
           </Card>
+          <div className="border-t pt-4" data-testid="traces-generation-metadata-section">
+            <GenerationMetadataDashboard agentId={agentId} />
+          </div>
         </TabsContent>
 
         <TabsContent value="evals" className="mt-0 space-y-4">
@@ -5333,13 +5335,6 @@ function AgentDetailInner() {
           <AgentGitOps agent={agent} />
         </TabsContent>
 
-        <TabsContent value="output-contracts" className="flex flex-col gap-6 mt-0" data-testid="tab-content-output-contracts">
-          <OutputContractEditor agentId={agentId} />
-          <div className="border-t pt-4">
-            <GenerationMetadataDashboard agentId={agentId} />
-          </div>
-        </TabsContent>
-
         <TabsContent value="aar" className="flex flex-col gap-4 mt-0" data-testid="tab-content-aar">
           {!aarData?.aarConfig ? (
             <Card>
@@ -5877,6 +5872,10 @@ function AgentDetailInner() {
               </>
             );
           })()}
+          <div className="border-t pt-4 flex flex-col gap-4" data-testid="aar-output-contracts-section">
+            <h3 className="text-sm font-semibold">Output Contract Enforcement</h3>
+            <OutputContractEditor agentId={agentId} />
+          </div>
         </TabsContent>
       </Tabs>
 

@@ -1,5 +1,5 @@
 import { createHash } from "crypto";
-import Ajv from "ajv";
+import Ajv2020 from "ajv/dist/2020";
 import { db } from "../db";
 import { sql } from "drizzle-orm";
 import { completeWithFallback, getProvider } from "../llm-provider";
@@ -95,10 +95,10 @@ export class StructuredOutputValidationError extends Error {
 // ── OutputContractEnforcer ────────────────────────────────────────────────────
 
 export class OutputContractEnforcer {
-  private ajv: Ajv;
+  private ajv: InstanceType<typeof Ajv2020>;
 
   constructor() {
-    this.ajv = new Ajv({ allErrors: true, strict: false });
+    this.ajv = new Ajv2020({ allErrors: true, strict: false });
   }
 
   async enforce(
@@ -306,10 +306,16 @@ export class OutputContractEnforcer {
         }
         case "coerce_to_string": {
           if (val === null || val === undefined) {
-            return rule.handle_null === "empty_string" ? "" : String(val);
+            return rule.handle_null === "empty_string" ? "" : "null";
           }
-          if (Array.isArray(val)) return val.map(String).join(", ");
-          if (typeof val === "object") return Object.values(val as Record<string, unknown>).map(String).join(", ");
+          if (Array.isArray(val)) {
+            if (rule.handle_array === "first") return val.length > 0 ? String(val[0]) : "";
+            return val.map(String).join(", ");
+          }
+          if (typeof val === "object") {
+            if (rule.handle_dict === "stringify") return JSON.stringify(val);
+            return Object.values(val as Record<string, unknown>).map(String).join(", ");
+          }
           const s = String(val);
           return rule.trim !== false ? s.trim() : s;
         }

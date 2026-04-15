@@ -6,7 +6,7 @@ import { createHash } from "crypto";
 import { sql } from "drizzle-orm";
 import { searchKnowledgeBaseChunks } from "./embeddings";
 import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
-import { outputContractEnforcer } from "./services/output-contract-enforcer";
+import { outputContractEnforcer, StructuredOutputValidationError } from "./services/output-contract-enforcer";
 import { isRealMcpServer, mcpListTools, mcpCallTool as mcpSdkCallTool } from "./mcp-client";
 
 export function canonicalJsonStringify(obj: any): string {
@@ -1571,6 +1571,7 @@ After receiving tool results, provide a structured analysis with key findings, s
           ...(currentContent && currentToolCalls.length === 0 ? [{ role: "assistant" as const, content: currentContent }] : []),
           { role: "user" as const, content: analysisPrompt },
         ];
+        const llmCallStartMs = performance.now();
         const analysisResult = await (onProgress && isConversational
           ? streamCompleteWithFallback(
               analysisMessages,
@@ -1592,6 +1593,7 @@ After receiving tool results, provide a structured analysis with key findings, s
               },
               [llmProvider, fallbackLlmProvider],
             ));
+        const llmCallLatencyMs = performance.now() - llmCallStartMs;
 
         totalPromptTokens += analysisResult.tokensUsed.prompt;
         totalCompletionTokens += analysisResult.tokensUsed.completion;
@@ -1599,7 +1601,6 @@ After receiving tool results, provide a structured analysis with key findings, s
         totalCostUsd += analysisResult.costUsd;
 
         const rawContent = analysisResult.content || (isConversational ? "I couldn't generate a response." : "{}");
-        const llmCallEndTime = performance.now();
 
         // GAP5: Output Contract Enforcement
         const outputContractId = runtimeConfig?.outputContractId as string | undefined;
@@ -1621,7 +1622,7 @@ After receiving tool results, provide a structured analysis with key findings, s
                   text: analysisPrompt,
                 },
                 originalPayload: { agentId, prompt },
-                llmLatencyMs: llmCallEndTime - (performance.now() - (analysisResult.tokensUsed.total * 0.5)),
+                llmLatencyMs: llmCallLatencyMs,
                 tokenUsage: {
                   promptTokens: analysisResult.tokensUsed.prompt,
                   completionTokens: analysisResult.tokensUsed.completion,
@@ -1642,8 +1643,12 @@ After receiving tool results, provide a structured analysis with key findings, s
               }
             }
           } catch (contractErr: unknown) {
+            // In strict mode, StructuredOutputValidationError must propagate to fail the run
+            if (contractErr instanceof StructuredOutputValidationError) {
+              throw contractErr;
+            }
             const msg = contractErr instanceof Error ? contractErr.message : String(contractErr);
-            console.warn("[agent-runtime] Output contract enforcement failed:", msg);
+            console.warn("[agent-runtime] Output contract enforcement failed (non-fatal):", msg);
           }
         }
 
