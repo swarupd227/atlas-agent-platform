@@ -84,6 +84,9 @@ export interface EnforcementResult {
   qualityDetails?: QualityScore;
   generationMetadataId?: string;
   tokenUsage?: { promptTokens: number; completionTokens: number };
+  /** True only for strict_with_interrupt mode — caller must mark step as failed for human review.
+   *  Monitor mode also produces validationStatus="failed" but sets shouldInterrupt=false (logging only). */
+  shouldInterrupt?: boolean;
 }
 
 export class StructuredOutputValidationError extends Error {
@@ -506,6 +509,7 @@ export class OutputContractEnforcer {
         return {
           output: {},
           validationStatus: "failed",
+          shouldInterrupt: true,
           repairAttempts,
           validationErrors,
           generationMetadataId: metadataId,
@@ -525,11 +529,13 @@ export class OutputContractEnforcer {
       }
 
       case "monitor":
-        // Log but continue — preserve best-effort parsed output so execution is not blocked
+        // Log but continue — preserve best-effort parsed output so execution is not blocked.
+        // shouldInterrupt is explicitly false: monitor mode NEVER marks steps as failed.
         console.warn("[output-contract-enforcer] Validation failed in monitor mode (logging only):", validationErrors);
         return {
           output: bestEffortOutput ?? {},
           validationStatus: "failed",
+          shouldInterrupt: false,
           repairAttempts,
           validationErrors,
           generationMetadataId: metadataId,

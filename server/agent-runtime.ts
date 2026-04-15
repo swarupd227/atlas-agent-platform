@@ -1347,15 +1347,70 @@ After receiving tool results, provide a structured analysis with key findings, s
     });
 
     if (currentToolCalls.length === 0 && currentContent) {
-      steps.push({
+      // No tools needed — the planning response IS the final answer.
+      // Apply contract enforcement here so all final-answer call sites are covered.
+      const noToolsStep: (typeof steps)[number] = {
         id: "step_3",
         name: "AI Analysis (No Tools Needed)",
         type: "ai_analysis",
-        status: "completed",
+        status: "running",
         startedAt: new Date().toISOString(),
-        completedAt: new Date().toISOString(),
-        output: { analysis: currentContent },
-      });
+      };
+      steps.push(noToolsStep);
+
+      let noToolsOutput: Record<string, unknown> = {};
+      let noToolsInterrupted = false;
+      try {
+        const isConversationalNoTools = options?.conversational === true;
+        if (!isConversationalNoTools) {
+          const noToolsContractId = runtimeConfig?.outputContractId as string | undefined;
+          const noToolsContract = noToolsContractId
+            ? await storage.getOutputContract(noToolsContractId)
+            : (await storage.getOutputContracts(agentId))[0];
+          if (noToolsContract) {
+            const noToolsEnforced = await outputContractEnforcer.enforce(noToolsContract, currentContent, {
+              agentId,
+              pipelineRunId: runtimeConfig?.pipelineRunId as string | undefined,
+              dagNodeId: runtimeConfig?.dagNodeId as string | undefined,
+              promptSpec: {
+                id: runtimeConfig?.promptId as string ?? "no-tools-analysis",
+                version: runtimeConfig?.promptVersion as string ?? "1.0.0",
+                text: prompt,
+              },
+              originalPayload: { agentId, prompt },
+              llmLatencyMs: planCallLatencyMs,
+              tokenUsage: { promptTokens: planResult.tokensUsed.prompt, completionTokens: planResult.tokensUsed.completion },
+              provider: options?.modelProvider ?? "openai",
+              model: modelName,
+            });
+            noToolsOutput = { ...noToolsEnforced.output };
+            noToolsOutput.contractValidationStatus = noToolsEnforced.validationStatus;
+            noToolsOutput.contractRepairAttempts = noToolsEnforced.repairAttempts;
+            if (noToolsEnforced.validationErrors.length > 0) noToolsOutput.contractValidationErrors = noToolsEnforced.validationErrors;
+            if (noToolsEnforced.qualityScore !== undefined) noToolsOutput.contractQualityScore = noToolsEnforced.qualityScore;
+            noToolsInterrupted = noToolsEnforced.shouldInterrupt === true;
+            // Capture top-level fields for the function return
+            contractValidationStatus = noToolsEnforced.validationStatus;
+            contractRepairAttempts = noToolsEnforced.repairAttempts;
+            contractValidationErrors = noToolsEnforced.validationErrors.length > 0 ? noToolsEnforced.validationErrors : undefined;
+            contractQualityScore = noToolsEnforced.qualityScore;
+          } else {
+            try { noToolsOutput = JSON.parse(currentContent); } catch { noToolsOutput = { analysis: currentContent }; }
+          }
+        } else {
+          noToolsOutput = { analysis: currentContent, conversational: true };
+        }
+      } catch (noToolsErr: unknown) {
+        if (noToolsErr instanceof StructuredOutputValidationError) throw noToolsErr;
+        try { noToolsOutput = JSON.parse(currentContent); } catch { noToolsOutput = { analysis: currentContent }; }
+      }
+
+      noToolsStep.status = noToolsInterrupted ? "failed" : "completed";
+      noToolsStep.completedAt = new Date().toISOString();
+      noToolsStep.output = noToolsOutput;
+      if (noToolsInterrupted) {
+        noToolsStep.error = `Output contract validation failed (strict_with_interrupt): ${(noToolsOutput.contractValidationErrors as string[] | undefined ?? []).slice(0, 3).join("; ")}`;
+      }
       if (options?.conversational) {
         (steps as any).__conversationalResponse = currentContent;
       }
@@ -1692,6 +1747,8 @@ After receiving tool results, provide a structured analysis with key findings, s
               if (contractValidationErrors) analysis.contractValidationErrors = contractValidationErrors;
               if (contractQualityScore !== undefined) analysis.contractQualityScore = contractQualityScore;
               if (contractTokenUsage) analysis.contractTokenUsage = contractTokenUsage;
+              // Carry the explicit interrupt flag so monitor mode (shouldInterrupt=false) is never treated as an interrupt
+              analysis._contractShouldInterrupt = enforcedResult.shouldInterrupt === true;
             }
           } catch (contractErr: unknown) {
             // In strict mode, StructuredOutputValidationError must propagate to fail the run
@@ -1725,8 +1782,10 @@ After receiving tool results, provide a structured analysis with key findings, s
 
         analysis.iterationsUsed = iterationsUsed;
 
-        // Check if strict_with_interrupt triggered a non-success terminal state
-        const contractInterrupted = contractEnforced && analysis.contractValidationStatus === "failed";
+        // Check if strict_with_interrupt triggered a non-success terminal state.
+        // Uses the explicit shouldInterrupt flag from the enforcer — NOT validationStatus="failed"
+        // because monitor mode also returns validationStatus="failed" but must NOT interrupt.
+        const contractInterrupted = contractEnforced && analysis._contractShouldInterrupt === true;
 
         const lastStep = steps[steps.length - 1];
         lastStep.status = contractInterrupted ? "failed" : "completed";
