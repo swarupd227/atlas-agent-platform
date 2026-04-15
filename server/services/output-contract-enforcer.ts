@@ -219,6 +219,25 @@ export class OutputContractEnforcer {
     };
   }
 
+  // Public: record a single LLM call's metadata without enforcing any contract.
+  // Use this at planning/continuation LLM call sites to ensure per-call tracking.
+  async recordLlmCallMetadata(context: EnforcementContext, callType: "planning" | "replanning" | "tool_continuation" | "judge" = "planning"): Promise<string | undefined> {
+    return this.recordMetadata({
+      context: {
+        ...context,
+        promptSpec: {
+          id: context.promptSpec.id || callType,
+          version: context.promptSpec.version || "1.0.0",
+          text: context.promptSpec.text,
+        },
+      },
+      validationStatus: "passed",
+      repairAttempts: 0,
+      validationErrors: [],
+      validationLatencyMs: 0,
+    });
+  }
+
   // Dry-run: validate without recording metadata or making LLM repair calls
   dryRun(
     contract: OutputContract,
@@ -364,9 +383,14 @@ export class OutputContractEnforcer {
     const obj = data as Record<string, unknown>;
 
     if (head === "*") {
-      const result: Record<string, unknown> = { ...obj };
-      for (const key of Object.keys(result)) {
-        result[key] = this.applyAtPathParts(result[key], tail, transform);
+      // Array wildcard: map over elements preserving array shape
+      if (Array.isArray(obj)) {
+        return obj.map(item => this.applyAtPathParts(item, tail, transform));
+      }
+      // Object wildcard: apply to all values
+      const result: Record<string, unknown> = {};
+      for (const key of Object.keys(obj)) {
+        result[key] = this.applyAtPathParts(obj[key], tail, transform);
       }
       return result;
     }

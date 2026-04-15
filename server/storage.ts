@@ -835,7 +835,7 @@ export interface IStorage {
 
   // GAP5: Generation Metadata Records
   createGenerationMetadataRecord(record: InsertGenerationMetadataRecord): Promise<GenerationMetadataRecord>;
-  getGenerationMetadataRecords(filters: { pipelineRunId?: string; agentId?: string; promptId?: string; limit?: number }): Promise<GenerationMetadataRecord[]>;
+  getGenerationMetadataRecords(filters: { pipelineRunId?: string; agentId?: string; promptId?: string; promptSha256?: string; limit?: number }): Promise<GenerationMetadataRecord[]>;
   getGenerationMetadataStats(agentId: string): Promise<{ totalRecords: number; passRate: number; avgQualityScore: number; avgRepairAttempts: number }>;
 }
 
@@ -3832,11 +3832,12 @@ export class DatabaseStorage implements IStorage {
     return row;
   }
 
-  async getGenerationMetadataRecords(filters: { pipelineRunId?: string; agentId?: string; promptId?: string; limit?: number }): Promise<GenerationMetadataRecord[]> {
+  async getGenerationMetadataRecords(filters: { pipelineRunId?: string; agentId?: string; promptId?: string; promptSha256?: string; limit?: number }): Promise<GenerationMetadataRecord[]> {
     const conditions = [];
     if (filters.pipelineRunId) conditions.push(eq(generationMetadataRecords.pipelineRunId, filters.pipelineRunId));
     if (filters.agentId) conditions.push(eq(generationMetadataRecords.agentId, filters.agentId));
     if (filters.promptId) conditions.push(eq(generationMetadataRecords.promptId, filters.promptId));
+    if (filters.promptSha256) conditions.push(eq(generationMetadataRecords.promptSha256, filters.promptSha256));
 
     const query = db.select().from(generationMetadataRecords)
       .where(conditions.length > 0 ? and(...conditions) : undefined)

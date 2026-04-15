@@ -224,12 +224,11 @@ router.get("/api/prompt-fingerprints", async (req, res) => {
 });
 
 // GET /api/prompt-fingerprints/:sha256
-// Get all records sharing a specific prompt SHA-256 fingerprint
+// Get all records sharing a specific prompt SHA-256 fingerprint (DB-level filter, no in-memory scan)
 router.get("/api/prompt-fingerprints/:sha256", async (req, res) => {
   try {
-    const records = await storage.getGenerationMetadataRecords({ limit: 500 });
-    const matched = records.filter(r => r.promptSha256 === req.params.sha256);
-    res.json(matched);
+    const records = await storage.getGenerationMetadataRecords({ promptSha256: req.params.sha256, limit: 500 });
+    res.json(records);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     res.status(500).json({ error: msg });

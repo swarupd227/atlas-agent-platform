@@ -1264,6 +1264,7 @@ After receiving tool results, provide a structured analysis with key findings, s
   const maxCostPerRunUsd: number = typeof runtimeConfig.maxCostPerRunUsd === "number" ? runtimeConfig.maxCostPerRunUsd : 1.0;
 
   try {
+    const planCallStartMs = performance.now();
     const planResult = await (onProgress
       ? streamCompleteWithFallback(
           [
@@ -1292,11 +1293,25 @@ After receiving tool results, provide a structured analysis with key findings, s
           },
           [llmProvider, fallbackLlmProvider],
         ));
+    const planCallLatencyMs = performance.now() - planCallStartMs;
 
     totalPromptTokens += planResult.tokensUsed.prompt;
     totalCompletionTokens += planResult.tokensUsed.completion;
     totalTokens += planResult.tokensUsed.total;
     totalCostUsd += planResult.costUsd;
+
+    // Record per-call metadata for planning LLM call
+    outputContractEnforcer.recordLlmCallMetadata({
+      agentId,
+      pipelineRunId: runtimeConfig?.pipelineRunId as string | undefined,
+      dagNodeId: runtimeConfig?.dagNodeId as string | undefined,
+      promptSpec: { id: runtimeConfig?.promptId as string ?? "planning", version: runtimeConfig?.promptVersion as string ?? "1.0.0", text: systemMessage + "\n" + prompt },
+      originalPayload: { agentId, prompt },
+      llmLatencyMs: planCallLatencyMs,
+      tokenUsage: { promptTokens: planResult.tokensUsed.prompt, completionTokens: planResult.tokensUsed.completion },
+      provider: options?.modelProvider ?? "openai",
+      model: modelName,
+    }, "planning").catch(() => { /* non-fatal */ });
 
     if (totalCostUsd >= maxCostPerRunUsd) {
       costCapReached = true;
@@ -1453,6 +1468,7 @@ After receiving tool results, provide a structured analysis with key findings, s
 
       if (iterationsUsed < MAX_TOOL_ITERATIONS) {
         try {
+          const continueCallStartMs = performance.now();
           const continueResult = await (onProgress
             ? streamCompleteWithFallback(
                 conversationMessages,
@@ -1475,11 +1491,25 @@ After receiving tool results, provide a structured analysis with key findings, s
                 },
                 [llmProvider, fallbackLlmProvider],
               ));
+          const continueCallLatencyMs = performance.now() - continueCallStartMs;
 
           totalPromptTokens += continueResult.tokensUsed.prompt;
           totalCompletionTokens += continueResult.tokensUsed.completion;
           totalTokens += continueResult.tokensUsed.total;
           totalCostUsd += continueResult.costUsd;
+
+          // Record per-call metadata for tool continuation LLM call
+          outputContractEnforcer.recordLlmCallMetadata({
+            agentId,
+            pipelineRunId: runtimeConfig?.pipelineRunId as string | undefined,
+            dagNodeId: runtimeConfig?.dagNodeId as string | undefined,
+            promptSpec: { id: runtimeConfig?.promptId as string ?? "tool_continuation", version: runtimeConfig?.promptVersion as string ?? "1.0.0", text: `tool_continuation_iter_${iterationsUsed}` },
+            originalPayload: { agentId, iterationsUsed },
+            llmLatencyMs: continueCallLatencyMs,
+            tokenUsage: { promptTokens: continueResult.tokensUsed.prompt, completionTokens: continueResult.tokensUsed.completion },
+            provider: options?.modelProvider ?? "openai",
+            model: modelName,
+          }, "tool_continuation").catch(() => { /* non-fatal */ });
 
           if (totalCostUsd >= maxCostPerRunUsd) {
             costCapReached = true;
@@ -1682,10 +1712,21 @@ After receiving tool results, provide a structured analysis with key findings, s
 
         analysis.iterationsUsed = iterationsUsed;
 
+        // Check if strict_with_interrupt triggered a non-success terminal state
+        const contractInterrupted = contractEnforced && analysis.contractValidationStatus === "failed";
+
         const lastStep = steps[steps.length - 1];
-        lastStep.status = "completed";
+        lastStep.status = contractInterrupted ? "failed" : "completed";
         lastStep.completedAt = new Date().toISOString();
         lastStep.output = analysis;
+        if (contractInterrupted) {
+          lastStep.error = `Output contract validation failed (strict_with_interrupt): ${(analysis.contractValidationErrors ?? []).slice(0, 3).join("; ")}`;
+          emitProgress("contract_interrupt", {
+            validationStatus: "failed",
+            validationErrors: analysis.contractValidationErrors ?? [],
+            repairAttempts: analysis.contractRepairAttempts ?? 0,
+          });
+        }
 
         emitProgress("final_analysis", {
           summary: analysis.summary || rawContent,
