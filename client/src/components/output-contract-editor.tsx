@@ -47,14 +47,20 @@ interface NormalizerRule {
 interface ExpectedSection {
   section_id: string;
   mandatory_phrases?: string[];
-  bullet_preference?: "required" | "forbidden" | "neutral";
-  max_words?: number;
+  required_slots?: string[];
+  target_word_min?: number;
+  target_word_max?: number;
+  prefer_bullets?: boolean;
 }
 
 interface QualityScorerConfig {
   expected_sections?: ExpectedSection[];
-  min_word_count?: number;
-  max_word_count?: number;
+  failure_threshold?: number;
+}
+
+interface TypedOutputContract extends OutputContract {
+  normalizers: NormalizerRule[] | null;
+  qualityScorerConfig: QualityScorerConfig | null;
 }
 
 const ENFORCEMENT_MODES = [
@@ -278,7 +284,7 @@ function ExpectedSectionsBuilder({
   onChange: (sections: ExpectedSection[]) => void;
 }) {
   const addSection = () => {
-    onChange([...sections, { section_id: "", mandatory_phrases: [], bullet_preference: "neutral", max_words: undefined }]);
+    onChange([...sections, { section_id: "", mandatory_phrases: [], required_slots: [], prefer_bullets: undefined, target_word_min: undefined, target_word_max: undefined }]);
   };
 
   const removeSection = (idx: number) => onChange(sections.filter((_, i) => i !== idx));
@@ -306,24 +312,28 @@ function ExpectedSectionsBuilder({
               <Input value={sec.section_id} onChange={(e) => updateSection(idx, { section_id: e.target.value })} placeholder="summary" className="text-xs h-7" data-testid={`input-section-id-${idx}`} />
             </div>
             <div className="flex flex-col gap-1">
-              <Label className="text-[10px]">Bullet preference</Label>
-              <Select value={sec.bullet_preference ?? "neutral"} onValueChange={(v) => updateSection(idx, { bullet_preference: v as ExpectedSection["bullet_preference"] })}>
-                <SelectTrigger className="h-7 text-xs" data-testid={`select-bullet-pref-${idx}`}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="neutral">Neutral</SelectItem>
-                  <SelectItem value="required">Required</SelectItem>
-                  <SelectItem value="forbidden">Forbidden</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label className="text-[10px]">Prefer bullets</Label>
+              <div className="flex items-center gap-2 h-7">
+                <Switch
+                  checked={sec.prefer_bullets ?? false}
+                  onCheckedChange={(v) => updateSection(idx, { prefer_bullets: v })}
+                  data-testid={`switch-prefer-bullets-${idx}`}
+                />
+                <span className="text-[11px] text-muted-foreground">{sec.prefer_bullets ? "Required" : "Not required"}</span>
+              </div>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div className="flex flex-col gap-1">
-              <Label className="text-[10px]">Max words (optional)</Label>
-              <Input type="number" min={1} value={sec.max_words ?? ""} onChange={(e) => updateSection(idx, { max_words: e.target.value ? parseInt(e.target.value) : undefined })} className="text-xs h-7" data-testid={`input-section-max-words-${idx}`} />
+              <Label className="text-[10px]">Min words</Label>
+              <Input type="number" min={1} value={sec.target_word_min ?? ""} onChange={(e) => updateSection(idx, { target_word_min: e.target.value ? parseInt(e.target.value) : undefined })} className="text-xs h-7" data-testid={`input-section-word-min-${idx}`} />
             </div>
+            <div className="flex flex-col gap-1">
+              <Label className="text-[10px]">Max words</Label>
+              <Input type="number" min={1} value={sec.target_word_max ?? ""} onChange={(e) => updateSection(idx, { target_word_max: e.target.value ? parseInt(e.target.value) : undefined })} className="text-xs h-7" data-testid={`input-section-word-max-${idx}`} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
             <div className="flex flex-col gap-1">
               <Label className="text-[10px]">Mandatory phrases (comma-separated)</Label>
               <Input
@@ -332,6 +342,16 @@ function ExpectedSectionsBuilder({
                 placeholder="must include, key phrase"
                 className="text-xs h-7"
                 data-testid={`input-section-phrases-${idx}`}
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label className="text-[10px]">Required slots (comma-separated)</Label>
+              <Input
+                value={(sec.required_slots ?? []).join(", ")}
+                onChange={(e) => updateSection(idx, { required_slots: e.target.value.split(",").map(s => s.trim()).filter(Boolean) })}
+                placeholder="slot1, slot2"
+                className="text-xs h-7"
+                data-testid={`input-section-slots-${idx}`}
               />
             </div>
           </div>
@@ -372,22 +392,22 @@ function ContractForm({
   const [qualityScorerEnabled, setQualityScorerEnabled] = useState(initial?.qualityScorerEnabled ?? false);
   const [qualityThreshold, setQualityThreshold] = useState(String(initial?.qualityFailureThreshold ?? 0.68));
 
+  const typedInitial = initial as TypedOutputContract | undefined;
+
   const initNormalizers = (): NormalizerRule[] => {
-    const raw = (initial as any)?.normalizers;
+    const raw = typedInitial?.normalizers;
     if (Array.isArray(raw)) return raw as NormalizerRule[];
     return [];
   };
 
   const initExpectedSections = (): ExpectedSection[] => {
-    const cfg = (initial as any)?.qualityScorerConfig as QualityScorerConfig | null;
-    if (cfg?.expected_sections) return cfg.expected_sections;
+    const cfg = typedInitial?.qualityScorerConfig;
+    if (cfg?.expected_sections && Array.isArray(cfg.expected_sections)) return cfg.expected_sections;
     return [];
   };
 
   const [normalizers, setNormalizers] = useState<NormalizerRule[]>(initNormalizers);
   const [expectedSections, setExpectedSections] = useState<ExpectedSection[]>(initExpectedSections);
-  const [minWordCount, setMinWordCount] = useState(String((initial as any)?.qualityScorerConfig?.min_word_count ?? ""));
-  const [maxWordCount, setMaxWordCount] = useState(String((initial as any)?.qualityScorerConfig?.max_word_count ?? ""));
 
   const isEdit = !!initial;
   const savedId = initial?.id;
@@ -408,8 +428,7 @@ function ContractForm({
       }
       const qualityScorerConfig: QualityScorerConfig = {
         expected_sections: expectedSections.length > 0 ? expectedSections : undefined,
-        min_word_count: minWordCount ? parseInt(minWordCount) : undefined,
-        max_word_count: maxWordCount ? parseInt(maxWordCount) : undefined,
+        failure_threshold: parseFloat(qualityThreshold) || 0.68,
       };
       const body = {
         agentId,
@@ -492,16 +511,6 @@ function ContractForm({
                   className="w-36"
                 />
                 <p className="text-[11px] text-muted-foreground">Scores below this trigger deterministic repair. Default: 0.68</p>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div className="flex flex-col gap-1">
-                  <Label className="text-xs">Min word count</Label>
-                  <Input type="number" min={1} value={minWordCount} onChange={(e) => setMinWordCount(e.target.value)} className="text-xs h-8" data-testid="input-min-word-count" />
-                </div>
-                <div className="flex flex-col gap-1">
-                  <Label className="text-xs">Max word count</Label>
-                  <Input type="number" min={1} value={maxWordCount} onChange={(e) => setMaxWordCount(e.target.value)} className="text-xs h-8" data-testid="input-max-word-count" />
-                </div>
               </div>
               <Separator />
               <div>
@@ -657,8 +666,9 @@ export function OutputContractEditor({ agentId }: OutputContractEditorProps) {
         <div className="flex flex-col gap-2">
           {contracts.map((contract) => {
             const mode = modeLabel[contract.enforcementMode ?? "strict"] ?? modeLabel.strict;
-            const normalizerCount = Array.isArray((contract as any).normalizers) ? (contract as any).normalizers.length : 0;
-            const sectionCount = Array.isArray((contract as any).qualityScorerConfig?.expected_sections) ? (contract as any).qualityScorerConfig.expected_sections.length : 0;
+            const typedContract = contract as TypedOutputContract;
+            const normalizerCount = Array.isArray(typedContract.normalizers) ? typedContract.normalizers.length : 0;
+            const sectionCount = Array.isArray(typedContract.qualityScorerConfig?.expected_sections) ? typedContract.qualityScorerConfig!.expected_sections!.length : 0;
             return (
               <Card key={contract.id} data-testid={`card-contract-${contract.id}`}>
                 <CardContent className="p-4 flex flex-col gap-2">

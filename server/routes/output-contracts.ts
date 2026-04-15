@@ -93,7 +93,7 @@ router.post("/api/output-contracts/:id/dry-run", async (req, res) => {
     const contract = await storage.getOutputContract(req.params.id);
     if (!contract) return res.status(404).json({ error: "Not found" });
 
-    const body = dryRunSchema.safeParse(req.body);
+    const body = validateSchema.safeParse(req.body);
     if (!body.success) return res.status(400).json({ error: body.error.flatten() });
 
     const result = outputContractEnforcer.dryRun(contract, body.data.sampleJson);
