@@ -35,11 +35,10 @@ router.get("/api/generation-metadata/stats/:agentId", async (req, res) => {
   }
 });
 
-// GET /api/generation-metadata/:id  (single record)
+// GET /api/generation-metadata/:id  (single record — direct primary key lookup)
 router.get("/api/generation-metadata/:id", async (req, res) => {
   try {
-    const records = await storage.getGenerationMetadataRecords({ limit: 500 });
-    const record = records.find(r => r.id === req.params.id);
+    const record = await storage.getGenerationMetadataRecord(req.params.id);
     if (!record) return res.status(404).json({ error: "Not found" });
     res.json(record);
   } catch (err: unknown) {

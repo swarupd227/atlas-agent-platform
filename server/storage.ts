@@ -835,6 +835,7 @@ export interface IStorage {
 
   // GAP5: Generation Metadata Records
   createGenerationMetadataRecord(record: InsertGenerationMetadataRecord): Promise<GenerationMetadataRecord>;
+  getGenerationMetadataRecord(id: string): Promise<GenerationMetadataRecord | undefined>;
   getGenerationMetadataRecords(filters: { pipelineRunId?: string; agentId?: string; promptId?: string; promptSha256?: string; limit?: number }): Promise<GenerationMetadataRecord[]>;
   getGenerationMetadataStats(agentId: string): Promise<{ totalRecords: number; passRate: number; avgQualityScore: number; avgRepairAttempts: number }>;
 }
@@ -3829,6 +3830,11 @@ export class DatabaseStorage implements IStorage {
 
   async createGenerationMetadataRecord(record: InsertGenerationMetadataRecord): Promise<GenerationMetadataRecord> {
     const [row] = await db.insert(generationMetadataRecords).values(record).returning();
+    return row;
+  }
+
+  async getGenerationMetadataRecord(id: string): Promise<GenerationMetadataRecord | undefined> {
+    const [row] = await db.select().from(generationMetadataRecords).where(eq(generationMetadataRecords.id, id));
     return row;
   }
 
