@@ -1697,23 +1697,33 @@ After receiving tool results, provide a structured analysis with key findings, s
         if (isConversational) {
           (steps as any).__conversationalResponse = rawContent;
         }
-      } catch (err: any) {
+      } catch (err: unknown) {
+        // Strict-mode contract violations must propagate — do not swallow
+        if (err instanceof StructuredOutputValidationError) {
+          throw err;
+        }
+        const anyErr = err as Error;
         const lastStep = steps[steps.length - 1];
         lastStep.status = "failed";
-        lastStep.error = err.message;
+        lastStep.error = anyErr.message;
         lastStep.completedAt = new Date().toISOString();
-        emitProgress("error", { message: err.message, stage: "final_analysis" });
+        emitProgress("error", { message: anyErr.message, stage: "final_analysis" });
       }
     }
-  } catch (err: any) {
+  } catch (err: unknown) {
+    // Strict-mode contract violations must escape the function entirely
+    if (err instanceof StructuredOutputValidationError) {
+      throw err;
+    }
+    const anyErr = err as Error;
     steps[steps.length - 1].status = "failed";
-    steps[steps.length - 1].error = err.message;
+    steps[steps.length - 1].error = anyErr.message;
     steps[steps.length - 1].completedAt = new Date().toISOString();
-    emitProgress("error", { message: err.message, stage: "execution" });
+    emitProgress("error", { message: anyErr.message, stage: "execution" });
     return {
       steps,
       success: false,
-      summary: { totalSteps: steps.length, passedSteps: steps.filter(s => s.status === "completed").length, failedSteps: steps.filter(s => s.status === "failed").length, error: err.message },
+      summary: { totalSteps: steps.length, passedSteps: steps.filter(s => s.status === "completed").length, failedSteps: steps.filter(s => s.status === "failed").length, error: anyErr.message },
     };
   }
 

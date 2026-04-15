@@ -112,60 +112,70 @@ export class OutputContractEnforcer {
     let repairAttempts = 0;
     let currentResponse = llmResponse;
 
-    // STEP 1: Parse JSON
-    let parsed: Record<string, unknown>;
-    try {
-      parsed = this.parseJSON(currentResponse);
-    } catch (parseError: unknown) {
-      const msg = parseError instanceof Error ? parseError.message : String(parseError);
-      validationErrors.push(`JSON parse error: ${msg}`);
+    const maxRepairs = contract.maxRepairAttempts ?? 1;
 
-      if (contract.repairEnabled) {
-        const repairResult = await this.attemptRepair(contract, context, currentResponse, msg);
-        repairAttempts++;
-        if (repairResult.success && repairResult.parsed) {
-          parsed = repairResult.parsed;
-          currentResponse = repairResult.rawResponse ?? currentResponse;
+    // STEP 1: Parse JSON — with retry loop up to maxRepairAttempts
+    let parsed: Record<string, unknown>;
+    let parseSucceeded = false;
+    while (!parseSucceeded) {
+      try {
+        parsed = this.parseJSON(currentResponse);
+        parseSucceeded = true;
+      } catch (parseError: unknown) {
+        const msg = parseError instanceof Error ? parseError.message : String(parseError);
+        validationErrors.push(`JSON parse error: ${msg}`);
+
+        if (contract.repairEnabled && repairAttempts < maxRepairs) {
+          const repairResult = await this.attemptRepair(contract, context, currentResponse, msg);
+          repairAttempts++;
+          if (repairResult.success && repairResult.parsed) {
+            parsed = repairResult.parsed;
+            currentResponse = repairResult.rawResponse ?? currentResponse;
+            parseSucceeded = true;
+          } else {
+            // Repair call returned unparseable output — fail
+            return await this.handleFailure(contract, validationErrors, repairAttempts, context, startTime, undefined);
+          }
         } else {
-          // No best-effort output available — JSON parse failed even after repair
+          // No repair enabled or exhausted attempts — fail
           return await this.handleFailure(contract, validationErrors, repairAttempts, context, startTime, undefined);
         }
-      } else {
-        return await this.handleFailure(contract, validationErrors, repairAttempts, context, startTime, undefined);
       }
     }
 
     // STEP 2: Apply normalizers
     const normalizers = (contract.normalizers as NormalizerRule[] | null) ?? [];
-    const normalized = this.applyNormalizers(parsed, normalizers);
+    let normalized = this.applyNormalizers(parsed!, normalizers);
 
-    // STEP 3: Validate against schema
+    // STEP 3: Validate against schema — with retry loop up to maxRepairAttempts
     let validated = normalized;
     const schemaDef = (contract.schemaDefinition as Record<string, unknown>) ?? {};
-    const schemaErrors = this.validateAgainstSchema(normalized, schemaDef);
+    let schemaErrors = this.validateAgainstSchema(normalized, schemaDef);
 
-    if (schemaErrors.length > 0) {
+    while (schemaErrors.length > 0) {
       validationErrors.push(...schemaErrors);
 
-      if (contract.repairEnabled && repairAttempts < (contract.maxRepairAttempts ?? 1)) {
+      if (contract.repairEnabled && repairAttempts < maxRepairs) {
         const repairResult = await this.attemptRepair(contract, context, currentResponse, schemaErrors.join("; "));
         repairAttempts++;
         if (repairResult.success && repairResult.parsed) {
           const reNormalized = this.applyNormalizers(repairResult.parsed, normalizers);
+          currentResponse = repairResult.rawResponse ?? currentResponse;
           const reErrors = this.validateAgainstSchema(reNormalized, schemaDef);
           if (reErrors.length === 0) {
             validated = reNormalized;
+            schemaErrors = [];
           } else {
-            validationErrors.push(...reErrors.map(e => `[repair] ${e}`));
-            // Pass reNormalized as best-effort for monitor mode continuity
-            return await this.handleFailure(contract, validationErrors, repairAttempts, context, startTime, reNormalized);
+            // This repair attempt improved but didn't fully fix — loop to try again
+            normalized = reNormalized;
+            schemaErrors = reErrors;
           }
         } else {
-          // Repair call failed — use original normalized as best-effort
+          // Repair call itself failed — use best-effort normalized output
           return await this.handleFailure(contract, validationErrors, repairAttempts, context, startTime, normalized);
         }
       } else {
-        // No repair — use normalized as best-effort
+        // Repair disabled or exhausted — use best-effort normalized output
         return await this.handleFailure(contract, validationErrors, repairAttempts, context, startTime, normalized);
       }
     }
@@ -446,16 +456,21 @@ export class OutputContractEnforcer {
     bestEffortOutput?: Record<string, unknown>,
   ): Promise<EnforcementResult> {
     const validationLatencyMs = performance.now() - startTime;
+    const mode = contract.enforcementMode ?? "strict";
+    const tokenUsage = context.tokenUsage;
+
+    // Determine the effective persisted status based on enforcement mode outcome
+    // so downstream analytics see the correct terminal state per mode
+    const effectiveStatus: "failed" | "fallback" =
+      mode === "lenient" ? "fallback" : "failed";
+
     const metadataId = await this.recordMetadata({
       context,
-      validationStatus: "failed",
+      validationStatus: effectiveStatus,
       repairAttempts,
       validationErrors,
       validationLatencyMs,
     });
-
-    const mode = contract.enforcementMode ?? "strict";
-    const tokenUsage = context.tokenUsage;
 
     switch (mode) {
       case "strict":
