@@ -13,6 +13,8 @@ import {
   ONESPAN_ONTOLOGY_CONCEPTS,
   ONESPAN_BLUEPRINT_DEFS,
   ONESPAN_EVAL_CASES,
+  ONESPAN_AGENT_POLICIES,
+  ONESPAN_SYSTEM_PROMPTS,
   OS_TARGET_TXN_ID as TARGET_TXN_ID,
   OS_TARGET_CLIENT  as TARGET_CLIENT,
   OS_TARGET_AMOUNT  as TARGET_AMOUNT,
@@ -190,12 +192,7 @@ export async function ensureOnespanAgents(): Promise<void> {
   }
 
   // ── 7. Agents ─────────────────────────────────────────────────────────────────
-  const AGENT_POLICY_BINDINGS = [
-    { policyName: "Document Version Currency Policy", enforcement: "hard" },
-    { policyName: "VIP Transaction SLA Policy",       enforcement: "hard" },
-    { policyName: "Agent Intervention Audit Policy",  enforcement: "hard" },
-    { policyName: "Human-in-Loop Approval Gate",      enforcement: "hard" },
-  ];
+  const AGENT_POLICY_BINDINGS = [...ONESPAN_AGENT_POLICIES];
 
   const AGENT_ONTOLOGY_TAGS: Record<string, string[]> = {
     transactionHealthMonitor:  ["Digital Agreement Envelope", "Completion Rate", "Agreement Stall", "VIP Transaction"],
@@ -588,12 +585,33 @@ export async function getOnespanAgentRuns(_req: Request, res: Response): Promise
       await _refreshOnespanServerIds();
     }
 
+    type ToolCallTiming = { name: string; latencyMs?: number };
     type RunRecord = {
       key: string; agentId: string | null; agentName: string; step: number;
       agentStatus: string; runId: string | null; runStatus: string;
       triggerType: string | null; latencyMs: number | null;
       startedAt: Date | null; completedAt: Date | null; resultSummary: unknown;
+      toolCalls: ToolCallTiming[] | null;
     };
+
+    const TOOL_STEP_TYPES = new Set(["tool_call", "api_call", "mcpTool", "mcp_tool", "tool_use"]);
+
+    function extractToolCalls(stepsJson: unknown): ToolCallTiming[] | null {
+      if (!Array.isArray(stepsJson)) return null;
+      const calls = stepsJson
+        .filter(s => {
+          const step = s as Record<string, unknown>;
+          return TOOL_STEP_TYPES.has(step.type as string) || Boolean(step.toolName);
+        })
+        .map(s => {
+          const step = s as Record<string, unknown>;
+          const name = String(step.toolName ?? step.mcpTool ?? step.tool_name ?? step.name ?? "unknown");
+          const latencyMs = typeof step.latencyMs === "number" ? step.latencyMs : undefined;
+          return { name, ...(latencyMs !== undefined ? { latencyMs } : {}) };
+        })
+        .filter(tc => tc.name !== "unknown");
+      return calls.length > 0 ? calls : null;
+    }
 
     const runs: RunRecord[] = await Promise.all(
       ONESPAN_AGENT_DEFS.map(async (def, idx) => {
@@ -602,7 +620,8 @@ export async function getOnespanAgentRuns(_req: Request, res: Response): Promise
           return {
             key: def.key, agentId: null, agentName: def.name, step: idx + 1,
             agentStatus: "not_setup", runId: null, runStatus: "idle",
-            triggerType: null, latencyMs: null, startedAt: null, completedAt: null, resultSummary: null,
+            triggerType: null, latencyMs: null, startedAt: null, completedAt: null,
+            resultSummary: null, toolCalls: null,
           };
         }
 
@@ -626,6 +645,7 @@ export async function getOnespanAgentRuns(_req: Request, res: Response): Promise
           startedAt:     lastRun?.startedAt ?? null,
           completedAt:   lastRun?.completedAt ?? null,
           resultSummary: lastRun?.resultSummary ?? null,
+          toolCalls:     lastRun ? extractToolCalls(lastRun.stepsJson) : null,
         };
       }),
     );

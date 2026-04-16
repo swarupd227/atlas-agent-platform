@@ -3,6 +3,11 @@ import { Link } from "wouter";
 import { ExternalLink, CheckCircle2, XCircle, Clock, Activity } from "lucide-react";
 import { ONESPAN_AGENTS, ONESPAN_COLOR, ONESPAN_ACCENT } from "./onespan-constants";
 
+interface ToolCallTiming {
+  name: string;
+  latencyMs?: number;
+}
+
 interface AgentRunRecord {
   key: string;
   agentId: string | null;
@@ -16,6 +21,7 @@ interface AgentRunRecord {
   startedAt: string | null;
   completedAt: string | null;
   resultSummary: Record<string, unknown> | null;
+  toolCalls: ToolCallTiming[] | null;
 }
 
 function formatLatency(ms: number | null): string {
@@ -42,11 +48,24 @@ function RunStatusBadge({ status }: { status: string }) {
   return <span className="text-[10px] text-muted-foreground">{status}</span>;
 }
 
-function ToolCallList({ tools }: { tools: string[] }) {
+function ToolCallList({ timings, fallbackTools }: { timings: ToolCallTiming[] | null; fallbackTools: string[] }) {
+  const items: Array<{ name: string; latencyMs?: number; fromRun: boolean }> = timings
+    ? timings.map(t => ({ name: t.name, latencyMs: t.latencyMs, fromRun: true }))
+    : fallbackTools.map(n => ({ name: n, fromRun: false }));
+  if (items.length === 0) return null;
   return (
     <div className="flex flex-wrap gap-1 mt-1.5">
-      {tools.map((t, i) => (
-        <span key={i} className="text-[9px] px-1.5 py-0.5 rounded font-mono bg-muted/30 text-muted-foreground/70 border border-border/40">{t}</span>
+      {items.map((t, i) => (
+        <span
+          key={i}
+          className="text-[9px] px-1.5 py-0.5 rounded font-mono bg-muted/30 text-muted-foreground/70 border border-border/40 flex items-center gap-1"
+          title={t.fromRun ? `Actual tool call from run record${t.latencyMs != null ? ` — ${t.latencyMs}ms` : ""}` : "Configured tool (not yet run)"}
+        >
+          {t.name}
+          {t.latencyMs != null && (
+            <span className="text-muted-foreground/40">{t.latencyMs < 1000 ? `${t.latencyMs}ms` : `${(t.latencyMs / 1000).toFixed(1)}s`}</span>
+          )}
+        </span>
       ))}
     </div>
   );
@@ -151,7 +170,12 @@ export default function OnespanS3AgentTraces({ hasRun }: { hasRun: boolean }) {
                     {run.triggerType && <span className="font-mono">{run.triggerType}</span>}
                   </div>
 
-                  {agentDef && <ToolCallList tools={agentDef.tools} />}
+                  {agentDef && (
+                    <ToolCallList
+                      timings={run.toolCalls ?? null}
+                      fallbackTools={agentDef.tools}
+                    />
+                  )}
                   {run.resultSummary && <SummaryKV summary={run.resultSummary} />}
 
                   {/* MCP servers */}

@@ -108,7 +108,7 @@ export default function OnespanDemo() {
   const qc         = useQueryClient();
 
   const resetMutation = useMutation({
-    mutationFn: () => apiRequest("POST", "/demo-api/onespan/reset"),
+    mutationFn: () => apiRequest("DELETE", "/demo-api/onespan/reset"),
     onSuccess: () => {
       setHasRun(false);
       setLiveComplete(false);
