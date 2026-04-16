@@ -123,17 +123,19 @@ export default function OnespanS3AgentTraces({ hasRun }: { hasRun: boolean }) {
 
       <div className="space-y-3">
         {runs.map((run, idx) => {
-          const agentDef = ONESPAN_AGENTS.find(a => a.key === run.key);
+          const agentDef    = ONESPAN_AGENTS.find(a => a.key === run.key);
+          const notYetRun   = run.agentStatus !== "not_setup" && (run.runStatus === "idle" || !run.runStatus);
+          const notProvisioned = run.agentStatus === "not_setup";
           return (
             <div
               key={run.key}
-              className="rounded-xl border border-border/50 bg-muted/5 p-4 hover:border-border transition-colors"
+              className={`rounded-xl border p-4 transition-colors ${notYetRun ? "border-border/30 bg-muted/3 opacity-80" : notProvisioned ? "border-dashed border-border/30 bg-muted/3 opacity-60" : "border-border/50 bg-muted/5 hover:border-border"}`}
               data-testid={`trace-row-${run.key}`}
             >
               <div className="flex items-start gap-3">
                 <div
                   className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0 mt-0.5"
-                  style={{ backgroundColor: `${ONESPAN_COLOR}20`, color: ONESPAN_COLOR }}
+                  style={{ backgroundColor: `${ONESPAN_COLOR}${notYetRun || notProvisioned ? "10" : "20"}`, color: ONESPAN_COLOR }}
                 >
                   {run.step || idx + 1}
                 </div>
@@ -144,10 +146,16 @@ export default function OnespanS3AgentTraces({ hasRun }: { hasRun: boolean }) {
                         <span className="text-[12px] font-semibold hover:underline cursor-pointer" data-testid={`link-agent-${run.key}`}>{run.agentName}</span>
                       </Link>
                     ) : (
-                      <span className="text-[12px] font-semibold">{run.agentName}</span>
+                      <span className="text-[12px] font-semibold text-muted-foreground/60">{run.agentName}</span>
                     )}
-                    <RunStatusBadge status={run.runStatus} />
-                    {run.agentId && (
+                    {notProvisioned ? (
+                      <span className="text-[10px] text-muted-foreground/40 italic" data-testid={`status-not-provisioned-${run.key}`}>Not provisioned</span>
+                    ) : notYetRun ? (
+                      <span className="text-[10px] text-muted-foreground/50 italic" data-testid={`status-not-run-${run.key}`}>Not yet run — awaiting pipeline trigger</span>
+                    ) : (
+                      <RunStatusBadge status={run.runStatus} />
+                    )}
+                    {run.agentId && !notYetRun && !notProvisioned && (
                       <Link href={`/agents/${run.agentId}`}>
                         <ExternalLink className="w-3 h-3 text-muted-foreground/40 hover:text-foreground cursor-pointer" data-testid={`link-agent-ext-${run.key}`} />
                       </Link>
@@ -163,20 +171,22 @@ export default function OnespanS3AgentTraces({ hasRun }: { hasRun: boolean }) {
 
                   {agentDef && <p className="text-[10px] text-muted-foreground mt-0.5">{agentDef.role}</p>}
 
-                  <div className="flex items-center gap-4 mt-2 text-[10px] text-muted-foreground">
-                    <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{formatLatency(run.latencyMs)}</span>
-                    {run.startedAt && <span>Started {formatTime(run.startedAt)}</span>}
-                    {run.completedAt && <span>Ended {formatTime(run.completedAt)}</span>}
-                    {run.triggerType && <span className="font-mono">{run.triggerType}</span>}
-                  </div>
+                  {!notYetRun && !notProvisioned && (
+                    <div className="flex items-center gap-4 mt-2 text-[10px] text-muted-foreground">
+                      <span className="flex items-center gap-1"><Clock className="w-3 h-3" />{formatLatency(run.latencyMs)}</span>
+                      {run.startedAt && <span>Started {formatTime(run.startedAt)}</span>}
+                      {run.completedAt && <span>Ended {formatTime(run.completedAt)}</span>}
+                      {run.triggerType && <span className="font-mono">{run.triggerType}</span>}
+                    </div>
+                  )}
 
                   {agentDef && (
                     <ToolCallList
-                      timings={run.toolCalls ?? null}
-                      fallbackTools={agentDef.tools}
+                      timings={notYetRun || notProvisioned ? null : (run.toolCalls ?? null)}
+                      fallbackTools={notYetRun || notProvisioned ? [] : agentDef.tools}
                     />
                   )}
-                  {run.resultSummary && <SummaryKV summary={run.resultSummary} />}
+                  {!notYetRun && !notProvisioned && run.resultSummary && <SummaryKV summary={run.resultSummary} />}
 
                   {/* MCP servers */}
                   {agentDef && (

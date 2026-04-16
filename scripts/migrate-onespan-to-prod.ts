@@ -31,10 +31,17 @@ import {
   ONESPAN_ONTOLOGY_CONCEPTS,
   ONESPAN_BLUEPRINT_DEFS,
   ONESPAN_EVAL_CASES,
+  ONESPAN_AGENT_POLICIES,
   AGR_001_NAME,
   OS_TARGET_TXN_ID,
   OS_TARGET_CLIENT,
 } from "../server/onespan-shared-defs";
+
+// ── REST resource types (minimal shapes returned by the ATLAS API) ─────────────
+
+interface ApiResource     { id: string }
+interface NamedResource   extends ApiResource { name: string }
+interface LabeledResource extends ApiResource { label: string }
 
 // ── CLI argument parsing ────────────────────────────────────────────────────────
 
@@ -65,8 +72,8 @@ function parseArgs(): { prodUrl: string; prodOrgId: string; dryRun: boolean } {
 // ── HTTP client ────────────────────────────────────────────────────────────────
 
 interface ApiClient {
-  get<T = any>(path: string): Promise<T>;
-  post<T = any>(path: string, body: object): Promise<T>;
+  get<T>(path: string): Promise<T>;
+  post<T>(path: string, body: object): Promise<T>;
 }
 
 function makeApiClient(baseUrl: string, orgId: string, dryRun: boolean): ApiClient {
@@ -149,17 +156,17 @@ async function migrate() {
   try {
     await api.get("/api/agents");
     console.log("  ✓ Platform reachable");
-  } catch (err: any) {
-    console.error(`  ✗ Platform unreachable: ${err.message}`);
+  } catch (err: unknown) {
+    console.error(`  ✗ Platform unreachable: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
   }
 
   // ── Step 2: Ontology concepts ────────────────────────────────────────────────
   console.log("\n[2/8] Ontology concepts (12)…");
-  const existingConcepts: any[] = await api.get("/api/ontology-concepts/all").catch(() => []);
+  const existingConcepts = await api.get<LabeledResource[]>("/api/ontology-concepts/all").catch((): LabeledResource[] => []);
   const conceptIdByLabel: Record<string, string> = {};
   for (const c of ONESPAN_ONTOLOGY_CONCEPTS) {
-    const existing = existingConcepts.find((x: any) => x.label === c.label);
+    const existing = existingConcepts.find(x => x.label === c.label);
     if (existing) {
       conceptIdByLabel[c.label] = existing.id;
       console.log(`  skip   ${c.label}`);
@@ -180,10 +187,10 @@ async function migrate() {
 
   // ── Step 3: Policies ─────────────────────────────────────────────────────────
   console.log("\n[3/8] Policies (4)…");
-  const existingPolicies: any[] = await api.get("/api/policies").catch(() => []);
+  const existingPolicies = await api.get<NamedResource[]>("/api/policies").catch((): NamedResource[] => []);
   const policyIdByName: Record<string, string> = {};
   for (const p of ONESPAN_POLICY_DEFS) {
-    const existing = existingPolicies.find((x: any) => x.name === p.name);
+    const existing = existingPolicies.find(x => x.name === p.name);
     if (existing) {
       policyIdByName[p.name] = existing.id;
       console.log(`  skip   ${p.name}`);
@@ -206,10 +213,10 @@ async function migrate() {
 
   // ── Step 4: Knowledge bases ──────────────────────────────────────────────────
   console.log("\n[4/8] Knowledge bases (3)…");
-  const existingKBs: any[] = await api.get("/api/knowledge-bases").catch(() => []);
+  const existingKBs = await api.get<NamedResource[]>("/api/knowledge-bases").catch((): NamedResource[] => []);
   const kbIdByName: Record<string, string> = {};
   for (const kb of ONESPAN_KB_DEFS) {
-    const existing = existingKBs.find((x: any) => x.name === kb.name);
+    const existing = existingKBs.find(x => x.name === kb.name);
     if (existing) {
       kbIdByName[kb.name] = existing.id;
       console.log(`  skip   ${kb.name}`);
@@ -231,10 +238,10 @@ async function migrate() {
 
   // ── Step 5: MCP servers + tools ──────────────────────────────────────────────
   console.log("\n[5/8] MCP servers (5) + tools…");
-  const existingServers: any[] = await api.get("/api/mcp-servers").catch(() => []);
+  const existingServers = await api.get<NamedResource[]>("/api/mcp-servers").catch((): NamedResource[] => []);
   const serverIdByName: Record<string, string> = {};
   for (const serverDef of MCP_SERVERS) {
-    const existing = existingServers.find((x: any) => x.name === serverDef.name);
+    const existing = existingServers.find(x => x.name === serverDef.name);
     if (existing) {
       serverIdByName[serverDef.name] = existing.id;
       console.log(`  skip   ${serverDef.name}`);
@@ -264,17 +271,17 @@ async function migrate() {
             riskClassification: "low",
           });
         }
-        console.log(`    + ${(serverDef.tools as readonly any[]).length} tools registered`);
+        console.log(`    + ${serverDef.tools.length} tools registered`);
       }
     }
   }
 
   // ── Step 6: Skills ───────────────────────────────────────────────────────────
   console.log("\n[6/8] Skills (12)…");
-  const existingSkills: any[] = await api.get("/api/skills").catch(() => []);
+  const existingSkills = await api.get<NamedResource[]>("/api/skills").catch((): NamedResource[] => []);
   const skillIdByName: Record<string, string> = {};
   for (const s of ONESPAN_SKILLS) {
-    const existing = existingSkills.find((x: any) => x.name === s.name);
+    const existing = existingSkills.find(x => x.name === s.name);
     if (existing) {
       skillIdByName[s.name] = existing.id;
       console.log(`  skip   ${s.name}`);
@@ -300,7 +307,7 @@ async function migrate() {
           version:  "1.0",
           tags:     s.tags,
         },
-        allowedTools: (s.yamlFrontmatter.allowedTools as string[]) || [],
+        allowedTools: [...(s.yamlFrontmatter.allowedTools || [])],
       });
       if (!dryRun) skillIdByName[s.name] = created.id;
       console.log(`  create ${s.name}`);
@@ -310,10 +317,10 @@ async function migrate() {
 
   // ── Step 7: Blueprints ───────────────────────────────────────────────────────
   console.log("\n[7/8] Blueprints (4) + agents…");
-  const existingBlueprints: any[] = await api.get("/api/blueprints").catch(() => []);
+  const existingBlueprints = await api.get<NamedResource[]>("/api/blueprints").catch((): NamedResource[] => []);
   const blueprintIdByKey: Record<string, string> = {};
   for (const bp of ONESPAN_BLUEPRINT_DEFS) {
-    const existing = existingBlueprints.find((x: any) => x.name === bp.name);
+    const existing = existingBlueprints.find(x => x.name === bp.name);
     if (existing) {
       blueprintIdByKey[bp.key] = existing.id;
       console.log(`  skip   ${bp.name}`);
@@ -341,12 +348,7 @@ async function migrate() {
   }
 
   // ── Step 7b: Agents ──────────────────────────────────────────────────────────
-  const AGENT_POLICY_BINDINGS = [
-    { policyName: "Document Version Currency Policy", enforcement: "hard" },
-    { policyName: "VIP Transaction SLA Policy",       enforcement: "hard" },
-    { policyName: "Agent Intervention Audit Policy",  enforcement: "hard" },
-    { policyName: "Human-in-Loop Approval Gate",      enforcement: "hard" },
-  ];
+  const AGENT_POLICY_BINDINGS = [...ONESPAN_AGENT_POLICIES];
   const AGENT_ONTOLOGY_TAGS: Record<string, string[]> = {
     transactionHealthMonitor:  ["Digital Agreement Envelope", "Completion Rate", "Agreement Stall", "VIP Transaction"],
     exceptionClassifier:       ["Document Version Mismatch", "AML Attestation Clause", "Signer Session Event", "Corrective Resend"],
@@ -354,10 +356,10 @@ async function migrate() {
     agreementOpsIntelligence:  ["Peer Benchmark", "OneSpan Analytics Dashboard", "Envelope Audit Trail"],
   };
 
-  const existingAgents: any[] = await api.get("/api/agents").catch(() => []);
+  const existingAgents = await api.get<NamedResource[]>("/api/agents").catch((): NamedResource[] => []);
   const agentIdByKey: Record<string, string> = {};
   for (const def of ONESPAN_AGENT_DEFS) {
-    const existing = existingAgents.find((x: any) => x.name === def.name);
+    const existing = existingAgents.find(x => x.name === def.name);
     if (existing) {
       agentIdByKey[def.key] = existing.id;
       console.log(`  skip   ${def.name}`);
@@ -410,8 +412,8 @@ async function migrate() {
   // ── Step 8: Eval suite + cases ───────────────────────────────────────────────
   console.log("\n[8/8] Eval suite + cases (10)…");
   const SUITE_NAME = "OneSpan — Digital Agreements Intelligence Regression Suite";
-  const existingEvals: any[] = await api.get("/api/eval-suites").catch(() => []);
-  const existingSuite = existingEvals.find((x: any) => x.name === SUITE_NAME);
+  const existingEvals = await api.get<NamedResource[]>("/api/eval-suites").catch((): NamedResource[] => []);
+  const existingSuite = existingEvals.find(x => x.name === SUITE_NAME);
   const leadAgentId   = agentIdByKey["transactionHealthMonitor"];
 
   if (existingSuite) {
