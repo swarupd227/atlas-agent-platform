@@ -26,6 +26,7 @@ import {
 } from "./routes/helpers";
 import { ensureHearstAgents } from "./hearst-live-run";
 import { ensureFitchAgents } from "./fitch-live-run";
+import { ensureOnespanAgents } from "./onespan-live-run";
 import { registerKnowledgeBaseRoutes } from "./kb-routes";
 import adobeAnalyticsRouter from "./mock-mcp/adobe-analytics";
 import marketoRouter from "./mock-mcp/marketo";
@@ -261,6 +262,7 @@ export async function registerRoutes(
   ensureHearstAgents().catch((err: any) => console.error("[startup] ensureHearstAgents:", err?.message));
   ensureFitchAgents().catch((err: any) => console.error("[startup] ensureFitchAgents:", err?.message));
   ensureBBAgents().catch((err: any) => console.error("[startup] ensureBBAgents:", err?.message));
+  ensureOnespanAgents().catch((err: any) => console.error("[startup] ensureOnespanAgents:", err?.message));
   // OTC Order agents use lazy initialization (ensureOtcOrderAgents is called inside the live-run handler)
   // PKG Sched agents use lazy initialization (ensurePackagingSchedAgents is called inside pkgSchedLiveRunHandler)
 
