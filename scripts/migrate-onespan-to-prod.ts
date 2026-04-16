@@ -119,6 +119,7 @@ interface Counters {
   mcpTools: { created: number; skipped: number };
   skills: { created: number; skipped: number };
   policies: { created: number; skipped: number };
+  agentPolicies: { created: number; skipped: number };
   ontology: { created: number; skipped: number };
   blueprints: { created: number; skipped: number };
   agents: { created: number; skipped: number };
@@ -128,16 +129,17 @@ interface Counters {
 
 function zeroCounts(): Counters {
   return {
-    kbs:         { created: 0, skipped: 0 },
-    mcpServers:  { created: 0, skipped: 0 },
-    mcpTools:    { created: 0, skipped: 0 },
-    skills:      { created: 0, skipped: 0 },
-    policies:    { created: 0, skipped: 0 },
-    ontology:    { created: 0, skipped: 0 },
-    blueprints:  { created: 0, skipped: 0 },
-    agents:      { created: 0, skipped: 0 },
-    policyLinks: { created: 0, skipped: 0 },
-    evals:       { created: 0, skipped: 0 },
+    kbs:           { created: 0, skipped: 0 },
+    mcpServers:    { created: 0, skipped: 0 },
+    mcpTools:      { created: 0, skipped: 0 },
+    skills:        { created: 0, skipped: 0 },
+    policies:      { created: 0, skipped: 0 },
+    agentPolicies: { created: 0, skipped: 0 },
+    ontology:      { created: 0, skipped: 0 },
+    blueprints:    { created: 0, skipped: 0 },
+    agents:        { created: 0, skipped: 0 },
+    policyLinks:   { created: 0, skipped: 0 },
+    evals:         { created: 0, skipped: 0 },
   };
 }
 
@@ -216,6 +218,32 @@ async function migrate() {
       if (!dryRun) policyIdByName[p.name] = created.id;
       console.log(`  create ${p.name}`);
       counts.policies.created++;
+    }
+  }
+
+  // ── Step 3b: Agent-level policies (12 total — 3 per agent × 4 agents) ────────
+  console.log("\n[3b/9] Agent-level policies (12)…");
+  const agentPolicyIdByName: Record<string, string> = {};
+  for (const ap of ONESPAN_AGENT_POLICIES) {
+    const existing = existingPolicies.find(x => x.name === ap.name);
+    if (existing) {
+      agentPolicyIdByName[ap.name] = existing.id;
+      console.log(`  skip   ${ap.name}`);
+      counts.agentPolicies.skipped++;
+    } else {
+      const created = await api.post<ApiResource>("/api/policies", {
+        name:             ap.name,
+        domain:           ap.domain,
+        description:      ap.description,
+        status:           "active",
+        version:          1,
+        scopeType:        ap.scopeType,
+        parentPolicyName: ap.parentPolicyName,
+        policyJson:       ap.policyJson,
+      });
+      if (!dryRun) agentPolicyIdByName[ap.name] = created.id;
+      console.log(`  create ${ap.name}`);
+      counts.agentPolicies.created++;
     }
   }
 
@@ -432,7 +460,7 @@ async function migrate() {
         preloadedSkills:   skillIds,
         blueprintId,
         complianceTags:    ["AML-2026Q1", "ONESPAN-POLICY-V3.2", "VIP-SLA"],
-        policyBindings:    ONESPAN_AGENT_POLICIES.filter(b => b.agentKey === def.key),
+        policyBindings:    ONESPAN_AGENT_POLICIES.filter(b => b.agentKey === def.key).map(b => ({ policyName: b.name, enforcement: b.enforcement, scopeType: b.scopeType })),
         ontologyTags,
         mcpServerIds,
         knowledgeBaseId:   kbId,
@@ -462,18 +490,19 @@ async function migrate() {
     );
     const agentPolicies = ONESPAN_AGENT_POLICIES.filter(b => b.agentKey === def.key);
     for (const binding of agentPolicies) {
-      if (boundPolicyNames.has(binding.policyName)) {
-        console.log(`  skip   ${def.name} ← ${binding.policyName}`);
+      if (boundPolicyNames.has(binding.name)) {
+        console.log(`  skip   ${def.name} ← ${binding.name}`);
         counts.policyLinks.skipped++;
       } else {
-        const policyId = policyIdByName[binding.policyName];
+        const policyId = agentPolicyIdByName[binding.name];
         if (policyId) {
           await api.post(`/api/agents/${agentId}/policies`, {
             policyId,
-            policyName:  binding.policyName,
+            policyName:  binding.name,
             enforcement: binding.enforcement,
+            scopeType:   binding.scopeType,
           });
-          console.log(`  link   ${def.name} ← ${binding.policyName}`);
+          console.log(`  link   ${def.name} ← ${binding.name}`);
           counts.policyLinks.created++;
         }
       }

@@ -487,28 +487,172 @@ export const ONESPAN_BLUEPRINT_DEFS = [
   },
 ] as const;
 
-// ─── Agent policy bindings (3 per agent × 4 agents = 12 total bindings) ──────
-// Each agent is bound to all 3 org-level policies — hard enforcement.
-
-// 3 org-level policies × 4 agents = 12 agent-policy binding objects.
-// Each agent is bound to all three org policies; agentKey enables per-agent filtering.
+// ─── Agent-level policy definitions (3 per agent × 4 agents = 12 total) ──────
+// These are scopeType: "agent" policies — distinct from the 3 org-level policies.
+// Each agent gets its own scoped policy resource for each of the 3 compliance themes.
 export const ONESPAN_AGENT_POLICIES = [
-  // AGR-001 Transaction Health Monitor
-  { agentKey: "transactionHealthMonitor",    policyName: "Re-Send Frequency Policy",            enforcement: "hard" as const },
-  { agentKey: "transactionHealthMonitor",    policyName: "Declined Document Correction Policy", enforcement: "hard" as const },
-  { agentKey: "transactionHealthMonitor",    policyName: "Data Minimisation Policy",            enforcement: "hard" as const },
-  // AGR-002 Exception Classifier
-  { agentKey: "exceptionClassifier",         policyName: "Re-Send Frequency Policy",            enforcement: "hard" as const },
-  { agentKey: "exceptionClassifier",         policyName: "Declined Document Correction Policy", enforcement: "hard" as const },
-  { agentKey: "exceptionClassifier",         policyName: "Data Minimisation Policy",            enforcement: "hard" as const },
-  // AGR-003 Intervention Orchestrator
-  { agentKey: "interventionOrchestrator",    policyName: "Re-Send Frequency Policy",            enforcement: "hard" as const },
-  { agentKey: "interventionOrchestrator",    policyName: "Declined Document Correction Policy", enforcement: "hard" as const },
-  { agentKey: "interventionOrchestrator",    policyName: "Data Minimisation Policy",            enforcement: "hard" as const },
-  // AGR-004 Agreement Ops Intelligence
-  { agentKey: "agreementOpsIntelligence",    policyName: "Re-Send Frequency Policy",            enforcement: "hard" as const },
-  { agentKey: "agreementOpsIntelligence",    policyName: "Declined Document Correction Policy", enforcement: "hard" as const },
-  { agentKey: "agreementOpsIntelligence",    policyName: "Data Minimisation Policy",            enforcement: "hard" as const },
+  // ── AGR-001 Transaction Health Monitor ───────────────────────────────────────
+  {
+    agentKey:         "transactionHealthMonitor",
+    name:             "AGR-001 — Re-Send Frequency Policy",
+    scopeType:        "agent"      as const,
+    domain:           "compliance" as const,
+    enforcement:      "hard"       as const,
+    parentPolicyName: "Re-Send Frequency Policy",
+    description:      "Limits AGR-001 to recommending at most 2 automated re-sends per envelope; 3rd requires human approval.",
+    policyJson:       { enforcement: "hard", scopeType: "agent", agentScope: "transactionHealthMonitor", rules: [
+      { name: "Monitor Re-Send Recommendation Cap", description: "AGR-001 may flag at most 2 auto-resend recommendations per envelope per 7-day window" },
+      { name: "Cooldown Enforcement",               description: "AGR-001 must confirm 4h cooldown has elapsed before recommending any resend action" },
+    ]},
+  },
+  {
+    agentKey:         "transactionHealthMonitor",
+    name:             "AGR-001 — Declined Document Correction Policy",
+    scopeType:        "agent"      as const,
+    domain:           "compliance" as const,
+    enforcement:      "hard"       as const,
+    parentPolicyName: "Declined Document Correction Policy",
+    description:      "AGR-001 must alert on version mismatch before any corrective action; portfolio health signals must include version currency status.",
+    policyJson:       { enforcement: "hard", scopeType: "agent", agentScope: "transactionHealthMonitor", rules: [
+      { name: "Version Mismatch Alert Requirement", description: "AGR-001 must surface document version mismatch in every health alert for declined transactions" },
+      { name: "Pre-Correction Notification",        description: "AGR-001 must notify downstream agents of version gap before classifying decline as correctable" },
+    ]},
+  },
+  {
+    agentKey:         "transactionHealthMonitor",
+    name:             "AGR-001 — Data Minimisation Policy",
+    scopeType:        "agent"      as const,
+    domain:           "compliance" as const,
+    enforcement:      "hard"       as const,
+    parentPolicyName: "Data Minimisation Policy",
+    description:      "AGR-001 must restrict portfolio health monitoring to necessary transaction-level metadata; no access to signer identity or financial history.",
+    policyJson:       { enforcement: "hard", scopeType: "agent", agentScope: "transactionHealthMonitor", rules: [
+      { name: "Transaction Metadata Only",   description: "AGR-001 accesses status, amount, doc version, and priority — no signer PII beyond transaction ID" },
+      { name: "Aggregate-Level Reporting",  description: "Portfolio KPI aggregates only; no individual signer exposure in health outputs" },
+    ]},
+  },
+  // ── AGR-002 Exception Classifier ─────────────────────────────────────────────
+  {
+    agentKey:         "exceptionClassifier",
+    name:             "AGR-002 — Re-Send Frequency Policy",
+    scopeType:        "agent"      as const,
+    domain:           "compliance" as const,
+    enforcement:      "hard"       as const,
+    parentPolicyName: "Re-Send Frequency Policy",
+    description:      "AGR-002 must validate remaining re-send quota before issuing a CORRECTABLE classification that would trigger a resend.",
+    policyJson:       { enforcement: "hard", scopeType: "agent", agentScope: "exceptionClassifier", rules: [
+      { name: "Quota Pre-Check",           description: "AGR-002 must verify re-send quota is not exhausted before classifying decline as auto-correctable" },
+      { name: "Classification Annotation", description: "Every CORRECTABLE classification must include remaining re-send allowance in the output metadata" },
+    ]},
+  },
+  {
+    agentKey:         "exceptionClassifier",
+    name:             "AGR-002 — Declined Document Correction Policy",
+    scopeType:        "agent"      as const,
+    domain:           "compliance" as const,
+    enforcement:      "hard"       as const,
+    parentPolicyName: "Declined Document Correction Policy",
+    description:      "AGR-002 must classify document version mismatch declines against the current required version and gate auto-correction on confidence >90%.",
+    policyJson:       { enforcement: "hard", scopeType: "agent", agentScope: "exceptionClassifier", rules: [
+      { name: "Version Currency Assertion",   description: "AGR-002 must confirm the required doc version via get_document_versions before any CORRECTABLE classification" },
+      { name: "Confidence Threshold Gate",   description: "Auto-correction classification requires confidence ≥90%; below threshold emits HUMAN_REVIEW classification" },
+    ]},
+  },
+  {
+    agentKey:         "exceptionClassifier",
+    name:             "AGR-002 — Data Minimisation Policy",
+    scopeType:        "agent"      as const,
+    domain:           "compliance" as const,
+    enforcement:      "hard"       as const,
+    parentPolicyName: "Data Minimisation Policy",
+    description:      "AGR-002 must access only the signer session and document version data strictly required for decline classification.",
+    policyJson:       { enforcement: "hard", scopeType: "agent", agentScope: "exceptionClassifier", rules: [
+      { name: "Signer Session Scope Limit",  description: "AGR-002 accesses session duration, click-stream events, and decline timestamp only — no identity or financial data" },
+      { name: "Classification Output Scope", description: "Output may not include raw PII fields — only classification codes, confidence, and recommended action" },
+    ]},
+  },
+  // ── AGR-003 Intervention Orchestrator ────────────────────────────────────────
+  {
+    agentKey:         "interventionOrchestrator",
+    name:             "AGR-003 — Re-Send Frequency Policy",
+    scopeType:        "agent"      as const,
+    domain:           "compliance" as const,
+    enforcement:      "hard"       as const,
+    parentPolicyName: "Re-Send Frequency Policy",
+    description:      "AGR-003 is the sole agent authorized to execute envelope resends; hard-limited to 2 automated resends per envelope before requiring RM approval.",
+    policyJson:       { enforcement: "hard", scopeType: "agent", agentScope: "interventionOrchestrator", rules: [
+      { name: "Resend Execution Cap",       description: "AGR-003 may execute at most 2 automated resends per envelope within 7 days; 3rd requires explicit RM approval signal" },
+      { name: "Cooldown Enforcement",       description: "AGR-003 must enforce 4h minimum cooldown between resend executions for the same signer" },
+      { name: "Resend Receipt Required",    description: "Resend is not considered complete until delivery receipt is logged; retry on failure counts against quota" },
+    ]},
+  },
+  {
+    agentKey:         "interventionOrchestrator",
+    name:             "AGR-003 — Declined Document Correction Policy",
+    scopeType:        "agent"      as const,
+    domain:           "compliance" as const,
+    enforcement:      "hard"       as const,
+    parentPolicyName: "Declined Document Correction Policy",
+    description:      "AGR-003 must use the verified current document version (v1.4+) for all corrective resends on commercial loans >$500K, and is hard-blocked from resending deprecated versions.",
+    policyJson:       { enforcement: "hard", scopeType: "agent", agentScope: "interventionOrchestrator", rules: [
+      { name: "Version Hard-Block",         description: "AGR-003 must not dispatch envelopes with version below the required version; attempt is rejected and error-logged" },
+      { name: "AML Attestation Compliance", description: "All commercial loans >$500K must use v1.4+ containing 2026-Q1 AML attestation clause before AGR-003 resends" },
+      { name: "CRM Status Update Required", description: "AGR-003 must update CRM to INTERVENTION_ACTIVE before resend execution, not after" },
+    ]},
+  },
+  {
+    agentKey:         "interventionOrchestrator",
+    name:             "AGR-003 — Data Minimisation Policy",
+    scopeType:        "agent"      as const,
+    domain:           "compliance" as const,
+    enforcement:      "hard"       as const,
+    parentPolicyName: "Data Minimisation Policy",
+    description:      "AGR-003 must restrict data access to envelope IDs, recipient emails, and transaction IDs — no financial history or identity documents beyond signing context.",
+    policyJson:       { enforcement: "hard", scopeType: "agent", agentScope: "interventionOrchestrator", rules: [
+      { name: "Resend Payload Scope",       description: "AGR-003 dispatch payload may include only envelope ID, recipient email, doc version, and HIGH priority flag" },
+      { name: "Audit Log Minimisation",     description: "Helpdesk ticket content is limited to transaction ID, agent action, and outcome — no signer PII in ticket body" },
+    ]},
+  },
+  // ── AGR-004 Agreement Ops Intelligence ───────────────────────────────────────
+  {
+    agentKey:         "agreementOpsIntelligence",
+    name:             "AGR-004 — Re-Send Frequency Policy",
+    scopeType:        "agent"      as const,
+    domain:           "compliance" as const,
+    enforcement:      "hard"       as const,
+    parentPolicyName: "Re-Send Frequency Policy",
+    description:      "AGR-004 must include re-send frequency compliance statistics in every portfolio report, flagging agents that have exhausted their quotas.",
+    policyJson:       { enforcement: "hard", scopeType: "agent", agentScope: "agreementOpsIntelligence", rules: [
+      { name: "Compliance Reporting Requirement", description: "AGR-004 ops report must include per-agent re-send frequency compliance status section" },
+      { name: "Quota Violation Flagging",         description: "Any envelope with re-send quota exhaustion must appear as a priority item in the compliance violation inventory" },
+    ]},
+  },
+  {
+    agentKey:         "agreementOpsIntelligence",
+    name:             "AGR-004 — Declined Document Correction Policy",
+    scopeType:        "agent"      as const,
+    domain:           "compliance" as const,
+    enforcement:      "hard"       as const,
+    parentPolicyName: "Declined Document Correction Policy",
+    description:      "AGR-004 must surface document version compliance rates and AML attestation coverage gaps as primary KPIs in the operations intelligence report.",
+    policyJson:       { enforcement: "hard", scopeType: "agent", agentScope: "agreementOpsIntelligence", rules: [
+      { name: "Version Compliance KPI",     description: "Ops report must include document version currency rate across the portfolio, broken down by product line" },
+      { name: "AML Gap Inventory",          description: "Ops report must enumerate all transactions with AML attestation clause gaps, including deal value at risk" },
+    ]},
+  },
+  {
+    agentKey:         "agreementOpsIntelligence",
+    name:             "AGR-004 — Data Minimisation Policy",
+    scopeType:        "agent"      as const,
+    domain:           "compliance" as const,
+    enforcement:      "hard"       as const,
+    parentPolicyName: "Data Minimisation Policy",
+    description:      "AGR-004 must produce all analytics and benchmark outputs using aggregated, anonymised data — no individual signer exposure in reports or dashboards.",
+    policyJson:       { enforcement: "hard", scopeType: "agent", agentScope: "agreementOpsIntelligence", rules: [
+      { name: "Anonymised Analytics Only",  description: "AGR-004 calls analytics APIs that return aggregate metrics; individual signer data must not appear in report output" },
+      { name: "Benchmark Data Scope",       description: "Peer benchmark data is strictly anonymised — no peer institution identification in report content" },
+    ]},
+  },
 ] as const;
 
 // ─── Agent system prompts ─────────────────────────────────────────────────────
