@@ -1,6 +1,8 @@
-import { CheckCircle2, FileSignature, AlertTriangle, User, Clock, ExternalLink } from "lucide-react";
+import { useState, useEffect, useCallback } from "react";
+import { CheckCircle2, FileSignature, AlertTriangle, User, Clock, ExternalLink, ThumbsUp, ThumbsDown, ShieldCheck } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Link } from "wouter";
+import { useToast } from "@/hooks/use-toast";
 import { ONESPAN_COLOR, ONESPAN_ACCENT, TARGET_TXN_ID, TARGET_CLIENT } from "./onespan-constants";
 
 interface PolicyCheck {
@@ -34,7 +36,119 @@ function SeverityBadge({ severity }: { severity: PolicyCheck["severity"] }) {
   return null;
 }
 
-function InterventionCard({ hasRun }: { hasRun: boolean }) {
+function useSLACountdown(durationMinutes: number, active: boolean) {
+  const [secondsLeft, setSecondsLeft] = useState(durationMinutes * 60);
+
+  useEffect(() => {
+    if (!active) return;
+    const id = setInterval(() => {
+      setSecondsLeft(s => Math.max(0, s - 1));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [active]);
+
+  const hours   = Math.floor(secondsLeft / 3600);
+  const minutes = Math.floor((secondsLeft % 3600) / 60);
+  const secs    = secondsLeft % 60;
+  const expired = secondsLeft === 0;
+  const label   = expired
+    ? "SLA expired"
+    : `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+
+  return { label, expired, secondsLeft };
+}
+
+function HILApprovalGate({ hasRun, approved, rejected, onApprove, onReject }: {
+  hasRun: boolean;
+  approved: boolean;
+  rejected: boolean;
+  onApprove: () => void;
+  onReject: () => void;
+}) {
+  const { label: slaLabel, expired: slaExpired } = useSLACountdown(120, hasRun && !approved && !rejected);
+
+  if (!hasRun) {
+    return (
+      <div className="rounded-xl border border-dashed border-border/50 p-4 flex items-center gap-3 text-muted-foreground/50">
+        <ShieldCheck className="w-4 h-4" />
+        <span className="text-[11px]">Human-in-Loop approval gate — run pipeline to activate</span>
+      </div>
+    );
+  }
+
+  if (approved) {
+    return (
+      <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4" data-testid="hil-approved-state">
+        <div className="flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+          <span className="text-sm font-semibold text-emerald-400">Intervention Approved</span>
+          <Badge className="text-[9px] px-1.5 bg-emerald-500/10 text-emerald-400 border-emerald-500/20 ml-auto">Human Approved</Badge>
+        </div>
+        <p className="text-[11px] text-muted-foreground mt-1.5">
+          AGR-003 corrective resend approved by human reviewer. ATLAS pipeline continues — CRM and helpdesk records locked.
+        </p>
+      </div>
+    );
+  }
+
+  if (rejected) {
+    return (
+      <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-4" data-testid="hil-rejected-state">
+        <div className="flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4 text-red-400" />
+          <span className="text-sm font-semibold text-red-400">Intervention Rejected — Manual RM Escalation Required</span>
+        </div>
+        <p className="text-[11px] text-muted-foreground mt-1.5">
+          Automated resend blocked. RM David Okafor must contact Sarah Keating directly to resolve the agreement exception.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-border/60 bg-muted/5 p-4" data-testid="hil-gate">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <ShieldCheck className="w-4 h-4" style={{ color: ONESPAN_COLOR }} />
+          <span className="text-sm font-semibold">Human-in-Loop Approval Gate</span>
+          <Badge style={{ backgroundColor: `${ONESPAN_COLOR}15`, color: ONESPAN_COLOR, borderColor: `${ONESPAN_COLOR}30` }} className="text-[9px] px-1.5">ACTIVE</Badge>
+        </div>
+        <div className={`flex items-center gap-1.5 text-[10px] font-mono ${slaExpired ? "text-red-400" : "text-amber-400"}`} data-testid="sla-countdown">
+          <Clock className="w-3 h-3" />
+          <span>RM response SLA: {slaLabel}</span>
+        </div>
+      </div>
+      <p className="text-[11px] text-muted-foreground mb-3">
+        AGR-003 executed corrective resend for <span className="text-foreground font-semibold">{TARGET_TXN_ID}</span> — {TARGET_CLIENT} $1.2M Commercial Loan.
+        Human approval required per Human-in-Loop Approval Gate policy. RM David Okafor notified — 2-hour response SLA active.
+      </p>
+      <div className="flex items-center gap-2">
+        <button
+          onClick={onApprove}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold text-white transition-all hover:opacity-90 active:scale-95"
+          style={{ backgroundColor: ONESPAN_COLOR }}
+          data-testid="btn-hil-approve"
+        >
+          <ThumbsUp className="w-3 h-3" />
+          Approve Intervention
+        </button>
+        <button
+          onClick={onReject}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold border border-red-500/30 text-red-400 bg-red-500/5 hover:bg-red-500/10 transition-all active:scale-95"
+          data-testid="btn-hil-reject"
+        >
+          <ThumbsDown className="w-3 h-3" />
+          Reject — Escalate to RM
+        </button>
+        <span className={`ml-auto text-[10px] ${slaExpired ? "text-red-400" : "text-muted-foreground/50"}`}>
+          {slaExpired ? "⚠ SLA window expired — action required" : "Pipeline paused — awaiting your decision"}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function InterventionCard({ hasRun, approved, rejected }: { hasRun: boolean; approved: boolean; rejected: boolean }) {
   return (
     <div className="rounded-xl border border-border/50 overflow-hidden" data-testid="card-intervention">
       {/* Card header */}
@@ -44,8 +158,10 @@ function InterventionCard({ hasRun }: { hasRun: boolean }) {
             <FileSignature className="w-4 h-4" style={{ color: ONESPAN_COLOR }} />
             <span className="text-sm font-bold" data-testid="heading-intervention">Intervention Record — {TARGET_TXN_ID}</span>
           </div>
-          {hasRun
-            ? <Badge style={{ backgroundColor: `${ONESPAN_COLOR}20`, color: ONESPAN_COLOR, borderColor: `${ONESPAN_COLOR}40` }} className="text-[10px]">Completed by ATLAS</Badge>
+          {hasRun && !rejected
+            ? <Badge style={{ backgroundColor: `${ONESPAN_COLOR}20`, color: ONESPAN_COLOR, borderColor: `${ONESPAN_COLOR}40` }} className="text-[10px]">{approved ? "Approved" : "Completed by ATLAS"}</Badge>
+            : rejected
+            ? <Badge className="text-[10px] bg-red-500/10 text-red-400 border-red-500/20">Rejected — RM Escalation</Badge>
             : <Badge variant="outline" className="text-[10px] text-muted-foreground">Awaiting Pipeline Run</Badge>}
         </div>
       </div>
@@ -90,17 +206,17 @@ function InterventionCard({ hasRun }: { hasRun: boolean }) {
             {[
               { agent: "AGR-001", action: "Portfolio health scan — VIP decline detected in 52h stall", status: hasRun, color: "text-blue-400" },
               { agent: "AGR-002", action: "Exception classified: DOCUMENT_VERSION_MISMATCH — confidence 98% — CORRECTABLE", status: hasRun, color: "text-violet-400" },
-              { agent: "AGR-003", action: "Envelope resent with v1.4 to s.keating@meridian-capital.com — priority HIGH", status: hasRun, color: "text-amber-400" },
-              { agent: "AGR-003", action: "CRM updated — INTERVENTION_ACTIVE — David Okafor attributed", status: hasRun, color: "text-amber-400" },
+              { agent: "AGR-003", action: "Envelope resent with v1.4 to s.keating@meridian-capital.com — priority HIGH", status: hasRun && !rejected, color: "text-amber-400" },
+              { agent: "AGR-003", action: "CRM updated — INTERVENTION_ACTIVE — David Okafor attributed", status: hasRun && !rejected, color: "text-amber-400" },
               { agent: "AGR-003", action: "RM David Okafor notified (email + inbox) — 2h response SLA", status: hasRun, color: "text-amber-400" },
-              { agent: "AGR-003", action: "Helpdesk ticket created (auto-resolved) — AML attestation gap remediated", status: hasRun, color: "text-amber-400" },
+              { agent: "AGR-003", action: "Helpdesk ticket created (auto-resolved) — AML attestation gap remediated", status: hasRun && !rejected, color: "text-amber-400" },
               { agent: "AGR-004", action: "Portfolio ops report generated with systemic recommendations", status: hasRun, color: "text-emerald-400" },
             ].map((item, i) => (
               <div key={i} className="flex items-start gap-2.5" data-testid={`action-item-${i}`}>
-                <div className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${hasRun ? "bg-emerald-400" : "bg-muted-foreground/20"}`} />
+                <div className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${item.status ? "bg-emerald-400" : "bg-muted-foreground/20"}`} />
                 <span className={`text-[9px] font-bold shrink-0 w-14 ${item.color}`}>{item.agent}</span>
-                <span className={`text-[11px] ${hasRun ? "text-foreground/80" : "text-muted-foreground/40"}`}>{item.action}</span>
-                {hasRun && <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0 mt-0.5" />}
+                <span className={`text-[11px] ${item.status ? "text-foreground/80" : "text-muted-foreground/40"}`}>{item.action}</span>
+                {item.status && <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0 mt-0.5" />}
               </div>
             ))}
           </div>
@@ -116,7 +232,7 @@ function InterventionCard({ hasRun }: { hasRun: boolean }) {
             <div className="text-[11px] font-semibold">Sarah Keating</div>
             <div className="text-[10px] text-muted-foreground">VP Treasury · Meridian Capital Partners</div>
             <div className="text-[10px] text-muted-foreground/60 mt-0.5">s.keating@meridian-capital.com</div>
-            {hasRun && <div className="text-[10px] text-blue-400 mt-1">✉ Resend delivered — awaiting signature</div>}
+            {hasRun && !rejected && <div className="text-[10px] text-blue-400 mt-1">✉ Resend delivered — awaiting signature</div>}
           </div>
           <div className="rounded-lg border border-border/50 bg-muted/10 p-3">
             <div className="flex items-center gap-1.5 mb-1">
@@ -131,7 +247,7 @@ function InterventionCard({ hasRun }: { hasRun: boolean }) {
         </div>
 
         {/* ETA */}
-        {hasRun && (
+        {hasRun && !rejected && (
           <div className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/10 p-3">
             <Clock className="w-4 h-4 text-muted-foreground" />
             <span className="text-[11px] text-muted-foreground">Expected signing completion: <span className="text-foreground font-semibold">within 24 hours</span> · ETA auto-updated in CRM</span>
@@ -143,8 +259,31 @@ function InterventionCard({ hasRun }: { hasRun: boolean }) {
 }
 
 export default function OnespanS4Approvals({ hasRun }: { hasRun: boolean }) {
+  const { toast } = useToast();
+  const [approved, setApproved] = useState(false);
+  const [rejected, setRejected] = useState(false);
+
   const openViolations = POLICY_CHECKS.filter(c => c.status === "VIOLATION").length;
   const remediated     = POLICY_CHECKS.filter(c => c.status === "REMEDIATED").length;
+
+  const handleApprove = useCallback(() => {
+    setApproved(true);
+    setRejected(false);
+    toast({
+      title: "Intervention Approved",
+      description: `AGR-003 corrective resend for ${TARGET_TXN_ID} confirmed by human reviewer. CRM and helpdesk records locked.`,
+    });
+  }, [toast]);
+
+  const handleReject = useCallback(() => {
+    setRejected(true);
+    setApproved(false);
+    toast({
+      title: "Intervention Rejected",
+      description: "Automated resend blocked. RM David Okafor must contact Sarah Keating directly to resolve the agreement exception.",
+      variant: "destructive",
+    });
+  }, [toast]);
 
   return (
     <div className="space-y-5">
@@ -166,8 +305,17 @@ export default function OnespanS4Approvals({ hasRun }: { hasRun: boolean }) {
         </div>
       </div>
 
+      {/* HIL Approval Gate */}
+      <HILApprovalGate
+        hasRun={hasRun}
+        approved={approved}
+        rejected={rejected}
+        onApprove={handleApprove}
+        onReject={handleReject}
+      />
+
       {/* Intervention card */}
-      <InterventionCard hasRun={hasRun} />
+      <InterventionCard hasRun={hasRun} approved={approved} rejected={rejected} />
 
       {/* Policy compliance */}
       <div className="rounded-xl border border-border/50 overflow-hidden">

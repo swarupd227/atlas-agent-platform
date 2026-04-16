@@ -26,6 +26,7 @@ import {
   Zap,
   Umbrella,
   TrendingDown,
+  FileSignature,
 } from "lucide-react";
 
 interface Demo {
@@ -233,16 +234,16 @@ const DEMOS: Demo[] = [
     badge: "New",
   },
   {
-    id: "onespan-digital-agreements",
+    id: "onespan-agreements",
     title: "Digital Agreements Intelligence",
     client: "OneSpan",
     description:
       "VIP deal TXN-2026-00847 — Meridian Capital Partners $1.2M Commercial Loan — declined by signer Sarah Keating (VP Treasury) due to document version mismatch (v1.2 sent vs v1.4 required, AML attestation gap). 4 ATLAS agents run sequentially: AGR-001 detects VIP decline from portfolio health scan → AGR-002 classifies exception as CORRECTABLE (98% confidence) → AGR-003 resends envelope with v1.4, updates CRM, notifies RM David Okafor → AGR-004 generates ops report with peer benchmarks and systemic recommendations.",
-    industry: "Financial Services",
+    industry: "Financial Services / Legal Tech",
     industryId: "financial_services",
     stage: "Agreement Operations",
     route: "/demo/onespan",
-    icon: FileText,
+    icon: FileSignature,
     iconColor: "#00538C",
     duration: "6 min",
     screens: 4,

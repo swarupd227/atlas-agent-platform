@@ -1,95 +1,475 @@
-#!/usr/bin/env tsx
+#!/usr/bin/env npx tsx
 /**
  * migrate-onespan-to-prod.ts
  *
- * Dev → Production migration script for the OneSpan Digital Agreements Intelligence demo.
- *
- * Provisions all platform intelligence components in the PROD org:
- *   - 3 knowledge bases
- *   - 5 mock MCP servers + tools
- *   - 12 agent skills (3 per agent)
- *   - 4 org policies
- *   - 12 ontology concepts
- *   - 4 blueprints
- *   - 4 agents (gpt-4.1, autonomyMode: autonomous)
- *   - 1 shared eval suite + 10 test cases
+ * Provisions the OneSpan Digital Agreements Intelligence demo (SCN-OS-1.0)
+ * against a target ATLAS platform instance via REST API — no direct database access.
  *
  * Usage:
- *   DEV_ORG_ID=<dev-org-id>   PROD_ORG_ID=<prod-org-id>   npx tsx scripts/migrate-onespan-to-prod.ts
+ *   npx tsx scripts/migrate-onespan-to-prod.ts \
+ *     --prod-url https://atlas-platform.replit.app \
+ *     --prod-org-id <target-org-id> \
+ *     [--dry-run]
  *
- * Required environment variables:
- *   DATABASE_URL     — PostgreSQL connection string (prod DB)
- *   PROD_ORG_ID      — Target production org ID
- *   DEV_ORG_ID       — Source dev org ID (for reference / validation)
+ * Flags:
+ *   --prod-url     Base URL of the target ATLAS platform (required)
+ *   --prod-org-id  Organization ID on the target platform (required)
+ *   --dry-run      Validate connectivity and print plan without making changes
  *
- * The script is IDEMPOTENT: re-running it will not create duplicate entities.
+ * The script is fully idempotent — re-running it is safe. All resources are
+ * looked up by name before creation; existing resources are left unchanged.
  *
- * Provisions:
- *   1. MCP servers (base URL uses PROD_BASE_URL env var or inferred from DATABASE_URL host)
- *   2. Skills (identical to dev — production-ready)
- *   3. Policies (scoped to prod org)
- *   4. Ontology concepts (financial_services industry)
- *   5. Blueprints
- *   6. Agents with all bindings (KB, MCP, skills, evals, policies, ontology tags)
- *   7. Eval suite + test cases
+ * NEVER run db:push — it drops the pgvector embedding column.
  */
 
-import { storage } from "../server/storage";
+import {
+  makeOnespanMcpServerDefs,
+  ONESPAN_KB_DEFS,
+  ONESPAN_SKILLS,
+  ONESPAN_AGENT_DEFS,
+  ONESPAN_POLICY_DEFS,
+  ONESPAN_ONTOLOGY_CONCEPTS,
+  ONESPAN_BLUEPRINT_DEFS,
+  ONESPAN_EVAL_CASES,
+  AGR_001_NAME,
+  OS_TARGET_TXN_ID,
+  OS_TARGET_CLIENT,
+} from "../server/onespan-shared-defs";
 
-const PROD_ORG_ID   = process.env.PROD_ORG_ID   ?? "REPLACE_WITH_PROD_ORG_ID";
-const DEV_ORG_ID    = process.env.DEV_ORG_ID    ?? "0c9bcf16-cdd9-45e2-87f6-6a839a7f7056";
-const PROD_BASE_URL = process.env.PROD_BASE_URL  ?? `https://${process.env.REPL_SLUG ?? "app"}.replit.app`;
+// ── CLI argument parsing ────────────────────────────────────────────────────────
 
-// ─── Sanity check ─────────────────────────────────────────────────────────────
+function parseArgs(): { prodUrl: string; prodOrgId: string; dryRun: boolean } {
+  const args = process.argv.slice(2);
+  const get = (flag: string): string | undefined => {
+    const i = args.indexOf(flag);
+    return i >= 0 ? args[i + 1] : undefined;
+  };
+  const prodUrl   = get("--prod-url");
+  const prodOrgId = get("--prod-org-id");
+  const dryRun    = args.includes("--dry-run");
 
-function abort(msg: string): never {
-  console.error(`[migrate-onespan] ABORT: ${msg}`);
-  process.exit(1);
-}
-
-if (!process.env.DATABASE_URL) abort("DATABASE_URL is not set");
-if (PROD_ORG_ID === "REPLACE_WITH_PROD_ORG_ID") abort("PROD_ORG_ID must be set — run with PROD_ORG_ID=<id>");
-if (PROD_ORG_ID === DEV_ORG_ID) abort("PROD_ORG_ID must differ from DEV_ORG_ID — aborting to avoid overwriting dev");
-
-// ─── Import live-run defs (reuse the same canonical definitions) ───────────────
-
-async function main() {
-  console.log(`[migrate-onespan] Starting migration → org ${PROD_ORG_ID}`);
-  console.log(`[migrate-onespan] Prod base URL: ${PROD_BASE_URL}`);
-
-  // Force prod org context via env override
-  process.env.DEV_ORG_ID = PROD_ORG_ID;
-
-  // Dynamically import the live-run module which contains all entity definitions
-  const {
-    ensureOnespanAgents,
-    ONESPAN_MCP_SERVERS,
-  } = await import("../server/onespan-live-run");
-
-  // Patch MCP server URLs to use prod base URL
-  for (const server of ONESPAN_MCP_SERVERS) {
-    server.url = server.url.replace(/http:\/\/localhost:\d+/, PROD_BASE_URL);
+  if (!prodUrl) {
+    console.error("ERROR: --prod-url is required");
+    console.error("Example: --prod-url https://atlas-platform.replit.app");
+    process.exit(1);
+  }
+  if (!prodOrgId) {
+    console.error("ERROR: --prod-org-id is required");
+    console.error("Example: --prod-org-id cf5754b1-ee80-4b51-8bf6-7be263c97527");
+    process.exit(1);
   }
 
-  console.log(`[migrate-onespan] Provisioning ${ONESPAN_MCP_SERVERS.length} MCP servers at ${PROD_BASE_URL}…`);
-
-  await ensureOnespanAgents();
-
-  console.log(`[migrate-onespan] Migration complete ✓`);
-  console.log(`[migrate-onespan] Entities provisioned in org ${PROD_ORG_ID}:`);
-  console.log(`  • 3 knowledge bases`);
-  console.log(`  • 5 MCP servers + tools`);
-  console.log(`  • 12 agent skills`);
-  console.log(`  • 4 policies`);
-  console.log(`  • 12 ontology concepts`);
-  console.log(`  • 4 blueprints`);
-  console.log(`  • 4 agents (gpt-4.1, autonomous)`);
-  console.log(`  • 1 eval suite + 10 test cases`);
-  console.log(`[migrate-onespan] All entities are idempotent — re-running this script is safe.`);
-  process.exit(0);
+  return { prodUrl: prodUrl.replace(/\/$/, ""), prodOrgId, dryRun };
 }
 
-main().catch(err => {
-  console.error("[migrate-onespan] Fatal error:", err);
+// ── HTTP client ────────────────────────────────────────────────────────────────
+
+interface ApiClient {
+  get<T = any>(path: string): Promise<T>;
+  post<T = any>(path: string, body: object): Promise<T>;
+}
+
+function makeApiClient(baseUrl: string, orgId: string, dryRun: boolean): ApiClient {
+  const headers = {
+    "Content-Type":      "application/json",
+    "x-organization-id": orgId,
+  };
+
+  async function request<T>(method: string, path: string, body?: object): Promise<T> {
+    const url = `${baseUrl}${path}`;
+    if (dryRun && method !== "GET") {
+      console.log(`    [dry-run] ${method} ${url}`);
+      return {} as T;
+    }
+    const resp = await fetch(url, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => "(no body)");
+      throw new Error(`${method} ${url} → HTTP ${resp.status}: ${text}`);
+    }
+    const ct = resp.headers.get("content-type") ?? "";
+    return ct.includes("application/json") ? (resp.json() as Promise<T>) : ({} as T);
+  }
+
+  return {
+    get:  <T>(path: string)               => request<T>("GET",  path),
+    post: <T>(path: string, body: object) => request<T>("POST", path, body),
+  };
+}
+
+// ── Migration counters ─────────────────────────────────────────────────────────
+
+interface Counters {
+  kbs: { created: number; skipped: number };
+  mcpServers: { created: number; skipped: number };
+  skills: { created: number; skipped: number };
+  policies: { created: number; skipped: number };
+  ontology: { created: number; skipped: number };
+  blueprints: { created: number; skipped: number };
+  agents: { created: number; skipped: number };
+  evals: { created: number; skipped: number };
+}
+
+function zeroCounts(): Counters {
+  return {
+    kbs:        { created: 0, skipped: 0 },
+    mcpServers: { created: 0, skipped: 0 },
+    skills:     { created: 0, skipped: 0 },
+    policies:   { created: 0, skipped: 0 },
+    ontology:   { created: 0, skipped: 0 },
+    blueprints: { created: 0, skipped: 0 },
+    agents:     { created: 0, skipped: 0 },
+    evals:      { created: 0, skipped: 0 },
+  };
+}
+
+// ── Main migration function ────────────────────────────────────────────────────
+
+async function migrate() {
+  const { prodUrl, prodOrgId, dryRun } = parseArgs();
+  const counts = zeroCounts();
+
+  console.log("┌─────────────────────────────────────────────────────────────────────────");
+  console.log("│ ATLAS — OneSpan SCN-OS-1.0 Production Migration");
+  console.log("│ Digital Agreements Intelligence — VIP Decline Recovery Pipeline");
+  console.log("├─────────────────────────────────────────────────────────────────────────");
+  console.log(`│ Target URL:    ${prodUrl}`);
+  console.log(`│ Target Org ID: ${prodOrgId}`);
+  console.log(`│ Dry Run:       ${dryRun}`);
+  console.log("└─────────────────────────────────────────────────────────────────────────");
+
+  const api = makeApiClient(prodUrl, prodOrgId, dryRun);
+  const MCP_SERVERS = makeOnespanMcpServerDefs(prodUrl);
+
+  // ── Step 1: Health check ─────────────────────────────────────────────────────
+  console.log("\n[1/8] Health check…");
+  try {
+    await api.get("/api/agents");
+    console.log("  ✓ Platform reachable");
+  } catch (err: any) {
+    console.error(`  ✗ Platform unreachable: ${err.message}`);
+    process.exit(1);
+  }
+
+  // ── Step 2: Ontology concepts ────────────────────────────────────────────────
+  console.log("\n[2/8] Ontology concepts (12)…");
+  const existingConcepts: any[] = await api.get("/api/ontology-concepts/all").catch(() => []);
+  const conceptIdByLabel: Record<string, string> = {};
+  for (const c of ONESPAN_ONTOLOGY_CONCEPTS) {
+    const existing = existingConcepts.find((x: any) => x.label === c.label);
+    if (existing) {
+      conceptIdByLabel[c.label] = existing.id;
+      console.log(`  skip   ${c.label}`);
+      counts.ontology.skipped++;
+    } else {
+      const created = await api.post("/api/ontology-concepts", {
+        label:       c.label,
+        category:    c.category,
+        description: c.description,
+        tags:        c.tags,
+        status:      "active",
+      });
+      if (!dryRun) conceptIdByLabel[c.label] = created.id;
+      console.log(`  create ${c.label}`);
+      counts.ontology.created++;
+    }
+  }
+
+  // ── Step 3: Policies ─────────────────────────────────────────────────────────
+  console.log("\n[3/8] Policies (4)…");
+  const existingPolicies: any[] = await api.get("/api/policies").catch(() => []);
+  const policyIdByName: Record<string, string> = {};
+  for (const p of ONESPAN_POLICY_DEFS) {
+    const existing = existingPolicies.find((x: any) => x.name === p.name);
+    if (existing) {
+      policyIdByName[p.name] = existing.id;
+      console.log(`  skip   ${p.name}`);
+      counts.policies.skipped++;
+    } else {
+      const created = await api.post("/api/policies", {
+        name:        p.name,
+        domain:      p.domain,
+        description: p.description,
+        status:      "active",
+        version:     1,
+        scopeType:   "org",
+        policyJson:  p.policyJson,
+      });
+      if (!dryRun) policyIdByName[p.name] = created.id;
+      console.log(`  create ${p.name}`);
+      counts.policies.created++;
+    }
+  }
+
+  // ── Step 4: Knowledge bases ──────────────────────────────────────────────────
+  console.log("\n[4/8] Knowledge bases (3)…");
+  const existingKBs: any[] = await api.get("/api/knowledge-bases").catch(() => []);
+  const kbIdByName: Record<string, string> = {};
+  for (const kb of ONESPAN_KB_DEFS) {
+    const existing = existingKBs.find((x: any) => x.name === kb.name);
+    if (existing) {
+      kbIdByName[kb.name] = existing.id;
+      console.log(`  skip   ${kb.name}`);
+      counts.kbs.skipped++;
+    } else {
+      const created = await api.post("/api/knowledge-bases", {
+        name:           kb.name,
+        description:    kb.description,
+        industry:       kb.industry,
+        domain:         kb.domain,
+        status:         "active",
+        embeddingModel: "text-embedding-3-small",
+      });
+      if (!dryRun) kbIdByName[kb.name] = created.id;
+      console.log(`  create ${kb.name}`);
+      counts.kbs.created++;
+    }
+  }
+
+  // ── Step 5: MCP servers + tools ──────────────────────────────────────────────
+  console.log("\n[5/8] MCP servers (5) + tools…");
+  const existingServers: any[] = await api.get("/api/mcp-servers").catch(() => []);
+  const serverIdByName: Record<string, string> = {};
+  for (const serverDef of MCP_SERVERS) {
+    const existing = existingServers.find((x: any) => x.name === serverDef.name);
+    if (existing) {
+      serverIdByName[serverDef.name] = existing.id;
+      console.log(`  skip   ${serverDef.name}`);
+      counts.mcpServers.skipped++;
+    } else {
+      const created = await api.post("/api/mcp-servers", {
+        name:        serverDef.name,
+        description: serverDef.description,
+        url:         serverDef.url,
+        status:      "active",
+        riskTier:    "low",
+        allowlisted: true,
+      });
+      if (!dryRun) serverIdByName[serverDef.name] = created.id;
+      console.log(`  create ${serverDef.name} → ${serverDef.url}`);
+      counts.mcpServers.created++;
+
+      if (!dryRun && created.id) {
+        for (const tool of serverDef.tools) {
+          await api.post("/api/mcp-server-tools", {
+            serverId:           created.id,
+            name:               tool.name,
+            description:        tool.description,
+            inputSchema:        tool.inputSchema,
+            annotations:        { endpoint: tool.endpoint, method: tool.method },
+            enabled:            true,
+            riskClassification: "low",
+          });
+        }
+        console.log(`    + ${(serverDef.tools as readonly any[]).length} tools registered`);
+      }
+    }
+  }
+
+  // ── Step 6: Skills ───────────────────────────────────────────────────────────
+  console.log("\n[6/8] Skills (12)…");
+  const existingSkills: any[] = await api.get("/api/skills").catch(() => []);
+  const skillIdByName: Record<string, string> = {};
+  for (const s of ONESPAN_SKILLS) {
+    const existing = existingSkills.find((x: any) => x.name === s.name);
+    if (existing) {
+      skillIdByName[s.name] = existing.id;
+      console.log(`  skip   ${s.name}`);
+      counts.skills.skipped++;
+    } else {
+      const created = await api.post("/api/skills", {
+        name:            s.name,
+        description:     s.description,
+        domain:          s.domain,
+        industry:        s.industry,
+        version:         s.version,
+        author:          "OneSpan Digital Agreements Analytics Engineering",
+        trustTier:       "platform-provided",
+        complexity:      (s.yamlFrontmatter.complexity as string) || "intermediate",
+        status:          "active",
+        tags:            s.tags,
+        contextMode:     (s.yamlFrontmatter.contextMode as string) || "summary",
+        markdownBody:    s.markdownBody,
+        yamlFrontmatter: {
+          ...s.yamlFrontmatter,
+          industry: "financial_services",
+          domain:   "digital_agreements",
+          version:  "1.0",
+          tags:     s.tags,
+        },
+        allowedTools: (s.yamlFrontmatter.allowedTools as string[]) || [],
+      });
+      if (!dryRun) skillIdByName[s.name] = created.id;
+      console.log(`  create ${s.name}`);
+      counts.skills.created++;
+    }
+  }
+
+  // ── Step 7: Blueprints ───────────────────────────────────────────────────────
+  console.log("\n[7/8] Blueprints (4) + agents…");
+  const existingBlueprints: any[] = await api.get("/api/blueprints").catch(() => []);
+  const blueprintIdByKey: Record<string, string> = {};
+  for (const bp of ONESPAN_BLUEPRINT_DEFS) {
+    const existing = existingBlueprints.find((x: any) => x.name === bp.name);
+    if (existing) {
+      blueprintIdByKey[bp.key] = existing.id;
+      console.log(`  skip   ${bp.name}`);
+      counts.blueprints.skipped++;
+    } else {
+      const created = await api.post("/api/blueprints", {
+        name:        bp.name,
+        description: bp.description,
+        version:     1,
+        status:      "active",
+        patternType: "pipeline",
+        blueprintJson: {
+          industry:           "financial_services",
+          workflowSteps:      bp.workflowSteps,
+          requiredTools:      bp.requiredTools,
+          escalationTriggers: ["VIP decline", "Document version mismatch", "AML attestation gap"],
+          complianceNodes:    ["Document-Version-Currency", "VIP-SLA", "Agent-Intervention-Audit", "Human-in-Loop-Gate"],
+          outputFormat:       "Portfolio Ops Intelligence Report + JSON pipeline summary",
+        },
+      });
+      if (!dryRun) blueprintIdByKey[bp.key] = created.id;
+      console.log(`  create ${bp.name}`);
+      counts.blueprints.created++;
+    }
+  }
+
+  // ── Step 7b: Agents ──────────────────────────────────────────────────────────
+  const AGENT_POLICY_BINDINGS = [
+    { policyName: "Document Version Currency Policy", enforcement: "hard" },
+    { policyName: "VIP Transaction SLA Policy",       enforcement: "hard" },
+    { policyName: "Agent Intervention Audit Policy",  enforcement: "hard" },
+    { policyName: "Human-in-Loop Approval Gate",      enforcement: "hard" },
+  ];
+  const AGENT_ONTOLOGY_TAGS: Record<string, string[]> = {
+    transactionHealthMonitor:  ["Digital Agreement Envelope", "Completion Rate", "Agreement Stall", "VIP Transaction"],
+    exceptionClassifier:       ["Document Version Mismatch", "AML Attestation Clause", "Signer Session Event", "Corrective Resend"],
+    interventionOrchestrator:  ["Corrective Resend", "Relationship Manager", "Envelope Audit Trail"],
+    agreementOpsIntelligence:  ["Peer Benchmark", "OneSpan Analytics Dashboard", "Envelope Audit Trail"],
+  };
+
+  const existingAgents: any[] = await api.get("/api/agents").catch(() => []);
+  const agentIdByKey: Record<string, string> = {};
+  for (const def of ONESPAN_AGENT_DEFS) {
+    const existing = existingAgents.find((x: any) => x.name === def.name);
+    if (existing) {
+      agentIdByKey[def.key] = existing.id;
+      console.log(`  skip   ${def.name}`);
+      counts.agents.skipped++;
+    } else {
+      const mcpServerIds = def.mcpServerNames
+        .map(n => serverIdByName[n])
+        .filter(Boolean);
+      const skillIds = def.skillNames
+        .map(n => skillIdByName[n])
+        .filter(Boolean)
+        .map(skillId => ({ skillId }));
+      const ontologyTags = (AGENT_ONTOLOGY_TAGS[def.key] || []).map(label => ({ label }));
+      const blueprintId  = blueprintIdByKey[def.key];
+      const kbId         = kbIdByName[def.kbName];
+
+      const created = await api.post("/api/agents", {
+        name:              def.name,
+        description:       def.description,
+        systemPrompt:      def.systemPrompt,
+        runtimeConfig:     { prompt: def.taskPrompt, scheduleIntervalMinutes: 0 },
+        agentType:         "operational",
+        status:            "active",
+        environment:       "production",
+        modelProvider:     "openai",
+        modelName:         "gpt-4.1",
+        riskTier:          "MEDIUM",
+        autonomyMode:      "autonomous",
+        currentVersion:    "1.0.0",
+        maxToolIterations: def.maxToolIterations,
+        toolAccessClass:   "standard",
+        department:        "Digital Agreements Operations",
+        owner:             "OneSpan Digital Agreements Engineering",
+        healthScore:       0.96,
+        successRate:       0.96,
+        preloadedSkills:   skillIds,
+        blueprintId,
+        complianceTags:    ["AML-2026Q1", "ONESPAN-POLICY-V3.2", "VIP-SLA"],
+        policyBindings:    AGENT_POLICY_BINDINGS,
+        ontologyTags,
+        mcpServerIds,
+        knowledgeBaseId:   kbId,
+      });
+      if (!dryRun) agentIdByKey[def.key] = created.id;
+      console.log(`  create ${def.name}`);
+      counts.agents.created++;
+    }
+  }
+
+  // ── Step 8: Eval suite + cases ───────────────────────────────────────────────
+  console.log("\n[8/8] Eval suite + cases (10)…");
+  const SUITE_NAME = "OneSpan — Digital Agreements Intelligence Regression Suite";
+  const existingEvals: any[] = await api.get("/api/eval-suites").catch(() => []);
+  const existingSuite = existingEvals.find((x: any) => x.name === SUITE_NAME);
+  const leadAgentId   = agentIdByKey["transactionHealthMonitor"];
+
+  if (existingSuite) {
+    console.log(`  skip   ${SUITE_NAME}`);
+    counts.evals.skipped++;
+  } else if (!dryRun && leadAgentId) {
+    const suite = await api.post("/api/eval-suites", {
+      agentId:         leadAgentId,
+      name:            SUITE_NAME,
+      type:            "regression",
+      industry:        "financial_services",
+      passRate:        0.94,
+      totalCases:      10,
+      coverageTags:    ["portfolio_health","vip_sla","exception_classification","aml_compliance","intervention","crm_audit","rm_escalation","benchmarks"],
+      thresholdConfig: { minPassRate: 0.90 },
+      scorerConfig:    { type: "llm_judge", model: "gpt-4.1" },
+    });
+    console.log(`  create ${SUITE_NAME}`);
+    counts.evals.created++;
+
+    for (const ec of ONESPAN_EVAL_CASES) {
+      await api.post(`/api/eval-suites/${suite.id}/test-cases`, {
+        name:           ec.name,
+        severity:       ec.severity,
+        tags:           ec.tags,
+        status:         "active",
+        origin:         "onespan_spec",
+        weight:         ec.severity === "critical" ? 2 : 1,
+        inputData:      { scenario: ec.name },
+        expectedOutput: { pass: true },
+      });
+    }
+    console.log(`    + ${ONESPAN_EVAL_CASES.length} test cases created`);
+  }
+
+  // ── Summary ──────────────────────────────────────────────────────────────────
+  console.log("\n┌─────────────────────────────────────────────────────────────────────────");
+  console.log("│ MIGRATION COMPLETE");
+  console.log("├─────────────────────────────────────────────────────────────────────────");
+  console.log(`│ Scenario: ${OS_TARGET_TXN_ID} — ${OS_TARGET_CLIENT} VIP Decline Recovery`);
+  console.log(`│ Agents provisioned: ${AGR_001_NAME}, AGR-002, AGR-003, AGR-004`);
+  console.log("├─────────────────────────────────────────────────────────────────────────");
+  console.log(`│ Knowledge bases : ${counts.kbs.created} created, ${counts.kbs.skipped} skipped`);
+  console.log(`│ MCP servers     : ${counts.mcpServers.created} created, ${counts.mcpServers.skipped} skipped`);
+  console.log(`│ Skills          : ${counts.skills.created} created, ${counts.skills.skipped} skipped`);
+  console.log(`│ Policies        : ${counts.policies.created} created, ${counts.policies.skipped} skipped`);
+  console.log(`│ Ontology        : ${counts.ontology.created} created, ${counts.ontology.skipped} skipped`);
+  console.log(`│ Blueprints      : ${counts.blueprints.created} created, ${counts.blueprints.skipped} skipped`);
+  console.log(`│ Agents          : ${counts.agents.created} created, ${counts.agents.skipped} skipped`);
+  console.log(`│ Eval suites     : ${counts.evals.created} created, ${counts.evals.skipped} skipped`);
+  if (dryRun) {
+    console.log("│");
+    console.log("│ [DRY RUN] No changes were made. Remove --dry-run to apply.");
+  }
+  console.log("└─────────────────────────────────────────────────────────────────────────");
+}
+
+migrate().catch(err => {
+  console.error("[migrate-onespan] Fatal error:", err?.message ?? err);
   process.exit(1);
 });

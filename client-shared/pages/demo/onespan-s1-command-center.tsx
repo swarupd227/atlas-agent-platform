@@ -1,5 +1,6 @@
+import { useState, useEffect } from "react";
 import { Link } from "wouter";
-import { AlertTriangle, CheckCircle2, Clock, FileText } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, FileText, ShieldAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   ONESPAN_TRANSACTIONS, ONESPAN_KPI_DATA, ONESPAN_COLOR, ONESPAN_ACCENT,
@@ -50,6 +51,53 @@ function VersionCell({ sent, required }: { sent: string; required: string }) {
   );
 }
 
+function RiskScoreCell({ score }: { score: number }) {
+  const color =
+    score >= 80 ? "text-red-400"
+    : score >= 60 ? "text-amber-400"
+    : score >= 40 ? "text-yellow-400"
+    : "text-emerald-400";
+  const bg =
+    score >= 80 ? "bg-red-500/10 border-red-500/20"
+    : score >= 60 ? "bg-amber-500/10 border-amber-500/20"
+    : score >= 40 ? "bg-yellow-500/10 border-yellow-500/20"
+    : "bg-emerald-500/10 border-emerald-500/20";
+  return (
+    <span className={`inline-flex items-center text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${color} ${bg}`} data-testid={`risk-${score}`}>
+      {score}
+    </span>
+  );
+}
+
+function SLACountdown({ stallHours, status }: { stallHours: number; status: OnespanTransaction["status"] }) {
+  const [tick, setTick] = useState(0);
+
+  useEffect(() => {
+    if (status !== "stalled" && status !== "declined") return;
+    const id = setInterval(() => setTick(t => t + 1), 60_000);
+    return () => clearInterval(id);
+  }, [status]);
+
+  if (status !== "stalled" && status !== "declined") return null;
+
+  const escalationThresholdHours = 72;
+  const remaining = escalationThresholdHours - stallHours;
+
+  if (remaining <= 0) {
+    return (
+      <span className="inline-flex items-center gap-1 text-[9px] text-red-400 font-medium">
+        <ShieldAlert className="w-2.5 h-2.5" />SLA breached
+      </span>
+    );
+  }
+
+  return (
+    <span className={`inline-flex items-center gap-0.5 text-[9px] font-mono ${remaining <= 12 ? "text-red-400" : "text-amber-400/70"}`}>
+      <Clock className="w-2.5 h-2.5" />{remaining}h to esc.
+    </span>
+  );
+}
+
 function TxnRow({ txn }: { txn: OnespanTransaction }) {
   const isTarget = txn.id === TARGET_TXN_ID;
   return (
@@ -79,8 +127,14 @@ function TxnRow({ txn }: { txn: OnespanTransaction }) {
       <td className="py-2.5 px-2 text-center">
         <span className="text-[10px] text-muted-foreground">{txn.signerCount}</span>
       </td>
+      <td className="py-2.5 px-2 text-center">
+        <RiskScoreCell score={txn.riskScore} />
+      </td>
       <td className="py-2.5 px-2 pr-4">
-        <StatusPill status={txn.status} stallHours={txn.stallHours} />
+        <div className="flex flex-col gap-1">
+          <StatusPill status={txn.status} stallHours={txn.stallHours} />
+          <SLACountdown stallHours={txn.stallHours} status={txn.status} />
+        </div>
       </td>
     </tr>
   );
@@ -139,7 +193,7 @@ export default function OnespanS1CommandCenter({ onRunPipeline }: { onRunPipelin
         <div className="px-4 py-3 border-b border-border/50 flex items-center justify-between">
           <div>
             <h3 className="text-sm font-semibold" data-testid="heading-transactions">Active Agreement Transactions</h3>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Rolling 30 days · {ONESPAN_TRANSACTIONS.length} transactions · 7 stalls + 1 decline</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Rolling 30 days · {ONESPAN_TRANSACTIONS.length} transactions · Risk score 0–100</p>
           </div>
           <div className="flex items-center gap-2">
             <span className="w-2 h-2 rounded-full bg-red-400 animate-pulse" />
@@ -155,7 +209,8 @@ export default function OnespanS1CommandCenter({ onRunPipeline }: { onRunPipelin
                 <th className="py-2 px-2 text-right text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Amount</th>
                 <th className="py-2 px-2 text-center text-[10px] font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap">Doc Ver</th>
                 <th className="py-2 px-2 text-center text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Signers</th>
-                <th className="py-2 px-2 pr-4 text-left text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Status</th>
+                <th className="py-2 px-2 text-center text-[10px] font-medium text-muted-foreground uppercase tracking-wider whitespace-nowrap">Risk</th>
+                <th className="py-2 px-2 pr-4 text-left text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Status · SLA</th>
               </tr>
             </thead>
             <tbody>

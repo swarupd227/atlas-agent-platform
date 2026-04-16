@@ -17,17 +17,22 @@ export interface OnespanTransaction {
   requiredVersion: string;
   stallHours: number;
   signerCount: number;
+  riskScore: number;
 }
 
 export const ONESPAN_TRANSACTIONS: OnespanTransaction[] = [
-  { id: "TXN-2026-00847", client: "Meridian Capital Partners", product: "Commercial Loan",  amount: 1200000, status: "declined",  priority: "vip",    docVersion: "v1.2", requiredVersion: "v1.4", stallHours: 52, signerCount: 2 },
-  { id: "TXN-2026-00831", client: "Apex Realty Group",         product: "Mortgage",          amount: 850000,  status: "stalled",   priority: "high",   docVersion: "v2.1", requiredVersion: "v2.1", stallHours: 72, signerCount: 3 },
-  { id: "TXN-2026-00819", client: "Sunrise Logistics LLC",     product: "Credit Facility",   amount: 500000,  status: "stalled",   priority: "normal", docVersion: "v3.0", requiredVersion: "v3.0", stallHours: 48, signerCount: 1 },
-  { id: "TXN-2026-00802", client: "Harbor Financial Corp",     product: "Term Loan",         amount: 2100000, status: "completed", priority: "high",   docVersion: "v1.4", requiredVersion: "v1.4", stallHours: 0,  signerCount: 4 },
-  { id: "TXN-2026-00798", client: "Clearview Ventures",        product: "Line of Credit",    amount: 350000,  status: "pending",   priority: "normal", docVersion: "v2.0", requiredVersion: "v2.0", stallHours: 0,  signerCount: 2 },
-  { id: "TXN-2026-00791", client: "Pacific Meridian Bank",     product: "Mortgage",          amount: 980000,  status: "in_review", priority: "high",   docVersion: "v1.4", requiredVersion: "v1.4", stallHours: 0,  signerCount: 3 },
-  { id: "TXN-2026-00784", client: "TechGrowth Capital",        product: "Credit Facility",   amount: 650000,  status: "stalled",   priority: "normal", docVersion: "v2.1", requiredVersion: "v2.1", stallHours: 36, signerCount: 2 },
-  { id: "TXN-2026-00777", client: "National Bridge Corp",      product: "Term Loan",         amount: 4500000, status: "completed", priority: "vip",    docVersion: "v1.4", requiredVersion: "v1.4", stallHours: 0,  signerCount: 5 },
+  { id: "TXN-2026-00847", client: "Meridian Capital Partners",  product: "Commercial Loan",  amount: 1200000, status: "declined",  priority: "vip",    docVersion: "v1.2", requiredVersion: "v1.4", stallHours: 52, signerCount: 2, riskScore: 94 },
+  { id: "TXN-2026-00831", client: "Apex Realty Group",          product: "Mortgage",          amount:  850000, status: "stalled",   priority: "high",   docVersion: "v2.1", requiredVersion: "v2.1", stallHours: 72, signerCount: 3, riskScore: 81 },
+  { id: "TXN-2026-00819", client: "Sunrise Logistics LLC",      product: "Credit Facility",   amount:  500000, status: "stalled",   priority: "normal", docVersion: "v3.0", requiredVersion: "v3.0", stallHours: 48, signerCount: 1, riskScore: 67 },
+  { id: "TXN-2026-00802", client: "Harbor Financial Corp",      product: "Term Loan",         amount: 2100000, status: "completed", priority: "high",   docVersion: "v1.4", requiredVersion: "v1.4", stallHours:  0, signerCount: 4, riskScore: 12 },
+  { id: "TXN-2026-00798", client: "Clearview Ventures",         product: "Line of Credit",    amount:  350000, status: "pending",   priority: "normal", docVersion: "v2.0", requiredVersion: "v2.0", stallHours:  0, signerCount: 2, riskScore: 22 },
+  { id: "TXN-2026-00791", client: "Pacific Meridian Bank",      product: "Mortgage",          amount:  980000, status: "in_review", priority: "high",   docVersion: "v1.4", requiredVersion: "v1.4", stallHours:  0, signerCount: 3, riskScore: 38 },
+  { id: "TXN-2026-00784", client: "TechGrowth Capital",         product: "Credit Facility",   amount:  650000, status: "stalled",   priority: "normal", docVersion: "v2.1", requiredVersion: "v2.1", stallHours: 36, signerCount: 2, riskScore: 59 },
+  { id: "TXN-2026-00777", client: "National Bridge Corp",       product: "Term Loan",         amount: 4500000, status: "completed", priority: "vip",    docVersion: "v1.4", requiredVersion: "v1.4", stallHours:  0, signerCount: 5, riskScore:  8 },
+  { id: "TXN-2026-00763", client: "Riverstone Equity Partners", product: "Commercial Loan",   amount:  775000, status: "stalled",   priority: "high",   docVersion: "v1.3", requiredVersion: "v1.4", stallHours: 28, signerCount: 2, riskScore: 73 },
+  { id: "TXN-2026-00751", client: "Blueharbor Asset Mgmt",     product: "Line of Credit",    amount: 3200000, status: "pending",   priority: "vip",    docVersion: "v2.0", requiredVersion: "v2.0", stallHours:  6, signerCount: 3, riskScore: 45 },
+  { id: "TXN-2026-00739", client: "Sterling Bridge Capital",    product: "Mortgage",          amount:  620000, status: "declined",  priority: "normal", docVersion: "v2.0", requiredVersion: "v2.1", stallHours: 18, signerCount: 1, riskScore: 88 },
+  { id: "TXN-2026-00724", client: "Westgate Holdings LLC",      product: "Term Loan",         amount: 1800000, status: "in_review", priority: "vip",    docVersion: "v1.4", requiredVersion: "v1.4", stallHours:  0, signerCount: 4, riskScore: 31 },
 ];
 
 export interface OnespanAgent {
@@ -63,7 +68,7 @@ export const ONESPAN_AGENTS: OnespanAgent[] = [
     tools:      ["get_transaction_detail", "get_signer_session", "get_document_versions", "classify_decline_reason"],
     color:      "text-violet-400",
     bgColor:    "bg-violet-500/10",
-    mcpServers: ["OneSpan — Signer UI Event API"],
+    mcpServers: ["OneSpan — Signer Event API"],
   },
   {
     key:        "interventionOrchestrator",

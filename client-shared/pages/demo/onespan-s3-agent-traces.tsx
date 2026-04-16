@@ -130,7 +130,14 @@ export default function OnespanS3AgentTraces({ hasRun }: { hasRun: boolean }) {
                     <RunStatusBadge status={run.runStatus} />
                     {run.agentId && (
                       <Link href={`/agents/${run.agentId}`}>
-                        <ExternalLink className="w-3 h-3 text-muted-foreground/40 hover:text-foreground cursor-pointer" />
+                        <ExternalLink className="w-3 h-3 text-muted-foreground/40 hover:text-foreground cursor-pointer" data-testid={`link-agent-ext-${run.key}`} />
+                      </Link>
+                    )}
+                    {run.runId && (
+                      <Link href={`/runs/${run.runId}`}>
+                        <span className="text-[9px] font-mono text-muted-foreground/40 hover:text-foreground cursor-pointer transition-colors" data-testid={`link-run-${run.key}`}>
+                          #{run.runId.slice(0, 8)}
+                        </span>
                       </Link>
                     )}
                   </div>

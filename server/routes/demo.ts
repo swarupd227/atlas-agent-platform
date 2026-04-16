@@ -1241,8 +1241,8 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
   // POST /demo-api/onespan/setup  — Force-provision all agents
   router.post("/demo-api/onespan/setup", onespanSetupHandler);
 
-  // POST /demo-api/onespan/reset  — Clear run history
-  router.post("/demo-api/onespan/reset", onespanResetHandler);
+  // DELETE /demo-api/onespan/reset  — Clear run history
+  router.delete("/demo-api/onespan/reset", onespanResetHandler);
 
   // ============================================================
   // END ONESPAN SCN-OS-1.0 DIGITAL AGREEMENTS INTELLIGENCE DEMO
