@@ -192,7 +192,7 @@ export async function ensureOnespanAgents(): Promise<void> {
   }
 
   // ── 7. Agents ─────────────────────────────────────────────────────────────────
-  const AGENT_POLICY_BINDINGS = [...ONESPAN_AGENT_POLICIES];
+  // Per-agent policy bindings (3 per agent, filtered from the 12-item array)
 
   const AGENT_ONTOLOGY_TAGS: Record<string, string[]> = {
     transactionHealthMonitor:  ["Digital Agreement Envelope", "Completion Rate", "Agreement Stall", "VIP Transaction"],
@@ -288,7 +288,7 @@ export async function ensureOnespanAgents(): Promise<void> {
         preloadedSkills:   preloadedSkills as { skillId: string }[],
         blueprintId:       agentBlueprintId,
         complianceTags:    ["AML-2026Q1", "ONESPAN-POLICY-V3.2", "VIP-SLA"],
-        policyBindings:    AGENT_POLICY_BINDINGS,
+        policyBindings:    ONESPAN_AGENT_POLICIES.filter(b => b.agentKey === def.key),
         ontologyTags:      agentOntologyTags,
         evalBindings:      [{ suiteName: SHARED_EVAL_SUITE_NAME, schedule: "weekly" }],
       } as Parameters<typeof storage.createAgent>[0]);
@@ -298,7 +298,7 @@ export async function ensureOnespanAgents(): Promise<void> {
         runtimeConfig:   { prompt: def.taskPrompt, scheduleIntervalMinutes: 0 },
         preloadedSkills: preloadedSkills as { skillId: string }[],
         blueprintId:     agentBlueprintId,
-        policyBindings:  AGENT_POLICY_BINDINGS,
+        policyBindings:  ONESPAN_AGENT_POLICIES.filter(b => b.agentKey === def.key),
         ontologyTags:    agentOntologyTags,
         evalBindings:    [{ suiteName: SHARED_EVAL_SUITE_NAME, schedule: "weekly" }],
       } as Parameters<typeof storage.updateAgent>[1]);

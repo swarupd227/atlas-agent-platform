@@ -375,7 +375,6 @@ async function migrate() {
   }
 
   // ── Step 7b: Agents ──────────────────────────────────────────────────────────
-  const AGENT_POLICY_BINDINGS = [...ONESPAN_AGENT_POLICIES];
   const EVAL_SUITE_NAME = "OneSpan — Digital Agreements Intelligence Regression Suite";
   const AGENT_ONTOLOGY_TAGS: Record<string, string[]> = {
     transactionHealthMonitor:  ["Digital Agreement Envelope", "Completion Rate", "Agreement Stall", "VIP Transaction"],
@@ -433,7 +432,7 @@ async function migrate() {
         preloadedSkills:   skillIds,
         blueprintId,
         complianceTags:    ["AML-2026Q1", "ONESPAN-POLICY-V3.2", "VIP-SLA"],
-        policyBindings:    AGENT_POLICY_BINDINGS,
+        policyBindings:    ONESPAN_AGENT_POLICIES.filter(b => b.agentKey === def.key),
         ontologyTags,
         mcpServerIds,
         knowledgeBaseId:   kbId,
@@ -461,7 +460,8 @@ async function migrate() {
     const boundPolicyNames = new Set(
       existingBindings.map(b => b.policyName ?? b.policy?.name ?? ""),
     );
-    for (const binding of ONESPAN_AGENT_POLICIES) {
+    const agentPolicies = ONESPAN_AGENT_POLICIES.filter(b => b.agentKey === def.key);
+    for (const binding of agentPolicies) {
       if (boundPolicyNames.has(binding.policyName)) {
         console.log(`  skip   ${def.name} ← ${binding.policyName}`);
         counts.policyLinks.skipped++;

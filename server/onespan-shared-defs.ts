@@ -386,33 +386,33 @@ Then end with this JSON block (fill in actual values from tool results):
 
 export const ONESPAN_POLICY_DEFS = [
   {
-    name: "Document Version Currency Policy",
+    name: "Re-Send Frequency Policy",
     domain: "compliance",
-    description: "Mandates that all digital agreement envelopes use the current required document version before dispatch, with hard-block for commercial loans >$500K requiring AML attestation.",
+    description: "Limits the cadence and maximum number of envelope re-sends to prevent signer fatigue and maintain deliverability reputation across the digital agreements portfolio.",
     policyJson: { enforcement: "hard", rules: [
-      { name: "Pre-Send Version Validation", description: "All envelopes must pass document version currency check before dispatch — invalid or deprecated versions are blocked" },
-      { name: "AML Attestation Requirement", description: "Commercial loans >$500K must use document version containing 2026-Q1 AML attestation clause (v1.4+)" },
-      { name: "Auto-Correct on Decline",     description: "Document version mismatch declines are automatically corrected via resend without human approval when confidence >90%" },
+      { name: "Max Re-Sends Per Envelope",  description: "No more than 3 re-send attempts per envelope within 7 days — 4th attempt requires human approval" },
+      { name: "Re-Send Cooldown Window",    description: "Minimum 4h cooldown between re-send attempts to the same signer to prevent notification fatigue" },
+      { name: "Automated Re-Send Cap",      description: "ATLAS agents may auto-resend up to 2 times; 3rd attempt and beyond require RM or ops lead approval" },
     ]},
   },
   {
-    name: "VIP Transaction SLA Policy",
-    domain: "agent_governance",
-    description: "Mandates 4-hour RM escalation alert for VIP client transactions that stall or decline, and immediate ATLAS intervention without requiring human initiation.",
+    name: "Declined Document Correction Policy",
+    domain: "compliance",
+    description: "Mandates verification and correction of declined documents before re-issue, with hard-block on sending deprecated document versions containing regulatory clause gaps.",
     policyJson: { enforcement: "hard", rules: [
-      { name: "VIP 4h Stall Alert",  description: "VIP transactions stalling beyond 4 hours trigger automatic RM notification and ATLAS portfolio health alert" },
-      { name: "VIP Decline Triage",  description: "Declined VIP transactions are triaged by AGR-002 within 30 minutes of decline event detection" },
-      { name: "VIP Resend Priority", description: "VIP corrective resends are dispatched with HIGH priority and RM notification within 30 minutes of classification" },
+      { name: "Pre-Send Version Validation", description: "All envelopes must pass document version currency check before dispatch — deprecated versions are hard-blocked" },
+      { name: "AML Attestation Requirement", description: "Commercial loans >$500K must use version containing 2026-Q1 AML attestation clause (v1.4+)" },
+      { name: "Correction Confidence Gate",  description: "Auto-correction requires >90% classifier confidence — lower confidence triggers mandatory human review" },
     ]},
   },
   {
-    name: "Human-in-Loop Approval Gate",
-    domain: "agent_governance",
-    description: "Requires human approval before any intervention involving non-correctable declines, amount >$5M, or confidence score <70% for exception classification.",
+    name: "Data Minimisation Policy",
+    domain: "compliance",
+    description: "Ensures only necessary signer and transaction data is collected, retained, and processed by ATLAS agents during digital agreements operations, per GDPR Article 5(1)(c).",
     policyJson: { enforcement: "hard", rules: [
-      { name: "Low Confidence Gate",  description: "Exception classifications with confidence <70% require human review before any automated action" },
-      { name: "Large Deal Gate",      description: "Transactions >$5M require human approval for any corrective resend action" },
-      { name: "Non-Correctable Gate", description: "Genuine signer refusals (GENUINE_REFUSAL classification) require RM intervention — no automated resend" },
+      { name: "Signer PII Scope Limit",  description: "Agents may access only name, email, and role — no access to financial history, credit score, or identity documents beyond signing context" },
+      { name: "Retention Window",        description: "Signer session event data purged after 90 days unless subject to active regulatory hold or litigation freeze" },
+      { name: "Purpose Limitation",      description: "Data collected for decline classification may not be reused for marketing, profiling, or any purpose outside agreement workflow" },
     ]},
   },
 ] as const;
@@ -490,10 +490,25 @@ export const ONESPAN_BLUEPRINT_DEFS = [
 // ─── Agent policy bindings (3 per agent × 4 agents = 12 total bindings) ──────
 // Each agent is bound to all 3 org-level policies — hard enforcement.
 
+// 3 org-level policies × 4 agents = 12 agent-policy binding objects.
+// Each agent is bound to all three org policies; agentKey enables per-agent filtering.
 export const ONESPAN_AGENT_POLICIES = [
-  { policyName: "Document Version Currency Policy", enforcement: "hard" as const },
-  { policyName: "VIP Transaction SLA Policy",       enforcement: "hard" as const },
-  { policyName: "Human-in-Loop Approval Gate",      enforcement: "hard" as const },
+  // AGR-001 Transaction Health Monitor
+  { agentKey: "transactionHealthMonitor",    policyName: "Re-Send Frequency Policy",            enforcement: "hard" as const },
+  { agentKey: "transactionHealthMonitor",    policyName: "Declined Document Correction Policy", enforcement: "hard" as const },
+  { agentKey: "transactionHealthMonitor",    policyName: "Data Minimisation Policy",            enforcement: "hard" as const },
+  // AGR-002 Exception Classifier
+  { agentKey: "exceptionClassifier",         policyName: "Re-Send Frequency Policy",            enforcement: "hard" as const },
+  { agentKey: "exceptionClassifier",         policyName: "Declined Document Correction Policy", enforcement: "hard" as const },
+  { agentKey: "exceptionClassifier",         policyName: "Data Minimisation Policy",            enforcement: "hard" as const },
+  // AGR-003 Intervention Orchestrator
+  { agentKey: "interventionOrchestrator",    policyName: "Re-Send Frequency Policy",            enforcement: "hard" as const },
+  { agentKey: "interventionOrchestrator",    policyName: "Declined Document Correction Policy", enforcement: "hard" as const },
+  { agentKey: "interventionOrchestrator",    policyName: "Data Minimisation Policy",            enforcement: "hard" as const },
+  // AGR-004 Agreement Ops Intelligence
+  { agentKey: "agreementOpsIntelligence",    policyName: "Re-Send Frequency Policy",            enforcement: "hard" as const },
+  { agentKey: "agreementOpsIntelligence",    policyName: "Declined Document Correction Policy", enforcement: "hard" as const },
+  { agentKey: "agreementOpsIntelligence",    policyName: "Data Minimisation Policy",            enforcement: "hard" as const },
 ] as const;
 
 // ─── Agent system prompts ─────────────────────────────────────────────────────

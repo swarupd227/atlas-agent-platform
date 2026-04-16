@@ -51,21 +51,83 @@ function VersionCell({ sent, required }: { sent: string; required: string }) {
   );
 }
 
-function RiskScoreCell({ score }: { score: number }) {
-  const color =
+function RiskScoreBar({ score }: { score: number }) {
+  const fillColor =
+    score >= 80 ? "#f87171"
+    : score >= 60 ? "#fbbf24"
+    : score >= 40 ? "#facc15"
+    : "#34d399";
+  const label =
     score >= 80 ? "text-red-400"
     : score >= 60 ? "text-amber-400"
     : score >= 40 ? "text-yellow-400"
     : "text-emerald-400";
-  const bg =
-    score >= 80 ? "bg-red-500/10 border-red-500/20"
-    : score >= 60 ? "bg-amber-500/10 border-amber-500/20"
-    : score >= 40 ? "bg-yellow-500/10 border-yellow-500/20"
-    : "bg-emerald-500/10 border-emerald-500/20";
   return (
-    <span className={`inline-flex items-center text-[10px] font-mono font-bold px-1.5 py-0.5 rounded border ${color} ${bg}`} data-testid={`risk-${score}`}>
-      {score}
-    </span>
+    <div className="flex items-center gap-1.5 w-full min-w-[64px]" data-testid={`risk-bar-${score}`}>
+      <div className="flex-1 h-1.5 rounded-full bg-muted/30 overflow-hidden">
+        <div
+          className="h-full rounded-full transition-all"
+          style={{ width: `${score}%`, backgroundColor: fillColor }}
+        />
+      </div>
+      <span className={`text-[10px] font-mono font-semibold w-6 text-right tabular-nums ${label}`}>{score}</span>
+    </div>
+  );
+}
+
+// ── Completion rate arc gauge ─────────────────────────────────────────────────
+
+function CompletionRateGauge({ actual, benchmark }: { actual: number; benchmark: number }) {
+  const size    = 96;
+  const r       = 36;
+  const cx      = size / 2;
+  const cy      = size / 2 + 8;
+  const startAngle = -210;
+  const sweepDeg   = 240;
+
+  function polarToXY(angleDeg: number, radius: number) {
+    const rad = (angleDeg * Math.PI) / 180;
+    return { x: cx + radius * Math.cos(rad), y: cy + radius * Math.sin(rad) };
+  }
+
+  function arcPath(fromAngle: number, toAngle: number, radius: number) {
+    const start   = polarToXY(fromAngle, radius);
+    const end     = polarToXY(toAngle, radius);
+    const large   = toAngle - fromAngle > 180 ? 1 : 0;
+    return `M ${start.x} ${start.y} A ${radius} ${radius} 0 ${large} 1 ${end.x} ${end.y}`;
+  }
+
+  const actualAngle    = startAngle + (sweepDeg * actual) / 100;
+  const benchmarkAngle = startAngle + (sweepDeg * benchmark) / 100;
+  const endAngle       = startAngle + sweepDeg;
+  const isBelow        = actual < benchmark;
+
+  return (
+    <div className="flex flex-col items-center" data-testid="gauge-completion-rate">
+      <svg width={size} height={size - 4} viewBox={`0 0 ${size} ${size}`}>
+        {/* Track */}
+        <path d={arcPath(startAngle, endAngle, r)} fill="none" stroke="currentColor" strokeWidth="6" strokeLinecap="round" className="text-muted/30" />
+        {/* Actual fill */}
+        <path d={arcPath(startAngle, actualAngle, r)} fill="none" stroke={isBelow ? "#f87171" : ONESPAN_COLOR} strokeWidth="6" strokeLinecap="round" />
+        {/* Benchmark tick */}
+        {(() => {
+          const tp  = polarToXY(benchmarkAngle, r - 9);
+          const tp2 = polarToXY(benchmarkAngle, r + 3);
+          return <line x1={tp.x} y1={tp.y} x2={tp2.x} y2={tp2.y} stroke={ONESPAN_ACCENT} strokeWidth="2" strokeLinecap="round" />;
+        })()}
+        {/* Center label */}
+        <text x={cx} y={cy - 4} textAnchor="middle" fontSize="14" fontWeight="700" fill={isBelow ? "#f87171" : ONESPAN_COLOR}>
+          {actual}%
+        </text>
+        <text x={cx} y={cy + 9} textAnchor="middle" fontSize="7" fill="currentColor" className="text-muted-foreground opacity-60">
+          COMPLETION
+        </text>
+      </svg>
+      <div className="flex items-center gap-1 mt-0.5">
+        <span className="w-2 h-0.5 rounded" style={{ backgroundColor: ONESPAN_ACCENT }} />
+        <span className="text-[9px] text-muted-foreground">Peer: {benchmark}%</span>
+      </div>
+    </div>
   );
 }
 
@@ -150,8 +212,8 @@ function TxnRow({ txn }: { txn: OnespanTransaction }) {
       <td className="py-2.5 px-2 text-center">
         <span className="text-[10px] text-muted-foreground">{txn.signerCount}</span>
       </td>
-      <td className="py-2.5 px-2 text-center">
-        <RiskScoreCell score={txn.riskScore} />
+      <td className="py-2.5 px-2">
+        <RiskScoreBar score={txn.riskScore} />
       </td>
       <td className="py-2.5 px-2 pr-4">
         <div className="flex flex-col gap-1">
@@ -194,12 +256,22 @@ export default function OnespanS1CommandCenter({ onRunPipeline }: { onRunPipelin
         </div>
       </div>
 
-      {/* KPI cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {ONESPAN_KPI_DATA.map(kpi => (
+      {/* KPI row: completion gauge + KPI tiles */}
+      <div className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-stretch">
+        {/* Completion rate arc gauge */}
+        <div
+          className="sm:col-span-1 rounded-xl border border-border/50 bg-muted/10 p-3 flex flex-col items-center justify-center"
+          data-testid="kpi-completion"
+        >
+          <CompletionRateGauge actual={88.3} benchmark={92.5} />
+          <div className="text-[9px] text-red-400 font-medium mt-1 text-center">−4.2pp vs benchmark</div>
+        </div>
+
+        {/* Remaining KPI tiles */}
+        {ONESPAN_KPI_DATA.filter(k => k.id !== "completion").map(kpi => (
           <div
             key={kpi.id}
-            className="rounded-xl border border-border/50 bg-muted/10 p-4"
+            className="sm:col-span-1 rounded-xl border border-border/50 bg-muted/10 p-4"
             data-testid={`kpi-${kpi.id}`}
           >
             <div className="text-[10px] text-muted-foreground mb-1">{kpi.label}</div>
