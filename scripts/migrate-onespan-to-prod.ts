@@ -376,6 +376,7 @@ async function migrate() {
 
   // ── Step 7b: Agents ──────────────────────────────────────────────────────────
   const AGENT_POLICY_BINDINGS = [...ONESPAN_AGENT_POLICIES];
+  const EVAL_SUITE_NAME = "OneSpan — Digital Agreements Intelligence Regression Suite";
   const AGENT_ONTOLOGY_TAGS: Record<string, string[]> = {
     transactionHealthMonitor:  ["Digital Agreement Envelope", "Completion Rate", "Agreement Stall", "VIP Transaction"],
     exceptionClassifier:       ["Document Version Mismatch", "AML Attestation Clause", "Signer Session Event", "Corrective Resend"],
@@ -391,6 +392,13 @@ async function migrate() {
       agentIdByKey[def.key] = existing.id;
       console.log(`  skip   ${def.name}`);
       counts.agents.skipped++;
+      // Reconcile eval binding for existing agent — idempotent PATCH
+      if (!dryRun) {
+        await api.post(`/api/agents/${existing.id}/eval-bindings`, {
+          suiteName: EVAL_SUITE_NAME,
+          schedule:  "weekly",
+        }).catch(() => { /* already bound or unsupported — continue */ });
+      }
     } else {
       const mcpServerIds = def.mcpServerNames
         .map(n => serverIdByName[n])
@@ -403,7 +411,7 @@ async function migrate() {
       const blueprintId  = blueprintIdByKey[def.key];
       const kbId         = kbIdByName[def.kbName];
 
-      const created = await api.post("/api/agents", {
+      const created = await api.post<ApiResource>("/api/agents", {
         name:              def.name,
         description:       def.description,
         systemPrompt:      def.systemPrompt,
@@ -429,6 +437,7 @@ async function migrate() {
         ontologyTags,
         mcpServerIds,
         knowledgeBaseId:   kbId,
+        evalBindings:      [{ suiteName: EVAL_SUITE_NAME, schedule: "weekly" }],
       });
       if (!dryRun) agentIdByKey[def.key] = created.id;
       console.log(`  create ${def.name}`);
@@ -473,18 +482,17 @@ async function migrate() {
 
   // ── Step 9: Eval suite + cases ───────────────────────────────────────────────
   console.log("\n[9/9] Eval suite + cases (10)…");
-  const SUITE_NAME = "OneSpan — Digital Agreements Intelligence Regression Suite";
   const existingEvals = await api.get<NamedResource[]>("/api/eval-suites").catch((): NamedResource[] => []);
-  const existingSuite = existingEvals.find(x => x.name === SUITE_NAME);
+  const existingSuite = existingEvals.find(x => x.name === EVAL_SUITE_NAME);
   const leadAgentId   = agentIdByKey["transactionHealthMonitor"];
 
   if (existingSuite) {
-    console.log(`  skip   ${SUITE_NAME}`);
+    console.log(`  skip   ${EVAL_SUITE_NAME}`);
     counts.evals.skipped++;
   } else if (!dryRun && leadAgentId) {
     const suite = await api.post("/api/eval-suites", {
       agentId:         leadAgentId,
-      name:            SUITE_NAME,
+      name:            EVAL_SUITE_NAME,
       type:            "regression",
       industry:        "financial_services",
       passRate:        0.94,
@@ -493,7 +501,7 @@ async function migrate() {
       thresholdConfig: { minPassRate: 0.90 },
       scorerConfig:    { type: "llm_judge", model: "gpt-4.1" },
     });
-    console.log(`  create ${SUITE_NAME}`);
+    console.log(`  create ${EVAL_SUITE_NAME}`);
     counts.evals.created++;
 
     for (const ec of ONESPAN_EVAL_CASES) {

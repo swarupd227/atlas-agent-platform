@@ -103,7 +103,7 @@ export default function OnespanDemo() {
   const [showSSELog, setShowSSELog]         = useState(false);
   const [reportText, setReportText]         = useState<string | null>(null);
 
-  const esRef      = useRef<EventSource | null>(null);
+  const abortRef   = useRef<AbortController | null>(null);
   const eventIdRef = useRef(0);
   const qc         = useQueryClient();
 
@@ -128,7 +128,7 @@ export default function OnespanDemo() {
   }, []);
 
   const stopLiveRun = useCallback(() => {
-    if (esRef.current) { esRef.current.close(); esRef.current = null; }
+    if (abortRef.current) { abortRef.current.abort(); abortRef.current = null; }
     setActiveAgentKey(null);
     setLiveRunning(false);
   }, []);
@@ -144,77 +144,92 @@ export default function OnespanDemo() {
     setShowSSELog(true);
     setActiveTab("live-run");
 
-    const es = new EventSource("/demo-api/onespan/live-run");
-    esRef.current = es;
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
 
-    es.addEventListener("run_start", (e: MessageEvent) => {
-      const d = JSON.parse(e.data) as { message?: string };
-      addEvent("run_start", "ATLAS Runtime", d.message || "Initialising OneSpan Digital Agreements pipeline…");
-    });
+    const dispatch = (eventType: string, rawData: string) => {
+      let d: Record<string, unknown> = {};
+      try { d = JSON.parse(rawData); } catch { /* malformed chunk — skip */ }
 
-    es.addEventListener("setup", (e: MessageEvent) => {
-      const d = JSON.parse(e.data) as { message?: string };
-      addEvent("setup", "ATLAS Runtime", d.message || "Agents and knowledge bases verified.");
-    });
-
-    es.addEventListener("agent_start", (e: MessageEvent) => {
-      const d = JSON.parse(e.data) as { key?: string; agentName?: string; step?: number };
-      setActiveAgentKey(d.key ?? null);
-      addEvent("agent_start", d.agentName ?? "Agent", `▶ ${d.agentName} starting — step ${d.step}`);
-      qc.invalidateQueries({ queryKey: ["/demo-api/onespan/agent-runs"] });
-    });
-
-    es.addEventListener("tool_call", (e: MessageEvent) => {
-      const d = JSON.parse(e.data) as { agentName?: string; tool?: string };
-      addEvent("tool_call", d.agentName ?? "Agent", `Calling ${d.tool}…`, d.tool);
-    });
-
-    es.addEventListener("tool_result", (e: MessageEvent) => {
-      const d = JSON.parse(e.data) as { agentName?: string; tool?: string; success?: boolean; recordCount?: number; error?: string };
-      const label = d.success
-        ? `${d.tool} → ${d.recordCount != null ? `${d.recordCount} records` : "OK"}`
-        : `${d.tool} → ${d.error ?? "failed"}`;
-      addEvent("tool_result", d.agentName ?? "Agent", label, d.tool, d.success);
-    });
-
-    es.addEventListener("agent_complete", (e: MessageEvent) => {
-      const d = JSON.parse(e.data) as { key?: string; agentName?: string; success?: boolean };
-      setCompletedKeys(prev => [...prev, d.key ?? ""]);
-      setActiveAgentKey(null);
-      addEvent("agent_complete", d.agentName ?? "Agent", `${d.success ? "✓ Complete" : "✗ Failed"}: ${d.agentName}`, undefined, d.success);
-      qc.invalidateQueries({ queryKey: ["/demo-api/onespan/agent-runs"] });
-    });
-
-    es.addEventListener("pipeline_complete", (e: MessageEvent) => {
-      const d = JSON.parse(e.data) as { reportText?: string; message?: string };
-      addEvent("pipeline_complete", "ATLAS Runtime", "All 4 agents complete — Portfolio Intelligence Report ready", undefined, true);
-      if (d.reportText) setReportText(d.reportText);
-      es.close();
-      esRef.current = null;
-      setLiveRunning(false);
-      setLiveComplete(true);
-      setHasRun(true);
-      setActiveAgentKey(null);
-      qc.invalidateQueries({ queryKey: ["/demo-api/onespan/agent-runs"] });
-    });
-
-    es.addEventListener("error", (e: MessageEvent) => {
-      let msg = "Pipeline error";
-      try { msg = (JSON.parse(e.data) as { message?: string })?.message ?? msg; } catch { /* */ }
-      addEvent("error", "ATLAS Runtime", `Error: ${msg}`);
-      es.close();
-      esRef.current = null;
-      setLiveRunning(false);
-      setActiveAgentKey(null);
-    });
-
-    es.onerror = () => {
-      if (es.readyState === EventSource.CLOSED) {
+      if (eventType === "run_start") {
+        addEvent("run_start", "ATLAS Runtime", (d.message as string) || "Initialising OneSpan Digital Agreements pipeline…");
+      } else if (eventType === "setup") {
+        addEvent("setup", "ATLAS Runtime", (d.message as string) || "Agents and knowledge bases verified.");
+      } else if (eventType === "agent_start") {
+        setActiveAgentKey((d.key as string) ?? null);
+        addEvent("agent_start", (d.agentName as string) ?? "Agent", `▶ ${d.agentName as string} starting — step ${d.step as number}`);
+        qc.invalidateQueries({ queryKey: ["/demo-api/onespan/agent-runs"] });
+      } else if (eventType === "tool_call") {
+        addEvent("tool_call", (d.agentName as string) ?? "Agent", `Calling ${d.tool as string}…`, d.tool as string);
+      } else if (eventType === "tool_result") {
+        const label = d.success
+          ? `${d.tool} → ${d.recordCount != null ? `${d.recordCount} records` : "OK"}`
+          : `${d.tool} → ${(d.error as string) ?? "failed"}`;
+        addEvent("tool_result", (d.agentName as string) ?? "Agent", label, d.tool as string, d.success as boolean);
+      } else if (eventType === "agent_complete") {
+        setCompletedKeys(prev => [...prev, (d.key as string) ?? ""]);
+        setActiveAgentKey(null);
+        addEvent("agent_complete", (d.agentName as string) ?? "Agent", `${d.success ? "✓ Complete" : "✗ Failed"}: ${d.agentName as string}`, undefined, d.success as boolean);
+        qc.invalidateQueries({ queryKey: ["/demo-api/onespan/agent-runs"] });
+      } else if (eventType === "pipeline_complete") {
+        addEvent("pipeline_complete", "ATLAS Runtime", "All 4 agents complete — Portfolio Intelligence Report ready", undefined, true);
+        if (d.reportText) setReportText(d.reportText as string);
+        abortRef.current = null;
         setLiveRunning(false);
-        esRef.current = null;
+        setLiveComplete(true);
+        setHasRun(true);
+        setActiveAgentKey(null);
+        qc.invalidateQueries({ queryKey: ["/demo-api/onespan/agent-runs"] });
+      } else if (eventType === "error") {
+        addEvent("error", "ATLAS Runtime", `Error: ${(d.message as string) ?? "Pipeline error"}`);
+        abortRef.current = null;
+        setLiveRunning(false);
         setActiveAgentKey(null);
       }
     };
+
+    (async () => {
+      try {
+        const resp = await fetch("/demo-api/onespan/live-run", {
+          method:  "POST",
+          headers: { Accept: "text/event-stream" },
+          signal:  ctrl.signal,
+        });
+
+        if (!resp.ok || !resp.body) {
+          addEvent("error", "ATLAS Runtime", `Connection failed: HTTP ${resp.status}`);
+          setLiveRunning(false);
+          return;
+        }
+
+        const reader  = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const blocks = buffer.split("\n\n");
+          buffer = blocks.pop() ?? "";
+          for (const block of blocks) {
+            let evType = "";
+            let evData = "";
+            for (const line of block.split("\n")) {
+              if (line.startsWith("event: "))      evType = line.slice(7).trim();
+              else if (line.startsWith("data: "))  evData = line.slice(6).trim();
+            }
+            if (evType && evData) dispatch(evType, evData);
+          }
+        }
+      } catch (err: unknown) {
+        if ((err as Error).name !== "AbortError") {
+          addEvent("error", "ATLAS Runtime", "Stream connection error");
+          setLiveRunning(false);
+          setActiveAgentKey(null);
+        }
+      }
+    })();
   }, [addEvent, stopLiveRun, qc]);
 
   useEffect(() => () => { stopLiveRun(); }, [stopLiveRun]);

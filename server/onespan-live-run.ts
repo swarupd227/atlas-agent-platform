@@ -692,3 +692,9 @@ export async function onespanResetHandler(_req: Request, res: Response): Promise
     res.status(500).json({ success: false, error: err instanceof Error ? err.message : "Reset failed" });
   }
 }
+
+// ─── Spec-contract alias exports ─────────────────────────────────────────────
+// The task spec references these names; keep them in sync with handlers above.
+export const resetOnespanDemo  = onespanResetHandler;
+export const setupOnespanDemo  = onespanSetupHandler;
+export const runOnespanDemo    = onespanLiveRunHandler;

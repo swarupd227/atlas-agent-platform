@@ -248,7 +248,7 @@ const DEMOS: Demo[] = [
     duration: "6 min",
     screens: 4,
     tags: ["Digital Agreements", "eSignature", "Decline Recovery", "VIP Client", "AML Compliance"],
-    badge: "New",
+    badge: "Digital Agreements",
   },
   {
     id: "sh-healthcare",
