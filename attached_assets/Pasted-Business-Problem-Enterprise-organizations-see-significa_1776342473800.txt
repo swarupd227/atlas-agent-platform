@@ -1,0 +1,76 @@
+Business Problem
+Enterprise organizations see significant revenue impact from transaction stalls, abandonments, and declines. Exceptions — unresponsive signer, form abandonment, wrong recipient, technical access issue, recipient-declined — are managed reactively by operations staff manually reviewing the Sender UI dashboard. By the time an intervention is made, a deal may have already slipped.
+Demo Narrative & Workflow
+Atlas deploys a digital agreement operations pipeline that monitors every active OneSpan Sign transaction in real time, classifies exceptions (including the Recipient Declined exception shown in the walkthrough), orchestrates targeted recovery actions, and surfaces a live operations intelligence view to the business team.
+1.	Transaction Health Monitor polls the OneSpan Sign API (Sender UI layer) every 15 minutes; computes a completion risk score per in-flight transaction; flags at-risk transactions before SLA expiry.
+2.	Exception Classifier categorizes each at-risk or declined transaction across five exception types: (1) Stalled at signer — unresponsive; (2) Form abandoned mid-completion; (3) Wrong recipient — routing error; (4) Technical block — authentication/access issue; (5) Recipient Declined — signer explicitly rejected the document with a stated reason.
+3.	Intervention Orchestrator selects the right recovery action per exception: automated personalized re-send for stalled signers; corrected document workflow for declined transactions (reads decline reason from OneSpan Sign API, determines if the issue is correctable, sends corrected document or escalates to relationship manager); alternative signer routing for wrong recipient; IT support ticket for technical blocks.
+4.	Agreement Operations Intelligence Agent aggregates transaction health data from the OneSpan Sign Analytics API into a real-time completion rate dashboard — by business unit, document type, authentication method, and signer channel — surfacing completion trends, decline reason patterns, and ROI impact to business leadership.
+
+Business Impact Summary
+KPI / Outcome	Baseline (Without Atlas)	With Atlas	Business Impact
+Agreement Completion Rate	72–78% (industry avg)	88–92% with Atlas interventions	15–20% revenue acceleration per deal cycle
+Declined Transaction Recovery Time	Manual: sender notices next log-in (hours–days)	<2 hours: Atlas detects decline, classifies reason, triggers corrective action	Faster recovery; fewer lost deals from solvable declines
+Stall-to-Recovery Time	3–5 business days (manual monitoring)	<4 hours (automated detection + intervention)	Faster time-to-revenue on loan, insurance, and HR workflows
+Ops Staff Time on Exceptions	40–60% of ops time on manual chase-ups	<15% — Atlas handles routine exceptions	Ops team reallocated to high-value customer engagement
+
+Agent Pipeline
+Agent ID	Agent Name	Model	Business Role	OneSpan APIs & Systems	Outcome Delivered
+AGR-001	Transaction Health Monitor	claude-sonnet-4-5	Polls OneSpan Sign Sender UI API every 15 minutes; computes completion risk score from time-in-flight, signer response history, authentication method, and document type; flags transactions crossing the risk threshold before SLA expiry	• onespan_sign_sender_ui_api
+• completion_risk_scorer
+• sla_deadline_calculator
+• transaction_status_reader	• Real-time risk score per transaction
+• Early warning before SLA breach
+• Prioritised exception queue — all five exception types
+AGR-002	Exception Classifier	claude-sonnet-4-5	Analyses each at-risk or declined transaction for root cause across FIVE exception types: (1) Unresponsive signer, (2) Form abandonment at specific step, (3) Wrong recipient/routing error, (4) Technical access block, (5) Recipient Declined — reads decline reason from OneSpan Sign Signer UI event log; determines if decline is correctable (document error, wrong version, missing field) vs. intentional (signer refusal) and routes accordingly	• onespan_sign_signer_ui_event_api
+• decline_reason_reader
+• form_completion_analytics_api
+• signer_auth_log_reader
+• crm_account_lookup	• Five-category exception classification
+• Decline reason analysis: correctable vs. intentional
+• VIP deal identification for escalation
+AGR-003	Intervention Orchestrator	claude-opus-4-5	Executes recovery action per exception type — for Declined: if correctable, triggers corrected document upload and resend via OneSpan Sign Sender UI API with updated recipient notification; if intentional decline, escalates to relationship manager in CRM with decline reason context; for stalled: personalised re-send; for wrong recipient: re-routing; for technical blocks: IT helpdesk ticket	• onespan_sign_sender_ui_resend_api
+• onespan_sign_document_update_api
+• crm_escalation_api
+• alternate_signer_router
+• it_helpdesk_api
+• intervention_outcome_tracker	• Automated decline recovery or escalation within 2 hours
+• Corrected document resend without manual sender intervention
+• All interventions logged with outcome tracking
+AGR-004	Agreement Operations Intelligence	claude-opus-4-5	Aggregates OneSpan Sign Analytics data into a live operations dashboard: completion rate, decline rate and top decline reasons, abandonment stage analysis by document type, authentication method performance, and channel split; computes revenue impact of current rates vs. target; delivers weekly performance brief to business unit heads	• onespan_sign_analytics_api
+• completion_rate_aggregator
+• decline_reason_trend_analyzer
+• revenue_impact_calculator
+• executive_brief_publisher	• Live completion + decline dashboard with reason breakdown
+• Revenue impact of agreement pipeline health
+• Decline reason trend analysis — identifies systematic issues
+
+⚙  Platform Intelligence Setup in Atlas
+Outcome Contract
+  Contract Name: Enterprise Agreement Completion Operations
+  Risk Tier: Medium
+  Pricing Model: Per-transaction completed above baseline completion rate
+  KPIs: Agreement Completion Rate (target >90%) | Declined Transaction Recovery Time (<2 hrs) | Mean Time to Recovery from Stall (<4 hrs) | Ops Team Exception Handling Time (<15% of capacity)
+  Drift Threshold: Completion rate decline >5% over 14-day window triggers intervention strategy review
+Knowledge Bases & Policy Libraries
+  Agreement Type Playbook: Business rules per agreement type: SLA timelines, escalation paths, authorised alternative signers, and correctable-decline categories by document type
+  Decline Reason Classification Reference: Known correctable decline reasons (wrong document version, missing field, incorrect signer) vs. intentional decline patterns — informs AGR-002 classification logic
+  CRM Account Priority Definitions: Account tier definitions and relationship manager assignments — used for VIP escalation routing on declined high-value deals
+MCP Integrations — OneSpan API Layers & Enterprise Systems
+  OneSpan Sign Sender UI API MCP: Sender UI layer: transaction creation, status polling, document upload/update, re-send API, routing modification, and signing workflow management
+  OneSpan Sign Signer UI Event API MCP: Signer UI layer: signing ceremony events, consent accept/decline events, decline reason text, signer authentication outcomes, and completion timestamps
+  OneSpan Sign Analytics API MCP: Analytics layer: completion rates, time-in-flight, drop-off stages, authentication success rates, usage trends, and decline rate reporting
+  CRM Integration MCP: Salesforce / Dynamics: account priority lookup, relationship manager escalation, and deal stage synchronisation
+  IT Helpdesk MCP: ServiceNow / Jira: technical block escalation ticket creation and resolution tracking
+Domain Ontology & Knowledge Graph
+  Agreement domain — Transaction, Signer, EvidenceSummary, ExceptionType, DeclineReason
+  Workflow taxonomy — StallReason, CorrectedDocument, EscalationPath, InterventionType, RecoveryOutcome
+Governance & Compliance Policies
+  Re-Send Frequency Policy — automated re-sends capped at 2 per transaction within 48 hours to prevent signer fatigue
+  Declined Document Correction Policy — corrected document resend requires sender approval when the correction involves substantive document content changes
+  Data Minimisation Policy — Atlas reads transaction metadata, status events, and decline reason codes only; agreement document content is not accessible to Atlas agents
+Key Atlas Screens — CIO Demo Path
+  Overview Dashboard → Agreement Pipeline Health: completion rate + decline rate gauges, stall count by exception category, revenue at risk, VIP deal status
+  Multi-Agent Pipeline Orchestrator → 5-exception-type pipeline with Declined branch routing
+  Monitor → Live Runs: decline recovery interventions with corrected-doc resend events
+  Approvals → VIP declined deal escalation queue for relationship manager authorization
