@@ -6,7 +6,7 @@ import { littlerLiveRunHandler } from "../littler-live-run";
 import { otcQuoteLiveRunHandler } from "../otc-quote-live-run";
 import { otcOrderLiveRunHandler, getOtcOrderAgentRuns, resetOtcOrderDemo, ensureOtcOrderAgents } from "../otc-order-live-run";
 import { pkgSchedLiveRunHandler, resetPkgSchedDemo, getPkgSchedAgentRuns } from "../pkg-sched-live-run";
-import { onespanLiveRunHandler, onespanSetupHandler, onespanResetHandler, getOnespanAgentRuns, ensureOnespanAgents } from "../onespan-live-run";
+import { runOnespanDemo, setupOnespanDemo, resetOnespanDemo, getOnespanAgentRuns, ensureOnespanAgents } from "../onespan-live-run";
 
 import { seedPartnerPortalRegistry } from "../seed-blackrock2-partner-portal";
 import { storage } from "../storage";
@@ -1237,17 +1237,17 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
 
   // GET  /demo-api/onespan/live-run  — SSE stream (4-agent pipeline, EventSource uses GET)
   // POST /demo-api/onespan/live-run  — Same SSE stream for POST-contract compliance
-  router.get("/demo-api/onespan/live-run", onespanLiveRunHandler);
-  router.post("/demo-api/onespan/live-run", onespanLiveRunHandler);
+  router.get("/demo-api/onespan/live-run", runOnespanDemo);
+  router.post("/demo-api/onespan/live-run", runOnespanDemo);
 
   // GET /demo-api/onespan/agent-runs  — Per-agent run history
   router.get("/demo-api/onespan/agent-runs", getOnespanAgentRuns);
 
   // POST /demo-api/onespan/setup  — Force-provision all agents
-  router.post("/demo-api/onespan/setup", onespanSetupHandler);
+  router.post("/demo-api/onespan/setup", setupOnespanDemo);
 
   // DELETE /demo-api/onespan/reset  — Clear run history
-  router.delete("/demo-api/onespan/reset", onespanResetHandler);
+  router.delete("/demo-api/onespan/reset", resetOnespanDemo);
 
   // ============================================================
   // END ONESPAN SCN-OS-1.0 DIGITAL AGREEMENTS INTELLIGENCE DEMO

@@ -17,6 +17,7 @@ export interface OnespanLiveEvent {
 
 function getEventColor(ev: OnespanLiveEvent): string {
   if (ev.type === "run_start" || ev.type === "setup")       return "text-blue-400";
+  if (ev.type === "tool_call")                               return "text-blue-400";
   if (ev.type === "agent_start")                             return "text-amber-300 font-semibold";
   if (ev.type === "agent_complete" && ev.success !== false)  return "text-green-400";
   if (ev.type === "agent_complete" && ev.success === false)  return "text-red-400";
@@ -29,6 +30,7 @@ function getEventColor(ev: OnespanLiveEvent): string {
 
 function getEventIcon(ev: OnespanLiveEvent) {
   if (ev.type === "run_start" || ev.type === "setup")       return <Zap className="w-3 h-3 text-blue-400 shrink-0 mt-0.5" />;
+  if (ev.type === "tool_call")                               return <Terminal className="w-3 h-3 text-blue-400 shrink-0 mt-0.5" />;
   if (ev.type === "agent_start")                             return <Play className="w-3 h-3 text-amber-300 shrink-0 mt-0.5" />;
   if (ev.type === "agent_complete" && ev.success !== false)  return <CheckCircle className="w-3 h-3 text-green-400 shrink-0 mt-0.5" />;
   if (ev.type === "agent_complete" && ev.success === false)  return <XCircle className="w-3 h-3 text-red-400 shrink-0 mt-0.5" />;

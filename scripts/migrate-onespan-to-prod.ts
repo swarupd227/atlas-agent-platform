@@ -180,7 +180,7 @@ async function migrate() {
       console.log(`  skip   ${c.label}`);
       counts.ontology.skipped++;
     } else {
-      const created = await api.post("/api/ontology-concepts", {
+      const created = await api.post<ApiResource>("/api/ontology-concepts", {
         label:       c.label,
         category:    c.category,
         description: c.description,
@@ -204,7 +204,7 @@ async function migrate() {
       console.log(`  skip   ${p.name}`);
       counts.policies.skipped++;
     } else {
-      const created = await api.post("/api/policies", {
+      const created = await api.post<ApiResource>("/api/policies", {
         name:        p.name,
         domain:      p.domain,
         description: p.description,
@@ -230,7 +230,7 @@ async function migrate() {
       console.log(`  skip   ${kb.name}`);
       counts.kbs.skipped++;
     } else {
-      const created = await api.post("/api/knowledge-bases", {
+      const created = await api.post<ApiResource>("/api/knowledge-bases", {
         name:           kb.name,
         description:    kb.description,
         industry:       kb.industry,
@@ -314,7 +314,7 @@ async function migrate() {
       console.log(`  skip   ${s.name}`);
       counts.skills.skipped++;
     } else {
-      const created = await api.post("/api/skills", {
+      const created = await api.post<ApiResource>("/api/skills", {
         name:            s.name,
         description:     s.description,
         domain:          s.domain,
@@ -353,7 +353,7 @@ async function migrate() {
       console.log(`  skip   ${bp.name}`);
       counts.blueprints.skipped++;
     } else {
-      const created = await api.post("/api/blueprints", {
+      const created = await api.post<ApiResource>("/api/blueprints", {
         name:        bp.name,
         description: bp.description,
         version:     1,
@@ -490,7 +490,7 @@ async function migrate() {
     console.log(`  skip   ${EVAL_SUITE_NAME}`);
     counts.evals.skipped++;
   } else if (!dryRun && leadAgentId) {
-    const suite = await api.post("/api/eval-suites", {
+    const suite = await api.post<ApiResource>("/api/eval-suites", {
       agentId:         leadAgentId,
       name:            EVAL_SUITE_NAME,
       type:            "regression",
