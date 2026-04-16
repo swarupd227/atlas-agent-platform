@@ -1,7 +1,7 @@
 import { useRef, useEffect } from "react";
 import {
   CheckCircle, XCircle, CheckCircle2, Zap, Play, Terminal, Loader2,
-  FileSignature, AlertTriangle,
+  FileSignature, AlertTriangle, Brain, IterationCcw,
 } from "lucide-react";
 import { ONESPAN_COLOR, ONESPAN_AGENTS, TARGET_TXN_ID, TARGET_CLIENT, TARGET_AMOUNT, TARGET_PRODUCT } from "./onespan-constants";
 
@@ -18,6 +18,8 @@ export interface OnespanLiveEvent {
 function getEventColor(ev: OnespanLiveEvent): string {
   if (ev.type === "run_start" || ev.type === "setup")       return "text-blue-400";
   if (ev.type === "tool_call")                               return "text-blue-400";
+  if (ev.type === "agent_thinking")                          return "text-purple-400/80";
+  if (ev.type === "iteration_done")                          return "text-slate-400/70";
   if (ev.type === "agent_start")                             return "text-amber-300 font-semibold";
   if (ev.type === "agent_complete" && ev.success !== false)  return "text-green-400";
   if (ev.type === "agent_complete" && ev.success === false)  return "text-red-400";
@@ -31,6 +33,8 @@ function getEventColor(ev: OnespanLiveEvent): string {
 function getEventIcon(ev: OnespanLiveEvent) {
   if (ev.type === "run_start" || ev.type === "setup")       return <Zap className="w-3 h-3 text-blue-400 shrink-0 mt-0.5" />;
   if (ev.type === "tool_call")                               return <Terminal className="w-3 h-3 text-blue-400 shrink-0 mt-0.5" />;
+  if (ev.type === "agent_thinking")                          return <Brain className="w-3 h-3 text-purple-400/80 shrink-0 mt-0.5" />;
+  if (ev.type === "iteration_done")                          return <IterationCcw className="w-3 h-3 text-slate-400/60 shrink-0 mt-0.5" />;
   if (ev.type === "agent_start")                             return <Play className="w-3 h-3 text-amber-300 shrink-0 mt-0.5" />;
   if (ev.type === "agent_complete" && ev.success !== false)  return <CheckCircle className="w-3 h-3 text-green-400 shrink-0 mt-0.5" />;
   if (ev.type === "agent_complete" && ev.success === false)  return <XCircle className="w-3 h-3 text-red-400 shrink-0 mt-0.5" />;

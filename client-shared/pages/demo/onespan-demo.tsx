@@ -160,12 +160,28 @@ export default function OnespanDemo() {
         addEvent("agent_start", (d.agentName as string) ?? "Agent", `▶ ${d.agentName as string} starting — step ${d.step as number}`);
         qc.invalidateQueries({ queryKey: ["/demo-api/onespan/agent-runs"] });
       } else if (eventType === "tool_call") {
-        addEvent("tool_call", (d.agentName as string) ?? "Agent", `Calling ${d.tool as string}…`, d.tool as string);
+        const args = d.args as Record<string, unknown> | undefined;
+        const argSummary = args
+          ? Object.entries(args).slice(0, 2).map(([k, v]) => `${k}: ${String(v).slice(0, 40)}`).join(", ")
+          : "";
+        const callMsg = argSummary
+          ? `Calling ${d.tool as string} (${argSummary})`
+          : `Calling ${d.tool as string}…`;
+        addEvent("tool_call", (d.agentName as string) ?? "Agent", callMsg, d.tool as string);
       } else if (eventType === "tool_result") {
         const label = d.success
           ? `${d.tool} → ${d.recordCount != null ? `${d.recordCount} records` : "OK"}`
           : `${d.tool} → ${(d.error as string) ?? "failed"}`;
         addEvent("tool_result", (d.agentName as string) ?? "Agent", label, d.tool as string, d.success as boolean);
+      } else if (eventType === "agent_thinking") {
+        const summary = (d.summary as string) ?? "";
+        if (summary.length > 0) {
+          addEvent("agent_thinking", (d.agentName as string) ?? "Agent", summary);
+        }
+      } else if (eventType === "iteration_done") {
+        const iter  = d.iteration as number ?? 0;
+        const tools = d.toolsCalled as number ?? 0;
+        addEvent("iteration_done", (d.agentName as string) ?? "Agent", `Iteration ${iter} complete — ${tools} tool call${tools !== 1 ? "s" : ""} processed`);
       } else if (eventType === "agent_complete") {
         setCompletedKeys(prev => [...prev, (d.key as string) ?? ""]);
         setActiveAgentKey(null);

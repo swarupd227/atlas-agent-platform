@@ -510,6 +510,7 @@ export async function onespanLiveRunHandler(req: Request, res: Response): Promis
                 agentId,
                 agentName: def.name,
                 tool:      event.data.tool || event.data.function || "unknown",
+                args:      event.data.args,
                 iteration: event.data.iteration,
               });
             } else if (event.type === "tool_call_result") {
@@ -521,6 +522,23 @@ export async function onespanLiveRunHandler(req: Request, res: Response): Promis
                 recordCount: event.data.recordCount,
                 error:       event.data.error,
                 iteration:   event.data.iteration,
+              });
+            } else if (event.type === "llm_thinking") {
+              const reasoning = (event.data.reasoning as string) || "";
+              if (reasoning && reasoning.trim().length > 10) {
+                sse(res, "agent_thinking", {
+                  agentId,
+                  agentName: def.name,
+                  summary:   reasoning.trim().slice(0, 300),
+                  iteration: event.data.iteration,
+                });
+              }
+            } else if (event.type === "iteration_complete") {
+              sse(res, "iteration_done", {
+                agentId,
+                agentName:   def.name,
+                iteration:   event.data.iteration,
+                toolsCalled: event.data.toolCallsInIteration,
               });
             } else if (event.type === "final_analysis") {
               capturedFinalAnalysis = (event.data.summary as string) || capturedFinalAnalysis;
