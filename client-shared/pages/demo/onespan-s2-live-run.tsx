@@ -141,7 +141,7 @@ export default function OnespanS2LiveRun({
         </button>
         <div className="mt-4 grid grid-cols-2 gap-2 w-full max-w-2xl">
           {ONESPAN_AGENTS.map(agent => (
-            <div key={agent.key} className="rounded-xl border border-border/40 bg-muted/10 p-3">
+            <div key={agent.key} className="rounded-xl border border-border/40 bg-muted/10 p-3" data-testid={`card-agent-preview-${agent.key}`}>
               <div className="flex items-center gap-2 mb-1">
                 <span className={`text-[9px] font-bold ${agent.color}`}>STEP {agent.step}</span>
               </div>
@@ -167,10 +167,13 @@ export default function OnespanS2LiveRun({
       <div className="rounded-xl border border-border/50 bg-black/30 overflow-hidden" data-testid="block-sse-log">
         <div className="flex items-center justify-between px-3 py-2 border-b border-border/30">
           <div className="flex items-center gap-2">
-            <div className={`w-1.5 h-1.5 rounded-full ${running ? "bg-amber-400 animate-pulse" : complete ? "bg-emerald-400" : "bg-muted-foreground/40"}`} />
+            <div
+              data-testid={running ? "status-pipeline-running" : complete ? "status-pipeline-complete" : "status-pipeline-idle"}
+              className={`w-1.5 h-1.5 rounded-full ${running ? "bg-amber-400 animate-pulse" : complete ? "bg-emerald-400" : "bg-muted-foreground/40"}`}
+            />
             <span className="text-[11px] font-mono font-medium">SSE Trace Log — {TARGET_TXN_ID} Pipeline</span>
           </div>
-          <span className="text-[10px] text-muted-foreground/50">{events.length} events</span>
+          <span className="text-[10px] text-muted-foreground/50" data-testid="status-event-count">{events.length} events</span>
         </div>
         <div className="h-56 overflow-y-auto px-3 py-2 space-y-1 font-mono" data-testid="sse-log-body">
           {events.map(ev => (
