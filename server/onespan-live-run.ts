@@ -45,7 +45,28 @@ export async function ensureOnespanAgents(): Promise<void> {
 
   const orgId = process.env.DEV_ORG_ID || "0c9bcf16-cdd9-45e2-87f6-6a839a7f7056";
 
-  // ── 1. Knowledge bases ───────────────────────────────────────────────────────
+  // ── 1. Ontology concepts ─────────────────────────────────────────────────────
+  const allConcepts = await storage.getOntologyConcepts("financial_services").catch((): Awaited<ReturnType<typeof storage.getOntologyConcepts>> => []);
+  const existingConceptLabels = new Set(allConcepts.map(c => c.label));
+  const { randomUUID } = await import("crypto");
+  for (const concept of ONESPAN_ONTOLOGY_CONCEPTS) {
+    if (existingConceptLabels.has(concept.label)) continue;
+    await storage.createOntologyConcept({
+      id:            randomUUID(),
+      industryId:    "financial_services",
+      ontologyName:  "OneSpan Digital Agreements",
+      label:         concept.label,
+      category:      concept.category,
+      description:   concept.description,
+      tags:          concept.tags,
+      properties:    [],
+      relationships: [],
+      synonyms:      [],
+      source:        "industry-standard",
+    });
+  }
+
+  // ── 2. Knowledge bases ───────────────────────────────────────────────────────
   const allKBs = await storage.getKnowledgeBases(orgId).catch((): Awaited<ReturnType<typeof storage.getKnowledgeBases>> => []);
   const kbIdByName: Record<string, string> = {};
   for (const kbDef of ONESPAN_KB_DEFS) {
@@ -58,12 +79,81 @@ export async function ensureOnespanAgents(): Promise<void> {
         domain:      "digital_agreements",
         status:      "active",
         tags:        ["onespan", "digital_agreements"],
-      } as Parameters<typeof storage.createKnowledgeBase>[0]);
+      } as Parameters<typeof storage.createKnowledgeBase>[0]).catch(() => undefined);
     }
-    kbIdByName[kbDef.name] = kb.id;
+    if (kb) kbIdByName[kbDef.name] = kb.id;
   }
 
-  // ── 2. MCP servers + tools ───────────────────────────────────────────────────
+  // ── 3. Org-level policies ─────────────────────────────────────────────────────
+  // Policy creation requires org context — skip gracefully if org is unavailable at startup.
+  const allPolicies = await storage.getPolicies().catch((): Awaited<ReturnType<typeof storage.getPolicies>> => []);
+  for (const polDef of ONESPAN_POLICY_DEFS) {
+    const existing = allPolicies.find(p => p.name === polDef.name);
+    if (!existing) {
+      await storage.createPolicy({
+        name:        polDef.name,
+        domain:      polDef.domain,
+        description: polDef.description,
+        status:      "active",
+        version:     1,
+        scopeType:   "org",
+        policyJson:  polDef.policyJson,
+      }).catch(() => { /* org context unavailable at startup — deferred to first live-run call */ });
+    }
+  }
+
+  // ── 4. Agent-level policies (12 total — 3 per agent) ─────────────────────────
+  const agentPolicyIdByName: Record<string, string> = {};
+  for (const apDef of ONESPAN_AGENT_POLICIES) {
+    const existing = allPolicies.find(p => p.name === apDef.name);
+    if (existing) {
+      agentPolicyIdByName[apDef.name] = existing.id;
+    } else {
+      const created = await storage.createPolicy({
+        name:        apDef.name,
+        domain:      apDef.domain,
+        description: apDef.description,
+        status:      "active",
+        version:     1,
+        scopeType:   "agent",
+        policyJson:  apDef.policyJson,
+      }).catch(() => undefined);
+      if (created) agentPolicyIdByName[apDef.name] = created.id;
+    }
+  }
+
+  // ── 5. Skills ────────────────────────────────────────────────────────────────
+  const allSkills = await storage.getSkills().catch((): Awaited<ReturnType<typeof storage.getSkills>> => []);
+  for (const skillDef of ONESPAN_SKILLS) {
+    let skill = allSkills.find(s => s.name === skillDef.name);
+    if (!skill) {
+      skill = await storage.createSkill({
+        name:            skillDef.name,
+        description:     skillDef.description,
+        domain:          skillDef.domain,
+        industry:        skillDef.industry,
+        version:         skillDef.version,
+        author:          "OneSpan Digital Agreements Analytics Engineering",
+        trustTier:       "platform-provided",
+        complexity:      (skillDef.yamlFrontmatter.complexity as string) || "intermediate",
+        status:          "active",
+        tags:            skillDef.tags,
+        contextMode:     (skillDef.yamlFrontmatter.contextMode as string) || "summary",
+        markdownBody:    skillDef.markdownBody,
+        yamlFrontmatter: {
+          ...skillDef.yamlFrontmatter,
+          industry: "financial_services",
+          domain:   "digital_agreements",
+          version:  "1.0",
+          tags:     skillDef.tags,
+        },
+        allowedTools: [...(skillDef.yamlFrontmatter.allowedTools || [])],
+      });
+    }
+    _onespanSkillIdByName[skillDef.name] = skill.id;
+  }
+
+  // ── 6. MCP servers + tools ───────────────────────────────────────────────────
   const allServers = await storage.getMcpServers().catch((): Awaited<ReturnType<typeof storage.getMcpServers>> => []);
   for (const serverDef of ONESPAN_MCP_SERVERS) {
     let server = allServers.find(s => s.name === serverDef.name);
@@ -97,77 +187,7 @@ export async function ensureOnespanAgents(): Promise<void> {
     }
   }
 
-  // ── 3. Skills ────────────────────────────────────────────────────────────────
-  const allSkills = await storage.getSkills().catch((): Awaited<ReturnType<typeof storage.getSkills>> => []);
-  for (const skillDef of ONESPAN_SKILLS) {
-    let skill = allSkills.find(s => s.name === skillDef.name);
-    if (!skill) {
-      skill = await storage.createSkill({
-        name:            skillDef.name,
-        description:     skillDef.description,
-        domain:          skillDef.domain,
-        industry:        skillDef.industry,
-        version:         skillDef.version,
-        author:          "OneSpan Digital Agreements Analytics Engineering",
-        trustTier:       "platform-provided",
-        complexity:      (skillDef.yamlFrontmatter.complexity as string) || "intermediate",
-        status:          "active",
-        tags:            skillDef.tags,
-        contextMode:     (skillDef.yamlFrontmatter.contextMode as string) || "summary",
-        markdownBody:    skillDef.markdownBody,
-        yamlFrontmatter: {
-          ...skillDef.yamlFrontmatter,
-          industry: "financial_services",
-          domain:   "digital_agreements",
-          version:  "1.0",
-          tags:     skillDef.tags,
-        },
-        allowedTools: [...(skillDef.yamlFrontmatter.allowedTools || [])],
-      });
-    }
-    _onespanSkillIdByName[skillDef.name] = skill.id;
-  }
-
-  // ── 4. Policies ──────────────────────────────────────────────────────────────
-  // Policy creation requires org context — skip gracefully if org is unavailable at startup.
-  const allPolicies = await storage.getPolicies().catch((): Awaited<ReturnType<typeof storage.getPolicies>> => []);
-  for (const polDef of ONESPAN_POLICY_DEFS) {
-    const existing = allPolicies.find(p => p.name === polDef.name);
-    if (!existing) {
-      await storage.createPolicy({
-        name:        polDef.name,
-        domain:      polDef.domain,
-        description: polDef.description,
-        status:      "active",
-        version:     1,
-        scopeType:   "org",
-        policyJson:  polDef.policyJson,
-      }).catch(() => { /* org context unavailable at startup — deferred to first live-run call */ });
-    }
-  }
-
-  // ── 5. Ontology concepts ─────────────────────────────────────────────────────
-  const allConcepts = await storage.getOntologyConcepts("financial_services").catch((): Awaited<ReturnType<typeof storage.getOntologyConcepts>> => []);
-  const existingConceptLabels = new Set(allConcepts.map(c => c.label));
-  const { randomUUID } = await import("crypto");
-  for (const concept of ONESPAN_ONTOLOGY_CONCEPTS) {
-    if (existingConceptLabels.has(concept.label)) continue;
-    await storage.createOntologyConcept({
-      id:            randomUUID(),
-      industryId:    "financial_services",
-      ontologyName:  "OneSpan Digital Agreements",
-      label:         concept.label,
-      category:      concept.category,
-      description:   concept.description,
-      tags:          concept.tags,
-      properties:    [],
-      relationships: [],
-      synonyms:      [],
-      source:        "industry-standard",
-    });
-  }
-
-  // ── 6. Blueprints ────────────────────────────────────────────────────────────
+  // ── 7. Blueprints ────────────────────────────────────────────────────────────
   const allBlueprints = await storage.getBlueprints().catch((): Awaited<ReturnType<typeof storage.getBlueprints>> => []);
   const blueprintIdByKey: Record<string, string> = {};
   for (const bpDef of ONESPAN_BLUEPRINT_DEFS) {
@@ -192,7 +212,7 @@ export async function ensureOnespanAgents(): Promise<void> {
     blueprintIdByKey[bpDef.key] = bp.id;
   }
 
-  // ── 7. Agents ─────────────────────────────────────────────────────────────────
+  // ── 8. Agents ─────────────────────────────────────────────────────────────────
   // Per-agent policy bindings (3 per agent, filtered from the 12-item array)
 
   const AGENT_ONTOLOGY_TAGS: Record<string, string[]> = {

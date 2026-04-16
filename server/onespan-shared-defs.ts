@@ -89,9 +89,9 @@ export function makeOnespanMcpServerDefs(baseUrl: string) {
 // ─── Knowledge base definitions ───────────────────────────────────────────────
 
 export const ONESPAN_KB_DEFS = [
-  { name: "OneSpan Digital Agreements Knowledge Base",    description: "OneSpan platform features, signing workflow best practices, envelope management, signer re-engagement playbooks, and document version management for digital agreements operations teams.", industry: "financial_services", domain: "digital_agreements" },
-  { name: "OneSpan Intervention Playbook",                description: "Step-by-step intervention playbooks for common decline and stall scenarios: document version correction, authentication reset, recipient update, RM escalation triggers, and helpdesk ticket workflows.", industry: "financial_services", domain: "digital_agreements" },
-  { name: "OneSpan Platform Intelligence Knowledge Base", description: "OneSpan Analytics API reference, peer benchmark methodology, compliance reporting framework, and portfolio health KPI definitions for operations intelligence agents.", industry: "financial_services", domain: "digital_agreements" },
+  { name: "Agreement Type Playbook",                description: "Taxonomy and classification of commercial agreement types (loans, revolving credit, term facilities, letters of credit) used in OneSpan Digital Agreements portfolio monitoring, including SLA tiers, required document templates, and completion benchmarks by agreement class.", industry: "financial_services", domain: "digital_agreements" },
+  { name: "Decline Reason Classification Reference", description: "Structured decline reason code taxonomy covering document version mismatches, AML attestation gaps, authentication failures, signer session abandonment, and consent withdrawal — including correctability rules, confidence scoring criteria, and required evidence for each decline classification.", industry: "financial_services", domain: "digital_agreements" },
+  { name: "CRM Account Priority Definitions",        description: "CRM account priority tier definitions, VIP designation criteria, relationship manager assignment rules, escalation SLA obligations by priority band, and approved communication protocols for automated intervention notifications to RMs and account holders.", industry: "financial_services", domain: "digital_agreements" },
 ] as const;
 
 // ─── Skill definitions (3 per agent = 12 total) ───────────────────────────────
@@ -208,7 +208,7 @@ export const ONESPAN_AGENT_DEFS = [
     description:    "Continuously monitors the digital agreements portfolio for completion rate degradation, stall patterns, and VIP decline alerts — the earliest-warning layer of the pipeline.",
     mcpServerNames: ["OneSpan — Sender UI API"],
     skillNames:     ["Agreement Portfolio Health Monitoring", "Stall Pattern Detection", "Completion Funnel Analysis"],
-    kbName:         "OneSpan Digital Agreements Knowledge Base",
+    kbName:         "Agreement Type Playbook",
     maxToolIterations: 8,
     systemPrompt: `You are AGR-001 Transaction Health Monitor for OneSpan Digital Agreements Intelligence.
 
@@ -247,7 +247,7 @@ IMPORTANT: End your final response with ONLY this JSON block:
     description:    "Deep-dives into the VIP declined transaction to classify the exception type, verify correctability, and gather all context needed for intervention planning.",
     mcpServerNames: ["OneSpan — Signer Event API"],
     skillNames:     ["Decline Exception Classification", "Signer Session Analysis", "Document Version Intelligence"],
-    kbName:         "OneSpan Digital Agreements Knowledge Base",
+    kbName:         "Decline Reason Classification Reference",
     maxToolIterations: 8,
     systemPrompt: `You are AGR-002 Exception Classifier for OneSpan Digital Agreements Intelligence.
 
@@ -287,7 +287,7 @@ IMPORTANT: End your final response with ONLY this JSON block:
     description:    "Executes the corrective intervention: resends the envelope with the correct document version, updates CRM, notifies the relationship manager, and creates an audit-trail helpdesk ticket.",
     mcpServerNames: ["OneSpan — Sender UI API", "OneSpan — CRM", "OneSpan — IT Helpdesk"],
     skillNames:     ["Corrective Envelope Resend", "CRM Record Management", "RM Escalation Protocol"],
-    kbName:         "OneSpan Intervention Playbook",
+    kbName:         "CRM Account Priority Definitions",
     maxToolIterations: 10,
     systemPrompt: `You are AGR-003 Intervention Orchestrator for OneSpan Digital Agreements Intelligence.
 
@@ -328,7 +328,7 @@ IMPORTANT: End your final response with ONLY this JSON block:
     description:    "Synthesizes portfolio analytics, peer benchmarks, and compliance status into an actionable operations intelligence report with prioritized recommendations.",
     mcpServerNames: ["OneSpan — Analytics API"],
     skillNames:     ["Portfolio Analytics Synthesis", "Peer Benchmark Analysis", "Compliance Reporting"],
-    kbName:         "OneSpan Platform Intelligence Knowledge Base",
+    kbName:         "CRM Account Priority Definitions",
     maxToolIterations: 8,
     systemPrompt: `You are AGR-004 Agreement Operations Intelligence for OneSpan Digital Agreements.
 
