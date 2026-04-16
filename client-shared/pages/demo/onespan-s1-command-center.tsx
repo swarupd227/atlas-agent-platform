@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
 import { Link } from "wouter";
-import { AlertTriangle, CheckCircle2, Clock, FileText, ShieldAlert } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Clock, FileText, ShieldAlert, XCircle, UserX, WifiOff, UserRound } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   ONESPAN_TRANSACTIONS, ONESPAN_KPI_DATA, ONESPAN_COLOR, ONESPAN_ACCENT,
-  TARGET_TXN_ID, type OnespanTransaction,
+  TARGET_TXN_ID, type OnespanTransaction, type ExceptionType,
 } from "./onespan-constants";
 
 function StatusPill({ status, stallHours }: { status: OnespanTransaction["status"]; stallHours: number }) {
@@ -98,6 +98,29 @@ function SLACountdown({ stallHours, status }: { stallHours: number; status: Ones
   );
 }
 
+const EXCEPTION_META: Record<NonNullable<ExceptionType>, { label: string; cls: string; Icon: React.ElementType }> = {
+  DECLINED:        { label: "Declined",        cls: "bg-red-500/10    text-red-400    border-red-500/20",    Icon: XCircle    },
+  STALLED:         { label: "Stalled",         cls: "bg-amber-500/10  text-amber-400  border-amber-500/20",  Icon: Clock      },
+  ABANDONED:       { label: "Abandoned",       cls: "bg-orange-500/10 text-orange-400 border-orange-500/20", Icon: UserX      },
+  WRONG_RECIPIENT: { label: "Wrong Recipient", cls: "bg-purple-500/10 text-purple-400 border-purple-500/20", Icon: UserRound  },
+  TECH_BLOCK:      { label: "Tech Block",      cls: "bg-slate-500/10  text-slate-400  border-slate-500/20",  Icon: WifiOff    },
+};
+
+function ExceptionTypeBadge({ exceptionType }: { exceptionType: ExceptionType }) {
+  if (!exceptionType) return null;
+  const meta = EXCEPTION_META[exceptionType];
+  if (!meta) return null;
+  const { label, cls, Icon } = meta;
+  return (
+    <span
+      data-testid={`exception-badge-${exceptionType.toLowerCase()}`}
+      className={`inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full border font-medium whitespace-nowrap ${cls}`}
+    >
+      <Icon className="w-2.5 h-2.5" />{label}
+    </span>
+  );
+}
+
 function TxnRow({ txn }: { txn: OnespanTransaction }) {
   const isTarget = txn.id === TARGET_TXN_ID;
   return (
@@ -133,6 +156,7 @@ function TxnRow({ txn }: { txn: OnespanTransaction }) {
       <td className="py-2.5 px-2 pr-4">
         <div className="flex flex-col gap-1">
           <StatusPill status={txn.status} stallHours={txn.stallHours} />
+          <ExceptionTypeBadge exceptionType={txn.exceptionType} />
           <SLACountdown stallHours={txn.stallHours} status={txn.status} />
         </div>
       </td>

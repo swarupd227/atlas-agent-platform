@@ -382,7 +382,7 @@ Then end with this JSON block (fill in actual values from tool results):
   },
 ] as const;
 
-// ─── Policy definitions ───────────────────────────────────────────────────────
+// ─── Policy definitions (3 org-level policies) ───────────────────────────────
 
 export const ONESPAN_POLICY_DEFS = [
   {
@@ -403,16 +403,6 @@ export const ONESPAN_POLICY_DEFS = [
       { name: "VIP 4h Stall Alert",  description: "VIP transactions stalling beyond 4 hours trigger automatic RM notification and ATLAS portfolio health alert" },
       { name: "VIP Decline Triage",  description: "Declined VIP transactions are triaged by AGR-002 within 30 minutes of decline event detection" },
       { name: "VIP Resend Priority", description: "VIP corrective resends are dispatched with HIGH priority and RM notification within 30 minutes of classification" },
-    ]},
-  },
-  {
-    name: "Agent Intervention Audit Policy",
-    domain: "agent_governance",
-    description: "Requires complete, timestamped audit trail of all ATLAS agent interventions including CRM update, helpdesk ticket, and RM notification for every automated action.",
-    policyJson: { enforcement: "hard", rules: [
-      { name: "CRM Audit Entry",     description: "Every ATLAS intervention must generate a CRM audit entry with agent ID, action type, and timestamp" },
-      { name: "Helpdesk Record",     description: "Every corrective action must generate a helpdesk ticket even when auto-resolved, for incident tracking" },
-      { name: "RM Notification Log", description: "All RM notifications must be logged with delivery status and response SLA tracking" },
     ]},
   },
   {
@@ -497,12 +487,12 @@ export const ONESPAN_BLUEPRINT_DEFS = [
   },
 ] as const;
 
-// ─── Agent policy bindings ────────────────────────────────────────────────────
+// ─── Agent policy bindings (3 per agent × 4 agents = 12 total bindings) ──────
+// Each agent is bound to all 3 org-level policies — hard enforcement.
 
 export const ONESPAN_AGENT_POLICIES = [
   { policyName: "Document Version Currency Policy", enforcement: "hard" as const },
   { policyName: "VIP Transaction SLA Policy",       enforcement: "hard" as const },
-  { policyName: "Agent Intervention Audit Policy",  enforcement: "hard" as const },
   { policyName: "Human-in-Loop Approval Gate",      enforcement: "hard" as const },
 ] as const;
 

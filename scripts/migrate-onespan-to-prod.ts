@@ -107,29 +107,37 @@ function makeApiClient(baseUrl: string, orgId: string, dryRun: boolean): ApiClie
   };
 }
 
+// ── Tool record returned by the ATLAS MCP tools API ────────────────────────────
+
+interface McpToolRecord extends ApiResource { name: string }
+
 // ── Migration counters ─────────────────────────────────────────────────────────
 
 interface Counters {
   kbs: { created: number; skipped: number };
   mcpServers: { created: number; skipped: number };
+  mcpTools: { created: number; skipped: number };
   skills: { created: number; skipped: number };
   policies: { created: number; skipped: number };
   ontology: { created: number; skipped: number };
   blueprints: { created: number; skipped: number };
   agents: { created: number; skipped: number };
+  policyLinks: { created: number; skipped: number };
   evals: { created: number; skipped: number };
 }
 
 function zeroCounts(): Counters {
   return {
-    kbs:        { created: 0, skipped: 0 },
-    mcpServers: { created: 0, skipped: 0 },
-    skills:     { created: 0, skipped: 0 },
-    policies:   { created: 0, skipped: 0 },
-    ontology:   { created: 0, skipped: 0 },
-    blueprints: { created: 0, skipped: 0 },
-    agents:     { created: 0, skipped: 0 },
-    evals:      { created: 0, skipped: 0 },
+    kbs:         { created: 0, skipped: 0 },
+    mcpServers:  { created: 0, skipped: 0 },
+    mcpTools:    { created: 0, skipped: 0 },
+    skills:      { created: 0, skipped: 0 },
+    policies:    { created: 0, skipped: 0 },
+    ontology:    { created: 0, skipped: 0 },
+    blueprints:  { created: 0, skipped: 0 },
+    agents:      { created: 0, skipped: 0 },
+    policyLinks: { created: 0, skipped: 0 },
+    evals:       { created: 0, skipped: 0 },
   };
 }
 
@@ -152,7 +160,7 @@ async function migrate() {
   const MCP_SERVERS = makeOnespanMcpServerDefs(prodUrl);
 
   // ── Step 1: Health check ─────────────────────────────────────────────────────
-  console.log("\n[1/8] Health check…");
+  console.log("\n[1/9] Health check…");
   try {
     await api.get("/api/agents");
     console.log("  ✓ Platform reachable");
@@ -162,7 +170,7 @@ async function migrate() {
   }
 
   // ── Step 2: Ontology concepts ────────────────────────────────────────────────
-  console.log("\n[2/8] Ontology concepts (12)…");
+  console.log("\n[2/9] Ontology concepts (12)…");
   const existingConcepts = await api.get<LabeledResource[]>("/api/ontology-concepts/all").catch((): LabeledResource[] => []);
   const conceptIdByLabel: Record<string, string> = {};
   for (const c of ONESPAN_ONTOLOGY_CONCEPTS) {
@@ -186,7 +194,7 @@ async function migrate() {
   }
 
   // ── Step 3: Policies ─────────────────────────────────────────────────────────
-  console.log("\n[3/8] Policies (4)…");
+  console.log("\n[3/9] Policies (3)…");
   const existingPolicies = await api.get<NamedResource[]>("/api/policies").catch((): NamedResource[] => []);
   const policyIdByName: Record<string, string> = {};
   for (const p of ONESPAN_POLICY_DEFS) {
@@ -212,7 +220,7 @@ async function migrate() {
   }
 
   // ── Step 4: Knowledge bases ──────────────────────────────────────────────────
-  console.log("\n[4/8] Knowledge bases (3)…");
+  console.log("\n[4/9] Knowledge bases (3)…");
   const existingKBs = await api.get<NamedResource[]>("/api/knowledge-bases").catch((): NamedResource[] => []);
   const kbIdByName: Record<string, string> = {};
   for (const kb of ONESPAN_KB_DEFS) {
@@ -236,18 +244,21 @@ async function migrate() {
     }
   }
 
-  // ── Step 5: MCP servers + tools ──────────────────────────────────────────────
-  console.log("\n[5/8] MCP servers (5) + tools…");
+  // ── Step 5: MCP servers + tools (reconcile both new and existing) ────────────
+  console.log("\n[5/9] MCP servers (5) + tools (reconcile all)…");
   const existingServers = await api.get<NamedResource[]>("/api/mcp-servers").catch((): NamedResource[] => []);
   const serverIdByName: Record<string, string> = {};
   for (const serverDef of MCP_SERVERS) {
     const existing = existingServers.find(x => x.name === serverDef.name);
+    let serverId: string | undefined;
+
     if (existing) {
+      serverId = existing.id;
       serverIdByName[serverDef.name] = existing.id;
       console.log(`  skip   ${serverDef.name}`);
       counts.mcpServers.skipped++;
     } else {
-      const created = await api.post("/api/mcp-servers", {
+      const created = await api.post<ApiResource>("/api/mcp-servers", {
         name:        serverDef.name,
         description: serverDef.description,
         url:         serverDef.url,
@@ -255,14 +266,27 @@ async function migrate() {
         riskTier:    "low",
         allowlisted: true,
       });
-      if (!dryRun) serverIdByName[serverDef.name] = created.id;
+      if (!dryRun) {
+        serverId = created.id;
+        serverIdByName[serverDef.name] = created.id;
+      }
       console.log(`  create ${serverDef.name} → ${serverDef.url}`);
       counts.mcpServers.created++;
+    }
 
-      if (!dryRun && created.id) {
-        for (const tool of serverDef.tools) {
+    // Reconcile tools for ALL servers (new or existing) — idempotent on name
+    if (!dryRun && serverId) {
+      const existingTools = await api
+        .get<McpToolRecord[]>(`/api/mcp-servers/${serverId}/tools`)
+        .catch((): McpToolRecord[] => []);
+      const existingToolNames = new Set(existingTools.map(t => t.name));
+
+      for (const tool of serverDef.tools) {
+        if (existingToolNames.has(tool.name)) {
+          counts.mcpTools.skipped++;
+        } else {
           await api.post("/api/mcp-server-tools", {
-            serverId:           created.id,
+            serverId,
             name:               tool.name,
             description:        tool.description,
             inputSchema:        tool.inputSchema,
@@ -270,14 +294,17 @@ async function migrate() {
             enabled:            true,
             riskClassification: "low",
           });
+          counts.mcpTools.created++;
         }
-        console.log(`    + ${serverDef.tools.length} tools registered`);
+      }
+      if (counts.mcpTools.created > 0 || counts.mcpTools.skipped > 0) {
+        console.log(`    tools: ${counts.mcpTools.created} created, ${counts.mcpTools.skipped} skipped`);
       }
     }
   }
 
   // ── Step 6: Skills ───────────────────────────────────────────────────────────
-  console.log("\n[6/8] Skills (12)…");
+  console.log("\n[6/9] Skills (12)…");
   const existingSkills = await api.get<NamedResource[]>("/api/skills").catch((): NamedResource[] => []);
   const skillIdByName: Record<string, string> = {};
   for (const s of ONESPAN_SKILLS) {
@@ -316,7 +343,7 @@ async function migrate() {
   }
 
   // ── Step 7: Blueprints ───────────────────────────────────────────────────────
-  console.log("\n[7/8] Blueprints (4) + agents…");
+  console.log("\n[7/9] Blueprints (4) + agents…");
   const existingBlueprints = await api.get<NamedResource[]>("/api/blueprints").catch((): NamedResource[] => []);
   const blueprintIdByKey: Record<string, string> = {};
   for (const bp of ONESPAN_BLUEPRINT_DEFS) {
@@ -409,8 +436,43 @@ async function migrate() {
     }
   }
 
-  // ── Step 8: Eval suite + cases ───────────────────────────────────────────────
-  console.log("\n[8/8] Eval suite + cases (10)…");
+  // ── Step 8: Explicit agent-policy link reconciliation ─────────────────────────
+  // Runs for ALL agents (new or skipped) — ensures 3 policy bindings per agent
+  // regardless of whether the agent was provisioned in this run or previously.
+  console.log("\n[8/9] Agent-policy link reconciliation (3 policies × 4 agents)…");
+  for (const def of ONESPAN_AGENT_DEFS) {
+    const agentId = agentIdByKey[def.key];
+    if (!agentId || dryRun) {
+      if (dryRun) console.log(`  [dry-run] would reconcile policies for ${def.name}`);
+      continue;
+    }
+    const existingBindings = await api
+      .get<Array<{ policyName?: string; policy?: { name: string } }>>(`/api/agents/${agentId}/policies`)
+      .catch(() => []);
+    const boundPolicyNames = new Set(
+      existingBindings.map(b => b.policyName ?? b.policy?.name ?? ""),
+    );
+    for (const binding of ONESPAN_AGENT_POLICIES) {
+      if (boundPolicyNames.has(binding.policyName)) {
+        console.log(`  skip   ${def.name} ← ${binding.policyName}`);
+        counts.policyLinks.skipped++;
+      } else {
+        const policyId = policyIdByName[binding.policyName];
+        if (policyId) {
+          await api.post(`/api/agents/${agentId}/policies`, {
+            policyId,
+            policyName:  binding.policyName,
+            enforcement: binding.enforcement,
+          });
+          console.log(`  link   ${def.name} ← ${binding.policyName}`);
+          counts.policyLinks.created++;
+        }
+      }
+    }
+  }
+
+  // ── Step 9: Eval suite + cases ───────────────────────────────────────────────
+  console.log("\n[9/9] Eval suite + cases (10)…");
   const SUITE_NAME = "OneSpan — Digital Agreements Intelligence Regression Suite";
   const existingEvals = await api.get<NamedResource[]>("/api/eval-suites").catch((): NamedResource[] => []);
   const existingSuite = existingEvals.find(x => x.name === SUITE_NAME);
@@ -451,19 +513,21 @@ async function migrate() {
 
   // ── Summary ──────────────────────────────────────────────────────────────────
   console.log("\n┌─────────────────────────────────────────────────────────────────────────");
-  console.log("│ MIGRATION COMPLETE");
+  console.log("│ MIGRATION COMPLETE — 9 steps");
   console.log("├─────────────────────────────────────────────────────────────────────────");
   console.log(`│ Scenario: ${OS_TARGET_TXN_ID} — ${OS_TARGET_CLIENT} VIP Decline Recovery`);
   console.log(`│ Agents provisioned: ${AGR_001_NAME}, AGR-002, AGR-003, AGR-004`);
   console.log("├─────────────────────────────────────────────────────────────────────────");
-  console.log(`│ Knowledge bases : ${counts.kbs.created} created, ${counts.kbs.skipped} skipped`);
-  console.log(`│ MCP servers     : ${counts.mcpServers.created} created, ${counts.mcpServers.skipped} skipped`);
-  console.log(`│ Skills          : ${counts.skills.created} created, ${counts.skills.skipped} skipped`);
-  console.log(`│ Policies        : ${counts.policies.created} created, ${counts.policies.skipped} skipped`);
-  console.log(`│ Ontology        : ${counts.ontology.created} created, ${counts.ontology.skipped} skipped`);
-  console.log(`│ Blueprints      : ${counts.blueprints.created} created, ${counts.blueprints.skipped} skipped`);
-  console.log(`│ Agents          : ${counts.agents.created} created, ${counts.agents.skipped} skipped`);
-  console.log(`│ Eval suites     : ${counts.evals.created} created, ${counts.evals.skipped} skipped`);
+  console.log(`│ Ontology concepts : ${counts.ontology.created} created, ${counts.ontology.skipped} skipped`);
+  console.log(`│ Policies (3 org)  : ${counts.policies.created} created, ${counts.policies.skipped} skipped`);
+  console.log(`│ Knowledge bases   : ${counts.kbs.created} created, ${counts.kbs.skipped} skipped`);
+  console.log(`│ MCP servers       : ${counts.mcpServers.created} created, ${counts.mcpServers.skipped} skipped`);
+  console.log(`│ MCP tools (recon) : ${counts.mcpTools.created} created, ${counts.mcpTools.skipped} skipped`);
+  console.log(`│ Skills            : ${counts.skills.created} created, ${counts.skills.skipped} skipped`);
+  console.log(`│ Blueprints        : ${counts.blueprints.created} created, ${counts.blueprints.skipped} skipped`);
+  console.log(`│ Agents            : ${counts.agents.created} created, ${counts.agents.skipped} skipped`);
+  console.log(`│ Policy links (12) : ${counts.policyLinks.created} linked, ${counts.policyLinks.skipped} already bound`);
+  console.log(`│ Eval suites       : ${counts.evals.created} created, ${counts.evals.skipped} skipped`);
   if (dryRun) {
     console.log("│");
     console.log("│ [DRY RUN] No changes were made. Remove --dry-run to apply.");

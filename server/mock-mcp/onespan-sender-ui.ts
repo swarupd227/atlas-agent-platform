@@ -3,14 +3,18 @@ import { Router, type Request, type Response } from "express";
 const router = Router();
 
 const TXN_PORTFOLIO = [
-  { id: "TXN-2026-00847", client: "Meridian Capital Partners", product: "Commercial Loan", amount: 1200000, status: "declined",   signers: 2, docVersion: "v1.2", correctVersion: "v1.4", stall: true,  priority: "vip" },
-  { id: "TXN-2026-00831", client: "Apex Realty Group",         product: "Mortgage",        amount: 850000,  status: "stalled",    signers: 3, docVersion: "v2.1", correctVersion: "v2.1", stall: true,  priority: "high" },
-  { id: "TXN-2026-00819", client: "Sunrise Logistics LLC",     product: "Credit Facility", amount: 500000,  status: "stalled",    signers: 1, docVersion: "v3.0", correctVersion: "v3.0", stall: true,  priority: "normal" },
-  { id: "TXN-2026-00802", client: "Harbor Financial Corp",     product: "Term Loan",       amount: 2100000, status: "completed",  signers: 4, docVersion: "v1.4", correctVersion: "v1.4", stall: false, priority: "high" },
-  { id: "TXN-2026-00798", client: "Clearview Ventures",        product: "LOC",             amount: 350000,  status: "pending",    signers: 2, docVersion: "v2.0", correctVersion: "v2.0", stall: false, priority: "normal" },
-  { id: "TXN-2026-00791", client: "Pacific Meridian Bank",     product: "Mortgage",        amount: 980000,  status: "in_review",  signers: 3, docVersion: "v1.4", correctVersion: "v1.4", stall: false, priority: "high" },
-  { id: "TXN-2026-00784", client: "TechGrowth Capital",        product: "Credit Facility", amount: 650000,  status: "stalled",    signers: 2, docVersion: "v2.1", correctVersion: "v2.1", stall: true,  priority: "normal" },
-  { id: "TXN-2026-00777", client: "National Bridge Corp",      product: "Term Loan",       amount: 4500000, status: "completed",  signers: 5, docVersion: "v1.4", correctVersion: "v1.4", stall: false, priority: "vip" },
+  { id: "TXN-2026-00847", client: "Meridian Capital Partners",  product: "Commercial Loan",  amount: 1200000, status: "declined",  signers: 2, docVersion: "v1.2", correctVersion: "v1.4", stall: true,  priority: "vip",    exceptionType: "DECLINED"       },
+  { id: "TXN-2026-00831", client: "Apex Realty Group",          product: "Mortgage",         amount:  850000, status: "stalled",   signers: 3, docVersion: "v2.1", correctVersion: "v2.1", stall: true,  priority: "high",   exceptionType: "STALLED"        },
+  { id: "TXN-2026-00819", client: "Sunrise Logistics LLC",      product: "Credit Facility",  amount:  500000, status: "stalled",   signers: 1, docVersion: "v3.0", correctVersion: "v3.0", stall: true,  priority: "normal", exceptionType: "ABANDONED"      },
+  { id: "TXN-2026-00802", client: "Harbor Financial Corp",      product: "Term Loan",        amount: 2100000, status: "completed", signers: 4, docVersion: "v1.4", correctVersion: "v1.4", stall: false, priority: "high",   exceptionType: null             },
+  { id: "TXN-2026-00798", client: "Clearview Ventures",         product: "Line of Credit",   amount:  350000, status: "pending",   signers: 2, docVersion: "v2.0", correctVersion: "v2.0", stall: false, priority: "normal", exceptionType: null             },
+  { id: "TXN-2026-00791", client: "Pacific Meridian Bank",      product: "Mortgage",         amount:  980000, status: "in_review", signers: 3, docVersion: "v1.4", correctVersion: "v1.4", stall: false, priority: "high",   exceptionType: null             },
+  { id: "TXN-2026-00784", client: "TechGrowth Capital",         product: "Credit Facility",  amount:  650000, status: "stalled",   signers: 2, docVersion: "v2.1", correctVersion: "v2.1", stall: true,  priority: "normal", exceptionType: "TECH_BLOCK"     },
+  { id: "TXN-2026-00777", client: "National Bridge Corp",       product: "Term Loan",        amount: 4500000, status: "completed", signers: 5, docVersion: "v1.4", correctVersion: "v1.4", stall: false, priority: "vip",    exceptionType: null             },
+  { id: "TXN-2026-00763", client: "Riverstone Equity Partners", product: "Commercial Loan",  amount:  775000, status: "stalled",   signers: 2, docVersion: "v1.3", correctVersion: "v1.4", stall: true,  priority: "high",   exceptionType: "STALLED"        },
+  { id: "TXN-2026-00751", client: "Blueharbor Asset Mgmt",      product: "Line of Credit",   amount: 3200000, status: "pending",   signers: 3, docVersion: "v2.0", correctVersion: "v2.0", stall: false, priority: "vip",    exceptionType: null             },
+  { id: "TXN-2026-00739", client: "Sterling Bridge Capital",    product: "Mortgage",         amount:  620000, status: "declined",  signers: 1, docVersion: "v2.0", correctVersion: "v2.1", stall: true,  priority: "normal", exceptionType: "DECLINED"       },
+  { id: "TXN-2026-00724", client: "Westgate Holdings LLC",      product: "Term Loan",        amount: 1800000, status: "in_review", signers: 4, docVersion: "v1.4", correctVersion: "v1.4", stall: false, priority: "vip",    exceptionType: "WRONG_RECIPIENT" },
 ];
 
 // GET /portfolio-health — overall portfolio completion metrics
