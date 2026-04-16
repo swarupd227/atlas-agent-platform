@@ -104,6 +104,7 @@ import MoodysDemo from "@client-shared/pages/demo/moodys-demo";
 import HearstDemo from "@client-shared/pages/demo/hearst-demo";
 import FitchDemo from "@client-shared/pages/demo/fitch-demo";
 import FitchRWDemo from "@client-shared/pages/demo/fitch-rw-demo";
+import OnespanDemo from "@client-shared/pages/demo/onespan-demo";
 import BlackBookDemo from "@client-shared/pages/demo/blackbook-demo";
 import LittlerDemo from "@client-shared/pages/demo/littler-demo";
 import OtcQuoteDemo from "@client-shared/pages/demo/otc-quote-demo";
@@ -315,6 +316,7 @@ function DashboardRouter() {
       <Route path="/demo/otc-quote" component={OtcQuoteDemo} />
       <Route path="/demo/otc-order" component={OtcOrderDemo} />
       <Route path="/demo/pkg-sched" component={PkgSchedDemo} />
+          <Route path="/demo/onespan" component={OnespanDemo} />
       <Route path="/demo/sh-healthcare" component={SHHealthcareDemo} />
       <Route path="/demo/sh-financial" component={SHFinancialDemo} />
       <Route path="/demo/sh-manufacturing" component={SHManufacturingDemo} />

@@ -6,6 +6,7 @@ import { littlerLiveRunHandler } from "../littler-live-run";
 import { otcQuoteLiveRunHandler } from "../otc-quote-live-run";
 import { otcOrderLiveRunHandler, getOtcOrderAgentRuns, resetOtcOrderDemo, ensureOtcOrderAgents } from "../otc-order-live-run";
 import { pkgSchedLiveRunHandler, resetPkgSchedDemo, getPkgSchedAgentRuns } from "../pkg-sched-live-run";
+import { onespanLiveRunHandler, onespanSetupHandler, onespanResetHandler, getOnespanAgentRuns } from "../onespan-live-run";
 
 import { seedPartnerPortalRegistry } from "../seed-blackrock2-partner-portal";
 import { storage } from "../storage";
@@ -1225,6 +1226,26 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
 
   // ============================================================
   // END ADVANTIVE SCN-1.1 PACKAGING SCHEDULING DEMO ROUTES
+  // ============================================================
+
+  // ============================================================
+  // ONESPAN SCN-OS-1.0 — DIGITAL AGREEMENTS INTELLIGENCE DEMO
+  // ============================================================
+
+  // GET /demo-api/onespan/live-run  — SSE stream (4-agent pipeline)
+  router.get("/demo-api/onespan/live-run", onespanLiveRunHandler);
+
+  // GET /demo-api/onespan/agent-runs  — Per-agent run history
+  router.get("/demo-api/onespan/agent-runs", getOnespanAgentRuns);
+
+  // POST /demo-api/onespan/setup  — Force-provision all agents
+  router.post("/demo-api/onespan/setup", onespanSetupHandler);
+
+  // POST /demo-api/onespan/reset  — Clear run history
+  router.post("/demo-api/onespan/reset", onespanResetHandler);
+
+  // ============================================================
+  // END ONESPAN SCN-OS-1.0 DIGITAL AGREEMENTS INTELLIGENCE DEMO
   // ============================================================
 
 
