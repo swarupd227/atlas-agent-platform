@@ -534,12 +534,15 @@ export async function onespanLiveRunHandler(req: Request, res: Response): Promis
                 });
               }
             } else if (event.type === "iteration_complete") {
-              sse(res, "iteration_done", {
-                agentId,
-                agentName:   def.name,
-                iteration:   event.data.iteration,
-                toolsCalled: event.data.toolCallsInIteration,
-              });
+              const toolsCalled = (event.data.toolCallsInIteration as number) ?? 0;
+              if (toolsCalled > 0) {
+                sse(res, "iteration_done", {
+                  agentId,
+                  agentName:   def.name,
+                  iteration:   event.data.iteration,
+                  toolsCalled,
+                });
+              }
             } else if (event.type === "final_analysis") {
               capturedFinalAnalysis = (event.data.summary as string) || capturedFinalAnalysis;
             }
