@@ -551,7 +551,7 @@ export async function otcFulfillmentLiveRunHandler(req: Request, res: Response):
         agentId,
         deploymentId: deployId,
         success:     result.success,
-        summary:     result.message?.slice(0, 400) ?? "",
+        summary:     result.message?.slice(0, 2000) ?? "",
         step:        PIPELINE_STEPS.indexOf(step) + 1,
       });
 

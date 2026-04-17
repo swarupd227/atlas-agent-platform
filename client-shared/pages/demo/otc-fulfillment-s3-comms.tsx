@@ -1,7 +1,7 @@
-import { Mail, MessageSquare, Bell, CheckCircle, AlertCircle, TrendingUp } from "lucide-react";
+import { Mail, MessageSquare, Bell, CheckCircle, AlertCircle, TrendingUp, Braces, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { FulfillmentPipelineState } from "./otc-fulfillment-constants";
-import { OTC_FULFILLMENT_COLOR } from "./otc-fulfillment-constants";
+import { OTC_FULFILLMENT_COLOR, parseAgentJson } from "./otc-fulfillment-constants";
 
 const ACCENT = OTC_FULFILLMENT_COLOR;
 
@@ -54,6 +54,53 @@ const ESCALATIONS = [
 ];
 
 interface Props { state: FulfillmentPipelineState; }
+
+function JsonValue({ value }: { value: unknown }) {
+  if (typeof value === "number") return <span className="text-emerald-400">{value}</span>;
+  if (typeof value === "boolean") return <span className="text-amber-400">{String(value)}</span>;
+  if (typeof value === "string") return <span className="text-sky-300">"{value}"</span>;
+  if (value === null) return <span className="text-slate-400">null</span>;
+  if (typeof value === "object") return <span className="text-muted-foreground">{JSON.stringify(value)}</span>;
+  return <span className="text-foreground">{String(value)}</span>;
+}
+
+function AgentJsonSummaryPanel({ agentCode, summary, label }: { agentCode: string; summary: string; label: string }) {
+  const json = parseAgentJson(summary);
+  const entries = json ? Object.entries(json) : null;
+  return (
+    <div
+      className="rounded-lg border border-emerald-500/25 bg-black/70 p-4"
+      data-testid={`json-summary-${agentCode.toLowerCase().replace(/-/g, "")}`}
+    >
+      <div className="flex items-center gap-2 mb-3">
+        <Braces className="w-3.5 h-3.5 text-emerald-400" />
+        <span className="text-[10px] font-mono font-semibold text-emerald-400">{agentCode}</span>
+        <span className="text-[10px] text-muted-foreground">— {label}</span>
+        <Badge variant="outline" className="ml-auto text-[9px] border-emerald-500/30 text-emerald-400">JSON Summary</Badge>
+      </div>
+      {entries ? (
+        <div className="font-mono text-[11px] leading-relaxed">
+          <span className="text-muted-foreground/60">{"{"}</span>
+          <div className="pl-4 flex flex-col gap-0.5">
+            {entries.map(([key, val]) => (
+              <div key={key} className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-violet-400">"{key}"</span>
+                <span className="text-muted-foreground/50">:</span>
+                <JsonValue value={val} />
+                <span className="text-muted-foreground/40">,</span>
+              </div>
+            ))}
+          </div>
+          <span className="text-muted-foreground/60">{"}"}</span>
+        </div>
+      ) : (
+        <div className="font-mono text-[11px] text-muted-foreground/60 italic line-clamp-5 whitespace-pre-wrap">
+          {summary || "No summary available"}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function OtcFulfillmentS3Comms({ state }: Props) {
   const agt012   = state.agents.find(a => a.code === "OTC-AGT-012");
@@ -228,16 +275,50 @@ export default function OtcFulfillmentS3Comms({ state }: Props) {
         </div>
       </div>
 
-      {isDone && (
+      {isDone && state.agentSummaries["OTC-AGT-012"] && (
+        <AgentJsonSummaryPanel
+          agentCode="OTC-AGT-012"
+          summary={state.agentSummaries["OTC-AGT-012"]}
+          label="Customer Notification Dispatch"
+        />
+      )}
+
+      {state.phase === "complete" && (
         <div
-          className="rounded-lg border p-4"
-          style={{ borderColor: "#10b98130", background: "#10b98108" }}
+          className="rounded-xl border-2 p-5"
+          style={{ borderColor: "#10b98145", background: "linear-gradient(135deg, #10b98110 0%, #065f4610 100%)" }}
+          data-testid="pipeline-complete-metrics-card"
         >
-          <div className="text-sm font-semibold text-emerald-400 mb-1">
-            "Within 8 minutes, Atlas assessed 847 shipments, protected 93% of SLA commitments for $47K, and notified every customer before a single one called."
+          <div className="flex items-center gap-2 mb-4">
+            <Zap className="w-5 h-5 text-emerald-400" />
+            <span className="text-base font-bold text-emerald-400">Pipeline Complete — Crisis Resolved</span>
+            <Badge className="ml-auto text-[10px] bg-emerald-500/20 text-emerald-400 border-emerald-500/30">OTC-SCN-003</Badge>
           </div>
-          <div className="text-xs text-muted-foreground">
-            Alternative without Atlas: 3–5 days of spreadsheets, emergency calls, and a 40% spike in customer complaints.
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+            {[
+              { label: "Customers Notified", value: "847",  color: "text-emerald-400",  sub: "zero inbound spike" },
+              { label: "Shipments Rerouted", value: "312",  color: "text-sky-400",       sub: "Platinum + Gold priority" },
+              { label: "SLA Protected",      value: "93%",  color: "text-amber-400",     sub: "289 of 312 compliant" },
+              { label: "Incremental Cost",   value: "$47K", color: "text-violet-400",    sub: "Smart Reroute authority" },
+            ].map(m => (
+              <div
+                key={m.label}
+                className="rounded-lg border border-border/30 bg-background/40 p-3 text-center"
+                data-testid={`pipeline-metric-${m.label.toLowerCase().replace(/\s+/g, "-")}`}
+              >
+                <div className={`text-2xl font-bold tabular-nums ${m.color}`}>{m.value}</div>
+                <div className="text-[10px] font-semibold text-foreground/80 mt-0.5">{m.label}</div>
+                <div className="text-[9px] text-muted-foreground mt-0.5">{m.sub}</div>
+              </div>
+            ))}
+          </div>
+          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
+            <div className="text-sm font-semibold text-emerald-400 mb-1">
+              "Within 8 minutes, Atlas assessed 847 shipments, protected 93% of SLA commitments for $47K, and notified every customer before a single one called."
+            </div>
+            <div className="text-xs text-muted-foreground">
+              Without Atlas: 3–5 days of manual triage, emergency escalation calls, and a 40% spike in customer complaints.
+            </div>
           </div>
         </div>
       )}

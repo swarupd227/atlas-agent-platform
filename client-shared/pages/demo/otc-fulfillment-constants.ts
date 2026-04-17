@@ -61,6 +61,50 @@ function makeInitialState(): FulfillmentPipelineState {
   };
 }
 
+// ─── JSON extraction utility ─────────────────────────────────────────────────
+// Uses a bracket-balanced scan rather than a greedy regex to reliably extract
+// the first valid JSON object from mixed prose + JSON agent output.
+export function parseAgentJson(text: string): Record<string, unknown> | null {
+  if (!text) return null;
+
+  const start = text.indexOf("{");
+  if (start === -1) return null;
+
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (escape) { escape = false; continue; }
+    if (ch === "\\" && inString) { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        try {
+          const candidate = text.slice(start, i + 1);
+          const parsed = JSON.parse(candidate);
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            return parsed as Record<string, unknown>;
+          }
+        } catch {
+          // not valid JSON — keep scanning for the next opening brace
+          const next = text.indexOf("{", i + 1);
+          if (next === -1) return null;
+          i = next - 1;
+          depth = 0;
+        }
+        break;
+      }
+    }
+  }
+
+  return null;
+}
+
 // ─── Main hook ────────────────────────────────────────────────────────────────
 export function useOtcFulfillmentPipeline() {
   const [state, setState] = useState<FulfillmentPipelineState>(makeInitialState);
