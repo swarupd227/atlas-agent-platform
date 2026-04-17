@@ -140,8 +140,8 @@ export default function AdvSupportDemo() {
 
   const handleScenarioChange = (s: AdvSupportScenario) => {
     if (isRunning) return;
+    // reset() is handled by the hook's useEffect watching scenarioId
     setScenario(s);
-    reset();
     lastAdvancedRef.current = 0;
     setScreen(1);
     setLogOpen(false);
@@ -205,28 +205,29 @@ export default function AdvSupportDemo() {
         </div>
       </div>
 
-      {/* Scenario selector */}
-      <div className="shrink-0 border-b border-border/40 bg-black/20 px-5 py-2 flex items-center gap-2 overflow-x-auto">
-        <span className="text-[10px] font-mono text-muted-foreground/50 uppercase tracking-wider shrink-0">Scenario</span>
-        {SCENARIOS.map(sc => (
-          <button
-            key={sc.id}
-            data-testid={`scenario-${sc.id.toLowerCase()}`}
-            onClick={() => handleScenarioChange(sc.id)}
-            disabled={isRunning}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-medium border transition-all shrink-0 ${
-              scenario === sc.id
-                ? "text-white border-transparent"
-                : "border-border/40 text-muted-foreground/60 hover:text-muted-foreground hover:border-border/60"
-            } disabled:opacity-50 disabled:cursor-not-allowed`}
-            style={scenario === sc.id ? { background: ACCENT } : undefined}
-          >
-            <span className="font-mono font-bold text-[10px]">{sc.id}</span>
-            {sc.label}
-          </button>
-        ))}
-        <span className="text-[10px] text-muted-foreground/40 ml-2 hidden sm:inline">{activeScenario.desc}</span>
-      </div>
+      {/* Scenario selector — hidden while running */}
+      {!isRunning && (
+        <div className="shrink-0 border-b border-border/40 bg-black/20 px-5 py-2 flex items-center gap-2 overflow-x-auto">
+          <span className="text-[10px] font-mono text-muted-foreground/50 uppercase tracking-wider shrink-0">Scenario</span>
+          {SCENARIOS.map(sc => (
+            <button
+              key={sc.id}
+              data-testid={`scenario-${sc.id.toLowerCase()}`}
+              onClick={() => handleScenarioChange(sc.id)}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-medium border transition-all shrink-0 ${
+                scenario === sc.id
+                  ? "text-white border-transparent"
+                  : "border-border/40 text-muted-foreground/60 hover:text-muted-foreground hover:border-border/60"
+              }`}
+              style={scenario === sc.id ? { background: ACCENT } : undefined}
+            >
+              <span className="font-mono font-bold text-[10px]">{sc.id}</span>
+              {sc.label}
+            </button>
+          ))}
+          <span className="text-[10px] text-muted-foreground/40 ml-2 hidden sm:inline">{activeScenario.desc}</span>
+        </div>
+      )}
 
       {/* Agent pipeline row */}
       <div className="shrink-0 border-b border-border/40 bg-card/20 px-5 py-2 flex items-center gap-3 overflow-x-auto">

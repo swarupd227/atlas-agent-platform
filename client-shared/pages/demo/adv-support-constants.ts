@@ -121,6 +121,13 @@ export function useAdvSupportPipeline(scenarioId: AdvSupportScenario = "A") {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
   }, []);
 
+  // Auto-reset when scenarioId changes (fixes stale scenario state)
+  useEffect(() => {
+    if (esRef.current) { esRef.current.close(); esRef.current = null; }
+    stopTimer();
+    setState(makeInitialState(scenarioId));
+  }, [scenarioId, stopTimer]);
+
   const start = useCallback(() => {
     if (esRef.current) { esRef.current.close(); esRef.current = null; }
     stopTimer();
