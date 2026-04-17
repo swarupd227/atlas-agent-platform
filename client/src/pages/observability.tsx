@@ -18,6 +18,10 @@ import {
   MonitorCheck,
   ShieldAlert,
   TrendingDown,
+  FlaskConical,
+  XCircle,
+  CalendarClock,
+  ChevronRight,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -76,6 +80,28 @@ interface AgentAlert {
   acknowledgedAt: string | null;
 }
 
+interface SmokeTestCheck {
+  name: string;
+  passed: boolean;
+  detail: string;
+}
+
+interface SmokeTestRun {
+  id: string;
+  completedAt: string | null;
+  status: "pass" | "fail";
+  durationMs: number | null;
+  alertRaised: boolean;
+  freshPassRate: number | null;
+  checks: SmokeTestCheck[];
+  pipelineSteps: Array<{ agentCode: string; success: boolean; toolCallCount: number }>;
+}
+
+interface SmokeTestData {
+  runs: SmokeTestRun[];
+  nextScheduledAt: string | null;
+}
+
 type SortKey = keyof AgentRow;
 
 function formatMs(ms: number): string {
@@ -120,6 +146,11 @@ export default function ObservabilityPage() {
   const { data: alerts, isLoading: alertsLoading, refetch: refetchAlerts } = useQuery<AgentAlert[]>({
     queryKey: ["/api/observability/alerts"],
     refetchInterval: 60000,
+  });
+
+  const { data: smokeTestData, isLoading: smokeTestLoading, refetch: refetchSmokeTests } = useQuery<SmokeTestData>({
+    queryKey: ["/api/observability/smoke-tests"],
+    refetchInterval: 120000,
   });
 
   const acknowledgeAlert = useMutation({
@@ -184,7 +215,7 @@ export default function ObservabilityPage() {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => { refetchFleet(); refetchAlerts(); }}
+            onClick={() => { refetchFleet(); refetchAlerts(); refetchSmokeTests(); }}
             data-testid="button-refresh"
           >
             <RefreshCcw className="w-4 h-4 mr-1" />
@@ -308,6 +339,173 @@ export default function ObservabilityPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Pipeline Health — OTC Smoke Tests */}
+      <Card data-testid="card-pipeline-health">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base flex items-center gap-2">
+              <FlaskConical className="w-4 h-4 text-primary" />
+              Pipeline Health — OTC Smoke Tests
+            </CardTitle>
+            {smokeTestData?.nextScheduledAt && (
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground" data-testid="text-next-run">
+                <CalendarClock className="w-3.5 h-3.5" />
+                Next run: {new Date(smokeTestData.nextScheduledAt).toLocaleString()}
+              </div>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          {smokeTestLoading ? (
+            <div className="space-y-3">
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-10 w-full" />
+            </div>
+          ) : !smokeTestData || smokeTestData.runs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-8 text-center gap-2" data-testid="text-no-smoke-runs">
+              <FlaskConical className="w-8 h-8 text-muted-foreground" />
+              <div className="font-medium text-sm">No smoke test runs yet</div>
+              <div className="text-xs text-muted-foreground">
+                The OTC pipeline smoke test runs weekly.
+                {smokeTestData?.nextScheduledAt && (
+                  <> Next scheduled: {new Date(smokeTestData.nextScheduledAt).toLocaleString()}</>
+                )}
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Latest run summary */}
+              {(() => {
+                const latest = smokeTestData.runs[0];
+                const passed = latest.checks.filter(c => c.passed).length;
+                const total = latest.checks.length;
+                return (
+                  <div
+                    className={`rounded-lg border p-4 ${latest.status === "pass"
+                      ? "bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-800"
+                      : "bg-red-50 border-red-200 dark:bg-red-950/30 dark:border-red-800"
+                    }`}
+                    data-testid="card-latest-smoke-run"
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className="flex items-center gap-2">
+                        {latest.status === "pass" ? (
+                          <CheckCircle className="w-5 h-5 text-green-600 dark:text-green-400 shrink-0" />
+                        ) : (
+                          <XCircle className="w-5 h-5 text-red-600 dark:text-red-400 shrink-0" />
+                        )}
+                        <div>
+                          <div className="font-semibold text-sm" data-testid="text-smoke-status">
+                            {latest.status === "pass" ? "All checks passed" : "One or more checks failed"}
+                          </div>
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            {latest.completedAt ? new Date(latest.completedAt).toLocaleString() : "Unknown time"}
+                            {latest.durationMs != null && ` · ${formatMs(latest.durationMs)}`}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Badge
+                          variant={latest.status === "pass" ? "outline" : "destructive"}
+                          className="text-xs"
+                          data-testid="badge-smoke-result"
+                        >
+                          {passed}/{total} checks
+                        </Badge>
+                        {latest.freshPassRate != null && (
+                          <Badge variant="secondary" className="text-xs" data-testid="badge-eval-pass-rate">
+                            Eval {Math.round(latest.freshPassRate * 100)}%
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {latest.checks.map((check, i) => (
+                        <div
+                          key={i}
+                          className={`rounded-md border px-3 py-2 text-xs ${check.passed
+                            ? "bg-green-50 border-green-200 dark:bg-green-950/20 dark:border-green-900"
+                            : "bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-900"
+                          }`}
+                          data-testid={`card-check-${i}`}
+                        >
+                          <div className="flex items-center gap-1.5 font-medium mb-0.5">
+                            {check.passed ? (
+                              <CheckCircle className="w-3 h-3 text-green-600 dark:text-green-400 shrink-0" />
+                            ) : (
+                              <XCircle className="w-3 h-3 text-red-600 dark:text-red-400 shrink-0" />
+                            )}
+                            {check.name}
+                          </div>
+                          <div className="text-muted-foreground leading-snug">{check.detail}</div>
+                        </div>
+                      ))}
+                    </div>
+                    {latest.pipelineSteps.length > 0 && (
+                      <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground flex-wrap">
+                        <span className="font-medium text-foreground">Pipeline:</span>
+                        {latest.pipelineSteps.map((step, i) => (
+                          <span key={i} className="flex items-center gap-1">
+                            {i > 0 && <ChevronRight className="w-3 h-3" />}
+                            <span
+                              className={step.success ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}
+                              data-testid={`text-pipeline-step-${i}`}
+                            >
+                              {step.agentCode}
+                            </span>
+                            <span className="text-muted-foreground">({step.toolCallCount} tools)</span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* Run history */}
+              {smokeTestData.runs.length > 1 && (
+                <div>
+                  <div className="text-xs font-medium text-muted-foreground mb-2">Run History</div>
+                  <div className="space-y-1.5">
+                    {smokeTestData.runs.slice(1).map((run) => {
+                      const passed = run.checks.filter(c => c.passed).length;
+                      const total = run.checks.length;
+                      return (
+                        <div
+                          key={run.id}
+                          className="flex items-center justify-between rounded-md border px-3 py-2 text-xs"
+                          data-testid={`row-smoke-run-${run.id}`}
+                        >
+                          <div className="flex items-center gap-2">
+                            {run.status === "pass" ? (
+                              <CheckCircle className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
+                            ) : (
+                              <XCircle className="w-3.5 h-3.5 text-red-600 dark:text-red-400" />
+                            )}
+                            <span className="text-muted-foreground">
+                              {run.completedAt ? new Date(run.completedAt).toLocaleString() : "—"}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={run.status === "pass" ? "text-green-700 dark:text-green-400 font-medium" : "text-red-600 dark:text-red-400 font-medium"}>
+                              {run.status === "pass" ? "Pass" : "Fail"}
+                            </span>
+                            <span className="text-muted-foreground">{passed}/{total} checks</span>
+                            {run.freshPassRate != null && (
+                              <span className="text-muted-foreground">· eval {Math.round(run.freshPassRate * 100)}%</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Tabs defaultValue="agents" className="space-y-4">
         <TabsList>
@@ -528,10 +726,17 @@ export default function ObservabilityPage() {
                             "text-amber-500"
                           }`} />
                           <div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-semibold text-sm">{alert.agentName}</span>
                               <Badge variant={severityBadgeVariant(alert.severity)} className="text-xs h-5">
                                 {alert.severity}
+                              </Badge>
+                              <Badge
+                                variant="outline"
+                                className="text-xs h-5 font-mono"
+                                data-testid={`badge-alert-type-${alert.id}`}
+                              >
+                                {alert.alertType}
                               </Badge>
                               {alert.acknowledgedAt && (
                                 <Badge variant="outline" className="text-xs h-5">acknowledged</Badge>

@@ -1,7 +1,7 @@
 import { Router, type Request } from "express";
 import { db } from "../db";
-import { runTraces, agents, agentAlerts } from "@shared/schema";
-import { eq, gte, and, isNull, desc, sql } from "drizzle-orm";
+import { runTraces, agents, agentAlerts, jobs } from "@shared/schema";
+import { eq, gte, and, isNull, desc, or, sql } from "drizzle-orm";
 import { getOrgId } from "../auth";
 
 const router = Router();
@@ -289,6 +289,50 @@ router.post("/api/observability/alerts/:id/acknowledge", async (req: Request, re
   } catch (err: any) {
     console.error("[observability] Alert acknowledge error:", err.message);
     res.status(500).json({ error: "Failed to acknowledge alert" });
+  }
+});
+
+router.get("/api/observability/smoke-tests", async (_req: Request, res) => {
+  try {
+    const [recentRuns, nextRun] = await Promise.all([
+      db.select().from(jobs)
+        .where(and(eq(jobs.type, "otc_smoke_test"), or(eq(jobs.status, "completed"), eq(jobs.status, "failed"))))
+        .orderBy(desc(jobs.completedAt))
+        .limit(10),
+      db.select().from(jobs)
+        .where(and(eq(jobs.type, "otc_smoke_test"), eq(jobs.status, "queued"), gte(jobs.scheduledFor, new Date())))
+        .orderBy(jobs.scheduledFor)
+        .limit(1),
+    ]);
+
+    const runs = recentRuns.map(j => {
+      const result = (j.result as Record<string, unknown>) ?? {};
+      const checks = (result.checks as Array<{ name: string; passed: boolean; detail: string }>) ?? [];
+      // A job-level failure (unhandled exception) is always a fail even with no checks
+      const isJobFailed = j.status === "failed";
+      const allPassed = !isJobFailed && checks.length > 0 && checks.every(c => c.passed);
+      const syntheticChecks = isJobFailed && checks.length === 0
+        ? [{ name: "Smoke Test Run", passed: false, detail: j.error ?? "Job failed with an unhandled exception" }]
+        : checks;
+      return {
+        id: j.id,
+        completedAt: j.completedAt?.toISOString() ?? null,
+        status: allPassed ? "pass" : "fail",
+        durationMs: (result.durationMs as number) ?? null,
+        alertRaised: (result.alertRaised as boolean) ?? false,
+        freshPassRate: (result.freshPassRate as number | null) ?? null,
+        checks: syntheticChecks,
+        pipelineSteps: (result.pipelineSteps as Array<{ agentCode: string; success: boolean; toolCallCount: number }>) ?? [],
+      };
+    });
+
+    res.json({
+      runs,
+      nextScheduledAt: nextRun[0]?.scheduledFor?.toISOString() ?? null,
+    });
+  } catch (err: any) {
+    console.error("[observability] Smoke tests fetch error:", err.message);
+    res.status(500).json({ error: "Failed to fetch smoke test history" });
   }
 });
 
