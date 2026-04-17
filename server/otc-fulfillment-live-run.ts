@@ -318,7 +318,7 @@ export async function ensureOtcFulfillmentAgents(): Promise<void> {
         complianceTags:    [...def.complianceTags],
         policyBindings:    POLICY_BINDINGS,
         ontologyTags:      def.ontologyTags.map(label => ({ label })),
-        evalBindings:      [],
+        evalBindings:      [{ suiteName: EVAL_SUITE_NAME, schedule: "weekly" }],
       } as Parameters<typeof storage.createAgent>[0]);
     } else {
       await storage.updateAgent(agent.id, {
@@ -329,6 +329,7 @@ export async function ensureOtcFulfillmentAgents(): Promise<void> {
         modelName:       "gpt-4.1",
         autonomyMode:    "autonomous",
         maxToolIterations: 8,
+        evalBindings:    [{ suiteName: EVAL_SUITE_NAME, schedule: "weekly" }],
       }).catch(() => {});
     }
     _agentIdByName[def.name] = agent.id;
@@ -382,18 +383,6 @@ export async function ensureOtcFulfillmentAgents(): Promise<void> {
       }
     }
 
-    // Bind eval suite to all 3 agents so performance scores appear in each agent detail page
-    if (suite) {
-      const evalBinding = [{ suiteName: EVAL_SUITE_NAME, schedule: "weekly" }];
-      const agentIds = [
-        _agentIdByName[OTC_AGT_005_NAME],
-        _agentIdByName[OTC_AGT_007_NAME],
-        _agentIdByName[OTC_AGT_012_NAME],
-      ].filter(Boolean) as string[];
-      for (const agentId of agentIds) {
-        await storage.updateAgent(agentId, { evalBindings: evalBinding } as Parameters<typeof storage.updateAgent>[1]).catch(() => {});
-      }
-    }
   }
 
   _setupDone = true;
