@@ -381,6 +381,19 @@ export async function ensureOtcFulfillmentAgents(): Promise<void> {
         }
       }
     }
+
+    // Bind eval suite to all 3 agents so performance scores appear in each agent detail page
+    if (suite) {
+      const evalBinding = [{ suiteName: EVAL_SUITE_NAME, schedule: "weekly" }];
+      const agentIds = [
+        _agentIdByName[OTC_AGT_005_NAME],
+        _agentIdByName[OTC_AGT_007_NAME],
+        _agentIdByName[OTC_AGT_012_NAME],
+      ].filter(Boolean) as string[];
+      for (const agentId of agentIds) {
+        await storage.updateAgent(agentId, { evalBindings: evalBinding } as Parameters<typeof storage.updateAgent>[1]).catch(() => {});
+      }
+    }
   }
 
   _setupDone = true;
