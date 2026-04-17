@@ -1,4 +1,5 @@
-import { Braces } from "lucide-react";
+import { useState } from "react";
+import { Braces, Clipboard, Check } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { parseAgentJson } from "./otc-fulfillment-constants";
 
@@ -14,6 +15,16 @@ function JsonValue({ value }: { value: unknown }) {
 export function AgentJsonSummaryPanel({ agentCode, summary, label }: { agentCode: string; summary: string; label: string }) {
   const json = parseAgentJson(summary);
   const entries = json ? Object.entries(json) : null;
+  const [copied, setCopied] = useState(false);
+
+  function handleCopy() {
+    const text = json ? JSON.stringify(json, null, 2) : (summary || "");
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }
+
   return (
     <div
       className="rounded-lg border border-emerald-500/25 bg-black/70 p-4"
@@ -24,6 +35,17 @@ export function AgentJsonSummaryPanel({ agentCode, summary, label }: { agentCode
         <span className="text-[10px] font-mono font-semibold text-emerald-400">{agentCode}</span>
         <span className="text-[10px] text-muted-foreground">— {label}</span>
         <Badge variant="outline" className="ml-auto text-[9px] border-emerald-500/30 text-emerald-400">JSON Summary</Badge>
+        <button
+          onClick={handleCopy}
+          data-testid={`copy-json-${agentCode.toLowerCase().replace(/-/g, "")}`}
+          className="ml-1 p-1 rounded hover:bg-emerald-500/10 transition-colors"
+          title="Copy JSON"
+        >
+          {copied
+            ? <Check className="w-3 h-3 text-emerald-400" />
+            : <Clipboard className="w-3 h-3 text-emerald-400/60 hover:text-emerald-400" />
+          }
+        </button>
       </div>
       {entries ? (
         <div className="font-mono text-[11px] leading-relaxed">
