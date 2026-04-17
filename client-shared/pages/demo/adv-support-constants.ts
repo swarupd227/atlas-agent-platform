@@ -70,6 +70,26 @@ function makeInitialState(): SupportPipelineState {
   };
 }
 
+// ─── Utility: extract a brief 1-line summary from a tool result object ────────
+function briefResult(result: unknown, maxLen = 120): string {
+  if (!result || typeof result !== "object") return "";
+  const top = result as Record<string, unknown>;
+  const firstKey = Object.keys(top)[0];
+  if (!firstKey) return "";
+  const inner = top[firstKey];
+  if (inner && typeof inner === "object" && !Array.isArray(inner)) {
+    const pairs = Object.entries(inner as Record<string, unknown>)
+      .filter(([, v]) => typeof v === "string" || typeof v === "number")
+      .slice(0, 3)
+      .map(([k, v]) => `${k}: ${String(v).slice(0, 40)}`);
+    return pairs.join(" · ").slice(0, maxLen);
+  }
+  if (typeof inner === "string" || typeof inner === "number") {
+    return String(inner).slice(0, maxLen);
+  }
+  return "";
+}
+
 // ─── Main hook ────────────────────────────────────────────────────────────────
 export function useAdvSupportPipeline() {
   const [state, setState] = useState<SupportPipelineState>(makeInitialState);
@@ -142,11 +162,14 @@ export function useAdvSupportPipeline() {
         d.agentName?.includes("002") ? "SUP-002" :
         d.agentName?.includes("003") ? "SUP-003" : "SUP-004"
       );
-      if (d.type === "tool_call_result") {
-        const icon = d.data?.success !== false ? "✓" : "✗";
-        addLog(code, "tool_call", `${icon} ${d.tool}`);
-      } else {
-        addLog(code, "analysis", "↻ Reasoning…");
+      if (d.type === "tool_call_start") {
+        addLog(code, "analysis", `→ ${d.tool}`);
+      } else if (d.type === "tool_call_result") {
+        const ok = d.success !== false;
+        const icon = ok ? "✔" : "✗";
+        const detail = ok ? briefResult(d.result) : (d.error ?? "");
+        const suffix = detail ? ` — ${detail}` : "";
+        addLog(code, "tool_call", `${icon} ${d.tool}${suffix}`);
       }
     });
 

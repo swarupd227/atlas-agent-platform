@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
-import { HeadsetIcon, ChevronRight, Tag, Search, Microscope, Package, Terminal, RotateCcw, Play } from "lucide-react";
+import { HeadsetIcon, ChevronRight, ChevronDown, ChevronUp, Tag, Search, Microscope, Package, Terminal, RotateCcw, Play } from "lucide-react";
 import {
   useAdvSupportPipeline,
   type SupportLogEntry,
@@ -29,7 +29,7 @@ const LOG_TYPE_COLOR: Record<SupportLogEntry["type"], string> = {
   error:     "text-rose-400",
 };
 
-function AgentLogPanel({ entries, open }: { entries: SupportLogEntry[]; open: boolean }) {
+function AgentLogPanel({ entries, open, onToggle }: { entries: SupportLogEntry[]; open: boolean; onToggle: () => void }) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -38,42 +38,53 @@ function AgentLogPanel({ entries, open }: { entries: SupportLogEntry[]; open: bo
     }
   }, [entries.length, open]);
 
-  if (!open) return null;
-
   return (
-    <div
-      className="shrink-0 border-t border-border/40 bg-black/60 backdrop-blur-sm overflow-y-auto"
-      style={{ height: 192 }}
-      data-testid="panel-agent-logs"
-    >
-      <div className="px-4 py-2 flex items-center gap-2 border-b border-border/20 sticky top-0 bg-black/80">
-        <Terminal className="w-3 h-3 text-muted-foreground/60" />
+    <div className="shrink-0 border-t border-border/40 bg-black/60 backdrop-blur-sm" data-testid="panel-agent-logs">
+      {/* Always-visible header — click to toggle */}
+      <button
+        onClick={onToggle}
+        className="w-full px-4 py-2 flex items-center gap-2 hover:bg-white/5 transition-colors"
+        data-testid="button-toggle-logs"
+      >
+        <Terminal className="w-3 h-3 text-muted-foreground/60 shrink-0" />
         <span className="text-[10px] font-mono text-muted-foreground/70 uppercase tracking-widest">Atlas Agent Log Stream</span>
         {entries.length > 0 && (
-          <span className="ml-auto text-[9px] font-mono text-muted-foreground/40">{entries.length} events</span>
+          <span className="text-[9px] font-mono text-muted-foreground/40">{entries.length} events</span>
         )}
-      </div>
-      {entries.length === 0 ? (
-        <div className="px-4 py-3 text-[10px] font-mono text-muted-foreground/30 italic">
-          Waiting for Atlas agents… press ▶ Run Atlas to begin.
-        </div>
-      ) : (
-        <div className="px-4 py-2 flex flex-col gap-0.5">
-          {entries.map((entry, i) => {
-            const ts = new Date(entry.timestamp).toISOString().slice(11, 23);
-            return (
-              <div key={i} className="flex items-start gap-2 leading-tight" data-testid={`log-entry-${i}`}>
-                <span className="text-[9px] font-mono text-muted-foreground/30 shrink-0 pt-px">{ts}</span>
-                <span className="text-[10px] font-mono shrink-0 pt-px" style={{ color: `${ACCENT}cc`, minWidth: 72 }}>
-                  [{entry.agentCode}]
-                </span>
-                <span className={`text-[10px] font-mono ${LOG_TYPE_COLOR[entry.type]}`}>
-                  {entry.message}
-                </span>
-              </div>
-            );
-          })}
-          <div ref={bottomRef} />
+        <span className="ml-auto">
+          {open
+            ? <ChevronDown className="w-3 h-3 text-muted-foreground/40" />
+            : <ChevronUp className="w-3 h-3 text-muted-foreground/40" />
+          }
+        </span>
+      </button>
+
+      {/* Collapsible log body */}
+      {open && (
+        <div className="overflow-y-auto border-t border-border/20" style={{ height: 192 }}>
+          {entries.length === 0 ? (
+            <div className="px-4 py-3 text-[10px] font-mono text-muted-foreground/30 italic">
+              Waiting for Atlas agents… press ▶ Run Atlas to begin.
+            </div>
+          ) : (
+            <div className="px-4 py-2 flex flex-col gap-0.5">
+              {entries.map((entry, i) => {
+                const ts = new Date(entry.timestamp).toISOString().slice(11, 23);
+                return (
+                  <div key={i} className="flex items-start gap-2 leading-tight" data-testid={`log-entry-${i}`}>
+                    <span className="text-[9px] font-mono text-muted-foreground/30 shrink-0 pt-px">{ts}</span>
+                    <span className="text-[10px] font-mono shrink-0 pt-px" style={{ color: `${ACCENT}cc`, minWidth: 72 }}>
+                      [{entry.agentCode}]
+                    </span>
+                    <span className={`text-[10px] font-mono break-all ${LOG_TYPE_COLOR[entry.type]}`}>
+                      {entry.message}
+                    </span>
+                  </div>
+                );
+              })}
+              <div ref={bottomRef} />
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -90,10 +101,7 @@ export default function AdvSupportDemo() {
   const isComplete = state.phase === "complete";
   const isError    = state.phase === "error";
 
-  // Auto-open log panel when run starts
-  useEffect(() => {
-    if (isRunning) setLogOpen(true);
-  }, [isRunning]);
+  // (log panel stays collapsed by default; user opens via header click)
 
   // Auto-advance screens
   useEffect(() => {
@@ -188,13 +196,6 @@ export default function AdvSupportDemo() {
 
         {/* Controls */}
         <div className="flex items-center gap-2 ml-2">
-          <button
-            data-testid="button-toggle-logs"
-            onClick={() => setLogOpen(o => !o)}
-            className="text-[11px] text-muted-foreground/60 hover:text-muted-foreground px-2 py-1 rounded border border-border/30 transition-colors"
-          >
-            {logOpen ? "Hide" : "Logs"}
-          </button>
           {(isComplete || isError || state.phase !== "idle") && (
             <button
               data-testid="button-reset"
@@ -298,8 +299,8 @@ export default function AdvSupportDemo() {
         {screen === 4 && <AdvSupportS4Escalation state={state} />}
       </div>
 
-      {/* Log panel */}
-      <AgentLogPanel entries={state.log} open={logOpen} />
+      {/* Log panel — collapsed by default, click header to expand */}
+      <AgentLogPanel entries={state.log} open={logOpen} onToggle={() => setLogOpen(o => !o)} />
     </div>
   );
 }

@@ -531,8 +531,11 @@ export async function advSupportLiveRunHandler(req: Request, res: Response): Pro
             agentName: step.agentName,
             agentCode: step.agentCode,
             type:      evt.type,
-            tool:      evt.data?.toolName ?? evt.data?.tool ?? "tool",
-            data:      { tool: evt.data?.toolName ?? evt.data?.tool, success: evt.type === "tool_call_result" ? evt.data?.success !== false : undefined },
+            tool:      evt.data?.tool ?? "tool",
+            success:   evt.type === "tool_call_result" ? evt.data?.success !== false : undefined,
+            result:    evt.type === "tool_call_result" ? evt.data?.result : undefined,
+            error:     evt.type === "tool_call_result" ? evt.data?.error  : undefined,
+            args:      evt.type === "tool_call_start"  ? evt.data?.args   : undefined,
           });
         }
       };
