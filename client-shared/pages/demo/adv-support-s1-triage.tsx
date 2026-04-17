@@ -1,4 +1,4 @@
-import { MessageSquare, Tag, Package, Users, ArrowRight, Clock, Shield, AlertTriangle, Cpu } from "lucide-react";
+import { Tag, Package, Users, ArrowRight, Clock, Shield, AlertTriangle, Cpu } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { SupportPipelineState } from "./adv-support-constants";
 import { ADV_SUPPORT_COLOR } from "./adv-support-constants";
@@ -280,8 +280,6 @@ export default function AdvSupportS1Triage({ state }: Props) {
         </div>
       )}
 
-      {/* Hidden spacer for MessageSquare import — keeps icon available if needed */}
-      <span className="sr-only"><MessageSquare className="w-0 h-0" /></span>
     </div>
   );
 }
