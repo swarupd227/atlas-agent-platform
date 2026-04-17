@@ -78,56 +78,56 @@ function getScenarioContent(scenario: SupportPipelineState["scenario"]): Scenari
     queryText: '"Our ParityFactory data synchronization with our FDA-validated batch record system has failed during an active 21 CFR Part 11 validation window.',
     customer: "— Rachel Kim, BioNexus Pharma Inc. | Enterprise | Account Manager: Tyler Brooks",
     runningBadge: "SUP-001 Classifying",
-    doneBadge: "Regulatory Protocol Activated",
+    doneBadge: "FDA Regulatory Hold Activated",
     intents: [
-      { label: "compliance_critical",       score: 0.99, primary: true  },
-      { label: "technical_troubleshooting", score: 0.88, primary: false },
-      { label: "bug_report",               score: 0.41, primary: false },
+      { label: "compliance_critical",      score: 0.99, primary: true  },
+      { label: "regulatory_emergency",     score: 0.94, primary: false },
+      { label: "technical_troubleshooting", score: 0.41, primary: false },
     ],
     products: [
-      { id: "InfinityQS",    label: "InfinityQS SPC Pro", active: false },
-      { id: "Kiwiplan",      label: "Kiwiplan",            active: false },
-      { id: "DDI System",    label: "DDI System",          active: false },
-      { id: "ParityFactory", label: "ParityFactory",       active: true  },
-      { id: "Pepperi",       label: "Pepperi",             active: false },
-      { id: "VeraCore",      label: "VeraCore",            active: false },
+      { id: "ParityFactory",  label: "ParityFactory",       active: true  },
+      { id: "InfinityQS",     label: "InfinityQS SPC Pro",  active: false },
+      { id: "Kiwiplan",       label: "Kiwiplan",            active: false },
+      { id: "DDI System",     label: "DDI System",          active: false },
+      { id: "Pepperi",        label: "Pepperi",             active: false },
+      { id: "VeraCore",       label: "VeraCore",            active: false },
     ],
-    activeProductBadge: "v8.2.1 DETECTED",
-    stat1: { value: "Regulatory",  sub: "compliance_critical"    },
-    stat2: { label: "Product",     value: "ParityFactory", sub: "v8.2.1 — Data Sync",   accent: "#8b5cf6" },
-    stat3: { value: "Enterprise",  sub: "1h Compliance SLA · $520K ACV", accent: "#f59e0b" },
-    stat4: { label: "FDA Audit",   value: "4h",  sub: "21 CFR Part 11 — On-site",      accent: "#ef4444" },
-    complianceNote: "Regulatory flag: FDA 21 CFR Part 11 active validation window — legal hold protocol activated",
-    routingText: "Routing Decision: Diagnostic Reasoning Agent (SUP-003) — Regulatory Fast-Track",
-    routingDetail: "compliance_critical (0.99) + Enterprise + FDA auditors on-site in 4h → mandatory regulatory escalation path. Legal hold activated. KB pre-check via SUP-002. Legal CC: compliance@advantive.com.",
+    activeProductBadge: "v8.2.1 · FDA-VALIDATED",
+    stat1: { value: "FDA",          sub: "compliance_critical"      },
+    stat2: { label: "Product",      value: "ParityFactory", sub: "v8.2.1 — FDA Batch Sync",  accent: "#8b5cf6" },
+    stat3: { value: "Enterprise",   sub: "4h SLA · $284K ACV",      accent: "#ef4444"   },
+    stat4: { label: "Audit",        value: "4h",  sub: "FDA auditors on-site",             accent: "#ef4444" },
+    complianceNote: "Regulatory flag: FDA 21 CFR Part 11 active validation window detected",
+    routingText: "Routing Decision: Diagnostic Reasoning Agent (SUP-003)",
+    routingDetail: "compliance_critical (0.99) + FDA regulatory context → P0 immediate. Diagnostic mandatory before any action. Legal hold placed on logs. Compliance team CC'd.",
   };
 
-  // Scenario A (default)
+  // Default: Scenario A
   return {
     badge: "INBOUND SUPPORT QUERY — AIVA PORTAL",
     urgency: "P1 CRITICAL",
-    queryText: '"Our InfinityQS SPC charts stopped updating after the v9.3 patch. Xbar-R returning IQS-SQL-TMO-7891.',
+    queryText: '"InfinityQS SPC Pro is throwing IQS-SQL-TMO-7891 errors.',
     customer: "— Priya Nair, Cascade Polymers Inc. | Enterprise | Account Manager: James Whitfield",
     runningBadge: "SUP-001 Classifying",
-    doneBadge: "Routed to Diagnostic",
+    doneBadge: "Routed to KB Resolution + Diagnostic",
     intents: [
       { label: "technical_troubleshooting", score: 0.97, primary: true  },
-      { label: "bug_report",                score: 0.61, primary: false },
-      { label: "configuration_issue",       score: 0.22, primary: false },
+      { label: "performance_degradation",   score: 0.71, primary: false },
+      { label: "configuration_issue",       score: 0.38, primary: false },
     ],
     products: [
-      { id: "InfinityQS",    label: "InfinityQS SPC Pro", active: true  },
-      { id: "Kiwiplan",      label: "Kiwiplan",           active: false },
-      { id: "DDI System",    label: "DDI System",         active: false },
-      { id: "ParityFactory", label: "ParityFactory",      active: false },
-      { id: "Pepperi",       label: "Pepperi",            active: false },
-      { id: "VeraCore",      label: "VeraCore",           active: false },
+      { id: "InfinityQS",    label: "InfinityQS SPC Pro",  active: true  },
+      { id: "Kiwiplan",      label: "Kiwiplan",             active: false },
+      { id: "DDI System",    label: "DDI System",           active: false },
+      { id: "ParityFactory", label: "ParityFactory",        active: false },
+      { id: "Pepperi",       label: "Pepperi",              active: false },
+      { id: "VeraCore",      label: "VeraCore",             active: false },
     ],
     activeProductBadge: "v9.3.0 DETECTED",
-    stat1: { value: "Technical",   sub: "troubleshooting"          },
-    stat2: { label: "Product",     value: "InfinityQS", sub: "v9.3.0 — 7 days old",    accent: "#8b5cf6" },
-    stat3: { value: "Enterprise",  sub: "4h SLA · $248K ACV",      accent: "#f59e0b"   },
-    stat4: { label: "Audit",       value: "26h", sub: "ISO 9001 deadline",              accent: "#ef4444" },
+    stat1: { value: "P1",           sub: "technical_troubleshooting"           },
+    stat2: { label: "Product",      value: "InfinityQS", sub: "v9.3.0 — SPC Engine", accent: "#8b5cf6" },
+    stat3: { value: "Enterprise",   sub: "2h SLA · $128K ACV",         accent: "#ef4444"   },
+    stat4: { label: "Audit",        value: "26h", sub: "ISO 9001 deadline",         accent: "#ef4444" },
     complianceNote: "Compliance flag: ISO 9001 audit deadline detected",
     routingText: "Routing Decision: Diagnostic Reasoning Agent (SUP-003)",
     routingDetail: "technical_troubleshooting (0.97) + Enterprise tier + ISO audit deadline → Diagnostic mandatory. KB pre-check running in parallel via SUP-002. SLA override: P1, 2h target.",
@@ -135,9 +135,10 @@ function getScenarioContent(scenario: SupportPipelineState["scenario"]): Scenari
 }
 
 export default function AdvSupportS1Triage({ state }: Props) {
-  const isIdle    = state.phase === "idle";
-  const isRunning = state.agents.find(a => a.code === "SUP-001")?.status === "running";
-  const isDone    = state.agents.find(a => a.code === "SUP-001")?.status === "complete";
+  const agentStatus = state.agents.find(a => a.code === "SUP-001")?.status ?? "idle";
+  const isIdle    = agentStatus === "idle";
+  const isRunning = agentStatus === "running";
+  const isDone    = agentStatus === "complete";
 
   const sc = getScenarioContent(state.scenario);
 
@@ -146,6 +147,13 @@ export default function AdvSupportS1Triage({ state }: Props) {
     sc.urgency.includes("CRITICAL")   ? "border-rose-500/50 text-rose-400" :
     sc.urgency.includes("MEDIUM")     ? "border-amber-400/50 text-amber-400" :
                                         "border-border/50 text-muted-foreground";
+
+  const queryId = state.scenario === "B" ? "AIVA-Q-1142" : state.scenario === "C" ? "AIVA-Q-0614" : "AIVA-Q-0831";
+  const querySuffix = state.scenario === "C"
+    ? "Batch records LOT089-094 missing. FDA auditors on-site in 4 hours."
+    : state.scenario === "B"
+    ? "12 alarms configured but no emails sending."
+    : "47 control charts blocked. ISO 9001 audit tomorrow 09:00.";
 
   return (
     <div className="flex flex-col gap-4 p-4">
@@ -165,29 +173,21 @@ export default function AdvSupportS1Triage({ state }: Props) {
           </div>
           <p className="text-xs text-muted-foreground mt-1 italic">
             {sc.queryText}
-            <span className="font-medium text-foreground"> {state.scenario === "A" ? "47 control charts blocked. ISO 9001 audit tomorrow 09:00." : state.scenario === "C" ? "Batch records LOT089-094 missing. FDA auditors on-site in 4 hours." : "12 alarms configured but no emails sending."}"</span>
+            <span className="font-medium text-foreground"> {querySuffix}"</span>
           </p>
           <p className="text-xs text-muted-foreground mt-1">{sc.customer}</p>
         </div>
-        <span className="text-[10px] font-mono text-muted-foreground/50 shrink-0">
-          {state.scenario === "A" ? "AIVA-Q-0831" : state.scenario === "B" ? "AIVA-Q-1142" : "AIVA-Q-0614"}
-        </span>
+        <span className="text-[10px] font-mono text-muted-foreground/50 shrink-0">{queryId}</span>
       </div>
 
-      {/* Extracted intelligence — hidden until pipeline starts */}
-      {isIdle ? (
-        <div className="flex flex-col items-center justify-center gap-3 py-12 text-center" data-testid="triage-idle-placeholder">
-          <Cpu className="w-8 h-8 text-muted-foreground/30" style={{ color: `${ACCENT}40` }} />
-          <div className="text-sm text-muted-foreground/50 font-medium">SUP-001 standing by</div>
-          <div className="text-xs text-muted-foreground/30">Press <span className="font-mono">▶ Run Atlas</span> to activate the Triage & Intent Classifier</div>
-        </div>
-      ) : (
+      {/* Gate: show intelligence panels only after SUP-001 completes */}
+      {isDone && (
         <>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <StatCard label="Intent"       value={sc.stat1.value} sub={sc.stat1.sub}        accent={ACCENT}           icon={Tag}     />
-            <StatCard label={sc.stat2.label}  value={sc.stat2.value} sub={sc.stat2.sub}     accent={sc.stat2.accent}  icon={Package} />
-            <StatCard label="Customer"     value={sc.stat3.value} sub={sc.stat3.sub}         accent={sc.stat3.accent}  icon={Users}   />
-            <StatCard label={sc.stat4.label}  value={sc.stat4.value} sub={sc.stat4.sub}     accent={sc.stat4.accent}  icon={Clock}   />
+            <StatCard label="Intent"          value={sc.stat1.value} sub={sc.stat1.sub}    accent={ACCENT}           icon={Tag}     />
+            <StatCard label={sc.stat2.label}  value={sc.stat2.value} sub={sc.stat2.sub}    accent={sc.stat2.accent}  icon={Package} />
+            <StatCard label="Customer"        value={sc.stat3.value} sub={sc.stat3.sub}    accent={sc.stat3.accent}  icon={Users}   />
+            <StatCard label={sc.stat4.label}  value={sc.stat4.value} sub={sc.stat4.sub}    accent={sc.stat4.accent}  icon={Clock}   />
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
@@ -196,7 +196,7 @@ export default function AdvSupportS1Triage({ state }: Props) {
               <div className="flex items-center gap-2 mb-3">
                 <Tag className="w-4 h-4" style={{ color: ACCENT }} />
                 <span className="text-sm font-semibold">Intent Classification</span>
-                {isDone && <Badge variant="outline" className="ml-auto text-[10px] border-emerald-500/40 text-emerald-400">Complete</Badge>}
+                <Badge variant="outline" className="ml-auto text-[10px] border-emerald-500/40 text-emerald-400">Complete</Badge>
               </div>
               <div className="flex flex-col gap-2" data-testid="intent-classification">
                 {sc.intents.map(item => (
@@ -205,11 +205,11 @@ export default function AdvSupportS1Triage({ state }: Props) {
                     <div className="flex-1 h-1.5 rounded-full bg-border/40 overflow-hidden">
                       <div
                         className="h-full rounded-full transition-all duration-700"
-                        style={{ width: isDone ? `${item.score * 100}%` : "0%", background: item.primary ? ACCENT : `${ACCENT}60` }}
+                        style={{ width: `${item.score * 100}%`, background: item.primary ? ACCENT : `${ACCENT}60` }}
                       />
                     </div>
-                    <span className="text-xs font-mono text-muted-foreground/70">{isDone ? item.score.toFixed(2) : "--"}</span>
-                    {item.primary && isDone && <Badge variant="outline" className="text-[9px] border-emerald-500/40 text-emerald-400">PRIMARY</Badge>}
+                    <span className="text-xs font-mono text-muted-foreground/70">{item.score.toFixed(2)}</span>
+                    {item.primary && <Badge variant="outline" className="text-[9px] border-emerald-500/40 text-emerald-400">PRIMARY</Badge>}
                   </div>
                 ))}
               </div>
@@ -236,7 +236,7 @@ export default function AdvSupportS1Triage({ state }: Props) {
                   <div key={p.id} className="flex items-center gap-2" data-testid={`product-${p.id.toLowerCase().replace(/\s/g, "-")}`}>
                     <div className="w-2 h-2 rounded-full shrink-0" style={{ background: p.active ? ACCENT : "rgb(71 85 105)" }} />
                     <span className={`text-xs ${p.active ? "font-semibold" : "text-muted-foreground"}`}>{p.label}</span>
-                    {p.active && isDone && (
+                    {p.active && (
                       <Badge variant="outline" className="ml-auto text-[9px]" style={{ borderColor: `${ACCENT}50`, color: ACCENT }}>
                         {sc.activeProductBadge}
                       </Badge>
@@ -248,21 +248,40 @@ export default function AdvSupportS1Triage({ state }: Props) {
           </div>
 
           {/* Routing decision */}
-          {isDone && (
-            <div
-              className="rounded-lg border p-4 flex items-start gap-3"
-              style={{ background: `${ACCENT}0A`, borderColor: `${ACCENT}30` }}
-              data-testid="routing-decision"
-            >
-              <ArrowRight className="w-4 h-4 mt-0.5 shrink-0" style={{ color: ACCENT }} />
-              <div>
-                <div className="text-xs font-semibold" style={{ color: ACCENT }}>{sc.routingText}</div>
-                <div className="text-[11px] text-muted-foreground mt-1">{sc.routingDetail}</div>
-              </div>
+          <div
+            className="rounded-lg border p-4 flex items-start gap-3"
+            style={{ background: `${ACCENT}0A`, borderColor: `${ACCENT}30` }}
+            data-testid="routing-decision"
+          >
+            <ArrowRight className="w-4 h-4 mt-0.5 shrink-0" style={{ color: ACCENT }} />
+            <div>
+              <div className="text-xs font-semibold" style={{ color: ACCENT }}>{sc.routingText}</div>
+              <div className="text-[11px] text-muted-foreground mt-1">{sc.routingDetail}</div>
             </div>
-          )}
+          </div>
         </>
       )}
+
+      {/* While SUP-001 is actively running — show classifying placeholder */}
+      {isRunning && (
+        <div className="flex flex-col items-center justify-center gap-3 py-12 text-center" data-testid="triage-running-placeholder">
+          <Cpu className="w-8 h-8 animate-pulse" style={{ color: `${ACCENT}80` }} />
+          <div className="text-sm text-muted-foreground/60 font-medium">SUP-001 classifying…</div>
+          <div className="text-xs text-muted-foreground/30">Triage intelligence will appear once classification completes</div>
+        </div>
+      )}
+
+      {/* Idle — not yet started */}
+      {isIdle && (
+        <div className="flex flex-col items-center justify-center gap-3 py-12 text-center" data-testid="triage-idle-placeholder">
+          <Cpu className="w-8 h-8" style={{ color: `${ACCENT}40` }} />
+          <div className="text-sm text-muted-foreground/50 font-medium">SUP-001 standing by</div>
+          <div className="text-xs text-muted-foreground/30">Select a scenario above to begin the triage pipeline</div>
+        </div>
+      )}
+
+      {/* Hidden spacer for MessageSquare import — keeps icon available if needed */}
+      <span className="sr-only"><MessageSquare className="w-0 h-0" /></span>
     </div>
   );
 }
