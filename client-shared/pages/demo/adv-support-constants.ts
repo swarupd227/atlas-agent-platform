@@ -1,16 +1,19 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 
 // ─── Shared brand color ───────────────────────────────────────────────────────
-export const ADV_SUPPORT_COLOR = "#C62A47";  // Advantive crimson — distinct from all other demos
+export const ADV_SUPPORT_COLOR = "#C62A47";
+
+// ─── Scenario type ────────────────────────────────────────────────────────────
+export type AdvSupportScenario = "A" | "B" | "C";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 export type SupportPipelinePhase =
   | "idle"
   | "setup"
-  | "triage"       // SUP-001 active
-  | "resolution"   // SUP-002 active
-  | "diagnostic"   // SUP-003 active
-  | "escalation"   // SUP-004 active
+  | "triage"
+  | "resolution"
+  | "diagnostic"
+  | "escalation"
   | "complete"
   | "error";
 
@@ -31,15 +34,17 @@ export interface SupportAgentStatus {
 }
 
 export interface SupportPipelineState {
-  phase:   SupportPipelinePhase;
-  log:     SupportLogEntry[];
-  agents:  SupportAgentStatus[];
+  scenario: AdvSupportScenario;
+  phase:    SupportPipelinePhase;
+  log:      SupportLogEntry[];
+  agents:   SupportAgentStatus[];
   metrics: {
     intent_classified:    boolean;
     kb_confidence:        number;
     diagnostic_complete:  boolean;
     sf_case_created:      boolean;
     t2_assigned:          boolean;
+    t1_resolved:          boolean;
     elapsed_secs:         number;
   };
   agentSummaries: Record<string, string>;
@@ -47,14 +52,15 @@ export interface SupportPipelineState {
 }
 
 const AGENT_DEFS: Omit<SupportAgentStatus, "status">[] = [
-  { code: "SUP-001", name: "Triage & Intent Classifier",   label: "Triage & Intent Classification"    },
-  { code: "SUP-002", name: "Knowledge Resolution Agent",   label: "Knowledge Base Resolution Attempt" },
-  { code: "SUP-003", name: "Diagnostic Reasoning Agent",   label: "Diagnostic Reasoning & Log Analysis" },
-  { code: "SUP-004", name: "T1→T2 Escalation Packager",   label: "T1→T2 Escalation Packaging"        },
+  { code: "SUP-001", name: "Triage & Intent Classifier",  label: "Triage & Intent Classification"     },
+  { code: "SUP-002", name: "Knowledge Resolution Agent",  label: "Knowledge Base Resolution Attempt"  },
+  { code: "SUP-003", name: "Diagnostic Reasoning Agent",  label: "Diagnostic Reasoning & Log Analysis" },
+  { code: "SUP-004", name: "T1→T2 Escalation Packager",  label: "T1→T2 Escalation Packaging"         },
 ];
 
-function makeInitialState(): SupportPipelineState {
+function makeInitialState(scenario: AdvSupportScenario = "A"): SupportPipelineState {
   return {
+    scenario,
     phase:   "idle",
     log:     [],
     agents:  AGENT_DEFS.map(a => ({ ...a, status: "idle" })),
@@ -64,13 +70,13 @@ function makeInitialState(): SupportPipelineState {
       diagnostic_complete: false,
       sf_case_created:     false,
       t2_assigned:         false,
+      t1_resolved:         false,
       elapsed_secs:        0,
     },
     agentSummaries: {},
   };
 }
 
-// ─── Utility: extract a brief 1-line summary from a tool result object ────────
 function briefResult(result: unknown, maxLen = 120): string {
   if (!result || typeof result !== "object") return "";
   const top = result as Record<string, unknown>;
@@ -84,15 +90,13 @@ function briefResult(result: unknown, maxLen = 120): string {
       .map(([k, v]) => `${k}: ${String(v).slice(0, 40)}`);
     return pairs.join(" · ").slice(0, maxLen);
   }
-  if (typeof inner === "string" || typeof inner === "number") {
-    return String(inner).slice(0, maxLen);
-  }
+  if (typeof inner === "string" || typeof inner === "number") return String(inner).slice(0, maxLen);
   return "";
 }
 
 // ─── Main hook ────────────────────────────────────────────────────────────────
-export function useAdvSupportPipeline() {
-  const [state, setState] = useState<SupportPipelineState>(makeInitialState);
+export function useAdvSupportPipeline(scenarioId: AdvSupportScenario = "A") {
+  const [state, setState] = useState<SupportPipelineState>(() => makeInitialState(scenarioId));
   const esRef    = useRef<EventSource | null>(null);
   const startTs  = useRef<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -120,7 +124,7 @@ export function useAdvSupportPipeline() {
   const start = useCallback(() => {
     if (esRef.current) { esRef.current.close(); esRef.current = null; }
     stopTimer();
-    setState(makeInitialState);
+    setState(makeInitialState(scenarioId));
     startTs.current = Date.now();
     timerRef.current = setInterval(() => {
       setState(prev => ({
@@ -129,7 +133,7 @@ export function useAdvSupportPipeline() {
       }));
     }, 1000);
 
-    const es = new EventSource("/demo-api/advantive-support/live-run");
+    const es = new EventSource(`/demo-api/advantive-support/live-run?scenario=${scenarioId}`);
     esRef.current = es;
 
     const on = (type: string, handler: (d: any) => void) => {
@@ -148,9 +152,9 @@ export function useAdvSupportPipeline() {
     on("agent_start", (d) => {
       const code: string = d.agentCode ?? "";
       const phase: SupportPipelinePhase =
-        code === "SUP-001" ? "triage"      :
-        code === "SUP-002" ? "resolution"  :
-        code === "SUP-003" ? "diagnostic"  : "escalation";
+        code === "SUP-001" ? "triage" :
+        code === "SUP-002" ? "resolution" :
+        code === "SUP-003" ? "diagnostic" : "escalation";
       setState(prev => ({ ...prev, phase }));
       setAgentStatus(code, "running", undefined, d.deploymentId);
       addLog(code, "info", `▶ ${d.label ?? code} — step ${d.step}/${d.totalSteps}`);
@@ -181,7 +185,8 @@ export function useAdvSupportPipeline() {
       if (code === "SUP-001" && d.success) {
         setState(prev => ({ ...prev, metrics: { ...prev.metrics, intent_classified: true }, agentSummaries: { ...prev.agentSummaries, [code]: d.summary ?? "" } }));
       } else if (code === "SUP-002" && d.success) {
-        setState(prev => ({ ...prev, metrics: { ...prev.metrics, kb_confidence: 0.58 }, agentSummaries: { ...prev.agentSummaries, [code]: d.summary ?? "" } }));
+        const conf = scenarioId === "B" ? 0.89 : scenarioId === "C" ? 0.52 : 0.58;
+        setState(prev => ({ ...prev, metrics: { ...prev.metrics, kb_confidence: conf }, agentSummaries: { ...prev.agentSummaries, [code]: d.summary ?? "" } }));
       } else if (code === "SUP-003" && d.success) {
         setState(prev => ({ ...prev, metrics: { ...prev.metrics, diagnostic_complete: true }, agentSummaries: { ...prev.agentSummaries, [code]: d.summary ?? "" } }));
       } else if (code === "SUP-004" && d.success) {
@@ -201,17 +206,25 @@ export function useAdvSupportPipeline() {
 
     on("pipeline_complete", (d) => {
       stopTimer();
+      const isT1Resolved = d.metrics?.t1_resolved === true;
       setState(prev => ({
         ...prev,
-        phase:   "complete",
+        phase: "complete",
         metrics: {
           ...prev.metrics,
           sf_case_created: d.metrics?.salesforce_case ? true : prev.metrics.sf_case_created,
           t2_assigned:     d.metrics?.t2_specialist   ? true : prev.metrics.t2_assigned,
+          t1_resolved:     isT1Resolved,
         },
         agentSummaries: d.agentSummaries ?? prev.agentSummaries,
       }));
-      addLog("ATLAS", "complete", "✔ Pipeline complete — SF Case #00074821 created, Marcus Chen assigned, ISO audit covered");
+
+      const completionMsg = isT1Resolved
+        ? "✔ T1 Autonomous Resolution — query triaged, KB resolved at 0.89 confidence, answer delivered to customer"
+        : scenarioId === "C"
+        ? "✔ Regulatory Fast-Track complete — FDA legal hold placed, SF Case #00078034 created, Sofia Rodriguez assigned, compliance team CC'd"
+        : "✔ Pipeline complete — SF Case #00074821 created, Marcus Chen assigned, ISO audit covered";
+      addLog("ATLAS", "complete", completionMsg);
       es.close();
     });
 
@@ -232,13 +245,13 @@ export function useAdvSupportPipeline() {
         );
       }
     };
-  }, [addLog, setAgentStatus, stopTimer]);
+  }, [scenarioId, addLog, setAgentStatus, stopTimer]);
 
   const reset = useCallback(() => {
     if (esRef.current) { esRef.current.close(); esRef.current = null; }
     stopTimer();
-    setState(makeInitialState);
-  }, [stopTimer]);
+    setState(makeInitialState(scenarioId));
+  }, [scenarioId, stopTimer]);
 
   useEffect(() => () => {
     if (esRef.current) esRef.current.close();

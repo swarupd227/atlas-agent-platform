@@ -14,6 +14,12 @@ export const SUP_002_NAME = "Knowledge Resolution Agent";
 export const SUP_003_NAME = "Diagnostic Reasoning Agent";
 export const SUP_004_NAME = "T1→T2 Escalation Packager";
 
+// ─── Scenario control (read by mock MCPs at request time) ─────────────────────
+export type AdvSupportScenario = "A" | "B" | "C";
+let _currentAdvScenario: AdvSupportScenario = "A";
+export function setAdvScenario(s: AdvSupportScenario): void { _currentAdvScenario = s; }
+export function getAdvScenario(): AdvSupportScenario { return _currentAdvScenario; }
+
 // ─── MCP server definitions (url is injected by caller) ──────────────────────
 export function makeAdvSupportMcpServerDefs(baseUrl: string) {
   return [

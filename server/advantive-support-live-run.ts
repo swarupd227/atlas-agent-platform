@@ -11,6 +11,8 @@ import {
   ADV_SUPPORT_BLUEPRINTS,
   ADV_SUPPORT_ONTOLOGY_CONCEPTS,
   ADV_SUPPORT_SYSTEM_PROMPTS,
+  setAdvScenario,
+  type AdvSupportScenario,
 } from "./advantive-support-shared-defs";
 
 const BASE_URL = `http://localhost:${process.env.PORT || 5000}`;
@@ -25,7 +27,7 @@ const _mcpIdByName:     Record<string, string> = {};
 const _deployIdByAgent: Record<string, string> = {};
 
 // ─── Pipeline step definitions ────────────────────────────────────────────────
-const PIPELINE_STEPS = [
+const PIPELINE_STEPS_A = [
   {
     agentName:  SUP_001_NAME,
     agentCode:  "SUP-001",
@@ -111,6 +113,140 @@ STANDARDS: Every escalation package must include: full conversation context, SUP
 
 When complete, output a JSON summary:
 {"status":"ESCALATED","case_id":"SF-CASE-2026-074821","t2_team":"InfinityQS Database & Schema","specialist":"Marcus Chen","response_eta_hours":1.5,"am_notified":true,"audit_logged":true}`,
+  },
+];
+
+// ─── Scenario B: T1 Autonomous Resolution (Meridian Mfg / InfinityQS Alarms) ─
+const PIPELINE_STEPS_B = [
+  {
+    agentName:  SUP_001_NAME,
+    agentCode:  "SUP-001",
+    label:      "Triage & Intent Classification",
+    maxIter:    6,
+    taskPrompt: `You are Advantive ONE's Triage & Intent Classifier (SUP-001).
+
+INBOUND QUERY — received from AIVA Support Agent interface:
+Customer: David Park, Meridian Manufacturing LLC (Account ACC-00892, Professional tier)
+Query: "Our InfinityQS SPC alarm email notifications have stopped sending after the v9.3 upgrade this morning. The alarm configuration panel shows all 12 alarms as enabled but no emails are going out to the shop floor supervisors."
+
+MISSION: Triage this query through the full classification and routing pipeline.
+1. Call receive_inbound_query to ingest the structured query from AIVA
+2. Call classify_intent to determine intent type with confidence scoring
+3. Call detect_product_version to identify the Advantive product and version
+4. Call read_customer_tier to retrieve account tier and SLA targets
+5. Call route_to_agent to determine and execute routing decision
+
+ROUTING CONTEXT: configuration_issue, InfinityQS v9.3, Professional tier, no compliance deadline.
+
+When complete, output a JSON summary:
+{"status":"ROUTED","intent":"configuration_issue","product":"InfinityQS","version":"9.3.0","tier":"Professional","route":"SUP-002","urgency":"MEDIUM","next_agent":"SUP-002"}`,
+  },
+  {
+    agentName:  SUP_002_NAME,
+    agentCode:  "SUP-002",
+    label:      "Knowledge Base Resolution Attempt",
+    maxIter:    6,
+    taskPrompt: `You are Advantive ONE's Knowledge Resolution Agent (SUP-002).
+
+HANDOFF FROM SUP-001: Query classified as configuration_issue for InfinityQS v9.3. Customer is Professional tier (Meridian Manufacturing LLC). Issue: alarm email notifications not sending after v9.3 upgrade. Routing: attempt KB resolution.
+
+MISSION: Attempt autonomous resolution from the Advantive knowledge base.
+1. Call search_product_docs to search InfinityQS v9.3 alarm/notification documentation
+2. Call query_historical_resolutions to find similar resolved tickets (focus on v9.3 SMTP alarm issues)
+3. Call generate_kb_answer to construct an answer from findings
+4. Call score_answer_confidence to evaluate the answer quality
+
+CRITICAL GATE: Confidence will be 0.89 — above the 0.65 threshold. You MUST deliver the resolution directly to the customer. This is a T1 autonomous resolution — no escalation needed.
+
+When complete, output a JSON summary:
+{"status":"RESOLVED","confidence":0.89,"resolution":"smtp_credentials_re_entered","message_delivered":true,"t1_resolved":true}`,
+  },
+];
+
+// ─── Scenario C: Regulatory Fast-Track (BioNexus Pharma / ParityFactory FDA) ─
+const PIPELINE_STEPS_C = [
+  {
+    agentName:  SUP_001_NAME,
+    agentCode:  "SUP-001",
+    label:      "Triage & Intent Classification",
+    maxIter:    6,
+    taskPrompt: `You are Advantive ONE's Triage & Intent Classifier (SUP-001).
+
+INBOUND QUERY — received from AIVA Support Agent interface:
+Customer: Rachel Kim, BioNexus Pharma Inc. (Account ACC-01234, Enterprise tier)
+Query: "Our ParityFactory data synchronization with our FDA-validated batch record system has failed during an active 21 CFR Part 11 validation window. Batch records BNX-2026-0417-LOT089 through LOT094 are missing from the validated repository. FDA auditors are on-site and will begin the inspection in 4 hours."
+
+MISSION: Triage this query through the full classification and routing pipeline.
+1. Call receive_inbound_query to ingest the structured query from AIVA
+2. Call classify_intent — this is compliance_critical (0.99) with regulatory hold required
+3. Call detect_product_version — ParityFactory v8.2.1
+4. Call read_customer_tier — Enterprise + Compliance SLA, 1h response target
+5. Call route_to_agent — FDA 21 CFR Part 11 active validation window activates regulatory fast-track. Legal hold: compliance@advantive.com CC.
+
+When complete, output a JSON summary:
+{"status":"ROUTED","intent":"compliance_critical","product":"ParityFactory","version":"8.2.1","tier":"Enterprise","route":"SUP-003","urgency":"REGULATORY-CRITICAL","legal_hold":true,"next_agent":"SUP-002"}`,
+  },
+  {
+    agentName:  SUP_002_NAME,
+    agentCode:  "SUP-002",
+    label:      "Knowledge Base Resolution Attempt",
+    maxIter:    6,
+    taskPrompt: `You are Advantive ONE's Knowledge Resolution Agent (SUP-002).
+
+HANDOFF FROM SUP-001: Query classified as compliance_critical for ParityFactory v8.2.1. Customer is BioNexus Pharma Inc., Enterprise + Compliance SLA. FDA 21 CFR Part 11 active validation window. FDA auditors on-site in 4 hours. Routing: KB check per policy, then route to Diagnostic.
+
+MISSION: Attempt KB resolution — but regulatory protocol mandates T2 regardless of confidence.
+1. Call search_product_docs to search ParityFactory FDA sync documentation
+2. Call query_historical_resolutions to find similar resolved tickets
+3. Call generate_kb_answer to evaluate available guidance
+4. Call score_answer_confidence — confidence will be 0.52 (below 0.65 gate + regulatory protocol)
+
+FDA REGULATORY PROTOCOL: Even if confidence were above 0.65, the 21 CFR Part 11 active validation window mandates T2 engagement and compliance officer supervision for all recovery steps. Route to Diagnostic regardless.
+
+When complete, output a JSON summary:
+{"status":"ROUTED_TO_DIAGNOSTIC","confidence":0.52,"reason":"fda_regulatory_protocol","regulatory_hold":true,"next_agent":"SUP-003"}`,
+  },
+  {
+    agentName:  SUP_003_NAME,
+    agentCode:  "SUP-003",
+    label:      "Diagnostic Reasoning & Compliance Analysis",
+    maxIter:    7,
+    taskPrompt: `You are Advantive ONE's Diagnostic Reasoning Agent (SUP-003).
+
+HANDOFF FROM SUP-002: KB confidence 0.52 + FDA regulatory protocol — autonomous resolution not permitted. ParityFactory v8.2.1 sync failure. BioNexus Pharma Inc., Enterprise. Batch records LOT089-094 missing from FDA-validated repository. FDA auditors on-site in 4 hours. REGULATORY EMERGENCY.
+
+MISSION: Diagnose the root cause and build a compliance-supervised recovery path.
+1. Call ingest_error_context — ParityFactory v8.2.1, PF-SYNC-DAEMON-EXIT-0
+2. Call query_product_logs — 22,140 log entries, sync daemon exit after DB maintenance
+3. Call match_error_pattern — PF-BUG-821-0033 (DaemonAutoRestart=false configuration gap)
+4. Call build_resolution_path — 5-step compliance-supervised recovery, 20 minutes
+5. Call assess_escalation_need — P0 regulatory mandatory escalation. Legal hold + legal CC required.
+
+COMPLIANCE CONTEXT: All recovery steps must be performed under documented compliance supervision per 21 CFR Part 11. Legal hold on all sync logs. FDA advisory to be filed.
+
+When complete, output a JSON summary:
+{"status":"ESCALATION_REQUIRED","root_cause":"PF-BUG-821-0033","resolution_path":"compliance_supervised","autonomous_confidence":0.73,"escalation_type":"regulatory_mandatory","legal_hold":true,"next_agent":"SUP-004"}`,
+  },
+  {
+    agentName:  SUP_004_NAME,
+    agentCode:  "SUP-004",
+    label:      "Regulatory Escalation Packaging",
+    maxIter:    6,
+    taskPrompt: `You are Advantive ONE's T1→T2 Escalation Packager (SUP-004).
+
+HANDOFF FROM SUP-003: BioNexus Pharma Inc. (Enterprise, Compliance SLA). ParityFactory v8.2.1 sync failure. Root cause: PF-BUG-821-0033 (DaemonAutoRestart=false). 6 batch records LOT089-094 missing from FDA-validated repository. FDA auditors on-site in 4 hours. P0 regulatory mandatory escalation. Legal hold required.
+
+MISSION: Create a regulatory-grade escalation package with legal hold.
+1. Call build_escalation_package — FDA regulatory grade, 21 fields, legal hold context
+2. Call create_salesforce_case — SF-CASE-2026-078034, Priority: Critical Regulatory Emergency
+3. Call recommend_t2_owner — ParityFactory Compliance & Integration Team, Sofia Rodriguez, ETA 30 min
+4. Call notify_account_manager — Tyler Brooks + compliance@advantive.com legal CC
+5. Call log_escalation_audit — FDA advisory FDA-ADV-2026-04-17-001, all pipeline events, regulatory tags
+
+REGULATORY STANDARDS: Legal hold on all sync logs until audit complete. Compliance officer must co-sign all recovery steps. FDA advisory filed for BioNexus Pharma. Zero tolerance for errors with auditors on-site.
+
+When complete, output a JSON summary:
+{"status":"ESCALATED","case_id":"SF-CASE-2026-078034","t2_team":"ParityFactory Compliance & Integration","specialist":"Sofia Rodriguez","response_eta_hours":0.5,"legal_notified":true,"regulatory_hold":true,"fda_advisory":"FDA-ADV-2026-04-17-001"}`,
   },
 ];
 
@@ -469,17 +605,46 @@ export async function advSupportLiveRunHandler(req: Request, res: Response): Pro
 
   req.on("close", () => { aborted = true; clearInterval(keepalive); });
 
+  // ── Resolve scenario ────────────────────────────────────────────────────────
+  const rawScenario = req.query.scenario;
+  const scenario: AdvSupportScenario =
+    rawScenario === "B" ? "B" : rawScenario === "C" ? "C" : "A";
+  setAdvScenario(scenario);
+  const PIPELINE_STEPS =
+    scenario === "B" ? PIPELINE_STEPS_B :
+    scenario === "C" ? PIPELINE_STEPS_C :
+    PIPELINE_STEPS_A;
+
+  const RUN_START_MSG: Record<AdvSupportScenario, string> = {
+    A: "SUPPORT ALERT — InfinityQS v9.3 production outage at Cascade Polymers Inc. ISO 9001 audit in 26 hours. Activating AI-First T1 Support pipeline…",
+    B: "SUPPORT QUERY — InfinityQS v9.3 alarm email notifications not sending at Meridian Manufacturing LLC. Activating AI-First T1 Support pipeline…",
+    C: "REGULATORY EMERGENCY — ParityFactory FDA 21 CFR Part 11 data sync failure at BioNexus Pharma Inc. FDA auditors on-site in 4 hours. Activating Regulatory Fast-Track pipeline…",
+  };
+
+  const QUERY_ID: Record<AdvSupportScenario, string> = {
+    A: "AIVA-Q-2026-04-17-0831",
+    B: "AIVA-Q-2026-04-17-1142",
+    C: "AIVA-Q-2026-04-17-0614",
+  };
+
   try {
     sse("run_start", {
-      message:   "SUPPORT ALERT — InfinityQS v9.3 production outage at Cascade Polymers Inc. ISO 9001 audit in 26 hours. Activating AI-First T1 Support pipeline…",
-      scenario:  "ADV-SCN-004",
-      query_id:  "AIVA-Q-2026-04-17-0831",
+      message:   RUN_START_MSG[scenario],
+      scenario:  `ADV-SCN-${scenario}`,
+      query_id:  QUERY_ID[scenario],
     });
 
-    sse("setup", { message: "Provisioning SUP-001, SUP-002, SUP-003, SUP-004…" });
+    const agentSetupMsg = scenario === "B"
+      ? "Provisioning SUP-001, SUP-002…"
+      : "Provisioning SUP-001, SUP-002, SUP-003, SUP-004…";
+    sse("setup", { message: agentSetupMsg });
     await ensureAdvSupportAgents();
+
+    const agentReadyMsg = scenario === "B"
+      ? "Agents ready — SUP-001 ✓ · SUP-002 ✓ · (SUP-003 not needed) · (SUP-004 not needed)"
+      : "Agents ready — SUP-001 ✓ · SUP-002 ✓ · SUP-003 ✓ · SUP-004 ✓";
     sse("setup", {
-      message:  "Agents ready — SUP-001 ✓ · SUP-002 ✓ · SUP-003 ✓ · SUP-004 ✓",
+      message:  agentReadyMsg,
       agentIds: {
         sup001: _agentIdByName[SUP_001_NAME],
         sup002: _agentIdByName[SUP_002_NAME],
@@ -557,17 +722,51 @@ export async function advSupportLiveRunHandler(req: Request, res: Response): Pro
     }
 
     if (!aborted) {
-      sse("pipeline_complete", {
-        message: "AI-First T1 Support pipeline complete — query triaged, KB resolution attempted, root cause diagnosed, Salesforce case created, T2 specialist assigned",
-        metrics: {
-          t1_autonomous_capable: true,
-          autonomous_confidence: 0.91,
-          escalation_type: "parallel_standby",
-          salesforce_case: "SF-CASE-2026-074821",
-          t2_specialist: "Marcus Chen / InfinityQS DB Team",
-          response_eta_hours: 1.5,
-          audit_trail_logged: true,
+      const COMPLETE_PAYLOAD: Record<AdvSupportScenario, object> = {
+        A: {
+          message: "AI-First T1 Support pipeline complete — query triaged, KB resolution attempted, root cause diagnosed, Salesforce case created, T2 specialist assigned",
+          metrics: {
+            t1_autonomous_capable: true,
+            t1_resolved: false,
+            autonomous_confidence: 0.91,
+            escalation_type: "parallel_standby",
+            salesforce_case: "SF-CASE-2026-074821",
+            t2_specialist: "Marcus Chen / InfinityQS DB Team",
+            response_eta_hours: 1.5,
+            audit_trail_logged: true,
+          },
         },
+        B: {
+          message: "AI-First T1 Support — T1 Autonomous Resolution complete. Answer delivered to David Park (Meridian Mfg). KB confidence 0.89 passed gate — no T2 needed.",
+          metrics: {
+            t1_resolved: true,
+            t1_autonomous_capable: true,
+            autonomous_confidence: 0.89,
+            kb_confidence: 0.89,
+            escalation_type: "none",
+            resolution_delivered: true,
+            audit_trail_logged: true,
+          },
+        },
+        C: {
+          message: "Regulatory Fast-Track complete — FDA legal hold placed, Salesforce Case SF-CASE-2026-078034 created, Sofia Rodriguez assigned, compliance team CC'd, FDA advisory FDA-ADV-2026-04-17-001 filed",
+          metrics: {
+            t1_resolved: false,
+            t1_autonomous_capable: false,
+            autonomous_confidence: 0.73,
+            escalation_type: "regulatory_mandatory",
+            salesforce_case: "SF-CASE-2026-078034",
+            t2_specialist: "Sofia Rodriguez / ParityFactory Compliance & Integration",
+            response_eta_hours: 0.5,
+            legal_hold: true,
+            legal_cc: "compliance@advantive.com",
+            regulatory_advisory: "FDA-ADV-2026-04-17-001",
+            audit_trail_logged: true,
+          },
+        },
+      };
+      sse("pipeline_complete", {
+        ...COMPLETE_PAYLOAD[scenario],
         agentSummaries,
       });
     }
