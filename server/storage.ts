@@ -316,6 +316,7 @@ export interface IStorage {
   createAuditChainHealthCheck(record: InsertAuditChainHealthCheck): Promise<AuditChainHealthCheck>;
   getAuditChainHealthChecks(limit: number): Promise<AuditChainHealthCheck[]>;
   getPendingAuditChainJob(): Promise<Job | null>;
+  getPendingOtcSmokeTestJob(): Promise<Job | null>;
   persistAuditChainCheckResult(
     integrityResult: { valid: boolean; totalEvents: number; verifiedEvents: number; brokenAt?: number },
     durationMs: number,
@@ -1515,6 +1516,20 @@ export class DatabaseStorage implements IStorage {
       .where(
         and(
           eq(jobs.type, "audit_chain_integrity_check"),
+          eq(jobs.status, "queued")
+        )
+      )
+      .limit(1);
+    return job ?? null;
+  }
+
+  async getPendingOtcSmokeTestJob() {
+    const [job] = await db
+      .select()
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.type, "otc_smoke_test"),
           eq(jobs.status, "queued")
         )
       )

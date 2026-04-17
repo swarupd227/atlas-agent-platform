@@ -3,6 +3,7 @@ import { storage } from "./storage";
 import { runAgentOnce, runtimeEvents } from "./agent-runtime";
 import {
   OTC_AGT_005_NAME, OTC_AGT_007_NAME, OTC_AGT_012_NAME,
+  OTC_EVAL_SUITE_NAME,
   makeOtcFulfillmentMcpServerDefs,
   OTC_FULFILLMENT_KB_DEFS,
   OTC_FULFILLMENT_AGENT_DEFS,
@@ -15,7 +16,7 @@ import {
 
 const BASE_URL = `http://localhost:${process.env.PORT || 5000}`;
 const OTC_FULFILLMENT_MCP_SERVERS = makeOtcFulfillmentMcpServerDefs(BASE_URL);
-const EVAL_SUITE_NAME = "OTC Fulfillment Exception Regression Suite";
+const EVAL_SUITE_NAME = OTC_EVAL_SUITE_NAME;
 
 // ─── Module-level caches ────────────────────────────────────────────────────
 let _setupDone = false;
@@ -434,6 +435,60 @@ export async function resetOtcFulfillmentDemo(_req: Request, res: Response): Pro
   Object.keys(_agentIdByName).forEach(k => delete _agentIdByName[k]);
   Object.keys(_deployIdByAgent).forEach(k => delete _deployIdByAgent[k]);
   res.json({ reset: true });
+}
+
+// ─── Headless pipeline runner (used by smoke test worker) ───────────────────
+export interface OtcPipelineStepResult {
+  agentCode: string;
+  agentName: string;
+  success: boolean;
+  toolCallCount: number;
+  message: string;
+}
+
+export interface OtcPipelineRunResult {
+  success: boolean;
+  steps: OtcPipelineStepResult[];
+  error?: string;
+}
+
+export async function runOtcFulfillmentPipeline(): Promise<OtcPipelineRunResult> {
+  await ensureOtcFulfillmentAgents();
+
+  const steps: OtcPipelineStepResult[] = [];
+
+  for (const step of PIPELINE_STEPS) {
+    const agentId = _agentIdByName[step.agentName];
+    if (!agentId) {
+      steps.push({ agentCode: step.agentCode, agentName: step.agentName, success: false, toolCallCount: 0, message: `Agent not found: ${step.agentName}` });
+      return { success: false, steps, error: `Agent not found: ${step.agentName}` };
+    }
+
+    const deployId = await _ensureDeployment(agentId, step.agentName);
+    let result: { success: boolean; message?: string; steps?: any[] };
+    try {
+      result = await runAgentOnce(deployId, step.taskPrompt, step.maxIter);
+    } catch (err: any) {
+      const errMsg = err?.message ?? "Unknown error";
+      steps.push({ agentCode: step.agentCode, agentName: step.agentName, success: false, toolCallCount: 0, message: errMsg });
+      return { success: false, steps, error: `${step.agentCode} threw: ${errMsg}` };
+    }
+
+    const toolCallCount = (result.steps ?? []).filter((s: any) => s.type === "api_call").length;
+    steps.push({
+      agentCode: step.agentCode,
+      agentName: step.agentName,
+      success: result.success,
+      toolCallCount,
+      message: result.message?.slice(0, 500) ?? "",
+    });
+
+    if (!result.success) {
+      return { success: false, steps, error: `${step.agentCode} failed: ${result.message?.slice(0, 200) ?? "unknown error"}` };
+    }
+  }
+
+  return { success: true, steps };
 }
 
 // ─── SSE Live-Run Handler ────────────────────────────────────────────────────

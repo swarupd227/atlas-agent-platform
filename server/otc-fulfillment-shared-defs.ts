@@ -13,6 +13,9 @@ export const OTC_AGT_005_NAME = "Fulfillment & Exception Agent";
 export const OTC_AGT_007_NAME = "Delivery Tracking & Confirmation Agent";
 export const OTC_AGT_012_NAME = "Customer Communication & Notification Agent";
 
+// ─── Eval suite name (single source of truth) ────────────────────────────────
+export const OTC_EVAL_SUITE_NAME = "OTC Fulfillment Exception Regression Suite";
+
 // ─── MCP server definitions (url is injected by caller) ──────────────────────
 export function makeOtcFulfillmentMcpServerDefs(baseUrl: string) {
   return [

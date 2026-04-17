@@ -1,11 +1,16 @@
 import { storage } from "./storage";
 import type { Job, AuditChainTrigger } from "@shared/schema";
+import { agentAlerts } from "@shared/schema";
 import { EventEmitter } from "events";
 import { checkOntologyCompliance, executeScheduledAgentCycle } from "./agent-runtime";
 import { industryEvalFrameworks } from "./routes";
 import { runLlmJudge, runAgentOnInput, buildAgentContext } from "./eval-judge";
 import { getDefaultProvider, getProvider, completeWithFallback } from "./llm-provider";
 import { runAlertCheck } from "./routes/observability";
+import { db } from "./db";
+import { eq, and, isNull } from "drizzle-orm";
+import { ensureOtcFulfillmentAgents, runOtcFulfillmentPipeline } from "./otc-fulfillment-live-run";
+import { OTC_AGT_005_NAME, OTC_AGT_007_NAME, OTC_AGT_012_NAME, OTC_EVAL_SUITE_NAME } from "./otc-fulfillment-shared-defs";
 
 export const jobEvents = new EventEmitter();
 jobEvents.setMaxListeners(50);
@@ -575,6 +580,251 @@ export async function enqueueAuditChainCheck() {
   }
 }
 
+// ─── OTC Fulfillment Smoke Test ───────────────────────────────────────────────
+
+const OTC_SMOKE_TEST_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // weekly
+const OTC_SMOKE_MIN_PASS_RATE = 0.90;
+const OTC_SMOKE_ALERT_TYPE = "otc_smoke_test_failure";
+
+type SmokeSeverity = "critical" | "high" | "warning";
+const SEVERITY_RANK: Record<SmokeSeverity, number> = { critical: 3, high: 2, warning: 1 };
+function maxSeverity(a: SmokeSeverity, b: SmokeSeverity): SmokeSeverity {
+  return SEVERITY_RANK[a] >= SEVERITY_RANK[b] ? a : b;
+}
+
+async function processOtcSmokeTest(job: Job): Promise<Record<string, unknown>> {
+  const startedAt = Date.now();
+  const checks: Array<{ name: string; passed: boolean; detail: string }> = [];
+  let alertNeeded = false;
+  let alertMessage = "";
+  let alertSeverity: SmokeSeverity = "warning";
+  let freshEvalRunId: string | undefined;
+  let freshPassRate: number | null = null;
+  let pipelineSteps: Array<{ agentCode: string; success: boolean; toolCallCount: number }> = [];
+
+  try {
+    // 1. Structural pre-flight: ensure agents + MCP servers are provisioned
+    await ensureOtcFulfillmentAgents();
+
+    const allAgents = await storage.getAgents().catch((): Awaited<ReturnType<typeof storage.getAgents>> => []);
+    const agentNames = [OTC_AGT_005_NAME, OTC_AGT_007_NAME, OTC_AGT_012_NAME];
+    const missingAgents = agentNames.filter(n => !allAgents.find(a => a.name === n));
+    const inactiveAgents = agentNames.filter(n => {
+      const a = allAgents.find(ag => ag.name === n);
+      return a && a.status !== "active";
+    });
+
+    if (missingAgents.length > 0) {
+      checks.push({ name: "Agent Provisioning", passed: false, detail: `Missing agents: ${missingAgents.join(", ")}` });
+      alertNeeded = true;
+      alertSeverity = maxSeverity(alertSeverity, "critical");
+      alertMessage = `OTC smoke test: missing agents — ${missingAgents.join(", ")}`;
+    } else if (inactiveAgents.length > 0) {
+      checks.push({ name: "Agent Provisioning", passed: false, detail: `Inactive agents: ${inactiveAgents.join(", ")}` });
+      alertNeeded = true;
+      alertSeverity = maxSeverity(alertSeverity, "high");
+      alertMessage = `OTC smoke test: inactive agents — ${inactiveAgents.join(", ")}`;
+    } else {
+      checks.push({ name: "Agent Provisioning", passed: true, detail: "All 3 OTC agents active (OTC-AGT-005, OTC-AGT-007, OTC-AGT-012)" });
+    }
+
+    const allServers = await storage.getMcpServers().catch((): Awaited<ReturnType<typeof storage.getMcpServers>> => []);
+    const mcpNames = [
+      "OTC Fulfillment — Disruption Intelligence",
+      "OTC Fulfillment — Shipment Tracking & Carrier",
+      "OTC Fulfillment — Customer Comm Engine",
+    ];
+    const missingServers = mcpNames.filter(n => !allServers.find(s => s.name === n));
+    if (missingServers.length > 0) {
+      checks.push({ name: "MCP Server Registration", passed: false, detail: `Missing servers: ${missingServers.join(", ")}` });
+      if (!alertNeeded) { alertNeeded = true; alertMessage = `OTC smoke test: missing MCP servers — ${missingServers.join(", ")}`; }
+    } else {
+      checks.push({ name: "MCP Server Registration", passed: true, detail: "All 3 MCP servers registered" });
+    }
+
+    // 2. End-to-end pipeline run: OTC-AGT-005 → OTC-AGT-007 → OTC-AGT-012
+    console.log("[otc-smoke-test] Starting end-to-end 3-agent pipeline run…");
+    const pipelineResult = await runOtcFulfillmentPipeline();
+    pipelineSteps = pipelineResult.steps.map(s => ({
+      agentCode: s.agentCode,
+      success: s.success,
+      toolCallCount: s.toolCallCount,
+    }));
+
+    if (!pipelineResult.success) {
+      const failedStep = pipelineResult.steps.find(s => !s.success);
+      const detail = pipelineResult.error ?? `Pipeline step failed: ${failedStep?.agentCode ?? "unknown"}`;
+      checks.push({ name: "End-to-End Pipeline Run", passed: false, detail });
+      alertSeverity = maxSeverity(alertSeverity, "critical");
+      if (!alertNeeded) {
+        alertNeeded = true;
+        alertMessage = `OTC smoke test: pipeline failure — ${detail}`;
+      } else {
+        alertMessage += `; pipeline failure — ${detail}`;
+      }
+    } else {
+      const stepSummary = pipelineResult.steps.map(s => `${s.agentCode}(${s.toolCallCount} tools)`).join(" → ");
+      checks.push({ name: "End-to-End Pipeline Run", passed: true, detail: `All 3 agents completed: ${stepSummary}` });
+      console.log(`[otc-smoke-test] Pipeline success: ${stepSummary}`);
+    }
+
+    // 3. Eval suite run — always execute a fresh inline eval every cycle
+    const allSuites = await storage.getEvalSuites().catch((): Awaited<ReturnType<typeof storage.getEvalSuites>> => []);
+    const suite = allSuites.find(s => s.name === OTC_EVAL_SUITE_NAME);
+    if (!suite) {
+      checks.push({ name: "Eval Suite Run", passed: false, detail: `Eval suite "${OTC_EVAL_SUITE_NAME}" not found` });
+      if (!alertNeeded) { alertNeeded = true; alertMessage = `OTC smoke test: eval suite not found`; }
+    } else {
+      const leadAgent = allAgents.find(a => a.name === OTC_AGT_005_NAME);
+      if (!leadAgent) {
+        checks.push({ name: "Eval Suite Run", passed: false, detail: "Lead agent unavailable — eval skipped" });
+        if (!alertNeeded) { alertNeeded = true; alertMessage = `OTC smoke test: lead agent unavailable`; }
+      } else {
+        const testCases = await storage.getEvalTestCases(suite.id).catch((): Awaited<ReturnType<typeof storage.getEvalTestCases>> => []);
+        const agentCtx = buildAgentContext(leadAgent);
+        const evalRun = await storage.createEvalRun({
+          suiteId: suite.id, status: "running", passRate: 0,
+          totalCases: testCases.length, passedCases: 0, failedCases: 0, avgLatencyMs: 0,
+        });
+        freshEvalRunId = evalRun.id;
+
+        let passed = 0; let failed = 0; let totalLatency = 0;
+        for (const tc of testCases) {
+          const inputData = (tc.inputData as Record<string, unknown>) || {};
+          try {
+            const agentRun = await runAgentOnInput(leadAgent.systemPrompt, inputData);
+            const judgeResult = await runLlmJudge(tc.name, inputData,
+              (tc.expectedOutput as Record<string, unknown>) || null, agentCtx, agentRun.output, undefined);
+            const latencyMs = agentRun.latencyMs + judgeResult.latencyMs;
+            totalLatency += latencyMs;
+            if (judgeResult.isPassed) passed++; else failed++;
+            await storage.createEvalCaseResult({
+              runId: evalRun.id, caseId: tc.id, passed: judgeResult.isPassed, latencyMs,
+              actualOutput: { status: judgeResult.isPassed ? "pass" : "fail", confidence: judgeResult.confidence, reason: judgeResult.reason, agentOutput: agentRun.output || null },
+              scorerOutputs: { judgeMetadata: { confidence: judgeResult.confidence, reason: judgeResult.reason } },
+            }).catch(() => {});
+          } catch {
+            failed++;
+            await storage.createEvalCaseResult({
+              runId: evalRun.id, caseId: tc.id, passed: false, latencyMs: 0,
+              actualOutput: { status: "fail", reason: "Eval case threw an exception" },
+            }).catch(() => {});
+          }
+          await delay(100);
+        }
+
+        const passRate = testCases.length > 0 ? passed / testCases.length : 0;
+        const avgLatency = testCases.length > 0 ? Math.round(totalLatency / testCases.length) : 0;
+        freshPassRate = passRate;
+        await storage.createEvalRun({
+          suiteId: suite.id, status: "completed", passRate,
+          totalCases: testCases.length, passedCases: passed, failedCases: failed, avgLatencyMs: avgLatency,
+        });
+
+        const passRatePct = Math.round(passRate * 100);
+        if (passRate < OTC_SMOKE_MIN_PASS_RATE) {
+          checks.push({ name: "Eval Suite Run", passed: false, detail: `Eval pass rate ${passRatePct}% is below ${OTC_SMOKE_MIN_PASS_RATE * 100}% threshold (${passed}/${testCases.length} cases)` });
+          const evalSeverity: SmokeSeverity = passRate < 0.75 ? "critical" : "high";
+          alertSeverity = maxSeverity(alertSeverity, evalSeverity);
+          if (!alertNeeded) {
+            alertNeeded = true;
+            alertMessage = `OTC smoke test: eval pass rate ${passRatePct}% (${passed}/${testCases.length} cases)`;
+          } else {
+            alertMessage += `; eval pass rate ${passRatePct}%`;
+          }
+        } else {
+          checks.push({ name: "Eval Suite Run", passed: true, detail: `Eval pass rate ${passRatePct}% meets ${OTC_SMOKE_MIN_PASS_RATE * 100}% threshold (${passed}/${testCases.length} cases)` });
+        }
+        console.log(`[otc-smoke-test] Eval run complete: ${passed}/${testCases.length} passed (${passRatePct}%)`);
+      }
+    }
+
+    // 4. Resolve or create observability alert — fallback to incident if agent is unavailable
+    const leadAgentId = allAgents.find(a => a.name === OTC_AGT_005_NAME)?.id;
+
+    if (alertNeeded) {
+      if (leadAgentId) {
+        // Upsert alert into agent_alerts (visible in Observability)
+        const openAlerts = await db.select().from(agentAlerts).where(
+          and(eq(agentAlerts.agentId, leadAgentId), eq(agentAlerts.alertType, OTC_SMOKE_ALERT_TYPE), isNull(agentAlerts.acknowledgedAt))
+        );
+        if (openAlerts.length > 0) {
+          await db.update(agentAlerts).set({ severity: alertSeverity, message: alertMessage, triggeredAt: new Date() }).where(eq(agentAlerts.id, openAlerts[0].id));
+        } else {
+          await db.insert(agentAlerts).values({ agentId: leadAgentId, agentName: OTC_AGT_005_NAME, alertType: OTC_SMOKE_ALERT_TYPE, severity: alertSeverity, message: alertMessage });
+        }
+        console.log(`[otc-smoke-test] Alert upserted (severity: ${alertSeverity}): ${alertMessage}`);
+      } else {
+        // Fallback: create a system-level incident when the lead agent itself is unavailable
+        await storage.createIncident({
+          agentId: "system-otc-smoke-test",
+          agentName: "OTC Fulfillment Smoke Test",
+          severity: alertSeverity === "critical" ? "critical" : alertSeverity === "high" ? "high" : "medium",
+          status: "open",
+          sourceMetric: OTC_SMOKE_ALERT_TYPE,
+          sourceDetails: { message: alertMessage, triggeredAt: new Date().toISOString() },
+        }).catch(err => console.error("[otc-smoke-test] Failed to create fallback incident:", err.message));
+        console.log(`[otc-smoke-test] Incident created (fallback — lead agent unavailable): ${alertMessage}`);
+      }
+    } else if (leadAgentId) {
+      // All checks passed — auto-acknowledge any open alerts
+      const openAlerts = await db.select().from(agentAlerts).where(
+        and(eq(agentAlerts.agentId, leadAgentId), eq(agentAlerts.alertType, OTC_SMOKE_ALERT_TYPE), isNull(agentAlerts.acknowledgedAt))
+      );
+      if (openAlerts.length > 0) {
+        await db.update(agentAlerts).set({ acknowledgedAt: new Date() }).where(eq(agentAlerts.id, openAlerts[0].id));
+        console.log("[otc-smoke-test] All checks passed — auto-acknowledged previous alert");
+      }
+    }
+
+    const allPassed = checks.every(c => c.passed);
+    console.log(`[otc-smoke-test] Done — ${allPassed ? "HEALTHY" : "DEGRADED"} (${checks.filter(c => c.passed).length}/${checks.length} checks passed, alert: ${alertNeeded})`);
+
+  } catch (err: any) {
+    const errMsg: string = err?.message ?? "Unexpected smoke test exception";
+    console.error("[otc-smoke-test] Unexpected error during smoke test:", errMsg);
+    // Best-effort: surface unhandled exceptions as an observability incident so the failure is never silent
+    await storage.createIncident({
+      agentId: "system-otc-smoke-test",
+      agentName: "OTC Fulfillment Smoke Test",
+      severity: "critical",
+      status: "open",
+      sourceMetric: OTC_SMOKE_ALERT_TYPE,
+      sourceDetails: { message: `Smoke test threw unhandled exception: ${errMsg}`, triggeredAt: new Date().toISOString() },
+    }).catch(incErr => console.error("[otc-smoke-test] Failed to create exception incident:", incErr.message));
+    throw err;
+  } finally {
+    const nextRunAt = new Date(Date.now() + OTC_SMOKE_TEST_INTERVAL_MS);
+    try {
+      await storage.createJob({ type: "otc_smoke_test", status: "queued", payload: { triggeredBy: "scheduled" }, scheduledFor: nextRunAt });
+      console.log(`[otc-smoke-test] Re-enqueued for next run at ${nextRunAt.toISOString()}`);
+    } catch (enqueueErr: any) {
+      console.error("[otc-smoke-test] Failed to re-enqueue smoke test:", enqueueErr.message);
+    }
+  }
+
+  return { durationMs: Date.now() - startedAt, checks, alertRaised: alertNeeded, freshEvalRunId, freshPassRate, pipelineSteps };
+}
+
+export async function enqueueOtcSmokeTest() {
+  try {
+    const existing = await storage.getPendingOtcSmokeTestJob();
+    if (existing) {
+      console.log("[startup] OTC smoke test already queued, skipping initial enqueue");
+      return;
+    }
+    await storage.createJob({
+      type: "otc_smoke_test",
+      status: "queued",
+      payload: { triggeredBy: "scheduled" },
+      scheduledFor: new Date(),
+    });
+    console.log("[startup] Enqueued initial OTC Fulfillment smoke test");
+  } catch (err: any) {
+    console.error("[startup] CRITICAL: Failed to enqueue OTC smoke test — monitoring inactive:", err.message);
+  }
+}
+
 export function startWorker(intervalMs = 2000) {
   if (workerRunning) return;
   workerRunning = true;
@@ -609,6 +859,8 @@ export function startWorker(intervalMs = 2000) {
             result = await processAgentScheduledRun(job);
           } else if (job.type === "audit_chain_integrity_check") {
             result = await processAuditChainIntegrityCheck(job);
+          } else if (job.type === "otc_smoke_test") {
+            result = await processOtcSmokeTest(job);
           } else {
             result = { message: `Unknown job type: ${job.type}` };
           }
