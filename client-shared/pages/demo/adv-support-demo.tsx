@@ -82,7 +82,16 @@ export default function AdvSupportDemo() {
   const [screen, setScreen]     = useState(1);
   const [logOpen, setLogOpen]   = useState(false);
   const { state, start, reset } = useAdvSupportPipeline(scenario);
-  const lastAdvancedRef = useRef(0);
+  const lastAdvancedRef   = useRef(0);
+  const pendingStartRef   = useRef(false);
+
+  // Auto-start when `start` stabilizes with a new scenarioId after a pill click
+  useEffect(() => {
+    if (pendingStartRef.current) {
+      pendingStartRef.current = false;
+      start();
+    }
+  }, [start]);
 
   const isRunning  = state.phase !== "idle" && state.phase !== "complete" && state.phase !== "error";
   const isComplete = state.phase === "complete";
@@ -140,8 +149,18 @@ export default function AdvSupportDemo() {
 
   const handleScenarioChange = (s: AdvSupportScenario) => {
     if (isRunning) return;
-    // reset() is handled by the hook's useEffect watching scenarioId
+    if (s === scenario) {
+      // Same scenario — just re-start directly (start is already stable)
+      lastAdvancedRef.current = 0;
+      setScreen(1);
+      setLogOpen(false);
+      start();
+      return;
+    }
+    // Different scenario — flag auto-start; hook's useEffect resets state,
+    // then the useEffect above fires start() once the new `start` is stable
     setScenario(s);
+    pendingStartRef.current = true;
     lastAdvancedRef.current = 0;
     setScreen(1);
     setLogOpen(false);
