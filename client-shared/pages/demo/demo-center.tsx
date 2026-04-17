@@ -18,6 +18,7 @@ import {
   Layers,
   Clock,
   Tag,
+  HeadsetIcon,
   BarChart2,
   Factory,
   HeartPulse,
@@ -363,6 +364,23 @@ const DEMOS: Demo[] = [
     tags: ["Self-Healing", "Model Bias", "NAIC", "GDPR Art. 22", "Platform Intelligence"],
     badge: "Self-Healing",
   },
+  {
+    id: "advantive-support",
+    title: "AI-First Tier 1 Support Intelligence",
+    client: "Advantive ONE",
+    description:
+      "Cascade Polymers Inc. (Enterprise, $248K ACV) reports InfinityQS v9.3 SQL timeout IQS-SQL-TMO-7891 — 47 Xbar-R control charts blocked with ISO 9001 audit 26 hours away. 4 Atlas agents run sequentially: SUP-001 (Triage) classifies P1 technical_troubleshooting (0.97 confidence) → SUP-002 (Knowledge) searches 18,400 tickets, confidence 0.58 — below gate, routes to Diagnostic → SUP-003 (Diagnostic) queries Product Log Intelligence, confirms IQS-BUG-930-0042 (migration script silently skipped), builds 5-step resolution path → SUP-004 (Escalation) auto-creates Salesforce Case #00074821 with 18 fields pre-populated, routes to Marcus Chen (InfinityQS DB Team), notifies AM James Whitfield — ISO audit fully covered.",
+    industry: "Technology / SaaS",
+    industryId: "technology_saas",
+    stage: "Customer Support Operations",
+    route: "/demo/advantive-support",
+    icon: HeadsetIcon,
+    iconColor: "#C62A47",
+    duration: "7 min",
+    screens: 4,
+    tags: ["T1 Support", "InfinityQS", "Diagnostic Reasoning", "Escalation", "Salesforce", "ISO 9001"],
+    badge: "New",
+  },
 ];
 
 const INDUSTRY_FILTERS = [
@@ -373,6 +391,7 @@ const INDUSTRY_FILTERS = [
   { id: "automotive", label: "Automotive Data" },
   { id: "legal_services", label: "Legal Services" },
   { id: "manufacturing", label: "Manufacturing" },
+  { id: "technology_saas", label: "Technology / SaaS" },
 ];
 
 const industryBadgeStyle: Record<string, string> = {
@@ -388,6 +407,8 @@ const industryBadgeStyle: Record<string, string> = {
     "bg-orange-50 text-orange-800 border-orange-300 dark:bg-orange-950/50 dark:text-orange-300 dark:border-orange-800/50",
   self_healing:
     "bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800",
+  technology_saas:
+    "bg-rose-50 text-rose-700 border-rose-200 dark:bg-rose-950 dark:text-rose-300 dark:border-rose-800",
 };
 
 export default function DemoCenter() {

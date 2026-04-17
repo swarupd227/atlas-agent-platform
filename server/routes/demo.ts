@@ -8,6 +8,7 @@ import { otcOrderLiveRunHandler, getOtcOrderAgentRuns, resetOtcOrderDemo, ensure
 import { pkgSchedLiveRunHandler, resetPkgSchedDemo, getPkgSchedAgentRuns } from "../pkg-sched-live-run";
 import { runOnespanDemo, setupOnespanDemo, resetOnespanDemo, getOnespanAgentRuns, ensureOnespanAgents } from "../onespan-live-run";
 import { otcFulfillmentLiveRunHandler, getOtcFulfillmentAgentRuns, resetOtcFulfillmentDemo, ensureOtcFulfillmentAgents } from "../otc-fulfillment-live-run";
+import { advSupportLiveRunHandler, getAdvSupportAgentRuns, resetAdvSupportDemo } from "../advantive-support-live-run";
 
 import { seedPartnerPortalRegistry } from "../seed-blackrock2-partner-portal";
 import { storage } from "../storage";
@@ -3220,6 +3221,11 @@ Log every action.`;
   router.post("/demo-api/fitch-rw/reset",     fitchRWResetHandler);
   router.get("/demo-api/fitch-rw/live-run",   fitchRWLiveRunHandler);
   router.get("/demo-api/fitch-rw/agent-runs", getFitchRWAgentRuns);
+
+  // ── Demo 4: Advantive ONE AI-First Tier 1 Support Intelligence ─────────────
+  router.get("/demo-api/advantive-support/live-run",   advSupportLiveRunHandler);
+  router.get("/demo-api/advantive-support/agent-runs", getAdvSupportAgentRuns);
+  router.post("/demo-api/advantive-support/reset",     resetAdvSupportDemo);
 
 export { ensureHearstAgents, ensureFitchAgents };
 export default router;

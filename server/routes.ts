@@ -62,6 +62,11 @@ import onespanHelpdeskRouter    from "./mock-mcp/onespan-helpdesk";
 import otcFulfillmentDisruptionRouter from "./mock-mcp/otc-fulfillment-disruption";
 import otcFulfillmentTrackingRouter   from "./mock-mcp/otc-fulfillment-tracking";
 import otcFulfillmentCommsRouter      from "./mock-mcp/otc-fulfillment-comms";
+import advSupportTriageRouter         from "./mock-mcp/adv-support-triage";
+import advSupportKbRouter             from "./mock-mcp/adv-support-kb";
+import advSupportDiagnosticRouter     from "./mock-mcp/adv-support-diagnostic";
+import advSupportEscalationRouter     from "./mock-mcp/adv-support-escalation";
+import { ensureAdvSupportAgents }     from "./advantive-support-live-run";
 import { bbLiveRunHandler, getBBAgentRuns, getBBOutcomeData, getBBSelfHealingStatus, resetBBDemo, ensureBBAgents } from "./blackbook-live-run";
 import { registerMockMcpServers } from "./mock-mcp/register";
 import piiRouter from "./routes/pii";
@@ -195,6 +200,10 @@ export async function registerRoutes(
   app.use("/api/mock/otc-fulfillment-disruption", otcFulfillmentDisruptionRouter);
   app.use("/api/mock/otc-fulfillment-tracking",   otcFulfillmentTrackingRouter);
   app.use("/api/mock/otc-fulfillment-comms",      otcFulfillmentCommsRouter);
+  app.use("/api/mock/adv-support-triage",         advSupportTriageRouter);
+  app.use("/api/mock/adv-support-kb",             advSupportKbRouter);
+  app.use("/api/mock/adv-support-diagnostic",     advSupportDiagnosticRouter);
+  app.use("/api/mock/adv-support-escalation",     advSupportEscalationRouter);
 
   app.get("/demo-api/blackbook/live-run",    bbLiveRunHandler);
   app.get("/demo-api/blackbook/agent-runs",  getBBAgentRuns);
@@ -272,6 +281,7 @@ export async function registerRoutes(
   // OTC Order agents use lazy initialization (ensureOtcOrderAgents is called inside the live-run handler)
   // PKG Sched agents use lazy initialization (ensurePackagingSchedAgents is called inside pkgSchedLiveRunHandler)
   // OTC Fulfillment agents use lazy initialization (ensureOtcFulfillmentAgents is called inside the live-run handler)
+  // Advantive Support agents use lazy initialization (ensureAdvSupportAgents is called inside advSupportLiveRunHandler)
 
   // Backfill AAR configs for all already-deployed agents
   backfillAarConfigs().catch((err: any) => console.error("[startup] backfillAarConfigs:", err?.message));

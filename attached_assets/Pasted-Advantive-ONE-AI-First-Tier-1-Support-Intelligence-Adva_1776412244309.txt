@@ -1,0 +1,79 @@
+Advantive ONE AI-First Tier 1 Support Intelligence
+Advantive Products: Advantive ONE Support Agent (Power Engine), Kiwiplan, DDI System, InfinityQS, ParityFactory   |   Industry: Cross-Product — Advantive Customer Support Operations
+📊 AI Maturity Layer — Generative Operations (Layer 4): Advantive's whitepaper positions Generative Operations as Layer 4: drafting SOPs, summarising downtime events, guiding troubleshooting, accelerating training, and closing skill gaps. BCG reports 30–50% reductions in documentation and analysis time. AI-First Tier 1 Support is this layer applied to customer operations — generative AI handling support resolution at scale.
+
+⚡ AIVA Power Engine Alignment: This scenario IS Advantive ONE's Support Agent Power Engine — extended and operationalised at scale. The foundational Support Agent (delivered Q1 2026) provides single-answer Q&A. Atlas adds the multi-agent workflow layer: triage classification, diagnostic reasoning across product logs, T1→T2 escalation packaging, and knowledge base maintenance. Nous proposed building this for Advantive in the Partnership Brief (Project 1).
+
+🔗 Atlas ↔ Advantive ONE Co-Existence: Advantive ONE's AIVA Support Agent is the customer-facing interaction layer — it handles the conversational experience and delivers instant answers from product knowledge. Atlas provides the multi-agent workflow infrastructure behind AIVA: classifying intent, routing to the appropriate knowledge or diagnostic agent, enriching T2 escalations, and maintaining KB quality. AIVA is the face; Atlas is the engine room.
+
+Business Problem
+Advantive supports customers across 8+ product lines (Kiwiplan, DDI System, ParityFactory, InfinityQS, Pepperi, VeraCore, Advantzware, Proplanner) with a human-staffed Tier 1 support function handling high volumes of routine inquiries. The Advantive ONE Support Agent provides the interface layer; but transforming T1 support from human-resourced to AI-driven requires multi-agent workflow infrastructure for intent classification, diagnostic reasoning, and escalation packaging — capabilities Atlas ALMP is built for.
+Demo Narrative & Workflow
+Atlas deploys the multi-agent workflow infrastructure behind Advantive ONE's AIVA Support Agent — a four-agent pipeline that classifies every inbound query, resolves 60–65% autonomously, applies diagnostic reasoning for technical troubleshooting, and packages the remaining cases as enriched escalations for Tier 2 specialists. The result: dramatically reduced human labor dependency with improved customer experience.
+9.	Triage & Intent Classifier receives inbound query from AIVA Support Agent; classifies intent (how-to, bug report, configuration issue, billing, product-specific troubleshooting); identifies the product and version; routes to the appropriate resolution agent.
+10.	Knowledge Resolution Agent searches the full Advantive product knowledge base — product docs, historical ticket resolutions, and Advantive ONE's native product knowledge layer — generates a precise product-specific answer; self-assesses confidence score.
+11.	Diagnostic Reasoning Agent handles technical issues that require product log analysis (via Advantive ONE's Product Log Intelligence capability): ingests error context, queries product logs, applies diagnostic reasoning per product, generates a step-by-step resolution path.
+12.	T1→T2 Escalation Packager handles cases that cannot be resolved autonomously: generates a structured escalation package with full conversation context, classification, diagnostic steps taken, confidence rationale, and recommended T2 specialist routing — with Salesforce ticket pre-created via Advantive ONE's Salesforce integration.
+
+Business Impact Summary
+KPI / Outcome	Baseline	With Atlas	Impact
+T1 Autonomous Resolution Rate	0% — all T1 queries handled by human agents	60–65% resolved autonomously without human involvement	Dramatic reduction in human labor dependency; T1 team focuses on complex cases only
+T1 Response Time	Queue-dependent; hours during peak volume	<30 seconds for knowledge-resolvable queries	Customer experience improvement at scale across 8+ product lines
+T2 Escalation Quality	Human T1 agents pass basic context; T2 agents re-investigate from scratch	T2 receives structured escalation package with classification, diagnostic steps, and Salesforce case pre-created	T2 specialists spend time solving, not re-gathering context — Tier 2 efficiency improvement
+KB Quality & Coverage	Static product docs; no systematic quality monitoring	Automated KB quality assessments weekly; coverage gaps identified and flagged	KB improves continuously as each resolution cycle feeds back into the knowledge layer
+
+Agent Pipeline
+ID	Agent Name	Model	Business Role	Advantive APIs & Systems	Outcome
+SUP-001	Triage & Intent Classifier	claude-sonnet-4-5	Receives inbound query from AIVA Support Agent interface; classifies intent type (how-to / bug report / config issue / billing / technical troubleshooting); identifies product line and version; routes to Knowledge Resolution or Diagnostic agent; applies customer tier override rules for enterprise accounts	• advantive_one_support_agent_mcp
+• intent_classifier
+• product_version_detector
+• customer_tier_reader
+• routing_engine	• 100% of T1 queries classified and routed within 5 seconds
+• Product-specific routing — Kiwiplan queries to Kiwiplan KB; DDI to DDI KB etc.
+• Enterprise customer tier applied for priority handling
+SUP-002	Knowledge Resolution Agent	claude-sonnet-4-5	Searches full Advantive product KB (product docs, historical resolutions, Advantive ONE product knowledge layer); generates precise product-specific answer; self-assesses confidence — high confidence (>0.80) triggers direct resolution; medium confidence triggers additional search pass; low confidence triggers Diagnostic Agent or Escalation	• advantive_one_kb_search
+• product_docs_kb
+• historical_ticket_resolution_kb
+• confidence_scorer
+• additional_search_trigger	• 60–65% of T1 queries resolved autonomously
+• Product-specific answers with documentation citations
+• Confidence scoring prevents hallucinated answers reaching customers
+SUP-003	Diagnostic Reasoning Agent	claude-opus-4-5	Handles technical troubleshooting that requires product log analysis — ingests error context; queries product logs via Advantive ONE Product Log Intelligence capability; applies per-product diagnostic reasoning (Kiwiplan, InfinityQS, DDI System patterns); generates step-by-step resolution path with verification steps	• advantive_one_log_intelligence_mcp
+• product_error_catalog
+• diagnostic_reasoning_engine
+• resolution_path_builder
+• verification_step_generator	• Technical troubleshooting without human T1 involvement
+• Product-specific error pattern recognition
+• Resolution path with customer-executable verification steps
+SUP-004	T1→T2 Escalation Packager	claude-sonnet-4-5	For cases not resolved by SUP-002 or SUP-003: generates structured escalation package with full conversation context, intent classification, product and version, diagnostic steps taken, specific reasoning gap that prevented resolution, and recommended T2 owner; creates Salesforce case via Advantive ONE Salesforce integration with all context pre-populated	• escalation_package_builder
+• salesforce_case_creator_mcp
+• t2_owner_recommender
+• context_consolidator
+• advantive_one_salesforce_mcp	• 100% of escalations enriched before T2 human sees them
+• Salesforce case auto-created with full context
+• T2 routing recommendation based on product specialisation
+
+⚙  Platform Intelligence Setup in Atlas
+Outcome Contract
+  Contract Name: AI-First Tier 1 Support — Advantive ONE Platform
+  Risk Tier: Medium
+  Pricing Model: Per T1 interaction resolved autonomously; outcome bonus for autonomous resolution rate >60%
+  KPIs: T1 Autonomous Resolution Rate (target >60%) | Response Time for Knowledge Queries (<30 sec) | T2 Escalation Enrichment Rate (100% of escalations packaged) | KB Quality Score (>85% on golden evaluation dataset weekly)
+  Drift Threshold: Autonomous resolution rate drop below 50% triggers KB gap analysis and knowledge ingestion sprint
+Knowledge Bases
+  Advantive Product Knowledge Base: Full documentation corpus for all 8+ Advantive product lines — Kiwiplan, DDI System, ParityFactory, InfinityQS, Pepperi, VeraCore, Advantzware, Proplanner — chunked per product with RAG pipeline
+  Historical T1 Ticket Resolutions: 2–3 years of resolved T1 ticket corpus classified by intent, product, and resolution type — foundation for Knowledge Resolution Agent's similarity matching
+MCP Integrations — Advantive Product APIs
+  Advantive ONE Support Agent MCP: AIVA Support Agent interface — receives inbound queries, returns structured responses to AIVA for customer delivery
+  Advantive ONE Product Log Intelligence MCP: Product log ingestion and anomaly analysis from Advantive ONE (built in Project 2 Component 3) — feeds SUP-003 Diagnostic Agent
+  Advantive ONE Salesforce MCP: Salesforce case creation and bidirectional sync from Advantive ONE (built in Project 2 Component 3) — used by SUP-004 Escalation Packager
+Governance Policies
+  Confidence Gate Policy — any resolution with confidence score <0.75 is escalated or flagged for human review; Atlas never delivers uncertain answers as confident
+  Customer Privacy Policy — customer ticket data used only for resolution; never used to train third-party models without Advantive consent
+  KB Update Policy — any product release triggers automated KB update within 24 hours of release; KB quality evaluated before update is activated
+Key Atlas Screens
+  Outcome Builder → AI-First Support Transformation outcome with Technology/SaaS industry preset
+  Multi-Agent Pipeline Orchestrator → 4-stage T1 pipeline with confidence-based routing
+  Monitor → Live Runs: resolution rate dashboard by product line; autonomous vs. escalated ratio
+  Evaluation Studio → KB quality assessment: golden dataset accuracy by product and intent category
+
