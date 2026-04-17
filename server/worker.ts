@@ -794,12 +794,17 @@ async function processOtcSmokeTest(job: Job): Promise<Record<string, unknown>> {
     }).catch(incErr => console.error("[otc-smoke-test] Failed to create exception incident:", incErr.message));
     throw err;
   } finally {
-    const nextRunAt = new Date(Date.now() + OTC_SMOKE_TEST_INTERVAL_MS);
-    try {
-      await storage.createJob({ type: "otc_smoke_test", status: "queued", payload: { triggeredBy: "scheduled" }, scheduledFor: nextRunAt });
-      console.log(`[otc-smoke-test] Re-enqueued for next run at ${nextRunAt.toISOString()}`);
-    } catch (enqueueErr: any) {
-      console.error("[otc-smoke-test] Failed to re-enqueue smoke test:", enqueueErr.message);
+    const triggeredBy = (job.payload as Record<string, unknown>)?.triggeredBy ?? "scheduled";
+    if (triggeredBy !== "manual") {
+      const nextRunAt = new Date(Date.now() + OTC_SMOKE_TEST_INTERVAL_MS);
+      try {
+        await storage.createJob({ type: "otc_smoke_test", status: "queued", payload: { triggeredBy: "scheduled" }, scheduledFor: nextRunAt });
+        console.log(`[otc-smoke-test] Re-enqueued for next run at ${nextRunAt.toISOString()}`);
+      } catch (enqueueErr: any) {
+        console.error("[otc-smoke-test] Failed to re-enqueue smoke test:", enqueueErr.message);
+      }
+    } else {
+      console.log("[otc-smoke-test] Manual trigger — skipping scheduled re-enqueue");
     }
   }
 
@@ -823,6 +828,17 @@ export async function enqueueOtcSmokeTest() {
   } catch (err: any) {
     console.error("[startup] CRITICAL: Failed to enqueue OTC smoke test — monitoring inactive:", err.message);
   }
+}
+
+export async function enqueueOtcSmokeTestNow(): Promise<{ jobId: string }> {
+  const job = await storage.createJob({
+    type: "otc_smoke_test",
+    status: "queued",
+    payload: { triggeredBy: "manual" },
+    scheduledFor: new Date(),
+  });
+  console.log(`[otc-smoke-test] Manual trigger enqueued — job ${job.id}`);
+  return { jobId: job.id };
 }
 
 export function startWorker(intervalMs = 2000) {

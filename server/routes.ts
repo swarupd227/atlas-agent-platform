@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { startWorker, enqueueAuditChainCheck, enqueueOtcSmokeTest } from "./worker";
+import { startWorker, enqueueAuditChainCheck, enqueueOtcSmokeTest, enqueueOtcSmokeTestNow } from "./worker";
 import { runStartupMigrations } from "./db";
 import authRouter from "./routes/auth";
 import toolConnectorsRouter from "./routes/tool-connectors";
@@ -200,6 +200,15 @@ export async function registerRoutes(
   app.use("/api/mock/otc-fulfillment-disruption", otcFulfillmentDisruptionRouter);
   app.use("/api/mock/otc-fulfillment-tracking",   otcFulfillmentTrackingRouter);
   app.use("/api/mock/otc-fulfillment-comms",      otcFulfillmentCommsRouter);
+
+  app.post("/api/otc-fulfillment/smoke-test", async (_req, res) => {
+    try {
+      const { jobId } = await enqueueOtcSmokeTestNow();
+      res.json({ ok: true, jobId, message: "OTC smoke test job queued" });
+    } catch (err: unknown) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : "Failed to enqueue smoke test" });
+    }
+  });
   app.use("/api/mock/adv-support-triage",         advSupportTriageRouter);
   app.use("/api/mock/adv-support-kb",             advSupportKbRouter);
   app.use("/api/mock/adv-support-diagnostic",     advSupportDiagnosticRouter);

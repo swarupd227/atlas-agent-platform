@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
-import { Factory, ChevronRight, AlertTriangle, Truck, Mail, Terminal, RotateCcw, Play } from "lucide-react";
+import { Factory, ChevronRight, AlertTriangle, Truck, Mail, Terminal, RotateCcw, Play, FlaskConical } from "lucide-react";
 import {
   useOtcFulfillmentPipeline,
   type FulfillmentLogEntry,
@@ -81,11 +81,37 @@ function AgentLogPanel({ entries, open }: { entries: FulfillmentLogEntry[]; open
   );
 }
 
+type SmokeTestStatus = "idle" | "queuing" | "queued" | "error";
+
 export default function OtcFulfillmentDemo() {
   const [screen, setScreen]   = useState(1);
   const [logOpen, setLogOpen] = useState(false);
   const { state, start, reset } = useOtcFulfillmentPipeline();
   const lastAdvancedRef = useRef(0);
+  const [smokeStatus, setSmokeStatus] = useState<SmokeTestStatus>("idle");
+  const [smokeJobId, setSmokeJobId]   = useState<string | null>(null);
+  const [smokeError, setSmokeError]   = useState<string | null>(null);
+
+  const runSmokeTest = async () => {
+    setSmokeStatus("queuing");
+    setSmokeJobId(null);
+    setSmokeError(null);
+    try {
+      const res = await fetch("/api/otc-fulfillment/smoke-test", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setSmokeError(data.error || "Failed to queue smoke test");
+        setSmokeStatus("error");
+      } else {
+        setSmokeJobId(data.jobId);
+        setSmokeStatus("queued");
+        setTimeout(() => setSmokeStatus("idle"), 6000);
+      }
+    } catch (err: unknown) {
+      setSmokeError(err instanceof Error ? err.message : "Network error");
+      setSmokeStatus("error");
+    }
+  };
 
   const isRunning  = state.phase !== "idle" && state.phase !== "complete" && state.phase !== "error";
   const isComplete = state.phase === "complete";
@@ -290,6 +316,28 @@ export default function OtcFulfillmentDemo() {
                 <span className="hidden sm:inline">Reset</span>
               </button>
             )}
+
+            {/* Smoke test trigger */}
+            <button
+              data-testid="button-run-smoke-test"
+              onClick={runSmokeTest}
+              disabled={smokeStatus === "queuing"}
+              className={`flex items-center gap-1.5 text-[10px] h-7 px-3 rounded-md border transition-all ${
+                smokeStatus === "queued"
+                  ? "border-emerald-500/30 text-emerald-400 bg-emerald-500/8"
+                  : smokeStatus === "error"
+                  ? "border-rose-500/30 text-rose-400 bg-rose-500/8"
+                  : smokeStatus === "queuing"
+                  ? "border-border/30 text-muted-foreground opacity-60 cursor-not-allowed"
+                  : "border-border/30 text-muted-foreground hover:text-foreground hover:border-border/60"
+              }`}
+              title={smokeStatus === "queued" && smokeJobId ? `Job queued: ${smokeJobId}` : smokeStatus === "error" ? (smokeError ?? "Error") : "Trigger OTC smoke test immediately"}
+            >
+              <FlaskConical className="w-3 h-3" />
+              <span className="hidden sm:inline">
+                {smokeStatus === "queuing" ? "Queuing…" : smokeStatus === "queued" ? "Queued ✓" : smokeStatus === "error" ? "Failed" : "Run Now"}
+              </span>
+            </button>
 
             <Link href="/demo">
               <button
