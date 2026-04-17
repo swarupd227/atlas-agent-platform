@@ -1,6 +1,6 @@
 import { type Request, type Response } from "express";
 import { storage } from "./storage";
-import { runAgentOnce, runtimeEvents } from "./agent-runtime";
+import { runAgentOnce, type RuntimeProgressEvent } from "./agent-runtime";
 import {
   SUP_001_NAME, SUP_002_NAME, SUP_003_NAME, SUP_004_NAME,
   makeAdvSupportMcpServerDefs,
@@ -524,42 +524,32 @@ export async function advSupportLiveRunHandler(req: Request, res: Response): Pro
         totalSteps:   PIPELINE_STEPS.length,
       });
 
-      const onEvent = (evt: any) => {
+      const onProgress = (evt: RuntimeProgressEvent) => {
         if (aborted) return;
-        if (evt.agentId !== agentId) return;
-        sse("agent_event", {
-          agentName: step.agentName,
-          agentCode: step.agentCode,
-          type:      evt.type,
-          tool:      evt.toolName,
-          data:      { tool: evt.toolName, success: evt.success !== false },
-        });
+        if (evt.type === "tool_call_start" || evt.type === "tool_call_result") {
+          sse("agent_event", {
+            agentName: step.agentName,
+            agentCode: step.agentCode,
+            type:      evt.type,
+            tool:      evt.data?.toolName ?? evt.data?.tool ?? "tool",
+            data:      { tool: evt.data?.toolName ?? evt.data?.tool, success: evt.type === "tool_call_result" ? evt.data?.success !== false : undefined },
+          });
+        }
       };
-      runtimeEvents.on("agent_event", onEvent);
 
-      let runResult: any;
-      try {
-        runResult = await runAgentOnce(agentId, step.taskPrompt, {
-          modelProvider:     ADV_SUPPORT_AGENT_DEFS[i].modelProvider,
-          modelName:         ADV_SUPPORT_AGENT_DEFS[i].modelName,
-          maxToolIterations: step.maxIter,
-        });
-      } finally {
-        runtimeEvents.off("agent_event", onEvent);
-      }
+      let runResult: { success: boolean; message: string };
+      runResult = await runAgentOnce(deploymentId, step.taskPrompt, step.maxIter, onProgress);
 
       if (aborted) break;
 
-      const summary = typeof runResult?.output === "string"
-        ? runResult.output.slice(0, 600)
-        : `${step.agentCode} cycle completed`;
+      const summary = runResult.message?.slice(0, 600) ?? `${step.agentCode} cycle completed`;
       agentSummaries[step.agentCode] = summary;
 
-      if (runResult?.success === false) {
+      if (!runResult.success) {
         sse("agent_error", {
           agentCode: step.agentCode,
           agentName: step.agentName,
-          message:   runResult?.error ?? "Agent run failed",
+          message:   runResult.message ?? "Agent run failed",
         });
         break;
       }

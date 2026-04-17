@@ -184,8 +184,8 @@ export const ADV_SUPPORT_AGENT_DEFS = [
     department:     "Customer Support Operations",
     complianceTags: ["T1-TRIAGE-PROTOCOL", "CUSTOMER-PRIVACY-POLICY"],
     ontologyTags:   ["Support Query", "Intent Classification", "Product Routing", "Customer Tier"],
-    modelProvider:  "anthropic",
-    modelName:      "claude-sonnet-4-5",
+    modelProvider:  "openai",
+    modelName:      "gpt-4.1",
   },
   {
     key:            "knowledge",
@@ -198,8 +198,8 @@ export const ADV_SUPPORT_AGENT_DEFS = [
     department:     "Customer Support Operations",
     complianceTags: ["KB-ACCURACY-GATE", "CONFIDENCE-THRESHOLD-POLICY"],
     ontologyTags:   ["Knowledge Base", "Resolution Confidence", "Documentation Search", "Historical Ticket"],
-    modelProvider:  "anthropic",
-    modelName:      "claude-sonnet-4-5",
+    modelProvider:  "openai",
+    modelName:      "gpt-4.1",
   },
   {
     key:            "diagnostic",
@@ -212,8 +212,8 @@ export const ADV_SUPPORT_AGENT_DEFS = [
     department:     "Technical Support Engineering",
     complianceTags: ["DIAGNOSTIC-ACCURACY-GATE", "LOG-INTELLIGENCE-USAGE"],
     ontologyTags:   ["Error Diagnostic", "Product Log", "Resolution Path", "Escalation Signal"],
-    modelProvider:  "anthropic",
-    modelName:      "claude-opus-4-5",
+    modelProvider:  "openai",
+    modelName:      "gpt-4.1",
   },
   {
     key:            "escalation",
@@ -226,8 +226,8 @@ export const ADV_SUPPORT_AGENT_DEFS = [
     department:     "Technical Support Engineering",
     complianceTags: ["ESCALATION-COMPLETENESS-POLICY", "SALESFORCE-SYNC-PROTOCOL"],
     ontologyTags:   ["Escalation Package", "Salesforce Case", "T2 Routing", "Audit Trail"],
-    modelProvider:  "anthropic",
-    modelName:      "claude-sonnet-4-5",
+    modelProvider:  "openai",
+    modelName:      "gpt-4.1",
   },
 ] as const;
 
