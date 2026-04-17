@@ -1,0 +1,27 @@
+Demo 3: Fulfillment Exception Command Center
+PROBLEM STATEMENT: A severe winter storm hits the Midwest, impacting NovaTech's Chicago DC (largest facility), Indianapolis DC, and St. Louis DC. All three facilities cease outbound shipping for 48-72 hours. 847 in-transit and pending shipments are affected. 312 are for priority customers with SLA commitments. The operations team currently manages this manually with spreadsheets and emergency calls - typically losing 3-5 days of productivity and generating a 40% increase in customer complaints.
+
+DEMO OBJECTIVE: Show Atlas as a real-time crisis command center that detects the disruption, assesses impact, reroutes fulfillment, and proactively communicates with customers - all within minutes of the event.
+
+AGENTS INVOKED: OTC-AGT-005 (Fulfillment & Exception Agent), OTC-AGT-007 (Delivery Tracking & Confirmation Agent), OTC-AGT-012 (Customer Communication & Notification Agent)
+
+Screen 4.1: Disruption Alert & Impact Assessment
+Atlas detects the disruption and presents a real-time impact dashboard.
+Layout: Alert Banner + Impact Map + Affected Shipment Grid
+Alert Banner (Top): Red pulsing banner: "FULFILLMENT DISRUPTION DETECTED - Winter Storm Warning affecting Chicago DC, Indianapolis DC, St. Louis DC. Estimated outage: 48-72 hours. 847 shipments affected." Timestamp and source (weather feed + carrier delay signals). Dismiss/Acknowledge button.
+Center Left (50%) - Impact Map: A US map zoomed to the Midwest showing: three affected DCs with red pulsing markers and outage radius circles, in-transit shipments as moving dots (green = on-track, amber = at-risk, red = delayed), alternate DCs in blue (Dallas, Atlanta, Philadelphia) with available capacity indicators. Storm overlay showing weather system path and timing. Legend showing shipment counts by status.
+Center Right (50%) - Impact Summary Dashboard: Four metric cards: 847 Total Affected (red), 312 Priority/SLA (red), 489 Standard (amber), 46 Already Delayed (red). Below: impact breakdown by category - a stacked bar chart: By DC (Chicago: 523, Indianapolis: 198, St. Louis: 126), By Priority (Platinum: 87, Gold: 225, Standard: 535), By Customer Revenue (Top 50 customers: 312 shipments, $4.8M value), By SLA Status (At risk of SLA breach: 312, 37%). A prominent orange CTA: "Launch Rerouting Optimization".
+
+Screen 4.2: Intelligent Rerouting & Customer Triage
+Atlas proposes rerouting strategies prioritized by customer value and SLA risk.
+Layout: Rerouting Options + Customer Priority Queue
+Top Section (40%) - Rerouting Strategy Panel: OTC-AGT-005 badge. Three rerouting strategy tabs: (Tab 1 - Recommended) "Smart Reroute": Reroute 312 priority shipments to alternate DCs (Dallas: 145, Atlanta: 98, Philadelphia: 69). Hold 489 standard shipments for DC recovery (expected 48-72 hrs). Estimated additional cost: $47,200. SLA breaches avoided: 289 of 312 (93%). (Tab 2) "Full Reroute": Reroute all 847 shipments. Cost: $128,000. SLA breaches avoided: 100%. (Tab 3) "Wait and Notify": Hold all, notify customers, resume when DCs reopen. Cost: $0 shipping. Estimated SLA breaches: 312. Customer complaint estimate: 180+. Each tab shows cost/benefit analysis and approval requirement.
+Bottom Section (60%) - Priority Customer Triage Queue: A sortable table of the 312 priority-affected shipments: Customer Name, Order #, Original DC, Shipment Value, SLA Deadline, Days Until Breach, Proposed Reroute DC, New ETA, Customer Tier. Sorted by urgency (days until SLA breach ascending). Top rows highlighted: "Meridian Manufacturing - ORD-78432 - $429K - SLA breach in 1 day - Reroute to Dallas (arrive May 4)". Batch action buttons: "Approve All Reroutes" / "Approve Selected" / "Hold for Review". Individual row actions: Approve / Override / Escalate.
+
+Screen 4.3: Proactive Customer Communication
+Atlas generates and sends personalized customer notifications before they need to call.
+Layout: Communication Preview + Delivery Dashboard
+Left Panel (55%) - Communication Preview: OTC-AGT-012 badge. A preview of the customer notification email/portal message. Three tiers of communication templates shown as tabs: (Tier 1 - Platinum customers): Personal email from account manager, specific shipment details, new delivery date, apology and credit offer. (Tier 2 - Gold): Branded email with shipment-specific details and new ETA. (Tier 3 - Standard): Portal notification with general delay notice and estimated recovery. Each template shows personalized merge fields: customer name, order number, original delivery date, new delivery date, tracking link. "Customize" edit button on each. Bulk send controls.
+Right Panel (45%) - Communication Dashboard: Real-time delivery tracking: Messages Queued: 847, Sent: 623 (animated counter), Delivered: 589, Opened: 234 (updating live), Customer Responses: 12 (3 requesting callback). A feed showing responses as they arrive with sentiment indicators (positive/neutral/negative). Escalation queue for negative responses with one-click "Assign to Account Manager" routing.
+Demo Talking Point
+"Within 8 minutes of detecting the disruption, Atlas assessed 847 affected shipments, proposed an optimized rerouting strategy that saves 93% of SLA commitments for $47K incremental cost, and began sending personalized notifications to every affected customer - before a single customer called to complain. The alternative: 3-5 days of spreadsheets, emergency calls, and a 40% spike in complaints."
