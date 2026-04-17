@@ -7,6 +7,7 @@ import { otcQuoteLiveRunHandler } from "../otc-quote-live-run";
 import { otcOrderLiveRunHandler, getOtcOrderAgentRuns, resetOtcOrderDemo, ensureOtcOrderAgents } from "../otc-order-live-run";
 import { pkgSchedLiveRunHandler, resetPkgSchedDemo, getPkgSchedAgentRuns } from "../pkg-sched-live-run";
 import { runOnespanDemo, setupOnespanDemo, resetOnespanDemo, getOnespanAgentRuns, ensureOnespanAgents } from "../onespan-live-run";
+import { otcFulfillmentLiveRunHandler, getOtcFulfillmentAgentRuns, resetOtcFulfillmentDemo, ensureOtcFulfillmentAgents } from "../otc-fulfillment-live-run";
 
 import { seedPartnerPortalRegistry } from "../seed-blackrock2-partner-portal";
 import { storage } from "../storage";
@@ -1199,6 +1200,28 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
 
   // ============================================================
   // END OTC ORDER DEMO ROUTES
+  // ============================================================
+
+  // ============================================================
+  // NOVATECH INDUSTRIES — OTC FULFILLMENT EXCEPTION COMMAND CENTER
+  // Demo 3: Winter Storm Stella — 847 shipments, 3 sequential agents
+  // OTC-AGT-005 → OTC-AGT-007 → OTC-AGT-012
+  // ============================================================
+
+  router.post("/demo-api/otc-fulfillment/setup", async (_req, res) => {
+    try {
+      await ensureOtcFulfillmentAgents();
+      res.json({ ok: true, message: "OTC Fulfillment agents provisioned" });
+    } catch (err: unknown) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : "Setup failed" });
+    }
+  });
+  router.get("/demo-api/otc-fulfillment/live-run",   otcFulfillmentLiveRunHandler);
+  router.get("/demo-api/otc-fulfillment/agent-runs", getOtcFulfillmentAgentRuns);
+  router.post("/demo-api/otc-fulfillment/reset",     resetOtcFulfillmentDemo);
+
+  // ============================================================
+  // END OTC FULFILLMENT DEMO ROUTES
   // ============================================================
 
   // ============================================================

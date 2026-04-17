@@ -217,6 +217,23 @@ const DEMOS: Demo[] = [
     badge: "New",
   },
   {
+    id: "otc-fulfillment",
+    title: "Fulfillment Exception Command Center",
+    client: "NovaTech Industries",
+    description:
+      "Fulfillment stage of the Order-to-Cash cycle. Winter Storm Stella hits the Midwest, suspending outbound operations at Chicago DC, Indianapolis DC, and St. Louis DC — 847 shipments affected. Three Atlas agents run sequentially: OTC-AGT-005 (Fulfillment & Exception) detects the disruption, assesses 312 priority SLA-committed shipments, and executes Smart Reroute ($47.2K) to Dallas, Atlanta, and Philadelphia DCs. OTC-AGT-007 (Delivery Tracking) confirms carrier signals, updates routing records, and validates 289 of 312 SLA-compliant ETAs. OTC-AGT-012 (Customer Comms) notifies all 847 customers with tier-personalised messages before a single one calls. 92.6% SLA protection in under 8 minutes.",
+    industry: "Manufacturing",
+    industryId: "manufacturing",
+    stage: "Fulfillment",
+    route: "/demo/otc-fulfillment",
+    icon: Factory,
+    iconColor: "#E85D26",
+    duration: "8 min",
+    screens: 3,
+    tags: ["Order-to-Cash", "Fulfillment", "DC Rerouting", "Crisis Response", "Customer Comms"],
+    badge: "New",
+  },
+  {
     id: "advantive-pkg-sched",
     title: "Predictive Production Scheduling",
     client: "Advantive",
