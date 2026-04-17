@@ -330,7 +330,7 @@ export async function ensureAdvSupportAgents(): Promise<void> {
         complianceTags:    [...def.complianceTags],
         policyBindings:    POLICY_BINDINGS,
         ontologyTags:      def.ontologyTags.map(label => ({ label })),
-        evalBindings:      [],
+        evalBindings:      [{ suiteName: EVAL_SUITE_NAME, schedule: "weekly" }],
       } as Parameters<typeof storage.createAgent>[0]);
     } else {
       await storage.updateAgent(agent.id, {
@@ -341,6 +341,7 @@ export async function ensureAdvSupportAgents(): Promise<void> {
         modelName:         def.modelName,
         autonomyMode:      "autonomous",
         maxToolIterations: 8,
+        evalBindings:      [{ suiteName: EVAL_SUITE_NAME, schedule: "weekly" }],
       }).catch(() => {});
     }
     _agentIdByName[def.name] = agent.id;
@@ -392,20 +393,6 @@ export async function ensureAdvSupportAgents(): Promise<void> {
         for (const tc of testCases) {
           await storage.createEvalTestCase({ suiteId: suite.id, ...tc, weight: 1 }).catch(() => {});
         }
-      }
-    }
-
-    // Bind eval suite to all 4 agents
-    if (suite) {
-      const evalBinding = [{ suiteName: EVAL_SUITE_NAME, schedule: "weekly" }];
-      const agentIds = [
-        _agentIdByName[SUP_001_NAME],
-        _agentIdByName[SUP_002_NAME],
-        _agentIdByName[SUP_003_NAME],
-        _agentIdByName[SUP_004_NAME],
-      ].filter(Boolean) as string[];
-      for (const agentId of agentIds) {
-        await storage.updateAgent(agentId, { evalBindings: evalBinding } as Parameters<typeof storage.updateAgent>[1]).catch(() => {});
       }
     }
   }
