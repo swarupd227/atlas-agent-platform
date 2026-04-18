@@ -326,7 +326,7 @@ export default function AdvSupportDemo() {
   const [compareOpen, setCompareOpen] = useState(false);
   const [completedRuns, setCompletedRuns] = useState<Partial<Record<AdvSupportScenario, RunSnapshot>>>({});
   const { state, start, reset } = useAdvSupportPipeline(scenario);
-  const lastAdvancedRef   = useRef(0);
+  const advancedPhasesRef = useRef<Set<string>>(new Set());
   const pendingStartRef   = useRef(false);
   const capturedRef       = useRef<Set<string>>(new Set());
 
@@ -371,25 +371,28 @@ export default function AdvSupportDemo() {
     setCompletedRuns(prev => ({ ...prev, [scenario]: snapshot }));
   }, [isComplete, scenario, state.metrics, state.agents]);
 
-  // Auto-advance screens
+  // Auto-advance screens — derived purely from state.phase; does not depend on
+  // the current screen value so manual tab clicks mid-run never break the logic.
   useEffect(() => {
-    if (state.phase === "resolution" && screen === 1 && lastAdvancedRef.current < 2) {
-      const t = setTimeout(() => { lastAdvancedRef.current = 2; setScreen(2); }, 1400);
+    const phase = state.phase;
+    const seen  = advancedPhasesRef.current;
+
+    if (phase === "resolution" && !seen.has("resolution")) {
+      seen.add("resolution");
+      const t = setTimeout(() => setScreen(2), 1400);
       return () => clearTimeout(t);
     }
-    if (!isTwoAgent && state.phase === "diagnostic" && screen === 2 && lastAdvancedRef.current < 3) {
-      const t = setTimeout(() => { lastAdvancedRef.current = 3; setScreen(3); }, 1400);
+    if (!isTwoAgent && phase === "diagnostic" && !seen.has("diagnostic")) {
+      seen.add("diagnostic");
+      const t = setTimeout(() => setScreen(3), 1400);
       return () => clearTimeout(t);
     }
-    if (!isTwoAgent && state.phase === "escalation" && screen === 3 && lastAdvancedRef.current < 4) {
-      const t = setTimeout(() => { lastAdvancedRef.current = 4; setScreen(4); }, 1400);
+    if (!isTwoAgent && (phase === "escalation" || (phase === "complete" && !seen.has("escalation"))) && !seen.has("escalation")) {
+      seen.add("escalation");
+      const t = setTimeout(() => setScreen(4), 1400);
       return () => clearTimeout(t);
     }
-    if (!isTwoAgent && isComplete && screen < 4 && lastAdvancedRef.current < 4) {
-      const t = setTimeout(() => { lastAdvancedRef.current = 4; setScreen(4); }, 1400);
-      return () => clearTimeout(t);
-    }
-  }, [state.phase, screen, isComplete, isTwoAgent]);
+  }, [state.phase, isTwoAgent]);
 
   const getScreenStatus = (id: number): "active" | "complete" | "available" | "locked" => {
     if (id === screen) return "active";
@@ -415,7 +418,7 @@ export default function AdvSupportDemo() {
 
   const handleReset = async () => {
     reset();
-    lastAdvancedRef.current = 0;
+    advancedPhasesRef.current = new Set();
     setScreen(1);
     setLogOpen(false);
     await fetch("/demo-api/advantive-support/reset", { method: "POST" }).catch(() => {});
@@ -424,7 +427,8 @@ export default function AdvSupportDemo() {
   const handleScenarioChange = (s: AdvSupportScenario) => {
     if (isRunning) return;
     if (s === scenario) {
-      lastAdvancedRef.current = 0;
+      // Same scenario — just re-start directly (start is already stable)
+      advancedPhasesRef.current = new Set();
       setScreen(1);
       setLogOpen(false);
       start();
@@ -432,7 +436,7 @@ export default function AdvSupportDemo() {
     }
     setScenario(s);
     pendingStartRef.current = true;
-    lastAdvancedRef.current = 0;
+    advancedPhasesRef.current = new Set();
     setScreen(1);
     setLogOpen(false);
   };
