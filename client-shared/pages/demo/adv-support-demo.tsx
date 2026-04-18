@@ -120,8 +120,8 @@ export default function AdvSupportDemo() {
   }, [state.phase, screen, isComplete, isTwoAgent]);
 
   const getScreenStatus = (id: number): "active" | "complete" | "available" | "locked" => {
-    if (isTwoAgent && id > 2) return "locked";
     if (id === screen) return "active";
+    if (isTwoAgent && id > 2) return "locked";
     if (isComplete) return id < screen ? "complete" : "available";
     const phases: Record<number, string> = { 1: "triage", 2: "resolution", 3: "diagnostic", 4: "escalation" };
     const unlocked = Object.entries(phases).some(([sid, ph]) => parseInt(sid) < id &&
@@ -136,7 +136,9 @@ export default function AdvSupportDemo() {
   };
 
   const handleTabClick = (id: number) => {
-    if (getScreenStatus(id) !== "locked") setScreen(id);
+    const status = getScreenStatus(id);
+    // In Scenario B, N/A tabs (3 & 4) are navigable so users can see the bypass explanation
+    if (status !== "locked" || (isTwoAgent && id > 2)) setScreen(id);
   };
 
   const handleReset = async () => {
@@ -285,10 +287,11 @@ export default function AdvSupportDemo() {
               key={id}
               data-testid={`screen-tab-${id}`}
               onClick={() => handleTabClick(id)}
-              disabled={isLocked}
+              disabled={isLocked && !isNA}
               className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium border-b-2 transition-all whitespace-nowrap ${
                 isActive ? "border-current" :
                 isComplete_ ? "border-transparent text-emerald-400/70" :
+                isNA ? "border-transparent text-muted-foreground/40 hover:text-muted-foreground/60" :
                 isLocked ? "border-transparent text-muted-foreground/30 cursor-not-allowed" :
                 "border-transparent text-muted-foreground/60 hover:text-muted-foreground"
               }`}

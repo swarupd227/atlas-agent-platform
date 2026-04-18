@@ -1,4 +1,4 @@
-import { Microscope, FileSearch, Database, CheckCircle2, AlertTriangle, ChevronRight, ShieldAlert, Cpu } from "lucide-react";
+import { Microscope, FileSearch, Database, CheckCircle2, AlertTriangle, ChevronRight, ShieldAlert, Cpu, CheckCircle, Gauge } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { SupportPipelineState } from "./adv-support-constants";
 import { ADV_SUPPORT_COLOR } from "./adv-support-constants";
@@ -23,12 +23,76 @@ const RESOLUTION_STEPS_C = [
 interface Props { state: SupportPipelineState; }
 
 export default function AdvSupportS3Diagnostic({ state }: Props) {
+  const isB       = state.scenario === "B";
   const agentStatus = state.agents.find(a => a.code === "SUP-003")?.status ?? "idle";
   const isIdle    = agentStatus === "idle";
   const isRunning = agentStatus === "running";
   const isDone    = agentStatus === "complete";
   const isC       = state.scenario === "C";
   const steps     = isC ? RESOLUTION_STEPS_C : RESOLUTION_STEPS_A;
+
+  if (isB) {
+    return (
+      <div className="flex flex-col gap-4 p-4" data-testid="diagnostic-bypassed">
+        <div
+          className="rounded-lg border px-5 py-4 flex items-start gap-4"
+          style={{ background: `${ACCENT}0D`, borderColor: `${ACCENT}30` }}
+        >
+          <CheckCircle className="w-6 h-6 shrink-0 mt-0.5 text-emerald-400" />
+          <div className="flex-1">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <span className="text-sm font-semibold text-emerald-400">Stage Bypassed — T1 Autonomous Resolution</span>
+              <Badge variant="outline" className="text-[9px] border-emerald-500/40 text-emerald-400">Not Applicable</Badge>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Diagnostic reasoning was not needed. SUP-002 KB lookup returned a confidence score of{" "}
+              <span className="font-mono font-semibold text-foreground">0.89</span>, which cleared the autonomous
+              resolution gate threshold of{" "}
+              <span className="font-mono font-semibold text-foreground">≥ 0.80</span>. The resolution path was
+              delivered directly to the customer — no root-cause log analysis was required.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="rounded-lg border border-border/30 bg-card/40 p-4 flex flex-col gap-1.5" data-testid="bypass-kb-confidence">
+            <div className="flex items-center gap-2">
+              <Gauge className="w-4 h-4" style={{ color: ACCENT }} />
+              <span className="text-xs font-semibold text-muted-foreground">KB Confidence Score</span>
+            </div>
+            <div className="text-2xl font-mono font-bold" style={{ color: ACCENT }}>0.89</div>
+            <div className="text-[11px] text-muted-foreground">SUP-002 result — first pass</div>
+          </div>
+          <div className="rounded-lg border border-border/30 bg-card/40 p-4 flex flex-col gap-1.5" data-testid="bypass-gate-threshold">
+            <div className="flex items-center gap-2">
+              <Gauge className="w-4 h-4 text-muted-foreground/60" />
+              <span className="text-xs font-semibold text-muted-foreground">Auto-Resolve Gate</span>
+            </div>
+            <div className="text-2xl font-mono font-bold text-muted-foreground">≥ 0.80</div>
+            <div className="text-[11px] text-muted-foreground">Professional tier threshold</div>
+          </div>
+          <div className="rounded-lg border border-emerald-500/20 bg-emerald-950/10 p-4 flex flex-col gap-1.5" data-testid="bypass-outcome">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              <span className="text-xs font-semibold text-muted-foreground">Outcome</span>
+            </div>
+            <div className="text-sm font-semibold text-emerald-400">T1 Resolved</div>
+            <div className="text-[11px] text-muted-foreground">Resolution sent · No T2 needed</div>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-border/30 bg-card/40 p-4" data-testid="bypass-pipeline-note">
+          <div className="text-xs font-semibold mb-2 text-muted-foreground/80">Why this stage exists in other scenarios</div>
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            When KB confidence falls below the gate (e.g. <span className="font-mono text-foreground">0.58</span> in Scenario A —
+            T2 Escalation), SUP-003 activates to perform deep log analysis across the Advantive ONE Product Log Intelligence
+            database. In this case, the high-confidence KB match made that step unnecessary, saving resolution time and
+            routing the fix directly to the end user.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   const bannerTitle = isC
     ? "DIAGNOSTIC REASONING — PARITYFACTORY COMPLIANCE LOG INTELLIGENCE"

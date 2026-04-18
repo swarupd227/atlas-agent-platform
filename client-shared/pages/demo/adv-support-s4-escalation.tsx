@@ -1,4 +1,4 @@
-import { Package, Briefcase, ArrowRightCircle, Bell, ClipboardList, CheckCircle2, ExternalLink, ShieldAlert, Cpu } from "lucide-react";
+import { Package, Briefcase, ArrowRightCircle, Bell, ClipboardList, CheckCircle2, ExternalLink, ShieldAlert, Cpu, CheckCircle, Users } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import type { SupportPipelineState } from "./adv-support-constants";
 import { ADV_SUPPORT_COLOR } from "./adv-support-constants";
@@ -21,6 +21,7 @@ const PIPELINE_TRACE_C = [
 interface Props { state: SupportPipelineState; }
 
 export default function AdvSupportS4Escalation({ state }: Props) {
+  const isB       = state.scenario === "B";
   const agentStatus = state.agents.find(a => a.code === "SUP-004")?.status ?? "idle";
   const isIdle    = agentStatus === "idle";
   const isRunning = agentStatus === "running";
@@ -58,6 +59,77 @@ export default function AdvSupportS4Escalation({ state }: Props) {
     { field: "SLA Target",     value: "Response within 2 hours",              highlight: true  },
     { field: "Auto-populated", value: "18 / 18 fields",                       highlight: false },
   ];
+
+  if (isB) {
+    return (
+      <div className="flex flex-col gap-4 p-4" data-testid="escalation-bypassed">
+        <div
+          className="rounded-lg border px-5 py-4 flex items-start gap-4"
+          style={{ background: `${ACCENT}0D`, borderColor: `${ACCENT}30` }}
+        >
+          <CheckCircle className="w-6 h-6 shrink-0 mt-0.5 text-emerald-400" />
+          <div className="flex-1">
+            <div className="flex items-center gap-2 flex-wrap mb-1">
+              <span className="text-sm font-semibold text-emerald-400">Stage Bypassed — T1 Autonomous Resolution</span>
+              <Badge variant="outline" className="text-[9px] border-emerald-500/40 text-emerald-400">Not Applicable</Badge>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              No escalation was needed. SUP-002 KB lookup achieved a confidence score of{" "}
+              <span className="font-mono font-semibold text-foreground">0.89</span>, clearing the autonomous resolution
+              gate of{" "}
+              <span className="font-mono font-semibold text-foreground">≥ 0.80</span>. The issue was resolved entirely
+              at T1 — a Salesforce case was not created and no T2 specialist was engaged.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="rounded-lg border border-emerald-500/20 bg-emerald-950/10 p-4 flex flex-col gap-2" data-testid="bypass-resolution-summary">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+              <span className="text-xs font-semibold text-muted-foreground">Resolution Summary</span>
+            </div>
+            <div className="flex flex-col gap-1 text-xs">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Resolution tier</span>
+                <span className="text-emerald-400 font-semibold">T1 Autonomous</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">KB confidence</span>
+                <span className="font-mono font-semibold text-foreground">0.89</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Gate threshold</span>
+                <span className="font-mono text-foreground">≥ 0.80</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Salesforce case</span>
+                <span className="text-muted-foreground/60">Not created</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">T2 specialist</span>
+                <span className="text-muted-foreground/60">Not engaged</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-lg border border-border/30 bg-card/40 p-4 flex flex-col gap-2" data-testid="bypass-escalation-note">
+            <div className="flex items-center gap-2">
+              <Users className="w-4 h-4 text-muted-foreground/60" />
+              <span className="text-xs font-semibold text-muted-foreground">When escalation activates</span>
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              In Scenario A (T2 Escalation), KB confidence was{" "}
+              <span className="font-mono text-foreground">0.58</span> — below the{" "}
+              <span className="font-mono text-foreground">0.65</span> Enterprise gate. SUP-003 performed diagnostic
+              reasoning, which then triggered SUP-004 to build a full T2 handoff package with 18 pre-populated
+              Salesforce fields. That pathway is bypassed entirely here.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4 p-4">
