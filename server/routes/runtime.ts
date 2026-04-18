@@ -4912,11 +4912,11 @@ def list_policies():
           `if __name__ == "__main__":\n` +
           `    import mlflow\n` +
           `\n` +
-          `    print(f"[deploy] MLflow version: {mlflow.__version__}", flush=True)\n` +
-          `\n` +
-          `    # Always set these FIRST — spark.mlflow.modelRegistryUri is not available on serverless.\n` +
+          `    # Always the FIRST two calls — spark.mlflow.modelRegistryUri is not available on serverless.\n` +
           `    mlflow.set_tracking_uri("databricks")\n` +
           `    mlflow.set_registry_uri("databricks-uc")\n` +
+          `\n` +
+          `    print(f"[deploy] MLflow version: {mlflow.__version__}", flush=True)\n` +
           `\n` +
           `    _PYPROJECT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pyproject.toml")\n` +
           `    with open(_PYPROJECT, "rb") as f:\n` +
@@ -4972,15 +4972,18 @@ def list_policies():
           `    # MLflow traces still work via MLFLOW_TRACKING_URI env var set on the endpoint above.\n` +
           `    try:\n` +
           `        from databricks.sdk.service.serving import (\n` +
-          `            AiGatewayInferenceTableConfig,\n` +
+          `            AiGatewayConfig, AiGatewayInferenceTableConfig,\n` +
           `        )\n` +
-          `        w.serving_endpoints.put_ai_gateway(\n` +
-          `            name=_SERVING_ENDPOINT_NAME,\n` +
+          `        _ai_gw = AiGatewayConfig(\n` +
           `            inference_table_config=AiGatewayInferenceTableConfig(\n` +
           `                catalog_name="workspace",\n` +
           `                schema_name="default",\n` +
           `                enabled=True,\n` +
-          `            ),\n` +
+          `            )\n` +
+          `        )\n` +
+          `        w.serving_endpoints.put_ai_gateway(\n` +
+          `            name=_SERVING_ENDPOINT_NAME,\n` +
+          `            ai_gateway=_ai_gw,\n` +
           `        )\n` +
           `    except Exception:\n` +
           `        pass  # inference tables not supported in this workspace tier\n`
@@ -6048,10 +6051,11 @@ clean:
             `if __name__ == "__main__":\n` +
             `    import mlflow\n` +
             `\n` +
-            `    print(f"[deploy] MLflow version: {mlflow.__version__}", flush=True)\n` +
-            `\n` +
+            `    # Always the FIRST two calls — spark.mlflow.modelRegistryUri is not available on serverless.\n` +
             `    mlflow.set_tracking_uri("databricks")\n` +
             `    mlflow.set_registry_uri("databricks-uc")\n` +
+            `\n` +
+            `    print(f"[deploy] MLflow version: {mlflow.__version__}", flush=True)\n` +
             `\n` +
             `    _PYPROJECT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pyproject.toml")\n` +
             `    with open(_PYPROJECT, "rb") as f:\n` +
@@ -6102,17 +6106,22 @@ clean:
             `            timeout=timedelta(minutes=30),\n` +
             `        )\n` +
             `    try:\n` +
-            `        from databricks.sdk.service.serving import AiGatewayInferenceTableConfig\n` +
-            `        w.serving_endpoints.put_ai_gateway(\n` +
-            `            name=_SERVING_ENDPOINT_NAME,\n` +
+            `        from databricks.sdk.service.serving import (\n` +
+            `            AiGatewayConfig, AiGatewayInferenceTableConfig,\n` +
+            `        )\n` +
+            `        _ai_gw = AiGatewayConfig(\n` +
             `            inference_table_config=AiGatewayInferenceTableConfig(\n` +
             `                catalog_name="workspace",\n` +
             `                schema_name="default",\n` +
             `                enabled=True,\n` +
-            `            ),\n` +
+            `            )\n` +
+            `        )\n` +
+            `        w.serving_endpoints.put_ai_gateway(\n` +
+            `            name=_SERVING_ENDPOINT_NAME,\n` +
+            `            ai_gateway=_ai_gw,\n` +
             `        )\n` +
             `    except Exception:\n` +
-            `        pass\n`
+            `        pass  # inference tables not supported in this workspace tier\n`
           );
 
           const dbxImportLines = ["from collections import namedtuple", ...tools.map(t => `from tools.${t.name} import TOOL_SPEC as ${t.name}_spec, execute as ${t.name}_execute`)].join("\n");
