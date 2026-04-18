@@ -3442,31 +3442,43 @@ ${nodeSetup}
 4. Thread per task run; poll run status
 5. On requires_action: dispatch tool_calls, submit outputs
 6. Max iteration guard; log status transitions`,
-        databricks: `Generate agent.py — Databricks Mosaic AI (mlflow.pyfunc.ResponsesAgent):
-CRITICAL RULES (deployment will fail if violated):
-- Extend mlflow.pyfunc.ResponsesAgent, NOT mlflow.pyfunc.PythonModel
-- Call mlflow.openai.autolog() at module level (NOT mlflow.langchain.autolog)
-- Initialize WorkspaceClient and LLM client LAZILY inside predict_stream() (NOT at module level):
-    w = WorkspaceClient()
-    client = w.serving_endpoints.get_open_ai_client()
-- log_model() must have: NO signature= param; input_example={"input": [...]}; resources=[DatabricksServingEndpoint(endpoint_name=_SERVING_ENDPOINT_NAME)]
-- Import TOOLS from tools; build tool_specs = [t.spec for t in TOOLS] and tool_map = {t.name: t.execute for t in TOOLS}
+        databricks: `Generate agent.py — Databricks Mosaic AI (mlflow.pyfunc.ResponsesAgent, MLflow 2.22.4):
 
-IMPLEMENT:
-1. predict_stream(context, model_input) → Iterator[ResponsesAgentStreamEvent]:
-   - Extract messages from model_input["messages"] (DataFrame or dict)
-   - Prepend system prompt as first message on every call
-   - Initialize WorkspaceClient and openai client lazily inside this method
-   - Pass tool_specs to client.responses.create(model=_LLM_ENDPOINT, input=messages, tools=tool_specs, stream=True)
-   - Dispatch tool calls: json.loads() inside try/except (handle malformed JSON); catch all tool exceptions and return error string
-   - Cap at _MAX_ITERATIONS with a clear message if reached
-   - Yield ResponsesAgentStreamEvent objects throughout
-2. predict(context, model_input) → ResponsesAgentResponse:
-   - Collect all streamed events from predict_stream() and return as ResponsesAgentResponse
-3. log_model() block: set experiment, call mlflow.pyfunc.log_model with python_model=agent instance,
-   artifact_path="agent", pip_requirements=["openai>=1.30.0","requests>=2.31.0"],
-   input_example={"input": [{"role":"user","content":"Hello"}]},
-   resources=[DatabricksServingEndpoint(endpoint_name=_SERVING_ENDPOINT_NAME)]`,
+MANDATORY TWO-BLOCK STRUCTURE (spark_python_task exec() runs top-level code before upgraded MLflow is active):
+Block 1 — stdlib only at module top level: import json, os, sys, tomllib, warnings; from typing import Generator, Optional; from uuid import uuid4
+Block 2 — serve-time block: ALL mlflow/ResponsesAgent imports inside "if __name__ != '__main__':"
+Block 3 — job entry point: ALL deployment code inside "if __name__ == '__main__':"
+
+CORRECT IMPORTS (inside if __name__ != "__main__":):
+- from mlflow.pyfunc import ResponsesAgent               # NOT mlflow.pyfunc.PythonModel
+- from mlflow.types.responses import ResponsesRequest, ResponsesResponse, ResponsesStreamEvent
+  # WRONG names: ResponsesAgentRequest, ResponsesAgentResponse, ResponsesAgentStreamEvent (those are MLflow 3.x)
+- from openai import OpenAI                              # direct OpenAI client
+- DO NOT import SpanType — use span_type="TOOL" string literal in @mlflow.trace decorators
+
+OPENAI CLIENT (inside _get_llm_client method, NOT WorkspaceClient):
+    host  = os.environ.get("DATABRICKS_HOST", "").rstrip("/")
+    token = os.environ.get("DATABRICKS_TOKEN", "")
+    self._llm_client = OpenAI(base_url=f"{host}/serving-endpoints", api_key=token)
+# NEVER use WorkspaceClient().serving_endpoints.get_open_ai_client() — fails on Model Serving
+
+predict_stream(self, request: ResponsesRequest) → Generator[ResponsesStreamEvent, None, None]:
+- FIRST: if not os.environ.get("DATABRICKS_HOST"): yield stub ResponsesStreamEvent and return  (log_model schema validation guard)
+- Manual agentic loop using client.chat.completions.create(model=_LLM_ENDPOINT, messages=..., tools=tool_specs, stream=True)
+  # NEVER use client.responses.create() — output_to_responses_items_stream does NOT exist in 2.22.4
+- Accumulate delta.content and delta.tool_calls (with tc_buffers dict keyed by tc.index)
+- Each yielded ResponsesStreamEvent item MUST include: "id": str(uuid4()), "status": "completed"
+
+predict(self, request: ResponsesRequest) → ResponsesResponse:
+- Collect e.item from predict_stream(); return ResponsesResponse(output=output)
+
+if __name__ == "__main__": block:
+- FIRST two calls: mlflow.set_tracking_uri("databricks"); mlflow.set_registry_uri("databricks-uc")
+- Read pip_requirements from pyproject.toml via tomllib
+- mlflow.pyfunc.log_model(artifact_path="agent", python_model=__file__, code_paths=["tools"], pip_requirements=pip_requirements, ...)
+  # artifact_path= NOT name=; NO resources= param (mlflow.models.resources doesn't exist in 2.22.4)
+- Create/update serving endpoint via WorkspaceClient + ServedEntityInput + EndpointCoreConfigInput
+- Wrap put_ai_gateway() in try/except (inference tables unsupported in some workspace tiers)`,
         "claude-code": `Generate the entrypoint file (src/claude_code_agent.ts) — Claude Code SDK (TypeScript only):
 1. Import { query } from "@anthropic-ai/claude-code" — this is the ONLY import needed for the LLM
 2. Define customTools array: each entry has name, description, input_schema (JSON Schema), and run: async (input) => string
@@ -4648,23 +4660,30 @@ def list_policies():
         // pyproject.toml: [project.dependencies] = runtime-only (openai + requests for ResponsesAgent).
         // Pre-installed Databricks serverless packages (mlflow, databricks-sdk, pydantic, pyarrow)
         // belong in [dev] only — listing them in main deps causes version-conflict errors on serverless.
+        // pyproject.toml: requires-python = ">=3.11" — Databricks serverless runs Python 3.11, NOT 3.12.
+        // Main [dependencies]: runtime-only packages NOT pre-installed on serverless.
+        // Always use loose lower-bound pins — exact pins conflict with pre-installed packages on serverless.
+        // Pre-installed packages (mlflow, databricks-sdk, pydantic, pyarrow) go in [dev] only.
         files["pyproject.toml"] = (
           `[project]\n` +
           `name = "${agentSlugDbx}"\n` +
           `version = "0.1.0"\n` +
           `description = "${(agent.description || "AI agent generated by ATLAS.").replace(/"/g, '\\"')}"\n` +
-          `requires-python = ">=3.12"\n` +
+          `requires-python = ">=3.11"\n` +
           `dependencies = [\n` +
-          `    "${pin ? "openai==1.30.0" : "openai>=1.30.0"}",\n` +
-          `    "${pin ? "requests==2.31.0" : "requests>=2.31.0"}",\n` +
+          `    # Only packages NOT pre-installed on Databricks serverless.\n` +
+          `    # Use loose lower-bound constraints — NO exact pins.\n` +
+          `    "openai>=1.30.0",\n` +
+          `    "requests>=2.31.0",\n` +
           `]\n\n` +
           `[project.optional-dependencies]\n` +
           `dev = [\n` +
-          `    "${pin ? "mlflow==2.18.0" : "mlflow>=2.18.0"}",\n` +
-          `    "${pin ? "databricks-sdk==0.36.0" : "databricks-sdk>=0.36.0"}",\n` +
+          `    # Pre-installed on serverless — needed for local dev/testing only.\n` +
+          `    "mlflow>=2.20.0",\n` +
+          `    "databricks-sdk>=0.36.0",\n` +
           `    "pydantic>=2.0.0,<3.0.0",\n` +
           `    "pyarrow>=14.0.0",\n` +
-          `    "${pin ? "pytest==8.3.4" : "pytest>=7.4.0,<9.0.0"}",\n` +
+          `    "pytest>=7.4.0,<9.0.0",\n` +
           `]\n\n` +
           `[build-system]\n` +
           `requires = ["hatchling"]\nbuild-backend = "hatchling.build"\n\n` +
@@ -4676,112 +4695,295 @@ def list_policies():
         );
 
         const systemPromptShort = (systemPrompt || "").substring(0, 500).replace(/`/g, "'").replace(/\\/g, "\\\\");
+        const agentDescShort = (agent.description || "AI agent generated by ATLAS.").replace(/\n/g, "\\n").substring(0, 200);
+        // agent.py uses a strict two-block structure (guide §11):
+        //   1. stdlib-only imports at module top level
+        //   2. serve-time block: if __name__ != "__main__": (ResponsesAgent class + set_model)
+        //   3. job entry-point: if __name__ == "__main__": (mlflow.pyfunc.log_model + endpoint CRUD)
+        // This prevents ImportError when spark_python_task exec()s the file before the upgraded
+        // MLflow env (mlflow>=2.20.0) is active. The __main__ block only needs pre-installed
+        // mlflow + databricks-sdk; all serve-time imports run later inside the serving container.
         files["agent.py"] = aiResult?.entrypoint || (
-          `# Databricks Mosaic AI Agent — ResponsesAgent\n` +
-          `# Generated for: ${agent.name}\n` +
-          `# Framework: mlflow.pyfunc.ResponsesAgent (OpenAI Responses API via WorkspaceClient)\n` +
-          `import json\nimport sys\nimport pandas as pd\n` +
-          `import mlflow\n` +
-          `from mlflow.models.resources import DatabricksServingEndpoint\n` +
-          `from mlflow.pyfunc import ResponsesAgent\n` +
-          `# ResponsesAgentStreamEvent / ResponsesAgentResponse: available from mlflow >= 2.18.\n` +
-          `# The outer try/except handles the rare case where an older MLflow is pre-installed.\n` +
-          `try:\n` +
-          `    from mlflow.pyfunc import ResponsesAgentStreamEvent, ResponsesAgentResponse\n` +
-          `except ImportError:\n` +
-          `    from mlflow.pyfunc.model import ResponsesAgentStreamEvent, ResponsesAgentResponse  # type: ignore\n` +
-          `from tools import TOOLS\n\n` +
+          `# ─── Standard library ONLY at module top level ─────────────────────────────\n` +
+          `# Do NOT put mlflow/ResponsesAgent imports here — they run during spark_python_task\n` +
+          `# exec() before the upgraded MLflow env is active, causing ImportError.\n` +
+          `import json\n` +
+          `import os\n` +
+          `import sys\n` +
+          `import tomllib\n` +
+          `import warnings\n` +
+          `from typing import Generator, Optional\n` +
+          `from uuid import uuid4\n` +
+          `\n` +
           `if "__file__" not in globals():\n` +
-          `    __file__ = __import__("sys")._getframe(0).f_code.co_filename\n\n` +
-          `# ── Agent configuration ──────────────────────────────────────────────────────\n` +
-          `_LLM_ENDPOINT          = "${dbxEndpoint}"  # verify this endpoint exists in your workspace\n` +
+          `    __file__ = sys._getframe(0).f_code.co_filename\n` +
+          `\n` +
+          `# ── Constants — no MLflow imports here ───────────────────────────────────────\n` +
+          `_LLM_ENDPOINT          = os.environ.get("LLM_ENDPOINT", "${dbxEndpoint}")\n` +
           `_MAX_TOKENS            = 4096\n` +
           `_TEMPERATURE           = 0.1\n` +
           `_MAX_ITERATIONS        = ${maxIterations}\n` +
           `_COMPLETION_TOKEN      = "${completionPromise}"\n` +
           `_SYSTEM_PROMPT         = """${systemPromptShort}"""\n` +
           `_EXPERIMENT_NAME       = "/Shared/${agentSlugDbx}_experiment"\n` +
-          `_REGISTERED_MODEL_NAME = "<catalog>.<schema>.${agentSlugDbx}"  # replace with real Unity Catalog path\n` +
-          `_SERVING_ENDPOINT_NAME = "${agentSlugDbx}_endpoint"\n\n` +
-          `# Enable automatic MLflow tracing for OpenAI (ResponsesAgent uses the OpenAI Responses API)\n` +
-          `mlflow.openai.autolog()\n\n` +
-          `# Build tool registry from ToolInfo objects in tools/__init__.py\n` +
-          `tool_specs = [t.spec for t in TOOLS]\n` +
-          `tool_map   = {t.name: t.execute for t in TOOLS}\n\n\n` +
-          `class ${dbxClassName}Agent(ResponsesAgent):\n` +
-          `    """${agent.name}\n\n    ${(agent.description || "AI agent generated by ATLAS.").replace(/\n/g, "\\n").substring(0, 200)}\n    """\n\n` +
-          `    def predict_stream(self, context, model_input):\n` +
-          `        """Stream responses, dispatching tool calls until completion or max iterations."""\n` +
-          `        from databricks.sdk import WorkspaceClient  # lazy — must not init at module load in serverless\n\n` +
-          `        if isinstance(model_input, __import__("pandas").DataFrame):\n` +
-          `            messages = list(model_input["input"].iloc[0])\n` +
-          `        else:\n` +
-          `            messages = list(model_input.get("input") or model_input.get("messages", []))\n\n` +
-          `        messages = [{"role": "system", "content": _SYSTEM_PROMPT}] + messages\n\n` +
-          `        w = WorkspaceClient()\n` +
-          `        client = w.serving_endpoints.get_open_ai_client()\n\n` +
-          `        for iteration in range(_MAX_ITERATIONS):\n` +
-          `            response = client.responses.create(\n` +
-          `                model=_LLM_ENDPOINT, input=messages,\n` +
-          `                tools=tool_specs if tool_specs else None,\n` +
-          `                max_output_tokens=_MAX_TOKENS, temperature=_TEMPERATURE, stream=True,\n` +
-          `            )\n` +
-          `            tool_calls = []\n` +
-          `            assistant_parts = []\n` +
-          `            for event in response:\n` +
-          `                # Wrap each streaming chunk in the native MLflow response-event\n` +
-          `                # type so predict_stream honours the ResponsesAgent contract.\n` +
-          `                yield ResponsesAgentStreamEvent(data=event)\n` +
-          `                if not hasattr(event, "type"):\n` +
-          `                    continue\n` +
-          `                if event.type == "response.output_item.added":\n` +
-          `                    item = getattr(event, "item", None)\n` +
-          `                    if item and getattr(item, "type", None) == "function_call":\n` +
-          `                        tool_calls.append(item)\n` +
-          `                elif event.type == "response.output_text.delta":\n` +
-          `                    assistant_parts.append(getattr(event, "delta", ""))\n` +
-          `            if not tool_calls:\n` +
+          `_REGISTERED_MODEL_NAME = "<catalog>.<schema>.${agentSlugDbx}"  # replace with your Unity Catalog path\n` +
+          `_SERVING_ENDPOINT_NAME = "${agentSlugDbx}_endpoint"\n` +
+          `\n` +
+          `\n` +
+          `# ─── SERVE-TIME BLOCK ────────────────────────────────────────────────────────\n` +
+          `# Runs only when loaded by the Model Serving container (not during spark_python_task).\n` +
+          `# MLflow >=2.20.0 is guaranteed active here because the DAB environments spec\n` +
+          `# lists mlflow>=2.20.0,<3.0.0 as its first dependency (upgrades serverless 2.11.4).\n` +
+          `if __name__ != "__main__":\n` +
+          `    import mlflow\n` +
+          `    from mlflow.pyfunc import ResponsesAgent\n` +
+          `    from mlflow.types.responses import (\n` +
+          `        ResponsesRequest,       # correct name in MLflow >=2.20.0\n` +
+          `        ResponsesResponse,      # NOT ResponsesAgentResponse\n` +
+          `        ResponsesStreamEvent,   # NOT ResponsesAgentStreamEvent\n` +
+          `    )\n` +
+          `    from openai import OpenAI\n` +
+          `    # SpanType: do NOT import — use the string literal span_type="TOOL" directly.\n` +
+          `    from tools import TOOLS\n` +
+          `\n` +
+          `    tool_specs = [t.spec for t in TOOLS]\n` +
+          `    tool_map   = {t.name: t.execute for t in TOOLS}\n` +
+          `\n` +
+          `\n` +
+          `    class ${dbxClassName}Agent(ResponsesAgent):\n` +
+          `        """${agent.name}\n\n        ${agentDescShort}\n        """\n` +
+          `\n` +
+          `        def __init__(self):\n` +
+          `            self._llm_client: Optional[OpenAI] = None\n` +
+          `\n` +
+          `        def _get_llm_client(self) -> OpenAI:\n` +
+          `            # On Model Serving, DATABRICKS_HOST and DATABRICKS_TOKEN are auto-injected.\n` +
+          `            # Do NOT use WorkspaceClient() here — it may fail to discover credentials.\n` +
+          `            if self._llm_client is None:\n` +
+          `                host  = os.environ.get("DATABRICKS_HOST", "").rstrip("/")\n` +
+          `                token = os.environ.get("DATABRICKS_TOKEN", "")\n` +
+          `                self._llm_client = OpenAI(\n` +
+          `                    base_url=f"{host}/serving-endpoints",\n` +
+          `                    api_key=token,\n` +
+          `                )\n` +
+          `            return self._llm_client\n` +
+          `\n` +
+          `        def predict_stream(\n` +
+          `            self, request: ResponsesRequest\n` +
+          `        ) -> Generator[ResponsesStreamEvent, None, None]:\n` +
+          `            # Guard: mlflow.pyfunc.log_model calls predict() to validate the schema.\n` +
+          `            # At that point DATABRICKS_HOST is not set (the endpoint doesn't exist yet).\n` +
+          `            # Return a stub so validation succeeds without a real LLM call.\n` +
+          `            if not os.environ.get("DATABRICKS_HOST"):\n` +
+          `                yield ResponsesStreamEvent(\n` +
+          `                    type="response.output_item.done",\n` +
+          `                    item={\n` +
+          `                        "type": "message",\n` +
+          `                        "id": str(uuid4()),       # required field\n` +
+          `                        "role": "assistant",\n` +
+          `                        "status": "completed",    # required field\n` +
+          `                        "content": [{"type": "output_text", "text": "stub"}],\n` +
+          `                    }\n` +
+          `                )\n` +
           `                return\n` +
-          `            assistant_text = "".join(assistant_parts)\n` +
-          `            messages.append({"role": "assistant", "content": assistant_text or None,\n` +
-          `                "tool_calls": [{"id": tc.call_id, "type": "function", "function": {"name": tc.name, "arguments": tc.arguments}} for tc in tool_calls]})\n` +
-          `            for tc in tool_calls:\n` +
-          `                try:\n` +
-          `                    kwargs = json.loads(tc.arguments) if tc.arguments else {}\n` +
-          `                except (json.JSONDecodeError, TypeError):\n` +
-          `                    kwargs = {}\n` +
-          `                tool_fn = tool_map.get(tc.name)\n` +
-          `                try:\n` +
-          `                    result = tool_fn(**kwargs) if tool_fn else {"error": f"Unknown tool: {tc.name}"}\n` +
-          `                except Exception as exc:\n` +
-          `                    result = {"error": str(exc)}\n` +
-          `                messages.append({"role": "tool", "tool_call_id": tc.call_id, "content": json.dumps(result)})\n` +
-          `        # Max-iteration sentinel: wrap in the same native event type as normal stream events.\n` +
-          `        yield ResponsesAgentStreamEvent(data={"type": "response.output_text.delta", "delta": f"[Max iterations (${maxIterations}) reached]"})\n\n` +
-          `    def predict(self, context, model_input):\n` +
-          `        """Non-streaming prediction — collects the full stream and returns a ResponsesAgentResponse."""\n` +
-          `        events = list(self.predict_stream(context, model_input))\n` +
-          `        # Unwrap the .data payload from each ResponsesAgentStreamEvent before packing\n` +
-          `        # into ResponsesAgentResponse so the output list contains plain event objects.\n` +
-          `        output = [e.data if hasattr(e, "data") else e for e in events]\n` +
-          `        return ResponsesAgentResponse(output=output)\n\n\n` +
-          `agent = ${dbxClassName}Agent()\n` +
-          `mlflow.models.set_model(agent)\n\n\n` +
+          `\n` +
+          `            # Build message list from the ResponsesRequest input.\n` +
+          `            messages: list = [{"role": "system", "content": _SYSTEM_PROMPT}]\n` +
+          `            for msg in (request.input if isinstance(request.input, list) else []):\n` +
+          `                role    = getattr(msg, "role", None)    or msg.get("role", "user")\n` +
+          `                content = getattr(msg, "content", None) or msg.get("content", "")\n` +
+          `                messages.append({"role": role, "content": content})\n` +
+          `\n` +
+          `            client = self._get_llm_client()\n` +
+          `\n` +
+          `            # Manual agentic loop via chat.completions (stream=True).\n` +
+          `            # Helpers like output_to_responses_items_stream do NOT exist in MLflow 2.22.4.\n` +
+          `            for _ in range(_MAX_ITERATIONS):\n` +
+          `                with warnings.catch_warnings():\n` +
+          `                    warnings.filterwarnings(\n` +
+          `                        "ignore", message="PydanticSerializationUnexpectedValue"\n` +
+          `                    )\n` +
+          `                    stream = client.chat.completions.create(\n` +
+          `                        model=_LLM_ENDPOINT,\n` +
+          `                        messages=messages,\n` +
+          `                        tools=tool_specs if tool_specs else None,\n` +
+          `                        max_tokens=_MAX_TOKENS,\n` +
+          `                        temperature=_TEMPERATURE,\n` +
+          `                        stream=True,\n` +
+          `                    )\n` +
+          `\n` +
+          `                content_acc = ""\n` +
+          `                tc_buffers: dict = {}\n` +
+          `                for chunk in stream:\n` +
+          `                    if not chunk.choices:\n` +
+          `                        continue\n` +
+          `                    delta = chunk.choices[0].delta\n` +
+          `                    if delta.content:\n` +
+          `                        content_acc += delta.content\n` +
+          `                    if delta.tool_calls:\n` +
+          `                        for tc in delta.tool_calls:\n` +
+          `                            idx = tc.index\n` +
+          `                            if idx not in tc_buffers:\n` +
+          `                                tc_buffers[idx] = {\n` +
+          `                                    "id": tc.id or "",\n` +
+          `                                    "name": tc.function.name or "",\n` +
+          `                                    "arguments": "",\n` +
+          `                                }\n` +
+          `                            if tc.function.arguments:\n` +
+          `                                tc_buffers[idx]["arguments"] += tc.function.arguments\n` +
+          `                            if tc.function.name and not tc_buffers[idx]["name"]:\n` +
+          `                                tc_buffers[idx]["name"] = tc.function.name\n` +
+          `\n` +
+          `                tool_calls = list(tc_buffers.values())\n` +
+          `\n` +
+          `                if not tool_calls:\n` +
+          `                    # No tool calls — final assistant turn, yield and stop.\n` +
+          `                    yield ResponsesStreamEvent(\n` +
+          `                        type="response.output_item.done",\n` +
+          `                        item={\n` +
+          `                            "type": "message",\n` +
+          `                            "id": str(uuid4()),\n` +
+          `                            "role": "assistant",\n` +
+          `                            "status": "completed",\n` +
+          `                            "content": [{"type": "output_text", "text": content_acc}],\n` +
+          `                        }\n` +
+          `                    )\n` +
+          `                    return\n` +
+          `\n` +
+          `                messages.append({\n` +
+          `                    "role": "assistant",\n` +
+          `                    "content": content_acc or None,\n` +
+          `                    "tool_calls": [\n` +
+          `                        {\n` +
+          `                            "id": tc["id"], "type": "function",\n` +
+          `                            "function": {"name": tc["name"], "arguments": tc["arguments"]},\n` +
+          `                        }\n` +
+          `                        for tc in tool_calls\n` +
+          `                    ],\n` +
+          `                })\n` +
+          `\n` +
+          `                for tc in tool_calls:\n` +
+          `                    try:\n` +
+          `                        kwargs = json.loads(tc["arguments"]) if tc["arguments"] else {}\n` +
+          `                    except (json.JSONDecodeError, TypeError):\n` +
+          `                        kwargs = {}\n` +
+          `                    tool_fn = tool_map.get(tc["name"])\n` +
+          `                    try:\n` +
+          `                        result = (\n` +
+          `                            tool_fn(**kwargs)\n` +
+          `                            if tool_fn\n` +
+          `                            else {"error": f"Unknown tool: {tc['name']}"}\n` +
+          `                        )\n` +
+          `                    except Exception as exc:\n` +
+          `                        result = {"error": str(exc)}\n` +
+          `                    messages.append({\n` +
+          `                        "role": "tool",\n` +
+          `                        "tool_call_id": tc["id"],\n` +
+          `                        "content": json.dumps(result),\n` +
+          `                    })\n` +
+          `\n` +
+          `            # Max-iteration sentinel.\n` +
+          `            yield ResponsesStreamEvent(\n` +
+          `                type="response.output_item.done",\n` +
+          `                item={\n` +
+          `                    "type": "message",\n` +
+          `                    "id": str(uuid4()),\n` +
+          `                    "role": "assistant",\n` +
+          `                    "status": "completed",\n` +
+          `                    "content": [{"type": "output_text", "text": f"[Max iterations ({_MAX_ITERATIONS}) reached]"}],\n` +
+          `                }\n` +
+          `            )\n` +
+          `\n` +
+          `        def predict(self, request: ResponsesRequest) -> ResponsesResponse:\n` +
+          `            output = [\n` +
+          `                e.item for e in self.predict_stream(request)\n` +
+          `                if hasattr(e, "item") and e.item\n` +
+          `            ]\n` +
+          `            return ResponsesResponse(output=output)\n` +
+          `\n` +
+          `\n` +
+          `    AGENT = ${dbxClassName}Agent()\n` +
+          `    mlflow.models.set_model(AGENT)\n` +
+          `\n` +
+          `\n` +
+          `# ─── JOB ENTRY POINT ─────────────────────────────────────────────────────────\n` +
+          `# Runs only in spark_python_task. Uses only pre-installed mlflow + databricks-sdk.\n` +
+          `# All other imports live in the serve-time block above.\n` +
           `if __name__ == "__main__":\n` +
-          `    import argparse\n` +
-          `    parser = argparse.ArgumentParser()\n` +
-          `    parser.add_argument("--experiment_name", default=_EXPERIMENT_NAME)\n` +
-          `    args = parser.parse_args()\n` +
-          `    mlflow.set_experiment(args.experiment_name)\n` +
+          `    import mlflow\n` +
+          `\n` +
+          `    print(f"[deploy] MLflow version: {mlflow.__version__}", flush=True)\n` +
+          `\n` +
+          `    # Always set these FIRST — spark.mlflow.modelRegistryUri is not available on serverless.\n` +
+          `    mlflow.set_tracking_uri("databricks")\n` +
+          `    mlflow.set_registry_uri("databricks-uc")\n` +
+          `\n` +
+          `    _PYPROJECT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pyproject.toml")\n` +
+          `    with open(_PYPROJECT, "rb") as f:\n` +
+          `        pip_requirements = tomllib.load(f)["project"]["dependencies"]\n` +
+          `\n` +
+          `    mlflow.set_experiment(_EXPERIMENT_NAME)\n` +
+          `\n` +
           `    with mlflow.start_run():\n` +
           `        model_info = mlflow.pyfunc.log_model(\n` +
-          `            python_model=agent, artifact_path="agent",\n` +
-          `            pip_requirements=["openai>=1.30.0", "requests>=2.31.0"],\n` +
+          `            artifact_path="agent",        # NOT name= — that parameter requires newer MLflow\n` +
+          `            python_model=__file__,\n` +
+          `            code_paths=["tools"],         # packages the tools/ directory into the model artifact\n` +
           `            input_example={"input": [{"role": "user", "content": "Hello, what can you help me with?"}]},\n` +
-          `            resources=[DatabricksServingEndpoint(endpoint_name=_SERVING_ENDPOINT_NAME)],\n` +
+          `            pip_requirements=pip_requirements,\n` +
           `            registered_model_name=_REGISTERED_MODEL_NAME,\n` +
+          `            # Do NOT pass resources= — mlflow.models.resources doesn't exist in MLflow 2.22.4\n` +
           `        )\n` +
-          `    print(f"Model logged: {model_info.model_uri}")\n`
+          `        print(f"[deploy] Registered model v{model_info.registered_model_version}", flush=True)\n` +
+          `\n` +
+          `    from datetime import timedelta\n` +
+          `    from databricks.sdk import WorkspaceClient\n` +
+          `    from databricks.sdk.service.serving import ServedEntityInput, EndpointCoreConfigInput\n` +
+          `\n` +
+          `    w = WorkspaceClient()\n` +
+          `    served_entity = ServedEntityInput(\n` +
+          `        entity_name=_REGISTERED_MODEL_NAME,\n` +
+          `        entity_version=str(model_info.registered_model_version),\n` +
+          `        workload_size="Small",\n` +
+          `        scale_to_zero_enabled=True,\n` +
+          `        environment_vars={\n` +
+          `            "MLFLOW_TRACKING_URI":    "databricks",\n` +
+          `            "MLFLOW_EXPERIMENT_NAME": _EXPERIMENT_NAME,\n` +
+          `        },\n` +
+          `    )\n` +
+          `    existing = {ep.name for ep in w.serving_endpoints.list()}\n` +
+          `    if _SERVING_ENDPOINT_NAME in existing:\n` +
+          `        w.serving_endpoints.update_config_and_wait(\n` +
+          `            name=_SERVING_ENDPOINT_NAME,\n` +
+          `            served_entities=[served_entity],\n` +
+          `            timeout=timedelta(minutes=30),\n` +
+          `        )\n` +
+          `    else:\n` +
+          `        w.serving_endpoints.create_and_wait(\n` +
+          `            name=_SERVING_ENDPOINT_NAME,\n` +
+          `            config=EndpointCoreConfigInput(\n` +
+          `                name=_SERVING_ENDPOINT_NAME,\n` +
+          `                served_entities=[served_entity],\n` +
+          `            ),\n` +
+          `            timeout=timedelta(minutes=30),\n` +
+          `        )\n` +
+          `    # Optional: enable inference table tracing via AI Gateway.\n` +
+          `    # Wrapped in try/except — some workspace tiers do not support inference tables.\n` +
+          `    # MLflow traces still work via MLFLOW_TRACKING_URI env var set on the endpoint above.\n` +
+          `    try:\n` +
+          `        from databricks.sdk.service.serving import (\n` +
+          `            AiGatewayInferenceTableConfig,\n` +
+          `        )\n` +
+          `        w.serving_endpoints.put_ai_gateway(\n` +
+          `            name=_SERVING_ENDPOINT_NAME,\n` +
+          `            inference_table_config=AiGatewayInferenceTableConfig(\n` +
+          `                catalog_name="workspace",\n` +
+          `                schema_name="default",\n` +
+          `                enabled=True,\n` +
+          `            ),\n` +
+          `        )\n` +
+          `    except Exception:\n` +
+          `        pass  # inference tables not supported in this workspace tier\n`
         );
 
         // Build Databricks tools/__init__.py: ToolInfo registry for ResponsesAgent.
@@ -4872,12 +5074,13 @@ def list_policies():
 
         // spark_python_task is correct for plain Python scripts; python_wheel_task
         // requires a packaged .whl with setuptools entry points which don't exist here.
-        files["databricks.yml"] = `# Databricks Asset Bundle (DAB)\n# Deploy with: databricks bundle deploy\n#\n# Authentication: set DATABRICKS_HOST and DATABRICKS_TOKEN in your environment.\n# DAB reads these env vars automatically — do NOT put them in workspace.host.\n# Using \${DATABRICKS_HOST} in workspace.host causes a parse error on bundle validate.\nbundle:\n  name: ${agentSlugDbx}_bundle\n\n# Bump wheel_version whenever pyproject.toml version changes.\n# Run: databricks bundle deploy --var "wheel_version=<new-version>"\nvariables:\n  wheel_version:\n    description: Version of the agent wheel (must match pyproject.toml [project].version).\n    default: "0.1.0"\n\nworkspace:\n  # ~/  expands to /Users/<your-username> in Databricks — keeps dev deploys user-scoped\n  root_path: ~/.bundle/\${bundle.name}/\${bundle.target}\n\ntargets:\n  dev:\n    default: true\n    mode: development\n\n  staging:\n    mode: development\n\n  prod:\n    mode: production\n\nresources:\n  jobs:\n    deploy_agent:\n      name: Deploy ${agent.name}\n      tasks:\n        - task_key: log_model\n          spark_python_task:\n            python_file: \${workspace.file_path}/agent.py\n          environment_key: default\n      environments:\n        - environment_key: default\n          spec:\n            client: "2"\n            # Install the agent wheel built by "make build".\n            # All transitive deps (mlflow, databricks-sdk, etc.) are declared in pyproject.toml\n            # and installed automatically — no need to list them individually here.\n            dependencies:\n              - ./dist/${agentSlugDbx}-\${var.wheel_version}-py3-none-any.whl\n`;
+        files["databricks.yml"] = `# Databricks Asset Bundle (DAB)\n# Deploy with: databricks bundle deploy\n#\n# Authentication: set DATABRICKS_HOST and DATABRICKS_TOKEN in your environment.\n# DAB reads these env vars automatically — do NOT put them in workspace.host.\n# Using \${DATABRICKS_HOST} in workspace.host causes a parse error on bundle validate.\nbundle:\n  name: ${agentSlugDbx}_bundle\n\n# Bump wheel_version whenever pyproject.toml version changes.\n# Run: databricks bundle deploy --var "wheel_version=<new-version>"\nvariables:\n  wheel_version:\n    description: Version of the agent wheel (must match pyproject.toml [project].version).\n    default: "0.1.0"\n\nworkspace:\n  # ~/  expands to /Users/<your-username> in Databricks — keeps dev deploys user-scoped\n  root_path: ~/.bundle/\${bundle.name}/\${bundle.target}\n\ntargets:\n  dev:\n    default: true\n    mode: development\n\n  staging:\n    mode: development\n\n  prod:\n    mode: production\n\nresources:\n  jobs:\n    deploy_agent:\n      name: Deploy ${agent.name}\n      tasks:\n        - task_key: log_model\n          spark_python_task:\n            python_file: \${workspace.file_path}/agent.py\n          environment_key: default\n      environments:\n        - environment_key: default\n          spec:\n            client: "2"\n            dependencies:\n              # MUST be first — upgrades the serverless pre-installed MLflow 2.11.4\n              # to >=2.20.0 which is required for ResponsesAgent and related APIs.\n              - mlflow>=2.20.0,<3.0.0\n              # Agent wheel built by: python -m build\n              - ./dist/${agentSlugDbx}-\${var.wheel_version}-py3-none-any.whl\n`;
 
         files["MLproject"] = `name: ${agentSlugDbx}\n\nconda_env: conda.yaml\n\nentry_points:\n  main:\n    parameters:\n      experiment_name:\n        type: str\n        default: /Shared/${agentSlugDbx}_experiment\n    command: "python agent.py --experiment_name {experiment_name}"\n\n  evaluate:\n    command: "python evaluate.py"\n`;
 
         // conda.yaml delegates pip deps to pyproject.toml via editable install.
-        files["conda.yaml"] = `name: ${agentSlugDbx}_env\nchannels:\n  - defaults\ndependencies:\n  - python=3.12\n  - pip:\n    # All runtime deps are declared in pyproject.toml — no duplication here.\n    - -e .\n`;
+        // python=3.11 — Databricks serverless runs Python 3.11, NOT 3.12.
+        files["conda.yaml"] = `name: ${agentSlugDbx}_env\nchannels:\n  - defaults\ndependencies:\n  - python=3.11\n  - pip:\n    # All runtime deps are declared in pyproject.toml — no duplication here.\n    - -e .\n`;
 
         // requirements.txt delegates entirely to pyproject.toml — single line as spec requires.
         files["requirements.txt"] = "-e .[dev]\n";
@@ -4902,7 +5105,7 @@ on:
         required: true
 
 env:
-  PYTHON_VERSION: "3.12"
+  PYTHON_VERSION: "3.11"
 
 jobs:
   test:
@@ -5657,81 +5860,259 @@ clean:
           const systemPromptShort = (systemPrompt || "").substring(0, 500).replace(/`/g, "'").replace(/\\/g, "\\\\");
           const agentIterDbx = agentRec.maxToolIterations || maxIterations;
 
+          const agentDescShortDbx = (agentRec.description || "AI agent generated by ATLAS.").replace(/\n/g, "\\n").substring(0, 200);
           localFiles[`${dirPrefix}/agent.py`] = aiResult?.entrypoint || (
-            `# Databricks Mosaic AI Agent — ResponsesAgent\n` +
-            `# Generated for: ${agentRec.name}\n` +
-            `# Framework: mlflow.pyfunc.ResponsesAgent (OpenAI Responses API via WorkspaceClient)\n` +
-            `import json\nimport mlflow\n` +
-            `from mlflow.models.resources import DatabricksServingEndpoint\n` +
-            `from mlflow.pyfunc import ResponsesAgent\n` +
-            `try:\n    from mlflow.pyfunc import ResponsesAgentStreamEvent, ResponsesAgentResponse\n` +
-            `except ImportError:\n    from mlflow.pyfunc.model import ResponsesAgentStreamEvent, ResponsesAgentResponse  # type: ignore\n` +
-            `from tools import TOOLS\n\n` +
-            `if "__file__" not in globals():\n    __file__ = __import__("sys")._getframe(0).f_code.co_filename\n\n` +
-            `_LLM_ENDPOINT          = "${dbxEndpoint}"\n` +
+            `# ─── Standard library ONLY at module top level ─────────────────────────────\n` +
+            `import json\n` +
+            `import os\n` +
+            `import sys\n` +
+            `import tomllib\n` +
+            `import warnings\n` +
+            `from typing import Generator, Optional\n` +
+            `from uuid import uuid4\n` +
+            `\n` +
+            `if "__file__" not in globals():\n` +
+            `    __file__ = sys._getframe(0).f_code.co_filename\n` +
+            `\n` +
+            `_LLM_ENDPOINT          = os.environ.get("LLM_ENDPOINT", "${dbxEndpoint}")\n` +
             `_MAX_TOKENS            = 4096\n` +
             `_TEMPERATURE           = 0.1\n` +
             `_MAX_ITERATIONS        = ${agentIterDbx}\n` +
             `_COMPLETION_TOKEN      = "${completionPromise}"\n` +
             `_SYSTEM_PROMPT         = """${systemPromptShort}"""\n` +
             `_EXPERIMENT_NAME       = "/Shared/${agentSlugDbx}_experiment"\n` +
-            `_REGISTERED_MODEL_NAME = "<catalog>.<schema>.${agentSlugDbx}"\n` +
-            `_SERVING_ENDPOINT_NAME = "${agentSlugDbx}_endpoint"\n\n` +
-            `mlflow.openai.autolog()\n\n` +
-            `tool_specs = [t.spec for t in TOOLS]\n` +
-            `tool_map   = {t.name: t.execute for t in TOOLS}\n\n\n` +
-            `class ${dbxClassName}Agent(ResponsesAgent):\n` +
-            `    """${agentRec.name}\n\n    ${(agentRec.description || "AI agent generated by ATLAS.").replace(/\n/g, "\\n").substring(0, 200)}\n    """\n\n` +
-            `    def predict_stream(self, context, model_input):\n` +
-            `        from databricks.sdk import WorkspaceClient\n\n` +
-            `        if isinstance(model_input, __import__("pandas").DataFrame):\n` +
-            `            messages = list(model_input["input"].iloc[0])\n` +
-            `        else:\n` +
-            `            messages = list(model_input.get("input") or model_input.get("messages", []))\n\n` +
-            `        messages = [{"role": "system", "content": _SYSTEM_PROMPT}] + messages\n\n` +
-            `        w = WorkspaceClient()\n` +
-            `        client = w.serving_endpoints.get_open_ai_client()\n\n` +
-            `        for iteration in range(_MAX_ITERATIONS):\n` +
-            `            response = client.responses.create(\n` +
-            `                model=_LLM_ENDPOINT, input=messages,\n` +
-            `                tools=tool_specs if tool_specs else None,\n` +
-            `                max_output_tokens=_MAX_TOKENS, temperature=_TEMPERATURE, stream=True,\n` +
-            `            )\n` +
-            `            tool_calls = []\n` +
-            `            assistant_parts = []\n` +
-            `            for event in response:\n` +
-            `                yield ResponsesAgentStreamEvent(data=event)\n` +
-            `                if not hasattr(event, "type"):\n` +
-            `                    continue\n` +
-            `                if event.type == "response.output_item.added":\n` +
-            `                    item = getattr(event, "item", None)\n` +
-            `                    if item and getattr(item, "type", None) == "function_call":\n` +
-            `                        tool_calls.append(item)\n` +
-            `                elif event.type == "response.output_text.delta":\n` +
-            `                    assistant_parts.append(getattr(event, "delta", ""))\n` +
-            `            if not tool_calls:\n` +
+            `_REGISTERED_MODEL_NAME = "<catalog>.<schema>.${agentSlugDbx}"  # replace with your Unity Catalog path\n` +
+            `_SERVING_ENDPOINT_NAME = "${agentSlugDbx}_endpoint"\n` +
+            `\n` +
+            `\n` +
+            `# ─── SERVE-TIME BLOCK ────────────────────────────────────────────────────────\n` +
+            `if __name__ != "__main__":\n` +
+            `    import mlflow\n` +
+            `    from mlflow.pyfunc import ResponsesAgent\n` +
+            `    from mlflow.types.responses import (\n` +
+            `        ResponsesRequest,\n` +
+            `        ResponsesResponse,\n` +
+            `        ResponsesStreamEvent,\n` +
+            `    )\n` +
+            `    from openai import OpenAI\n` +
+            `    from tools import TOOLS\n` +
+            `\n` +
+            `    tool_specs = [t.spec for t in TOOLS]\n` +
+            `    tool_map   = {t.name: t.execute for t in TOOLS}\n` +
+            `\n` +
+            `\n` +
+            `    class ${dbxClassName}Agent(ResponsesAgent):\n` +
+            `        """${agentRec.name}\n\n        ${agentDescShortDbx}\n        """\n` +
+            `\n` +
+            `        def __init__(self):\n` +
+            `            self._llm_client: Optional[OpenAI] = None\n` +
+            `\n` +
+            `        def _get_llm_client(self) -> OpenAI:\n` +
+            `            if self._llm_client is None:\n` +
+            `                host  = os.environ.get("DATABRICKS_HOST", "").rstrip("/")\n` +
+            `                token = os.environ.get("DATABRICKS_TOKEN", "")\n` +
+            `                self._llm_client = OpenAI(\n` +
+            `                    base_url=f"{host}/serving-endpoints",\n` +
+            `                    api_key=token,\n` +
+            `                )\n` +
+            `            return self._llm_client\n` +
+            `\n` +
+            `        def predict_stream(\n` +
+            `            self, request: ResponsesRequest\n` +
+            `        ) -> Generator[ResponsesStreamEvent, None, None]:\n` +
+            `            if not os.environ.get("DATABRICKS_HOST"):\n` +
+            `                yield ResponsesStreamEvent(\n` +
+            `                    type="response.output_item.done",\n` +
+            `                    item={\n` +
+            `                        "type": "message",\n` +
+            `                        "id": str(uuid4()),\n` +
+            `                        "role": "assistant",\n` +
+            `                        "status": "completed",\n` +
+            `                        "content": [{"type": "output_text", "text": "stub"}],\n` +
+            `                    }\n` +
+            `                )\n` +
             `                return\n` +
-            `            assistant_text = "".join(assistant_parts)\n` +
-            `            messages.append({"role": "assistant", "content": assistant_text or None,\n` +
-            `                "tool_calls": [{"id": tc.call_id, "type": "function", "function": {"name": tc.name, "arguments": tc.arguments}} for tc in tool_calls]})\n` +
-            `            for tc in tool_calls:\n` +
-            `                try:\n` +
-            `                    kwargs = json.loads(tc.arguments) if tc.arguments else {}\n` +
-            `                except (json.JSONDecodeError, TypeError):\n` +
-            `                    kwargs = {}\n` +
-            `                tool_fn = tool_map.get(tc.name)\n` +
-            `                try:\n` +
-            `                    result = tool_fn(**kwargs) if tool_fn else {"error": f"Unknown tool: {tc.name}"}\n` +
-            `                except Exception as exc:\n` +
-            `                    result = {"error": str(exc)}\n` +
-            `                messages.append({"role": "tool", "tool_call_id": tc.call_id, "content": json.dumps(result)})\n` +
-            `        yield ResponsesAgentStreamEvent(data={"type": "response.output_text.delta", "delta": f"[Max iterations (${agentIterDbx}) reached]"})\n\n` +
-            `    def predict(self, context, model_input):\n` +
-            `        events = list(self.predict_stream(context, model_input))\n` +
-            `        output = [e.data if hasattr(e, "data") else e for e in events]\n` +
-            `        return ResponsesAgentResponse(output=output)\n\n\n` +
-            `agent = ${dbxClassName}Agent()\n` +
-            `mlflow.models.set_model(agent)\n`
+            `\n` +
+            `            messages: list = [{"role": "system", "content": _SYSTEM_PROMPT}]\n` +
+            `            for msg in (request.input if isinstance(request.input, list) else []):\n` +
+            `                role    = getattr(msg, "role", None)    or msg.get("role", "user")\n` +
+            `                content = getattr(msg, "content", None) or msg.get("content", "")\n` +
+            `                messages.append({"role": role, "content": content})\n` +
+            `\n` +
+            `            client = self._get_llm_client()\n` +
+            `\n` +
+            `            for _ in range(_MAX_ITERATIONS):\n` +
+            `                with warnings.catch_warnings():\n` +
+            `                    warnings.filterwarnings(\n` +
+            `                        "ignore", message="PydanticSerializationUnexpectedValue"\n` +
+            `                    )\n` +
+            `                    stream = client.chat.completions.create(\n` +
+            `                        model=_LLM_ENDPOINT,\n` +
+            `                        messages=messages,\n` +
+            `                        tools=tool_specs if tool_specs else None,\n` +
+            `                        max_tokens=_MAX_TOKENS,\n` +
+            `                        temperature=_TEMPERATURE,\n` +
+            `                        stream=True,\n` +
+            `                    )\n` +
+            `\n` +
+            `                content_acc = ""\n` +
+            `                tc_buffers: dict = {}\n` +
+            `                for chunk in stream:\n` +
+            `                    if not chunk.choices:\n` +
+            `                        continue\n` +
+            `                    delta = chunk.choices[0].delta\n` +
+            `                    if delta.content:\n` +
+            `                        content_acc += delta.content\n` +
+            `                    if delta.tool_calls:\n` +
+            `                        for tc in delta.tool_calls:\n` +
+            `                            idx = tc.index\n` +
+            `                            if idx not in tc_buffers:\n` +
+            `                                tc_buffers[idx] = {\n` +
+            `                                    "id": tc.id or "",\n` +
+            `                                    "name": tc.function.name or "",\n` +
+            `                                    "arguments": "",\n` +
+            `                                }\n` +
+            `                            if tc.function.arguments:\n` +
+            `                                tc_buffers[idx]["arguments"] += tc.function.arguments\n` +
+            `                            if tc.function.name and not tc_buffers[idx]["name"]:\n` +
+            `                                tc_buffers[idx]["name"] = tc.function.name\n` +
+            `\n` +
+            `                tool_calls = list(tc_buffers.values())\n` +
+            `\n` +
+            `                if not tool_calls:\n` +
+            `                    yield ResponsesStreamEvent(\n` +
+            `                        type="response.output_item.done",\n` +
+            `                        item={\n` +
+            `                            "type": "message",\n` +
+            `                            "id": str(uuid4()),\n` +
+            `                            "role": "assistant",\n` +
+            `                            "status": "completed",\n` +
+            `                            "content": [{"type": "output_text", "text": content_acc}],\n` +
+            `                        }\n` +
+            `                    )\n` +
+            `                    return\n` +
+            `\n` +
+            `                messages.append({\n` +
+            `                    "role": "assistant",\n` +
+            `                    "content": content_acc or None,\n` +
+            `                    "tool_calls": [\n` +
+            `                        {"id": tc["id"], "type": "function",\n` +
+            `                         "function": {"name": tc["name"], "arguments": tc["arguments"]}}\n` +
+            `                        for tc in tool_calls\n` +
+            `                    ],\n` +
+            `                })\n` +
+            `\n` +
+            `                for tc in tool_calls:\n` +
+            `                    try:\n` +
+            `                        kwargs = json.loads(tc["arguments"]) if tc["arguments"] else {}\n` +
+            `                    except (json.JSONDecodeError, TypeError):\n` +
+            `                        kwargs = {}\n` +
+            `                    tool_fn = tool_map.get(tc["name"])\n` +
+            `                    try:\n` +
+            `                        result = (\n` +
+            `                            tool_fn(**kwargs) if tool_fn\n` +
+            `                            else {"error": f"Unknown tool: {tc['name']}"}\n` +
+            `                        )\n` +
+            `                    except Exception as exc:\n` +
+            `                        result = {"error": str(exc)}\n` +
+            `                    messages.append({\n` +
+            `                        "role": "tool",\n` +
+            `                        "tool_call_id": tc["id"],\n` +
+            `                        "content": json.dumps(result),\n` +
+            `                    })\n` +
+            `\n` +
+            `            yield ResponsesStreamEvent(\n` +
+            `                type="response.output_item.done",\n` +
+            `                item={\n` +
+            `                    "type": "message",\n` +
+            `                    "id": str(uuid4()),\n` +
+            `                    "role": "assistant",\n` +
+            `                    "status": "completed",\n` +
+            `                    "content": [{"type": "output_text", "text": f"[Max iterations ({_MAX_ITERATIONS}) reached]"}],\n` +
+            `                }\n` +
+            `            )\n` +
+            `\n` +
+            `        def predict(self, request: ResponsesRequest) -> ResponsesResponse:\n` +
+            `            output = [\n` +
+            `                e.item for e in self.predict_stream(request)\n` +
+            `                if hasattr(e, "item") and e.item\n` +
+            `            ]\n` +
+            `            return ResponsesResponse(output=output)\n` +
+            `\n` +
+            `\n` +
+            `    AGENT = ${dbxClassName}Agent()\n` +
+            `    mlflow.models.set_model(AGENT)\n` +
+            `\n` +
+            `\n` +
+            `# ─── JOB ENTRY POINT ─────────────────────────────────────────────────────────\n` +
+            `if __name__ == "__main__":\n` +
+            `    import mlflow\n` +
+            `\n` +
+            `    print(f"[deploy] MLflow version: {mlflow.__version__}", flush=True)\n` +
+            `\n` +
+            `    mlflow.set_tracking_uri("databricks")\n` +
+            `    mlflow.set_registry_uri("databricks-uc")\n` +
+            `\n` +
+            `    _PYPROJECT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pyproject.toml")\n` +
+            `    with open(_PYPROJECT, "rb") as f:\n` +
+            `        pip_requirements = tomllib.load(f)["project"]["dependencies"]\n` +
+            `\n` +
+            `    mlflow.set_experiment(_EXPERIMENT_NAME)\n` +
+            `\n` +
+            `    with mlflow.start_run():\n` +
+            `        model_info = mlflow.pyfunc.log_model(\n` +
+            `            artifact_path="agent",\n` +
+            `            python_model=__file__,\n` +
+            `            code_paths=["tools"],\n` +
+            `            input_example={"input": [{"role": "user", "content": "Hello, what can you help me with?"}]},\n` +
+            `            pip_requirements=pip_requirements,\n` +
+            `            registered_model_name=_REGISTERED_MODEL_NAME,\n` +
+            `        )\n` +
+            `        print(f"[deploy] Registered model v{model_info.registered_model_version}", flush=True)\n` +
+            `\n` +
+            `    from datetime import timedelta\n` +
+            `    from databricks.sdk import WorkspaceClient\n` +
+            `    from databricks.sdk.service.serving import ServedEntityInput, EndpointCoreConfigInput\n` +
+            `\n` +
+            `    w = WorkspaceClient()\n` +
+            `    served_entity = ServedEntityInput(\n` +
+            `        entity_name=_REGISTERED_MODEL_NAME,\n` +
+            `        entity_version=str(model_info.registered_model_version),\n` +
+            `        workload_size="Small",\n` +
+            `        scale_to_zero_enabled=True,\n` +
+            `        environment_vars={\n` +
+            `            "MLFLOW_TRACKING_URI":    "databricks",\n` +
+            `            "MLFLOW_EXPERIMENT_NAME": _EXPERIMENT_NAME,\n` +
+            `        },\n` +
+            `    )\n` +
+            `    existing = {ep.name for ep in w.serving_endpoints.list()}\n` +
+            `    if _SERVING_ENDPOINT_NAME in existing:\n` +
+            `        w.serving_endpoints.update_config_and_wait(\n` +
+            `            name=_SERVING_ENDPOINT_NAME,\n` +
+            `            served_entities=[served_entity],\n` +
+            `            timeout=timedelta(minutes=30),\n` +
+            `        )\n` +
+            `    else:\n` +
+            `        w.serving_endpoints.create_and_wait(\n` +
+            `            name=_SERVING_ENDPOINT_NAME,\n` +
+            `            config=EndpointCoreConfigInput(\n` +
+            `                name=_SERVING_ENDPOINT_NAME,\n` +
+            `                served_entities=[served_entity],\n` +
+            `            ),\n` +
+            `            timeout=timedelta(minutes=30),\n` +
+            `        )\n` +
+            `    try:\n` +
+            `        from databricks.sdk.service.serving import AiGatewayInferenceTableConfig\n` +
+            `        w.serving_endpoints.put_ai_gateway(\n` +
+            `            name=_SERVING_ENDPOINT_NAME,\n` +
+            `            inference_table_config=AiGatewayInferenceTableConfig(\n` +
+            `                catalog_name="workspace",\n` +
+            `                schema_name="default",\n` +
+            `                enabled=True,\n` +
+            `            ),\n` +
+            `        )\n` +
+            `    except Exception:\n` +
+            `        pass\n`
           );
 
           const dbxImportLines = ["from collections import namedtuple", ...tools.map(t => `from tools.${t.name} import TOOL_SPEC as ${t.name}_spec, execute as ${t.name}_execute`)].join("\n");
@@ -5753,18 +6134,21 @@ clean:
             `name = "${agentSlugDbx}"\n` +
             `version = "0.1.0"\n` +
             `description = "${(agentRec.description || "AI agent generated by ATLAS.").replace(/"/g, '\\"')}"\n` +
-            `requires-python = ">=3.12"\n` +
+            `requires-python = ">=3.11"\n` +
             `dependencies = [\n` +
-            `    "${pin ? "openai==1.30.0" : "openai>=1.30.0"}",\n` +
-            `    "${pin ? "requests==2.31.0" : "requests>=2.31.0"}",\n` +
+            `    # Only packages NOT pre-installed on Databricks serverless.\n` +
+            `    # Use loose lower-bound constraints — NO exact pins.\n` +
+            `    "openai>=1.30.0",\n` +
+            `    "requests>=2.31.0",\n` +
             `]\n\n` +
             `[project.optional-dependencies]\n` +
             `dev = [\n` +
-            `    "${pin ? "mlflow==2.18.0" : "mlflow>=2.18.0"}",\n` +
-            `    "${pin ? "databricks-sdk==0.36.0" : "databricks-sdk>=0.36.0"}",\n` +
+            `    # Pre-installed on serverless — needed for local dev/testing only.\n` +
+            `    "mlflow>=2.20.0",\n` +
+            `    "databricks-sdk>=0.36.0",\n` +
             `    "pydantic>=2.0.0,<3.0.0",\n` +
             `    "pyarrow>=14.0.0",\n` +
-            `    "${pin ? "pytest==8.3.4" : "pytest>=7.4.0,<9.0.0"}",\n` +
+            `    "pytest>=7.4.0,<9.0.0",\n` +
             `]\n\n` +
             `[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n\n` +
             `[tool.hatch.build]\nexclude = [\n    ".databricks/",\n    ".github/",\n    "dist/",\n    "tests/",\n    "*.egg-info",\n    ".env*",\n]\n\n` +
@@ -5776,7 +6160,7 @@ clean:
 
           localFiles[`${dirPrefix}/MLproject`] = `name: ${agentSlugDbx}\n\nconda_env: conda.yaml\n\nentry_points:\n  main:\n    parameters:\n      experiment_name:\n        type: str\n        default: /Shared/${agentSlugDbx}_experiment\n    command: "python agent.py --experiment_name {experiment_name}"\n\n  evaluate:\n    command: "python evaluate.py"\n`;
 
-          localFiles[`${dirPrefix}/conda.yaml`] = `name: ${agentSlugDbx}_env\nchannels:\n  - defaults\ndependencies:\n  - python=3.12\n  - pip:\n    # All runtime deps are declared in pyproject.toml — no duplication here.\n    - -e .\n`;
+          localFiles[`${dirPrefix}/conda.yaml`] = `name: ${agentSlugDbx}_env\nchannels:\n  - defaults\ndependencies:\n  - python=3.11\n  - pip:\n    # All runtime deps are declared in pyproject.toml — no duplication here.\n    - -e .\n`;
 
           localFiles[`${dirPrefix}/requirements.txt`] = "-e .[dev]\n";
 
@@ -5810,7 +6194,7 @@ clean:
             );
           }
 
-          localFiles[`${dirPrefix}/.github/workflows/ci.yml`] = `name: CI — ${agentSlugDbx}\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  workflow_dispatch:\n    inputs:\n      wheel_version:\n        description: "Wheel version to deploy to production"\n        required: true\n\nenv:\n  PYTHON_VERSION: "3.12"\n\njobs:\n  test:\n    name: Test\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: \${{ env.PYTHON_VERSION }}\n          cache: "pip"\n      - name: Install dev dependencies\n        run: pip install -e .[dev]\n      - name: Run tests\n        run: python -m pytest tests/ -v\n\n  build:\n    name: Build wheel\n    needs: test\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: \${{ env.PYTHON_VERSION }}\n          cache: "pip"\n      - name: Build wheel\n        run: pip install --quiet build && python -m build\n      - name: Upload wheel artifact\n        uses: actions/upload-artifact@v4\n        with:\n          name: wheel\n          path: dist/\n\n  deploy-staging:\n    name: Deploy to staging\n    needs: build\n    if: github.ref == 'refs/heads/main' && github.event_name == 'push'\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: \${{ env.PYTHON_VERSION }}\n          cache: "pip"\n      - name: Download wheel artifact\n        uses: actions/download-artifact@v4\n        with:\n          name: wheel\n          path: dist/\n      - uses: databricks/setup-databricks@v3\n        with:\n          databricks-host: \${{ secrets.DATABRICKS_HOST }}\n          databricks-token: \${{ secrets.DATABRICKS_TOKEN }}\n      - name: Deploy to staging\n        run: |\n          databricks bundle deploy --target staging\n          databricks bundle run deploy_agent --target staging\n\n  deploy-prod:\n    name: Deploy to production\n    needs: build\n    if: github.event_name == 'workflow_dispatch'\n    runs-on: ubuntu-latest\n    environment: production\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: \${{ env.PYTHON_VERSION }}\n          cache: "pip"\n      - name: Download wheel artifact\n        uses: actions/download-artifact@v4\n        with:\n          name: wheel\n          path: dist/\n      - uses: databricks/setup-databricks@v3\n        with:\n          databricks-host: \${{ secrets.DATABRICKS_HOST_PROD }}\n          databricks-token: \${{ secrets.DATABRICKS_TOKEN_PROD }}\n      - name: Deploy to production\n        run: |\n          databricks bundle deploy --target prod --var "wheel_version=\${{ github.event.inputs.wheel_version }}"\n          databricks bundle run deploy_agent --target prod\n`;
+          localFiles[`${dirPrefix}/.github/workflows/ci.yml`] = `name: CI — ${agentSlugDbx}\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  workflow_dispatch:\n    inputs:\n      wheel_version:\n        description: "Wheel version to deploy to production"\n        required: true\n\nenv:\n  PYTHON_VERSION: "3.11"\n\njobs:\n  test:\n    name: Test\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: \${{ env.PYTHON_VERSION }}\n          cache: "pip"\n      - name: Install dev dependencies\n        run: pip install -e .[dev]\n      - name: Run tests\n        run: python -m pytest tests/ -v\n\n  build:\n    name: Build wheel\n    needs: test\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: \${{ env.PYTHON_VERSION }}\n          cache: "pip"\n      - name: Build wheel\n        run: pip install --quiet build && python -m build\n      - name: Upload wheel artifact\n        uses: actions/upload-artifact@v4\n        with:\n          name: wheel\n          path: dist/\n\n  deploy-staging:\n    name: Deploy to staging\n    needs: build\n    if: github.ref == 'refs/heads/main' && github.event_name == 'push'\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: \${{ env.PYTHON_VERSION }}\n          cache: "pip"\n      - name: Download wheel artifact\n        uses: actions/download-artifact@v4\n        with:\n          name: wheel\n          path: dist/\n      - uses: databricks/setup-databricks@v3\n        with:\n          databricks-host: \${{ secrets.DATABRICKS_HOST }}\n          databricks-token: \${{ secrets.DATABRICKS_TOKEN }}\n      - name: Deploy to staging\n        run: |\n          databricks bundle deploy --target staging\n          databricks bundle run deploy_agent --target staging\n\n  deploy-prod:\n    name: Deploy to production\n    needs: build\n    if: github.event_name == 'workflow_dispatch'\n    runs-on: ubuntu-latest\n    environment: production\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with:\n          python-version: \${{ env.PYTHON_VERSION }}\n          cache: "pip"\n      - name: Download wheel artifact\n        uses: actions/download-artifact@v4\n        with:\n          name: wheel\n          path: dist/\n      - uses: databricks/setup-databricks@v3\n        with:\n          databricks-host: \${{ secrets.DATABRICKS_HOST_PROD }}\n          databricks-token: \${{ secrets.DATABRICKS_TOKEN_PROD }}\n      - name: Deploy to production\n        run: |\n          databricks bundle deploy --target prod --var "wheel_version=\${{ github.event.inputs.wheel_version }}"\n          databricks bundle run deploy_agent --target prod\n`;
         } else {
           const entrypointPath = format === "typescript" ? `${dirPrefix}/src/runtime/orchestrator.ts` : `${dirPrefix}/src/runtime/orchestrator.py`;
           if (aiResult?.entrypoint && aiResult.entrypoint.length > 200) {
