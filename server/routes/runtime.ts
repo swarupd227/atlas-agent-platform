@@ -4985,8 +4985,8 @@ def list_policies():
           `            name=_SERVING_ENDPOINT_NAME,\n` +
           `            ai_gateway=_ai_gw,\n` +
           `        )\n` +
-          `    except Exception:\n` +
-          `        pass  # inference tables not supported in this workspace tier\n`
+          `    except Exception as _ai_gw_err:\n` +
+          `        print(f"[deploy] AI Gateway skipped — inference tables unavailable in this workspace tier: {_ai_gw_err}", flush=True)\n`
         );
 
         // Build Databricks tools/__init__.py: ToolInfo registry for ResponsesAgent.
@@ -5079,7 +5079,9 @@ def list_policies():
         // requires a packaged .whl with setuptools entry points which don't exist here.
         files["databricks.yml"] = `# Databricks Asset Bundle (DAB)\n# Deploy with: databricks bundle deploy\n#\n# Authentication: set DATABRICKS_HOST and DATABRICKS_TOKEN in your environment.\n# DAB reads these env vars automatically — do NOT put them in workspace.host.\n# Using \${DATABRICKS_HOST} in workspace.host causes a parse error on bundle validate.\nbundle:\n  name: ${agentSlugDbx}_bundle\n\n# Bump wheel_version whenever pyproject.toml version changes.\n# Run: databricks bundle deploy --var "wheel_version=<new-version>"\nvariables:\n  wheel_version:\n    description: Version of the agent wheel (must match pyproject.toml [project].version).\n    default: "0.1.0"\n\nworkspace:\n  # ~/  expands to /Users/<your-username> in Databricks — keeps dev deploys user-scoped\n  root_path: ~/.bundle/\${bundle.name}/\${bundle.target}\n\ntargets:\n  dev:\n    default: true\n    mode: development\n\n  staging:\n    mode: development\n\n  prod:\n    mode: production\n\nresources:\n  jobs:\n    deploy_agent:\n      name: Deploy ${agent.name}\n      tasks:\n        - task_key: log_model\n          spark_python_task:\n            python_file: \${workspace.file_path}/agent.py\n          environment_key: default\n      environments:\n        - environment_key: default\n          spec:\n            client: "2"\n            dependencies:\n              # MUST be first — upgrades the serverless pre-installed MLflow 2.11.4\n              # to >=2.20.0 which is required for ResponsesAgent and related APIs.\n              - mlflow>=2.20.0,<3.0.0\n              # Agent wheel built by: python -m build\n              - ./dist/${agentSlugDbx}-\${var.wheel_version}-py3-none-any.whl\n`;
 
-        files["MLproject"] = `name: ${agentSlugDbx}\n\nconda_env: conda.yaml\n\nentry_points:\n  main:\n    parameters:\n      experiment_name:\n        type: str\n        default: /Shared/${agentSlugDbx}_experiment\n    command: "python agent.py --experiment_name {experiment_name}"\n\n  evaluate:\n    command: "python evaluate.py"\n`;
+        // MLproject entry point must match agent.py's __main__ block.
+        // __main__ reads _EXPERIMENT_NAME directly from the constant — no CLI arg needed.
+        files["MLproject"] = `name: ${agentSlugDbx}\n\nconda_env: conda.yaml\n\nentry_points:\n  main:\n    command: "python agent.py"\n\n  evaluate:\n    command: "python evaluate.py"\n`;
 
         // conda.yaml delegates pip deps to pyproject.toml via editable install.
         // python=3.11 — Databricks serverless runs Python 3.11, NOT 3.12.
@@ -6120,8 +6122,8 @@ clean:
             `            name=_SERVING_ENDPOINT_NAME,\n` +
             `            ai_gateway=_ai_gw,\n` +
             `        )\n` +
-            `    except Exception:\n` +
-            `        pass  # inference tables not supported in this workspace tier\n`
+            `    except Exception as _ai_gw_err:\n` +
+            `        print(f"[deploy] AI Gateway skipped — inference tables unavailable in this workspace tier: {_ai_gw_err}", flush=True)\n`
           );
 
           const dbxImportLines = ["from collections import namedtuple", ...tools.map(t => `from tools.${t.name} import TOOL_SPEC as ${t.name}_spec, execute as ${t.name}_execute`)].join("\n");
@@ -6167,7 +6169,8 @@ clean:
 
           localFiles[`${dirPrefix}/.env.example`] = `DATABRICKS_HOST=https://adb-<workspace-id>.azuredatabricks.net\nDATABRICKS_TOKEN=dapi...\nAGENT_NAME=${agentRec.name}\n`;
 
-          localFiles[`${dirPrefix}/MLproject`] = `name: ${agentSlugDbx}\n\nconda_env: conda.yaml\n\nentry_points:\n  main:\n    parameters:\n      experiment_name:\n        type: str\n        default: /Shared/${agentSlugDbx}_experiment\n    command: "python agent.py --experiment_name {experiment_name}"\n\n  evaluate:\n    command: "python evaluate.py"\n`;
+          // __main__ reads _EXPERIMENT_NAME from the constant — no CLI arg.
+          localFiles[`${dirPrefix}/MLproject`] = `name: ${agentSlugDbx}\n\nconda_env: conda.yaml\n\nentry_points:\n  main:\n    command: "python agent.py"\n\n  evaluate:\n    command: "python evaluate.py"\n`;
 
           localFiles[`${dirPrefix}/conda.yaml`] = `name: ${agentSlugDbx}_env\nchannels:\n  - defaults\ndependencies:\n  - python=3.11\n  - pip:\n    # All runtime deps are declared in pyproject.toml — no duplication here.\n    - -e .\n`;
 
@@ -6313,6 +6316,9 @@ clean:
             `          spec:\n` +
             `            client: "2"\n` +
             `            dependencies:\n` +
+            `              # MUST be first — upgrades the serverless pre-installed MLflow 2.11.4\n` +
+            `              # to >=2.20.0 which is required for ResponsesAgent and related APIs.\n` +
+            `              - mlflow>=2.20.0,<3.0.0\n` +
             `              - ./${slot.prefix}/dist/${slug}-\${var.wheel_version}-py3-none-any.whl`
           );
         }).join("\n");
