@@ -1,0 +1,3113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Databricks Multi-Agent Deployment Guide</title>
+  <link rel="stylesheet"
+        href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/toml.min.js"></script>
+  <style>
+    :root {
+      --bg-primary:    #0d1117;
+      --bg-secondary:  #161b22;
+      --bg-tertiary:   #21262d;
+      --bg-card:       #1c2128;
+      --border:        #30363d;
+      --border-active: #58a6ff;
+      --text-primary:  #e6edf3;
+      --text-secondary:#8b949e;
+      --text-muted:    #6e7681;
+      --accent-blue:   #58a6ff;
+      --accent-purple: #bc8cff;
+      --accent-green:  #3fb950;
+      --accent-orange: #d29922;
+      --accent-red:    #f85149;
+      --wrong-bg:      rgba(248, 81, 73, 0.10);
+      --wrong-border:  rgba(248, 81, 73, 0.35);
+      --fix-bg:        rgba(63, 185, 80, 0.10);
+      --fix-border:    rgba(63, 185, 80, 0.35);
+      --tag-bg:        rgba(88, 166, 255, 0.12);
+      --radius:        8px;
+      --radius-lg:     12px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter", Helvetica, Arial, sans-serif;
+      font-size: 15px;
+      line-height: 1.65;
+    }
+
+    a { color: var(--accent-blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── Layout ─────────────────────────────────────────────────── */
+    .page-wrap {
+      max-width: 1060px;
+      margin: 0 auto;
+      padding: 0 24px 80px;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────── */
+    .site-header {
+      background: linear-gradient(135deg, #0d1117 0%, #1a1f2e 50%, #0d1117 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 56px 24px 48px;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .site-header::before {
+      content: "";
+      position: absolute; inset: 0;
+      background:
+        radial-gradient(ellipse 60% 40% at 20% 50%, rgba(88,166,255,0.06) 0%, transparent 70%),
+        radial-gradient(ellipse 50% 60% at 80% 30%, rgba(188,140,255,0.05) 0%, transparent 70%);
+      pointer-events: none;
+    }
+    .header-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--tag-bg);
+      border: 1px solid rgba(88,166,255,0.25);
+      border-radius: 20px;
+      padding: 5px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--accent-blue);
+      margin-bottom: 20px;
+    }
+    .site-header h1 {
+      font-size: clamp(26px, 4vw, 42px);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      background: linear-gradient(135deg, #e6edf3 30%, #58a6ff 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      line-height: 1.2;
+      margin-bottom: 14px;
+    }
+    .site-header .subtitle {
+      color: var(--text-secondary);
+      font-size: 16px;
+      max-width: 620px;
+      margin: 0 auto 24px;
+    }
+    .header-meta {
+      display: flex;
+      justify-content: center;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .meta-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 12px;
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+    .meta-pill strong { color: var(--text-primary); }
+
+    /* ── TOC Nav ─────────────────────────────────────────────────── */
+    .toc-nav {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      margin: 32px 0;
+      overflow: hidden;
+    }
+    .toc-nav summary {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 16px 20px;
+      cursor: pointer;
+      font-weight: 600;
+      color: var(--text-primary);
+      user-select: none;
+      list-style: none;
+    }
+    .toc-nav summary::-webkit-details-marker { display: none; }
+    .toc-nav summary::after {
+      content: "▾";
+      margin-left: auto;
+      color: var(--text-muted);
+      transition: transform 0.2s;
+    }
+    details[open] > summary::after { transform: rotate(180deg); }
+    .toc-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 4px;
+      padding: 0 16px 16px;
+    }
+    .toc-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      transition: background 0.15s, color 0.15s;
+    }
+    .toc-item:hover { background: var(--bg-tertiary); color: var(--text-primary); text-decoration: none; }
+    .toc-num {
+      flex-shrink: 0;
+      background: var(--bg-tertiary);
+      color: var(--accent-blue);
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 1px 6px;
+      min-width: 26px;
+      text-align: center;
+    }
+
+    /* ── Section headers ─────────────────────────────────────────── */
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin: 48px 0 20px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+    .section-title .icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 36px; height: 36px;
+      background: var(--tag-bg);
+      border: 1px solid rgba(88,166,255,0.2);
+      border-radius: 8px;
+      font-size: 18px;
+    }
+
+    /* ── Architecture card ───────────────────────────────────────── */
+    .arch-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      padding: 28px 32px;
+      margin-bottom: 24px;
+    }
+    .arch-diagram {
+      font-family: "SFMono-Regular", "Consolas", monospace;
+      font-size: 13px;
+      line-height: 2;
+      color: var(--text-primary);
+      background: var(--bg-primary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 24px;
+      overflow-x: auto;
+      white-space: pre;
+    }
+    .arch-diagram .node-orch  { color: #58a6ff; font-weight: 700; }
+    .arch-diagram .node-sub   { color: #3fb950; }
+    .arch-diagram .node-user  { color: #bc8cff; }
+    .arch-diagram .node-label { color: #d29922; font-style: italic; }
+    .arch-diagram .node-arrow { color: #6e7681; }
+
+    .key-points {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px;
+      margin-top: 20px;
+    }
+    .key-point {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 14px;
+      font-size: 13px;
+    }
+    .key-point .dot {
+      flex-shrink: 0;
+      margin-top: 5px;
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      background: var(--accent-blue);
+    }
+    .key-point .dot.green { background: var(--accent-green); }
+    .key-point .dot.purple { background: var(--accent-purple); }
+    .key-point .dot.orange { background: var(--accent-orange); }
+
+    /* ── Issue cards ─────────────────────────────────────────────── */
+    .issues-list {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .issue-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+      transition: border-color 0.2s;
+    }
+    .issue-card:hover { border-color: rgba(88,166,255,0.35); }
+
+    .issue-summary {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 16px 20px;
+      cursor: pointer;
+      user-select: none;
+      list-style: none;
+    }
+    .issue-summary::-webkit-details-marker { display: none; }
+
+    .issue-num {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px; height: 32px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--accent-blue);
+    }
+
+    .issue-title-wrap {
+      flex: 1;
+      min-width: 0;
+    }
+    .issue-title {
+      font-weight: 600;
+      font-size: 15px;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .issue-tags {
+      display: flex;
+      gap: 6px;
+      margin-top: 4px;
+      flex-wrap: wrap;
+    }
+    .tag {
+      font-size: 11px;
+      font-weight: 500;
+      padding: 2px 8px;
+      border-radius: 4px;
+      letter-spacing: 0.02em;
+    }
+    .tag-yaml   { background: rgba(210,153,34,0.15);  color: #d29922; border: 1px solid rgba(210,153,34,0.3); }
+    .tag-python { background: rgba(63,185,80,0.12);   color: #3fb950; border: 1px solid rgba(63,185,80,0.3); }
+    .tag-mlflow { background: rgba(188,140,255,0.12); color: #bc8cff; border: 1px solid rgba(188,140,255,0.3); }
+    .tag-infra  { background: rgba(248,81,73,0.12);   color: #f85149; border: 1px solid rgba(248,81,73,0.3); }
+    .tag-arch   { background: rgba(88,166,255,0.12);  color: #58a6ff; border: 1px solid rgba(88,166,255,0.3); }
+    .tag-deps   { background: rgba(56,189,156,0.12);  color: #39c5a5; border: 1px solid rgba(56,189,156,0.3); }
+
+    .issue-chevron {
+      flex-shrink: 0;
+      color: var(--text-muted);
+      font-size: 14px;
+      transition: transform 0.2s;
+    }
+    details[open] .issue-chevron { transform: rotate(90deg); }
+
+    .issue-body {
+      padding: 0 20px 20px;
+      border-top: 1px solid var(--border);
+    }
+
+    .wrong-block, .fix-block {
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      margin: 14px 0;
+    }
+    .wrong-block {
+      background: var(--wrong-bg);
+      border-left: 3px solid var(--accent-red);
+    }
+    .fix-block {
+      background: var(--fix-bg);
+      border-left: 3px solid var(--accent-green);
+    }
+    .block-label {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .wrong-block .block-label { color: var(--accent-red); }
+    .fix-block   .block-label { color: var(--accent-green); }
+    .block-label .dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+    }
+    .wrong-block .block-label .dot { background: var(--accent-red); }
+    .fix-block   .block-label .dot { background: var(--accent-green); }
+
+    .block-text {
+      font-size: 13.5px;
+      color: var(--text-primary);
+      line-height: 1.6;
+    }
+    .block-text code {
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 12.5px;
+    }
+
+    pre {
+      margin: 10px 0 0;
+      border-radius: var(--radius);
+      overflow: hidden;
+      font-size: 13px;
+    }
+    pre code.hljs {
+      padding: 16px 18px;
+      border-radius: var(--radius);
+    }
+
+    /* Inline code outside pre */
+    p code, li code, td code {
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 4px;
+      padding: 1px 6px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 12.5px;
+    }
+
+    /* ── Replit Section ──────────────────────────────────────────── */
+    .replit-section {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
+    }
+    .replit-header {
+      background: linear-gradient(90deg, rgba(188,140,255,0.12) 0%, transparent 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 20px 24px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .replit-icon {
+      width: 40px; height: 40px;
+      background: rgba(188,140,255,0.15);
+      border: 1px solid rgba(188,140,255,0.3);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+    }
+    .replit-header h2 {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    .replit-header p {
+      font-size: 13px;
+      color: var(--text-secondary);
+      margin-top: 2px;
+    }
+    .replit-body { padding: 24px; }
+
+    .copy-prompt-wrap {
+      position: relative;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--bg-primary);
+      overflow: hidden;
+    }
+    .copy-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 14px;
+      background: var(--bg-tertiary);
+      border-bottom: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .copy-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .copy-btn:hover { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--accent-blue); }
+    .copy-btn.copied { color: var(--accent-green); border-color: var(--accent-green); }
+
+    .replit-prompt {
+      padding: 18px 20px;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 12.5px;
+      line-height: 1.7;
+      color: var(--text-primary);
+      white-space: pre-wrap;
+      word-break: break-word;
+      max-height: 520px;
+      overflow-y: auto;
+    }
+    .replit-prompt::-webkit-scrollbar { width: 6px; }
+    .replit-prompt::-webkit-scrollbar-track { background: transparent; }
+    .replit-prompt::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Footer ─────────────────────────────────────────────────── */
+    .site-footer {
+      border-top: 1px solid var(--border);
+      margin-top: 64px;
+      padding: 28px 0;
+      text-align: center;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    /* ── Utilities ───────────────────────────────────────────────── */
+    .mt-8  { margin-top: 8px; }
+    .mt-12 { margin-top: 12px; }
+    .mt-16 { margin-top: 16px; }
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 20px 0;
+    }
+    p { margin: 8px 0; }
+    ul, ol { padding-left: 22px; }
+    li { margin: 4px 0; }
+
+    /* Responsive */
+    @media (max-width: 640px) {
+      .issue-title { font-size: 13.5px; }
+      .arch-diagram { font-size: 11px; }
+      .key-points { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════ HEADER -->
+<header class="site-header">
+  <div class="header-badge">Production Reference</div>
+  <h1>Databricks Multi-Agent Deployment Guide</h1>
+  <p class="subtitle">
+    Hard-won lessons from deploying a Python multi-agent wealth management system
+    with Databricks Asset Bundles, MLflow ResponsesAgent, and Model Serving.
+  </p>
+  <div class="header-meta">
+    <span class="meta-pill"><strong>21</strong>&nbsp;Issues documented</span>
+    <span class="meta-pill"><strong>14</strong>&nbsp;Architecture evolutions</span>
+    <span class="meta-pill"><strong>5</strong>&nbsp;Agents (1 orchestrator + 4 sub-agents)</span>
+    <span class="meta-pill"><strong>MLflow</strong>&nbsp;2.22.4 target</span>
+    <span class="meta-pill"><strong>Python</strong>&nbsp;3.11 (serverless)</span>
+  </div>
+</header>
+
+<div class="page-wrap">
+
+<!-- ═══════════════════════════════════════════════════════════════ TOC -->
+<details class="toc-nav" open>
+  <summary>Table of Contents</summary>
+  <div class="toc-grid">
+    <a class="toc-item" href="#architecture"><span class="toc-num">&#9654;</span>Architecture Summary</a>
+    <a class="toc-item" href="#issue-1"><span class="toc-num">01</span>catalog/schema in workspace block</a>
+    <a class="toc-item" href="#issue-2"><span class="toc-num">02</span>Serverless compute — no job_clusters</a>
+    <a class="toc-item" href="#issue-3"><span class="toc-num">03</span>environment_variables on tasks</a>
+    <a class="toc-item" href="#issue-4"><span class="toc-num">04</span>requires-python >= 3.12</a>
+    <a class="toc-item" href="#issue-5"><span class="toc-num">05</span>Exact version pins conflict</a>
+    <a class="toc-item" href="#issue-6"><span class="toc-num">06</span>MLflow 2.11.4 too old</a>
+    <a class="toc-item" href="#issue-7"><span class="toc-num">07</span>ResponsesAgent import path</a>
+    <a class="toc-item" href="#issue-8"><span class="toc-num">08</span>Request/Response/StreamEvent class names</a>
+    <a class="toc-item" href="#issue-9"><span class="toc-num">09</span>SpanType import location</a>
+    <a class="toc-item" href="#issue-10"><span class="toc-num">10</span>Missing stream helpers</a>
+    <a class="toc-item" href="#issue-11"><span class="toc-num">11</span>Top-level imports and exec()</a>
+    <a class="toc-item" href="#issue-12"><span class="toc-num">12</span>spark.mlflow registry URI</a>
+    <a class="toc-item" href="#issue-13"><span class="toc-num">13</span>log_model() name parameter</a>
+    <a class="toc-item" href="#issue-14"><span class="toc-num">14</span>log_model() code_paths parameter</a>
+    <a class="toc-item" href="#issue-15"><span class="toc-num">15</span>mlflow.models.resources missing</a>
+    <a class="toc-item" href="#issue-16"><span class="toc-num">16</span>StreamEvent missing id field</a>
+    <a class="toc-item" href="#issue-17"><span class="toc-num">17</span>WorkspaceClient() on Model Serving</a>
+    <a class="toc-item" href="#issue-18"><span class="toc-num">18</span>log_model predict() validation</a>
+    <a class="toc-item" href="#issue-19"><span class="toc-num">19</span>Separate endpoints per sub-agent</a>
+    <a class="toc-item" href="#issue-20"><span class="toc-num">20</span>jq dependency in deploy script</a>
+    <a class="toc-item" href="#issue-21"><span class="toc-num">21</span>Pre-installed package exact pins</a>
+    <a class="toc-item" href="#part2"><span class="toc-num">&#9654;</span>Architecture Evolution &amp; Optimizations</a>
+    <a class="toc-item" href="#arch-change-1"><span class="toc-num">A1</span>Single Endpoint Architecture</a>
+    <a class="toc-item" href="#arch-change-2"><span class="toc-num">A2</span>BaseWealthAgent Shared Loop</a>
+    <a class="toc-item" href="#arch-change-3"><span class="toc-num">A3</span>agents.yaml Registry</a>
+    <a class="toc-item" href="#arch-change-4"><span class="toc-num">A4</span>Single Wheel Build</a>
+    <a class="toc-item" href="#arch-change-5"><span class="toc-num">A5</span>sync_bundle.py Auto-Sync</a>
+    <a class="toc-item" href="#arch-change-6"><span class="toc-num">A6</span>MLflow Tracing with start_span</a>
+    <a class="toc-item" href="#arch-change-7"><span class="toc-num">A7</span>get_deploy_client Auth</a>
+    <a class="toc-item" href="#arch-change-8"><span class="toc-num">A8</span>Intelligent Tool Routing</a>
+    <a class="toc-item" href="#arch-change-9"><span class="toc-num">A9</span>MAX_ITERATIONS Reduced</a>
+    <a class="toc-item" href="#arch-change-10"><span class="toc-num">A10</span>predict() Clean Response</a>
+    <a class="toc-item" href="#arch-change-11"><span class="toc-num">A11</span>No File I/O at Module Load</a>
+    <a class="toc-item" href="#arch-change-12"><span class="toc-num">A12</span>Idempotent MLflow Tracing Init</a>
+    <a class="toc-item" href="#arch-change-13"><span class="toc-num">A13</span>MLflow Version Compat Shim</a>
+    <a class="toc-item" href="#arch-change-14"><span class="toc-num">A14</span>Deleted Unnecessary Files</a>
+    <a class="toc-item" href="#issue-22"><span class="toc-num">22</span>AutoCaptureConfigInput Rejected for Agent Models</a>
+    <a class="toc-item" href="#issue-23"><span class="toc-num">23</span>Inference Tables Not Supported in Workspace</a>
+    <a class="toc-item" href="#correct-patterns"><span class="toc-num">&#9654;</span>Correct Patterns Reference</a>
+    <a class="toc-item" href="#replit"><span class="toc-num">&#9654;</span>Replit Agent Instructions</a>
+  </div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════ ARCHITECTURE -->
+<div id="architecture">
+  <h2 class="section-title"><span class="icon">&#9874;</span>Architecture Summary</h2>
+  <div class="arch-card">
+    <p style="color:var(--text-secondary); font-size:13px; margin-bottom:14px;">
+      There is exactly <strong style="color:var(--text-primary);">ONE</strong> Databricks Model Serving
+      endpoint — the orchestrator. Sub-agents are Python wheels installed into the same environment and
+      called in-process. No HTTP between agents, no separate endpoints.
+    </p>
+    <div class="arch-diagram"><span class="node-user">User Request</span>
+      │
+      ▼
+<span class="node-orch">wealth-mgmt-orchestrator</span>  <span class="node-label">← ONLY serving endpoint</span>
+      │
+      │  Python in-process calls (no HTTP, no separate endpoints)
+      │
+      ├─── <span class="node-sub">CustomerOnboardingAgent.predict()</span>
+      │         Stage 1: KYC/AML, identity docs, account creation
+      │
+      ├─── <span class="node-sub">InvestorSuitabilityProfilingAgent.predict()</span>
+      │         Stage 2: Risk tolerance, suitability profile
+      │
+      ├─── <span class="node-sub">InvestmentRecommendationExecutionAgent.predict()</span>
+      │         Stage 3: Recommend products, consent, execute investment
+      │
+      └─── <span class="node-sub">PortfolioTrackingGoalProgressAgent.predict()</span>
+                Stage 4: Monitor ROI vs benchmark, compliance report</div>
+
+    <div class="key-points">
+      <div class="key-point">
+        <div class="dot"></div>
+        <div>Sub-agents are packaged as <code>.whl</code> files and installed as DAB environment dependencies.</div>
+      </div>
+      <div class="key-point">
+        <div class="dot green"></div>
+        <div>All agents use the <code>ResponsesAgent</code> pattern from <code>mlflow.pyfunc</code> (MLflow ≥ 2.20.0).</div>
+      </div>
+      <div class="key-point">
+        <div class="dot purple"></div>
+        <div>The spark_python_task only registers the orchestrator model; sub-agents ride along as imports.</div>
+      </div>
+      <div class="key-point">
+        <div class="dot orange"></div>
+        <div>Credentials (<code>DATABRICKS_HOST</code>, <code>DATABRICKS_TOKEN</code>) are auto-injected by Model Serving — never hardcoded.</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ ISSUES -->
+<h2 class="section-title"><span class="icon">&#9888;</span>Issues & Fixes — All 23</h2>
+<div class="issues-list">
+
+<!-- ─────────────────────────────────────────────────── ISSUE 1 -->
+<details class="issue-card" id="issue-1" open>
+  <summary class="issue-summary">
+    <span class="issue-num">01</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">catalog/schema not valid under workspace in databricks.yml</div>
+      <div class="issue-tags">
+        <span class="tag tag-yaml">YAML / DAB</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Adding <code>catalog: workspace</code> and <code>schema: default</code> inside the
+        <code>workspace:</code> block of <code>databricks.yml</code>. These fields do not exist in
+        the DAB spec and cause a validation error on <code>databricks bundle deploy</code>.
+      </div>
+      <pre><code class="language-yaml">workspace:
+  catalog: workspace   # ❌ not a valid DAB field
+  schema: default      # ❌ not a valid DAB field
+  root_path: ~/.bundle/...</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        Remove those lines entirely. Set the Unity Catalog coordinates in your Python agent code using MLflow APIs.
+        Use <code>registered_model_name="catalog.schema.model_name"</code> in <code>log_model()</code>.
+      </div>
+      <pre><code class="language-python"># In agent.py __main__ block:
+import mlflow
+mlflow.set_tracking_uri("databricks")
+mlflow.set_registry_uri("databricks-uc")
+
+mlflow.pyfunc.log_model(
+    artifact_path="agent",
+    registered_model_name="workspace.default.my_agent",  # ✅ UC coordinates here
+    ...
+)</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 2 -->
+<details class="issue-card" id="issue-2">
+  <summary class="issue-summary">
+    <span class="issue-num">02</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">Serverless compute only workspace — job_clusters config invalid</div>
+      <div class="issue-tags">
+        <span class="tag tag-yaml">YAML / DAB</span>
+        <span class="tag tag-infra">Infra</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Specifying a <code>job_clusters</code> block with <code>node_type_id</code>, <code>num_workers: 0</code>,
+        or <code>spark_version</code>. Serverless-only workspaces reject classic cluster config entirely.
+      </div>
+      <pre><code class="language-yaml">job_clusters:                        # ❌ not valid on serverless workspaces
+  - job_cluster_key: agents_cluster
+    new_cluster:
+      node_type_id: Standard_D4s_v3
+      num_workers: 0
+      spark_version: 14.3.x-scala2.12</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        Remove the <code>job_clusters</code> block entirely. Serverless compute is automatically used
+        when no cluster is specified. Use <code>environments</code> with <code>spec.client: "2"</code>
+        to declare Python dependencies.
+      </div>
+      <pre><code class="language-yaml">environments:                        # ✅ serverless environment spec
+  - environment_key: agents_env
+    spec:
+      client: "2"
+      dependencies:
+        - mlflow>=2.20.0,<3.0.0
+        - ./dist/my_agent-0.1.0-py3-none-any.whl
+
+tasks:
+  - task_key: deploy_agent
+    spark_python_task:
+      python_file: ${workspace.file_path}/agent.py
+    environment_key: agents_env
+    # NO job_cluster_key — serverless is the default</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 3 -->
+<details class="issue-card" id="issue-3">
+  <summary class="issue-summary">
+    <span class="issue-num">03</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">environment_variables not a valid DAB field on tasks</div>
+      <div class="issue-tags">
+        <span class="tag tag-yaml">YAML / DAB</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Placing <code>environment_variables</code> directly under a task definition.
+        This is not a valid DAB task field and causes bundle validation to fail.
+      </div>
+      <pre><code class="language-yaml">tasks:
+  - task_key: deploy_agent
+    environment_variables:           # ❌ not a valid DAB task field
+      LLM_ENDPOINT: "databricks-meta-llama-3-3-70b-instruct"</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        Remove <code>environment_variables</code> from tasks. On serverless, use DAB
+        <code>variables</code> and reference them in code via <code>os.environ.get()</code> with
+        sensible defaults. For secrets, use Databricks Secrets and pass via
+        <code>spark_env_vars</code> on classic clusters only.
+      </div>
+      <pre><code class="language-python"># In agent.py — read the variable with a default:
+_LLM_ENDPOINT = os.environ.get("LLM_ENDPOINT", "databricks-meta-llama-3-3-70b-instruct")</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 4 -->
+<details class="issue-card" id="issue-4">
+  <summary class="issue-summary">
+    <span class="issue-num">04</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">requires-python = ">=3.12" incompatible with serverless Python 3.11</div>
+      <div class="issue-tags">
+        <span class="tag tag-deps">Dependencies</span>
+        <span class="tag tag-infra">Infra</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        All <code>pyproject.toml</code> files had <code>requires-python = ">=3.12"</code>.
+        Databricks serverless runs <strong>Python 3.11</strong>. Pip refuses to install any wheel
+        that declares a 3.12+ requirement, causing the task to fail at dependency resolution.
+      </div>
+      <pre><code class="language-toml">[project]
+requires-python = ">=3.12"   # ❌ serverless is 3.11</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        Lower the constraint to <code>>=3.11</code> in every agent's <code>pyproject.toml</code>.
+        This applies to the orchestrator and all four sub-agent packages.
+      </div>
+      <pre><code class="language-toml">[project]
+requires-python = ">=3.11"   # ✅ matches Databricks serverless</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 5 -->
+<details class="issue-card" id="issue-5">
+  <summary class="issue-summary">
+    <span class="issue-num">05</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">Exact version pins cause conflicts with pre-installed packages</div>
+      <div class="issue-tags">
+        <span class="tag tag-deps">Dependencies</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Using exact version pins like <code>openai==1.30.0</code>, <code>mlflow==2.18.0</code>,
+        <code>pytest==8.3.4</code> in main dependencies. Serverless has pre-installed packages
+        at specific versions; exact pins conflict with the pre-installed set and cause pip
+        backtracking or outright failure.
+      </div>
+      <pre><code class="language-toml">dependencies = [
+    "openai==1.30.0",     # ❌ exact pin
+    "mlflow==2.18.0",     # ❌ exact pin
+    "pytest==8.3.4",      # ❌ exact pin
+]</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        Use loose lower-bound constraints. For packages that have a known breaking change, add
+        an upper bound to stay safe.
+      </div>
+      <pre><code class="language-toml">dependencies = [
+    "openai>=1.30.0",          # ✅ lower-bound only
+    "requests>=2.31.0",        # ✅ lower-bound only
+]
+
+[project.optional-dependencies]
+dev = [
+    "mlflow>=2.18.0",
+    "pytest>=7.4.0,<9.0.0",    # ✅ bounded range in dev only
+]</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 6 -->
+<details class="issue-card" id="issue-6">
+  <summary class="issue-summary">
+    <span class="issue-num">06</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">MLflow pre-installed version (2.11.4) is too old for ResponsesAgent</div>
+      <div class="issue-tags">
+        <span class="tag tag-mlflow">MLflow</span>
+        <span class="tag tag-deps">Dependencies</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Assuming the serverless environment has a recent enough MLflow. Databricks serverless
+        pre-installs MLflow <strong>2.11.4</strong>. <code>ResponsesAgent</code> requires MLflow ≥ 2.20.0.
+        If you do not explicitly upgrade it in the DAB environment spec, the job silently uses the
+        old version and fails with <code>ImportError</code> or <code>AttributeError</code>.
+      </div>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        Explicitly add <code>mlflow>=2.20.0,&lt;3.0.0</code> as the <strong>first</strong> dependency
+        in your DAB environment spec so it is upgraded before the job code runs. What actually gets
+        installed is 2.22.4 (latest in that range as of this writing).
+      </div>
+      <pre><code class="language-yaml">environments:
+  - environment_key: agents_env
+    spec:
+      client: "2"
+      dependencies:
+        - mlflow>=2.20.0,<3.0.0   # ✅ must be first — upgrades from 2.11.4
+        - ./dist/my_agent-0.1.0-py3-none-any.whl</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 7 -->
+<details class="issue-card" id="issue-7">
+  <summary class="issue-summary">
+    <span class="issue-num">07</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">ResponsesAgent import location differs by MLflow version</div>
+      <div class="issue-tags">
+        <span class="tag tag-mlflow">MLflow</span>
+        <span class="tag tag-python">Python</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Various wrong import paths that were tried and failed:
+        <code>mlflow.models.rag_signatures</code>, <code>mlflow.types.agent</code>,
+        <code>mlflow.models.ResponsesAgent</code>.
+      </div>
+      <pre><code class="language-python">from mlflow.models.rag_signatures import ResponsesAgent   # ❌
+from mlflow.types.agent import ResponsesAgent             # ❌
+from mlflow.models import ResponsesAgent                  # ❌</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        In MLflow 2.22.4 (what gets installed via the ≥2.20.0 constraint), the correct location is:
+      </div>
+      <pre><code class="language-python">from mlflow.pyfunc import ResponsesAgent   # ✅ MLflow 2.22.4</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 8 -->
+<details class="issue-card" id="issue-8">
+  <summary class="issue-summary">
+    <span class="issue-num">08</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">ResponsesAgentRequest / Response / StreamEvent wrong class names in 2.22.4</div>
+      <div class="issue-tags">
+        <span class="tag tag-mlflow">MLflow</span>
+        <span class="tag tag-python">Python</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        The <code>ResponsesAgent*</code> prefixed names were added in MLflow 3.x. They do not
+        exist in 2.22.4 and raise <code>ImportError</code>.
+      </div>
+      <pre><code class="language-python">from mlflow.types.responses import (
+    ResponsesAgentRequest,      # ❌ MLflow 3.x only
+    ResponsesAgentResponse,     # ❌ MLflow 3.x only
+    ResponsesAgentStreamEvent,  # ❌ MLflow 3.x only
+)</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        In MLflow 2.22.4 the type names are shorter — without the <code>Agent</code> infix:
+      </div>
+      <pre><code class="language-python">from mlflow.types.responses import (
+    ResponsesRequest,      # ✅ MLflow 2.22.4
+    ResponsesResponse,     # ✅ MLflow 2.22.4
+    ResponsesStreamEvent,  # ✅ MLflow 2.22.4
+)</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 9 -->
+<details class="issue-card" id="issue-9">
+  <summary class="issue-summary">
+    <span class="issue-num">09</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">SpanType import location incorrect</div>
+      <div class="issue-tags">
+        <span class="tag tag-mlflow">MLflow</span>
+        <span class="tag tag-python">Python</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Attempting to import <code>SpanType</code> from either of these locations — both fail
+        depending on the MLflow version:
+      </div>
+      <pre><code class="language-python">from mlflow.entities import SpanType              # ❌
+from mlflow.tracing.constant import SpanType      # ❌</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        Do not import <code>SpanType</code> at all. Pass the span type as a plain string literal
+        directly to the <code>@mlflow.trace</code> decorator. MLflow accepts string values for
+        <code>span_type</code> in all relevant versions.
+      </div>
+      <pre><code class="language-python">@mlflow.trace(span_type="TOOL")   # ✅ string literal — no import needed
+def my_tool_function(...):
+    ...</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 10 -->
+<details class="issue-card" id="issue-10">
+  <summary class="issue-summary">
+    <span class="issue-num">10</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">output_to_responses_items_stream and to_chat_completions_input don't exist in 2.22.4</div>
+      <div class="issue-tags">
+        <span class="tag tag-mlflow">MLflow</span>
+        <span class="tag tag-python">Python</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Trying to import convenience helpers that were added only in newer MLflow versions:
+      </div>
+      <pre><code class="language-python">from mlflow.types.responses import (
+    output_to_responses_items_stream,   # ❌ does not exist in 2.22.4
+    to_chat_completions_input,          # ❌ does not exist in 2.22.4
+)</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        Implement the agentic loop manually using direct OpenAI streaming. Accumulate
+        <code>delta.content</code> and <code>delta.tool_calls</code>, then yield
+        <code>ResponsesStreamEvent</code> objects yourself. See the full agentic loop pattern
+        in Issue 16 and the Correct agent.py structure in the Replit section.
+      </div>
+      <pre><code class="language-python"># ✅ Manual agentic loop — no helpers needed
+stream = client.chat.completions.create(
+    model=endpoint, messages=messages, tools=tool_specs, stream=True
+)
+content = ""
+tool_calls = []
+for chunk in stream:
+    delta = chunk.choices[0].delta
+    if delta.content:
+        content += delta.content
+    # ... accumulate tool_calls ...
+
+yield ResponsesStreamEvent(
+    type="response.output_item.done",
+    item={"type": "message", "id": str(uuid4()),
+          "role": "assistant", "status": "completed",
+          "content": [{"type": "output_text", "text": content}]}
+)</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 11 -->
+<details class="issue-card" id="issue-11">
+  <summary class="issue-summary">
+    <span class="issue-num">11</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">Top-level imports execute during spark_python_task exec() before upgraded MLflow is active</div>
+      <div class="issue-tags">
+        <span class="tag tag-python">Python</span>
+        <span class="tag tag-infra">Infra</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Placing all MLflow / ResponsesAgent imports at the module top level. When the DAB job runs
+        <code>spark_python_task</code>, it calls Python's built-in <code>exec()</code> on the file.
+        Top-level imports execute immediately at that point — but the upgraded MLflow environment
+        (from the <code>environments</code> spec) may not be fully active yet in the exec context.
+        This causes <code>ImportError</code> on <code>ResponsesAgent</code>.
+      </div>
+      <pre><code class="language-python"># ❌ top-level — executes during spark_python_task exec()
+import mlflow
+from mlflow.pyfunc import ResponsesAgent
+from mlflow.types.responses import ResponsesRequest, ResponsesStreamEvent
+from openai import OpenAI</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        Guard all serve-time imports inside <code>if __name__ != "__main__":</code>.
+        The <code>spark_python_task</code> only runs the <code>__main__</code> block, which only
+        needs plain <code>mlflow</code> (pre-installed) and <code>databricks-sdk</code>.
+        The serve-time block runs later, inside the serving container where the upgraded environment
+        is fully in effect.
+      </div>
+      <pre><code class="language-python"># ✅ serve-time block — runs only inside the Model Serving container
+if __name__ != "__main__":
+    import mlflow
+    from mlflow.pyfunc import ResponsesAgent
+    from mlflow.types.responses import ResponsesRequest, ResponsesResponse, ResponsesStreamEvent
+    from openai import OpenAI
+    # ... define agent class, set_model ...
+
+# ✅ job entry point — runs in spark_python_task
+if __name__ == "__main__":
+    import mlflow
+    mlflow.set_tracking_uri("databricks")
+    mlflow.set_registry_uri("databricks-uc")
+    # ... log_model, create endpoint ...</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 12 -->
+<details class="issue-card" id="issue-12">
+  <summary class="issue-summary">
+    <span class="issue-num">12</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">spark.mlflow.modelRegistryUri not available on serverless</div>
+      <div class="issue-tags">
+        <span class="tag tag-mlflow">MLflow</span>
+        <span class="tag tag-infra">Infra</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Calling <code>mlflow.set_experiment()</code> or <code>mlflow.start_run()</code> without
+        first setting tracking and registry URIs. On serverless, the Spark configuration key
+        <code>spark.mlflow.modelRegistryUri</code> is not populated, so MLflow defaults to
+        local file tracking and fails when it tries to register to Unity Catalog.
+      </div>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        Always call both URI setters as the very first MLflow calls in your
+        <code>__main__</code> block, before <code>set_experiment</code> or <code>start_run</code>.
+      </div>
+      <pre><code class="language-python">if __name__ == "__main__":
+    import mlflow
+    mlflow.set_tracking_uri("databricks")      # ✅ must come first
+    mlflow.set_registry_uri("databricks-uc")   # ✅ must come first
+    mlflow.set_experiment("/Shared/my_experiment")
+    with mlflow.start_run():
+        ...</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 13 -->
+<details class="issue-card" id="issue-13">
+  <summary class="issue-summary">
+    <span class="issue-num">13</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">log_model() name parameter doesn't exist in MLflow 2.22.4</div>
+      <div class="issue-tags">
+        <span class="tag tag-mlflow">MLflow</span>
+        <span class="tag tag-python">Python</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Using the <code>name=</code> keyword argument to <code>mlflow.pyfunc.log_model()</code>.
+        This parameter was added in a newer version and raises <code>TypeError: unexpected keyword argument 'name'</code>
+        on 2.22.4.
+      </div>
+      <pre><code class="language-python">mlflow.pyfunc.log_model(
+    name="agent",    # ❌ doesn't exist in 2.22.4
+    ...
+)</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        Use <code>artifact_path=</code> — this is the original parameter name and works across
+        all MLflow 2.x versions.
+      </div>
+      <pre><code class="language-python">mlflow.pyfunc.log_model(
+    artifact_path="agent",   # ✅ correct parameter name in 2.22.4
+    python_model=__file__,
+    ...
+)</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 14 -->
+<details class="issue-card" id="issue-14">
+  <summary class="issue-summary">
+    <span class="issue-num">14</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">log_model() code_paths parameter unavailable on old MLflow</div>
+      <div class="issue-tags">
+        <span class="tag tag-mlflow">MLflow</span>
+        <span class="tag tag-deps">Dependencies</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Using <code>code_paths=["tools"]</code> in <code>log_model()</code> while the pre-installed
+        MLflow 2.11.4 is still active (i.e., before fix #6 is applied). The <code>code_paths</code>
+        parameter was added later and raises <code>TypeError</code> on 2.11.4.
+      </div>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        This fix is a consequence of fix #6 — pin <code>mlflow>=2.20.0</code> in the DAB
+        environment spec so the upgraded version is active when <code>log_model()</code> is called.
+        Once MLflow 2.22.4 is in place, <code>code_paths</code> works correctly.
+      </div>
+      <pre><code class="language-python">mlflow.pyfunc.log_model(
+    artifact_path="agent",
+    python_model=__file__,
+    code_paths=["tools", "pyproject.toml"],   # ✅ works on 2.22.4
+    pip_requirements=pip_requirements,
+    registered_model_name=_REGISTERED_MODEL_NAME,
+)</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 15 -->
+<details class="issue-card" id="issue-15">
+  <summary class="issue-summary">
+    <span class="issue-num">15</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">mlflow.models.resources module doesn't exist in old MLflow</div>
+      <div class="issue-tags">
+        <span class="tag tag-mlflow">MLflow</span>
+        <span class="tag tag-python">Python</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Importing <code>DatabricksServingEndpoint</code> from <code>mlflow.models.resources</code>
+        inside the <code>__main__</code> block. This module doesn't exist in earlier MLflow versions
+        and is also unnecessary — the <code>resources</code> parameter to <code>log_model</code>
+        is entirely optional.
+      </div>
+      <pre><code class="language-python">from mlflow.models.resources import DatabricksServingEndpoint  # ❌ optional module
+
+mlflow.pyfunc.log_model(
+    ...,
+    resources=[DatabricksServingEndpoint(endpoint_name="my-llm")]  # ❌ skip this
+)</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        Remove the import and the <code>resources</code> parameter entirely. Create/update the
+        serving endpoint via the Databricks SDK after <code>log_model</code> completes — which
+        is what the <code>__main__</code> block already does using <code>WorkspaceClient</code>.
+      </div>
+      <pre><code class="language-python"># ✅ log_model without resources parameter
+mlflow.pyfunc.log_model(
+    artifact_path="agent",
+    python_model=__file__,
+    pip_requirements=pip_requirements,
+    registered_model_name=_REGISTERED_MODEL_NAME,
+)
+# Endpoint creation is handled by databricks.sdk below</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 16 -->
+<details class="issue-card" id="issue-16">
+  <summary class="issue-summary">
+    <span class="issue-num">16</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">ResponsesStreamEvent item missing required id and status fields</div>
+      <div class="issue-tags">
+        <span class="tag tag-mlflow">MLflow</span>
+        <span class="tag tag-python">Python</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Yielding a <code>ResponsesStreamEvent</code> whose <code>item</code> dict is missing
+        the <code>id</code> and <code>status</code> fields. MLflow's Pydantic model validates
+        the item and raises <code>ValidationError</code>.
+      </div>
+      <pre><code class="language-python">yield ResponsesStreamEvent(
+    type="response.output_item.done",
+    item={
+        "type": "message",
+        "role": "assistant",       # ❌ missing id and status
+        "content": [...]
+    }
+)</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        Always include <code>id</code> (a UUID string) and <code>status: "completed"</code>
+        in every message item. The same applies to tool call output items.
+      </div>
+      <pre><code class="language-python">from uuid import uuid4
+
+yield ResponsesStreamEvent(
+    type="response.output_item.done",
+    item={
+        "type": "message",
+        "id": str(uuid4()),         # ✅ required unique id
+        "role": "assistant",
+        "status": "completed",      # ✅ required status field
+        "content": [{"type": "output_text", "text": content}],
+    }
+)</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 17 -->
+<details class="issue-card" id="issue-17">
+  <summary class="issue-summary">
+    <span class="issue-num">17</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">WorkspaceClient() fails on Model Serving — no ambient credentials</div>
+      <div class="issue-tags">
+        <span class="tag tag-python">Python</span>
+        <span class="tag tag-infra">Infra</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Instantiating <code>WorkspaceClient()</code> inside the agent class (serve-time) to get
+        an OpenAI client via <code>.serving_endpoints.get_open_ai_client()</code>. The Databricks
+        SDK credential chain looks for a Databricks config profile or environment variables, but
+        in the Model Serving container the credentials are in <code>DATABRICKS_HOST</code> and
+        <code>DATABRICKS_TOKEN</code> — the SDK does not always discover them in time, and this
+        call sometimes raises <code>ValueError: credentials not found</code>.
+      </div>
+      <pre><code class="language-python">def _get_llm_client(self):
+    # ❌ WorkspaceClient() may fail to find credentials on Model Serving
+    return WorkspaceClient().serving_endpoints.get_open_ai_client()</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        On Model Serving, <code>DATABRICKS_HOST</code> and <code>DATABRICKS_TOKEN</code> are
+        always auto-injected as environment variables. Build the OpenAI client directly from them.
+      </div>
+      <pre><code class="language-python">def _get_llm_client(self) -> OpenAI:
+    if self._llm_client is None:
+        host  = os.environ.get("DATABRICKS_HOST", "").rstrip("/")
+        token = os.environ.get("DATABRICKS_TOKEN", "")
+        self._llm_client = OpenAI(
+            base_url=f"{host}/serving-endpoints",   # ✅ direct from env vars
+            api_key=token,
+        )
+    return self._llm_client</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 18 -->
+<details class="issue-card" id="issue-18">
+  <summary class="issue-summary">
+    <span class="issue-num">18</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">log_model calls predict() on input_example — fails without DATABRICKS_HOST</div>
+      <div class="issue-tags">
+        <span class="tag tag-mlflow">MLflow</span>
+        <span class="tag tag-python">Python</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Having <code>predict_stream</code> unconditionally attempt a real LLM call.
+        When MLflow calls <code>log_model()</code> with an <code>input_example</code>, it calls
+        <code>predict()</code> internally to validate the schema. This happens inside the
+        spark_python_task context where <code>DATABRICKS_HOST</code> is not set (the serving
+        endpoint doesn't exist yet), causing the OpenAI client to fail with a connection error.
+      </div>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        Guard the real LLM call with an environment check. Return a stub response when
+        <code>DATABRICKS_HOST</code> is absent (i.e., during model logging validation).
+      </div>
+      <pre><code class="language-python">def predict_stream(self, request: ResponsesRequest):
+    # Guard: during mlflow.pyfunc.log_model, DATABRICKS_HOST is not set.
+    # Return a stub so schema validation succeeds without a real LLM call.
+    if not os.environ.get("DATABRICKS_HOST"):
+        yield ResponsesStreamEvent(
+            type="response.output_item.done",
+            item={
+                "type": "message",
+                "id": str(uuid4()),
+                "role": "assistant",
+                "status": "completed",
+                "content": [{"type": "output_text", "text": "stub"}],
+            }
+        )
+        return
+    # Real logic follows...
+    yield from self._run_agentic_loop(...)</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 19 -->
+<details class="issue-card" id="issue-19">
+  <summary class="issue-summary">
+    <span class="issue-num">19</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">Separate serving endpoints for each sub-agent (wrong architecture)</div>
+      <div class="issue-tags">
+        <span class="tag tag-arch">Architecture</span>
+        <span class="tag tag-infra">Infra</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Planning to deploy five separate Databricks Model Serving endpoints — one for the
+        orchestrator and one for each of the four sub-agents — and have the orchestrator call
+        sub-agents over HTTP. This multiplies cost, latency, and operational complexity by 5x,
+        and introduces network failure modes between agents.
+      </div>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        Deploy <strong>one endpoint only</strong> — the orchestrator. Sub-agents are packaged as
+        Python wheel files, listed as DAB environment dependencies, and imported directly by the
+        orchestrator at runtime. The orchestrator calls sub-agent class methods in-process with
+        zero network overhead.
+      </div>
+      <pre><code class="language-python"># ✅ Orchestrator imports sub-agents as Python modules (no HTTP)
+from customer_onboarding_agent import CustomerOnboardingAgent
+from investor_suitability_profiling_agent import InvestorSuitabilityProfilingAgent
+from investment_recommendation_execution_agent import InvestmentRecommendationExecutionAgent
+from portfolio_tracking_goal_progress_agent import PortfolioTrackingGoalProgressAgent
+
+# Called in-process as tools:
+result = CustomerOnboardingAgent().predict(sub_request)</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 20 -->
+<details class="issue-card" id="issue-20">
+  <summary class="issue-summary">
+    <span class="issue-num">20</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">jq dependency for Windows deployment script</div>
+      <div class="issue-tags">
+        <span class="tag tag-infra">Infra</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Using <code>jq</code> in <code>deploy.bat</code> to parse JSON responses from the
+        Databricks CLI. <code>jq</code> is a Unix tool not available by default on Windows,
+        making the script fail for Windows developers.
+      </div>
+      <pre><code class="language-bash">VERSION=$(databricks bundle run ... | jq -r '.version')  # ❌ jq not on Windows</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        Replace all <code>jq</code> usage with an inline Python one-liner. Python is already a
+        prerequisite for the project — no extra tool installation needed.
+      </div>
+      <pre><code class="language-bash">VERSION=$(databricks bundle run ... | python -c "import json,sys; print(json.load(sys.stdin)['version'])")
+# ✅ Python is already required — no extra dependencies</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 21 -->
+<details class="issue-card" id="issue-21">
+  <summary class="issue-summary">
+    <span class="issue-num">21</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">Pre-installed packages pinned as exact versions in main dependencies</div>
+      <div class="issue-tags">
+        <span class="tag tag-deps">Dependencies</span>
+        <span class="tag tag-infra">Infra</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Including exact-version pins for packages that are pre-installed on the serverless
+        runtime (<code>mlflow</code>, <code>databricks-sdk</code>, <code>pydantic</code>,
+        <code>pyarrow</code>) in the <code>[project] dependencies</code> table. These conflict
+        with the versions already present in the environment and cause pip resolver failures.
+      </div>
+      <pre><code class="language-toml">[project]
+dependencies = [
+    "mlflow==2.11.4",          # ❌ exact pin of a pre-installed package
+    "databricks-sdk==0.20.0",  # ❌ exact pin
+    "pydantic==2.5.0",         # ❌ exact pin
+    "pyarrow==14.0.1",         # ❌ exact pin
+]</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        Move all pre-installed packages to <code>[project.optional-dependencies] dev</code> only.
+        Keep the main <code>dependencies</code> table minimal — only the packages your code
+        actually imports that are <em>not</em> pre-installed on serverless.
+      </div>
+      <pre><code class="language-toml">[project]
+dependencies = [
+    "openai>=1.30.0",      # ✅ runtime dep, not pre-installed
+    "requests>=2.31.0",    # ✅ runtime dep
+]
+
+[project.optional-dependencies]
+dev = [
+    # Pre-installed packages go here — only needed for local dev
+    "mlflow>=2.18.0",
+    "databricks-sdk>=0.36.0",
+    "pydantic>=2.0.0,<3.0.0",
+    "pyarrow>=14.0.0",
+    "pytest>=7.4.0,<9.0.0",
+]</code></pre>
+    </div>
+  </div>
+</details>
+
+
+<!-- ─────────────────────────────────────────────────── ISSUE 22 -->
+<details class="issue-card" id="issue-22">
+  <summary class="issue-summary">
+    <span class="issue-num">22</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">AutoCaptureConfigInput rejected for agent model endpoints</div>
+      <div class="issue-tags">
+        <span class="tag tag-mlflow">MLflow</span>
+        <span class="tag tag-infra">Infra</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Passing <code>auto_capture_config=AutoCaptureConfigInput(...)</code> to
+        <code>create_and_wait()</code> or <code>update_config_and_wait()</code> when the
+        endpoint serves an agent (MLflow <code>ResponsesAgent</code>) model. Databricks rejects
+        this with an <code>InvalidParameterValue</code> error because the inference-table
+        contract for agent endpoints is different.
+      </div>
+      <pre><code class="language-python">from databricks.sdk.service.serving import (
+    ServedEntityInput, EndpointCoreConfigInput, AutoCaptureConfigInput,
+)
+auto_capture_config = AutoCaptureConfigInput(
+    catalog_name="workspace", schema_name="default", enabled=True,
+)
+# ❌ InvalidParameterValue: For endpoints serving agent models,
+#    please use the 'ai_gateway' field to manage inference tables.</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        Use <code>AiGatewayConfig</code> + <code>AiGatewayInferenceTableConfig</code> and apply
+        them via a separate <code>put_ai_gateway()</code> call <em>after</em> the endpoint is
+        created or updated. The <code>ai_gateway</code> field does not exist on
+        <code>EndpointCoreConfigInput</code> — it must be set through the dedicated API.
+      </div>
+      <pre><code class="language-python">from databricks.sdk.service.serving import (
+    ServedEntityInput, EndpointCoreConfigInput,
+    AiGatewayConfig, AiGatewayInferenceTableConfig,
+)
+_AI_GATEWAY = AiGatewayConfig(
+    inference_table_config=AiGatewayInferenceTableConfig(
+        catalog_name="workspace",
+        schema_name="default",
+        enabled=True,
+    )
+)
+# Create or update endpoint first (no auto_capture_config argument)
+w.serving_endpoints.create_and_wait(
+    name=_SERVING_ENDPOINT_NAME,
+    config=EndpointCoreConfigInput(
+        name=_SERVING_ENDPOINT_NAME,
+        served_entities=[served_entity],
+    ),
+    timeout=timedelta(minutes=30),
+)
+# Then apply ai_gateway separately
+w.serving_endpoints.put_ai_gateway(
+    name=_SERVING_ENDPOINT_NAME,
+    inference_table_config=_AI_GATEWAY.inference_table_config,
+)  # ✅ correct for agent model endpoints</code></pre>
+    </div>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ISSUE 23 -->
+<details class="issue-card" id="issue-23">
+  <summary class="issue-summary">
+    <span class="issue-num">23</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">Inference tables not supported for this endpoint type in workspace</div>
+      <div class="issue-tags">
+        <span class="tag tag-infra">Infra</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong</div>
+      <div class="block-text">
+        Even after switching to the correct <code>put_ai_gateway()</code> API (Issue 22),
+        calling it may raise a <code>NotFound</code> error in some Databricks workspace tiers:
+        <em>"Inference table is not currently supported for this endpoint type in this workspace."</em>
+        Inference tables are a premium feature gated by workspace tier and region.
+      </div>
+      <pre><code class="language-python">w.serving_endpoints.put_ai_gateway(
+    name=_SERVING_ENDPOINT_NAME,
+    inference_table_config=...,
+)
+# ❌ NotFound: Inference table is not currently supported
+#    for this endpoint type in this workspace.</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Fix</div>
+      <div class="block-text">
+        Drop the <code>put_ai_gateway()</code> call entirely when the workspace does not support
+        inference tables. MLflow traces still work correctly through the
+        <code>MLFLOW_TRACKING_URI=databricks</code> and <code>MLFLOW_EXPERIMENT_NAME</code>
+        environment variables set on the endpoint — those route traces to the Databricks workspace
+        tracking server independent of inference tables.
+      </div>
+      <pre><code class="language-python">from databricks.sdk.service.serving import ServedEntityInput, EndpointCoreConfigInput
+
+_ENDPOINT_ENV_VARS = {
+    "MLFLOW_TRACKING_URI":    "databricks",   # routes traces to workspace server
+    "MLFLOW_EXPERIMENT_NAME": _EXPERIMENT_NAME,
+}
+served_entity = ServedEntityInput(
+    entity_name=_REGISTERED_MODEL_NAME,
+    entity_version=str(model_info.registered_model_version),
+    workload_size="Small",
+    scale_to_zero_enabled=True,
+    environment_vars=_ENDPOINT_ENV_VARS,   # ✅ traces work without inference tables
+)
+# No put_ai_gateway() call needed — or can be wrapped in try/except
+if _SERVING_ENDPOINT_NAME in existing:
+    w.serving_endpoints.update_config_and_wait(
+        name=_SERVING_ENDPOINT_NAME,
+        served_entities=[served_entity],
+        timeout=timedelta(minutes=30),
+    )
+else:
+    w.serving_endpoints.create_and_wait(
+        name=_SERVING_ENDPOINT_NAME,
+        config=EndpointCoreConfigInput(
+            name=_SERVING_ENDPOINT_NAME,
+            served_entities=[served_entity],
+        ),
+        timeout=timedelta(minutes=30),
+    )</code></pre>
+    </div>
+  </div>
+</details>
+
+</div><!-- /issues-list -->
+
+<!-- ═══════════════════════════════════════════════════════════════ REFERENCE -->
+<h2 class="section-title"><span class="icon">&#128196;</span>Correct File Templates</h2>
+
+<details class="toc-nav" id="templates">
+  <summary style="font-weight:600;">Click to expand — databricks.yml, pyproject.toml, agent.py skeletons</summary>
+  <div style="padding: 0 16px 20px;">
+
+  <p style="color:var(--text-secondary); font-size:13px; margin: 12px 0 6px;">
+    <strong style="color:var(--text-primary);">databricks.yml</strong> — correct structure with all fixes applied
+  </p>
+  <pre><code class="language-yaml">bundle:
+  name: wealth_management_guidance_orchestrator_bundle
+
+variables:
+  wheel_version:
+    default: "0.1.0"
+  llm_endpoint:
+    default: "databricks-meta-llama-3-1-70b-instruct"
+
+workspace:
+  root_path: ~/.bundle/${bundle.name}/${bundle.target}
+  # NOTE: Do NOT add catalog: or schema: here — those are not valid DAB fields.
+
+targets:
+  dev:
+    default: true
+    mode: development
+
+resources:
+  jobs:
+    deploy_pipeline:
+      name: "Deploy Multi-Agent Pipeline"
+      environments:
+        - environment_key: agents_env
+          spec:
+            client: "2"
+            dependencies:
+              # MUST be first — upgrades serverless pre-installed MLflow 2.11.4
+              - mlflow>=2.20.0,<3.0.0
+              - ./orchestrator/dist/orchestrator-${var.wheel_version}-py3-none-any.whl
+              - ./agents/sub-agent-a/dist/sub_agent_a-${var.wheel_version}-py3-none-any.whl
+
+      tasks:
+        - task_key: deploy_orchestrator
+          spark_python_task:
+            python_file: ${workspace.file_path}/orchestrator/agent.py
+          environment_key: agents_env
+          # NO job_clusters — serverless is the default on serverless-only workspaces
+          # NO environment_variables — not a valid DAB task field</code></pre>
+
+  <div class="divider"></div>
+
+  <p style="color:var(--text-secondary); font-size:13px; margin: 12px 0 6px;">
+    <strong style="color:var(--text-primary);">pyproject.toml</strong> — correct dependency structure
+  </p>
+  <pre><code class="language-toml">[project]
+name = "my_agent"
+version = "0.1.0"
+requires-python = ">=3.11"   # NOT >=3.12 — serverless runs 3.11
+
+dependencies = [
+    # Only packages NOT pre-installed on serverless.
+    # Use loose lower-bound constraints — NO exact pins.
+    "openai>=1.30.0",
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    # Pre-installed packages go here — needed for local dev/testing only.
+    "mlflow>=2.18.0",
+    "databricks-sdk>=0.36.0",
+    "pydantic>=2.0.0,<3.0.0",
+    "pyarrow>=14.0.0",
+    "pytest>=7.4.0,<9.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"</code></pre>
+
+  <div class="divider"></div>
+
+  <p style="color:var(--text-secondary); font-size:13px; margin: 12px 0 6px;">
+    <strong style="color:var(--text-primary);">agent.py</strong> — correct two-block structure with all fixes applied
+  </p>
+  <pre><code class="language-python"># ─── Standard library ONLY at module top level ─────────────────────────────
+import json
+import os
+import sys
+import tomllib
+import warnings
+from typing import Generator, Optional
+from uuid import uuid4
+
+if "__file__" not in globals():
+    __file__ = sys._getframe(0).f_code.co_filename
+
+# Constants — no MLflow imports here
+_LLM_ENDPOINT          = os.environ.get("LLM_ENDPOINT", "databricks-meta-llama-3-3-70b-instruct")
+_EXPERIMENT_NAME       = "/Shared/my_experiment"
+_REGISTERED_MODEL_NAME = "workspace.default.my_agent"   # UC coordinates in code, not databricks.yml
+_SERVING_ENDPOINT_NAME = "my-serving-endpoint"
+
+# ─── SERVE-TIME BLOCK ───────────────────────────────────────────────────────
+# Runs only when loaded by the Model Serving container.
+# Guarded so spark_python_task exec() does NOT run these imports.
+if __name__ != "__main__":
+    import mlflow
+    from mlflow.pyfunc import ResponsesAgent             # correct path in 2.22.4
+    from mlflow.types.responses import (
+        ResponsesRequest,       # NOT ResponsesAgentRequest
+        ResponsesResponse,      # NOT ResponsesAgentResponse
+        ResponsesStreamEvent,   # NOT ResponsesAgentStreamEvent
+    )
+    from openai import OpenAI
+    # SpanType: do NOT import — use string literal: span_type="TOOL"
+
+    class MyAgent(ResponsesAgent):
+        def __init__(self):
+            self._llm_client: Optional[OpenAI] = None
+
+        def _get_llm_client(self) -> OpenAI:
+            # On Model Serving, DATABRICKS_HOST/TOKEN are auto-injected.
+            # Do NOT use WorkspaceClient() here — it may fail to find credentials.
+            if self._llm_client is None:
+                host  = os.environ.get("DATABRICKS_HOST", "").rstrip("/")
+                token = os.environ.get("DATABRICKS_TOKEN", "")
+                self._llm_client = OpenAI(
+                    base_url=f"{host}/serving-endpoints",
+                    api_key=token,
+                )
+            return self._llm_client
+
+        def predict_stream(self, request: ResponsesRequest) -> Generator[ResponsesStreamEvent, None, None]:
+            # Guard: log_model calls predict() for schema validation without DATABRICKS_HOST.
+            if not os.environ.get("DATABRICKS_HOST"):
+                yield ResponsesStreamEvent(
+                    type="response.output_item.done",
+                    item={
+                        "type": "message",
+                        "id": str(uuid4()),        # id field is required
+                        "role": "assistant",
+                        "status": "completed",     # status field is required
+                        "content": [{"type": "output_text", "text": "stub"}],
+                    }
+                )
+                return
+
+            # Implement the agentic loop manually — helpers like
+            # output_to_responses_items_stream do NOT exist in 2.22.4.
+            messages = [{"role": "user", "content": request.input[0].content}]
+            for _ in range(20):
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", message="PydanticSerializationUnexpectedValue")
+                    stream = self._get_llm_client().chat.completions.create(
+                        model=_LLM_ENDPOINT, messages=messages, stream=True
+                    )
+                content = ""
+                for chunk in stream:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        content += chunk.choices[0].delta.content
+                messages.append({"role": "assistant", "content": content})
+                yield ResponsesStreamEvent(
+                    type="response.output_item.done",
+                    item={
+                        "type": "message",
+                        "id": str(uuid4()),
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [{"type": "output_text", "text": content}],
+                    }
+                )
+                return
+
+        def predict(self, request: ResponsesRequest) -> ResponsesResponse:
+            output = [e.item for e in self.predict_stream(request)
+                      if hasattr(e, "item") and e.item]
+            return ResponsesResponse(output=output)
+
+    AGENT = MyAgent()
+    mlflow.models.set_model(AGENT)
+
+
+# ─── JOB ENTRY POINT ────────────────────────────────────────────────────────
+# Runs only in spark_python_task. Uses only pre-installed mlflow + databricks-sdk.
+if __name__ == "__main__":
+    import mlflow
+
+    print(f"[deploy] MLflow version: {mlflow.__version__}", flush=True)
+
+    # Always set these FIRST — spark.mlflow.modelRegistryUri is not available on serverless.
+    mlflow.set_tracking_uri("databricks")
+    mlflow.set_registry_uri("databricks-uc")
+
+    _PYPROJECT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pyproject.toml")
+    with open(_PYPROJECT, "rb") as f:
+        pip_requirements = tomllib.load(f)["project"]["dependencies"]
+
+    mlflow.set_experiment(_EXPERIMENT_NAME)
+
+    with mlflow.start_run():
+        model_info = mlflow.pyfunc.log_model(
+            artifact_path="agent",      # NOT name= — that parameter is newer
+            python_model=__file__,
+            code_paths=["tools"],       # works on 2.22.4 (fix #14)
+            input_example={"input": [{"role": "user", "content": "hello"}]},
+            pip_requirements=pip_requirements,
+            registered_model_name=_REGISTERED_MODEL_NAME,
+            # Do NOT pass resources= — mlflow.models.resources doesn't exist in older MLflow
+        )
+        print(f"[deploy] Registered v{model_info.registered_model_version}")
+
+    from datetime import timedelta
+    from databricks.sdk import WorkspaceClient
+    from databricks.sdk.service.serving import ServedEntityInput, EndpointCoreConfigInput
+
+    w = WorkspaceClient()
+    served_entity = ServedEntityInput(
+        entity_name=_REGISTERED_MODEL_NAME,
+        entity_version=str(model_info.registered_model_version),
+        workload_size="Small",
+        scale_to_zero_enabled=True,
+    )
+    existing = {ep.name for ep in w.serving_endpoints.list()}
+    if _SERVING_ENDPOINT_NAME in existing:
+        w.serving_endpoints.update_config_and_wait(
+            name=_SERVING_ENDPOINT_NAME,
+            served_entities=[served_entity],
+            timeout=timedelta(minutes=30),
+        )
+    else:
+        w.serving_endpoints.create_and_wait(
+            name=_SERVING_ENDPOINT_NAME,
+            config=EndpointCoreConfigInput(
+                name=_SERVING_ENDPOINT_NAME,
+                served_entities=[served_entity],
+            ),
+            timeout=timedelta(minutes=30),
+        )</code></pre>
+  </div>
+</details>
+
+<!-- ═══════════════════════════════════════════════════════════════ PART 2 -->
+<div id="part2">
+  <h2 class="section-title" style="margin-top: 64px;"><span class="icon">&#9881;</span>Part 2: Architecture Evolution &amp; Code Optimizations</h2>
+  <p style="color:var(--text-secondary); font-size:14px; margin-bottom:24px; line-height:1.7;">
+    After resolving the initial 21 deployment blockers, the codebase underwent significant architectural
+    refactoring. Each change below reduces complexity, cost, or latency — and prevents entire classes of
+    future bugs. Every card documents the <strong style="color:var(--accent-red);">old approach</strong>,
+    the <strong style="color:var(--accent-green);">new approach</strong>, and the reasoning.
+  </p>
+  <div class="issues-list">
+
+<!-- ─────────────────────────────────────────────────── ARCH CHANGE 1 -->
+<details class="issue-card" id="arch-change-1">
+  <summary class="issue-summary">
+    <span class="issue-num" style="background:rgba(88,166,255,0.15); color:var(--accent-blue);">A1</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">Single Endpoint Architecture — Sub-agents as In-Process Libraries</div>
+      <div class="issue-tags">
+        <span class="tag tag-arch">Architecture</span>
+        <span class="tag tag-infra">Infra</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Old Approach</div>
+      <div class="block-text">
+        5 separate Databricks Model Serving endpoints — one per agent. The orchestrator called
+        sub-agents over HTTP, meaning every request required up to 4 additional network round-trips
+        inside Databricks infrastructure.
+      </div>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>New Approach</div>
+      <div class="block-text">
+        ONE endpoint — the orchestrator only. Sub-agents are Python libraries called in-process
+        via the <code>BaseWealthAgent</code> mixin. No HTTP hops, no separate endpoint auth,
+        no separate deployment pipelines.
+      </div>
+      <pre><code class="language-python"># Sub-agents are called as plain Python classes — zero network overhead
+result = CustomerOnboardingAgent().predict(sub_request)
+result = InvestorSuitabilityProfilingAgent().predict(sub_request)</code></pre>
+    </div>
+    <p class="mt-12" style="color:var(--text-secondary); font-size:13px;">
+      <strong style="color:var(--text-primary);">Why:</strong> No exposure risk, lower cost (one serving endpoint billed),
+      lower latency (no HTTP hops between agents), and no inter-agent authentication to configure.
+    </p>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ARCH CHANGE 2 -->
+<details class="issue-card" id="arch-change-2">
+  <summary class="issue-summary">
+    <span class="issue-num" style="background:rgba(88,166,255,0.15); color:var(--accent-blue);">A2</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">BaseWealthAgent — Shared Agentic Loop via Mixin</div>
+      <div class="issue-tags">
+        <span class="tag tag-python">Python</span>
+        <span class="tag tag-arch">Architecture</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Old Approach</div>
+      <div class="block-text">
+        Each of the 5 agent files had 165+ lines containing a full duplicate of the agentic loop
+        (LLM call, tool dispatch, streaming, tracing). Any bug fix or enhancement had to be applied
+        to 5 separate files.
+      </div>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>New Approach</div>
+      <div class="block-text">
+        <code>shared/base_agent.py</code> contains the loop once. Each agent declares only its
+        identity — system prompt, tools, and endpoint name — in 4 lines:
+      </div>
+      <pre><code class="language-python">class CustomerOnboardingAgent(BaseWealthAgent, ResponsesAgent):
+    def __init__(self):
+        self.llm_endpoint = _LLM_ENDPOINT
+        self.system_prompt = _SYSTEM_PROMPT
+        self._tools_dict = {t.name: t for t in load_tools()}
+        self._deploy_client = None</code></pre>
+    </div>
+    <p class="mt-12" style="color:var(--text-secondary); font-size:13px;">
+      <strong style="color:var(--text-primary);">Why:</strong> DRY principle. Adding a new agent is 4 lines, not 165.
+      Any loop change (tracing, error handling, streaming format) propagates to all agents automatically.
+    </p>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ARCH CHANGE 3 -->
+<details class="issue-card" id="arch-change-3">
+  <summary class="issue-summary">
+    <span class="issue-num" style="background:rgba(88,166,255,0.15); color:var(--accent-blue);">A3</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">agents.yaml Registry — Single Source of Truth for Agent Identity</div>
+      <div class="issue-tags">
+        <span class="tag tag-yaml">YAML / DAB</span>
+        <span class="tag tag-arch">Architecture</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Old Approach</div>
+      <div class="block-text">
+        Each agent required its own <code>agent.py</code> + <code>agent.yaml</code> +
+        <code>pyproject.toml</code> + <code>Makefile</code> = 14+ files just for identity.
+        Adding a new agent meant creating and maintaining a full new directory of boilerplate.
+      </div>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>New Approach</div>
+      <div class="block-text">
+        One <code>agents.yaml</code> at the project root. The <code>create_agent("key")</code>
+        factory builds any agent from the registry. Adding a new agent is one YAML block:
+      </div>
+      <pre><code class="language-yaml">my_new_agent:
+  name: "My New Agent"
+  system_prompt: |
+    You are...
+  tools_module: "tools.agents.my_new_agent.tools"
+  max_iterations: 5</code></pre>
+    </div>
+    <p class="mt-12" style="color:var(--text-secondary); font-size:13px;">
+      <strong style="color:var(--text-primary);">Why:</strong> Zero Python files needed per agent.
+      All agent configuration lives in one inspectable, diffable place. <code>create_agent(key)</code>
+      is the only factory needed.
+    </p>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ARCH CHANGE 4 -->
+<details class="issue-card" id="arch-change-4">
+  <summary class="issue-summary">
+    <span class="issue-num" style="background:rgba(88,166,255,0.15); color:var(--accent-blue);">A4</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">Single Wheel Build — One pyproject.toml at Root</div>
+      <div class="issue-tags">
+        <span class="tag tag-deps">Dependencies</span>
+        <span class="tag tag-infra">Infra</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Old Approach</div>
+      <div class="block-text">
+        5 separate <code>pyproject.toml</code> files, 5 wheels built independently and uploaded
+        to Databricks. Each deployment step required 5× build + 5× upload + 5× install.
+      </div>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>New Approach</div>
+      <div class="block-text">
+        One <code>pyproject.toml</code> at the project root producing one wheel:
+        <code>wealth_management_bundle-0.1.0-py3-none-any.whl</code>. All sub-agent tools
+        are bundled inside via <code>sync_bundle.py</code> (see A5).
+      </div>
+      <pre><code class="language-bash"># One command does everything
+make deploy-dev
+# → make sync → python scripts/sync_bundle.py
+# → pip wheel . → dist/wealth_management_bundle-0.1.0-py3-none-any.whl
+# → databricks bundle deploy</code></pre>
+    </div>
+    <p class="mt-12" style="color:var(--text-secondary); font-size:13px;">
+      <strong style="color:var(--text-primary);">Why:</strong> One build, one upload, one install.
+      Simpler CI/CD. No wheel version skew between agents.
+    </p>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ARCH CHANGE 5 -->
+<details class="issue-card" id="arch-change-5">
+  <summary class="issue-summary">
+    <span class="issue-num" style="background:rgba(88,166,255,0.15); color:var(--accent-blue);">A5</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">sync_bundle.py — Automated Pre-Build Sync</div>
+      <div class="issue-tags">
+        <span class="tag tag-python">Python</span>
+        <span class="tag tag-infra">Infra</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Old Approach</div>
+      <div class="block-text">
+        Sub-agent tools had to be manually copied into the orchestrator wheel before every build.
+        This was easy to forget, leading to stale tool code being deployed silently.
+      </div>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>New Approach</div>
+      <div class="block-text">
+        <code>scripts/sync_bundle.py</code> auto-syncs all tools and fixes import paths before
+        every build. The Makefile wires it in so it is impossible to forget:
+      </div>
+      <pre><code class="language-bash"># Makefile
+deploy-dev: sync build bundle-deploy
+
+sync:
+    python scripts/sync_bundle.py   # runs before every build automatically</code></pre>
+    </div>
+    <p class="mt-12" style="color:var(--text-secondary); font-size:13px;">
+      <strong style="color:var(--text-primary);">Why:</strong> <code>make deploy-dev</code> calls
+      <code>make sync</code> which calls <code>python scripts/sync_bundle.py</code> —
+      impossible to deploy stale tool code.
+    </p>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ARCH CHANGE 6 -->
+<details class="issue-card" id="arch-change-6">
+  <summary class="issue-summary">
+    <span class="issue-num" style="background:rgba(88,166,255,0.15); color:var(--accent-blue);">A6</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">MLflow Tracing with @mlflow.start_span Context Managers</div>
+      <div class="issue-tags">
+        <span class="tag tag-mlflow">MLflow</span>
+        <span class="tag tag-python">Python</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Old Approach</div>
+      <div class="block-text">
+        No tracing at all. LLM calls and tool executions were completely opaque — debugging
+        required adding print statements and re-deploying.
+      </div>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>New Approach</div>
+      <div class="block-text">
+        Every LLM call and tool execution is wrapped in a span. A parent <code>AGENT</code> span
+        in <code>predict()</code> anchors all child spans in the call tree:
+      </div>
+      <pre><code class="language-python"># Parent span — anchors the full request trace
+with mlflow.start_span(name="predict", span_type="AGENT") as span:
+    span.set_inputs({"query": request.input[0].content})
+
+    # Child span — each LLM call
+    with mlflow.start_span(name="llm_call", span_type="LLM") as llm_span:
+        llm_span.set_inputs({"num_messages": len(messages)})
+        response = client.predict(endpoint=self.llm_endpoint, inputs={...})
+        llm_span.set_outputs({"content_preview": content[:200]})</code></pre>
+    </div>
+    <p class="mt-12" style="color:var(--text-secondary); font-size:13px;">
+      <strong style="color:var(--text-primary);">Why:</strong> Full call tree visible in
+      Databricks Experiments → Traces tab. Latency per LLM call, per tool, per agent — all
+      observable without code changes.
+    </p>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ARCH CHANGE 7 -->
+<details class="issue-card" id="arch-change-7">
+  <summary class="issue-summary">
+    <span class="issue-num" style="background:rgba(88,166,255,0.15); color:var(--accent-blue);">A7</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">get_deploy_client("databricks") — Universal Auth Without Env Vars</div>
+      <div class="issue-tags">
+        <span class="tag tag-mlflow">MLflow</span>
+        <span class="tag tag-infra">Infra</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Old Approach</div>
+      <div class="block-text">
+        Two failed attempts:
+        <ol style="margin: 8px 0 0; padding-left: 20px;">
+          <li><code>WorkspaceClient()</code> — failed on serving endpoint (no credentials in the SDK chain)</li>
+          <li><code>OpenAI(base_url=os.environ['DATABRICKS_HOST'])</code> — failed because <code>DATABRICKS_HOST</code> not set in all contexts</li>
+        </ol>
+      </div>
+      <pre><code class="language-python"># WRONG — fails on serving endpoint (no default credentials)
+client = WorkspaceClient().serving_endpoints.get_open_ai_client()
+
+# WRONG — fails in job clusters (DATABRICKS_HOST not always set)
+client = OpenAI(base_url=os.environ["DATABRICKS_HOST"] + "/serving-endpoints", ...)</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>New Approach</div>
+      <div class="block-text">
+        <code>get_deploy_client("databricks")</code> — MLflow's deployment client handles auth
+        in ALL execution contexts automatically:
+      </div>
+      <pre><code class="language-python">from mlflow.deployments import get_deploy_client
+
+client = get_deploy_client("databricks")
+response = client.predict(endpoint=self.llm_endpoint, inputs={
+    "messages": messages,
+    "tools": tool_specs,
+})</code></pre>
+    </div>
+    <p class="mt-12" style="color:var(--text-secondary); font-size:13px;">
+      <strong style="color:var(--text-primary);">Why:</strong> Works everywhere without any environment variables —
+      job cluster, serving endpoint, local dev. MLflow handles credential discovery internally.
+    </p>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ARCH CHANGE 8 -->
+<details class="issue-card" id="arch-change-8">
+  <summary class="issue-summary">
+    <span class="issue-num" style="background:rgba(88,166,255,0.15); color:var(--accent-blue);">A8</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">Intelligent Tool Routing — LLM Decides Which Agents to Call</div>
+      <div class="issue-tags">
+        <span class="tag tag-arch">Architecture</span>
+        <span class="tag tag-python">Python</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Old Approach</div>
+      <div class="block-text">
+        The system prompt forced ALL 4 sub-agents to run every time in a fixed sequence,
+        regardless of what the user actually requested. Every single query triggered all 4
+        agents — even "what is my portfolio value?" ran onboarding, suitability, and
+        recommendation agents unnecessarily.
+      </div>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>New Approach</div>
+      <div class="block-text">
+        The system prompt instructs the LLM to call ONLY the relevant sub-agent(s) based on
+        the request context:
+      </div>
+      <div style="background:var(--bg-secondary); border:1px solid var(--border); border-radius:var(--radius); padding:12px 14px; margin-top:10px; font-size:13px;">
+        <div style="color:var(--text-secondary); margin-bottom:6px; font-size:12px; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">Routing examples</div>
+        <div style="margin: 4px 0;"><span style="color:var(--accent-orange);">"I want to invest"</span> → calls <code>suitability</code> + <code>recommendation</code> only</div>
+        <div style="margin: 4px 0;"><span style="color:var(--accent-orange);">"Track my portfolio"</span> → calls <code>portfolio</code> only</div>
+        <div style="margin: 4px 0;"><span style="color:var(--accent-orange);">"New customer onboarding"</span> → calls all 4 in order</div>
+      </div>
+    </div>
+    <p class="mt-12" style="color:var(--text-secondary); font-size:13px;">
+      <strong style="color:var(--text-primary);">Why:</strong> Up to 4x faster for simple requests.
+      Correct behavior — users aren't subjected to irrelevant agent processing. Cost scales with
+      request complexity, not always worst-case.
+    </p>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ARCH CHANGE 9 -->
+<details class="issue-card" id="arch-change-9">
+  <summary class="issue-summary">
+    <span class="issue-num" style="background:rgba(88,166,255,0.15); color:var(--accent-blue);">A9</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">MAX_ITERATIONS Reduced — 3x Fewer Worst-Case LLM Calls</div>
+      <div class="issue-tags">
+        <span class="tag tag-python">Python</span>
+        <span class="tag tag-arch">Architecture</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Old Approach</div>
+      <div class="block-text">
+        All agents had <code>MAX_ITERATIONS = 20</code>. With 1 orchestrator + 4 sub-agents,
+        the worst-case path was <strong>100 LLM calls per request</strong> (20 × 5 agents).
+      </div>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>New Approach</div>
+      <div class="block-text">
+        Orchestrator = <code>10</code> iterations, sub-agents = <code>5</code> iterations.
+        Worst case is now <strong>30 LLM calls</strong> (10 + 4×5), sufficient for all observed use cases.
+      </div>
+      <pre><code class="language-python"># In base_agent.py
+_MAX_ITERATIONS_ORCHESTRATOR = 10
+_MAX_ITERATIONS_SUB_AGENT    = 5   # overridden per-agent via agents.yaml max_iterations</code></pre>
+    </div>
+    <p class="mt-12" style="color:var(--text-secondary); font-size:13px;">
+      <strong style="color:var(--text-primary);">Why:</strong> 3x faster worst-case latency and 3x lower worst-case
+      token cost. All real use cases terminate well within these limits.
+    </p>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ARCH CHANGE 10 -->
+<details class="issue-card" id="arch-change-10">
+  <summary class="issue-summary">
+    <span class="issue-num" style="background:rgba(88,166,255,0.15); color:var(--accent-blue);">A10</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">predict() Returns Single Clean Response — No Intermediate Bubbles</div>
+      <div class="issue-tags">
+        <span class="tag tag-python">Python</span>
+        <span class="tag tag-mlflow">MLflow</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Old Approach</div>
+      <div class="block-text">
+        <code>predict()</code> collected <em>all</em> stream events including intermediate tool
+        call outputs: <code>output = [e.item for e in predict_stream(...)]</code>. This returned
+        multiple items to the UI, causing multiple response bubbles to appear for a single request.
+      </div>
+      <pre><code class="language-python"># WRONG — returns all items including intermediate tool call outputs
+def predict(self, request):
+    output = [e.item for e in self.predict_stream(request) if hasattr(e, "item")]
+    return ResponsesResponse(output=output)   # ← multiple bubbles in UI</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>New Approach</div>
+      <div class="block-text">
+        Extract only the final assistant text message. Return a single clean response:
+      </div>
+      <pre><code class="language-python"># RIGHT — returns only the final assistant message
+def predict(self, request):
+    final_text = ""
+    for event in self.predict_stream(request):
+        if hasattr(event, "item") and event.item:
+            item = event.item
+            if item.get("role") == "assistant":
+                for c in item.get("content", []):
+                    if c.get("type") == "output_text":
+                        final_text = c.get("text", "")
+    return ResponsesResponse(output=[{
+        "type": "message", "id": str(uuid4()),
+        "role": "assistant", "status": "completed",
+        "content": [{"type": "output_text", "text": final_text}],
+    }])</code></pre>
+    </div>
+    <p class="mt-12" style="color:var(--text-secondary); font-size:13px;">
+      <strong style="color:var(--text-primary);">Why:</strong> The UI shows exactly one response bubble per request.
+      Intermediate tool call outputs are tracing artifacts, not user-facing content.
+    </p>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ARCH CHANGE 11 -->
+<details class="issue-card" id="arch-change-11">
+  <summary class="issue-summary">
+    <span class="issue-num" style="background:rgba(88,166,255,0.15); color:var(--accent-blue);">A11</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">No File I/O at Module Load Time in agent.py</div>
+      <div class="issue-tags">
+        <span class="tag tag-python">Python</span>
+        <span class="tag tag-mlflow">MLflow</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Old Approach</div>
+      <div class="block-text">
+        <code>agent.py</code> read <code>agents.yaml</code> at module load time using a relative
+        path. When MLflow's <code>log_model()</code> validates the model, it runs <code>agent.py</code>
+        in a temporary directory where relative paths don't resolve — causing <code>FileNotFoundError</code>.
+      </div>
+      <pre><code class="language-python"># WRONG — fails during log_model validation in temp dir
+with open("agents.yaml") as f:      # ❌ relative path fails in temp dir
+    cfg = yaml.safe_load(f)
+_SYSTEM_PROMPT = cfg["orchestrator"]["system_prompt"]</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>New Approach</div>
+      <div class="block-text">
+        All constants are hardcoded directly in <code>agent.py</code>. The <code>agents.yaml</code>
+        file is only read lazily inside <code>create_agent()</code> at serve time, using
+        <code>__file__</code>-relative paths:
+      </div>
+      <pre><code class="language-python"># RIGHT — hardcode constants; read files lazily inside functions
+_EXPERIMENT_NAME       = "/Shared/wealth_management_experiment"
+_REGISTERED_MODEL_NAME = "workspace.default.orchestrator_agent"
+_LLM_ENDPOINT          = os.environ.get("LLM_ENDPOINT", "databricks-meta-llama-3-3-70b-instruct")
+
+# agents.yaml is read lazily inside create_agent() at serve time:
+def create_agent(key: str):
+    cfg_path = Path(__file__).parent / "agents.yaml"   # absolute, not relative
+    with open(cfg_path) as f:
+        cfg = yaml.safe_load(f)
+    return _build_agent(cfg[key])</code></pre>
+    </div>
+    <p class="mt-12" style="color:var(--text-secondary); font-size:13px;">
+      <strong style="color:var(--text-primary);">Why:</strong> <code>log_model</code> runs
+      <code>agent.py</code> in a temp directory where relative paths don't resolve.
+      Lazy loading with <code>__file__</code>-anchored paths avoids the temp-dir trap entirely.
+    </p>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ARCH CHANGE 12 -->
+<details class="issue-card" id="arch-change-12">
+  <summary class="issue-summary">
+    <span class="issue-num" style="background:rgba(88,166,255,0.15); color:var(--accent-blue);">A12</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">_setup_mlflow_tracing — Idempotent Lazy Initialization</div>
+      <div class="issue-tags">
+        <span class="tag tag-mlflow">MLflow</span>
+        <span class="tag tag-python">Python</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Old Approach</div>
+      <div class="block-text">
+        <code>mlflow.set_experiment()</code> called at module load — a network call to Databricks
+        Tracking that fails during <code>log_model</code> validation (no tracking URI configured
+        yet in the temp dir context).
+      </div>
+      <pre><code class="language-python"># WRONG — network call at module load fails during log_model validation
+mlflow.set_experiment("/Shared/my_experiment")   # ❌ at module level</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>New Approach</div>
+      <div class="block-text">
+        An idempotent helper with a flag, called lazily on the first <code>predict()</code>:
+      </div>
+      <pre><code class="language-python">_tracing_configured = False
+
+def _setup_mlflow_tracing(experiment_name=None):
+    global _tracing_configured
+    if _tracing_configured:
+        return                                   # safe to call repeatedly
+    mlflow.set_tracking_uri("databricks")
+    if experiment_name:
+        mlflow.set_experiment(experiment_name)
+    _tracing_configured = True
+
+class OrchestratorAgent(BaseWealthAgent, ResponsesAgent):
+    def predict(self, request):
+        _setup_mlflow_tracing("/Shared/wealth_mgmt")  # ✅ only on first real request
+        ...</code></pre>
+    </div>
+    <p class="mt-12" style="color:var(--text-secondary); font-size:13px;">
+      <strong style="color:var(--text-primary);">Why:</strong> Safe to call on every request,
+      configures only once, never fails during <code>log_model</code> validation since the
+      network call is deferred until the first real <code>predict()</code>.
+    </p>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ARCH CHANGE 13 -->
+<details class="issue-card" id="arch-change-13">
+  <summary class="issue-summary">
+    <span class="issue-num" style="background:rgba(88,166,255,0.15); color:var(--accent-blue);">A13</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">MLflow Version Compatibility Shim for ResponsesRequest Class Names</div>
+      <div class="issue-tags">
+        <span class="tag tag-mlflow">MLflow</span>
+        <span class="tag tag-python">Python</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Old Approach</div>
+      <div class="block-text">
+        Hard-coded imports for either MLflow 2.x OR MLflow 3.x — crashed on whichever version
+        was the wrong one. Class names changed between versions (see Issue 8).
+      </div>
+      <pre><code class="language-python"># WRONG — crashes on the wrong MLflow version
+from mlflow.types.responses import ResponsesAgentRequest   # ❌ 3.x only, crashes on 2.x
+# OR:
+from mlflow.types.responses import ResponsesRequest        # ❌ 2.x only, crashes on 3.x</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>New Approach</div>
+      <div class="block-text">
+        Try/except shim at the top of <code>base_agent.py</code> that works on both versions:
+      </div>
+      <pre><code class="language-python"># RIGHT — works on MLflow 2.x AND 3.x
+try:
+    from mlflow.types.responses import (
+        ResponsesAgentRequest  as ResponsesRequest,    # MLflow 3.x name
+        ResponsesAgentResponse as ResponsesResponse,
+        ResponsesAgentStreamEvent as ResponsesStreamEvent,
+    )
+except ImportError:
+    from mlflow.types.responses import (
+        ResponsesRequest,      # MLflow 2.x name
+        ResponsesResponse,
+        ResponsesStreamEvent,
+    )</code></pre>
+    </div>
+    <p class="mt-12" style="color:var(--text-secondary); font-size:13px;">
+      <strong style="color:var(--text-primary);">Why:</strong> MLflow 2.x uses <code>ResponsesRequest</code>,
+      MLflow 3.x renamed them to <code>ResponsesAgentRequest</code>. The shim handles both transparently —
+      codebase works on Databricks environments running either version.
+    </p>
+  </div>
+</details>
+
+<!-- ─────────────────────────────────────────────────── ARCH CHANGE 14 -->
+<details class="issue-card" id="arch-change-14">
+  <summary class="issue-summary">
+    <span class="issue-num" style="background:rgba(88,166,255,0.15); color:var(--accent-blue);">A14</span>
+    <div class="issue-title-wrap">
+      <div class="issue-title">Deleted Unnecessary Files — ~33 Files Removed</div>
+      <div class="issue-tags">
+        <span class="tag tag-arch">Architecture</span>
+        <span class="tag tag-infra">Infra</span>
+      </div>
+    </div>
+    <span class="issue-chevron">&#9654;</span>
+  </summary>
+  <div class="issue-body">
+    <div style="background:var(--bg-secondary); border:1px solid var(--border); border-radius:var(--radius); padding:16px 18px; margin: 14px 0;">
+      <div style="font-size:12px; font-weight:700; letter-spacing:0.06em; text-transform:uppercase; color:var(--text-muted); margin-bottom:10px;">Files deleted during consolidation</div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:13px;">
+        <div><span style="color:var(--accent-red);">8 ×</span> <code>agent.py</code> per-agent files</div>
+        <div style="color:var(--text-secondary);">Replaced by <code>agents.yaml</code> + <code>create_agent()</code></div>
+        <div><span style="color:var(--accent-red);">8 ×</span> <code>agent.yaml</code> per-agent files</div>
+        <div style="color:var(--text-secondary);">Consolidated into root <code>agents.yaml</code></div>
+        <div><span style="color:var(--accent-red);">5 ×</span> <code>pyproject.toml</code></div>
+        <div style="color:var(--text-secondary);">Consolidated into root <code>pyproject.toml</code></div>
+        <div><span style="color:var(--accent-red);">5 ×</span> <code>Makefile</code></div>
+        <div style="color:var(--text-secondary);">Single root <code>Makefile</code></div>
+        <div><span style="color:var(--accent-red);">5 ×</span> <code>.env.example</code></div>
+        <div style="color:var(--text-secondary);"><code>get_deploy_client</code> needs no env vars</div>
+        <div><span style="color:var(--accent-red);">1 ×</span> <code>docker-compose.yml</code></div>
+        <div style="color:var(--text-secondary);">Databricks manages containers</div>
+        <div><span style="color:var(--accent-red);">1 ×</span> <code>deploy.bat</code></div>
+        <div style="color:var(--text-secondary);">Replaced by <code>make deploy-dev</code></div>
+      </div>
+    </div>
+    <p style="color:var(--text-secondary); font-size:13px;">
+      <strong style="color:var(--text-primary);">Why:</strong> Each deleted file was a maintenance burden and
+      a potential source of drift (e.g., one pyproject.toml with a different version pin, one Makefile
+      missing the sync step). The consolidated structure has one canonical file for each concern.
+    </p>
+  </div>
+</details>
+
+  </div><!-- /issues-list -->
+</div><!-- /part2 -->
+
+<!-- ═══════════════════════════════════════════════════════════════ CORRECT PATTERNS -->
+<div id="correct-patterns" style="margin-top: 48px;">
+  <h2 class="section-title"><span class="icon">&#9989;</span>Correct Patterns Reference</h2>
+  <p style="color:var(--text-secondary); font-size:14px; margin-bottom:20px;">
+    Quick-reference for the most commonly mis-implemented patterns. Each block shows the
+    wrong approach and the correct replacement.
+  </p>
+
+  <div class="arch-card" style="margin-bottom:20px;">
+    <div style="font-weight:700; font-size:15px; margin-bottom:14px; color:var(--text-primary);">Never do file I/O at module load in agent.py</div>
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong — fails during log_model validation in temp dir</div>
+      <pre><code class="language-python"># WRONG — relative path fails when MLflow runs agent.py in a temp directory
+with open("agents.yaml") as f:
+    cfg = yaml.safe_load(f)</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Right — hardcode constants, read files lazily inside functions</div>
+      <pre><code class="language-python"># RIGHT — hardcode constants at module level
+_EXPERIMENT_NAME = "/Shared/my_experiment"
+_LLM_ENDPOINT    = os.environ.get("LLM_ENDPOINT", "databricks-meta-llama-3-3-70b-instruct")
+
+# Read files lazily inside functions using __file__-anchored paths
+def create_agent(key):
+    cfg_path = Path(__file__).parent / "agents.yaml"
+    with open(cfg_path) as f:
+        return yaml.safe_load(f)[key]</code></pre>
+    </div>
+  </div>
+
+  <div class="arch-card" style="margin-bottom:20px;">
+    <div style="font-weight:700; font-size:15px; margin-bottom:14px; color:var(--text-primary);">Never call network APIs at module load</div>
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong — network call fails during log_model validation</div>
+      <pre><code class="language-python"># WRONG — network call at module level fails during log_model validation
+mlflow.set_experiment("/Shared/my_experiment")   # ❌ at module level</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Right — call lazily on first predict()</div>
+      <pre><code class="language-python"># RIGHT — call lazily on first predict()
+def predict(self, request):
+    _setup_mlflow_tracing(experiment_name="/Shared/my_experiment")
+    ...</code></pre>
+    </div>
+  </div>
+
+  <div class="arch-card" style="margin-bottom:20px;">
+    <div style="font-weight:700; font-size:15px; margin-bottom:14px; color:var(--text-primary);">Use get_deploy_client not WorkspaceClient or OpenAI directly</div>
+    <div class="wrong-block">
+      <div class="block-label"><span class="dot"></span>Wrong — context-dependent failures</div>
+      <pre><code class="language-python"># WRONG — fails on serving endpoint (no DATABRICKS_HOST)
+client = OpenAI(base_url=os.environ["DATABRICKS_HOST"] + "/serving-endpoints", ...)
+
+# WRONG — fails on serving endpoint (no default credentials)
+client = WorkspaceClient().serving_endpoints.get_open_ai_client()</code></pre>
+    </div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Right — works everywhere</div>
+      <pre><code class="language-python"># RIGHT — works everywhere without any env vars
+from mlflow.deployments import get_deploy_client
+client = get_deploy_client("databricks")
+response = client.predict(endpoint=endpoint_name, inputs={...})</code></pre>
+    </div>
+  </div>
+
+  <div class="arch-card">
+    <div style="font-weight:700; font-size:15px; margin-bottom:14px; color:var(--text-primary);">Guard the serve-time block correctly</div>
+    <div class="fix-block">
+      <div class="block-label"><span class="dot"></span>Right — top-level imports only run at serve time, not during job exec()</div>
+      <pre><code class="language-python"># RIGHT — serve-time code guarded from spark_python_task exec()
+if __name__ != "__main__":
+    from mlflow.pyfunc import ResponsesAgent
+    from mlflow.types.responses import ResponsesRequest, ResponsesResponse, ResponsesStreamEvent
+    # define agent class here
+    AGENT = MyAgent()
+    mlflow.models.set_model(AGENT)
+
+if __name__ == "__main__":
+    # log_model here — no agent class imports needed
+    import mlflow
+    mlflow.set_tracking_uri("databricks")
+    mlflow.set_registry_uri("databricks-uc")
+    with mlflow.start_run():
+        mlflow.pyfunc.log_model(artifact_path="agent", python_model=__file__, ...)</code></pre>
+    </div>
+  </div>
+
+</div><!-- /correct-patterns -->
+
+<!-- ═══════════════════════════════════════════════════════════════ REPLIT -->
+<div id="replit" style="margin-top: 48px;">
+  <div class="replit-section">
+    <div class="replit-header">
+      <div class="replit-icon">&#128295;</div>
+      <div>
+        <h2>Replit Agent Instructions</h2>
+        <p>Copy-paste this prompt into Replit Agent to generate correct Databricks multi-agent code from the start.</p>
+      </div>
+    </div>
+    <div class="replit-body">
+      <p style="color:var(--text-secondary); font-size:13px; margin-bottom:16px;">
+        This prompt encodes all 33 hard-won lessons from this guide — the original 23 deployment
+        blockers plus 10 architectural rules from Part 2 — so a Replit agent avoids every
+        pitfall when generating a Databricks Asset Bundle multi-agent system.
+      </p>
+      <div class="copy-prompt-wrap">
+        <div class="copy-toolbar">
+          <span>Replit Agent System Prompt — Databricks Multi-Agent (MLflow ResponsesAgent) — 33 Rules</span>
+          <button class="copy-btn" id="copyBtn" onclick="copyPrompt()">
+            &#128203; Copy to clipboard
+          </button>
+        </div>
+        <div class="replit-prompt" id="replitPrompt">You are generating a Databricks Asset Bundle (DAB) multi-agent system using the MLflow ResponsesAgent pattern deployed to Databricks Model Serving. Follow every rule below without exception — each rule was discovered through painful debugging on a real production system.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ARCHITECTURE
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Deploy EXACTLY ONE Databricks Model Serving endpoint (the orchestrator only).
+- Sub-agents are Python wheels installed as DAB environment dependencies.
+- The orchestrator imports sub-agent classes directly and calls predict() in-process.
+- There is NO HTTP between agents. No separate endpoints per sub-agent.
+- The DAB job (spark_python_task) only registers/deploys the orchestrator model.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+databricks.yml RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. NEVER add catalog: or schema: under workspace:. They are not valid DAB fields.
+   Set Unity Catalog coordinates in Python code via registered_model_name="cat.schema.model".
+
+2. NEVER add job_clusters. Serverless workspaces only support serverless compute.
+   Serverless is the default when no cluster is specified. Use environments + spec.client: "2".
+
+3. NEVER add environment_variables under tasks. It is not a valid DAB task field.
+   Read config from os.environ.get() with defaults in agent code.
+
+4. The environments block MUST include mlflow>=3.1.0 as the FIRST dependency.
+   Reason: serverless pre-installs an older MLflow that lacks ResponsesAgent tracing APIs.
+   MLflow 3.1.0+ is required for real-time tracing on serving endpoints and for
+   databricks-agents>=1.2.0 compatibility.
+
+Correct databricks.yml skeleton:
+  environments:
+    - environment_key: agents_env
+      spec:
+        client: "2"
+        dependencies:
+          - mlflow>=3.1.0                # FIRST — required for real-time endpoint tracing
+          - databricks-agents>=1.2.0
+          - ./dist/wealth_management_bundle-0.1.0-py3-none-any.whl
+  tasks:
+    - task_key: deploy_orchestrator
+      spark_python_task:
+        python_file: ${workspace.file_path}/orchestrator/agent.py
+      environment_key: agents_env
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+pyproject.toml RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+5. ALWAYS set requires-python = ">=3.11" — NEVER >=3.12. Databricks serverless runs Python 3.11.
+
+6. NEVER use exact version pins (==) in [project] dependencies. Use >= lower bounds only.
+   Exact pins conflict with pre-installed serverless packages and cause pip resolver failures.
+
+7. Pre-installed serverless packages (mlflow, databricks-sdk, pydantic, pyarrow) MUST NOT
+   appear in [project] dependencies. Move them to [project.optional-dependencies] dev only.
+
+Correct pyproject.toml skeleton:
+  [project]
+  requires-python = ">=3.11"
+  dependencies = [
+      "openai>=1.30.0",
+      "requests>=2.31.0",
+  ]
+  [project.optional-dependencies]
+  dev = [
+      "mlflow>=3.1.0",
+      "databricks-agents>=1.2.0",
+      "databricks-sdk>=0.36.0",
+      "pydantic>=2.0.0,<3.0.0",
+      "pyarrow>=14.0.0",
+      "pytest>=7.4.0,<9.0.0",
+  ]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+agent.py STRUCTURE RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+8. The file MUST be split into two guarded blocks:
+
+   BLOCK 1 — if __name__ != "__main__":
+     - Contains all serve-time imports: mlflow, ResponsesAgent, ResponsesRequest,
+       ResponsesResponse, ResponsesStreamEvent, OpenAI.
+     - Contains the agent class definition.
+     - Ends with: AGENT = MyAgent(); mlflow.models.set_model(AGENT)
+     - This block runs inside the Model Serving container where MLflow 2.22.4 is active.
+
+   BLOCK 2 — if __name__ == "__main__":
+     - Contains the deployment logic: log_model, create/update serving endpoint.
+     - Only imports mlflow (plain) and databricks.sdk — both pre-installed.
+     - This block runs in spark_python_task.
+
+   WHY: spark_python_task runs your file via exec(). Top-level imports execute immediately
+   at exec() time, before the upgraded MLflow environment is fully active. Guarding imports
+   under if __name__ != "__main__" prevents ImportError on ResponsesAgent.
+
+9. Top-level code (outside both blocks) must be ONLY:
+   - Standard library imports: json, os, sys, tomllib, warnings, typing, uuid
+   - Constants using os.environ.get() with defaults
+   - The __file__ guard: if "__file__" not in globals(): __file__ = sys._getframe(0).f_code.co_filename
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MLFLOW API RULES (MLflow 3.1.0+)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+10. MLflow 3.x renamed the responses types — use the compat shim in base_agent.py:
+    try:
+        from mlflow.types.responses import (
+            ResponsesAgentRequest as ResponsesRequest,
+            ResponsesAgentResponse as ResponsesResponse,
+            ResponsesAgentStreamEvent as ResponsesStreamEvent,
+        )
+    except ImportError:
+        from mlflow.types.responses import ResponsesRequest, ResponsesResponse, ResponsesStreamEvent
+    This handles both MLflow 2.x and 3.x without version-specific branching.
+
+11. NEVER import SpanType. Use the string literal directly:
+    mlflow.start_span(name="llm_call", span_type="LLM")  # correct
+
+12. NEVER import output_to_responses_items_stream or to_chat_completions_input — unavailable.
+    Implement the agentic loop manually using direct deploy client calls.
+
+13. In the __main__ block, ALWAYS set tracking and registry URIs FIRST before any mlflow call:
+    os.environ["MLFLOW_TRACKING_URI"] = "databricks"
+    mlflow.set_tracking_uri("databricks")
+    mlflow.set_registry_uri("databricks-uc")
+    Setting only the Python API is not enough — the env var must also be set so it takes
+    precedence over any container-injected MLFLOW_TRACKING_URI.
+
+14. Use artifact_path= NOT name= in log_model():
+    mlflow.pyfunc.log_model(artifact_path="agent", ...)
+
+15. Pass resources= to log_model() to declare which serving endpoints the model depends on:
+    from mlflow.models.resources import DatabricksServingEndpoint
+    resources=[DatabricksServingEndpoint(endpoint_name=_LLM_ENDPOINT)]
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CREDENTIALS & RUNTIME ENVIRONMENT RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+16. NEVER use WorkspaceClient() inside the serve-time agent class.
+    On Model Serving, DATABRICKS_HOST and DATABRICKS_TOKEN are auto-injected as env vars.
+    Build the OpenAI client directly:
+    OpenAI(base_url=f"{os.environ['DATABRICKS_HOST']}/serving-endpoints",
+           api_key=os.environ['DATABRICKS_TOKEN'])
+
+17. ALWAYS guard real LLM calls in predict_stream with:
+    if not os.environ.get("DATABRICKS_HOST"):
+        # Return stub response — mlflow.pyfunc.log_model calls predict() for validation
+        # at logging time when DATABRICKS_HOST is not set (endpoint doesn't exist yet).
+        yield ResponsesStreamEvent(type="response.output_item.done", item={...stub...})
+        return
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ResponsesStreamEvent RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+18. Every message item MUST include id (UUID string) and status ("completed"):
+    ResponsesStreamEvent(
+        type="response.output_item.done",
+        item={
+            "type": "message",
+            "id": str(uuid4()),       # REQUIRED
+            "role": "assistant",
+            "status": "completed",    # REQUIRED
+            "content": [{"type": "output_text", "text": content}],
+        }
+    )
+
+19. Tool call output items also need id, call_id, and status:
+    ResponsesStreamEvent(
+        type="response.output_item.done",
+        item={
+            "type": "function_call_output",
+            "id": str(uuid4()),
+            "call_id": tool_call_id,
+            "output": result_string,
+            "status": "completed",
+        }
+    )
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+DEPLOYMENT SCRIPT RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+20. NEVER use jq in deploy scripts. Use Python for JSON parsing:
+    python -c "import json,sys; print(json.load(sys.stdin)['key'])"
+    Python is already required — no extra tool installation needed on any OS.
+
+21. NEVER use AutoCaptureConfigInput for endpoints serving agent models.
+    Databricks raises InvalidParameterValue for any agent model endpoint that uses it.
+    For inference tables on agent endpoints use put_ai_gateway() after create/update:
+    from databricks.sdk.service.serving import AiGatewayConfig, AiGatewayInferenceTableConfig
+    w.serving_endpoints.put_ai_gateway(
+        name=endpoint_name,
+        inference_table_config=AiGatewayInferenceTableConfig(
+            catalog_name="workspace", schema_name="default", enabled=True,
+        )
+    )
+    BUT: wrap this in try/except NotFound — some workspace tiers don't support inference
+    tables for agent model endpoints and will raise NotFound. Traces still work through
+    MLFLOW_TRACKING_URI env var without inference tables.
+
+22. ALWAYS set MLFLOW_TRACKING_URI and MLFLOW_EXPERIMENT_NAME as environment_vars on
+    ServedEntityInput to route traces from the serving container to the workspace:
+    environment_vars={
+        "MLFLOW_TRACKING_URI":    "databricks",
+        "MLFLOW_EXPERIMENT_NAME": "/Shared/my_experiment",
+    }
+    The container's default MLFLOW_TRACKING_URI points to a local ephemeral SQLite store —
+    traces go nowhere without this override.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+QUICK CHECKLIST — verify before finalising generated code
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[ ] databricks.yml has NO catalog:/schema: under workspace:
+[ ] databricks.yml has NO job_clusters block
+[ ] databricks.yml has NO environment_variables on tasks
+[ ] databricks.yml environments has mlflow>=3.1.0 + databricks-agents>=1.2.0 as FIRST dependencies
+[ ] All pyproject.toml have requires-python = ">=3.11"
+[ ] No exact == pins in [project] dependencies
+[ ] mlflow/databricks-agents/databricks-sdk/pydantic/pyarrow are in [dev] only, not main deps
+[ ] agent.py serve-time imports are inside if __name__ != "__main__":
+[ ] agent.py __main__ block sets os.environ MLFLOW_TRACKING_URI + calls set_tracking_uri FIRST
+[ ] Imports use ResponsesAgent from mlflow.pyfunc (not mlflow.models)
+[ ] Types use MLflow compat shim for ResponsesRequest/Response/StreamEvent (2.x vs 3.x names)
+[ ] No SpanType import — using span_type="LLM"/"TOOL"/"AGENT" string literals instead
+[ ] No output_to_responses_items_stream or to_chat_completions_input imports
+[ ] log_model uses artifact_path= not name=
+[ ] log_model passes resources=[DatabricksServingEndpoint(...)] for the LLM endpoint
+[ ] NO AutoCaptureConfigInput for agent model endpoints — use put_ai_gateway() or omit entirely
+[ ] ServedEntityInput has environment_vars with MLFLOW_TRACKING_URI=databricks + MLFLOW_EXPERIMENT_NAME
+[ ] predict_stream has DATABRICKS_HOST guard returning stub response
+[ ] Every ResponsesStreamEvent message item has id and status fields
+[ ] Deploy scripts use python -c for JSON parsing (not jq)
+[ ] Only ONE serving endpoint (orchestrator) — sub-agents are in-process Python calls
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ARCHITECTURE EVOLUTION RULES (from Part 2 refactoring)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+22. NEVER do file I/O or network calls at module load time in agent.py.
+    Use hardcoded constants for experiment names, model names, and LLM endpoints.
+    Read files (like agents.yaml) lazily inside functions using Path(__file__).parent-anchored paths.
+    Reason: log_model runs agent.py in a temp directory where relative paths don't resolve.
+
+23. Use get_deploy_client("databricks") for ALL LLM calls — never WorkspaceClient() or
+    direct OpenAI client construction inside the agent class.
+    from mlflow.deployments import get_deploy_client
+    client = get_deploy_client("databricks")
+    response = client.predict(endpoint=endpoint_name, inputs={...})
+    Reason: Works in job cluster, serving endpoint, and local dev without any env vars.
+
+24. Put the agentic loop in a shared BaseWealthAgent mixin in shared/base_agent.py.
+    Each agent class declares ONLY: llm_endpoint, system_prompt, _tools_dict.
+    The mixin provides: predict(), predict_stream(), _run_loop(), _dispatch_tool().
+    Reason: DRY — adding a new agent is 4 lines, not 165. Loop fixes propagate to all agents.
+
+25. Use a single agents.yaml registry at the project root.
+    The create_agent(key) factory builds any agent from it.
+    Each entry has: name, system_prompt, tools_module, max_iterations.
+    Reason: Zero per-agent Python files. One YAML block = one new agent.
+
+26. Build ONE wheel from the root pyproject.toml — not one wheel per agent.
+    Run scripts/sync_bundle.py before every build (wire it into make deploy-dev via make sync).
+    The wheel is named: wealth_management_bundle-0.1.0-py3-none-any.whl
+    Reason: One build, one upload, one install. Sync script prevents stale tool code.
+
+27. Use mlflow.start_span() context managers for tracing — always have a parent AGENT span
+    in predict(). Nest LLM call spans and tool spans as children.
+    with mlflow.start_span(name="predict", span_type="AGENT") as span:
+        with mlflow.start_span(name="llm_call", span_type="LLM") as llm_span:
+            llm_span.set_inputs({"num_messages": len(messages)})
+    Reason: Full call tree visible in Databricks Experiments Traces tab.
+
+28. Make _setup_mlflow_tracing idempotent with a module-level flag:
+    _tracing_configured = False
+    def _setup_mlflow_tracing(experiment_name=None):
+        global _tracing_configured
+        if _tracing_configured: return
+        mlflow.set_tracking_uri("databricks")
+        if experiment_name: mlflow.set_experiment(experiment_name)
+        _tracing_configured = True
+    Call it on the first line of predict(), never at module level.
+    Reason: mlflow.set_experiment() is a network call that fails during log_model validation.
+
+29. Use the MLflow version compatibility shim for ResponsesRequest/AgentRequest at the top of base_agent.py:
+    try:
+        from mlflow.types.responses import (
+            ResponsesAgentRequest as ResponsesRequest,
+            ResponsesAgentResponse as ResponsesResponse,
+            ResponsesAgentStreamEvent as ResponsesStreamEvent,
+        )
+    except ImportError:
+        from mlflow.types.responses import ResponsesRequest, ResponsesResponse, ResponsesStreamEvent
+    Reason: MLflow 2.x uses ResponsesRequest; MLflow 3.x renamed to ResponsesAgentRequest.
+
+30. Let the LLM decide which sub-agent tools to call based on the user request.
+    NEVER force sequential execution of all sub-agents in the system prompt.
+    The system prompt should describe each sub-agent tool and when to use it, then instruct
+    the LLM to call ONLY the relevant one(s).
+    Reason: 4x faster for simple requests; correct behavior; cost scales with complexity.
+
+31. predict() must return ONLY the final assistant message — not intermediate tool call outputs.
+    Collect all stream events, find the last assistant message, return that single item.
+    NEVER return all events from predict_stream() directly.
+    Reason: Each returned item creates a separate response bubble in the UI.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+UPDATED QUICK CHECKLIST — verify before finalising generated code
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[ ] No file I/O or network calls at agent.py module load — constants are hardcoded
+[ ] Using get_deploy_client("databricks") for all LLM calls (not WorkspaceClient or direct OpenAI)
+[ ] Agentic loop is in BaseWealthAgent mixin — agent classes declare only identity
+[ ] Single agents.yaml registry + create_agent(key) factory
+[ ] Single root pyproject.toml — one wheel, no sync_bundle.py needed
+[ ] mlflow.start_span() used for tracing with parent AGENT span in predict()
+[ ] No _setup_mlflow_tracing or mlflow.tracing.enable() calls in model code — traces route via env vars
+[ ] MLflow version compat shim in base_agent.py for ResponsesRequest/AgentRequest names
+[ ] System prompt enables LLM routing — no forced sequential execution of all agents
+[ ] predict() returns only final assistant message — not all intermediate stream events
+[ ] ServedEntityInput.environment_vars sets MLFLOW_TRACKING_URI=databricks + MLFLOW_EXPERIMENT_NAME
+[ ] No AutoCaptureConfigInput — use put_ai_gateway() wrapped in try/except NotFound, or omit</div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════ FOOTER -->
+<footer class="site-footer">
+  Databricks Multi-Agent Wealth Management Deployment Guide &nbsp;·&nbsp;
+  Updated April 2026 &nbsp;·&nbsp;
+  MLflow 3.1.0+ &nbsp;·&nbsp; Python 3.11 &nbsp;·&nbsp; Databricks Serverless
+</footer>
+
+</div><!-- /page-wrap -->
+
+<script>
+  // Initialise highlight.js
+  document.addEventListener("DOMContentLoaded", () => {
+    document.querySelectorAll("pre code").forEach(el => hljs.highlightElement(el));
+  });
+
+  // Copy-to-clipboard
+  function copyPrompt() {
+    const text = document.getElementById("replitPrompt").innerText;
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.getElementById("copyBtn");
+      btn.textContent = "✓ Copied!";
+      btn.classList.add("copied");
+      setTimeout(() => {
+        btn.innerHTML = "&#128203; Copy to clipboard";
+        btn.classList.remove("copied");
+      }, 2500);
+    }).catch(() => {
+      // Fallback for older browsers
+      const ta = document.createElement("textarea");
+      ta.value = document.getElementById("replitPrompt").innerText;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      const btn = document.getElementById("copyBtn");
+      btn.textContent = "✓ Copied!";
+      btn.classList.add("copied");
+      setTimeout(() => {
+        btn.innerHTML = "&#128203; Copy to clipboard";
+        btn.classList.remove("copied");
+      }, 2500);
+    });
+  }
+
+  // Smooth scroll for TOC links
+  document.querySelectorAll('a[href^="#"]').forEach(a => {
+    a.addEventListener("click", e => {
+      const target = document.querySelector(a.getAttribute("href"));
+      if (target) {
+        e.preventDefault();
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+        // Auto-open the details element if it's closed
+        if (target.tagName === "DETAILS" && !target.open) {
+          target.open = true;
+        }
+      }
+    });
+  });
+</script>
+</body>
+</html>
