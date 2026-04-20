@@ -1,0 +1,1252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Databricks Multi-Agent System — Master Prompt</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface2: #22263a;
+      --border: #2e3250;
+      --accent: #4f6ef7;
+      --accent2: #7c3aed;
+      --green: #22c55e;
+      --yellow: #f59e0b;
+      --red: #ef4444;
+      --cyan: #06b6d4;
+      --text: #e2e8f0;
+      --muted: #8892a4;
+      --code-bg: #0d1117;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      font-size: 15px;
+    }
+
+    /* ── Layout ── */
+    .layout { display: flex; min-height: 100vh; }
+
+    nav {
+      width: 260px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      padding: 24px 0;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      overflow-y: auto;
+    }
+
+    nav .logo {
+      padding: 0 20px 20px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 16px;
+    }
+    nav .logo span {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+    nav .logo p { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+    nav ul { list-style: none; padding: 0 8px; }
+    nav ul li a {
+      display: block;
+      padding: 7px 12px;
+      border-radius: 6px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 13px;
+      transition: all .15s;
+    }
+    nav ul li a:hover { background: var(--surface2); color: var(--text); }
+    nav ul li.section-header {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding: 14px 12px 4px;
+    }
+
+    main {
+      flex: 1;
+      padding: 48px 56px;
+      max-width: 960px;
+    }
+
+    /* ── Header ── */
+    .page-header {
+      background: linear-gradient(135deg, var(--surface) 0%, var(--surface2) 100%);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 36px 40px;
+      margin-bottom: 48px;
+    }
+    .page-header h1 { font-size: 28px; font-weight: 700; margin-bottom: 8px; }
+    .page-header h1 span { color: var(--accent); }
+    .page-header p { color: var(--muted); max-width: 620px; line-height: 1.6; }
+    .badges { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+    .badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 20px;
+      border: 1px solid;
+    }
+    .badge.blue  { color: var(--accent); border-color: var(--accent); }
+    .badge.green { color: var(--green);  border-color: var(--green); }
+    .badge.purple{ color: #a78bfa;       border-color: #a78bfa; }
+    .badge.cyan  { color: var(--cyan);   border-color: var(--cyan); }
+
+    /* ── Copy button ── */
+    .copy-section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px 28px;
+      margin-bottom: 48px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+    .copy-section p { color: var(--muted); font-size: 13px; }
+    .copy-section p strong { color: var(--text); }
+    .btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: opacity .15s;
+    }
+    .btn:hover { opacity: .85; }
+    .btn.copied { background: var(--green); }
+
+    /* ── Sections ── */
+    section { margin-bottom: 56px; scroll-margin-top: 24px; }
+    section h2 {
+      font-size: 19px;
+      font-weight: 700;
+      margin-bottom: 20px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    section h2 .icon {
+      width: 28px; height: 28px;
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+    section h3 {
+      font-size: 15px;
+      font-weight: 600;
+      margin: 24px 0 10px;
+      color: var(--cyan);
+    }
+    section p { color: var(--muted); margin-bottom: 12px; }
+    section p strong { color: var(--text); }
+
+    /* ── Callout boxes ── */
+    .callout {
+      border-radius: 8px;
+      padding: 14px 18px;
+      margin-bottom: 16px;
+      font-size: 13.5px;
+      border-left: 3px solid;
+      display: flex;
+      gap: 10px;
+    }
+    .callout.warning { background: #1c1700; border-color: var(--yellow); color: #fde68a; }
+    .callout.danger  { background: #1c0000; border-color: var(--red);    color: #fca5a5; }
+    .callout.info    { background: #001c30; border-color: var(--accent);  color: #93c5fd; }
+    .callout.success { background: #001c0a; border-color: var(--green);   color: #86efac; }
+    .callout-icon { flex-shrink: 0; font-size: 15px; margin-top: 1px; }
+
+    /* ── Code blocks ── */
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 18px 20px;
+      overflow-x: auto;
+      margin-bottom: 16px;
+      position: relative;
+    }
+    code {
+      font-family: "JetBrains Mono", "Fira Code", Consolas, monospace;
+      font-size: 12.5px;
+      line-height: 1.65;
+      color: #e2e8f0;
+    }
+    pre .lang {
+      position: absolute;
+      top: 8px; right: 12px;
+      font-size: 10px;
+      color: var(--muted);
+      font-family: sans-serif;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+    /* syntax highlight */
+    .kw  { color: #c792ea; }
+    .st  { color: #c3e88d; }
+    .cm  { color: #546e7a; font-style: italic; }
+    .fn  { color: #82aaff; }
+    .nm  { color: #f78c6c; }
+    .op  { color: #89ddff; }
+
+    /* ── Tables ── */
+    .table-wrap { overflow-x: auto; margin-bottom: 16px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    th {
+      background: var(--surface2);
+      text-align: left;
+      padding: 10px 14px;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      border-bottom: 1px solid var(--border);
+    }
+    td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+    tr:last-child td { border-bottom: none; }
+    td code {
+      background: var(--surface2);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 11.5px;
+    }
+    td.pass { color: var(--green); font-weight: 600; }
+    td.fail { color: var(--red);   font-weight: 600; }
+
+    /* ── Checklist ── */
+    .checklist { list-style: none; padding: 0; }
+    .checklist li {
+      padding: 6px 0 6px 28px;
+      position: relative;
+      color: var(--muted);
+      font-size: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .checklist li:last-child { border-bottom: none; }
+    .checklist li::before {
+      content: "☐";
+      position: absolute;
+      left: 0;
+      color: var(--accent);
+    }
+    .checklist li strong { color: var(--text); }
+
+    /* ── Hidden prompt source ── */
+    #prompt-source { display: none; }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<!-- Hidden copyable prompt text -->
+<textarea id="prompt-source">
+You are a Senior Databricks Engineer with deep expertise in:
+- Databricks Asset Bundles (DAB)
+- Multi-agent architectures
+- MLflow tracing and observability
+- Production-grade system design on Databricks
+
+## ATTACHED SPECIFICATION
+
+The attached document contains:
+- User stories and business requirements
+- Agent definitions and responsibilities
+- Data flow and routing logic
+- Any domain-specific tools or integrations needed
+
+Read the attached document first. Derive agent names, intents, tools, routing logic, and domain knowledge entirely from it. Do not invent requirements not present in the document.
+
+## YOUR TASK
+
+Implement a production-ready multi-agent system on Databricks that fulfills every requirement in the attached specification. The architecture must follow ALL patterns below exactly — these are hard constraints learned from production deployments.
+
+---
+
+## 1. MANDATORY ARCHITECTURE PATTERNS
+
+### Agent Structure
+- One Orchestrator that receives queries, validates input, routes to agents, and aggregates results
+- Specialized agents derived from the attached spec
+- Each agent inherits from BaseAgent or RetryableAgent
+- Agents are modular, independently testable, and communicate only via the orchestrator
+
+### Orchestrator Responsibilities
+- Validate input: reject empty/whitespace queries immediately → {"status": "error", "error": "Query must not be empty"}
+- Strip and normalize query before processing
+- Generate workflow ID using uuid4().hex — never time.time() (collision risk)
+- Wrap all monitor.log() calls in try/except — monitoring failure must never crash a workflow
+- Use search_with_fallback pattern: if confidence < threshold, retry with broader intent
+
+### Retry Logic
+- RetryableAgent with configurable max_retries and retry_delay
+- Exponential backoff: delay = retry_delay * (2 ** (attempt - 1))
+- On retry attempts, call execute() directly — NEVER super().run() on retries (creates duplicate nested MLflow spans)
+- First attempt uses BaseAgent.run() which creates the traced span
+
+---
+
+## 2. CONFIGURATION — SINGLE SOURCE OF TRUTH
+
+All values in src/config/settings.py as dataclasses. No hardcoded values anywhere else.
+
+@dataclass
+class ModelConfig:
+    endpoint_name: str = "databricks-meta-llama-3-1-70b-instruct"
+    temperature: float = 0.1
+    max_tokens: int = 2000
+    max_retries: int = 3
+    retry_delay: float = 1.0
+
+@dataclass
+class AgentConfig:
+    confidence_threshold: float = 0.7
+    max_query_length: int = 2000
+    min_query_length: int = 3
+    search_max_results: int = 5
+    search_timeout: int = 30
+    response_min_words: int = 20
+    response_max_words: int = 500
+
+@dataclass
+class MonitoringConfig:
+    catalog: str = "workspace"
+    schema: str = "default"
+    table: str = "<your_table_name>"
+
+    @property
+    def full_table(self) -> str:
+        return f"{self.catalog}.{self.schema}.{self.table}"
+
+@dataclass
+class ServingConfig:
+    model_name_catalog: str = "workspace"
+    model_name_schema: str = "default"
+    model_name: str = "<your_model_name>"
+    endpoint_name: str = "<your_endpoint>"
+    workload_size: str = "Small"
+    scale_to_zero: bool = True
+
+    @property
+    def full_model_name(self) -> str:
+        return f"{self.model_name_catalog}.{self.model_name_schema}.{self.model_name}"
+
+@dataclass
+class GuardrailConfig:
+    max_repeated_chars: int = 20
+    injection_patterns: list = None
+    enable_pii_masking: bool = True
+    min_confidence_to_proceed: float = 0.7
+    min_output_confidence: float = 0.4
+    enable_output_pii_scan: bool = True
+
+    def __post_init__(self):
+        if self.injection_patterns is None:
+            self.injection_patterns = [
+                "ignore previous instructions", "ignore all instructions",
+                "system:", "<|im_start|>", "<|im_end|>",
+                "###instruction", "###system", "you are now",
+                "act as if", "forget you are",
+            ]
+
+---
+
+## 3. MLFLOW TRACING
+
+Every agent execution, tool call, and LLM request must be traced.
+
+Always set before any MLflow call:
+    mlflow.set_tracking_uri("databricks")
+    mlflow.set_registry_uri("databricks-uc")
+
+Experiment path — MUST use /Shared/, never /Users/
+Service principals resolve /Users/ to a UUID path and fail:
+    mlflow.set_experiment("/Shared/<your_experiment_name>")
+
+Capture per span: inputs, outputs, latency, agent name, tool usage.
+
+---
+
+## 4. GUARDRAILS (NON-NEGOTIABLE)
+
+Guardrails run at three checkpoints. A failed guardrail stops the pipeline immediately.
+
+### Layer 1 — Input Guardrails (src/guardrails/input_guardrails.py)
+Called by orchestrator BEFORE any agent runs.
+
+@dataclass
+class GuardrailResult:
+    passed: bool
+    reason: str = ""
+    sanitized_query: str = ""
+
+class InputGuardrails:
+    def check(self, query: str) -> GuardrailResult: ...
+
+Checks (fail fast on first violation):
+1. Empty/whitespace → block
+2. Min length (< settings.agent.min_query_length) → block
+3. Max length (> settings.agent.max_query_length) → block
+4. Repetition flood (single char/word repeated > 20x) → block
+5. Prompt injection (patterns from GuardrailConfig) → block
+6. PII detection → MASK (do not block), log warning, never log original PII
+
+PII patterns to mask:
+    email:       r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+"  → [EMAIL]
+    phone:       r"\b(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b"  → [PHONE]
+    credit_card: r"\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b"  → [CARD]
+    ssn:         r"\b\d{3}-\d{2}-\d{4}\b"  → [SSN]
+
+Orchestrator integration:
+    guardrail_result = self.input_guardrails.check(query)
+    if not guardrail_result.passed:
+        return {"status": "blocked", "reason": guardrail_result.reason, "workflow": {...}}
+    query = guardrail_result.sanitized_query
+
+### Layer 2 — Routing Guardrails (src/guardrails/routing_guardrails.py)
+Called AFTER triage, BEFORE search.
+
+@dataclass
+class RoutingDecision:
+    proceed: bool
+    force_escalation: bool = False
+    escalation_reason: str = ""
+
+class RoutingGuardrails:
+    def check(self, triage_result: Dict) -> RoutingDecision: ...
+
+Checks:
+- confidence < threshold → force escalation
+- intent not in triage_categories → force escalation
+- intent == "escalation" → force escalation
+- needs_escalation=True always wins even at high confidence
+
+Orchestrator integration:
+    routing_decision = self.routing_guardrails.check(triage_result)
+    if routing_decision.force_escalation:
+        triage_result["routing"]["escalation_reason"] = routing_decision.escalation_reason
+        return self._handle_escalation(triage_result, workflow)
+
+### Layer 3 — Output Guardrails (src/guardrails/output_guardrails.py)
+Called on final result BEFORE returning to caller AND before monitor.log().
+
+@dataclass
+class OutputGuardrailResult:
+    passed: bool
+    sanitized_response: str
+    warnings: List[str]
+    escalate: bool = False
+
+class OutputGuardrails:
+    def check(self, result: Dict) -> OutputGuardrailResult: ...
+
+Checks:
+- Empty response → replace with safe fallback message
+- word_count < response_min_words → add "response_too_short" warning
+- sources_count == 0 and not escalated → add "no_sources" warning
+- PII in response → mask before returning
+- confidence < min_output_confidence → escalate instead of returning low-confidence answer
+
+Orchestrator integration:
+    output_check = self.output_guardrails.check(final_result)
+    final_result["response"] = output_check.sanitized_response
+    if output_check.warnings:
+        final_result.setdefault("metadata", {})["guardrail_warnings"] = output_check.warnings
+    if output_check.escalate:
+        return self._handle_escalation(triage_result, workflow)
+
+---
+
+## 5. PRODUCTION MONITORING (DELTA TABLE)
+
+Write per-query metrics via Databricks SDK statement execution.
+
+Non-negotiable rules:
+1. NO expression partitioning — PARTITIONED BY (DATE(timestamp)) not supported on serverless warehouses. Omit it.
+2. Use StatementParameterListItem, not plain dicts:
+       from databricks.sdk.service.sql import StatementParameterListItem
+       params = [StatementParameterListItem(name=k, value=str(v) if v is not None else None)
+                 for k, v in d.items()]
+3. Explicit CAST in INSERT SQL — all params arrive as strings:
+       CAST(:confidence AS DOUBLE), CAST(:escalated AS BOOLEAN), CAST(:latency_ms AS DOUBLE)
+4. Booleans as lowercase strings: "true"/"false" not "True"/"False"
+5. All monitoring calls in try/except — never let monitoring crash the workflow
+
+Extend table with guardrail columns:
+    input_blocked     BOOLEAN,
+    pii_detected      BOOLEAN,
+    injection_detected BOOLEAN,
+    output_warnings   STRING,
+    output_escalated  BOOLEAN
+
+---
+
+## 6. SEARCH TIMEOUT ENFORCEMENT
+
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+
+with ThreadPoolExecutor(max_workers=1) as executor:
+    future = executor.submit(self.search_tool.search, query=query, intent=intent)
+    try:
+        results = future.result(timeout=settings.agent.search_timeout)
+    except FuturesTimeoutError:
+        raise TimeoutError(f"Search timed out after {settings.agent.search_timeout}s")
+
+---
+
+## 7. PYTHON WHEEL PACKAGING
+
+setup.py must use explicit package_dir mapping:
+
+setup(
+    name="<your_package_name>",
+    packages=["<pkg>", "<pkg>.agents", "<pkg>.tools", "<pkg>.orchestrator",
+              "<pkg>.tracing", "<pkg>.config", "<pkg>.guardrails"],
+    package_dir={
+        "<pkg>": "src",
+        "<pkg>.agents": "src/agents",
+        "<pkg>.tools": "src/tools",
+        "<pkg>.orchestrator": "src/orchestrator",
+        "<pkg>.tracing": "src/tracing",
+        "<pkg>.config": "src/config",
+        "<pkg>.guardrails": "src/guardrails",
+    },
+    entry_points={
+        "console_scripts": [
+            "main=<pkg>.main:main",
+            "register=<pkg>.register_model:register",
+        ]
+    },
+)
+
+---
+
+## 8. MODEL REGISTRATION & SERVING
+
+- Register as mlflow.pyfunc.PythonModel to Unity Catalog
+- Create separate serving_model.py logged via code_paths — never inline model class in register_model.py
+  (cloudpickle serializes by reference; serving container raises ModuleNotFoundError)
+- In serving_model.py load_context always set:
+      mlflow.set_tracking_uri("databricks")
+      mlflow.set_registry_uri("databricks-uc")
+  Without this, MLflow defaults to local SQLite → sqlite3.OperationalError in container
+
+---
+
+## 9. DAB CONFIGURATION (databricks.yml)
+
+bundle:
+  name: <your_bundle_name>
+
+workspace:
+  host: <your_workspace_host>
+
+resources:
+  jobs:
+    main_job:
+      name: "<Your Job Name>"
+      environments:
+        - environment_key: serverless
+          spec:
+            client: "2"   # "1"=REPL (unsupported), "2"=Jobs
+            dependencies:
+              - ./dist/<pkg>-0.1.0-py3-none-any.whl
+      tasks:
+        - task_key: main_task
+          environment_key: serverless
+          python_wheel_task:
+            package_name: <pkg>
+            entry_point: main
+            parameters: ["--query", "test query"]
+
+  registered_models:
+    main_model:
+      name: workspace.default.<model_name>
+      catalog_name: workspace
+      schema_name: default
+
+targets:
+  dev:
+    workspace:
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/dev
+
+Critical DAB rules:
+- NEVER use mode: development — prefixes all resources with dev_<username>_, breaks UC registration
+- Libraries belong in environments.spec.dependencies, not in the task
+- Build before deploy: python setup.py bdist_wheel
+
+---
+
+## 10. REQUIRED PROJECT STRUCTURE
+
+<project_root>/
+├── databricks.yml
+├── setup.py
+└── src/
+    ├── __init__.py
+    ├── main.py
+    ├── register_model.py
+    ├── serving_model.py
+    ├── monitoring.py
+    ├── config/
+    │   ├── __init__.py
+    │   └── settings.py
+    ├── agents/
+    │   ├── __init__.py
+    │   ├── base_agent.py
+    │   └── <agent_name>.py    (one per agent from spec)
+    ├── tools/
+    │   ├── __init__.py
+    │   └── <tool_name>.py     (one per tool from spec)
+    ├── orchestrator/
+    │   ├── __init__.py
+    │   └── orchestrator.py
+    ├── tracing/
+    │   ├── __init__.py
+    │   └── tracer.py
+    └── guardrails/
+        ├── __init__.py
+        ├── input_guardrails.py
+        ├── routing_guardrails.py
+        └── output_guardrails.py
+
+---
+
+## 11. OUTPUT FORMAT
+
+Provide in this order:
+1. Architecture diagram (textual, from attached spec)
+2. End-to-end flow explanation
+3. Complete working code for every file
+4. databricks.yml
+5. setup.py with correct package_dir
+6. Deploy and run commands:
+       python setup.py bdist_wheel
+       databricks bundle deploy --target dev
+       databricks bundle run -t dev <job_name>
+7. Monitoring table DDL + sample query
+
+---
+
+## 12. PITFALL REFERENCE
+
+client: "1" not supported for jobs → use client: "2"
+Libraries not supported for serverless task → move to environments.spec.dependencies
+ModuleNotFoundError: No module named '<pkg>' in job → fix setup.py package_dir mapping
+ModuleNotFoundError in serving container → separate serving_model.py via code_paths
+sqlite3.OperationalError in serving → mlflow.set_tracking_uri("databricks") in load_context
+RESOURCE_DOES_NOT_EXIST: experiment ID None → use /Shared/ experiment path not /Users/
+dev_username_ prefix on UC resources → remove mode: development from DAB target
+DELTA_OPERATION_NOT_ALLOWED Partitioning by expressions → omit PARTITIONED BY on serverless
+'dict' object has no attribute 'as_dict' → use StatementParameterListItem not plain dicts
+DATATYPE_MISMATCH on BOOLEAN/DOUBLE columns → add explicit CAST in INSERT SQL
+Monitoring crash kills workflow → wrap monitor.log() in try/except
+Duplicate MLflow spans on retry → call execute() directly on retries not super().run()
+Workflow ID collisions under concurrency → use uuid4().hex not int(time.time()*1000)
+Quality score goes negative → clamp: max(0.0, 1.0 - warnings * 0.15)
+Guardrail blocks valid queries → use full phrase match not substring for injection patterns
+PII masking breaks agent context → mask before agents but preserve masked form [EMAIL] etc
+Output guardrail must run before monitor.log() → sanitized response is what gets logged
+High confidence does not override escalation flag → check both guardrail AND triage flag
+
+---
+
+Now read the attached document and generate the complete implementation.
+</textarea>
+
+<div class="layout">
+
+  <!-- Sidebar -->
+  <nav>
+    <div class="logo">
+      <span>Master Prompt</span>
+      <p>Databricks Multi-Agent System</p>
+    </div>
+    <ul>
+      <li class="section-header">Overview</li>
+      <li><a href="#overview">Introduction</a></li>
+      <li><a href="#how-to-use">How to Use</a></li>
+      <li><a href="#checklist">Output Checklist</a></li>
+
+      <li class="section-header">Architecture</li>
+      <li><a href="#arch">Agent Structure</a></li>
+      <li><a href="#config">Configuration</a></li>
+      <li><a href="#retry">Retry Logic</a></li>
+
+      <li class="section-header">Observability</li>
+      <li><a href="#tracing">MLflow Tracing</a></li>
+      <li><a href="#monitoring">Delta Monitoring</a></li>
+
+      <li class="section-header">Safety</li>
+      <li><a href="#guardrails">Guardrails</a></li>
+      <li><a href="#input-grd">↳ Input Layer</a></li>
+      <li><a href="#routing-grd">↳ Routing Layer</a></li>
+      <li><a href="#output-grd">↳ Output Layer</a></li>
+
+      <li class="section-header">Deployment</li>
+      <li><a href="#packaging">Wheel Packaging</a></li>
+      <li><a href="#serving">Model Serving</a></li>
+      <li><a href="#dab">DAB Config</a></li>
+      <li><a href="#structure">Project Structure</a></li>
+
+      <li class="section-header">Reference</li>
+      <li><a href="#pitfalls">Pitfall Table</a></li>
+    </ul>
+  </nav>
+
+  <!-- Main content -->
+  <main>
+
+    <!-- Page header -->
+    <div class="page-header">
+      <h1>Databricks <span>Multi-Agent System</span><br>Master Prompt</h1>
+      <p>
+        Attach your user story document and paste the full prompt below into any LLM.
+        Every section is a hard constraint derived from real production deployments —
+        not suggestions.
+      </p>
+      <div class="badges">
+        <span class="badge blue">Databricks Asset Bundles</span>
+        <span class="badge green">MLflow Tracing</span>
+        <span class="badge purple">Unity Catalog</span>
+        <span class="badge cyan">Guardrails</span>
+        <span class="badge blue">Serverless</span>
+        <span class="badge green">Delta Monitoring</span>
+      </div>
+    </div>
+
+    <!-- Copy prompt -->
+    <div class="copy-section" id="how-to-use">
+      <div>
+        <strong>How to use</strong>
+        <p>1. Write your user story in a separate document (PDF, DOCX, or plain text).<br>
+           2. Copy the full prompt below.<br>
+           3. In your LLM of choice, attach the document and paste the prompt. The LLM will derive all agent names, intents, tools, and domain logic from your document.</p>
+      </div>
+      <button class="btn" id="copyBtn" onclick="copyPrompt()">Copy Full Prompt</button>
+    </div>
+
+    <!-- Overview -->
+    <section id="overview">
+      <h2><span class="icon" style="background:#1e2a4a">🎯</span> What This Prompt Produces</h2>
+      <p>Pasting this prompt with an attached specification document instructs the LLM to generate a <strong>complete, deployable Databricks multi-agent system</strong> including:</p>
+      <ul style="margin-left:20px;color:var(--muted);line-height:2">
+        <li>Full Python source for all agents, tools, orchestrator, tracing, guardrails</li>
+        <li><code>databricks.yml</code> DAB configuration</li>
+        <li><code>setup.py</code> with correct wheel packaging</li>
+        <li>Production Delta table monitoring</li>
+        <li>MLflow experiment tracing on <code>/Shared/</code> path</li>
+        <li>Unity Catalog model registration + serving endpoint</li>
+      </ul>
+    </section>
+
+    <!-- Architecture -->
+    <section id="arch">
+      <h2><span class="icon" style="background:#1e2a4a">🏗️</span> Mandatory Architecture Patterns</h2>
+
+      <h3>Agent Structure</h3>
+      <p>The prompt enforces one <strong>Orchestrator</strong> and N specialized agents from your spec, all inheriting from <code>BaseAgent</code> or <code>RetryableAgent</code>.</p>
+
+      <h3>Orchestrator Responsibilities</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Responsibility</th><th>Implementation</th></tr></thead>
+          <tbody>
+            <tr><td>Empty query rejection</td><td><code>{"status": "error", "error": "Query must not be empty"}</code></td></tr>
+            <tr><td>Query normalization</td><td><code>query = query.strip()</code> before any agent</td></tr>
+            <tr><td>Collision-safe workflow IDs</td><td><code>uuid4().hex</code> — never <code>time.time()</code></td></tr>
+            <tr><td>Monitoring isolation</td><td>All <code>monitor.log()</code> wrapped in <code>try/except</code></td></tr>
+            <tr><td>Low-confidence fallback</td><td><code>search_with_fallback</code> retries with broader intent</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout warning">
+        <span class="callout-icon">⚠️</span>
+        <span><strong>Never use <code>time.time()</code> for workflow IDs.</strong> Under concurrent load, millisecond timestamps collide. Always use <code>uuid4().hex</code>.</span>
+      </div>
+    </section>
+
+    <!-- Config -->
+    <section id="config">
+      <h2><span class="icon" style="background:#1a2e1a">⚙️</span> Configuration — Single Source of Truth</h2>
+      <p>All values live in <code>src/config/settings.py</code>. <strong>No hardcoded catalog names, endpoints, or paths anywhere else.</strong></p>
+
+      <pre><code><span class="kw">@dataclass</span>
+<span class="kw">class</span> <span class="fn">MonitoringConfig</span>:
+    catalog: <span class="fn">str</span> <span class="op">=</span> <span class="st">"workspace"</span>
+    schema:  <span class="fn">str</span> <span class="op">=</span> <span class="st">"default"</span>
+    table:   <span class="fn">str</span> <span class="op">=</span> <span class="st">"&lt;your_table&gt;"</span>
+
+    <span class="kw">@property</span>
+    <span class="kw">def</span> <span class="fn">full_table</span>(<span class="nm">self</span>) <span class="op">-&gt;</span> <span class="fn">str</span>:
+        <span class="kw">return</span> <span class="st">f"<span class="op">{</span><span class="nm">self</span>.catalog<span class="op">}</span>.<span class="op">{</span><span class="nm">self</span>.schema<span class="op">}</span>.<span class="op">{</span><span class="nm">self</span>.table<span class="op">}</span>"</span>
+
+<span class="kw">@dataclass</span>
+<span class="kw">class</span> <span class="fn">ServingConfig</span>:
+    endpoint_name:  <span class="fn">str</span> <span class="op">=</span> <span class="st">"&lt;your_endpoint&gt;"</span>
+    workload_size:  <span class="fn">str</span> <span class="op">=</span> <span class="st">"Small"</span>
+    scale_to_zero:  <span class="fn">bool</span> <span class="op">=</span> <span class="kw">True</span>
+
+    <span class="kw">@property</span>
+    <span class="kw">def</span> <span class="fn">full_model_name</span>(<span class="nm">self</span>) <span class="op">-&gt;</span> <span class="fn">str</span>:
+        <span class="kw">return</span> <span class="st">f"<span class="op">{</span><span class="nm">self</span>.model_name_catalog<span class="op">}</span>.<span class="op">{</span><span class="nm">self</span>.model_name_schema<span class="op">}</span>.<span class="op">{</span><span class="nm">self</span>.model_name<span class="op">}</span>"</span>
+<span class="lang">python</span></code></pre>
+    </section>
+
+    <!-- Retry -->
+    <section id="retry">
+      <h2><span class="icon" style="background:#1e1a2e">🔄</span> Retry Logic</h2>
+
+      <div class="callout danger">
+        <span class="callout-icon">🚨</span>
+        <span><strong>Critical:</strong> On retry attempts, call <code>execute()</code> directly — <strong>never</strong> <code>super().run()</code>. Calling <code>super().run()</code> on retries creates duplicate nested MLflow spans that pollute traces.</span>
+      </div>
+
+      <pre><code><span class="kw">for</span> attempt <span class="kw">in</span> <span class="fn">range</span>(<span class="nm">self</span>.max_retries <span class="op">+</span> <span class="nm">1</span>):
+    <span class="kw">if</span> attempt <span class="op">&gt;</span> <span class="nm">0</span>:
+        delay <span class="op">=</span> <span class="nm">self</span>.retry_delay <span class="op">*</span> (<span class="nm">2</span> <span class="op">**</span> (attempt <span class="op">-</span> <span class="nm">1</span>))  <span class="cm"># exponential backoff</span>
+        <span class="fn">time.sleep</span>(delay)
+
+    <span class="cm"># First attempt: use BaseAgent.run() to create the MLflow span</span>
+    <span class="cm"># Retries: call execute() directly to avoid nesting spans</span>
+    <span class="kw">if</span> attempt <span class="op">==</span> <span class="nm">0</span>:
+        result <span class="op">=</span> <span class="fn">super().run</span>(input_data)
+    <span class="kw">else</span>:
+        result <span class="op">=</span> <span class="nm">self</span>.<span class="fn">execute</span>(input_data)
+<span class="lang">python</span></code></pre>
+    </section>
+
+    <!-- Tracing -->
+    <section id="tracing">
+      <h2><span class="icon" style="background:#001c30">📊</span> MLflow Tracing</h2>
+
+      <div class="callout danger">
+        <span class="callout-icon">🚨</span>
+        <span><strong>Always use <code>/Shared/</code> experiment paths.</strong> Service principals cannot resolve <code>/Users/</code> paths — their username resolves to a UUID, producing a path that does not exist.</span>
+      </div>
+
+      <pre><code><span class="cm"># Required at the top of every entry point and load_context()</span>
+<span class="fn">mlflow.set_tracking_uri</span>(<span class="st">"databricks"</span>)
+<span class="fn">mlflow.set_registry_uri</span>(<span class="st">"databricks-uc"</span>)
+
+<span class="cm"># MUST use /Shared/ — never /Users/&lt;username&gt;/</span>
+<span class="fn">mlflow.set_experiment</span>(<span class="st">"/Shared/&lt;your_experiment_name&gt;"</span>)
+<span class="lang">python</span></code></pre>
+
+      <div class="callout warning">
+        <span class="callout-icon">⚠️</span>
+        <span>Without <code>mlflow.set_tracking_uri("databricks")</code> in <code>load_context()</code>, the serving container defaults to a local SQLite file and throws <code>sqlite3.OperationalError</code>.</span>
+      </div>
+    </section>
+
+    <!-- Monitoring -->
+    <section id="monitoring">
+      <h2><span class="icon" style="background:#001c0a">🗄️</span> Production Monitoring (Delta Table)</h2>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Rule</th><th>Wrong</th><th>Correct</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Table partitioning</td>
+              <td class="fail"><code>PARTITIONED BY (DATE(timestamp))</code></td>
+              <td class="pass">Omit entirely</td>
+            </tr>
+            <tr>
+              <td>SDK parameters</td>
+              <td class="fail"><code>{"name": k, "value": v}</code></td>
+              <td class="pass"><code>StatementParameterListItem(name=k, value=str(v))</code></td>
+            </tr>
+            <tr>
+              <td>Boolean values</td>
+              <td class="fail"><code>"True"</code> / <code>"False"</code></td>
+              <td class="pass"><code>"true"</code> / <code>"false"</code></td>
+            </tr>
+            <tr>
+              <td>Column types</td>
+              <td class="fail">Bare <code>:confidence</code></td>
+              <td class="pass"><code>CAST(:confidence AS DOUBLE)</code></td>
+            </tr>
+            <tr>
+              <td>Error isolation</td>
+              <td class="fail"><code>self.monitor.log(result)</code></td>
+              <td class="pass">Wrapped in <code>try/except</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Guardrail columns to add to the metrics table</h3>
+      <pre><code><span class="kw">input_blocked</span>      BOOLEAN,
+<span class="kw">pii_detected</span>       BOOLEAN,
+<span class="kw">injection_detected</span> BOOLEAN,
+<span class="kw">output_warnings</span>    STRING,
+<span class="kw">output_escalated</span>   BOOLEAN
+<span class="lang">sql</span></code></pre>
+    </section>
+
+    <!-- Guardrails -->
+    <section id="guardrails">
+      <h2><span class="icon" style="background:#1c0000">🛡️</span> Guardrails</h2>
+      <p>Three mandatory layers. A failed guardrail <strong>stops the pipeline immediately</strong> and returns a structured response — it does not log a warning and continue.</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Layer</th><th>Location in Pipeline</th><th>File</th></tr></thead>
+          <tbody>
+            <tr><td>1 — Input</td><td>Before any agent runs</td><td><code>src/guardrails/input_guardrails.py</code></td></tr>
+            <tr><td>2 — Routing</td><td>After triage, before search</td><td><code>src/guardrails/routing_guardrails.py</code></td></tr>
+            <tr><td>3 — Output</td><td>Before returning to caller, before <code>monitor.log()</code></td><td><code>src/guardrails/output_guardrails.py</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Input guardrail -->
+    <section id="input-grd">
+      <h2><span class="icon" style="background:#1c1700">1️⃣</span> Input Guardrails</h2>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Check</th><th>Rule</th><th>Action</th></tr></thead>
+          <tbody>
+            <tr><td>Empty/whitespace</td><td><code>len(query.strip()) == 0</code></td><td class="fail">Block</td></tr>
+            <tr><td>Min length</td><td><code>&lt; min_query_length</code></td><td class="fail">Block</td></tr>
+            <tr><td>Max length</td><td><code>&gt; max_query_length</code></td><td class="fail">Block</td></tr>
+            <tr><td>Repetition flood</td><td>Single char/word repeated &gt; 20×</td><td class="fail">Block</td></tr>
+            <tr><td>Prompt injection</td><td>Matches pattern list (full phrase, case-insensitive)</td><td class="fail">Block</td></tr>
+            <tr><td>PII</td><td>Email / phone / card / SSN regex</td><td class="pass">Mask → pass sanitized</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <pre><code><span class="kw">@dataclass</span>
+<span class="kw">class</span> <span class="fn">GuardrailResult</span>:
+    passed: <span class="fn">bool</span>
+    reason: <span class="fn">str</span> <span class="op">=</span> <span class="st">""</span>
+    sanitized_query: <span class="fn">str</span> <span class="op">=</span> <span class="st">""</span>
+
+<span class="cm"># Orchestrator integration</span>
+guardrail_result <span class="op">=</span> <span class="nm">self</span>.input_guardrails.<span class="fn">check</span>(query)
+<span class="kw">if not</span> guardrail_result.passed:
+    <span class="kw">return</span> {<span class="st">"status"</span>: <span class="st">"blocked"</span>, <span class="st">"reason"</span>: guardrail_result.reason, <span class="st">"workflow"</span>: {<span class="op">...</span>}}
+query <span class="op">=</span> guardrail_result.sanitized_query
+<span class="lang">python</span></code></pre>
+
+      <div class="callout info">
+        <span class="callout-icon">ℹ️</span>
+        <span>PII is <strong>masked, not blocked</strong>. The sanitized query (<code>[EMAIL]</code>, <code>[PHONE]</code> etc.) is passed downstream. Never log the original PII-containing query.</span>
+      </div>
+    </section>
+
+    <!-- Routing guardrail -->
+    <section id="routing-grd">
+      <h2><span class="icon" style="background:#1c1700">2️⃣</span> Routing Guardrails</h2>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Check</th><th>Rule</th><th>Action</th></tr></thead>
+          <tbody>
+            <tr><td>Low confidence</td><td><code>confidence &lt; threshold</code></td><td class="fail">Force escalation</td></tr>
+            <tr><td>Unknown intent</td><td>Intent not in <code>triage_categories</code></td><td class="fail">Force escalation</td></tr>
+            <tr><td>Explicit escalation</td><td><code>intent == "escalation"</code></td><td class="fail">Force escalation</td></tr>
+            <tr><td>Escalation flag conflict</td><td><code>needs_escalation=True</code> at high confidence</td><td class="fail">Escalation flag wins</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout warning">
+        <span class="callout-icon">⚠️</span>
+        <span>High confidence does <strong>not</strong> override an escalation flag. Always check both the guardrail decision AND the triage <code>needs_escalation</code> flag — escalate if either is true.</span>
+      </div>
+    </section>
+
+    <!-- Output guardrail -->
+    <section id="output-grd">
+      <h2><span class="icon" style="background:#1c1700">3️⃣</span> Output Guardrails</h2>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Check</th><th>Rule</th><th>Action</th></tr></thead>
+          <tbody>
+            <tr><td>Empty response</td><td><code>len(response.strip()) == 0</code></td><td>Replace with safe fallback</td></tr>
+            <tr><td>Too short</td><td><code>word_count &lt; response_min_words</code></td><td>Add <code>"response_too_short"</code> warning</td></tr>
+            <tr><td>No sources</td><td><code>sources_count == 0</code> and not escalated</td><td>Add <code>"no_sources"</code> warning</td></tr>
+            <tr><td>PII in response</td><td>Regex match on generated text</td><td class="pass">Mask before returning</td></tr>
+            <tr><td>Low confidence</td><td><code>confidence &lt; min_output_confidence</code></td><td class="fail">Downgrade to escalation</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout danger">
+        <span class="callout-icon">🚨</span>
+        <span>Output guardrail must run <strong>before</strong> <code>monitor.log()</code>. The sanitized response — not the raw one — is what gets logged to the Delta table.</span>
+      </div>
+    </section>
+
+    <!-- Packaging -->
+    <section id="packaging">
+      <h2><span class="icon" style="background:#1a1a2e">📦</span> Python Wheel Packaging</h2>
+      <p>The wheel must install as <code>&lt;pkg&gt;.*</code> not <code>src.*</code>. Use explicit <code>package_dir</code>:</p>
+
+      <pre><code><span class="fn">setup</span>(
+    name<span class="op">=</span><span class="st">"&lt;your_package_name&gt;"</span>,
+    packages<span class="op">=</span>[
+        <span class="st">"&lt;pkg&gt;"</span>, <span class="st">"&lt;pkg&gt;.agents"</span>, <span class="st">"&lt;pkg&gt;.tools"</span>,
+        <span class="st">"&lt;pkg&gt;.orchestrator"</span>, <span class="st">"&lt;pkg&gt;.tracing"</span>,
+        <span class="st">"&lt;pkg&gt;.config"</span>, <span class="st">"&lt;pkg&gt;.guardrails"</span>,
+    ],
+    package_dir<span class="op">=</span>{
+        <span class="st">"&lt;pkg&gt;"</span>:                 <span class="st">"src"</span>,
+        <span class="st">"&lt;pkg&gt;.agents"</span>:        <span class="st">"src/agents"</span>,
+        <span class="st">"&lt;pkg&gt;.tools"</span>:         <span class="st">"src/tools"</span>,
+        <span class="st">"&lt;pkg&gt;.orchestrator"</span>:  <span class="st">"src/orchestrator"</span>,
+        <span class="st">"&lt;pkg&gt;.tracing"</span>:       <span class="st">"src/tracing"</span>,
+        <span class="st">"&lt;pkg&gt;.config"</span>:        <span class="st">"src/config"</span>,
+        <span class="st">"&lt;pkg&gt;.guardrails"</span>:    <span class="st">"src/guardrails"</span>,
+    },
+    entry_points<span class="op">=</span>{
+        <span class="st">"console_scripts"</span>: [
+            <span class="st">"main=&lt;pkg&gt;.main:main"</span>,
+            <span class="st">"register=&lt;pkg&gt;.register_model:register"</span>,
+        ]
+    },
+)
+<span class="lang">python</span></code></pre>
+    </section>
+
+    <!-- Serving -->
+    <section id="serving">
+      <h2><span class="icon" style="background:#1a1a2e">🚀</span> Model Registration & Serving</h2>
+
+      <div class="callout danger">
+        <span class="callout-icon">🚨</span>
+        <span><strong>Always create a separate <code>serving_model.py</code></strong> logged via <code>code_paths</code>. Never inline the model class in <code>register_model.py</code> — cloudpickle serializes by reference, causing <code>ModuleNotFoundError</code> in the serving container.</span>
+      </div>
+
+      <pre><code><span class="cm"># serving_model.py — loaded via code_paths, not cloudpickle</span>
+<span class="kw">class</span> <span class="fn">YourModel</span>(mlflow.pyfunc.PythonModel):
+    <span class="kw">def</span> <span class="fn">load_context</span>(<span class="nm">self</span>, context):
+        <span class="kw">import</span> mlflow
+        <span class="cm"># Required — without this, serving defaults to local SQLite</span>
+        mlflow.<span class="fn">set_tracking_uri</span>(<span class="st">"databricks"</span>)
+        mlflow.<span class="fn">set_registry_uri</span>(<span class="st">"databricks-uc"</span>)
+
+        <span class="kw">from</span> &lt;pkg&gt;.config.settings <span class="kw">import</span> settings
+        <span class="kw">from</span> &lt;pkg&gt;.tracing.tracer <span class="kw">import</span> initialize_tracer
+        <span class="fn">initialize_tracer</span>(
+            experiment_name<span class="op">=</span>settings.tracing.experiment_name,
+            enable_tracing<span class="op">=</span>settings.tracing.enable_tracing,
+        )
+<span class="lang">python</span></code></pre>
+    </section>
+
+    <!-- DAB -->
+    <section id="dab">
+      <h2><span class="icon" style="background:#1a1a2e">🗂️</span> DAB Configuration</h2>
+
+      <div class="callout danger">
+        <span class="callout-icon">🚨</span>
+        <span><strong>Never use <code>mode: development</code>.</strong> It prefixes all resource names with <code>dev_&lt;username&gt;_</code>, which breaks Unity Catalog model registration.</span>
+      </div>
+
+      <pre><code>bundle:
+  name: &lt;your_bundle_name&gt;
+
+workspace:
+  host: &lt;your_workspace_host&gt;
+
+resources:
+  jobs:
+    main_job:
+      name: <span class="st">"&lt;Your Job Name&gt;"</span>
+      environments:
+        - environment_key: serverless
+          spec:
+            client: <span class="st">"2"</span>   <span class="cm"># "1"=REPL (unsupported), "2"=Jobs</span>
+            dependencies:
+              - ./dist/&lt;pkg&gt;-0.1.0-py3-none-any.whl
+      tasks:
+        - task_key: main_task
+          environment_key: serverless
+          python_wheel_task:
+            package_name: &lt;pkg&gt;
+            entry_point: main
+
+  registered_models:
+    main_model:
+      name: workspace.default.&lt;model_name&gt;
+      catalog_name: workspace
+      schema_name: default
+
+targets:
+  dev:
+    workspace:
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/dev
+<span class="lang">yaml</span></code></pre>
+    </section>
+
+    <!-- Structure -->
+    <section id="structure">
+      <h2><span class="icon" style="background:#1a1a2e">📁</span> Required Project Structure</h2>
+      <pre><code>&lt;project_root&gt;/
+├── databricks.yml
+├── setup.py
+└── src/
+    ├── __init__.py
+    ├── main.py                     <span class="cm"># CLI entry point</span>
+    ├── register_model.py           <span class="cm"># UC registration + endpoint lifecycle</span>
+    ├── serving_model.py            <span class="cm"># Standalone PyFunc (logged via code_paths)</span>
+    ├── monitoring.py               <span class="cm"># Delta table metrics writer</span>
+    ├── config/
+    │   ├── __init__.py
+    │   └── settings.py             <span class="cm"># Single source of truth</span>
+    ├── agents/
+    │   ├── __init__.py
+    │   ├── base_agent.py           <span class="cm"># BaseAgent + RetryableAgent</span>
+    │   └── &lt;agent_name&gt;.py        <span class="cm"># One file per agent from spec</span>
+    ├── tools/
+    │   ├── __init__.py
+    │   └── &lt;tool_name&gt;.py         <span class="cm"># One file per tool from spec</span>
+    ├── orchestrator/
+    │   ├── __init__.py
+    │   └── orchestrator.py
+    ├── tracing/
+    │   ├── __init__.py
+    │   └── tracer.py
+    └── guardrails/
+        ├── __init__.py
+        ├── input_guardrails.py
+        ├── routing_guardrails.py
+        └── output_guardrails.py
+<span class="lang">text</span></code></pre>
+    </section>
+
+    <!-- Output checklist -->
+    <section id="checklist">
+      <h2><span class="icon" style="background:#1a2e1a">✅</span> Expected Output Checklist</h2>
+      <p>The generated code must include all of the following:</p>
+      <ul class="checklist">
+        <li><strong>Architecture diagram</strong> — textual, derived from attached spec</li>
+        <li><strong>End-to-end flow explanation</strong> — query → agents → response</li>
+        <li><strong>Complete source</strong> for every file in the project structure</li>
+        <li><strong><code>databricks.yml</code></strong> with jobs, tasks, registered model</li>
+        <li><strong><code>setup.py</code></strong> with correct <code>package_dir</code> mapping including guardrails</li>
+        <li><strong>Deploy commands</strong>: <code>bdist_wheel</code> → <code>bundle deploy</code> → <code>bundle run</code></li>
+        <li><strong>Monitoring DDL</strong> with guardrail columns + sample query</li>
+        <li><strong>All three guardrail layers</strong> wired into orchestrator</li>
+        <li><strong>No hardcoded values</strong> outside <code>settings.py</code></li>
+        <li><strong><code>/Shared/</code> experiment path</strong> — not <code>/Users/</code></li>
+      </ul>
+    </section>
+
+    <!-- Pitfalls -->
+    <section id="pitfalls">
+      <h2><span class="icon" style="background:#1c0000">⚠️</span> Pitfall Reference</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Error / Symptom</th><th>Root Cause</th><th>Fix</th></tr></thead>
+          <tbody>
+            <tr><td><code>client: "1"</code> not supported</td><td>REPL mode used for jobs</td><td>Use <code>client: "2"</code></td></tr>
+            <tr><td>Libraries not supported for serverless task</td><td>Libs in task definition</td><td>Move to <code>environments.spec.dependencies</code></td></tr>
+            <tr><td><code>ModuleNotFoundError: &lt;pkg&gt;</code> in job</td><td>Wheel installs as <code>src.*</code></td><td>Fix <code>package_dir</code> in <code>setup.py</code></td></tr>
+            <tr><td><code>ModuleNotFoundError</code> in serving</td><td>cloudpickle class reference</td><td>Separate <code>serving_model.py</code> via <code>code_paths</code></td></tr>
+            <tr><td><code>sqlite3.OperationalError</code> in serving</td><td>MLflow defaults to local SQLite</td><td><code>mlflow.set_tracking_uri("databricks")</code> in <code>load_context</code></td></tr>
+            <tr><td><code>RESOURCE_DOES_NOT_EXIST: experiment ID None</code></td><td>Service principal resolves UUID path</td><td>Use <code>/Shared/</code> experiment path</td></tr>
+            <tr><td><code>dev_username_</code> prefix on UC resources</td><td><code>mode: development</code> in DAB</td><td>Remove <code>mode: development</code></td></tr>
+            <tr><td><code>DELTA_OPERATION_NOT_ALLOWED</code></td><td>Expression partitioning on serverless</td><td>Omit <code>PARTITIONED BY</code> entirely</td></tr>
+            <tr><td><code>'dict' has no attribute 'as_dict'</code></td><td>Plain dicts as SQL params</td><td>Use <code>StatementParameterListItem</code></td></tr>
+            <tr><td><code>DATATYPE_MISMATCH</code> on BOOLEAN/DOUBLE</td><td>All SDK params arrive as strings</td><td>Add <code>CAST(:field AS TYPE)</code> in INSERT SQL</td></tr>
+            <tr><td>Monitoring crash kills workflow</td><td>Unguarded <code>monitor.log()</code></td><td>Wrap in <code>try/except</code></td></tr>
+            <tr><td>Duplicate MLflow spans on retry</td><td><code>super().run()</code> called on retries</td><td>Call <code>execute()</code> directly on retries</td></tr>
+            <tr><td>Workflow ID collisions</td><td><code>int(time.time()*1000)</code></td><td>Use <code>uuid4().hex</code></td></tr>
+            <tr><td>Quality score goes negative</td><td>Unbounded penalty formula</td><td><code>max(0.0, 1.0 - warnings * 0.15)</code></td></tr>
+            <tr><td>Guardrail blocks valid queries</td><td>Substring injection match</td><td>Full phrase match, case-insensitive</td></tr>
+            <tr><td>PII masking breaks agent context</td><td>Blocking instead of masking</td><td>Preserve masked form <code>[EMAIL]</code> downstream</td></tr>
+            <tr><td>Raw PII logged to Delta table</td><td>Output guardrail runs after <code>monitor.log()</code></td><td>Run output guardrail <strong>before</strong> <code>monitor.log()</code></td></tr>
+            <tr><td>High confidence skips escalation</td><td>Confidence check overrides flag</td><td>Escalate if <em>either</em> guardrail or triage flag is true</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+  function copyPrompt() {
+    const text = document.getElementById("prompt-source").value.trim();
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.getElementById("copyBtn");
+      btn.textContent = "Copied!";
+      btn.classList.add("copied");
+      setTimeout(() => {
+        btn.textContent = "Copy Full Prompt";
+        btn.classList.remove("copied");
+      }, 2000);
+    });
+  }
+
+  // Highlight active nav item on scroll
+  const sections = document.querySelectorAll("section[id], div[id]");
+  const navLinks = document.querySelectorAll("nav a");
+
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(entry => {
+      if (entry.isIntersecting) {
+        navLinks.forEach(link => {
+          link.style.color = "";
+          link.style.background = "";
+          if (link.getAttribute("href") === "#" + entry.target.id) {
+            link.style.color = "var(--text)";
+            link.style.background = "var(--surface2)";
+          }
+        });
+      }
+    });
+  }, { threshold: 0.3 });
+
+  sections.forEach(s => observer.observe(s));
+</script>
+</body>
+</html>

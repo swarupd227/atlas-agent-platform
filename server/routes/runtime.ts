@@ -3442,43 +3442,256 @@ ${nodeSetup}
 4. Thread per task run; poll run status
 5. On requires_action: dispatch tool_calls, submit outputs
 6. Max iteration guard; log status transitions`,
-        databricks: `Generate agent.py — Databricks Mosaic AI (mlflow.pyfunc.ResponsesAgent, MLflow 2.22.4):
+        databricks: `Generate agent.py — Databricks Mosaic AI (mlflow.pyfunc.ResponsesAgent, MLflow 2.22.4).
 
-MANDATORY TWO-BLOCK STRUCTURE (spark_python_task exec() runs top-level code before upgraded MLflow is active):
-Block 1 — stdlib only at module top level: import json, os, sys, tomllib, warnings; from typing import Generator, Optional; from uuid import uuid4
-Block 2 — serve-time block: ALL mlflow/ResponsesAgent imports inside "if __name__ != '__main__':"
-Block 3 — job entry point: ALL deployment code inside "if __name__ == '__main__':"
+═══════════════════════════════════════════════════════════════════════════
+MANDATORY FILE STRUCTURE (three blocks, strict ordering)
+═══════════════════════════════════════════════════════════════════════════
+Block 1 — stdlib-only imports at module top-level (no mlflow/openai here):
+  import json, os, sys, tomllib, warnings
+  from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+  from dataclasses import dataclass, field
+  from typing import Generator, List, Optional
+  from uuid import uuid4
 
-CORRECT IMPORTS (inside if __name__ != "__main__":):
+Block 2 — serve-time block: ALL mlflow/ResponsesAgent imports inside:
+  if __name__ != "__main__":
+
+Block 3 — job entry-point: ALL deployment code inside:
+  if __name__ == "__main__":
+
+spark_python_task exec()s the file before the upgraded MLflow env is active,
+so any mlflow import at module level causes ImportError.
+
+═══════════════════════════════════════════════════════════════════════════
+CORRECT SERVE-TIME IMPORTS (inside if __name__ != "__main__":)
+═══════════════════════════════════════════════════════════════════════════
 - from mlflow.pyfunc import ResponsesAgent               # NOT mlflow.pyfunc.PythonModel
 - from mlflow.types.responses import ResponsesRequest, ResponsesResponse, ResponsesStreamEvent
-  # WRONG names: ResponsesAgentRequest, ResponsesAgentResponse, ResponsesAgentStreamEvent (those are MLflow 3.x)
+  # WRONG: ResponsesAgentRequest/Response/StreamEvent are MLflow 3.x names
 - from openai import OpenAI                              # direct OpenAI client
 - DO NOT import SpanType — use span_type="TOOL" string literal in @mlflow.trace decorators
 
-OPENAI CLIENT (inside _get_llm_client method, NOT WorkspaceClient):
-    host  = os.environ.get("DATABRICKS_HOST", "").rstrip("/")
-    token = os.environ.get("DATABRICKS_TOKEN", "")
-    self._llm_client = OpenAI(base_url=f"{host}/serving-endpoints", api_key=token)
+═══════════════════════════════════════════════════════════════════════════
+CONFIGURATION — dataclasses in src/config/settings.py (no hardcoded values)
+═══════════════════════════════════════════════════════════════════════════
+@dataclass
+class ModelConfig:
+    llm_endpoint: str = os.environ.get("LLM_ENDPOINT", "<endpoint>")
+    max_tokens: int = 4096
+    temperature: float = 0.1
+    max_iterations: int = 10
+
+@dataclass
+class AgentConfig:
+    name: str = "<agent_name>"
+    system_prompt: str = "<system_prompt>"
+    completion_token: str = "<completion_token>"
+    search_timeout_seconds: float = 10.0
+
+@dataclass
+class MonitoringConfig:
+    catalog: str = "workspace"
+    schema: str = "default"
+    table: str = "<agent>_monitoring"
+    enabled: bool = True
+
+@dataclass
+class ServingConfig:
+    endpoint_name: str = "<agent>_endpoint"
+    scale_to_zero: bool = True
+    workload_size: str = "Small"
+
+@dataclass
+class GuardrailConfig:
+    min_query_length: int = 3
+    max_query_length: int = 2000
+    min_output_confidence: float = 0.3
+    response_min_words: int = 5
+    routing_confidence_threshold: float = 0.6
+
+@dataclass
+class AppSettings:
+    model: ModelConfig = field(default_factory=ModelConfig)
+    agent: AgentConfig = field(default_factory=AgentConfig)
+    monitoring: MonitoringConfig = field(default_factory=MonitoringConfig)
+    serving: ServingConfig = field(default_factory=ServingConfig)
+    guardrails: GuardrailConfig = field(default_factory=GuardrailConfig)
+    experiment_name: str = "/Shared/<agent>_experiment"  # MUST use /Shared/ — never /Users/
+    registered_model_name: str = "<catalog>.<schema>.<agent>"
+
+settings = AppSettings()   # singleton — import from anywhere
+
+═══════════════════════════════════════════════════════════════════════════
+GUARDRAILS — three mandatory layers, each stops the pipeline immediately
+═══════════════════════════════════════════════════════════════════════════
+Layer 1 — INPUT (src/guardrails/input_guardrails.py) — before any agent runs:
+  @dataclass
+  class GuardrailResult:
+      passed: bool
+      reason: str = ""
+      sanitized_query: str = ""
+
+  Checks (in order):
+  1. Empty/whitespace: len(query.strip()) == 0 → block
+  2. Min length: len(query) < settings.guardrails.min_query_length → block
+  3. Max length: len(query) > settings.guardrails.max_query_length → block
+  4. Repetition flood: single char/word repeated >20× → block
+  5. Prompt injection: full-phrase case-insensitive match against pattern list → block
+  6. PII (email/phone/card/SSN regex) → MASK with [EMAIL]/[PHONE]/[CARD]/[SSN] and PASS sanitized form
+     # PII is masked, NOT blocked. NEVER log the original PII-containing query.
+
+  Wire into orchestrator BEFORE any agent:
+    result = self.input_guardrails.check(query)
+    if not result.passed:
+        return {"status": "blocked", "reason": result.reason, "workflow": {...}}
+    query = result.sanitized_query
+
+Layer 2 — ROUTING (src/guardrails/routing_guardrails.py) — after triage, before search:
+  Checks: low confidence (<threshold) → force escalation
+          unknown intent (not in triage_categories) → force escalation
+          intent == "escalation" → force escalation
+          needs_escalation=True at high confidence → escalation flag wins
+  # High confidence does NOT override escalation flag — check BOTH
+
+Layer 3 — OUTPUT (src/guardrails/output_guardrails.py) — BEFORE monitor.log():
+  Checks: empty response → replace with safe fallback
+          word_count < response_min_words → add "response_too_short" warning
+          sources_count == 0 and not escalated → add "no_sources" warning
+          PII in generated text → mask before returning
+          confidence < min_output_confidence → downgrade to escalation
+  Quality score: max(0.0, 1.0 - len(warnings) * 0.15)  # never goes negative
+  # Output guardrail MUST run before monitor.log() — log the sanitized response
+
+═══════════════════════════════════════════════════════════════════════════
+AGENT PATTERNS — BaseAgent and RetryableAgent
+═══════════════════════════════════════════════════════════════════════════
+class BaseAgent:
+    def __init__(self, settings: AppSettings): self.settings = settings
+    def execute(self, query: str, context: dict) -> dict: raise NotImplementedError
+
+class RetryableAgent(BaseAgent):
+    def __init__(self, settings, max_retries=3, backoff=1.0):
+        super().__init__(settings)
+        self.max_retries = max_retries; self.backoff = backoff
+
+    @mlflow.trace(name="<agent>", span_type="AGENT")
+    def run(self, query: str, context: dict) -> dict:
+        # run() is decorated — only call it ONCE (the first attempt).
+        # On retries call execute() directly to avoid duplicate MLflow spans.
+        return self.execute(query, context)
+
+    def run_with_retry(self, query: str, context: dict) -> dict:
+        last_exc = None
+        for attempt in range(self.max_retries):
+            try:
+                if attempt == 0:
+                    return self.run(query, context)    # decorated call (first)
+                return self.execute(query, context)    # direct call (retries — no duplicate spans)
+            except Exception as e:
+                last_exc = e
+                time.sleep(self.backoff * (2 ** attempt))
+        raise RuntimeError(f"Agent failed after {self.max_retries} retries") from last_exc
+
+═══════════════════════════════════════════════════════════════════════════
+SEARCH WITH TIMEOUT — ThreadPoolExecutor (not raw threads)
+═══════════════════════════════════════════════════════════════════════════
+def search_with_fallback(self, query: str) -> list:
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(self._do_search, query)
+        try:
+            return future.result(timeout=self.settings.agent.search_timeout_seconds)
+        except (FuturesTimeoutError, Exception) as e:
+            warnings.warn(f"Search timed out or failed: {e}")
+            return []
+
+═══════════════════════════════════════════════════════════════════════════
+WORKFLOW ID — uuid4, never time.time()
+═══════════════════════════════════════════════════════════════════════════
+workflow_id = uuid4().hex   # NOT int(time.time()*1000) — avoids ID collisions
+
+═══════════════════════════════════════════════════════════════════════════
+EXPERIMENT PATH — always /Shared/, never /Users/
+═══════════════════════════════════════════════════════════════════════════
+_EXPERIMENT_NAME = "/Shared/<agent>_experiment"
+# /Users/<username>/... fails for service principals (UUID-based path).
+# /Shared/... resolves correctly for all principal types.
+
+═══════════════════════════════════════════════════════════════════════════
+OPENAI CLIENT (inside _get_llm_client, NOT WorkspaceClient)
+═══════════════════════════════════════════════════════════════════════════
+host  = os.environ.get("DATABRICKS_HOST", "").rstrip("/")
+token = os.environ.get("DATABRICKS_TOKEN", "")
+self._llm_client = OpenAI(base_url=f"{host}/serving-endpoints", api_key=token)
 # NEVER use WorkspaceClient().serving_endpoints.get_open_ai_client() — fails on Model Serving
 
+═══════════════════════════════════════════════════════════════════════════
+predict_stream() implementation
+═══════════════════════════════════════════════════════════════════════════
 predict_stream(self, request: ResponsesRequest) → Generator[ResponsesStreamEvent, None, None]:
-- FIRST: if not os.environ.get("DATABRICKS_HOST"): yield stub ResponsesStreamEvent and return  (log_model schema validation guard)
-- Manual agentic loop using client.chat.completions.create(model=_LLM_ENDPOINT, messages=..., tools=tool_specs, stream=True)
-  # NEVER use client.responses.create() — output_to_responses_items_stream does NOT exist in 2.22.4
-- Accumulate delta.content and delta.tool_calls (with tc_buffers dict keyed by tc.index)
-- Each yielded ResponsesStreamEvent item MUST include: "id": str(uuid4()), "status": "completed"
+- FIRST: if not os.environ.get("DATABRICKS_HOST"): yield stub ResponsesStreamEvent; return
+- Agentic loop: client.chat.completions.create(model=endpoint, messages=..., tools=tool_specs, stream=True)
+  # NEVER client.responses.create() — output_to_responses_items_stream absent in 2.22.4
+- Accumulate delta.content and delta.tool_calls (tc_buffers dict keyed by tc.index)
+- Each yielded ResponsesStreamEvent MUST include: "id": str(uuid4()), "status": "completed"
 
 predict(self, request: ResponsesRequest) → ResponsesResponse:
 - Collect e.item from predict_stream(); return ResponsesResponse(output=output)
 
-if __name__ == "__main__": block:
+═══════════════════════════════════════════════════════════════════════════
+MONITORING — src/monitoring.py (Delta table writer)
+═══════════════════════════════════════════════════════════════════════════
+- Use StatementParameterListItem for ALL SQL parameters (plain dicts → 'dict' has no attribute 'as_dict')
+- CAST every non-string field in INSERT SQL: CAST(:latency_ms AS DOUBLE), CAST(:success AS BOOLEAN)
+- NEVER use PARTITIONED BY in CREATE TABLE — causes DELTA_OPERATION_NOT_ALLOWED on serverless
+- Wrap monitor.log() in try/except in orchestrator — monitoring crash must not kill workflow
+- Run output guardrail BEFORE monitor.log() — log the sanitized response, never raw PII
+
+DDL pattern:
+  CREATE TABLE IF NOT EXISTS <catalog>.<schema>.<table> (
+      workflow_id STRING, query STRING, response STRING,
+      intent STRING, agent_used STRING, latency_ms DOUBLE,
+      success BOOLEAN, escalated BOOLEAN, quality_score DOUBLE,
+      input_guardrail_passed BOOLEAN, routing_guardrail_passed BOOLEAN,
+      output_guardrail_passed BOOLEAN, warnings ARRAY<STRING>,
+      created_at TIMESTAMP
+  )  -- NO PARTITIONED BY
+
+INSERT pattern with StatementParameterListItem:
+  from databricks.sdk.service.sql import StatementParameterListItem
+  params = [
+      StatementParameterListItem(name="workflow_id", value=row["workflow_id"]),
+      StatementParameterListItem(name="latency_ms",  value=str(row["latency_ms"])),
+      StatementParameterListItem(name="success",     value="true" if row["success"] else "false"),
+      ...
+  ]
+  sql = "INSERT INTO ... VALUES (CAST(:latency_ms AS DOUBLE), CAST(:success AS BOOLEAN), ...)"
+
+═══════════════════════════════════════════════════════════════════════════
+if __name__ == "__main__": block (job entry-point)
+═══════════════════════════════════════════════════════════════════════════
 - FIRST two calls: mlflow.set_tracking_uri("databricks"); mlflow.set_registry_uri("databricks-uc")
 - Read pip_requirements from pyproject.toml via tomllib
-- mlflow.pyfunc.log_model(artifact_path="agent", python_model=__file__, code_paths=["tools"], pip_requirements=pip_requirements, ...)
-  # artifact_path= NOT name=; NO resources= param (mlflow.models.resources doesn't exist in 2.22.4)
+- mlflow.pyfunc.log_model(artifact_path="agent", python_model=__file__, code_paths=["tools"],
+    pip_requirements=pip_requirements, ...)
+  # artifact_path= NOT name=; NO resources= param (mlflow.models.resources absent in 2.22.4)
 - Create/update serving endpoint via WorkspaceClient + ServedEntityInput + EndpointCoreConfigInput
-- Wrap put_ai_gateway() in try/except (inference tables unsupported in some workspace tiers)`,
+- Wrap put_ai_gateway() in try/except (inference tables unsupported in some workspace tiers)
+
+═══════════════════════════════════════════════════════════════════════════
+SERVING MODEL — src/serving_model.py (separate file, NOT inline in register_model.py)
+═══════════════════════════════════════════════════════════════════════════
+class <Agent>Model(mlflow.pyfunc.PythonModel):
+    def load_context(self, context):
+        import mlflow
+        # Required — without this, serving defaults to local SQLite and crashes.
+        mlflow.set_tracking_uri("databricks")
+        mlflow.set_registry_uri("databricks-uc")
+        from src.config.settings import settings
+        # Initialize tracer, load components, etc.
+# Log via: mlflow.pyfunc.log_model(..., python_model=<Agent>Model(), code_paths=["src/serving_model.py"])
+# NEVER inline the model class in register_model.py — cloudpickle serializes by reference,
+# causing ModuleNotFoundError in the serving container.`,
         "claude-code": `Generate the entrypoint file (src/claude_code_agent.ts) — Claude Code SDK (TypeScript only):
 1. Import { query } from "@anthropic-ai/claude-code" — this is the ONLY import needed for the LLM
 2. Define customTools array: each entry has name, description, input_schema (JSON Schema), and run: async (input) => string
@@ -5075,9 +5288,72 @@ def list_policies():
           );
         }
 
-        // spark_python_task is correct for plain Python scripts; python_wheel_task
-        // requires a packaged .whl with setuptools entry points which don't exist here.
-        files["databricks.yml"] = `# Databricks Asset Bundle (DAB)\n# Deploy with: databricks bundle deploy\n#\n# Authentication: set DATABRICKS_HOST and DATABRICKS_TOKEN in your environment.\n# DAB reads these env vars automatically — do NOT put them in workspace.host.\n# Using \${DATABRICKS_HOST} in workspace.host causes a parse error on bundle validate.\nbundle:\n  name: ${agentSlugDbx}_bundle\n\n# Bump wheel_version whenever pyproject.toml version changes.\n# Run: databricks bundle deploy --var "wheel_version=<new-version>"\nvariables:\n  wheel_version:\n    description: Version of the agent wheel (must match pyproject.toml [project].version).\n    default: "0.1.0"\n\nworkspace:\n  # ~/  expands to /Users/<your-username> in Databricks — keeps dev deploys user-scoped\n  root_path: ~/.bundle/\${bundle.name}/\${bundle.target}\n\ntargets:\n  dev:\n    default: true\n    mode: development\n\n  staging:\n    mode: development\n\n  prod:\n    mode: production\n\nresources:\n  jobs:\n    deploy_agent:\n      name: Deploy ${agent.name}\n      tasks:\n        - task_key: log_model\n          spark_python_task:\n            python_file: \${workspace.file_path}/agent.py\n          environment_key: default\n      environments:\n        - environment_key: default\n          spec:\n            client: "2"\n            dependencies:\n              # MUST be first — upgrades the serverless pre-installed MLflow 2.11.4\n              # to >=2.20.0 which is required for ResponsesAgent and related APIs.\n              - mlflow>=2.20.0,<3.0.0\n              # Agent wheel built by: python -m build\n              - ./dist/${agentSlugDbx}-\${var.wheel_version}-py3-none-any.whl\n`;
+        // spark_python_task runs agent.py directly (no wheel entry-point needed).
+        // CRITICAL: NEVER add mode: development/production to targets — it prefixes every
+        // Unity Catalog resource with dev_<username>_, breaking UC model registration.
+        // Use per-target workspace.root_path to scope deploys instead.
+        files["databricks.yml"] = (
+          `# Databricks Asset Bundle (DAB) — ${agent.name}\n` +
+          `# Deploy:  databricks bundle deploy          (defaults to dev target)\n` +
+          `#          databricks bundle deploy -t prod\n` +
+          `#          databricks bundle run deploy_agent -t dev\n` +
+          `#\n` +
+          `# Auth: export DATABRICKS_HOST=https://adb-<id>.azuredatabricks.net\n` +
+          `#       export DATABRICKS_TOKEN=dapi...\n` +
+          `#       DAB reads these env vars automatically.\n` +
+          `#\n` +
+          `# Build wheel before deploying:\n` +
+          `#       python -m build   (or: python setup.py bdist_wheel)\n` +
+          `bundle:\n` +
+          `  name: ${agentSlugDbx}_bundle\n\n` +
+          `variables:\n` +
+          `  wheel_version:\n` +
+          `    description: "Matches [project].version in pyproject.toml. Bump on every release."\n` +
+          `    default: "0.1.0"\n\n` +
+          `workspace:\n` +
+          `  # Replace with your literal workspace URL — do NOT use \${DATABRICKS_HOST} here\n` +
+          `  # (variable interpolation in workspace.host causes bundle validate parse errors).\n` +
+          `  host: https://adb-<workspace-id>.azuredatabricks.net\n\n` +
+          `# IMPORTANT: no mode: development / mode: production on any target.\n` +
+          `# mode: development prefixes ALL Unity Catalog resource names with dev_<username>_\n` +
+          `# which permanently breaks UC model registration paths.\n` +
+          `targets:\n` +
+          `  dev:\n` +
+          `    default: true\n` +
+          `    workspace:\n` +
+          `      root_path: /Workspace/Users/\${workspace.current_user.userName}/.bundle/\${bundle.name}/dev\n\n` +
+          `  staging:\n` +
+          `    workspace:\n` +
+          `      root_path: /Workspace/Users/\${workspace.current_user.userName}/.bundle/\${bundle.name}/staging\n\n` +
+          `  prod:\n` +
+          `    workspace:\n` +
+          `      root_path: /Workspace/Users/\${workspace.current_user.userName}/.bundle/\${bundle.name}/prod\n\n` +
+          `resources:\n` +
+          `  # Register the model in Unity Catalog so the serving endpoint can resolve it.\n` +
+          `  registered_models:\n` +
+          `    agent_model:\n` +
+          `      name: workspace.default.${agentSlugDbx}\n` +
+          `      catalog_name: workspace\n` +
+          `      schema_name: default\n` +
+          `      comment: "${agent.name} — registered by ATLAS export"\n\n` +
+          `  jobs:\n` +
+          `    deploy_agent:\n` +
+          `      name: "Deploy ${agent.name}"\n` +
+          `      tasks:\n` +
+          `        - task_key: log_model\n` +
+          `          spark_python_task:\n` +
+          `            python_file: \${workspace.file_path}/agent.py\n` +
+          `          environment_key: default\n` +
+          `      environments:\n` +
+          `        - environment_key: default\n` +
+          `          spec:\n` +
+          `            client: "2"   # "1" = REPL (unsupported for jobs)\n` +
+          `            dependencies:\n` +
+          `              # mlflow MUST be first — upgrades the serverless pre-installed 2.11.4\n` +
+          `              # to >=2.20.0 which is required for ResponsesAgent and related APIs.\n` +
+          `              - mlflow>=2.20.0,<3.0.0\n` +
+          `              - ./dist/${agentSlugDbx}-\${var.wheel_version}-py3-none-any.whl\n`
+        );
 
         // MLproject entry point must match agent.py's __main__ block.
         // __main__ reads _EXPERIMENT_NAME directly from the constant — no CLI arg needed.
@@ -5089,6 +5365,473 @@ def list_policies():
 
         // requirements.txt delegates entirely to pyproject.toml — single line as spec requires.
         files["requirements.txt"] = "-e .[dev]\n";
+
+        // ── setup.py ─────────────────────────────────────────────────────────────
+        // Explicit package_dir mapping so the wheel installs as <pkg>.* not src.*
+        // (ModuleNotFoundError in jobs if this mapping is absent or wrong).
+        // Master Prompt §Packaging: must include config and guardrails subpackages.
+        files["setup.py"] = (
+          `from setuptools import setup\n\n` +
+          `setup(\n` +
+          `    name="${agentSlugDbx}",\n` +
+          `    version="0.1.0",\n` +
+          `    python_requires=">=3.11",\n` +
+          `    packages=[\n` +
+          `        "${agentSlugDbx}",\n` +
+          `        "${agentSlugDbx}.tools",\n` +
+          `        "${agentSlugDbx}.config",\n` +
+          `        "${agentSlugDbx}.guardrails",\n` +
+          `    ],\n` +
+          `    # Maps <pkg>.* imports to the correct source directories.\n` +
+          `    # Without this the wheel installs as src.* which causes ModuleNotFoundError\n` +
+          `    # inside Databricks serverless jobs and model serving containers.\n` +
+          `    package_dir={\n` +
+          `        "${agentSlugDbx}":            "src",\n` +
+          `        "${agentSlugDbx}.tools":      "tools",\n` +
+          `        "${agentSlugDbx}.config":     "src/config",\n` +
+          `        "${agentSlugDbx}.guardrails": "src/guardrails",\n` +
+          `    },\n` +
+          `    entry_points={\n` +
+          `        "console_scripts": [\n` +
+          `            "main=${agentSlugDbx}.main:main",\n` +
+          `        ],\n` +
+          `    },\n` +
+          `    install_requires=[\n` +
+          `        "mlflow>=2.20.0,<3.0.0",\n` +
+          `        "openai>=1.0.0",\n` +
+          `        "databricks-sdk>=0.20.0",\n` +
+          `    ],\n` +
+          `)\n`
+        );
+
+        // ── src/__init__.py ───────────────────────────────────────────────────────
+        files["src/__init__.py"] = "";
+
+        // ── src/config/__init__.py ────────────────────────────────────────────────
+        files["src/config/__init__.py"] = "";
+
+        // ── src/config/settings.py ────────────────────────────────────────────────
+        // Single source of truth for all configuration (Master Prompt §Config).
+        // No hardcoded values outside this file.
+        files["src/config/settings.py"] = (
+          `"""Single source of truth for ${agent.name} configuration.\n\n` +
+          `All tuneable values live here. Import \`settings\` (the singleton at the\n` +
+          `bottom of this file) from any module — never read os.environ directly.\n` +
+          `"""\n` +
+          `import os\n` +
+          `from dataclasses import dataclass, field\n\n\n` +
+          `@dataclass\n` +
+          `class ModelConfig:\n` +
+          `    llm_endpoint: str = os.environ.get("LLM_ENDPOINT", "${dbxEndpoint}")\n` +
+          `    max_tokens: int = 4096\n` +
+          `    temperature: float = 0.1\n` +
+          `    max_iterations: int = ${maxIterations}\n\n\n` +
+          `@dataclass\n` +
+          `class AgentConfig:\n` +
+          `    name: str = "${agent.name}"\n` +
+          `    description: str = "${agentDescShort}"\n` +
+          `    system_prompt: str = """${systemPromptShort}"""\n` +
+          `    completion_token: str = "${completionPromise}"\n` +
+          `    search_timeout_seconds: float = 10.0\n\n\n` +
+          `@dataclass\n` +
+          `class MonitoringConfig:\n` +
+          `    catalog: str = "workspace"\n` +
+          `    schema: str = "default"\n` +
+          `    table: str = "${agentSlugDbx}_monitoring"\n` +
+          `    enabled: bool = True\n\n\n` +
+          `@dataclass\n` +
+          `class ServingConfig:\n` +
+          `    endpoint_name: str = "${agentSlugDbx}_endpoint"\n` +
+          `    scale_to_zero: bool = True\n` +
+          `    workload_size: str = "Small"\n\n\n` +
+          `@dataclass\n` +
+          `class GuardrailConfig:\n` +
+          `    min_query_length: int = 3\n` +
+          `    max_query_length: int = 2000\n` +
+          `    min_output_confidence: float = 0.3\n` +
+          `    response_min_words: int = 5\n` +
+          `    routing_confidence_threshold: float = 0.6\n\n\n` +
+          `@dataclass\n` +
+          `class AppSettings:\n` +
+          `    model: ModelConfig = field(default_factory=ModelConfig)\n` +
+          `    agent: AgentConfig = field(default_factory=AgentConfig)\n` +
+          `    monitoring: MonitoringConfig = field(default_factory=MonitoringConfig)\n` +
+          `    serving: ServingConfig = field(default_factory=ServingConfig)\n` +
+          `    guardrails: GuardrailConfig = field(default_factory=GuardrailConfig)\n` +
+          `    # MUST use /Shared/ — /Users/<username>/... fails for service principals\n` +
+          `    # because they resolve to a UUID-based path instead.\n` +
+          `    experiment_name: str = "/Shared/${agentSlugDbx}_experiment"\n` +
+          `    registered_model_name: str = "<catalog>.<schema>.${agentSlugDbx}"\n\n\n` +
+          `# Module-level singleton — import from anywhere:\n` +
+          `#   from src.config.settings import settings\n` +
+          `settings = AppSettings()\n`
+        );
+
+        // ── src/serving_model.py ──────────────────────────────────────────────────
+        // Standalone PyFunc logged via code_paths.
+        // NEVER inline this class in register_model.py — cloudpickle serialises by
+        // reference, causing ModuleNotFoundError in the serving container.
+        // Master Prompt §Serving: load_context MUST call set_tracking_uri("databricks").
+        files["src/serving_model.py"] = (
+          `"""Standalone PyFunc model for ${agent.name}.\n\n` +
+          `This file is logged via mlflow.pyfunc.log_model(..., code_paths=["src/serving_model.py"])\n` +
+          `so that the serving container unpickles it by value, not by cloudpickle reference.\n` +
+          `\n` +
+          `Do NOT inline this class in register_model.py.\n` +
+          `"""\n` +
+          `import mlflow\n` +
+          `import pandas as pd\n\n\n` +
+          `class ${dbxClassName}ServingModel(mlflow.pyfunc.PythonModel):\n` +
+          `    """PythonModel wrapper loaded by the Databricks Model Serving container."""\n\n` +
+          `    def load_context(self, context):\n` +
+          `        # Required — without these two calls the serving container defaults\n` +
+          `        # to local SQLite for tracking and misses the UC registry, causing\n` +
+          `        # sqlite3.OperationalError and RESOURCE_DOES_NOT_EXIST at startup.\n` +
+          `        mlflow.set_tracking_uri("databricks")\n` +
+          `        mlflow.set_registry_uri("databricks-uc")\n\n` +
+          `        from src.config.settings import settings\n` +
+          `        self.settings = settings\n` +
+          `        # Initialise your orchestrator / agent here, e.g.:\n` +
+          `        # from src.orchestrator.orchestrator import Orchestrator\n` +
+          `        # self.orchestrator = Orchestrator(settings)\n\n` +
+          `    def predict(self, context, model_input: pd.DataFrame) -> pd.DataFrame:\n` +
+          `        query = model_input["query"].iloc[0] if "query" in model_input.columns else ""\n` +
+          `        # Replace with real orchestrator call:\n` +
+          `        result = {"response": f"[${agent.name}] received: {query}", "status": "ok"}\n` +
+          `        return pd.DataFrame([result])\n`
+        );
+
+        // ── src/guardrails/__init__.py ────────────────────────────────────────────
+        files["src/guardrails/__init__.py"] = "";
+
+        // ── src/guardrails/input_guardrails.py ───────────────────────────────────
+        // Layer 1: runs before any agent. Blocks on injection/length; masks PII.
+        files["src/guardrails/input_guardrails.py"] = (
+          `"""Input guardrail — Layer 1 of 3.\n\n` +
+          `Runs before any agent processes the query.\n` +
+          `A failed check STOPS the pipeline immediately (returns blocked status).\n` +
+          `PII is masked (not blocked) — the sanitized form is passed downstream.\n` +
+          `NEVER log the original PII-containing query.\n` +
+          `"""\n` +
+          `import re\n` +
+          `import warnings\n` +
+          `from dataclasses import dataclass\n` +
+          `from typing import List\n\n` +
+          `from src.config.settings import GuardrailConfig\n\n\n` +
+          `@dataclass\n` +
+          `class GuardrailResult:\n` +
+          `    passed: bool\n` +
+          `    reason: str = ""\n` +
+          `    sanitized_query: str = ""\n\n\n` +
+          `# Full-phrase injection patterns (case-insensitive exact match, not substring).\n` +
+          `_INJECTION_PATTERNS: List[str] = [\n` +
+          `    r"ignore previous instructions",\n` +
+          `    r"ignore all previous instructions",\n` +
+          `    r"disregard your instructions",\n` +
+          `    r"forget your previous instructions",\n` +
+          `    r"you are now",\n` +
+          `    r"act as if you are",\n` +
+          `    r"pretend you are",\n` +
+          `    r"jailbreak",\n` +
+          `    r"do anything now",\n` +
+          `]\n\n` +
+          `_PII_PATTERNS = [\n` +
+          `    (re.compile(r"\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Z|a-z]{2,}\\b"), "[EMAIL]"),\n` +
+          `    (re.compile(r"\\b(?:\\+?1[\\-. ]?)?\\(?[0-9]{3}\\)?[\\-. ]?[0-9]{3}[\\-. ]?[0-9]{4}\\b"), "[PHONE]"),\n` +
+          `    (re.compile(r"\\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\\b"), "[CARD]"),\n` +
+          `    (re.compile(r"\\b[0-9]{3}[-\\s]?[0-9]{2}[-\\s]?[0-9]{4}\\b"), "[SSN]"),\n` +
+          `]\n\n\n` +
+          `class InputGuardrails:\n` +
+          `    def __init__(self, config: GuardrailConfig):\n` +
+          `        self.config = config\n` +
+          `        self._injection_re = [\n` +
+          `            re.compile(rf"(?i)\\b{p}\\b") for p in _INJECTION_PATTERNS\n` +
+          `        ]\n\n` +
+          `    def check(self, query: str) -> GuardrailResult:\n` +
+          `        """Run all input checks. Returns GuardrailResult with passed=True on success."""\n` +
+          `        # 1. Empty / whitespace\n` +
+          `        if not query or len(query.strip()) == 0:\n` +
+          `            return GuardrailResult(passed=False, reason="empty_query")\n\n` +
+          `        # 2. Min length\n` +
+          `        if len(query) < self.config.min_query_length:\n` +
+          `            return GuardrailResult(passed=False, reason="query_too_short")\n\n` +
+          `        # 3. Max length\n` +
+          `        if len(query) > self.config.max_query_length:\n` +
+          `            return GuardrailResult(passed=False, reason="query_too_long")\n\n` +
+          `        # 4. Repetition flood (single char/word repeated >20 times)\n` +
+          `        words = query.split()\n` +
+          `        if words and max(words.count(w) for w in set(words)) > 20:\n` +
+          `            return GuardrailResult(passed=False, reason="repetition_flood")\n` +
+          `        if len(query) > 1 and len(set(query.replace(" ", ""))) == 1:\n` +
+          `            return GuardrailResult(passed=False, reason="repetition_flood")\n\n` +
+          `        # 5. Prompt injection (full-phrase, case-insensitive)\n` +
+          `        for pattern in self._injection_re:\n` +
+          `            if pattern.search(query):\n` +
+          `                return GuardrailResult(passed=False, reason="prompt_injection")\n\n` +
+          `        # 6. PII — mask and pass sanitized form downstream\n` +
+          `        sanitized = query\n` +
+          `        for pii_re, replacement in _PII_PATTERNS:\n` +
+          `            sanitized = pii_re.sub(replacement, sanitized)\n\n` +
+          `        return GuardrailResult(passed=True, sanitized_query=sanitized)\n`
+        );
+
+        // ── src/guardrails/routing_guardrails.py ─────────────────────────────────
+        // Layer 2: runs after triage, before search/agents.
+        files["src/guardrails/routing_guardrails.py"] = (
+          `"""Routing guardrail — Layer 2 of 3.\n\n` +
+          `Runs after triage classification, before routing to specialist agents.\n` +
+          `High confidence does NOT override an escalation flag — escalate if either\n` +
+          `the guardrail OR the triage needs_escalation flag is True.\n` +
+          `"""\n` +
+          `from dataclasses import dataclass\n` +
+          `from typing import List, Optional\n\n` +
+          `from src.config.settings import GuardrailConfig\n` +
+          `from src.guardrails.input_guardrails import GuardrailResult\n\n\n` +
+          `class RoutingGuardrails:\n` +
+          `    def __init__(self, config: GuardrailConfig, triage_categories: List[str]):\n` +
+          `        self.config = config\n` +
+          `        self.triage_categories = triage_categories\n\n` +
+          `    def check(\n` +
+          `        self,\n` +
+          `        intent: str,\n` +
+          `        confidence: float,\n` +
+          `        needs_escalation: bool = False,\n` +
+          `    ) -> GuardrailResult:\n` +
+          `        """Check routing decision. Returns GuardrailResult.\n\n` +
+          `        passed=True  → route to specialist agent\n` +
+          `        passed=False → force escalation (reason explains why)\n` +
+          `        """\n` +
+          `        # Explicit escalation intent\n` +
+          `        if intent == "escalation":\n` +
+          `            return GuardrailResult(passed=False, reason="explicit_escalation")\n\n` +
+          `        # Escalation flag wins — high confidence does not override\n` +
+          `        if needs_escalation:\n` +
+          `            return GuardrailResult(passed=False, reason="triage_escalation_flag")\n\n` +
+          `        # Unknown intent\n` +
+          `        if intent not in self.triage_categories:\n` +
+          `            return GuardrailResult(passed=False, reason="unknown_intent")\n\n` +
+          `        # Low confidence\n` +
+          `        if confidence < self.config.routing_confidence_threshold:\n` +
+          `            return GuardrailResult(passed=False, reason="low_confidence")\n\n` +
+          `        return GuardrailResult(passed=True)\n`
+        );
+
+        // ── src/guardrails/output_guardrails.py ──────────────────────────────────
+        // Layer 3: runs BEFORE monitor.log(). Logs sanitized response, never raw PII.
+        files["src/guardrails/output_guardrails.py"] = (
+          `"""Output guardrail — Layer 3 of 3.\n\n` +
+          `MUST run before monitor.log(). Log the sanitized response — never raw PII.\n` +
+          `Quality score formula: max(0.0, 1.0 - len(warnings) * 0.15)\n` +
+          `"""\n` +
+          `import re\n` +
+          `from dataclasses import dataclass, field\n` +
+          `from typing import List\n\n` +
+          `from src.config.settings import GuardrailConfig\n` +
+          `from src.guardrails.input_guardrails import _PII_PATTERNS\n\n\n` +
+          `@dataclass\n` +
+          `class OutputGuardrailResult:\n` +
+          `    passed: bool\n` +
+          `    sanitized_response: str = ""\n` +
+          `    warnings: List[str] = field(default_factory=list)\n` +
+          `    quality_score: float = 1.0\n` +
+          `    downgraded_to_escalation: bool = False\n\n\n` +
+          `_SAFE_FALLBACK = "I'm sorry, I wasn't able to generate a response. Please try again or contact support."\n\n\n` +
+          `class OutputGuardrails:\n` +
+          `    def __init__(self, config: GuardrailConfig):\n` +
+          `        self.config = config\n\n` +
+          `    def check(\n` +
+          `        self,\n` +
+          `        response: str,\n` +
+          `        sources_count: int = 0,\n` +
+          `        escalated: bool = False,\n` +
+          `        confidence: float = 1.0,\n` +
+          `    ) -> OutputGuardrailResult:\n` +
+          `        """Sanitize and score the generated response.\n\n` +
+          `        Always call this BEFORE monitor.log().\n` +
+          `        """\n` +
+          `        out_warnings: List[str] = []\n` +
+          `        out_response = response\n` +
+          `        downgraded = False\n\n` +
+          `        # Low confidence → downgrade to escalation\n` +
+          `        if confidence < self.config.min_output_confidence:\n` +
+          `            return OutputGuardrailResult(\n` +
+          `                passed=False,\n` +
+          `                sanitized_response=_SAFE_FALLBACK,\n` +
+          `                warnings=["low_output_confidence"],\n` +
+          `                quality_score=0.0,\n` +
+          `                downgraded_to_escalation=True,\n` +
+          `            )\n\n` +
+          `        # Empty response → safe fallback\n` +
+          `        if not out_response or len(out_response.strip()) == 0:\n` +
+          `            out_response = _SAFE_FALLBACK\n` +
+          `            out_warnings.append("empty_response")\n\n` +
+          `        # Too short\n` +
+          `        word_count = len(out_response.split())\n` +
+          `        if word_count < self.config.response_min_words:\n` +
+          `            out_warnings.append("response_too_short")\n\n` +
+          `        # No sources (only flag when not escalated)\n` +
+          `        if sources_count == 0 and not escalated:\n` +
+          `            out_warnings.append("no_sources")\n\n` +
+          `        # PII in response — mask before returning\n` +
+          `        for pii_re, replacement in _PII_PATTERNS:\n` +
+          `            out_response = pii_re.sub(replacement, out_response)\n\n` +
+          `        quality_score = max(0.0, 1.0 - len(out_warnings) * 0.15)\n\n` +
+          `        return OutputGuardrailResult(\n` +
+          `            passed=True,\n` +
+          `            sanitized_response=out_response,\n` +
+          `            warnings=out_warnings,\n` +
+          `            quality_score=quality_score,\n` +
+          `            downgraded_to_escalation=downgraded,\n` +
+          `        )\n`
+        );
+
+        // ── src/monitoring.py ─────────────────────────────────────────────────────
+        // Delta table metrics writer.
+        // CRITICAL rules from Master Prompt §Monitoring:
+        //   - StatementParameterListItem for ALL SQL params (not plain dicts)
+        //   - CAST(:field AS TYPE) in INSERT for every non-string column
+        //   - NO PARTITIONED BY — causes DELTA_OPERATION_NOT_ALLOWED on serverless
+        //   - Wrap monitor.log() in try/except in orchestrator (crash must not kill workflow)
+        //   - Run output guardrail BEFORE monitor.log() — log sanitized response only
+        files["src/monitoring.py"] = (
+          `"""Delta table monitoring writer for ${agent.name}.\n\n` +
+          `Write one row per workflow run containing query, response, guardrail results,\n` +
+          `latency, and quality metrics.\n\n` +
+          `IMPORTANT: Always call OutputGuardrails.check() BEFORE monitor.log().\n` +
+          `Log the sanitized response — never the raw response that may contain PII.\n\n` +
+          `Usage in orchestrator (wrap in try/except — crash must not kill workflow):\n\n` +
+          `    try:\n` +
+          `        monitor.log(row)\n` +
+          `    except Exception as e:\n` +
+          `        warnings.warn(f"Monitoring write failed (non-fatal): {e}")\n` +
+          `"""\n` +
+          `import warnings\n` +
+          `from dataclasses import dataclass, field\n` +
+          `from typing import Any, Dict, List, Optional\n\n` +
+          `from src.config.settings import MonitoringConfig\n\n\n` +
+          `@dataclass\n` +
+          `class MonitoringRow:\n` +
+          `    workflow_id: str\n` +
+          `    query: str\n` +
+          `    response: str              # sanitized — output guardrail must have run first\n` +
+          `    intent: str = ""\n` +
+          `    agent_used: str = ""\n` +
+          `    latency_ms: float = 0.0\n` +
+          `    success: bool = True\n` +
+          `    escalated: bool = False\n` +
+          `    quality_score: float = 1.0\n` +
+          `    input_guardrail_passed: bool = True\n` +
+          `    routing_guardrail_passed: bool = True\n` +
+          `    output_guardrail_passed: bool = True\n` +
+          `    output_warnings: List[str] = field(default_factory=list)\n\n\n` +
+          `# DDL — run once at startup or in a setup job.\n` +
+          `# NO PARTITIONED BY — expression partitioning raises DELTA_OPERATION_NOT_ALLOWED\n` +
+          `# on Databricks serverless compute.\n` +
+          `def _create_table_ddl(config: MonitoringConfig) -> str:\n` +
+          `    return f"""\n` +
+          `        CREATE TABLE IF NOT EXISTS {config.catalog}.{config.schema}.{config.table} (\n` +
+          `            workflow_id              STRING,\n` +
+          `            query                   STRING,\n` +
+          `            response                STRING,\n` +
+          `            intent                  STRING,\n` +
+          `            agent_used              STRING,\n` +
+          `            latency_ms              DOUBLE,\n` +
+          `            success                 BOOLEAN,\n` +
+          `            escalated               BOOLEAN,\n` +
+          `            quality_score           DOUBLE,\n` +
+          `            input_guardrail_passed  BOOLEAN,\n` +
+          `            routing_guardrail_passed BOOLEAN,\n` +
+          `            output_guardrail_passed BOOLEAN,\n` +
+          `            output_warnings         ARRAY<STRING>,\n` +
+          `            created_at              TIMESTAMP\n` +
+          `        )\n` +
+          `    """\n\n\n` +
+          `class MonitoringWriter:\n` +
+          `    """Writes workflow metrics to a Unity Catalog Delta table.\n\n` +
+          `    Requires DATABRICKS_HOST and DATABRICKS_TOKEN env vars (or a running cluster).\n` +
+          `    """\n\n` +
+          `    def __init__(self, config: MonitoringConfig):\n` +
+          `        self.config = config\n` +
+          `        self._client = None   # lazy — avoid import at module load time\n\n` +
+          `    def _get_client(self):\n` +
+          `        if self._client is None:\n` +
+          `            from databricks.sdk import WorkspaceClient\n` +
+          `            self._client = WorkspaceClient()\n` +
+          `        return self._client\n\n` +
+          `    def ensure_table(self) -> None:\n` +
+          `        """Create the monitoring table if it does not exist."""\n` +
+          `        if not self.config.enabled:\n` +
+          `            return\n` +
+          `        from databricks.sdk.service.sql import StatementParameterListItem\n` +
+          `        w = self._get_client()\n` +
+          `        warehouses = list(w.warehouses.list())\n` +
+          `        if not warehouses:\n` +
+          `            warnings.warn("No SQL warehouses found — skipping table creation")\n` +
+          `            return\n` +
+          `        warehouse_id = warehouses[0].id\n` +
+          `        ddl = _create_table_ddl(self.config)\n` +
+          `        w.statement_execution.execute_statement(\n` +
+          `            statement=ddl,\n` +
+          `            warehouse_id=warehouse_id,\n` +
+          `        ).result()\n\n` +
+          `    def log(self, row: MonitoringRow) -> None:\n` +
+          `        """Write one monitoring row. Caller must wrap in try/except.\n\n` +
+          `        Uses StatementParameterListItem for all parameters.\n` +
+          `        Uses CAST() in SQL for every non-string field.\n` +
+          `        """\n` +
+          `        if not self.config.enabled:\n` +
+          `            return\n` +
+          `        from databricks.sdk.service.sql import StatementParameterListItem\n` +
+          `        import json\n\n` +
+          `        w = self._get_client()\n` +
+          `        warehouses = list(w.warehouses.list())\n` +
+          `        if not warehouses:\n` +
+          `            warnings.warn("No SQL warehouses — skipping monitoring write")\n` +
+          `            return\n` +
+          `        warehouse_id = warehouses[0].id\n\n` +
+          `        tbl = f"{self.config.catalog}.{self.config.schema}.{self.config.table}"\n` +
+          `        # All SDK params arrive as strings — use CAST() for every non-string column.\n` +
+          `        sql = f"""\n` +
+          `            INSERT INTO {tbl}\n` +
+          `            VALUES (\n` +
+          `                :workflow_id,\n` +
+          `                :query,\n` +
+          `                :response,\n` +
+          `                :intent,\n` +
+          `                :agent_used,\n` +
+          `                CAST(:latency_ms AS DOUBLE),\n` +
+          `                CAST(:success AS BOOLEAN),\n` +
+          `                CAST(:escalated AS BOOLEAN),\n` +
+          `                CAST(:quality_score AS DOUBLE),\n` +
+          `                CAST(:input_guardrail_passed AS BOOLEAN),\n` +
+          `                CAST(:routing_guardrail_passed AS BOOLEAN),\n` +
+          `                CAST(:output_guardrail_passed AS BOOLEAN),\n` +
+          `                from_json(:output_warnings, 'ARRAY<STRING>'),\n` +
+          `                current_timestamp()\n` +
+          `            )\n` +
+          `        """\n` +
+          `        params = [\n` +
+          `            StatementParameterListItem(name="workflow_id",              value=row.workflow_id),\n` +
+          `            StatementParameterListItem(name="query",                   value=row.query),\n` +
+          `            StatementParameterListItem(name="response",                value=row.response),\n` +
+          `            StatementParameterListItem(name="intent",                  value=row.intent),\n` +
+          `            StatementParameterListItem(name="agent_used",              value=row.agent_used),\n` +
+          `            StatementParameterListItem(name="latency_ms",              value=str(row.latency_ms)),\n` +
+          `            StatementParameterListItem(name="success",                 value="true" if row.success else "false"),\n` +
+          `            StatementParameterListItem(name="escalated",               value="true" if row.escalated else "false"),\n` +
+          `            StatementParameterListItem(name="quality_score",           value=str(row.quality_score)),\n` +
+          `            StatementParameterListItem(name="input_guardrail_passed",  value="true" if row.input_guardrail_passed else "false"),\n` +
+          `            StatementParameterListItem(name="routing_guardrail_passed", value="true" if row.routing_guardrail_passed else "false"),\n` +
+          `            StatementParameterListItem(name="output_guardrail_passed", value="true" if row.output_guardrail_passed else "false"),\n` +
+          `            StatementParameterListItem(name="output_warnings",         value=json.dumps(row.output_warnings)),\n` +
+          `        ]\n` +
+          `        w.statement_execution.execute_statement(\n` +
+          `            statement=sql,\n` +
+          `            warehouse_id=warehouse_id,\n` +
+          `            parameters=params,\n` +
+          `        ).result()\n`
+        );
+
         // Empty __init__.py ensures pytest resolves package-level imports correctly
         // across all environments (avoids rootdir heuristic failures).
         files["tests/__init__.py"] = "";
@@ -6176,6 +6919,331 @@ clean:
 
           localFiles[`${dirPrefix}/requirements.txt`] = "-e .[dev]\n";
 
+          // ── setup.py — explicit package_dir so wheel installs as <pkg>.* not src.* ──
+          localFiles[`${dirPrefix}/setup.py`] = (
+            `from setuptools import setup\n\n` +
+            `setup(\n` +
+            `    name="${agentSlugDbx}",\n` +
+            `    version="0.1.0",\n` +
+            `    python_requires=">=3.11",\n` +
+            `    packages=[\n` +
+            `        "${agentSlugDbx}",\n` +
+            `        "${agentSlugDbx}.tools",\n` +
+            `        "${agentSlugDbx}.config",\n` +
+            `        "${agentSlugDbx}.guardrails",\n` +
+            `    ],\n` +
+            `    package_dir={\n` +
+            `        "${agentSlugDbx}":            "src",\n` +
+            `        "${agentSlugDbx}.tools":      "tools",\n` +
+            `        "${agentSlugDbx}.config":     "src/config",\n` +
+            `        "${agentSlugDbx}.guardrails": "src/guardrails",\n` +
+            `    },\n` +
+            `    entry_points={\n` +
+            `        "console_scripts": [\n` +
+            `            "main=${agentSlugDbx}.main:main",\n` +
+            `        ],\n` +
+            `    },\n` +
+            `    install_requires=[\n` +
+            `        "mlflow>=2.20.0,<3.0.0",\n` +
+            `        "openai>=1.0.0",\n` +
+            `        "databricks-sdk>=0.20.0",\n` +
+            `    ],\n` +
+            `)\n`
+          );
+
+          localFiles[`${dirPrefix}/src/__init__.py`] = "";
+          localFiles[`${dirPrefix}/src/config/__init__.py`] = "";
+
+          // ── src/config/settings.py — single source of truth ────────────────────
+          localFiles[`${dirPrefix}/src/config/settings.py`] = (
+            `"""Single source of truth for ${agentRec.name} configuration."""\n` +
+            `import os\n` +
+            `from dataclasses import dataclass, field\n\n\n` +
+            `@dataclass\n` +
+            `class ModelConfig:\n` +
+            `    llm_endpoint: str = os.environ.get("LLM_ENDPOINT", "${dbxEndpoint}")\n` +
+            `    max_tokens: int = 4096\n` +
+            `    temperature: float = 0.1\n` +
+            `    max_iterations: int = ${agentIterDbx}\n\n\n` +
+            `@dataclass\n` +
+            `class AgentConfig:\n` +
+            `    name: str = "${agentRec.name}"\n` +
+            `    description: str = "${agentDescShortDbx}"\n` +
+            `    system_prompt: str = """${systemPromptShort}"""\n` +
+            `    completion_token: str = "${completionPromise}"\n` +
+            `    search_timeout_seconds: float = 10.0\n\n\n` +
+            `@dataclass\n` +
+            `class MonitoringConfig:\n` +
+            `    catalog: str = "workspace"\n` +
+            `    schema: str = "default"\n` +
+            `    table: str = "${agentSlugDbx}_monitoring"\n` +
+            `    enabled: bool = True\n\n\n` +
+            `@dataclass\n` +
+            `class ServingConfig:\n` +
+            `    endpoint_name: str = "${agentSlugDbx}_endpoint"\n` +
+            `    scale_to_zero: bool = True\n` +
+            `    workload_size: str = "Small"\n\n\n` +
+            `@dataclass\n` +
+            `class GuardrailConfig:\n` +
+            `    min_query_length: int = 3\n` +
+            `    max_query_length: int = 2000\n` +
+            `    min_output_confidence: float = 0.3\n` +
+            `    response_min_words: int = 5\n` +
+            `    routing_confidence_threshold: float = 0.6\n\n\n` +
+            `@dataclass\n` +
+            `class AppSettings:\n` +
+            `    model: ModelConfig = field(default_factory=ModelConfig)\n` +
+            `    agent: AgentConfig = field(default_factory=AgentConfig)\n` +
+            `    monitoring: MonitoringConfig = field(default_factory=MonitoringConfig)\n` +
+            `    serving: ServingConfig = field(default_factory=ServingConfig)\n` +
+            `    guardrails: GuardrailConfig = field(default_factory=GuardrailConfig)\n` +
+            `    experiment_name: str = "/Shared/${agentSlugDbx}_experiment"\n` +
+            `    registered_model_name: str = "<catalog>.<schema>.${agentSlugDbx}"\n\n\n` +
+            `settings = AppSettings()\n`
+          );
+
+          // ── src/serving_model.py — standalone PyFunc, logged via code_paths ────
+          localFiles[`${dirPrefix}/src/serving_model.py`] = (
+            `"""Standalone PyFunc for ${agentRec.name}.\n\n` +
+            `Logged via code_paths — never inline this in register_model.py.\n` +
+            `load_context MUST call set_tracking_uri("databricks") and\n` +
+            `set_registry_uri("databricks-uc") or serving defaults to SQLite.\n` +
+            `"""\n` +
+            `import mlflow\n` +
+            `import pandas as pd\n\n\n` +
+            `class ${dbxClassName}ServingModel(mlflow.pyfunc.PythonModel):\n` +
+            `    def load_context(self, context):\n` +
+            `        mlflow.set_tracking_uri("databricks")\n` +
+            `        mlflow.set_registry_uri("databricks-uc")\n` +
+            `        from src.config.settings import settings\n` +
+            `        self.settings = settings\n\n` +
+            `    def predict(self, context, model_input: pd.DataFrame) -> pd.DataFrame:\n` +
+            `        query = model_input["query"].iloc[0] if "query" in model_input.columns else ""\n` +
+            `        result = {"response": f"[${agentRec.name}] received: {query}", "status": "ok"}\n` +
+            `        return pd.DataFrame([result])\n`
+          );
+
+          // ── src/guardrails/ ───────────────────────────────────────────────────
+          localFiles[`${dirPrefix}/src/guardrails/__init__.py`] = "";
+
+          localFiles[`${dirPrefix}/src/guardrails/input_guardrails.py`] = (
+            `"""Input guardrail (Layer 1 of 3) for ${agentRec.name}.\n\n` +
+            `Runs before any agent. PII is masked not blocked.\n` +
+            `A failed check stops the pipeline and returns blocked status.\n` +
+            `"""\n` +
+            `import re\n` +
+            `import warnings\n` +
+            `from dataclasses import dataclass\n` +
+            `from typing import List\n\n` +
+            `from src.config.settings import GuardrailConfig\n\n\n` +
+            `@dataclass\n` +
+            `class GuardrailResult:\n` +
+            `    passed: bool\n` +
+            `    reason: str = ""\n` +
+            `    sanitized_query: str = ""\n\n\n` +
+            `_INJECTION_PATTERNS: List[str] = [\n` +
+            `    r"ignore previous instructions",\n` +
+            `    r"ignore all previous instructions",\n` +
+            `    r"disregard your instructions",\n` +
+            `    r"forget your previous instructions",\n` +
+            `    r"you are now",\n` +
+            `    r"act as if you are",\n` +
+            `    r"pretend you are",\n` +
+            `    r"jailbreak",\n` +
+            `    r"do anything now",\n` +
+            `]\n\n` +
+            `_PII_PATTERNS = [\n` +
+            `    (re.compile(r"\\b[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Z|a-z]{2,}\\b"), "[EMAIL]"),\n` +
+            `    (re.compile(r"\\b(?:\\+?1[\\-. ]?)?\\(?[0-9]{3}\\)?[\\-. ]?[0-9]{3}[\\-. ]?[0-9]{4}\\b"), "[PHONE]"),\n` +
+            `    (re.compile(r"\\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\\b"), "[CARD]"),\n` +
+            `    (re.compile(r"\\b[0-9]{3}[-\\s]?[0-9]{2}[-\\s]?[0-9]{4}\\b"), "[SSN]"),\n` +
+            `]\n\n\n` +
+            `class InputGuardrails:\n` +
+            `    def __init__(self, config: GuardrailConfig):\n` +
+            `        self.config = config\n` +
+            `        self._injection_re = [re.compile(rf"(?i)\\b{p}\\b") for p in _INJECTION_PATTERNS]\n\n` +
+            `    def check(self, query: str) -> GuardrailResult:\n` +
+            `        if not query or len(query.strip()) == 0:\n` +
+            `            return GuardrailResult(passed=False, reason="empty_query")\n` +
+            `        if len(query) < self.config.min_query_length:\n` +
+            `            return GuardrailResult(passed=False, reason="query_too_short")\n` +
+            `        if len(query) > self.config.max_query_length:\n` +
+            `            return GuardrailResult(passed=False, reason="query_too_long")\n` +
+            `        words = query.split()\n` +
+            `        if words and max(words.count(w) for w in set(words)) > 20:\n` +
+            `            return GuardrailResult(passed=False, reason="repetition_flood")\n` +
+            `        for pattern in self._injection_re:\n` +
+            `            if pattern.search(query):\n` +
+            `                return GuardrailResult(passed=False, reason="prompt_injection")\n` +
+            `        sanitized = query\n` +
+            `        for pii_re, replacement in _PII_PATTERNS:\n` +
+            `            sanitized = pii_re.sub(replacement, sanitized)\n` +
+            `        return GuardrailResult(passed=True, sanitized_query=sanitized)\n`
+          );
+
+          localFiles[`${dirPrefix}/src/guardrails/routing_guardrails.py`] = (
+            `"""Routing guardrail (Layer 2 of 3) for ${agentRec.name}.\n\n` +
+            `Runs after triage, before routing to specialist agents.\n` +
+            `High confidence does NOT override an escalation flag.\n` +
+            `"""\n` +
+            `from typing import List\n\n` +
+            `from src.config.settings import GuardrailConfig\n` +
+            `from src.guardrails.input_guardrails import GuardrailResult\n\n\n` +
+            `class RoutingGuardrails:\n` +
+            `    def __init__(self, config: GuardrailConfig, triage_categories: List[str]):\n` +
+            `        self.config = config\n` +
+            `        self.triage_categories = triage_categories\n\n` +
+            `    def check(self, intent: str, confidence: float, needs_escalation: bool = False) -> GuardrailResult:\n` +
+            `        if intent == "escalation":\n` +
+            `            return GuardrailResult(passed=False, reason="explicit_escalation")\n` +
+            `        if needs_escalation:\n` +
+            `            return GuardrailResult(passed=False, reason="triage_escalation_flag")\n` +
+            `        if intent not in self.triage_categories:\n` +
+            `            return GuardrailResult(passed=False, reason="unknown_intent")\n` +
+            `        if confidence < self.config.routing_confidence_threshold:\n` +
+            `            return GuardrailResult(passed=False, reason="low_confidence")\n` +
+            `        return GuardrailResult(passed=True)\n`
+          );
+
+          localFiles[`${dirPrefix}/src/guardrails/output_guardrails.py`] = (
+            `"""Output guardrail (Layer 3 of 3) for ${agentRec.name}.\n\n` +
+            `MUST run before monitor.log(). Log sanitized response — never raw PII.\n` +
+            `Quality score: max(0.0, 1.0 - warnings * 0.15)\n` +
+            `"""\n` +
+            `import re\n` +
+            `from dataclasses import dataclass, field\n` +
+            `from typing import List\n\n` +
+            `from src.config.settings import GuardrailConfig\n` +
+            `from src.guardrails.input_guardrails import _PII_PATTERNS\n\n\n` +
+            `@dataclass\n` +
+            `class OutputGuardrailResult:\n` +
+            `    passed: bool\n` +
+            `    sanitized_response: str = ""\n` +
+            `    warnings: List[str] = field(default_factory=list)\n` +
+            `    quality_score: float = 1.0\n` +
+            `    downgraded_to_escalation: bool = False\n\n\n` +
+            `_SAFE_FALLBACK = "I'm sorry, I wasn't able to generate a response. Please try again or contact support."\n\n\n` +
+            `class OutputGuardrails:\n` +
+            `    def __init__(self, config: GuardrailConfig):\n` +
+            `        self.config = config\n\n` +
+            `    def check(self, response: str, sources_count: int = 0, escalated: bool = False, confidence: float = 1.0) -> OutputGuardrailResult:\n` +
+            `        """Call BEFORE monitor.log(). Returns sanitized response and quality score."""\n` +
+            `        out_warnings: List[str] = []\n` +
+            `        out_response = response\n` +
+            `        if confidence < self.config.min_output_confidence:\n` +
+            `            return OutputGuardrailResult(passed=False, sanitized_response=_SAFE_FALLBACK, warnings=["low_output_confidence"], quality_score=0.0, downgraded_to_escalation=True)\n` +
+            `        if not out_response or len(out_response.strip()) == 0:\n` +
+            `            out_response = _SAFE_FALLBACK\n` +
+            `            out_warnings.append("empty_response")\n` +
+            `        if len(out_response.split()) < self.config.response_min_words:\n` +
+            `            out_warnings.append("response_too_short")\n` +
+            `        if sources_count == 0 and not escalated:\n` +
+            `            out_warnings.append("no_sources")\n` +
+            `        for pii_re, replacement in _PII_PATTERNS:\n` +
+            `            out_response = pii_re.sub(replacement, out_response)\n` +
+            `        quality_score = max(0.0, 1.0 - len(out_warnings) * 0.15)\n` +
+            `        return OutputGuardrailResult(passed=True, sanitized_response=out_response, warnings=out_warnings, quality_score=quality_score)\n`
+          );
+
+          // ── src/monitoring.py — Delta table writer ────────────────────────────
+          // StatementParameterListItem (not plain dicts), CAST() for non-strings,
+          // NO PARTITIONED BY, always wrapped in try/except at call site.
+          localFiles[`${dirPrefix}/src/monitoring.py`] = (
+            `"""Delta table monitoring writer for ${agentRec.name}.\n\n` +
+            `Call OutputGuardrails.check() BEFORE monitor.log().\n` +
+            `Wrap monitor.log() in try/except — crash must not kill workflow.\n` +
+            `"""\n` +
+            `import json\n` +
+            `import warnings\n` +
+            `from dataclasses import dataclass, field\n` +
+            `from typing import List\n\n` +
+            `from src.config.settings import MonitoringConfig\n\n\n` +
+            `@dataclass\n` +
+            `class MonitoringRow:\n` +
+            `    workflow_id: str\n` +
+            `    query: str\n` +
+            `    response: str\n` +
+            `    intent: str = ""\n` +
+            `    agent_used: str = ""\n` +
+            `    latency_ms: float = 0.0\n` +
+            `    success: bool = True\n` +
+            `    escalated: bool = False\n` +
+            `    quality_score: float = 1.0\n` +
+            `    input_guardrail_passed: bool = True\n` +
+            `    routing_guardrail_passed: bool = True\n` +
+            `    output_guardrail_passed: bool = True\n` +
+            `    output_warnings: List[str] = field(default_factory=list)\n\n\n` +
+            `class MonitoringWriter:\n` +
+            `    def __init__(self, config: MonitoringConfig):\n` +
+            `        self.config = config\n` +
+            `        self._client = None\n\n` +
+            `    def _get_client(self):\n` +
+            `        if self._client is None:\n` +
+            `            from databricks.sdk import WorkspaceClient\n` +
+            `            self._client = WorkspaceClient()\n` +
+            `        return self._client\n\n` +
+            `    def ensure_table(self) -> None:\n` +
+            `        if not self.config.enabled:\n` +
+            `            return\n` +
+            `        w = self._get_client()\n` +
+            `        whs = list(w.warehouses.list())\n` +
+            `        if not whs:\n` +
+            `            warnings.warn("No SQL warehouses — skipping table creation")\n` +
+            `            return\n` +
+            `        tbl = f"{self.config.catalog}.{self.config.schema}.{self.config.table}"\n` +
+            `        # NO PARTITIONED BY — DELTA_OPERATION_NOT_ALLOWED on serverless\n` +
+            `        ddl = f"""\n` +
+            `            CREATE TABLE IF NOT EXISTS {tbl} (\n` +
+            `                workflow_id STRING, query STRING, response STRING,\n` +
+            `                intent STRING, agent_used STRING,\n` +
+            `                latency_ms DOUBLE, success BOOLEAN, escalated BOOLEAN,\n` +
+            `                quality_score DOUBLE,\n` +
+            `                input_guardrail_passed BOOLEAN, routing_guardrail_passed BOOLEAN,\n` +
+            `                output_guardrail_passed BOOLEAN,\n` +
+            `                output_warnings ARRAY<STRING>, created_at TIMESTAMP\n` +
+            `            )\n` +
+            `        """\n` +
+            `        w.statement_execution.execute_statement(statement=ddl, warehouse_id=whs[0].id).result()\n\n` +
+            `    def log(self, row: MonitoringRow) -> None:\n` +
+            `        """Write one row. Use StatementParameterListItem — plain dicts raise AttributeError."""\n` +
+            `        if not self.config.enabled:\n` +
+            `            return\n` +
+            `        from databricks.sdk.service.sql import StatementParameterListItem\n` +
+            `        w = self._get_client()\n` +
+            `        whs = list(w.warehouses.list())\n` +
+            `        if not whs:\n` +
+            `            warnings.warn("No SQL warehouses — skipping monitoring write")\n` +
+            `            return\n` +
+            `        tbl = f"{self.config.catalog}.{self.config.schema}.{self.config.table}"\n` +
+            `        sql = f"""\n` +
+            `            INSERT INTO {tbl} VALUES (\n` +
+            `                :workflow_id, :query, :response, :intent, :agent_used,\n` +
+            `                CAST(:latency_ms AS DOUBLE), CAST(:success AS BOOLEAN),\n` +
+            `                CAST(:escalated AS BOOLEAN), CAST(:quality_score AS DOUBLE),\n` +
+            `                CAST(:input_guardrail_passed AS BOOLEAN),\n` +
+            `                CAST(:routing_guardrail_passed AS BOOLEAN),\n` +
+            `                CAST(:output_guardrail_passed AS BOOLEAN),\n` +
+            `                from_json(:output_warnings, 'ARRAY<STRING>'), current_timestamp()\n` +
+            `            )\n` +
+            `        """\n` +
+            `        params = [\n` +
+            `            StatementParameterListItem(name="workflow_id",               value=row.workflow_id),\n` +
+            `            StatementParameterListItem(name="query",                     value=row.query),\n` +
+            `            StatementParameterListItem(name="response",                  value=row.response),\n` +
+            `            StatementParameterListItem(name="intent",                    value=row.intent),\n` +
+            `            StatementParameterListItem(name="agent_used",                value=row.agent_used),\n` +
+            `            StatementParameterListItem(name="latency_ms",                value=str(row.latency_ms)),\n` +
+            `            StatementParameterListItem(name="success",                   value="true" if row.success else "false"),\n` +
+            `            StatementParameterListItem(name="escalated",                 value="true" if row.escalated else "false"),\n` +
+            `            StatementParameterListItem(name="quality_score",             value=str(row.quality_score)),\n` +
+            `            StatementParameterListItem(name="input_guardrail_passed",    value="true" if row.input_guardrail_passed else "false"),\n` +
+            `            StatementParameterListItem(name="routing_guardrail_passed",  value="true" if row.routing_guardrail_passed else "false"),\n` +
+            `            StatementParameterListItem(name="output_guardrail_passed",   value="true" if row.output_guardrail_passed else "false"),\n` +
+            `            StatementParameterListItem(name="output_warnings",           value=json.dumps(row.output_warnings)),\n` +
+            `        ]\n` +
+            `        w.statement_execution.execute_statement(statement=sql, warehouse_id=whs[0].id, parameters=params).result()\n`
+          );
+
           localFiles[`${dirPrefix}/tests/__init__.py`] = "";
 
           if (mcpServerDetails.length > 0) {
@@ -6322,29 +7390,55 @@ clean:
             `              - ./${slot.prefix}/dist/${slug}-\${var.wheel_version}-py3-none-any.whl`
           );
         }).join("\n");
+        // Build registered_models section — one entry per agent in the bundle.
+        const registeredModelEntries = allSlots.map(slot => {
+          const slug = slot.agent.name.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+          return (
+            `    ${slug}_model:\n` +
+            `      name: workspace.default.${slug}\n` +
+            `      catalog_name: workspace\n` +
+            `      schema_name: default\n` +
+            `      comment: "${slot.agent.name} — registered by ATLAS export"`
+          );
+        }).join("\n");
         files["databricks.yml"] = (
           `# Databricks Asset Bundle (DAB) — ${orchestrator.name} Multi-Agent Team\n` +
-          `# Deploy with: databricks bundle deploy\n` +
+          `# Deploy:  databricks bundle deploy          (dev target)\n` +
+          `#          databricks bundle deploy -t prod\n` +
+          `#          databricks bundle run <agent>_deploy -t dev\n` +
           `#\n` +
-          `# Authentication: set DATABRICKS_HOST and DATABRICKS_TOKEN in your environment.\n` +
-          `# DAB reads these env vars automatically — do NOT put them in workspace.host.\n` +
+          `# Auth: export DATABRICKS_HOST=https://adb-<id>.azuredatabricks.net\n` +
+          `#       export DATABRICKS_TOKEN=dapi...\n` +
+          `#\n` +
+          `# Build wheel before deploying:\n` +
+          `#       cd <agent_dir> && python -m build\n` +
           `bundle:\n` +
           `  name: ${orchSlugDbx}_bundle\n\n` +
           `variables:\n` +
           `  wheel_version:\n` +
-          `    description: Version of the agent wheel (must match pyproject.toml [project].version).\n` +
+          `    description: "Matches [project].version in pyproject.toml. Bump on every release."\n` +
           `    default: "0.1.0"\n\n` +
           `workspace:\n` +
-          `  root_path: ~/.bundle/\${bundle.name}/\${bundle.target}\n\n` +
+          `  # Replace with your literal workspace URL.\n` +
+          `  host: https://adb-<workspace-id>.azuredatabricks.net\n\n` +
+          `# IMPORTANT: no mode: development / mode: production on any target.\n` +
+          `# mode: development prefixes ALL Unity Catalog resource names with dev_<username>_\n` +
+          `# which permanently breaks UC model registration paths.\n` +
           `targets:\n` +
           `  dev:\n` +
           `    default: true\n` +
-          `    mode: development\n\n` +
+          `    workspace:\n` +
+          `      root_path: /Workspace/Users/\${workspace.current_user.userName}/.bundle/\${bundle.name}/dev\n\n` +
           `  staging:\n` +
-          `    mode: development\n\n` +
+          `    workspace:\n` +
+          `      root_path: /Workspace/Users/\${workspace.current_user.userName}/.bundle/\${bundle.name}/staging\n\n` +
           `  prod:\n` +
-          `    mode: production\n\n` +
+          `    workspace:\n` +
+          `      root_path: /Workspace/Users/\${workspace.current_user.userName}/.bundle/\${bundle.name}/prod\n\n` +
           `resources:\n` +
+          `  # One registered_model entry per agent — Unity Catalog paths.\n` +
+          `  registered_models:\n` +
+          `${registeredModelEntries}\n\n` +
           `  jobs:\n` +
           `${agentJobEntries}\n`
         );
