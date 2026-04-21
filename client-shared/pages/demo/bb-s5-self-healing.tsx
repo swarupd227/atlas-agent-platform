@@ -1,5 +1,11 @@
+import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, Loader2, Clock, Zap, Database, ShieldCheck, RefreshCw } from "lucide-react";
+import {
+  AlertTriangle, CheckCircle2, Loader2, Clock, Zap, Database,
+  ShieldCheck, RefreshCw, Wifi, WifiOff, Play, RotateCcw,
+} from "lucide-react";
+
+type ScenarioType = "standard" | "fraud-ring" | "self-healing";
 
 interface HealingData {
   healingEvent: {
@@ -36,12 +42,12 @@ const STAGE_ICONS: Record<string, any> = {
   Validate: ShieldCheck,
 };
 
-const STAGE_COLORS: Record<string, string> = {
-  Detect: "text-red-400 bg-red-500/10 border-red-500/20",
-  Diagnose: "text-amber-400 bg-amber-500/10 border-amber-500/20",
-  Remediate: "text-blue-400 bg-blue-500/10 border-blue-500/20",
-  Backfill: "text-purple-400 bg-purple-500/10 border-purple-500/20",
-  Validate: "text-green-400 bg-green-500/10 border-green-500/20",
+const STAGE_COLORS: Record<string, { card: string; dot: string }> = {
+  Detect:    { card: "text-red-400 bg-red-500/10 border-red-500/20",       dot: "bg-red-400"    },
+  Diagnose:  { card: "text-amber-400 bg-amber-500/10 border-amber-500/20", dot: "bg-amber-400"  },
+  Remediate: { card: "text-blue-400 bg-blue-500/10 border-blue-500/20",    dot: "bg-blue-400"   },
+  Backfill:  { card: "text-purple-400 bg-purple-500/10 border-purple-500/20", dot: "bg-purple-400" },
+  Validate:  { card: "text-green-400 bg-green-500/10 border-green-500/20", dot: "bg-green-400"  },
 };
 
 function formatTime(iso: string) {
@@ -49,11 +55,411 @@ function formatTime(iso: string) {
   return d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
-export default function BBScreen5SelfHealing() {
+const LIVE_STAGES = [
+  { stage: "Detect",    label: "Detecting outage",     durationMs: 6000,  detail: "Data feed heartbeat missed — 0 transactions received from Manheim SE for 3 minutes" },
+  { stage: "Diagnose",  label: "Diagnosing root cause", durationMs: 9000,  detail: "API authentication token expired (confirmed by 401 response). Root cause: 24-hour token TTL not refreshed by cron job." },
+  { stage: "Remediate", label: "Applying fix",          durationMs: 5000,  detail: "Auto-rotated to backup authentication credential. Manheim SE API responding normally. Feed resumed." },
+  { stage: "Backfill",  label: "Backfilling 8,200 txns",durationMs: 11000, detail: "Backfill request queued for 8,200 missed transactions. SE regional valuations flagged with reduced confidence weighting pending full backfill." },
+  { stage: "Validate",  label: "Validating recovery",   durationMs: 5000,  detail: "Feed health score restored to 99.2%. Valuation model confidence weight restored to full after backfill validation." },
+];
+
+type LivePhase = "idle" | "running" | "complete";
+
+function LiveSelfHealingDemo() {
+  const [phase, setPhase]         = useState<LivePhase>("idle");
+  const [stageIdx, setStageIdx]   = useState(-1);       // -1 = not started, 0-4 = stages
+  const [stageStart, setStageStart] = useState<Date | null>(null);
+  const [elapsed, setElapsed]     = useState(0);
+  const [completedAt, setCompletedAt] = useState<Date | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const stageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const BB_COLOR = "#E8640A";
+
+  useEffect(() => {
+    if (phase === "running") {
+      timerRef.current = setInterval(() => {
+        setElapsed(e => e + 1);
+      }, 1000);
+    } else {
+      if (timerRef.current) clearInterval(timerRef.current);
+    }
+    return () => { if (timerRef.current) clearInterval(timerRef.current); };
+  }, [phase]);
+
+  function advanceStage(idx: number) {
+    if (idx >= LIVE_STAGES.length) {
+      setPhase("complete");
+      setCompletedAt(new Date());
+      return;
+    }
+    setStageIdx(idx);
+    setStageStart(new Date());
+    stageTimerRef.current = setTimeout(() => {
+      advanceStage(idx + 1);
+    }, LIVE_STAGES[idx].durationMs);
+  }
+
+  function triggerOutage() {
+    if (stageTimerRef.current) clearTimeout(stageTimerRef.current);
+    setPhase("running");
+    setStageIdx(-1);
+    setElapsed(0);
+    setCompletedAt(null);
+    setTimeout(() => advanceStage(0), 1000);
+  }
+
+  function reset() {
+    if (stageTimerRef.current) clearTimeout(stageTimerRef.current);
+    if (timerRef.current) clearInterval(timerRef.current);
+    setPhase("idle");
+    setStageIdx(-1);
+    setElapsed(0);
+    setCompletedAt(null);
+  }
+
+  useEffect(() => () => {
+    if (stageTimerRef.current) clearTimeout(stageTimerRef.current);
+    if (timerRef.current) clearInterval(timerRef.current);
+  }, []);
+
+  if (phase === "idle") {
+    return (
+      <div className="space-y-4">
+        {/* Feed health - all nominal */}
+        <div className="rounded-xl border border-green-500/30 bg-green-500/5 p-5" data-testid="bb-feeds-nominal">
+          <div className="flex items-center gap-3 mb-4">
+            <Wifi className="w-5 h-5 text-green-400" />
+            <div>
+              <h2 className="text-sm font-bold text-green-400">All Data Feeds Nominal</h2>
+              <p className="text-[11px] text-muted-foreground mt-0.5">5 auction data sources connected · Real-time health monitoring active</p>
+            </div>
+            <span className="ml-auto text-[10px] px-2 py-0.5 rounded-full bg-green-500/10 text-green-400 border border-green-500/20">HEALTHY</span>
+          </div>
+          <div className="space-y-2">
+            {[
+              { source: "Manheim (national)", health: 100, txns: "41,200" },
+              { source: "Manheim Southeast",  health: 100, txns: "8,200"  },
+              { source: "Adesa",              health: 100, txns: "38,500" },
+              { source: "Dealer-Direct",      health: 100, txns: "32,800" },
+              { source: "Independent",        health: 100, txns: "21,483" },
+            ].map(f => (
+              <div key={f.source} className="flex items-center gap-3">
+                <div className="w-2 h-2 rounded-full bg-green-400" />
+                <span className="text-[11px] font-medium w-44">{f.source}</span>
+                <div className="flex-1 h-1 rounded-full bg-muted/30">
+                  <div className="h-full rounded-full bg-green-400 transition-all" style={{ width: `${f.health}%` }} />
+                </div>
+                <span className="text-[10px] text-green-400 font-mono w-10 text-right">{f.health}%</span>
+                <span className="text-[10px] text-muted-foreground w-16 text-right">{f.txns} txns</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Trigger card */}
+        <div className="rounded-xl border bg-card p-5">
+          <div className="flex items-start gap-4">
+            <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center shrink-0">
+              <WifiOff className="w-5 h-5 text-amber-400" />
+            </div>
+            <div className="flex-1">
+              <h3 className="text-sm font-semibold">Simulate a Data Feed Outage</h3>
+              <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed max-w-lg">
+                Trigger a simulated Manheim Southeast authentication failure — the same scenario that happens in production.
+                Watch the Atlas self-healing pipeline run live through 5 automated stages: Detect → Diagnose → Remediate → Backfill → Validate.
+              </p>
+              <div className="flex items-center gap-3 mt-4">
+                <button
+                  onClick={triggerOutage}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white shadow-sm hover:opacity-90 active:scale-95 transition-all"
+                  style={{ backgroundColor: BB_COLOR }}
+                  data-testid="bb-trigger-outage"
+                >
+                  <Play className="w-4 h-4" />
+                  Trigger Simulated Outage
+                </button>
+                <span className="text-[11px] text-muted-foreground">Takes ~40 seconds to complete all 5 healing stages</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Historical context */}
+        <div className="rounded-xl border bg-card p-4">
+          <h3 className="text-xs font-semibold mb-3">Last 30 Days — Self-Healing Events</h3>
+          <div className="space-y-2">
+            {[
+              { id: "HLG-2026-0091", source: "Manheim SE",      issue: "OAuth token expired",   resolved: "4 min", date: "Apr 21" },
+              { id: "HLG-2026-0084", source: "Adesa",            issue: "Schema field mismatch", resolved: "7 min", date: "Apr 14" },
+              { id: "HLG-2026-0079", source: "Dealer-Direct API",issue: "Rate limit exceeded",   resolved: "2 min", date: "Apr 9"  },
+            ].map(e => (
+              <div key={e.id} className="flex items-center justify-between p-2.5 rounded-lg bg-muted/30 border border-border/50">
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0" />
+                  <div>
+                    <p className="text-[11px] font-semibold">{e.source} — {e.issue}</p>
+                    <p className="text-[10px] text-muted-foreground font-mono">{e.id} · {e.date}</p>
+                  </div>
+                </div>
+                <span className="text-[10px] text-green-400 font-mono">{e.resolved}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === "running") {
+    const activeStage = stageIdx >= 0 ? LIVE_STAGES[stageIdx] : null;
+    return (
+      <div className="space-y-4">
+        {/* Live incident banner */}
+        <div className="rounded-xl border border-red-500/40 bg-red-500/5 p-4 animate-pulse" data-testid="bb-incident-live">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <WifiOff className="w-5 h-5 text-red-400" />
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/20 text-red-400 border border-red-500/30">ACTIVE INCIDENT</span>
+                  <span className="text-[10px] font-mono text-muted-foreground">INC-{new Date().toISOString().slice(0, 10).replace(/-/g, "")}-001</span>
+                </div>
+                <h2 className="text-sm font-bold text-red-400 mt-0.5">Manheim Southeast data feed offline</h2>
+                <p className="text-[11px] text-muted-foreground">OAuth token expired · 8,200 transactions at risk</p>
+              </div>
+            </div>
+            <div className="text-right shrink-0">
+              <div className="flex items-center gap-1 text-red-400 justify-end">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                <span className="text-[10px] font-mono">Self-healing active</span>
+              </div>
+              <p className="text-2xl font-bold text-red-400 font-mono">{elapsed}s</p>
+              <p className="text-[10px] text-muted-foreground">elapsed</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Live stage pipeline */}
+        <div className="space-y-2">
+          {LIVE_STAGES.map((ls, i) => {
+            const isActive   = i === stageIdx;
+            const isComplete = i < stageIdx;
+            const isPending  = i > stageIdx;
+            const colors     = STAGE_COLORS[ls.stage];
+            const Icon       = STAGE_ICONS[ls.stage];
+            return (
+              <div
+                key={ls.stage}
+                className={`rounded-xl border p-4 transition-all duration-500 ${
+                  isComplete ? colors.card :
+                  isActive   ? `${colors.card} shadow-sm` :
+                  "bg-muted/10 border-border/30 opacity-50"
+                }`}
+                data-testid={`bb-live-stage-${ls.stage.toLowerCase()}`}
+              >
+                <div className="flex items-start gap-3">
+                  <div className="flex flex-col items-center gap-1 shrink-0">
+                    <div className={`w-7 h-7 rounded-full flex items-center justify-center ${
+                      isComplete ? "bg-green-500/20 border border-green-500/30" :
+                      isActive   ? `${colors.card} border` :
+                      "bg-muted/20 border border-border/30"
+                    }`}>
+                      {isComplete
+                        ? <CheckCircle2 className="w-4 h-4 text-green-400" />
+                        : isActive
+                          ? <Loader2 className={`w-3.5 h-3.5 animate-spin`} />
+                          : <span className="text-[10px] font-bold text-muted-foreground">{i + 1}</span>
+                      }
+                    </div>
+                    {i < LIVE_STAGES.length - 1 && (
+                      <div className={`w-px h-4 ${isComplete ? "bg-green-400/40" : "bg-border/20"}`} />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-1">
+                      <div className="flex items-center gap-1.5">
+                        <Icon className={`w-3.5 h-3.5 ${isPending ? "text-muted-foreground/40" : ""}`} />
+                        <span className="text-[11px] font-semibold">{ls.stage}</span>
+                        <span className="text-[10px] text-muted-foreground">— {ls.label}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-[9px]">
+                        {isComplete && <span className="text-green-400 font-mono">✓ done</span>}
+                        {isActive   && <span className="animate-pulse font-mono">running…</span>}
+                        <span className="text-muted-foreground/50">~{Math.round(ls.durationMs / 1000)}s</span>
+                      </div>
+                    </div>
+                    {(isActive || isComplete) && (
+                      <p className="text-[10px] leading-relaxed opacity-90">{ls.detail}</p>
+                    )}
+                    {isActive && (
+                      <div className="mt-2 h-1 rounded-full bg-current/20 overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-current opacity-80 transition-all"
+                          style={{
+                            width: "100%",
+                            animation: `pulse 1s ease-in-out infinite`,
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Feed status during run */}
+        <div className="rounded-xl border bg-card p-4">
+          <h3 className="text-xs font-semibold mb-3">Data Feed Status</h3>
+          <div className="space-y-2">
+            {[
+              { source: "Manheim (national)", health: 100, ok: true  },
+              { source: "Manheim Southeast",  health: stageIdx >= 2 ? 100 : 0, ok: stageIdx >= 2 },
+              { source: "Adesa",              health: 100, ok: true  },
+              { source: "Dealer-Direct",      health: 100, ok: true  },
+              { source: "Independent",        health: 100, ok: true  },
+            ].map(f => (
+              <div key={f.source} className="flex items-center gap-3">
+                <div className={`w-2 h-2 rounded-full ${f.ok ? "bg-green-400" : "bg-red-400 animate-pulse"}`} />
+                <span className="text-[11px] w-44">{f.source}</span>
+                <div className="flex-1 h-1 rounded-full bg-muted/30">
+                  <div
+                    className={`h-full rounded-full transition-all duration-1000 ${f.ok ? "bg-green-400" : "bg-red-400"}`}
+                    style={{ width: `${f.health}%` }}
+                  />
+                </div>
+                <span className={`text-[10px] font-mono w-10 text-right ${f.ok ? "text-green-400" : "text-red-400"}`}>
+                  {f.health}%
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Resolved
+  const totalSec = LIVE_STAGES.reduce((s, st) => s + st.durationMs, 0) / 1000;
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border border-green-500/30 bg-green-500/5 p-4" data-testid="bb-healing-banner">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/10 text-green-400 border border-green-500/20">RESOLVED</span>
+              <span className="text-[10px] text-muted-foreground font-mono">HLG-{new Date().toISOString().slice(0, 10).replace(/-/g, "")}-001</span>
+            </div>
+            <h2 className="text-sm font-bold">Manheim Southeast data feed offline — self-healed in {Math.round(elapsed / 60) || 1} min</h2>
+            <p className="text-[11px] text-muted-foreground mt-1">OAuth token expired — 401 response from Manheim Southeast API</p>
+          </div>
+          <div className="text-right shrink-0">
+            <div className="flex items-center gap-1 text-muted-foreground justify-end mb-0.5">
+              <Clock className="w-3.5 h-3.5" />
+              <span className="text-[10px]">Resolution time</span>
+            </div>
+            <p className="text-2xl font-bold text-green-400">{elapsed}s</p>
+            <p className="text-[10px] text-muted-foreground">fully automated</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Completed stages */}
+      <div className="space-y-2">
+        {LIVE_STAGES.map((ls, i) => {
+          const colors = STAGE_COLORS[ls.stage];
+          const Icon   = STAGE_ICONS[ls.stage];
+          return (
+            <div key={ls.stage} className={`rounded-xl border p-4 ${colors.card}`} data-testid={`bb-healing-stage-${ls.stage.toLowerCase()}`}>
+              <div className="flex items-start gap-3">
+                <div className="flex flex-col items-center gap-1">
+                  <div className="w-7 h-7 rounded-full flex items-center justify-center bg-green-500/20 border border-green-500/30">
+                    <CheckCircle2 className="w-4 h-4 text-green-400" />
+                  </div>
+                  {i < LIVE_STAGES.length - 1 && <div className="w-px h-4 bg-green-400/30" />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-1.5">
+                      <Icon className="w-3.5 h-3.5" />
+                      <span className="text-[11px] font-semibold">{ls.stage}</span>
+                      <CheckCircle2 className="w-3 h-3" />
+                    </div>
+                    <span className="text-[9px] opacity-70">~{Math.round(ls.durationMs / 1000)}s</span>
+                  </div>
+                  <p className="text-[10px] leading-relaxed opacity-90">{ls.detail}</p>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="grid grid-cols-3 gap-4">
+        <div className="col-span-2 rounded-xl border bg-card p-4">
+          <h3 className="text-xs font-semibold mb-3">Impact Avoided</h3>
+          <div className="space-y-2">
+            {[
+              { label: "Time saved vs manual",      value: "~243 min (4 hrs)" },
+              { label: "Transactions recovered",     value: "8,200" },
+              { label: "Valuations protected",       value: "31,000" },
+              { label: "Client exposure",            value: "Zero — resolved before customers noticed" },
+              { label: "Analyst intervention",       value: "None required" },
+            ].map(({ label, value }) => (
+              <div key={label} className="flex items-center justify-between">
+                <span className="text-[10px] text-muted-foreground">{label}</span>
+                <span className="text-[10px] font-semibold text-green-400">{value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="space-y-3">
+          <div className="rounded-xl border bg-card p-4">
+            <h3 className="text-xs font-semibold mb-2">Feed Health Restored</h3>
+            {[
+              { source: "Manheim (national)", status: 100 },
+              { source: "Adesa",              status: 100 },
+              { source: "Manheim SE",         status: 99  },
+              { source: "Dealer-Direct",      status: 100 },
+              { source: "Independent",        status: 100 },
+            ].map(f => (
+              <div key={f.source} className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] text-muted-foreground">{f.source}</span>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-12 h-1 rounded-full bg-muted/30">
+                    <div className="h-full rounded-full bg-green-400" style={{ width: `${f.status}%` }} />
+                  </div>
+                  <span className="text-[10px] text-green-400 font-mono">{f.status}%</span>
+                </div>
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={reset}
+            className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg text-[11px] border border-border/50 text-muted-foreground hover:text-foreground hover:border-border transition-all"
+            data-testid="bb-healing-reset"
+          >
+            <RotateCcw className="w-3.5 h-3.5" />
+            Run Again
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function BBScreen5SelfHealing({ scenario }: { scenario?: ScenarioType }) {
   const { data, isLoading } = useQuery<HealingData>({
     queryKey: ["/demo-api/blackbook/self-healing"],
-    refetchInterval: 30000,
+    refetchInterval: 60000,
+    enabled: scenario !== "self-healing",
   });
+
+  if (scenario === "self-healing") {
+    return <LiveSelfHealingDemo />;
+  }
 
   if (isLoading) {
     return <div className="flex items-center justify-center py-24"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
@@ -64,7 +470,6 @@ export default function BBScreen5SelfHealing() {
 
   return (
     <div className="space-y-4">
-      {/* Incident banner */}
       <div className="rounded-xl border border-green-500/30 bg-green-500/5 p-4" data-testid="bb-healing-banner">
         <div className="flex items-start justify-between gap-4">
           <div>
@@ -84,7 +489,6 @@ export default function BBScreen5SelfHealing() {
             <p className="text-[10px] text-muted-foreground">fully automated</p>
           </div>
         </div>
-
         <div className="flex items-center gap-4 mt-3 pt-3 border-t border-green-500/20">
           <div>
             <p className="text-[10px] text-muted-foreground">Triggered</p>
@@ -105,12 +509,11 @@ export default function BBScreen5SelfHealing() {
       </div>
 
       <div className="grid grid-cols-3 gap-4">
-        {/* Healing pipeline stages */}
         <div className="col-span-2 space-y-2">
           <h3 className="text-xs font-semibold">Healing Pipeline</h3>
           {d.stages.map((stage, i) => {
             const Icon = STAGE_ICONS[stage.stage] || Zap;
-            const colorClass = STAGE_COLORS[stage.stage] || "text-muted-foreground bg-muted/10 border-border/50";
+            const colorClass = STAGE_COLORS[stage.stage]?.card || "text-muted-foreground bg-muted/10 border-border/50";
             const widthPct = Math.round((stage.durationSec / totalDuration) * 100);
             return (
               <div key={stage.stage} className={`rounded-xl border p-4 ${colorClass}`} data-testid={`bb-healing-stage-${stage.stage.toLowerCase()}`}>
@@ -144,7 +547,6 @@ export default function BBScreen5SelfHealing() {
           })}
         </div>
 
-        {/* Without ALMP comparison */}
         <div className="space-y-3">
           <div className="rounded-xl border border-red-500/20 bg-red-500/5 p-4" data-testid="bb-without-almp">
             <h3 className="text-xs font-semibold text-red-400 mb-3">Without ATLAS</h3>
@@ -170,10 +572,10 @@ export default function BBScreen5SelfHealing() {
             <h3 className="text-xs font-semibold mb-3">Impact Avoided</h3>
             <div className="space-y-2">
               {[
-                { label: "Time saved", value: `${d.withoutAlmp.estimatedOutageMinutes - d.healingEvent.totalResolutionMinutes} min` },
-                { label: "Valuations protected", value: "8,200 transactions" },
-                { label: "Client exposure", value: "Zero — resolved before customers noticed" },
-                { label: "Analyst intervention", value: "None required" },
+                { label: "Time saved",              value: `${d.withoutAlmp.estimatedOutageMinutes - d.healingEvent.totalResolutionMinutes} min` },
+                { label: "Valuations protected",    value: "8,200 transactions" },
+                { label: "Client exposure",         value: "Zero — resolved before customers noticed" },
+                { label: "Analyst intervention",    value: "None required" },
               ].map(({ label, value }) => (
                 <div key={label} className="flex items-center justify-between">
                   <span className="text-[10px] text-muted-foreground">{label}</span>
@@ -187,10 +589,10 @@ export default function BBScreen5SelfHealing() {
             <h3 className="text-xs font-semibold mb-2">Data Feed Health</h3>
             {[
               { source: "Manheim (national)", status: 100 },
-              { source: "Adesa", status: 100 },
-              { source: "Manheim SE", status: 99 },
-              { source: "Dealer-Direct", status: 100 },
-              { source: "Independent", status: 100 },
+              { source: "Adesa",              status: 100 },
+              { source: "Manheim SE",         status: 99  },
+              { source: "Dealer-Direct",      status: 100 },
+              { source: "Independent",        status: 100 },
             ].map(f => (
               <div key={f.source} className="flex items-center justify-between mb-1.5">
                 <span className="text-[10px] text-muted-foreground">{f.source}</span>

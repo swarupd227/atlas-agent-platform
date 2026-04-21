@@ -39,8 +39,38 @@ function SeverityBadge({ level }: { level: string }) {
   return <span className={`text-[10px] px-1.5 py-0.5 rounded border ${styles[level] || styles.LOW}`}>{level}</span>;
 }
 
-export default function BBScreen2AnomalyDetection() {
-  const [selectedFraud, setSelectedFraud] = useState<FraudData["suspectedFraudPatterns"][0] | null>(null);
+type ScenarioType = "standard" | "fraud-ring" | "self-healing";
+
+const FRAUD_RING_BANNER = {
+  patternId: "FRP-2026-0042",
+  patternType: "Multi-Auction VIN Washing Ring — Luxury SUV",
+  confidence: 0.96,
+  affectedVINs: 11,
+  details: {
+    vin: "MULTIPLE (11 VINs)",
+    vehicleDescription: "2022–2024 Lincoln Navigator, Cadillac Escalade, GMC Yukon Denali",
+    appearances: [
+      { auction: "Manheim Atlanta",  date: "Apr 7",  salePrice: 38500, buyerLicenseState: "GA", status: "sold" },
+      { auction: "Adesa Birmingham", date: "Apr 9",  salePrice: 51200, buyerLicenseState: "AL", status: "sold" },
+      { auction: "Manheim Orlando",  date: "Apr 14", salePrice: 68900, buyerLicenseState: "FL", status: "sold" },
+      { auction: "NAAA Southeast",   date: "Apr 18", salePrice: 71400, buyerLicenseState: null,  status: "listed" },
+    ],
+    fraudIndicators: [
+      "11 VINs appearing across 4 auction houses in 12 days — statistically improbable for normal resale",
+      "Title jurisdiction changes in 3 states with no registration history",
+      "Price escalation of 85% over 4 appearances without condition upgrade",
+      "Same buyer license entity (masked) observed at Manheim Atlanta and Adesa Birmingham",
+      "Odometer readings stationary across appearances despite 2-week gap",
+    ],
+    historicalBaserate: "Base rate for legitimate multi-auction resale of this type: 1.2%. Ring confidence: 96%.",
+    recommendedAction: "Quarantine all 11 VINs. Escalate 3 highest-confidence VINs to Black Book Fraud Investigations (SLA: 4 hrs). Flag buyer entity for enhanced monitoring across all auction sources.",
+  },
+  historicalAccuracy: { confirmedFraudRate: 0.89, falsePositiveRate: 0.07 },
+};
+
+export default function BBScreen2AnomalyDetection({ scenario }: { scenario?: ScenarioType }) {
+  const isFraudRing = scenario === "fraud-ring";
+  const [selectedFraud, setSelectedFraud] = useState<any | null>(null);
 
   const { data: anomalyData, isLoading: aLoading } = useQuery<AnomalyData>({
     queryKey: ["/api/mock/bb-auction-data/outlier-detection"],
@@ -58,15 +88,25 @@ export default function BBScreen2AnomalyDetection() {
 
   const anomaly = anomalyData!;
   const fraud = fraudData!;
-  const totalFlagged = (anomaly.priceOutliers?.length || 0) + (anomaly.geographicInconsistencies?.length || 0) + (anomaly.volumeAnomalies?.length || 0) + (fraud.suspectedFraudPatterns?.length || 0);
+  const totalFlagged = (anomaly.priceOutliers?.length || 0) + (anomaly.geographicInconsistencies?.length || 0) + (anomaly.volumeAnomalies?.length || 0) + (isFraudRing ? 11 : (fraud.suspectedFraudPatterns?.length || 0));
 
   return (
     <div className="space-y-4">
       {/* Summary bar */}
+      {isFraudRing && (
+        <div className="rounded-xl border-2 border-red-500/40 bg-red-500/5 p-3 flex items-center gap-3">
+          <AlertTriangle className="w-5 h-5 text-red-400 shrink-0" />
+          <div>
+            <p className="text-[11px] font-bold text-red-400">Critical: Multi-auction VIN washing ring detected — 11 vehicles across 4 auction houses</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">Confidence: 96% · 3 VINs require analyst escalation within 4 hrs · All 11 flagged vehicles quarantined from pricing model</p>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-4 gap-3">
         {[
           { icon: Activity, label: "Transactions Today", value: "142,183", color: "text-blue-400" },
-          { icon: AlertTriangle, label: "Anomalies Flagged", value: String(totalFlagged + 19), color: "text-amber-400" },
+          { icon: AlertTriangle, label: "Anomalies Flagged", value: isFraudRing ? String(totalFlagged + 29) : String(totalFlagged + 19), color: isFraudRing ? "text-red-400" : "text-amber-400" },
           { icon: ShieldCheck, label: "Detection Rate", value: "97.2%", color: "text-green-400" },
           { icon: TrendingDown, label: "False Positive Rate", value: "7.8%", color: "text-purple-400" },
         ].map(({ icon: Icon, label, value, color }) => (
@@ -159,56 +199,100 @@ export default function BBScreen2AnomalyDetection() {
 
         {/* Right: fraud pattern */}
         <div className="col-span-2 space-y-3">
-          <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Search className="w-4 h-4 text-red-400" />
-                <h3 className="text-xs font-semibold text-red-400">Suspected Fraud Pattern</h3>
+          {isFraudRing ? (
+            <div className="rounded-xl border-2 border-red-500/50 bg-red-500/5 p-4" data-testid="bb-fraud-ring-panel">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Search className="w-4 h-4 text-red-400" />
+                  <h3 className="text-xs font-semibold text-red-400">Coordinated Fraud Ring</h3>
+                </div>
+                <span className="text-[10px] bg-red-500/20 text-red-400 border border-red-500/30 px-2 py-0.5 rounded font-semibold">11 VINs · CRITICAL</span>
               </div>
-              <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-1.5 py-0.5 rounded">1 detected</span>
-            </div>
-            {fraud.suspectedFraudPatterns?.map(fp => (
-              <div key={fp.patternId} className="space-y-2">
+              <div className="space-y-2">
                 <div className="flex items-start justify-between">
                   <div>
-                    <p className="text-[11px] font-semibold">{fp.patternType}</p>
-                    <p className="text-[10px] text-muted-foreground font-mono mt-0.5">{fp.details.vin}</p>
-                    <p className="text-[10px] text-muted-foreground">{fp.details.vehicleDescription}</p>
+                    <p className="text-[11px] font-semibold">{FRAUD_RING_BANNER.patternType}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">{FRAUD_RING_BANNER.details.vehicleDescription}</p>
+                    <p className="text-[10px] font-mono text-muted-foreground mt-0.5">{FRAUD_RING_BANNER.patternId}</p>
                   </div>
-                  <span className="text-[10px] font-bold text-red-400">{Math.round(fp.confidence * 100)}% conf.</span>
+                  <span className="text-[11px] font-bold text-red-400">{Math.round(FRAUD_RING_BANNER.confidence * 100)}% conf.</span>
                 </div>
-
-                <div className="space-y-1">
-                  {fp.details.appearances.map((a, i) => (
-                    <div key={i} className="flex items-center justify-between p-2 rounded bg-red-500/5 border border-red-500/10">
-                      <div>
-                        <p className="text-[10px] font-semibold">{a.auction}</p>
-                        <p className="text-[9px] text-muted-foreground">{a.date} · {a.status === "sold" ? "Sold" : "Listed"}</p>
+                <div className="p-2 rounded bg-red-500/10 border border-red-500/20">
+                  <p className="text-[10px] text-red-400 font-semibold mb-1">Cross-Auction Escalation Pattern</p>
+                  <div className="space-y-1">
+                    {FRAUD_RING_BANNER.details.appearances.map((a, i) => (
+                      <div key={i} className="flex items-center justify-between p-2 rounded bg-red-500/5 border border-red-500/10">
+                        <div>
+                          <p className="text-[10px] font-semibold">{a.auction}</p>
+                          <p className="text-[9px] text-muted-foreground">{a.date} · {a.status === "sold" ? "Sold" : "Listed"}{a.buyerLicenseState ? ` · ${a.buyerLicenseState}` : ""}</p>
+                        </div>
+                        <p className="text-[10px] font-mono font-bold">${a.salePrice.toLocaleString()}</p>
                       </div>
-                      <div className="text-right">
-                        <p className="text-[10px] font-mono">${a.salePrice.toLocaleString()}</p>
-                        {a.buyerLicenseState && <p className="text-[9px] text-muted-foreground">{a.buyerLicenseState}</p>}
-                      </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                 </div>
-
+                <div className="p-2 rounded bg-amber-500/10 border border-amber-500/20">
+                  <p className="text-[10px] text-amber-400 font-semibold">⚑ Escalation Required</p>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">3 highest-confidence VINs require analyst review within 4 hrs per BB fraud SLA.</p>
+                </div>
                 <button
-                  onClick={() => setSelectedFraud(fp)}
+                  onClick={() => setSelectedFraud(FRAUD_RING_BANNER)}
                   className="w-full flex items-center justify-center gap-1.5 text-[11px] text-red-400 border border-red-500/30 rounded-lg py-2 hover:bg-red-500/10 transition-colors"
                   data-testid="bb-fraud-detail-btn"
                 >
-                  View Decision Context <ChevronRight className="w-3.5 h-3.5" />
+                  View Full Decision Context <ChevronRight className="w-3.5 h-3.5" />
                 </button>
-
-                <div className="p-2 rounded bg-muted/20 border border-border/50">
-                  <p className="text-[10px] text-muted-foreground font-semibold mb-1">Historical Accuracy</p>
-                  <p className="text-[10px] text-muted-foreground">{fp.details.historicalBaserate}</p>
-                  <p className="text-[10px] text-muted-foreground mt-0.5">False positive rate: {Math.round(fraud.historicalAccuracy.falsePositiveRate * 100)}%</p>
-                </div>
               </div>
-            ))}
-          </div>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Search className="w-4 h-4 text-red-400" />
+                  <h3 className="text-xs font-semibold text-red-400">Suspected Fraud Pattern</h3>
+                </div>
+                <span className="text-[10px] bg-red-500/10 text-red-400 border border-red-500/20 px-1.5 py-0.5 rounded">1 detected</span>
+              </div>
+              {fraud.suspectedFraudPatterns?.map(fp => (
+                <div key={fp.patternId} className="space-y-2">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-[11px] font-semibold">{fp.patternType}</p>
+                      <p className="text-[10px] text-muted-foreground font-mono mt-0.5">{fp.details.vin}</p>
+                      <p className="text-[10px] text-muted-foreground">{fp.details.vehicleDescription}</p>
+                    </div>
+                    <span className="text-[10px] font-bold text-red-400">{Math.round(fp.confidence * 100)}% conf.</span>
+                  </div>
+                  <div className="space-y-1">
+                    {fp.details.appearances.map((a, i) => (
+                      <div key={i} className="flex items-center justify-between p-2 rounded bg-red-500/5 border border-red-500/10">
+                        <div>
+                          <p className="text-[10px] font-semibold">{a.auction}</p>
+                          <p className="text-[9px] text-muted-foreground">{a.date} · {a.status === "sold" ? "Sold" : "Listed"}</p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-[10px] font-mono">${a.salePrice.toLocaleString()}</p>
+                          {a.buyerLicenseState && <p className="text-[9px] text-muted-foreground">{a.buyerLicenseState}</p>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => setSelectedFraud(fp)}
+                    className="w-full flex items-center justify-center gap-1.5 text-[11px] text-red-400 border border-red-500/30 rounded-lg py-2 hover:bg-red-500/10 transition-colors"
+                    data-testid="bb-fraud-detail-btn"
+                  >
+                    View Decision Context <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                  <div className="p-2 rounded bg-muted/20 border border-border/50">
+                    <p className="text-[10px] text-muted-foreground font-semibold mb-1">Historical Accuracy</p>
+                    <p className="text-[10px] text-muted-foreground">{fp.details.historicalBaserate}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">False positive rate: {Math.round(fraud.historicalAccuracy.falsePositiveRate * 100)}%</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

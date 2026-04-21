@@ -31,6 +31,41 @@ import BBScreen4WeeklyReport from "./bb-s4-weekly-report";
 import BBScreen5SelfHealing from "./bb-s5-self-healing";
 
 type ScreenId = "outcome" | "anomaly" | "market-shift" | "weekly-report" | "self-healing";
+type ScenarioId = "standard" | "fraud-ring" | "self-healing";
+
+const SCENARIOS: {
+  id: ScenarioId;
+  label: string;
+  sub: string;
+  tags: string[];
+  description: string;
+  defaultScreen: ScreenId;
+}[] = [
+  {
+    id: "standard",
+    label: "Standard Weekly Run",
+    sub: "Routine pipeline — all signals green",
+    tags: ["Routine", "All Clear", "Report Generated"],
+    description: "Normal weekly pipeline: 142K transactions scanned, 1 fraud pattern quarantined, market shift detected 2.8 weeks ahead, report 85% auto-drafted.",
+    defaultScreen: "outcome",
+  },
+  {
+    id: "fraud-ring",
+    label: "Multi-Region Fraud Ring",
+    sub: "11 VINs across 4 auctions · Escalation required",
+    tags: ["Critical", "Fraud Alert", "Human Escalation"],
+    description: "Coordinated VIN washing ring detected: 11 Luxury SUVs across Manheim Atlanta, Adesa Birmingham, Manheim Orlando. 96% confidence · 3 VINs require analyst review.",
+    defaultScreen: "anomaly",
+  },
+  {
+    id: "self-healing",
+    label: "Feed Outage + Self-Healing",
+    sub: "Manheim SE offline — watch live recovery",
+    tags: ["Operational", "Live Demo", "Automated Recovery"],
+    description: "Manheim Southeast data feed goes offline mid-run. Watch Atlas self-healing pipeline animate through 5 stages in real time: Detect → Diagnose → Remediate → Backfill → Validate.",
+    defaultScreen: "self-healing",
+  },
+];
 
 interface LiveEvent {
   id: number;
@@ -47,7 +82,7 @@ const SCREENS: { id: ScreenId; label: string; sub: string; icon: any; step: numb
   { id: "anomaly",       label: "Anomaly Detection",         sub: "142K transactions scanned",  icon: AlertTriangle,   step: 2 },
   { id: "market-shift",  label: "Market Shift Alerts",       sub: "2-4 week early warning",     icon: TrendingDown,    step: 3 },
   { id: "weekly-report", label: "Weekly Report Draft",       sub: "85% auto-generated",         icon: FileText,        step: 4 },
-  { id: "self-healing",  label: "Self-Healing Demo",         sub: "Manheim SE outage resolved", icon: Activity,        step: 5 },
+  { id: "self-healing",  label: "Self-Healing",              sub: "Outage detection & recovery", icon: Activity,        step: 5 },
 ];
 
 const STATUS_MAP: Record<string, { dot: string; label: string }> = {
@@ -303,6 +338,7 @@ function PipelineHeader({ liveRunning, activeAgentName, hasRun }: {
 
 export default function BlackBookDemo() {
   const [activeScreen, setActiveScreen]     = useState<ScreenId>("outcome");
+  const [scenario, setScenario]             = useState<ScenarioId>("standard");
   const [hasRun, setHasRun]                 = useState(false);
   const [liveRunning, setLiveRunning]       = useState(false);
   const [liveComplete, setLiveComplete]     = useState(false);
@@ -410,16 +446,21 @@ export default function BlackBookDemo() {
 
   useEffect(() => () => { stopLiveRun(); }, [stopLiveRun]);
 
+  const handleScenarioChange = (s: ScenarioId) => {
+    setScenario(s);
+    setActiveScreen(SCENARIOS.find(sc => sc.id === s)?.defaultScreen ?? "outcome");
+  };
+
   const renderScreen = () => {
-    if (!hasRun && !liveRunning) {
+    if (!hasRun && !liveRunning && scenario !== "self-healing") {
       return <PreRunPlaceholder screen={activeScreen} onRun={startLiveRun} />;
     }
     switch (activeScreen) {
       case "outcome":        return <BBScreen1OutcomeCockpit />;
-      case "anomaly":        return <BBScreen2AnomalyDetection />;
-      case "market-shift":   return <BBScreen3MarketShift />;
+      case "anomaly":        return <BBScreen2AnomalyDetection scenario={scenario} />;
+      case "market-shift":   return <BBScreen3MarketShift scenario={scenario} />;
       case "weekly-report":  return <BBScreen4WeeklyReport />;
-      case "self-healing":   return <BBScreen5SelfHealing />;
+      case "self-healing":   return <BBScreen5SelfHealing scenario={scenario} />;
     }
   };
 
@@ -512,6 +553,50 @@ export default function BlackBookDemo() {
       {/* Pipeline header — 4 BB agents */}
       <div className="px-6 shrink-0">
         <PipelineHeader liveRunning={liveRunning} activeAgentName={liveAgentName} hasRun={hasRun} />
+      </div>
+
+      {/* Scenario selector */}
+      <div className="px-6 pt-3 shrink-0">
+        <div className="flex items-center gap-1 mb-1">
+          <span className="text-[9px] font-mono text-muted-foreground/50 uppercase tracking-widest">Scenario</span>
+        </div>
+        <div className="grid grid-cols-3 gap-2">
+          {SCENARIOS.map(sc => {
+            const isActive = scenario === sc.id;
+            return (
+              <button
+                key={sc.id}
+                onClick={() => handleScenarioChange(sc.id)}
+                data-testid={`bb-scenario-${sc.id}`}
+                className={`text-left px-3 py-2.5 rounded-xl border transition-all ${
+                  isActive
+                    ? "shadow-sm"
+                    : "border-border/40 bg-muted/10 hover:border-border/70 hover:bg-muted/20"
+                }`}
+                style={isActive ? { borderColor: `${BB_COLOR}60`, backgroundColor: `${BB_COLOR}08` } : {}}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-semibold leading-tight line-clamp-1">{sc.label}</span>
+                  {isActive && <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ backgroundColor: BB_COLOR }} />}
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {sc.tags.map(t => (
+                    <span
+                      key={t}
+                      className={`text-[9px] px-1.5 py-0.5 rounded-full border ${
+                        sc.id === "fraud-ring"  ? "bg-red-500/10 text-red-400 border-red-500/20" :
+                        sc.id === "self-healing" ? "bg-blue-500/10 text-blue-400 border-blue-500/20" :
+                        "bg-green-500/10 text-green-400 border-green-500/20"
+                      }`}
+                    >
+                      {t}
+                    </span>
+                  ))}
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Screen tabs */}

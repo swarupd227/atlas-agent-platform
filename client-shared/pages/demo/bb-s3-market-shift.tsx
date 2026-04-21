@@ -55,8 +55,32 @@ function ConfidenceBar({ value }: { value: number }) {
   );
 }
 
-export default function BBScreen3MarketShift() {
-  const [expandedAlert, setExpandedAlert] = useState<string | null>("MSA-2026-0089");
+type ScenarioType = "standard" | "fraud-ring" | "self-healing";
+
+const FRAUD_RING_ALERT = {
+  alertId: "MSA-2026-CRIT-001",
+  segment: "Luxury SUV",
+  severity: "RED",
+  confidence: 0.94,
+  estimatedLeadTime: "Detected today — immediate impact",
+  headline: "Luxury SUV wholesale prices up +18.4% in 3 days — VIN washing ring artificially inflating segment values",
+  fusedSignals: [
+    { type: "Auction Volume Signal", detail: "11 Luxury SUVs cycling through 4 auction houses in 12 days — 23σ deviation from segment norm", confidence: 0.96 },
+    { type: "Price Velocity Signal", detail: "Wholesale price +18.4% (3-day) vs segment norm +0.9%/week — consistent with artificial inflation", confidence: 0.92 },
+    { type: "Geographic Arbitrage", detail: "VIN appearances in GA → AL → FL → NAAA Southeast — multi-state title jurisdiction manipulation", confidence: 0.94 },
+    { type: "News Signal", detail: "No supply shock, OEM news, or legitimate fleet event to explain Luxury SUV price spike this week", confidence: 0.88 },
+  ],
+  projectedImpact: {
+    nextTwoWeekPriceChange: 18.4,
+    affectedValueRange: "$38,500 – $71,400",
+    affectedLenderExposure: "$24.8M (estimated, 6 lender clients with Luxury SUV exposure)",
+  },
+  recommendedAction: "Quarantine all 11 flagged VINs from Luxury SUV pricing model. Notify lender clients with exposure. Escalate to BB Fraud Investigations.",
+};
+
+export default function BBScreen3MarketShift({ scenario }: { scenario?: ScenarioType }) {
+  const isFraudRing = scenario === "fraud-ring";
+  const [expandedAlert, setExpandedAlert] = useState<string | null>(isFraudRing ? "MSA-2026-CRIT-001" : "MSA-2026-0089");
 
   const { data: shiftData, isLoading: sLoading } = useQuery<ShiftData>({
     queryKey: ["/api/mock/bb-market-data/shift-alerts"],
@@ -74,17 +98,19 @@ export default function BBScreen3MarketShift() {
 
   const shifts = shiftData!;
   const prices = priceData!;
+  const displayAlerts = isFraudRing ? [FRAUD_RING_ALERT, ...shifts.activeAlerts] : shifts.activeAlerts;
 
   return (
     <div className="space-y-4">
       {/* Status bar */}
-      <div className="flex items-center gap-3 p-3 rounded-xl border bg-card">
+      <div className={`flex items-center gap-3 p-3 rounded-xl border ${isFraudRing ? "border-red-500/30 bg-red-500/5" : "bg-card"}`}>
         <div className="flex items-center gap-2">
-          <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-          <span className="text-xs font-semibold">{shifts.activeAlerts.length} Active Alert{shifts.activeAlerts.length !== 1 ? "s" : ""}</span>
+          <span className={`w-2 h-2 rounded-full animate-pulse ${isFraudRing ? "bg-red-400" : "bg-amber-400"}`} />
+          <span className="text-xs font-semibold">{displayAlerts.length} Active Alert{displayAlerts.length !== 1 ? "s" : ""}</span>
+          {isFraudRing && <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-400 border border-red-500/30">1 CRITICAL</span>}
         </div>
         <span className="text-muted-foreground text-xs">·</span>
-        <span className="text-xs text-muted-foreground">{shifts.cleanSegments}/{shifts.monitoringSegments} segments clean</span>
+        <span className="text-xs text-muted-foreground">{shifts.cleanSegments - (isFraudRing ? 1 : 0)}/{shifts.monitoringSegments} segments clean</span>
         <span className="text-muted-foreground text-xs">·</span>
         <span className="text-xs text-muted-foreground">BB-AGT-002 fusing 4 signal types in real time</span>
       </div>
@@ -92,8 +118,14 @@ export default function BBScreen3MarketShift() {
       <div className="grid grid-cols-5 gap-4">
         {/* Alerts panel */}
         <div className="col-span-3 space-y-3">
-          {shifts.activeAlerts.map(alert => (
-            <div key={alert.alertId} className="rounded-xl border border-amber-500/30 bg-amber-500/5" data-testid={`bb-shift-alert-${alert.alertId}`}>
+          {displayAlerts.map(alert => {
+            const isCrit = alert.alertId === "MSA-2026-CRIT-001";
+            const borderCls = isCrit ? "border-red-500/40" : "border-amber-500/30";
+            const bgCls = isCrit ? "bg-red-500/5" : "bg-amber-500/5";
+            const badgeCls = isCrit ? "bg-red-500/20 text-red-400 border-red-500/30" : "bg-amber-500/20 text-amber-400 border-amber-500/30";
+            const divideCls = isCrit ? "border-red-500/20" : "border-amber-500/20";
+            return (
+            <div key={alert.alertId} className={`rounded-xl border ${borderCls} ${bgCls}`} data-testid={`bb-shift-alert-${alert.alertId}`}>
               <button
                 className="w-full flex items-start justify-between p-4 text-left"
                 onClick={() => setExpandedAlert(expandedAlert === alert.alertId ? null : alert.alertId)}
@@ -101,11 +133,11 @@ export default function BBScreen3MarketShift() {
               >
                 <div className="flex-1">
                   <div className="flex items-center gap-2 mb-1.5">
-                    <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                    <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border ${badgeCls}`}>
                       <AlertTriangle className="w-2.5 h-2.5" />
                       {alert.severity}
                     </span>
-                    <span className="text-[10px] text-muted-foreground">{alert.confidence * 100 | 0}% confidence · {alert.estimatedLeadTime}</span>
+                    <span className="text-[10px] text-muted-foreground">{(alert.confidence * 100) | 0}% confidence · {alert.estimatedLeadTime}</span>
                   </div>
                   <p className="text-xs font-semibold leading-snug">{alert.segment}</p>
                   <p className="text-[10px] text-muted-foreground mt-1 leading-relaxed">{alert.headline}</p>
@@ -116,7 +148,7 @@ export default function BBScreen3MarketShift() {
               </button>
 
               {expandedAlert === alert.alertId && (
-                <div className="px-4 pb-4 space-y-3 border-t border-amber-500/20 pt-3">
+                <div className={`px-4 pb-4 space-y-3 border-t ${divideCls} pt-3`}>
                   {/* Signal fusion */}
                   <div>
                     <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Fused Signals ({alert.fusedSignals.length})</p>
@@ -154,15 +186,16 @@ export default function BBScreen3MarketShift() {
                 </div>
               )}
             </div>
-          ))}
+          );
+          })}
 
           <div className="rounded-xl border bg-card p-4">
             <div className="flex items-center gap-2 mb-2">
               <span className="w-2 h-2 rounded-full bg-green-400" />
-              <h3 className="text-xs font-semibold text-green-400">{shifts.cleanSegments} Segments Within Normal Range</h3>
+              <h3 className="text-xs font-semibold text-green-400">{shifts.cleanSegments - (isFraudRing ? 1 : 0)} Segments Within Normal Range</h3>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {["Mid-Size Car", "Compact Car", "Compact SUV/CUV", "Mid-Size SUV", "Full-Size SUV", "Luxury SUV", "Full-Size Car", "Mid-Size Pickup", "Hybrid", "Luxury Car"].map(s => (
+              {["Mid-Size Car", "Compact Car", "Compact SUV/CUV", "Mid-Size SUV", "Full-Size SUV", "Full-Size Car", "Mid-Size Pickup", "Hybrid", "Luxury Car", ...(isFraudRing ? [] : ["Luxury SUV"])].map(s => (
                 <span key={s} className="text-[10px] px-2 py-0.5 rounded-full bg-green-500/10 text-green-400 border border-green-500/20">{s}</span>
               ))}
             </div>
