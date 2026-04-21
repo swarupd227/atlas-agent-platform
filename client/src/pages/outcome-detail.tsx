@@ -5595,6 +5595,9 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
       }
       setOrchestratorSelected(savedProposal.orchestratorSelected !== false);
       setDirty(false);
+      if (onProcessFlowStepsGenerated && Array.isArray(savedProposal.workers) && savedProposal.workers.length > 0) {
+        onProcessFlowStepsGenerated(buildFlowFromProposals(savedProposal.workers, savedProposal.orchestrator || null));
+      }
     }
   }, [savedProposal]);
 

@@ -519,6 +519,7 @@ export default function BlueprintDetail() {
 
       {!(editorView === "team" && linkedAgent?.agentType === "team") && (
       <div className="flex flex-1 min-h-0">
+        {!businessView && (
         <div className="w-[220px] border-r shrink-0 flex flex-col">
           <div className="p-3 border-b">
             <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Node Palette</span>
@@ -554,6 +555,7 @@ export default function BlueprintDetail() {
             </Button>
           </div>
         </div>
+        )}
 
         <div className="flex-1 flex flex-col min-w-0">
           {edgeMode && (
@@ -598,6 +600,7 @@ export default function BlueprintDetail() {
                             <svg width="2" height="32" className="overflow-visible">
                               <line x1="1" y1="0" x2="1" y2="32" stroke="hsl(var(--muted-foreground))" strokeWidth="1.5" markerEnd="url(#arrowhead)" />
                             </svg>
+                            {!businessView && (
                             <button
                               className="invisible group-hover:visible -mt-5 mb-1 rounded-full bg-destructive text-destructive-foreground w-5 h-5 flex items-center justify-center text-xs"
                               onClick={(e) => { e.stopPropagation(); deleteEdge(edge.from, edge.to); }}
@@ -605,14 +608,16 @@ export default function BlueprintDetail() {
                             >
                               <X className="w-3 h-3" />
                             </button>
+                            )}
                           </div>
                         ))}
                         {idx > 0 && incomingEdges.length === 0 && (
                           <div className="h-4" />
                         )}
                         <Card
-                          className={`w-full cursor-pointer ${isSelected ? "ring-2 ring-ring" : ""} ${isInvalid ? "ring-2 ring-destructive" : ""} ${isEdgeSource ? "ring-2 ring-blue-500" : ""}`}
+                          className={`w-full ${businessView ? "cursor-default" : "cursor-pointer"} ${isSelected && !businessView ? "ring-2 ring-ring" : ""} ${isInvalid ? "ring-2 ring-destructive" : ""} ${isEdgeSource ? "ring-2 ring-blue-500" : ""}`}
                           onClick={() => {
+                            if (businessView) return;
                             if (edgeMode === "__waiting__") {
                               setEdgeMode(node.id);
                             } else {
@@ -633,6 +638,7 @@ export default function BlueprintDetail() {
                               </div>
                             )}
                             {isInvalid && <AlertTriangle className="w-3.5 h-3.5 text-destructive shrink-0" />}
+                            {!businessView && (
                             <Button
                               variant="ghost"
                               size="icon"
@@ -642,6 +648,7 @@ export default function BlueprintDetail() {
                             >
                               <X className="w-3.5 h-3.5" />
                             </Button>
+                            )}
                           </CardContent>
                         </Card>
                         {outgoingEdges.length > 0 && idx < nodes.length - 1 && (
@@ -658,6 +665,28 @@ export default function BlueprintDetail() {
           </ScrollArea>
         </div>
 
+        {businessView ? (
+          <div className="w-[280px] border-l shrink-0 flex flex-col" data-testid="panel-business-review">
+            <div className="p-3 border-b">
+              <span className="text-xs font-semibold">Review Summary</span>
+            </div>
+            <div className="p-4 flex flex-col gap-3 text-xs text-muted-foreground">
+              <div className="flex flex-col gap-1">
+                <span className="font-medium text-foreground">{nodes.length} Steps</span>
+                <p>Review each step name below. When satisfied, click <strong>Submit for IT Review</strong> in the header.</p>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {nodes.map((n, i) => (
+                  <div key={n.id} className="flex items-center gap-2" data-testid={`review-step-${n.id}`}>
+                    <span className="w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] flex items-center justify-center font-semibold shrink-0">{i + 1}</span>
+                    <span className="text-foreground truncate">{getNodeDisplayLabel(n)}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-[10px] text-muted-foreground/70 mt-2">Switch to Technical view to edit individual steps or add connections.</p>
+            </div>
+          </div>
+        ) : (
         <div className="w-[280px] border-l shrink-0 flex flex-col">
           <div className="flex border-b">
             <button
@@ -1531,6 +1560,7 @@ export default function BlueprintDetail() {
             </div>
           </ScrollArea>
         </div>
+        )}
       </div>
       )}
 
