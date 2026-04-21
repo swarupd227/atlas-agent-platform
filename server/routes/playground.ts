@@ -6,13 +6,7 @@ import { getOrgId } from "../auth";
 import { conversations, messages as chatMessages } from "@shared/schema";
 import { buildAgentSystemPrompt } from "./helpers";
 import { executePromptWithMcp, type RuntimeProgressEvent } from "../agent-runtime";
-import OpenAI from "openai";
 import { callClaude, stripJsonFences, anthropicClient } from "../claude";
-
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
 
 const router = Router();
 
@@ -88,11 +82,6 @@ const router = Router();
 
       const systemPrompt = buildAgentSystemPrompt(agent);
 
-      const agentTools = Array.isArray(agent.toolsConfig)
-        ? (agent.toolsConfig as Array<{ name?: string; type?: string }>)
-        : [];
-      const webSearchEnabled = agentTools.some(t => t.name === "web_search" && t.type === "builtin");
-
       const mcpLinks = await storage.getAgentMcpServers(agentId);
       const mcpServerIds = mcpLinks.map(l => l.serverId);
       const hasMcpServers = mcpServerIds.length > 0;
@@ -164,69 +153,6 @@ const router = Router();
           fullResponse = `I encountered an error while processing your request: ${err.message}`;
           res.write(`data: ${JSON.stringify({ type: "error", content: fullResponse })}\n\n`);
         }
-      } else if (webSearchEnabled) {
-        const inputMessages: Array<{ role: "developer" | "user" | "assistant"; content: string }> = [
-          { role: "developer", content: systemPrompt },
-          ...existingMsgs.map(m => ({
-            role: m.role as "user" | "assistant",
-            content: m.content,
-          })),
-        ];
-
-        const stream = await openai.responses.create({
-          model: agent.modelName || "gpt-4.1",
-          input: inputMessages,
-          tools: [{ type: "web_search_preview" as any }],
-          stream: true,
-        } as any);
-
-        const citations: Array<{ url: string; title: string }> = [];
-
-        for await (const event of stream as any) {
-          if (event.type === "response.output_text.delta") {
-            const delta = event.delta || "";
-            if (delta) {
-              fullResponse += delta;
-              res.write(`data: ${JSON.stringify({ content: delta })}\n\n`);
-            }
-          }
-          if (event.type === "response.completed") {
-            const output = event.response?.output;
-            if (Array.isArray(output)) {
-              for (const item of output) {
-                if (item.type === "message" && Array.isArray(item.content)) {
-                  for (const block of item.content) {
-                    if (block.type === "output_text" && Array.isArray(block.annotations)) {
-                      for (const ann of block.annotations) {
-                        if (ann.type === "url_citation" && ann.url) {
-                          citations.push({ url: ann.url, title: ann.title || ann.url });
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-
-        if (citations.length > 0) {
-          const citationBlock = "\n\n---\n**Sources:**\n" + citations.map((c, i) => `${i + 1}. [${c.title}](${c.url})`).join("\n");
-          fullResponse += citationBlock;
-          res.write(`data: ${JSON.stringify({ content: citationBlock })}\n\n`);
-        }
-
-        try {
-          await storage.createTrace({
-            agentId,
-            environment: "playground",
-            status: "completed",
-            latencyMs: Date.now() - playgroundStartTime,
-            inputSummary: `Playground: ${content.length > 120 ? content.substring(0, 117) + "..." : content}`,
-            outputSummary: fullResponse.length > 300 ? fullResponse.substring(0, 297) + "..." : fullResponse,
-            modelId: agent.modelName || "gpt-4.1",
-          });
-        } catch {}
       } else {
         const claudeMsgs = existingMsgs.map(m => ({
           role: m.role as "user" | "assistant",

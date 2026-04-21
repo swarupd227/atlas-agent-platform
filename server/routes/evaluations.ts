@@ -1348,7 +1348,7 @@ Only include templates with matchScore >= 30. Respond ONLY with a valid JSON arr
       const rawContent = await callClaude({
         system: "",
         user: prompt,
-        model: "claude-haiku-4-5",
+        model: "claude-opus-4-5",
         maxTokens: 2048,
       });
 

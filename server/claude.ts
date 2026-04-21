@@ -21,7 +21,10 @@ export async function callClaude(opts: {
     messages: [{ role: "user", content: opts.user }],
     max_tokens: opts.maxTokens ?? 4096,
   });
-  return (response.content.find((b: any) => b.type === "text") as any)?.text ?? "";
+  const textBlock = response.content.find(
+    (b): b is Anthropic.TextBlock => b.type === "text"
+  );
+  return textBlock?.text ?? "";
 }
 
 export function stripJsonFences(raw: string): string {
