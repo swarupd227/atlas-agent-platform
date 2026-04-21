@@ -1,0 +1,35 @@
+Download the React DevTools for a better development experience: https://reactjs.org/link/react-devtools
+ Warning: validateDOMNesting(...): <a> cannot appear as a descendant of <a>.
+    at a
+    at a
+    at https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/wouter.js?v=a9547bdf:336:18
+    at div
+    at FeedbackTrigger (https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/src/components/feedback-modal.tsx:518:27)
+    at div
+    at SidebarFooter (https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/src/components/ui/sidebar.tsx:489:26)
+    at div
+    at div
+    at div
+    at Sidebar (https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/src/components/ui/sidebar.tsx:151:3)
+    at FullAppSidebar (https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/src/components/app-sidebar.tsx:100:22)
+    at AppSidebar (https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/src/components/app-sidebar.tsx:82:30)
+    at div
+    at div
+    at Provider (https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-SAEZPHBS.js?v=a9547bdf:37:15)
+    at TooltipProvider (https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=a9547bdf:956:5)
+    at SidebarProvider (https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/src/components/ui/sidebar.tsx:59:3)
+    at EvidenceDrawerProvider (https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/src/components/evidence-drawer.tsx:563:42)
+    at EnvironmentProvider (https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/src/components/environment-selector.tsx:41:39)
+    at RoleProvider (https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/src/components/role-provider.tsx:184:32)
+    at IndustryProvider (https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/src/components/industry-provider.tsx:651:36)
+    at DashboardLayout
+    at Route (https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/wouter.js?v=a9547bdf:322:16)
+    at Switch (https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/wouter.js?v=a9547bdf:378:17)
+    at AuthGate (https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/src/App.tsx:1049:56)
+    at AuthProvider (https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/src/components/auth-provider.tsx:21:32)
+    at Provider (https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/chunk-SAEZPHBS.js?v=a9547bdf:37:15)
+    at TooltipProvider (https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/@radix-ui_react-tooltip.js?v=a9547bdf:956:5)
+    at QueryClientProvider (https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/@fs/home/runner/workspace/node_modules/.vite/deps/@tanstack_react-query.js?v=a9547bdf:2747:3)
+    at ThemeProvider (https://7a2c8f52-ceef-4136-8b4d-36aee1338998-00-3nza971bnj9mr.spock.replit.dev/src/components/theme-provider.tsx:24:33)
+    at App
+printWarning @ /@fs/home/runner/workspace/node_modules/.vite/deps/chunk-GG6IGNHI.js?v=a9547bdf:521

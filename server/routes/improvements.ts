@@ -2285,44 +2285,35 @@ When you have enough information (usually after 2-3 exchanges), produce a struct
 }
 \`\`\`
 
-Existing outcome contracts for reference (do NOT duplicate these, use them for context only): ${JSON.stringify(outcomes.slice(0, 5).map(o => ({ name: o.name, description: o.description })))}
-Available agent templates (reference these when relevant): ${JSON.stringify(templates.slice(0, 10).map(t => ({ name: t.name, category: t.category, industry: t.industry, description: t.description })))}
+Existing plans (do NOT duplicate): ${JSON.stringify(outcomes.slice(0, 3).map(o => o.name))}
+Templates available: ${JSON.stringify(templates.slice(0, 6).map(t => ({ name: t.name, category: t.category })))}
 
 ${(() => {
   const ctx = discoveryContext || {};
   const parts: string[] = [];
   if (ctx.processSteps && ctx.processSteps.length > 0) {
-    parts.push(`PROCESS FLOW THE USER HAS MAPPED (${ctx.processSteps.length} steps, total ${ctx.processSteps.reduce((s: number, p: any) => s + (p.timeMins || 0), 0)} mins):\n${ctx.processSteps.map((s: any, i: number) => `  Step ${i+1}: "${s.description}" | Actor: ${s.actor} | Time: ${s.timeMins} mins | Pain points: ${s.painPoints || 'none'} | Improvement ideas: ${s.improvementIdeas || 'none'}`).join('\n')}`);
+    parts.push(`PROCESS STEPS (${ctx.processSteps.length}, total ${ctx.processSteps.reduce((s: number, p: any) => s + (p.timeMins || 0), 0)} mins):\n${ctx.processSteps.map((s: any, i: number) => `${i+1}. "${s.description}" | ${s.actor} | ${s.timeMins}m | pain: ${s.painPoints || 'none'}`).join('\n')}`);
   }
   if (ctx.transcriptAnalysis) {
-    parts.push(`VOICE RECORDING ANALYSIS (use these opportunities directly in the proposal):\nTranscript summary: ${ctx.transcriptAnalysis.transcript ? ctx.transcriptAnalysis.transcript.slice(0, 500) : 'N/A'}\nIdentified opportunities:\n${(ctx.transcriptAnalysis.opportunities || []).map((o: any) => `  - ${o.name}: ${o.description} (systems: ${(o.suggestedSystems || []).join(', ')})`).join('\n')}`);
+    parts.push(`VOICE ANALYSIS:\n${ctx.transcriptAnalysis.transcript ? ctx.transcriptAnalysis.transcript.slice(0, 300) : ''}\nOpportunities: ${(ctx.transcriptAnalysis.opportunities || []).map((o: any) => `${o.name}: ${o.description}`).join('; ')}`);
   }
   if (ctx.currentProposal) {
-    parts.push(`CURRENT PROPOSAL TO REFINE (the user is asking to update or improve this):\n${JSON.stringify(ctx.currentProposal, null, 2)}`);
+    parts.push(`PROPOSAL TO REFINE:\n${JSON.stringify(ctx.currentProposal)}`);
   }
   if (ctx.platformIntelDecisions && (ctx.platformIntelDecisions.accepted?.length > 0 || ctx.platformIntelDecisions.rejected?.length > 0)) {
-    const accepted = (ctx.platformIntelDecisions.accepted || []).map((d: any) => `  - ${d.type === 'template' ? 'Template' : 'Agent'}: "${d.name}" (id: ${d.id})`).join('\n');
-    const rejected = (ctx.platformIntelDecisions.rejected || []).map((d: any) => `  - ${d.type === 'template' ? 'Template' : 'Agent'}: "${d.name}" (id: ${d.id})`).join('\n');
-    parts.push(`PLATFORM INTELLIGENCE DECISIONS (user has reviewed AI-suggested agents and templates):\nACCEPTED (incorporate these into the proposal — reference them by name):\n${accepted || '  (none)'}\nREJECTED (do NOT propose these again — suggest alternatives if needed):\n${rejected || '  (none)'}`);
+    parts.push(`ACCEPTED: ${(ctx.platformIntelDecisions.accepted || []).map((d: any) => d.name).join(', ') || 'none'}\nREJECTED (do not re-propose): ${(ctx.platformIntelDecisions.rejected || []).map((d: any) => d.name).join(', ') || 'none'}`);
   }
-  return parts.length > 0 ? `STRUCTURED CONTEXT FROM USER INPUTS:\n${parts.join('\n\n')}` : 'No additional structured context provided yet.';
+  return parts.length > 0 ? `CONTEXT:\n${parts.join('\n\n')}` : '';
 })()}
 
-Guidelines:
-- Use warm, accessible business language - avoid technical jargon
-- Ask clarifying questions about business goals, current pain points, and success criteria
-- Propose realistic, measurable KPIs with specific numeric targets — use the user's own numbers (e.g., "currently 5 days, target 24 hours") wherever they were mentioned
-- Suggest agents that map to the user's exact domain with specific role names (e.g., "KYC Verification Agent", not "Data Processing Agent")
-- proposedAgents must each have specific workflowSteps describing real tasks (not generic steps like "Process data")
-- Include a validation checklist of actionable items the business owner and expert should confirm
-- When the user seems ready, produce the full structured proposal
-- Be proactive: surface things the user might not have thought of
-- Reference existing templates when a match exists
-- CRITICAL: If STRUCTURED CONTEXT FROM USER INPUTS is present above, you MUST use it: incorporate process steps, pain points, actor names, timing data, and identified opportunities directly into the proposal. Do not ignore this data.
-- CRITICAL: If CURRENT PROPOSAL TO REFINE is present, output a new full proposal JSON that addresses the user's latest request while preserving the parts they haven't asked to change. Always output the complete JSON, not a partial update.
-- CRITICAL: If PLATFORM INTELLIGENCE DECISIONS is present, you MUST respect it: reference accepted agents/templates by name in your proposal and do NOT re-propose any rejected agent or template. If a user rejected an agent, acknowledge it and suggest a meaningfully different alternative approach instead.
-- IMPORTANT: Include "roiEstimate" ONLY when the user has explicitly mentioned concrete financial numbers (e.g., hours spent per week, cost per incident, number of FTEs, failure rates with dollar impact, processing volume x cost). Derive all figures from those specific numbers — do NOT invent or assume figures the user did not provide. If no financial numbers were mentioned, omit "roiEstimate" entirely. Quote the source assumption in "assumptionsSummary" (e.g., "Based on your 3 FTEs spending 20h/week at $75/hr on manual processing").
-- NOTE: Do NOT include "regulatoryConstraints" or "applicablePolicies" fields in the proposal JSON — these are loaded separately in the background after the core proposal is shown.`;
+Rules:
+- Business language, no jargon. Ask 1-2 clarifying questions when needed, then produce the proposal.
+- Use the user's own numbers for KPIs and ROI. Specific agent names (e.g. "KYC Verification Agent").
+- workflowSteps must be specific tasks, not generic steps.
+- If PROPOSAL TO REFINE is present: output a complete updated JSON preserving unchanged parts.
+- If ACCEPTED/REJECTED is present: honour those choices.
+- Include roiEstimate only when the user gave concrete financial numbers. Omit it otherwise.
+- Do NOT include "regulatoryConstraints" or "applicablePolicies" in the JSON.`;
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");

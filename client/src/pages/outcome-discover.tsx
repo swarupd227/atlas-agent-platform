@@ -836,17 +836,22 @@ export default function OutcomeDiscover() {
 
       const decoder = new TextDecoder();
       let assistantContent = "";
+      let sseBuffer = "";
       setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
-      while (true) {
+      outer: while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        const text = decoder.decode(value, { stream: true });
-        const lines = text.split("\n").filter((l) => l.startsWith("data: "));
+        // Accumulate into a buffer so partial lines across TCP chunks are rejoined
+        sseBuffer += decoder.decode(value, { stream: true });
+        const lines = sseBuffer.split("\n");
+        // Keep the last (potentially incomplete) line in the buffer for the next read
+        sseBuffer = lines.pop() ?? "";
         for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
           try {
             const data = JSON.parse(line.slice(6));
-            if (data.done) break;
+            if (data.done) break outer;
             if (data.content) {
               assistantContent += data.content;
               const currentContent = assistantContent;
