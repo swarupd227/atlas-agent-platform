@@ -420,6 +420,7 @@ export default function OutcomeDetail() {
   const initialTemplateId = searchParams?.get("template") || null;
   const [activeTab, setActiveTab] = useState(initialTab);
   const [processFlowSteps, setProcessFlowSteps] = useState<AutoProcessStep[]>([]);
+  const processFlowInitializedForRef = useRef<string | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const [reportGenerating, setReportGenerating] = useState(false);
   const [reportContent, setReportContent] = useState<string | null>(null);
@@ -462,10 +463,11 @@ export default function OutcomeDetail() {
   });
 
   useEffect(() => {
-    if (outcome) {
+    if (outcome && outcome.id !== processFlowInitializedForRef.current) {
+      processFlowInitializedForRef.current = outcome.id;
       setProcessFlowSteps(buildAutoFlow(outcome, kpis || []));
     }
-  }, [outcome?.id, (kpis || []).length]);
+  }, [outcome?.id]);
 
   const { data: evidence, dataUpdatedAt: evidenceUpdatedAt } = useQuery<{
     kpiTimeSeries: Array<{
@@ -5333,6 +5335,16 @@ function BusinessProcessFlowSection({
           >
             {editMode ? "Done Editing" : "Edit"}
           </Button>
+          {onNavigateToAgentPlan && (
+            <Button
+              size="sm"
+              className="h-7 text-xs"
+              onClick={onNavigateToAgentPlan}
+              data-testid="button-continue-to-agent-plan-top"
+            >
+              Continue to Agent Plan →
+            </Button>
+          )}
           <Button
             size="sm"
             variant="ghost"
