@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle, CheckCircle2, Loader2, Clock, Zap, Database,
-  ShieldCheck, RefreshCw, Wifi, WifiOff, Play, RotateCcw,
+  ShieldCheck, RefreshCw, Wifi, WifiOff, Play, RotateCcw, Terminal,
+  ChevronDown, ChevronUp,
 } from "lucide-react";
 
 type ScenarioType = "standard" | "fraud-ring" | "self-healing";
@@ -63,29 +64,135 @@ const LIVE_STAGES = [
   { stage: "Validate",  label: "Validating recovery",   durationMs: 5000,  detail: "Feed health score restored to 99.2%. Valuation model confidence weight restored to full after backfill validation." },
 ];
 
+type LogLevel = "info" | "warn" | "error" | "success";
+interface LogEntry { id: number; time: string; level: LogLevel; msg: string; }
+
+const STAGE_LOGS: Record<string, { delay: number; level: LogLevel; msg: string }[]> = {
+  Detect: [
+    { delay: 400,  level: "warn",    msg: "[MONITOR] Heartbeat check: Manheim Southeast — MISSED (0 txns in 3m window)" },
+    { delay: 1400, level: "error",   msg: "[ALERT] Feed health score: 100% → 0% · Manheim Southeast unreachable" },
+    { delay: 2800, level: "error",   msg: "[INCIDENT] INC-20260421-001 raised — severity: HIGH · 8,200 daily txns at risk" },
+    { delay: 5000, level: "info",    msg: "[DETECT] Anomaly confirmed — dispatching self-healing pipeline" },
+  ],
+  Diagnose: [
+    { delay: 600,  level: "info",    msg: "[DIAG] Probing Manheim SE API: GET /v2/auction/feed/status" },
+    { delay: 1800, level: "error",   msg: "[DIAG] HTTP 401 Unauthorized — token mhse_tok_...a4f2 rejected" },
+    { delay: 3500, level: "info",    msg: "[DIAG] Token metadata: TTL=24h · last_rotated=24h 3m ago (cron missed)" },
+    { delay: 5500, level: "warn",    msg: "[DIAG] Root cause: OAuth token expiry — not infrastructure failure" },
+    { delay: 8000, level: "success", msg: "[DIAG] Diagnosis complete — remediation path: credential rotation" },
+  ],
+  Remediate: [
+    { delay: 400,  level: "info",    msg: "[REMEDIATE] Fetching backup credential from vault: MHSE_OAUTH_BACKUP" },
+    { delay: 1400, level: "info",    msg: "[REMEDIATE] Rotating token: mhse_tok_...a4f2 → mhse_tok_...9c1d" },
+    { delay: 2600, level: "info",    msg: "[REMEDIATE] Re-testing: GET /v2/auction/feed/status — HTTP 200 OK ✓" },
+    { delay: 4200, level: "success", msg: "[REMEDIATE] Feed live — Manheim SE transactions flowing normally" },
+  ],
+  Backfill: [
+    { delay: 400,  level: "info",    msg: "[BACKFILL] Gap window: 14:12:00Z → 14:15:47Z (3m 47s @ ~36 txns/sec)" },
+    { delay: 1800, level: "info",    msg: "[BACKFILL] Requesting historical batch: 8,200 missed transactions" },
+    { delay: 4200, level: "info",    msg: "[BACKFILL] Ingesting… 2,050 / 8,200 transactions processed" },
+    { delay: 6500, level: "info",    msg: "[BACKFILL] Ingesting… 6,140 / 8,200 transactions processed" },
+    { delay: 8500, level: "warn",    msg: "[BACKFILL] SE valuations flagged: confidence −15% pending validation" },
+    { delay: 10200,level: "success", msg: "[BACKFILL] Complete — 8,200 / 8,200 transactions ingested" },
+  ],
+  Validate: [
+    { delay: 400,  level: "info",    msg: "[VALIDATE] Running feed health check: Manheim Southeast" },
+    { delay: 1400, level: "success", msg: "[VALIDATE] Feed health: 99.2% — within normal threshold" },
+    { delay: 2600, level: "success", msg: "[VALIDATE] Backfill integrity confirmed: 8,200 / 8,200 verified" },
+    { delay: 3800, level: "success", msg: "[VALIDATE] SE region confidence weight restored to baseline" },
+    { delay: 4600, level: "success", msg: "[VALIDATE] INC-20260421-001 RESOLVED — fully automated · no analyst required" },
+  ],
+};
+
 type LivePhase = "idle" | "running" | "complete";
 
+const LOG_COLORS: Record<LogLevel, string> = {
+  info:    "text-muted-foreground/80",
+  warn:    "text-amber-400",
+  error:   "text-red-400",
+  success: "text-green-400",
+};
+
+function SystemLogPanel({ logs, show, onToggle }: { logs: LogEntry[]; show: boolean; onToggle: () => void }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (show && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [logs, show]);
+
+  return (
+    <div className="rounded-xl border border-border/50 bg-black/40 overflow-hidden" data-testid="bb-healing-log">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center justify-between px-3 py-2 border-b border-border/30 bg-muted/10 hover:bg-muted/20 transition-colors"
+        data-testid="bb-healing-log-toggle"
+      >
+        <div className="flex items-center gap-2">
+          <Terminal className="w-3.5 h-3.5 text-muted-foreground/60" />
+          <span className="text-[11px] font-medium font-mono">System Log</span>
+          <span className="text-[9px] px-1.5 py-0.5 rounded bg-muted/40 text-muted-foreground font-mono">{logs.length} entries</span>
+        </div>
+        {show ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground/50" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground/50" />}
+      </button>
+      {show && (
+        <div ref={scrollRef} className="h-36 overflow-y-auto px-3 py-2 space-y-0.5 font-mono">
+          {logs.length === 0 && (
+            <p className="text-[10px] text-muted-foreground/40 italic">Waiting for system events…</p>
+          )}
+          {logs.map(entry => (
+            <div key={entry.id} className="flex items-start gap-2" data-testid={`bb-log-entry-${entry.id}`}>
+              <span className="text-[9px] text-muted-foreground/40 shrink-0 mt-px">{entry.time}</span>
+              <span className={`text-[10px] leading-snug ${LOG_COLORS[entry.level]}`}>{entry.msg}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function LiveSelfHealingDemo() {
-  const [phase, setPhase]         = useState<LivePhase>("idle");
-  const [stageIdx, setStageIdx]   = useState(-1);       // -1 = not started, 0-4 = stages
-  const [stageStart, setStageStart] = useState<Date | null>(null);
-  const [elapsed, setElapsed]     = useState(0);
+  const [phase, setPhase]             = useState<LivePhase>("idle");
+  const [stageIdx, setStageIdx]       = useState(-1);
+  const [stageStart, setStageStart]   = useState<Date | null>(null);
+  const [elapsed, setElapsed]         = useState(0);
   const [completedAt, setCompletedAt] = useState<Date | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [logs, setLogs]               = useState<LogEntry[]>([]);
+  const [showLog, setShowLog]         = useState(true);
+
+  const timerRef      = useRef<ReturnType<typeof setInterval> | null>(null);
   const stageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const logTimersRef  = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const logIdRef      = useRef(0);
 
   const BB_COLOR = "#E8640A";
 
+  const addLog = useCallback((level: LogLevel, msg: string) => {
+    const now = new Date();
+    const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
+    setLogs(prev => [...prev, { id: logIdRef.current++, time, level, msg }]);
+  }, []);
+
   useEffect(() => {
     if (phase === "running") {
-      timerRef.current = setInterval(() => {
-        setElapsed(e => e + 1);
-      }, 1000);
+      timerRef.current = setInterval(() => setElapsed(e => e + 1), 1000);
     } else {
       if (timerRef.current) clearInterval(timerRef.current);
     }
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [phase]);
+
+  function clearLogTimers() {
+    logTimersRef.current.forEach(t => clearTimeout(t));
+    logTimersRef.current = [];
+  }
+
+  function scheduleLogsForStage(stageName: string) {
+    const entries = STAGE_LOGS[stageName] || [];
+    entries.forEach(({ delay, level, msg }) => {
+      const t = setTimeout(() => addLog(level, msg), delay);
+      logTimersRef.current.push(t);
+    });
+  }
 
   function advanceStage(idx: number) {
     if (idx >= LIVE_STAGES.length) {
@@ -95,32 +202,40 @@ function LiveSelfHealingDemo() {
     }
     setStageIdx(idx);
     setStageStart(new Date());
-    stageTimerRef.current = setTimeout(() => {
-      advanceStage(idx + 1);
-    }, LIVE_STAGES[idx].durationMs);
+    scheduleLogsForStage(LIVE_STAGES[idx].stage);
+    stageTimerRef.current = setTimeout(() => advanceStage(idx + 1), LIVE_STAGES[idx].durationMs);
   }
 
   function triggerOutage() {
     if (stageTimerRef.current) clearTimeout(stageTimerRef.current);
+    clearLogTimers();
     setPhase("running");
     setStageIdx(-1);
     setElapsed(0);
     setCompletedAt(null);
+    setLogs([]);
+    logIdRef.current = 0;
+    setShowLog(true);
     setTimeout(() => advanceStage(0), 1000);
   }
 
   function reset() {
     if (stageTimerRef.current) clearTimeout(stageTimerRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
+    clearLogTimers();
     setPhase("idle");
     setStageIdx(-1);
     setElapsed(0);
     setCompletedAt(null);
+    setLogs([]);
+    logIdRef.current = 0;
+    setShowLog(true);
   }
 
   useEffect(() => () => {
     if (stageTimerRef.current) clearTimeout(stageTimerRef.current);
     if (timerRef.current) clearInterval(timerRef.current);
+    clearLogTimers();
   }, []);
 
   if (phase === "idle") {
@@ -337,6 +452,8 @@ function LiveSelfHealingDemo() {
             ))}
           </div>
         </div>
+
+        <SystemLogPanel logs={logs} show={showLog} onToggle={() => setShowLog(v => !v)} />
       </div>
     );
   }
@@ -396,6 +513,8 @@ function LiveSelfHealingDemo() {
           );
         })}
       </div>
+
+      <SystemLogPanel logs={logs} show={showLog} onToggle={() => setShowLog(v => !v)} />
 
       <div className="grid grid-cols-3 gap-4">
         <div className="col-span-2 rounded-xl border bg-card p-4">
