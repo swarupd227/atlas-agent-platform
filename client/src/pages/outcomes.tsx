@@ -578,15 +578,12 @@ export default function Outcomes() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {!outcomesPerm.allowed ? (
-            <Button disabled title="You do not have permission to create outcome contracts" data-testid="button-create-outcome">
-              <Plus className="w-4 h-4 mr-1.5" /> New Contract
+            <Button disabled title="You do not have permission to create plans" data-testid="button-create-outcome">
+              <Plus className="w-4 h-4 mr-1.5" /> New Plan
             </Button>
           ) : (
             <Button onClick={() => navigate("/outcomes/discover")} data-testid="button-create-outcome">
-              <Plus className="w-4 h-4 mr-1.5" /> New Contract
-              {outcomesPerm.permission.access === "conditional" && outcomesPerm.permission.annotation && (
-                <Badge variant="secondary" className="text-xs ml-1">{outcomesPerm.permission.annotation}</Badge>
-              )}
+              <Plus className="w-4 h-4 mr-1.5" /> New Plan
             </Button>
           )}
         </div>
@@ -596,7 +593,7 @@ export default function Outcomes() {
         <div className="flex items-center gap-3 p-3 rounded-md bg-blue-500/10 border border-blue-500/20" data-testid="banner-awaiting-agent-plan">
           <Bot className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0" />
           <span className="text-xs text-blue-700 dark:text-blue-300 flex-1">
-            {awaitingPlanCount} outcome{awaitingPlanCount !== 1 ? "s" : ""} awaiting Agent Development Plan — Agent Engineers can generate proposals from the outcome detail page.
+            {awaitingPlanCount} plan{awaitingPlanCount !== 1 ? "s" : ""} awaiting automation setup — open a plan to configure and launch its automations.
           </span>
         </div>
       )}
@@ -1045,7 +1042,7 @@ export default function Outcomes() {
           <div className="text-center flex flex-col gap-1">
             <p className="text-base font-medium">Define outcomes first. Agents come second.</p>
             <p className="text-sm text-muted-foreground max-w-md">
-              Start by creating outcome contracts that define what business results you want to achieve. Then bind agents to deliver them.
+              Start by creating a plan that defines the business results you want to achieve. Then add automations to deliver them.
             </p>
           </div>
           <Link href="/outcomes/discover">
@@ -1059,7 +1056,7 @@ export default function Outcomes() {
       {sorted.length === 0 && (hasActiveFilters || search) && (
         <div className="flex flex-col items-center justify-center py-12 gap-3" data-testid="empty-state-filtered">
           <Filter className="w-10 h-10 text-muted-foreground/50" />
-          <p className="text-sm text-muted-foreground">No outcome contracts match your filters</p>
+          <p className="text-sm text-muted-foreground">No plans match your filters</p>
           <Button
             variant="outline"
             size="sm"
@@ -1080,7 +1077,7 @@ export default function Outcomes() {
       <Dialog open={!!deleteConfirmId} onOpenChange={(open) => { if (!open) setDeleteConfirmId(null); }}>
         <DialogContent className="max-w-sm" data-testid="dialog-delete-outcome">
           <DialogHeader>
-            <DialogTitle className="text-base">Delete Outcome Contract</DialogTitle>
+            <DialogTitle className="text-base">Delete Plan</DialogTitle>
           </DialogHeader>
           <div className="flex flex-col gap-3">
             <p className="text-sm text-muted-foreground">
