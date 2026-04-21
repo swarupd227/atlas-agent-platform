@@ -586,10 +586,11 @@ export default function OutcomeDiscover() {
   // Fetch live platform intelligence when a proposal is generated
   useEffect(() => {
     if (!proposal) return;
-    const roles: string[] = proposal.proposedAgents.map((a) => a.role || a.name || "");
-    const tools: string[] = proposal.proposedAgents.flatMap((a) => a.tools || []);
-    const autonomy: string[] = proposal.proposedAgents.map((a) => a.autonomyMode || "supervised");
-    const riskTiers: string[] = proposal.proposedAgents.map((a) => a.riskTier || "MEDIUM");
+    const agents = proposal.proposedAgents ?? [];
+    const roles: string[] = agents.map((a) => a.role || a.name || "");
+    const tools: string[] = agents.flatMap((a) => a.tools || []);
+    const autonomy: string[] = agents.map((a) => a.autonomyMode || "supervised");
+    const riskTiers: string[] = agents.map((a) => a.riskTier || "MEDIUM");
     const gateCount = Array.isArray(proposal.outcomeContract?.approvalGates)
       ? proposal.outcomeContract.approvalGates.length
       : 0;
