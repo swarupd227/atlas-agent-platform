@@ -121,6 +121,7 @@ import AdvSupportDemo from "@client-shared/pages/demo/adv-support-demo";
 import DemoCenter from "@client-shared/pages/demo/demo-center";
 import ObservabilityPage from "@/pages/observability";
 import FeedbackTracker from "@/pages/feedback";
+import ProcessFlows from "@/pages/process-flows";
 import BusinessCommandCenter from "@/pages/business-command-center";
 import MyActions from "@/pages/my-actions";
 import BusinessSettings from "@/pages/business-settings";
@@ -237,6 +238,7 @@ function DashboardRouter() {
       <Route path="/outcomes" component={Outcomes} />
       <Route path="/outcomes/discover" component={OutcomeDiscover} />
       <Route path="/outcomes/:id" component={OutcomeDetail} />
+      <Route path="/process-flows" component={ProcessFlows} />
       <Route path="/agents" component={Agents} />
       <Route path="/templates" component={Templates} />
       <Route path="/templates/:id" component={TemplateDetail} />

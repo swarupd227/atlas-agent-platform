@@ -406,6 +406,7 @@ function BusinessModeSidebar() {
   const navItems = [
     { title: "Home", url: "/dashboard", icon: Home },
     { title: "Outcomes", url: "/outcomes", icon: Target },
+    { title: "Process Flows", url: "/process-flows", icon: Workflow },
     { title: "My Actions", url: "/actions", icon: CheckCircle2, badge: pendingActions > 0 ? pendingActions : undefined },
     { title: "Settings", url: "/business-settings", icon: Settings },
   ];

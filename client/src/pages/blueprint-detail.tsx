@@ -71,8 +71,9 @@ import {
   Brain, Wrench, Database, GitBranch, Split, UserCheck, Shield,
   Plus, Trash2, Save, Play, PenTool, ArrowLeft, AlertTriangle,
   CheckCircle, ChevronDown, ChevronRight, X, MousePointer, Link2, FileText, MessageSquare, Server, Network,
-  Scale, BookMarked, Diff, Globe2, Lock, Crown, Copy,
+  Scale, BookMarked, Diff, Globe2, Lock, Crown, Copy, Eye, Code2, SendHorizonal,
 } from "lucide-react";
+import { useRole } from "@/components/role-provider";
 import {
   Tooltip,
   TooltipContent,
@@ -177,6 +178,29 @@ export default function BlueprintDetail() {
   const [kgBindings, setKgBindings] = useState<string[]>([]);
   const [kgBindingsOpen, setKgBindingsOpen] = useState(false);
   const [ontologyReadinessOpen, setOntologyReadinessOpen] = useState(false);
+  const [businessView, setBusinessView] = useState(false);
+  const { isBusinessMode } = useRole();
+
+  const BUSINESS_LABEL_MAP: Record<string, string> = {
+    llm_call: "AI Reasoning Step",
+    rag: "Knowledge Search",
+    tool_call: "System Action",
+    schema_validate: "Data Check",
+    human_review: "Expert Approval",
+    classifier: "Decision Point",
+    router: "Flow Branch",
+  };
+
+  const getNodeDisplayLabel = (node: BpNode) => {
+    if (!businessView) return node.label;
+    const bj = blueprint?.blueprintJson as any;
+    const processSteps: Array<{ label: string }> | undefined = bj?.metadata?.processFlowSteps;
+    if (processSteps && processSteps.length > 0) {
+      const idx = (blueprint?.blueprintJson as any)?.nodes?.findIndex((n: any) => n.id === node.id);
+      if (idx != null && idx >= 0 && processSteps[idx]) return processSteps[idx].label;
+    }
+    return BUSINESS_LABEL_MAP[node.type] || node.label;
+  };
 
   useEffect(() => {
     if (blueprint) {
@@ -426,16 +450,49 @@ export default function BlueprintDetail() {
         )}
         {dirty && <span className="text-xs text-amber-500" data-testid="text-unsaved">Unsaved changes</span>}
         <div className="flex-1" />
-        <Button variant="outline" size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} data-testid="button-save">
-          <Save className="w-3.5 h-3.5 mr-1.5" /> {saveMutation.isPending ? "Saving..." : "Save"}
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => compileMutation.mutate()} disabled={compileMutation.isPending} data-testid="button-compile">
-          <Play className="w-3.5 h-3.5 mr-1.5" /> {compileMutation.isPending ? "Compiling..." : "Compile"}
-        </Button>
-        <Button size="sm" onClick={() => setSignDialogOpen(true)} disabled={currentStatus !== "compiled"} data-testid="button-sign">
-          <PenTool className="w-3.5 h-3.5 mr-1.5" /> Sign & Version
-        </Button>
+        <div className="flex items-center rounded-md border overflow-hidden" data-testid="toggle-view-mode">
+          <button
+            type="button"
+            onClick={() => setBusinessView(false)}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs transition-colors ${!businessView ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/50"}`}
+            data-testid="button-technical-view"
+          >
+            <Code2 className="w-3 h-3" /> Technical
+          </button>
+          <button
+            type="button"
+            onClick={() => setBusinessView(true)}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 text-xs transition-colors ${businessView ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted/50"}`}
+            data-testid="button-business-view"
+          >
+            <Eye className="w-3 h-3" /> Business
+          </button>
+        </div>
+        {!businessView && (
+          <>
+            <Button variant="outline" size="sm" onClick={() => saveMutation.mutate()} disabled={saveMutation.isPending} data-testid="button-save">
+              <Save className="w-3.5 h-3.5 mr-1.5" /> {saveMutation.isPending ? "Saving..." : "Save"}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => compileMutation.mutate()} disabled={compileMutation.isPending} data-testid="button-compile">
+              <Play className="w-3.5 h-3.5 mr-1.5" /> {compileMutation.isPending ? "Compiling..." : "Compile"}
+            </Button>
+            <Button size="sm" onClick={() => setSignDialogOpen(true)} disabled={currentStatus !== "compiled"} data-testid="button-sign">
+              <PenTool className="w-3.5 h-3.5 mr-1.5" /> Sign & Version
+            </Button>
+          </>
+        )}
+        {businessView && (
+          <Button size="sm" variant="outline" data-testid="button-submit-it-review">
+            <SendHorizonal className="w-3.5 h-3.5 mr-1.5" /> Submit for IT Review
+          </Button>
+        )}
       </div>
+      {businessView && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-primary/5 border-b text-xs text-muted-foreground" data-testid="banner-business-view">
+          <Eye className="w-3.5 h-3.5 text-primary shrink-0" />
+          <span><strong className="text-foreground">Business View</strong> — showing plain-English step names. Switch to Technical view to edit nodes, compile, or sign.</span>
+        </div>
+      )}
 
       {linkedAgent?.agentType === "team" && (
         <div className="flex border-b shrink-0 bg-muted/30">
@@ -567,8 +624,8 @@ export default function BlueprintDetail() {
                           <CardContent className="p-3 flex items-center gap-2.5">
                             <div className={`w-1 h-6 rounded-full shrink-0 ${NODE_BG_COLORS[node.type] || "bg-gray-500"}`} />
                             <Icon className="w-4 h-4 text-muted-foreground shrink-0" />
-                            <span className="text-sm font-medium flex-1 truncate" data-testid={`text-node-label-${node.id}`}>{node.label}</span>
-                            <Badge variant="outline" className="text-[10px] shrink-0">{node.type}</Badge>
+                            <span className="text-sm font-medium flex-1 truncate" data-testid={`text-node-label-${node.id}`}>{getNodeDisplayLabel(node)}</span>
+                            {!businessView && <Badge variant="outline" className="text-[10px] shrink-0">{node.type}</Badge>}
                             {node.complianceRef && (
                               <div className="flex items-center gap-1 shrink-0" data-testid={`compliance-badge-${node.id}`}>
                                 <Shield className="w-3 h-3 text-emerald-500" />

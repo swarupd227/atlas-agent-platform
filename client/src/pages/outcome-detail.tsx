@@ -1846,6 +1846,8 @@ export default function OutcomeDetail() {
         );
       })()}
 
+      {isBusinessMode && <BusinessProcessFlowSection outcome={outcome} kpis={kpis || []} />}
+
       {isBusinessMode && (
         <button
           type="button"
@@ -5135,6 +5137,161 @@ interface UndoState {
   selectedIndices: number[];
   orchestratorSelected: boolean;
   label: string;
+}
+
+const BUSINESS_STEP_TYPES: Array<{
+  type: string;
+  label: string;
+  color: string;
+  bg: string;
+  border: string;
+}> = [
+  { type: "trigger", label: "Trigger", color: "text-emerald-600 dark:text-emerald-400", bg: "bg-emerald-500/10", border: "border-emerald-500/30" },
+  { type: "get_info", label: "Get Information", color: "text-blue-600 dark:text-blue-400", bg: "bg-blue-500/10", border: "border-blue-500/30" },
+  { type: "ai_reasoning", label: "AI Reasoning", color: "text-purple-600 dark:text-purple-400", bg: "bg-purple-500/10", border: "border-purple-500/30" },
+  { type: "make_decision", label: "Make Decision", color: "text-amber-600 dark:text-amber-400", bg: "bg-amber-500/10", border: "border-amber-500/30" },
+  { type: "expert_approval", label: "Expert Approval", color: "text-orange-600 dark:text-orange-400", bg: "bg-orange-500/10", border: "border-orange-500/30" },
+  { type: "take_action", label: "Take Action", color: "text-cyan-600 dark:text-cyan-400", bg: "bg-cyan-500/10", border: "border-cyan-500/30" },
+  { type: "send_notification", label: "Send Notification", color: "text-pink-600 dark:text-pink-400", bg: "bg-pink-500/10", border: "border-pink-500/30" },
+  { type: "end", label: "Complete", color: "text-slate-600 dark:text-slate-400", bg: "bg-slate-500/10", border: "border-slate-500/30" },
+];
+const BSTEP_MAP = Object.fromEntries(BUSINESS_STEP_TYPES.map(t => [t.type, t]));
+
+interface AutoProcessStep {
+  id: string;
+  type: string;
+  label: string;
+  description: string;
+  actor?: string;
+}
+
+function buildAutoFlow(outcome: OutcomeContract, kpis: KpiDefinition[]): AutoProcessStep[] {
+  const name = outcome.name || "Automation";
+  const kpiNames = kpis.slice(0, 2).map(k => k.name).join(" and ");
+  const steps: AutoProcessStep[] = [
+    { id: "s1", type: "trigger", label: "Initiate Process", description: `A business event triggers the "${name}" automation`, actor: "System" },
+    { id: "s2", type: "get_info", label: "Gather Information", description: "Collect all required data and context needed for processing", actor: "Digital Worker" },
+    { id: "s3", type: "ai_reasoning", label: "AI Analysis", description: kpiNames ? `Analyse inputs to improve ${kpiNames}` : "Analyse inputs and identify the right course of action", actor: "AI" },
+  ];
+  if (outcome.riskTier === "HIGH" || outcome.riskTier === "CRITICAL") {
+    steps.push({ id: "s4", type: "make_decision", label: "Risk Assessment", description: "Evaluate risk level and determine approval requirements", actor: "System" });
+    steps.push({ id: "s5", type: "expert_approval", label: "Expert Review", description: "Human expert reviews and approves high-risk decisions", actor: "Business Expert" });
+  } else {
+    steps.push({ id: "s4", type: "make_decision", label: "Decision Point", description: "Determine next action based on analysis results", actor: "System" });
+  }
+  steps.push({ id: "s6", type: "take_action", label: "Execute Action", description: "Carry out the approved action in connected systems", actor: "Digital Worker" });
+  steps.push({ id: "s7", type: "send_notification", label: "Notify Stakeholders", description: "Send confirmation and status updates to relevant parties", actor: "System" });
+  steps.push({ id: "s8", type: "end", label: "Complete", description: "Process complete and outcome tracked against KPIs", actor: "System" });
+  return steps;
+}
+
+function BusinessProcessFlowSection({ outcome, kpis }: { outcome: OutcomeContract; kpis: KpiDefinition[] }) {
+  const [, navigate] = useLocation();
+  const [editMode, setEditMode] = useState(false);
+  const [steps, setSteps] = useState<AutoProcessStep[]>(() => buildAutoFlow(outcome, kpis));
+  const [expanded, setExpanded] = useState(true);
+
+  return (
+    <div className="rounded-lg border bg-card" data-testid="section-process-flow">
+      <button
+        type="button"
+        className="flex items-center justify-between w-full px-5 py-3 text-left"
+        onClick={() => setExpanded(v => !v)}
+        data-testid="button-toggle-process-flow"
+      >
+        <div className="flex items-center gap-2.5">
+          <Workflow className="w-4 h-4 text-primary" />
+          <span className="text-sm font-semibold">How This Automation Works</span>
+          <Badge variant="secondary" className="text-[10px] h-4 px-1.5">{steps.length} steps</Badge>
+          {editMode && <Badge className="text-[10px] h-4 px-1.5 bg-amber-500/20 text-amber-700 dark:text-amber-400 border-amber-500/20 border">Editing</Badge>}
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-muted-foreground">Continue to Agent Plan →</span>
+          {expanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+        </div>
+      </button>
+
+      {expanded && (
+        <div className="px-5 pb-4 flex flex-col gap-4">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">This is a pre-built process flow for your outcome. You can review, edit, or skip straight to Agent Development below.</p>
+            <div className="flex items-center gap-2 shrink-0">
+              <Button
+                size="sm"
+                variant={editMode ? "default" : "outline"}
+                className="h-7 text-xs"
+                onClick={() => setEditMode(v => !v)}
+                data-testid="button-edit-process-flow"
+              >
+                {editMode ? "Done Editing" : "Edit"}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs"
+                onClick={() => navigate("/process-flows")}
+                data-testid="button-open-flow-studio"
+              >
+                Open Flow Studio →
+              </Button>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-1.5 overflow-x-auto pb-2">
+            {steps.map((step, i) => {
+              const meta = BSTEP_MAP[step.type] || BUSINESS_STEP_TYPES[0];
+              return (
+                <div key={step.id} className="flex items-center gap-1 shrink-0">
+                  <div
+                    className={`flex flex-col rounded-xl border ${meta.border} ${meta.bg} p-2.5 w-36 cursor-pointer transition-all hover:shadow-sm`}
+                    data-testid={`flow-step-${i}`}
+                  >
+                    <span className={`text-[9px] font-semibold uppercase tracking-wide mb-0.5 ${meta.color}`}>{meta.label}</span>
+                    {editMode ? (
+                      <input
+                        value={step.label}
+                        onChange={e => setSteps(prev => prev.map(s => s.id === step.id ? { ...s, label: e.target.value } : s))}
+                        className="text-xs font-medium bg-transparent border-b border-dashed border-muted-foreground/40 outline-none w-full mb-1"
+                        data-testid={`flow-step-input-${i}`}
+                      />
+                    ) : (
+                      <p className="text-xs font-medium text-foreground leading-snug line-clamp-2 mb-1">{step.label}</p>
+                    )}
+                    <p className="text-[10px] text-muted-foreground leading-snug line-clamp-2">{step.description}</p>
+                    {step.actor && <span className="text-[9px] text-muted-foreground/70 mt-1">{step.actor}</span>}
+                    {editMode && (
+                      <button
+                        type="button"
+                        onClick={() => setSteps(prev => prev.filter(s => s.id !== step.id))}
+                        className="mt-1 text-[9px] text-red-500 hover:underline self-end"
+                        data-testid={`flow-step-remove-${i}`}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
+                  {i < steps.length - 1 && <ArrowRight className="w-3 h-3 text-muted-foreground/40 shrink-0" />}
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="flex items-center gap-2 pt-1 border-t">
+            <p className="text-xs text-muted-foreground flex-1">These steps inform how your Digital Workers will be named and configured.</p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs"
+              onClick={() => setSteps(buildAutoFlow(outcome, kpis))}
+              data-testid="button-reset-flow"
+            >
+              <RefreshCw className="w-3 h-3 mr-1" /> Reset
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: OutcomeContract; kpis: KpiDefinition[]; initialTemplateId?: string | null }) {

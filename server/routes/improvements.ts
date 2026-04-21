@@ -745,7 +745,7 @@ const router = Router();
       if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
         return res.status(503).json({ error: "AI assistant is not configured" });
       }
-      const { outcomeContract, kpis, feedback, previousPlan, industryContext, templateId } = req.body;
+      const { outcomeContract, kpis, feedback, previousPlan, industryContext, templateId, processFlowSteps } = req.body;
 
       const orgId = getOrgId(req);
       const [templates, allSkills, allMcpServers, allPolicies, allAgents, ragPipelines, allKnowledgeBases] = await Promise.all([
@@ -1143,7 +1143,16 @@ ${JSON.stringify(kbSummary, null, 1)}
 EXISTING AGENTS FOR THIS OUTCOME (avoid duplicating these)
 ═══════════════════════════════════════════
 ${existingAgentNames.length > 0 ? existingAgentNames.join(", ") : "None yet"}
+${processFlowSteps && Array.isArray(processFlowSteps) && processFlowSteps.length > 0 ? `
+═══════════════════════════════════════════
+BUSINESS PROCESS FLOW (authored by business users — align agent names and roles to these steps)
+═══════════════════════════════════════════
+The business team has defined this process flow for the outcome. Each agent you propose should map to one or more of these business steps. Use the step labels as the primary inspiration for agent names.
 
+${processFlowSteps.map((s: any, i: number) => `Step ${i + 1} [${s.type || "action"}]: "${s.label}" — ${s.description || ""}${s.actor ? ` (Owner: ${s.actor})` : ""}`).join("\n")}
+
+IMPORTANT: Name agents using the business vocabulary above. Avoid generic names like "Worker Agent 1". Prefer names like "Invoice Validation Agent", "Risk Assessment Agent" etc., derived from the step labels above.
+` : ""}
 ═══════════════════════════════════════════
 RESPONSE FORMAT
 ═══════════════════════════════════════════
@@ -2179,6 +2188,62 @@ Revenue:
     } catch (error: any) {
       console.error("Customer value report error:", error);
       res.status(500).json({ error: "Failed to generate customer value report" });
+    }
+  });
+
+  router.post("/api/ai/generate-process-flow", async (req, res) => {
+    try {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+        return res.status(503).json({ error: "AI assistant is not configured" });
+      }
+      const { description, outcomeContext } = req.body;
+      if (!description || typeof description !== "string") {
+        return res.status(400).json({ error: "description is required" });
+      }
+
+      const validTypes = ["trigger", "get_info", "ai_reasoning", "make_decision", "expert_approval", "take_action", "send_notification", "end"];
+      const contextLine = outcomeContext ? `\nOutcome context: ${JSON.stringify(outcomeContext)}` : "";
+
+      const prompt = `You are a business process design assistant. Convert the following workflow description into a structured sequence of steps using only these step types: ${validTypes.join(", ")}.${contextLine}
+
+Workflow description: "${description}"
+
+Return a JSON object with:
+- "name": a short name for this process (max 5 words)
+- "steps": an array of steps, each with: type (one of the valid types), label (plain English name max 5 words), description (1 sentence), actor (who does this: "System", "AI", "Customer", "Manager", or a relevant role)
+
+Rules:
+- Always start with a "trigger" step
+- Always end with an "end" step
+- Include 5-10 steps total
+- Use "expert_approval" for any human sign-off steps
+- Use "ai_reasoning" for AI analysis steps
+- Use "make_decision" for branching points
+- Keep labels under 5 words and in plain business language
+
+Respond ONLY with valid JSON, no markdown fences.`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4.1-mini",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 1500,
+        response_format: { type: "json_object" },
+      });
+
+      const content = response.choices[0]?.message?.content || "{}";
+      let parsed: any = {};
+      try { parsed = JSON.parse(content); } catch {}
+
+      const steps = (parsed.steps || []).map((s: any) => ({
+        type: validTypes.includes(s.type) ? s.type : "take_action",
+        label: s.label || "Step",
+        description: s.description || "",
+        actor: s.actor || "System",
+      }));
+
+      res.json({ name: parsed.name || "Generated Flow", steps });
+    } catch (e: any) {
+      res.status(500).json({ error: "Failed to generate process flow" });
     }
   });
 
