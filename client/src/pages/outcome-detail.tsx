@@ -5483,6 +5483,40 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
   const [updatedAgentIndices, setUpdatedAgentIndices] = useState<Set<number>>(new Set());
   const updatedBadgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showCreateConfirm, setShowCreateConfirm] = useState(false);
+  const [streamLogs, setStreamLogs] = useState<{ time: string; message: string }[]>([]);
+  const logIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const streamLogsEndRef = useRef<HTMLDivElement | null>(null);
+
+  const PLAN_LOG_STEPS = [
+    "Reading outcome contract and business goals...",
+    "Analyzing KPIs and success metrics...",
+    "Designing orchestrator agent architecture...",
+    "Proposing specialized worker agents...",
+    "Binding MCP tools and system integrations...",
+    "Building agent pipeline and task dependencies...",
+    "Validating agent roles against business outcomes...",
+    "Finalizing development plan...",
+  ];
+
+  function startStreamLogs() {
+    setStreamLogs([]);
+    let step = 0;
+    const now = () => new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    logIntervalRef.current = setInterval(() => {
+      if (step < PLAN_LOG_STEPS.length) {
+        const msg = PLAN_LOG_STEPS[step];
+        setStreamLogs(prev => [...prev, { time: now(), message: msg }]);
+        step++;
+      }
+    }, 3500);
+  }
+
+  function stopStreamLogs() {
+    if (logIntervalRef.current) {
+      clearInterval(logIntervalRef.current);
+      logIntervalRef.current = null;
+    }
+  }
 
   function deepCloneAgent(p: AgentProposal): AgentProposal {
     return {
@@ -5626,6 +5660,10 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
       }
     }
   }, [savedProposal]);
+
+  useEffect(() => {
+    streamLogsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [streamLogs]);
 
   const { data: approvals } = useQuery<Approval[]>({
     queryKey: ["/api/approvals"],
@@ -5853,6 +5891,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
     }
     setGeneratingWithFeedback(true);
     setShowFeedback(false);
+    startStreamLogs();
     const prevProposals = proposals;
     try {
       const feedbackPayload: Record<string, unknown> = {
@@ -5910,6 +5949,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
     } catch (err) {
       toast({ title: "Failed to regenerate", description: "Please try again.", variant: "destructive" });
     } finally {
+      stopStreamLogs();
       setGeneratingWithFeedback(false);
     }
   }
@@ -6079,6 +6119,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
 
   async function generateProposals() {
     setGeneratingFresh(true);
+    startStreamLogs();
     try {
       const payload: Record<string, unknown> = {
         outcomeContract: outcome,
@@ -6109,6 +6150,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
     } catch (err) {
       toast({ title: "Failed to generate proposals", description: "Please try again.", variant: "destructive" });
     } finally {
+      stopStreamLogs();
       setGeneratingFresh(false);
     }
   }
@@ -6224,8 +6266,37 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
                 </>
               )}
             </Button>
-            {kpis.length === 0 && (
+            {kpis.length === 0 && !generating && (
               <p className="text-xs text-amber-600 dark:text-amber-400">Define KPIs first for better agent proposals</p>
+            )}
+            {generating && streamLogs.length > 0 && (
+              <div className="w-full max-w-lg rounded-lg border border-border bg-muted/40 overflow-hidden text-left" data-testid="panel-stream-logs">
+                <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/60">
+                  <span className="flex gap-1">
+                    <span className="w-2.5 h-2.5 rounded-full bg-red-400/70" />
+                    <span className="w-2.5 h-2.5 rounded-full bg-yellow-400/70" />
+                    <span className="w-2.5 h-2.5 rounded-full bg-green-400/70" />
+                  </span>
+                  <span className="text-[11px] font-mono text-muted-foreground ml-1">plan-generation.log</span>
+                </div>
+                <div className="px-3 py-2.5 flex flex-col gap-1.5 max-h-40 overflow-y-auto font-mono text-[11px]">
+                  {streamLogs.map((entry, i) => (
+                    <div key={i} className="flex gap-2 items-start" data-testid={`log-entry-${i}`}>
+                      <span className="text-muted-foreground/60 shrink-0 select-none">{entry.time}</span>
+                      <span className="text-emerald-600 dark:text-emerald-400">{entry.message}</span>
+                    </div>
+                  ))}
+                  <div className="flex gap-2 items-center">
+                    <span className="text-muted-foreground/60 shrink-0 select-none invisible">00:00:00</span>
+                    <span className="flex gap-1 items-center">
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse [animation-delay:0.2s]" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse [animation-delay:0.4s]" />
+                    </span>
+                  </div>
+                  <div ref={streamLogsEndRef} />
+                </div>
+              </div>
             )}
           </CardContent>
         </div>
@@ -6235,6 +6306,34 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
 
   return (
     <div className="flex flex-col gap-4">
+      {generating && streamLogs.length > 0 && (
+        <div className="rounded-lg border border-border bg-muted/40 overflow-hidden" data-testid="panel-stream-logs-plan">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/60">
+            <span className="flex gap-1">
+              <span className="w-2.5 h-2.5 rounded-full bg-red-400/70" />
+              <span className="w-2.5 h-2.5 rounded-full bg-yellow-400/70" />
+              <span className="w-2.5 h-2.5 rounded-full bg-green-400/70" />
+            </span>
+            <span className="text-[11px] font-mono text-muted-foreground ml-1">plan-generation.log</span>
+          </div>
+          <div className="px-3 py-2.5 flex flex-col gap-1.5 max-h-36 overflow-y-auto font-mono text-[11px]">
+            {streamLogs.map((entry, i) => (
+              <div key={i} className="flex gap-2 items-start">
+                <span className="text-muted-foreground/60 shrink-0 select-none">{entry.time}</span>
+                <span className="text-emerald-600 dark:text-emerald-400">{entry.message}</span>
+              </div>
+            ))}
+            <div className="flex gap-2 items-center">
+              <span className="text-muted-foreground/60 shrink-0 select-none invisible">00:00:00</span>
+              <span className="flex gap-1 items-center">
+                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
+                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse [animation-delay:0.2s]" />
+                <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse [animation-delay:0.4s]" />
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
       {pendingTemplateId && (
         <div className="flex items-start gap-3 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/40 px-4 py-3" data-testid="banner-template-preselected">
           <Sparkles className="w-4 h-4 text-blue-500 mt-0.5 shrink-0" />
