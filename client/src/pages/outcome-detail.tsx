@@ -5278,7 +5278,7 @@ function BusinessProcessFlowSection({
         name: outcome.name,
         description: outcome.description,
         riskTier: outcome.riskTier,
-        kpis: kpis.slice(0, 3).map(k => ({ name: k.name, target: k.targetValue, unit: k.unit })),
+        kpis: kpis.slice(0, 3).map(k => ({ name: k.name, target: k.target, unit: k.unit })),
       };
       const res = await apiRequest("POST", "/api/ai/generate-process-flow", {
         description: outcome.description || outcome.name,
@@ -5368,7 +5368,7 @@ function BusinessProcessFlowSection({
             {kpis.slice(0, 4).map(k => (
               <div key={k.id} className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-primary/5 border border-primary/15 text-xs" data-testid={`kpi-chip-${k.id}`}>
                 <span className="font-medium text-foreground">{k.name}</span>
-                {k.targetValue && <span className="text-muted-foreground">→ {k.targetValue}{k.unit ? ` ${k.unit}` : ""}</span>}
+                {k.target != null && <span className="text-muted-foreground">→ {k.target}{k.unit ? ` ${k.unit}` : ""}</span>}
               </div>
             ))}
           </div>
