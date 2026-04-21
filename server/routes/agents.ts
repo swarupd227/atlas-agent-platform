@@ -1736,7 +1736,7 @@ const router = Router();
           title: "Investment Decision Reconstruction",
           agentIdentity: { agentId: trace.agentId, versionId: trace.versionId, industry: snapshot.industryContext },
           decisionTimestamp: snapshot.capturedAt || trace.startedAt,
-          modelUsed: trace.modelId || "gpt-4.1",
+          modelUsed: trace.modelId || "claude-opus-4-5",
           dataSources: kbSources,
           reasoningChain: (trace.stepsJson as any[])?.filter((s: any) => s.type === "ai_analysis" || s.type === "ai_planning").map((s: any) => ({ step: s.name, output: s.output })) || [],
           riskFactors: (trace.stepsJson as any[])?.find((s: any) => s.type === "compliance_check")?.output || {},

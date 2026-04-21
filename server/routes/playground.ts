@@ -148,7 +148,7 @@ const router = Router();
               inputSummary: `Playground: ${content.length > 120 ? content.substring(0, 117) + "..." : content}`,
               outputSummary: fullResponse.length > 300 ? fullResponse.substring(0, 297) + "..." : fullResponse,
               stepsJson: result.steps,
-              modelId: "gpt-4.1",
+              modelId: "claude-opus-4-5",
               toolCalls: toolCalls.length > 0 ? toolCalls : null,
             });
           } catch {}
