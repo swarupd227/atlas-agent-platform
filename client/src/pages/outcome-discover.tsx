@@ -869,8 +869,8 @@ export default function OutcomeDiscover() {
         setActiveRegConstraints(extracted.regulatoryConstraints);
         setActiveApplicablePolicies(extracted.applicablePolicies);
         setExpandedRegulations(new Set());
-        // Auto-detect regulations in the background — no user action needed
-        if (extracted.outcomeContract?.description) {
+        // Auto-detect regulations in the background — only when industry context is set
+        if (extracted.outcomeContract?.description && industry?.id) {
           setDetectingRegulations(true);
           fetch("/api/ai/regulatory-constraints", {
             method: "POST",
@@ -2749,7 +2749,13 @@ export default function OutcomeDiscover() {
                       {(!regulatoryConstraints || regulatoryConstraints.length === 0) && (
                         <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30 text-muted-foreground" data-testid="text-no-regulations">
                           <Shield className="w-3.5 h-3.5 shrink-0" />
-                          <span className="text-xs">No regulations detected. Click the refresh icon to detect applicable regulations for this outcome.</span>
+                          <span className="text-xs">
+                            {!industry?.id
+                              ? "Select an industry workspace to enable automatic compliance detection."
+                              : detectingRegulations
+                              ? "Detecting applicable regulations…"
+                              : "No regulations detected. Click the refresh icon to detect applicable regulations for this outcome."}
+                          </span>
                         </div>
                       )}
                       {regulatoryConstraints && regulatoryConstraints.map((reg, i) => (
