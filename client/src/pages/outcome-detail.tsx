@@ -461,6 +461,12 @@ export default function OutcomeDetail() {
     enabled: !!outcomeId,
   });
 
+  useEffect(() => {
+    if (outcome && processFlowSteps.length === 0) {
+      setProcessFlowSteps(buildAutoFlow(outcome, kpis || []));
+    }
+  }, [outcome?.id, (kpis || []).length]);
+
   const { data: evidence, dataUpdatedAt: evidenceUpdatedAt } = useQuery<{
     kpiTimeSeries: Array<{
       kpiId: string;
@@ -2360,7 +2366,7 @@ export default function OutcomeDetail() {
 
         {/* Tab 2: Agent Plan & Contributions */}
         <TabsContent value="agent-map" className="space-y-6" data-testid="tabcontent-agent-map">
-          <AgentProposalsTab outcome={outcome} kpis={kpis || []} initialTemplateId={initialTemplateId} processFlowSteps={processFlowSteps} />
+          <AgentProposalsTab outcome={outcome} kpis={kpis || []} initialTemplateId={initialTemplateId} processFlowSteps={processFlowSteps} onProcessFlowStepsGenerated={setProcessFlowSteps} />
 
           {!agentContributions ? (
             <div className="space-y-3">
@@ -5180,6 +5186,32 @@ interface AutoProcessStep {
   actor?: string;
 }
 
+function inferStepType(role: string): AutoProcessStep["type"] {
+  const r = (role || "").toLowerCase();
+  if (/extract|collect|gather|fetch|read|scan|retrieve|look.?up/.test(r)) return "get_info";
+  if (/analys|validat|verif|classif|evaluat|assess|detect|check/.test(r)) return "ai_reasoning";
+  if (/route|decide|determin|prioriti|select|choose|triage/.test(r)) return "make_decision";
+  if (/approv|review|human|flag|escalat|oversight/.test(r)) return "expert_approval";
+  if (/send|notif|alert|email|message|report/.test(r)) return "send_notification";
+  return "take_action";
+}
+
+function buildFlowFromProposals(agents: Array<{ name: string; role: string; description: string }>, orchestrator: { name: string; role: string; description: string } | null): AutoProcessStep[] {
+  const steps: AutoProcessStep[] = [];
+  steps.push({ id: "pf0", type: "trigger", label: "Initiate Process", description: orchestrator?.role || "A business event triggers the automation", actor: "System" });
+  agents.slice(0, 6).forEach((a, i) => {
+    steps.push({
+      id: `pf${i + 1}`,
+      type: inferStepType(a.role || a.description),
+      label: a.name.replace(/agent$/i, "").trim(),
+      description: a.role || a.description,
+      actor: "Digital Worker",
+    });
+  });
+  steps.push({ id: `pf${agents.length + 1}`, type: "end", label: "Complete", description: "Process complete and outcome tracked against KPIs", actor: "System" });
+  return steps;
+}
+
 function buildAutoFlow(outcome: OutcomeContract, kpis: KpiDefinition[]): AutoProcessStep[] {
   const name = outcome.name || "Automation";
   const kpiNames = kpis.slice(0, 2).map(k => k.name).join(" and ");
@@ -5305,7 +5337,10 @@ function BusinessProcessFlowSection({
             size="sm"
             variant="ghost"
             className="h-7 text-xs"
-            onClick={() => navigate("/process-flows")}
+            onClick={() => {
+              const params = new URLSearchParams({ outcomeName: outcome.name || "", kpis: kpis.slice(0, 3).map(k => k.name).join(",") });
+              navigate(`/process-flows?${params.toString()}`);
+            }}
             data-testid="button-open-flow-studio"
           >
             Open Studio →
@@ -5314,7 +5349,18 @@ function BusinessProcessFlowSection({
       </div>
 
       <div className="px-5 py-4 flex flex-col gap-4">
-        <p className="text-xs text-muted-foreground">This is the pre-built process flow for your outcome. Review and optionally edit it — these steps will inform how your AI agents are named and configured.</p>
+        <p className="text-xs text-muted-foreground">Review and optionally edit this process flow — these steps will inform how your AI agents are named and configured. You can also skip straight to Agent Plan.</p>
+
+        {kpis.length > 0 && (
+          <div className="flex flex-wrap gap-2" data-testid="kpi-summary-strip">
+            {kpis.slice(0, 4).map(k => (
+              <div key={k.id} className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-primary/5 border border-primary/15 text-xs" data-testid={`kpi-chip-${k.id}`}>
+                <span className="font-medium text-foreground">{k.name}</span>
+                {k.targetValue && <span className="text-muted-foreground">→ {k.targetValue}{k.unit ? ` ${k.unit}` : ""}</span>}
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="flex items-start gap-1.5 overflow-x-auto pb-2">
           {steps.map((step, i) => {
@@ -5382,7 +5428,7 @@ function BusinessProcessFlowSection({
   );
 }
 
-function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps }: { outcome: OutcomeContract; kpis: KpiDefinition[]; initialTemplateId?: string | null; processFlowSteps?: AutoProcessStep[] }) {
+function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps, onProcessFlowStepsGenerated }: { outcome: OutcomeContract; kpis: KpiDefinition[]; initialTemplateId?: string | null; processFlowSteps?: AutoProcessStep[]; onProcessFlowStepsGenerated?: (steps: AutoProcessStep[]) => void }) {
   const { toast } = useToast();
   const { industry, workspaceConfig, activeFrameworks, activeDepartments } = useIndustry();
   const agentPerm = usePermission("create_modify_blueprints");
@@ -5797,6 +5843,9 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps 
       const data = await res.json();
       pushUndo("Regenerate with feedback");
       const newAgents: AgentProposal[] = data.agents || [];
+      if (onProcessFlowStepsGenerated && newAgents.length > 0) {
+        onProcessFlowStepsGenerated(buildFlowFromProposals(newAgents, data.orchestrator || null));
+      }
       const changed = new Set<number>();
       newAgents.forEach((newAgent, i) => {
         const prev = prevProposals[i];
@@ -6023,6 +6072,9 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps 
         setLastSaved(new Date().toISOString());
         setDirty(false);
         loadedRef.current = data.proposalId;
+      }
+      if (onProcessFlowStepsGenerated && Array.isArray(data.agents) && data.agents.length > 0) {
+        onProcessFlowStepsGenerated(buildFlowFromProposals(data.agents, data.orchestrator || null));
       }
       queryClient.invalidateQueries({ queryKey: ["/api/agent-proposals", outcome.id] });
     } catch (err) {

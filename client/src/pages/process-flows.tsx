@@ -1,5 +1,5 @@
-import { useState, useCallback } from "react";
-import { useLocation } from "wouter";
+import { useState, useCallback, useMemo } from "react";
+import { useLocation, useSearch } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import {
   Workflow, Zap, BookOpen, Users, Brain, CheckCircle2, Bell, Square,
@@ -299,20 +299,33 @@ function StepCard({
 
 export default function ProcessFlows() {
   const [, navigate] = useLocation();
+  const searchString = useSearch();
   const { toast } = useToast();
+
+  const urlParams = useMemo(() => {
+    const p = new URLSearchParams(searchString);
+    return { outcomeName: p.get("outcomeName") || "", kpis: p.get("kpis") || "" };
+  }, [searchString]);
+
   const [activeCategory, setActiveCategory] = useState<typeof CATEGORIES[number]>("All");
   const [steps, setSteps] = useState<ProcessStep[]>([]);
   const [activeTemplate, setActiveTemplate] = useState<ProcessTemplate | null>(null);
   const [editingStepId, setEditingStepId] = useState<string | null>(null);
   const [addingType, setAddingType] = useState<ProcessStep["type"] | null>(null);
-  const [aiDescription, setAiDescription] = useState("");
+  const [aiDescription, setAiDescription] = useState(() => urlParams.outcomeName || "");
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [generatingBlueprint, setGeneratingBlueprint] = useState(false);
-  const [flowName, setFlowName] = useState("");
+  const [flowName, setFlowName] = useState(() => urlParams.outcomeName ? `${urlParams.outcomeName} Flow` : "");
 
   const generateMutation = useMutation({
     mutationFn: async (description: string) => {
-      const res = await apiRequest("POST", "/api/ai/generate-process-flow", { description });
+      const outcomeContext = urlParams.outcomeName
+        ? { name: urlParams.outcomeName, kpis: urlParams.kpis.split(",").filter(Boolean).map(k => ({ name: k.trim() })) }
+        : undefined;
+      const res = await apiRequest("POST", "/api/ai/generate-process-flow", {
+        description,
+        ...(outcomeContext ? { outcomeContext } : {}),
+      });
       return res.json();
     },
     onSuccess: (data) => {
@@ -528,6 +541,17 @@ export default function ProcessFlows() {
                   Generate Flow
                 </Button>
               </div>
+            </div>
+          )}
+
+          {/* Outcome context banner */}
+          {urlParams.outcomeName && (
+            <div className="px-4 py-2 bg-primary/5 border-b flex items-center gap-2" data-testid="banner-outcome-context">
+              <Workflow className="w-3.5 h-3.5 text-primary shrink-0" />
+              <p className="text-xs text-muted-foreground">
+                Designing for outcome: <span className="font-medium text-foreground">{urlParams.outcomeName}</span>
+                {urlParams.kpis && <span> · KPIs: {urlParams.kpis}</span>}
+              </p>
             </div>
           )}
 
