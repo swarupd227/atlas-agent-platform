@@ -379,7 +379,6 @@ export default function BlackBookDemo() {
     liveEventId.current = 0;
     setLiveRunning(true);
     setLiveComplete(false);
-    setShowLiveFeed(true);
 
     const es = new EventSource("/demo-api/blackbook/live-run");
     esRef.current = es;
