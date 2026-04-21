@@ -737,7 +737,7 @@ const router = Router();
 
   router.post("/api/ai/propose-agents", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI assistant is not configured" });
       }
       const { outcomeContract, kpis, feedback, previousPlan, industryContext, templateId, processFlowSteps } = req.body;
@@ -2168,7 +2168,7 @@ Revenue:
 
   router.post("/api/ai/generate-process-flow", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI assistant is not configured" });
       }
       const { description, outcomeContext } = req.body;
@@ -2218,7 +2218,7 @@ Respond ONLY with valid JSON, no markdown fences.`;
 
   router.post("/api/ai/outcome-discover", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI assistant is not configured" });
       }
       const { messages, discoveryContext, industry } = req.body;
@@ -2398,7 +2398,7 @@ Guidelines:
 
   router.post("/api/ai/enhance-outcome", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI is not configured" });
       }
       const { proposal, industry } = req.body;
@@ -2423,7 +2423,7 @@ Guidelines:
 
   router.post("/api/ai/generate-kpis", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI is not configured" });
       }
       const { outcomeName, outcomeDescription, industry, existingKpis } = req.body;
@@ -2447,7 +2447,7 @@ Guidelines:
 
   router.post("/api/ai/regulatory-constraints", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI is not configured" });
       }
       const { description, industry } = req.body;
@@ -2485,7 +2485,7 @@ Guidelines:
 
   router.post("/api/ai/transcribe-analyze", upload.single("audio"), async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI transcription is not configured" });
       }
 
@@ -2543,7 +2543,7 @@ Return ONLY a valid JSON array of opportunity objects. Do not include any text b
   // AI-powered improvement cycle analysis
   router.post("/api/ai/improvement-analyze", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI is not configured" });
       }
 
@@ -3193,7 +3193,7 @@ Respond in JSON: { "testCases": [{ "name": string, "inputData": object, "expecte
 
   router.post("/api/ai/generate-eval-cases", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service is not configured" });
       }
 
@@ -3322,7 +3322,7 @@ Active agents: ${JSON.stringify(activeAgents.map(a => ({ id: a.id, name: a.name,
 
   router.post("/api/ai/enhance-template", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI enhancement is not configured" });
       }
       const { template, currentIndustry } = req.body;

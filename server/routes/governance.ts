@@ -64,7 +64,7 @@ router.use(billingRouter);
 
   router.post("/api/ai/enhance-policy-rules", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { policyName, domain, description, framework, industry, existingRules } = req.body;
@@ -146,7 +146,7 @@ ${JSON.stringify(existingRules, null, 2)}`,
 
   router.post("/api/ai/enhance-ontology-concept", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { conceptId, label, category, description, industry, ontologyName, properties, relationships } = req.body;
@@ -232,7 +232,7 @@ Existing Tags: ${JSON.stringify(existingTags)}${conceptListStr}`,
 
   router.post("/api/ai/generate-ontology", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const generateSchema = z.object({
@@ -330,7 +330,7 @@ Use real ${industryName} terminology and standards (${ontologyName || "industry 
 
   router.post("/api/ai/generate-subdomain-ontology", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const generateSchema = z.object({
@@ -445,7 +445,7 @@ Use real ${subdomain} terminology, standards, and frameworks. For credit rating 
 
   router.post("/api/ai/enhance-regulation", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { regulationName, industry, jurisdictions, requirements } = req.body;
@@ -489,7 +489,7 @@ Known Requirements: ${JSON.stringify(requirements || [])}`,
 
   router.post("/api/ai/enhance-policy-pack", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { packName, framework, description, industry, riskLevel, existingPolicies } = req.body;
@@ -535,7 +535,7 @@ Existing Policies: ${JSON.stringify(existingPolicies || [])}`,
 
   router.post("/api/ai/generate-regulation-policies", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { regulationName, industry, requirements, jurisdictions } = req.body;
@@ -583,7 +583,7 @@ Key Requirements: ${JSON.stringify(requirements || [])}`,
 
   router.post("/api/ai/suggest-ontology-tags", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { agentName, agentDescription, agentSkills, industry, ontologyName } = req.body;
