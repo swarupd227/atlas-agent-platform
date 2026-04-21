@@ -5505,13 +5505,24 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
   function startStreamLogs() {
     setStreamLogs([]);
     let step = 0;
+    let waitTick = 0;
     const now = () => new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
     logIntervalRef.current = setInterval(() => {
-      const msg = step < PLAN_LOG_STEPS.length
-        ? PLAN_LOG_STEPS[step]
-        : PLAN_LOG_STEPS[step % PLAN_LOG_STEPS.length];
-      setStreamLogs(prev => [...prev, { time: now(), message: msg }]);
-      step++;
+      if (step < PLAN_LOG_STEPS.length) {
+        setStreamLogs(prev => [...prev, { time: now(), message: PLAN_LOG_STEPS[step] }]);
+        step++;
+      } else {
+        waitTick++;
+        const dots = ".".repeat((waitTick % 3) + 1);
+        setStreamLogs(prev => {
+          const last = prev[prev.length - 1];
+          const isWaiting = last?.message.startsWith("Waiting for AI response");
+          if (isWaiting) {
+            return [...prev.slice(0, -1), { time: now(), message: `Waiting for AI response${dots}` }];
+          }
+          return [...prev, { time: now(), message: `Waiting for AI response${dots}` }];
+        });
+      }
     }, 4000);
   }
 
@@ -6275,19 +6286,22 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
             )}
             {generating && streamLogs.length > 0 && (
               <div className="w-full max-w-lg rounded-lg border border-border bg-muted/40 overflow-hidden text-left" data-testid="panel-stream-logs">
-                <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/60">
-                  <span className="flex gap-1">
-                    <span className="w-2.5 h-2.5 rounded-full bg-red-400/70" />
-                    <span className="w-2.5 h-2.5 rounded-full bg-yellow-400/70" />
-                    <span className="w-2.5 h-2.5 rounded-full bg-green-400/70" />
+                <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-muted/60">
+                  <span className="flex items-center gap-2">
+                    <span className="flex gap-1">
+                      <span className="w-2.5 h-2.5 rounded-full bg-red-400/70" />
+                      <span className="w-2.5 h-2.5 rounded-full bg-yellow-400/70" />
+                      <span className="w-2.5 h-2.5 rounded-full bg-green-400/70" />
+                    </span>
+                    <span className="text-[11px] font-mono text-muted-foreground ml-1">plan-generation.log</span>
                   </span>
-                  <span className="text-[11px] font-mono text-muted-foreground ml-1">plan-generation.log</span>
+                  <span className="text-[10px] text-muted-foreground/50 italic">estimated milestones</span>
                 </div>
                 <div className="px-3 py-2.5 flex flex-col gap-1.5 max-h-40 overflow-y-auto font-mono text-[11px]">
                   {streamLogs.map((entry, i) => (
                     <div key={i} className="flex gap-2 items-start" data-testid={`log-entry-${i}`}>
                       <span className="text-muted-foreground/60 shrink-0 select-none">{entry.time}</span>
-                      <span className="text-emerald-600 dark:text-emerald-400">{entry.message}</span>
+                      <span className={entry.message.startsWith("Waiting") ? "text-muted-foreground/70" : "text-emerald-600 dark:text-emerald-400"}>{entry.message}</span>
                     </div>
                   ))}
                   <div className="flex gap-2 items-center">
@@ -6312,19 +6326,22 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
     <div className="flex flex-col gap-4">
       {generating && streamLogs.length > 0 && (
         <div className="rounded-lg border border-border bg-muted/40 overflow-hidden" data-testid="panel-stream-logs-plan">
-          <div className="flex items-center gap-2 px-3 py-2 border-b border-border bg-muted/60">
-            <span className="flex gap-1">
-              <span className="w-2.5 h-2.5 rounded-full bg-red-400/70" />
-              <span className="w-2.5 h-2.5 rounded-full bg-yellow-400/70" />
-              <span className="w-2.5 h-2.5 rounded-full bg-green-400/70" />
+          <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-muted/60">
+            <span className="flex items-center gap-2">
+              <span className="flex gap-1">
+                <span className="w-2.5 h-2.5 rounded-full bg-red-400/70" />
+                <span className="w-2.5 h-2.5 rounded-full bg-yellow-400/70" />
+                <span className="w-2.5 h-2.5 rounded-full bg-green-400/70" />
+              </span>
+              <span className="text-[11px] font-mono text-muted-foreground ml-1">plan-generation.log</span>
             </span>
-            <span className="text-[11px] font-mono text-muted-foreground ml-1">plan-generation.log</span>
+            <span className="text-[10px] text-muted-foreground/50 italic">estimated milestones</span>
           </div>
           <div className="px-3 py-2.5 flex flex-col gap-1.5 max-h-36 overflow-y-auto font-mono text-[11px]">
             {streamLogs.map((entry, i) => (
               <div key={i} className="flex gap-2 items-start">
                 <span className="text-muted-foreground/60 shrink-0 select-none">{entry.time}</span>
-                <span className="text-emerald-600 dark:text-emerald-400">{entry.message}</span>
+                <span className={entry.message.startsWith("Waiting") ? "text-muted-foreground/70" : "text-emerald-600 dark:text-emerald-400"}>{entry.message}</span>
               </div>
             ))}
             <div className="flex gap-2 items-center">
