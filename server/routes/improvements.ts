@@ -2485,7 +2485,7 @@ Guidelines:
 
   router.post("/api/ai/transcribe-analyze", upload.single("audio"), async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
         return res.status(503).json({ error: "AI transcription is not configured" });
       }
 
