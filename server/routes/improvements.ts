@@ -2328,9 +2328,22 @@ Guidelines:
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
 
+      // Strip JSON proposal blocks from history (they're re-injected via discoveryContext.currentProposal)
+      // and cap history at last 8 messages to prevent token bloat on multi-turn conversations.
+      const stripJsonBlocks = (text: string) =>
+        text.replace(/```json[\s\S]*?```/g, "[proposal omitted for brevity]").trim();
+
       const anthropicMessages = (messages as Array<{ role: string; content: string }>)
         .filter((m) => m.role !== "system")
-        .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+        .slice(-8)
+        .map((m, i, arr) => ({
+          role: m.role as "user" | "assistant",
+          // Keep the final assistant message intact so Claude knows where it left off;
+          // strip JSON blocks from all earlier turns to reduce input tokens.
+          content: (m.role === "assistant" && i < arr.length - 1)
+            ? stripJsonBlocks(m.content)
+            : m.content,
+        }));
 
       const claudeStream = anthropicClient.messages.stream({
         model: "claude-haiku-4-5",
