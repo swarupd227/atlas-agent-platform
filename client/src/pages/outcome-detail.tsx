@@ -5908,6 +5908,8 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
     setShowFeedback(false);
     startStreamLogs();
     const prevProposals = proposals;
+    const abort = new AbortController();
+    const abortTimer = setTimeout(() => abort.abort(), 120_000);
     try {
       const feedbackPayload: Record<string, unknown> = {
         outcomeContract: outcome,
@@ -5922,7 +5924,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
       };
       if (pendingTemplateId) feedbackPayload.templateId = pendingTemplateId;
       if (processFlowSteps && processFlowSteps.length > 0) feedbackPayload.processFlowSteps = processFlowSteps;
-      const res = await apiRequest("POST", "/api/ai/propose-agents", feedbackPayload);
+      const res = await apiRequest("POST", "/api/ai/propose-agents", feedbackPayload, abort.signal);
       const data = await res.json();
       pushUndo("Regenerate with feedback");
       const newAgents: AgentProposal[] = data.agents || [];
@@ -5961,9 +5963,15 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
       setFeedbackText("");
       queryClient.invalidateQueries({ queryKey: ["/api/agent-proposals", outcome.id] });
       toast({ title: "Plan regenerated with feedback", description: "The plan has been updated based on your feedback." });
-    } catch (err) {
-      toast({ title: "Failed to regenerate", description: "Please try again.", variant: "destructive" });
+    } catch (err: any) {
+      const isTimeout = err?.name === "AbortError" || abort.signal.aborted;
+      toast({
+        title: isTimeout ? "Regeneration timed out" : "Failed to regenerate",
+        description: isTimeout ? "The request took too long. Please try again." : "Please try again.",
+        variant: "destructive",
+      });
     } finally {
+      clearTimeout(abortTimer);
       stopStreamLogs();
       setGeneratingWithFeedback(false);
     }
@@ -6135,6 +6143,8 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
   async function generateProposals() {
     setGeneratingFresh(true);
     startStreamLogs();
+    const abort = new AbortController();
+    const abortTimer = setTimeout(() => abort.abort(), 120_000);
     try {
       const payload: Record<string, unknown> = {
         outcomeContract: outcome,
@@ -6143,7 +6153,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
       };
       if (pendingTemplateId) payload.templateId = pendingTemplateId;
       if (processFlowSteps && processFlowSteps.length > 0) payload.processFlowSteps = processFlowSteps;
-      const res = await apiRequest("POST", "/api/ai/propose-agents", payload);
+      const res = await apiRequest("POST", "/api/ai/propose-agents", payload, abort.signal);
       const data = await res.json();
       setProposals(data.agents || []);
       setOrchestrator(data.orchestrator || null);
@@ -6162,9 +6172,15 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
         onProcessFlowStepsGenerated(buildFlowFromProposals(data.agents, data.orchestrator || null));
       }
       queryClient.invalidateQueries({ queryKey: ["/api/agent-proposals", outcome.id] });
-    } catch (err) {
-      toast({ title: "Failed to generate proposals", description: "Please try again.", variant: "destructive" });
+    } catch (err: any) {
+      const isTimeout = err?.name === "AbortError" || abort.signal.aborted;
+      toast({
+        title: isTimeout ? "Plan generation timed out" : "Failed to generate proposals",
+        description: isTimeout ? "The request took too long. Please try again." : "Please try again.",
+        variant: "destructive",
+      });
     } finally {
+      clearTimeout(abortTimer);
       stopStreamLogs();
       setGeneratingFresh(false);
     }
