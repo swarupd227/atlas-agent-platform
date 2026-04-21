@@ -71,7 +71,7 @@ import {
   Brain, Wrench, Database, GitBranch, Split, UserCheck, Shield,
   Plus, Trash2, Save, Play, PenTool, ArrowLeft, AlertTriangle,
   CheckCircle, ChevronDown, ChevronRight, X, MousePointer, Link2, FileText, MessageSquare, Server, Network,
-  Scale, BookMarked, Diff, Globe2, Lock, Crown, Copy, Eye, Code2, SendHorizonal,
+  Scale, BookMarked, Diff, Globe2, Lock, Crown, Copy, Eye, Code2, SendHorizontal,
 } from "lucide-react";
 
 import {
@@ -482,7 +482,7 @@ export default function BlueprintDetail() {
         )}
         {businessView && (
           <Button size="sm" variant="outline" data-testid="button-submit-it-review">
-            <SendHorizonal className="w-3.5 h-3.5 mr-1.5" /> Submit for IT Review
+            <SendHorizontal className="w-3.5 h-3.5 mr-1.5" /> Submit for IT Review
           </Button>
         )}
       </div>
