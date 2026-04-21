@@ -85,6 +85,10 @@ const router = Router();
       const mcpLinks = await storage.getAgentMcpServers(agentId);
       const mcpServerIds = mcpLinks.map(l => l.serverId);
       const hasMcpServers = mcpServerIds.length > 0;
+      // Note: web_search_preview (OpenAI-only tool) has been removed in favour of
+      // Claude streaming for all non-MCP chat. Agents configured with the
+      // "web_search" built-in tool will fall through to the Claude path below.
+      // Implement web search via an MCP server tool for Anthropic-compatible results.
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");

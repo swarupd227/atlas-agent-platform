@@ -2365,6 +2365,9 @@ Return JSON with the enhanced fields: { "name": string, "inputScenario": string,
 
   router.post("/api/ai/suggest-memory-rules", async (req, res) => {
     try {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
       const { industry, tier } = req.body;
       if (!industry) {
         return res.status(400).json({ error: "industry is required" });
@@ -2611,6 +2614,9 @@ Return a JSON object with:
 
   router.post("/api/ai/resolve-entities", async (req, res) => {
     try {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
       const { entityA, sourceA, entityB, sourceB, entityType, industry } = req.body;
       if (!entityA || !entityB) {
         return res.status(400).json({ error: "entityA and entityB are required" });
@@ -2644,6 +2650,9 @@ Return ONLY valid JSON.`,
 
   router.post("/api/ai/extract-relationships", async (req, res) => {
     try {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
       const { text, industry, documentName } = req.body;
       if (!text) {
         return res.status(400).json({ error: "text is required" });
@@ -2684,6 +2693,9 @@ Return ONLY valid JSON.`,
 
   router.post("/api/ai/knowledge-graph-suggestions", async (req, res) => {
     try {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+        return res.status(503).json({ error: "AI service not configured" });
+      }
       const { entities, relationships, industry } = req.body;
 
       const kgSuggestRaw = await callClaude({
