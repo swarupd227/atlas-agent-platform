@@ -421,6 +421,7 @@ export default function OutcomeDetail() {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [processFlowSteps, setProcessFlowSteps] = useState<AutoProcessStep[]>([]);
   const processFlowInitializedForRef = useRef<string | null>(null);
+  const processFlowFromProposalRef = useRef<string | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const [reportGenerating, setReportGenerating] = useState(false);
   const [reportContent, setReportContent] = useState<string | null>(null);
@@ -465,6 +466,7 @@ export default function OutcomeDetail() {
   useEffect(() => {
     if (outcome && outcome.id !== processFlowInitializedForRef.current) {
       processFlowInitializedForRef.current = outcome.id;
+      processFlowFromProposalRef.current = null;
       setProcessFlowSteps(buildAutoFlow(outcome, kpis || []));
     }
   }, [outcome?.id]);
@@ -602,6 +604,18 @@ export default function OutcomeDetail() {
     },
     enabled: !!outcomeId,
   });
+
+  useEffect(() => {
+    if (
+      pageProposalData &&
+      Array.isArray(pageProposalData.workers) &&
+      pageProposalData.workers.length > 0 &&
+      processFlowFromProposalRef.current !== (outcomeId || "")
+    ) {
+      processFlowFromProposalRef.current = outcomeId || "";
+      setProcessFlowSteps(buildFlowFromProposals(pageProposalData.workers, pageProposalData.orchestrator || null));
+    }
+  }, [pageProposalData?.id, outcomeId]);
 
   const { data: agentContributions } = useQuery<{
     contributions: Array<{
