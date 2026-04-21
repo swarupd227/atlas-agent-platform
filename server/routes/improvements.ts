@@ -1073,12 +1073,12 @@ ${mandateSection}${feedbackSection}
 ═══════════════════════════════════════════
 OUTCOME CONTRACT (the business goal to deliver)
 ═══════════════════════════════════════════
-${JSON.stringify(outcomeDetails, null, 1)}
+${JSON.stringify(outcomeDetails)}
 
 ═══════════════════════════════════════════
 KPI DEFINITIONS (with full targets, weights, SLAs)
 ═══════════════════════════════════════════
-${JSON.stringify(kpiDetails, null, 1)}
+${JSON.stringify(kpiDetails)}
 
 ═══════════════════════════════════════════
 INDUSTRY CONTEXT
@@ -1097,42 +1097,42 @@ INSTRUCTION: Start agent design from this template's configuration. Adapt tools,
 ` : ""}═══════════════════════════════════════════
 AGENT TEMPLATES (reusable configurations — match to these when possible)
 ═══════════════════════════════════════════
-${JSON.stringify(templateSummaries, null, 1)}
+${JSON.stringify(templateSummaries)}
 
 ═══════════════════════════════════════════
 ONTOLOGY CONCEPTS (industry domain vocabulary — use these terms in agent roles and descriptions)
 ═══════════════════════════════════════════
-${JSON.stringify(ontologySummary, null, 1)}
+${JSON.stringify(ontologySummary)}
 
 ═══════════════════════════════════════════
 ONTOLOGY ENHANCEMENTS (AI-enriched — agent use cases, risk factors, implementation guidance)
 ═══════════════════════════════════════════
-${JSON.stringify(enhancementSummary, null, 1)}
+${JSON.stringify(enhancementSummary)}
 
 ═══════════════════════════════════════════
 AGENT SKILLS LIBRARY (composable skill units — assign REAL skills to agents by name)
 ═══════════════════════════════════════════
-${JSON.stringify(skillSummaries, null, 1)}
+${JSON.stringify(skillSummaries)}
 
 ═══════════════════════════════════════════
 MCP SERVERS & TOOLS (registered tool integrations — assign REAL tools from this registry)
 ═══════════════════════════════════════════
-${JSON.stringify(mcpToolSummary, null, 1)}
+${JSON.stringify(mcpToolSummary)}
 
 ═══════════════════════════════════════════
 ACTIVE POLICIES (governance constraints agents must obey)
 ═══════════════════════════════════════════
-${JSON.stringify(policySummary, null, 1)}
+${JSON.stringify(policySummary)}
 
 ═══════════════════════════════════════════
 RAG PIPELINES (knowledge retrieval configurations)
 ═══════════════════════════════════════════
-${JSON.stringify(ragSummary, null, 1)}
+${JSON.stringify(ragSummary)}
 
 ═══════════════════════════════════════════
 KNOWLEDGE BASES (vector-embedded document collections for RAG grounding — assign relevant KBs to agents by ID)
 ═══════════════════════════════════════════
-${JSON.stringify(kbSummary, null, 1)}
+${JSON.stringify(kbSummary)}
 
 ═══════════════════════════════════════════
 EXISTING AGENTS FOR THIS OUTCOME (avoid duplicating these)
@@ -1152,16 +1152,10 @@ IMPORTANT: Name agents using the business vocabulary above. Avoid generic names 
 RESPONSE FORMAT
 ═══════════════════════════════════════════
 
-Respond with a JSON object. Include a top-level "planReasoning" field with structured chain-of-thought analysis BEFORE the agent definitions. This field is displayed to engineers in the UI and must reflect your actual reasoning — not boilerplate.
+Respond with a JSON object matching this schema exactly:
 
 \`\`\`json
 {
-  "planReasoning": {
-    "kpisAnalysed": ["string - for each KPI: 'KPI name: domain (e.g. AR monitoring), independent/dependent and why'"],
-    "patternDecision": "string - which pattern you selected and WHY, citing specific agents and data flow from your dependency matrix",
-    "skillToolGaps": ["string - for each agent with missing ideal skills/MCP tools: 'Agent Name: missing X skill, Y MCP tool'"],
-    "estimatedImpactApproach": "string - confirm you used actual numeric baseline→target values, or note which KPIs lacked numeric data"
-  },
   "orchestrator": {
     "name": "string",
     "description": "string",
@@ -1182,7 +1176,7 @@ Respond with a JSON object. Include a top-level "planReasoning" field with struc
     "suggestedRagPipeline": "string | null - name of RAG pipeline for knowledge retrieval",
     "suggestedKnowledgeBases": [{"id": "string - KB id from Knowledge Bases registry", "name": "string"}],
     "complianceTags": ["string - regulatory frameworks from Industry Context"],
-    "systemPrompt": "string - industry-specific system prompt referencing domain ontology and compliance"
+    "systemPrompt": "string - 1-2 sentence role instruction (e.g. 'You monitor AR aging and flag overdue invoices...')"
   },
   "agents": [
     {
@@ -1205,7 +1199,7 @@ Respond with a JSON object. Include a top-level "planReasoning" field with struc
       "suggestedRagPipeline": "string | null",
       "suggestedKnowledgeBases": [{"id": "string - KB id", "name": "string"}],
       "complianceTags": ["string - regulatory framework tags"],
-      "systemPrompt": "string - detailed industry-aware system prompt",
+      "systemPrompt": "string - 1-2 sentence role instruction",
       "outputSchema": {
         "type": "record_list | summary",
         "description": "string - what each record represents, e.g. 'scored lead with qualification decision'",
@@ -1383,7 +1377,7 @@ MANDATORY: You MUST create EXACTLY ${stagedPipelines[0].count} worker agents —
 After assigning one agent to each stage, bind the following ${kpiDetails.length} KPIs to the most relevant existing stage agent (do NOT create extra agents for KPIs): ${kpiDetails.map((k: any) => `${k.name} (baseline: ${k.baseline} → target: ${k.target}, weight: ${k.weight}, SLA: ${k.slaThreshold || "none"})`).join("; ")}`
         : `Generate an agent development plan for the outcome "${outcomeContract?.name}" targeting ${kpiDetails.length} KPIs: ${kpiDetails.map((k: any) => `${k.name} (baseline: ${k.baseline} → target: ${k.target}, weight: ${k.weight}, SLA: ${k.slaThreshold || "none"})`).join("; ")}`;
 
-      const content = await callClaude({ system: systemPrompt, user: userMsg, maxTokens: 8000, jsonMode: true });
+      const content = await callClaude({ model: "claude-haiku-4-5", system: systemPrompt, user: userMsg, maxTokens: 16000, jsonMode: true });
       let jsonStr = content;
       const fencedMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (fencedMatch) {

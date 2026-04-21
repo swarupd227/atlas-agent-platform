@@ -5495,7 +5495,11 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
     "Binding MCP tools and system integrations...",
     "Building agent pipeline and task dependencies...",
     "Validating agent roles against business outcomes...",
+    "Checking policy compliance and governance constraints...",
+    "Optimizing agent skill assignments...",
     "Finalizing development plan...",
+    "Verifying pipeline execution graph...",
+    "Running final validation checks...",
   ];
 
   function startStreamLogs() {
@@ -5503,12 +5507,12 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
     let step = 0;
     const now = () => new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
     logIntervalRef.current = setInterval(() => {
-      if (step < PLAN_LOG_STEPS.length) {
-        const msg = PLAN_LOG_STEPS[step];
-        setStreamLogs(prev => [...prev, { time: now(), message: msg }]);
-        step++;
-      }
-    }, 3500);
+      const msg = step < PLAN_LOG_STEPS.length
+        ? PLAN_LOG_STEPS[step]
+        : PLAN_LOG_STEPS[step % PLAN_LOG_STEPS.length];
+      setStreamLogs(prev => [...prev, { time: now(), message: msg }]);
+      step++;
+    }, 4000);
   }
 
   function stopStreamLogs() {
