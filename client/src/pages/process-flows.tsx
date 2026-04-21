@@ -403,9 +403,11 @@ export default function ProcessFlows() {
       const res = await apiRequest("POST", "/api/blueprints", {
         name: flowName || "Business Process Blueprint",
         description: `Generated from Process Flow: ${flowName}`,
-        nodes: blueprintNodes,
-        edges: blueprintEdges,
-        metadata: { processFlowSteps: steps, sourceFlowName: flowName },
+        blueprintJson: {
+          nodes: blueprintNodes,
+          edges: blueprintEdges,
+          metadata: { processFlowSteps: steps, sourceFlowName: flowName },
+        },
       });
       const bp = await res.json();
       toast({ title: "Blueprint created", description: "Redirecting to Blueprint Studio…" });

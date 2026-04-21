@@ -415,9 +415,11 @@ export default function OutcomeDetail() {
   const { isBusinessMode } = useRole();
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
-  const initialTab = searchParams?.get("tab") === "agent-map" ? "agent-map" : "kpi-delivery";
+  const _tabParam = searchParams?.get("tab");
+  const initialTab = _tabParam === "agent-map" ? "agent-map" : _tabParam === "process-flow" ? "process-flow" : "kpi-delivery";
   const initialTemplateId = searchParams?.get("template") || null;
   const [activeTab, setActiveTab] = useState(initialTab);
+  const [processFlowSteps, setProcessFlowSteps] = useState<AutoProcessStep[]>([]);
   const [reportOpen, setReportOpen] = useState(false);
   const [reportGenerating, setReportGenerating] = useState(false);
   const [reportContent, setReportContent] = useState<string | null>(null);
@@ -1846,8 +1848,6 @@ export default function OutcomeDetail() {
         );
       })()}
 
-      {isBusinessMode && <BusinessProcessFlowSection outcome={outcome} kpis={kpis || []} />}
-
       {isBusinessMode && (
         <button
           type="button"
@@ -1866,6 +1866,10 @@ export default function OutcomeDetail() {
       <Tabs value={activeTab} onValueChange={setActiveTab} className={`space-y-4${isBusinessMode && !advancedOpen ? " hidden" : ""}`}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="kpi-delivery" data-testid="tab-kpi-delivery">KPI Delivery</TabsTrigger>
+          <TabsTrigger value="process-flow" data-testid="tab-process-flow">
+            <Workflow className="w-3.5 h-3.5 mr-1.5" />
+            Process Flow
+          </TabsTrigger>
           <TabsTrigger value="agent-map" data-testid="tab-agent-map">Agent Plan</TabsTrigger>
           <TabsTrigger value="governance" data-testid="tab-governance">
             <Gavel className="w-3.5 h-3.5 mr-1.5" />
@@ -2343,9 +2347,20 @@ export default function OutcomeDetail() {
           })()}
         </TabsContent>
 
+        {/* Tab 1.5: Process Flow */}
+        <TabsContent value="process-flow" className="space-y-4" data-testid="tabcontent-process-flow">
+          <BusinessProcessFlowSection
+            outcome={outcome}
+            kpis={kpis || []}
+            steps={processFlowSteps}
+            onStepsChange={setProcessFlowSteps}
+            onNavigateToAgentPlan={() => setActiveTab("agent-map")}
+          />
+        </TabsContent>
+
         {/* Tab 2: Agent Plan & Contributions */}
         <TabsContent value="agent-map" className="space-y-6" data-testid="tabcontent-agent-map">
-          <AgentProposalsTab outcome={outcome} kpis={kpis || []} initialTemplateId={initialTemplateId} />
+          <AgentProposalsTab outcome={outcome} kpis={kpis || []} initialTemplateId={initialTemplateId} processFlowSteps={processFlowSteps} />
 
           {!agentContributions ? (
             <div className="space-y-3">
@@ -5185,116 +5200,189 @@ function buildAutoFlow(outcome: OutcomeContract, kpis: KpiDefinition[]): AutoPro
   return steps;
 }
 
-function BusinessProcessFlowSection({ outcome, kpis }: { outcome: OutcomeContract; kpis: KpiDefinition[] }) {
+function BusinessProcessFlowSection({
+  outcome,
+  kpis,
+  steps: controlledSteps,
+  onStepsChange,
+  onNavigateToAgentPlan,
+}: {
+  outcome: OutcomeContract;
+  kpis: KpiDefinition[];
+  steps?: AutoProcessStep[];
+  onStepsChange?: (steps: AutoProcessStep[]) => void;
+  onNavigateToAgentPlan?: () => void;
+}) {
   const [, navigate] = useLocation();
+  const { toast } = useToast();
   const [editMode, setEditMode] = useState(false);
-  const [steps, setSteps] = useState<AutoProcessStep[]>(() => buildAutoFlow(outcome, kpis));
-  const [expanded, setExpanded] = useState(true);
+  const [aiGenerating, setAiGenerating] = useState(false);
+
+  const defaultSteps = buildAutoFlow(outcome, kpis);
+  const isControlled = controlledSteps !== undefined && controlledSteps.length > 0;
+  const [localSteps, setLocalSteps] = useState<AutoProcessStep[]>(defaultSteps);
+  const steps = isControlled ? controlledSteps : localSteps;
+
+  const setSteps = (updater: AutoProcessStep[] | ((prev: AutoProcessStep[]) => AutoProcessStep[])) => {
+    const newSteps = typeof updater === "function" ? updater(steps) : updater;
+    setLocalSteps(newSteps);
+    onStepsChange?.(newSteps);
+  };
+
+  useEffect(() => {
+    if (!isControlled) {
+      const fresh = buildAutoFlow(outcome, kpis);
+      setLocalSteps(fresh);
+      onStepsChange?.(fresh);
+    }
+  }, [outcome.id]);
+
+  async function handleAiRegenerate() {
+    setAiGenerating(true);
+    try {
+      const outcomeContext = {
+        name: outcome.name,
+        description: outcome.description,
+        riskTier: outcome.riskTier,
+        kpis: kpis.slice(0, 3).map(k => ({ name: k.name, target: k.targetValue, unit: k.unit })),
+      };
+      const res = await apiRequest("POST", "/api/ai/generate-process-flow", {
+        description: outcome.description || outcome.name,
+        outcomeContext,
+      });
+      const data = await res.json();
+      if (Array.isArray(data.steps) && data.steps.length > 0) {
+        const aiSteps: AutoProcessStep[] = data.steps.map((s: any, i: number) => ({
+          id: `ai_${i}`,
+          type: s.type || "take_action",
+          label: s.label || s.name || `Step ${i + 1}`,
+          description: s.description || "",
+          actor: s.actor || "Digital Worker",
+        }));
+        setSteps(aiSteps);
+        toast({ title: "Flow updated", description: "AI has redesigned the process flow for this outcome." });
+      } else {
+        toast({ title: "No changes", description: "AI did not return a revised flow.", variant: "destructive" });
+      }
+    } catch {
+      toast({ title: "AI generation failed", variant: "destructive" });
+    } finally {
+      setAiGenerating(false);
+    }
+  }
 
   return (
     <div className="rounded-lg border bg-card" data-testid="section-process-flow">
-      <button
-        type="button"
-        className="flex items-center justify-between w-full px-5 py-3 text-left"
-        onClick={() => setExpanded(v => !v)}
-        data-testid="button-toggle-process-flow"
-      >
+      <div className="flex items-center justify-between px-5 py-3 border-b">
         <div className="flex items-center gap-2.5">
           <Workflow className="w-4 h-4 text-primary" />
           <span className="text-sm font-semibold">How This Automation Works</span>
           <Badge variant="secondary" className="text-[10px] h-4 px-1.5">{steps.length} steps</Badge>
           {editMode && <Badge className="text-[10px] h-4 px-1.5 bg-amber-500/20 text-amber-700 dark:text-amber-400 border-amber-500/20 border">Editing</Badge>}
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">Continue to Agent Plan →</span>
-          {expanded ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
+        <div className="flex items-center gap-2 shrink-0">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            onClick={handleAiRegenerate}
+            disabled={aiGenerating}
+            data-testid="button-ai-regenerate-flow"
+          >
+            {aiGenerating ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />}
+            AI Redesign
+          </Button>
+          <Button
+            size="sm"
+            variant={editMode ? "default" : "outline"}
+            className="h-7 text-xs"
+            onClick={() => setEditMode(v => !v)}
+            data-testid="button-edit-process-flow"
+          >
+            {editMode ? "Done Editing" : "Edit"}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 text-xs"
+            onClick={() => navigate("/process-flows")}
+            data-testid="button-open-flow-studio"
+          >
+            Open Studio →
+          </Button>
         </div>
-      </button>
+      </div>
 
-      {expanded && (
-        <div className="px-5 pb-4 flex flex-col gap-4">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-xs text-muted-foreground">This is a pre-built process flow for your outcome. You can review, edit, or skip straight to Agent Development below.</p>
-            <div className="flex items-center gap-2 shrink-0">
-              <Button
-                size="sm"
-                variant={editMode ? "default" : "outline"}
-                className="h-7 text-xs"
-                onClick={() => setEditMode(v => !v)}
-                data-testid="button-edit-process-flow"
-              >
-                {editMode ? "Done Editing" : "Edit"}
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                className="h-7 text-xs"
-                onClick={() => navigate("/process-flows")}
-                data-testid="button-open-flow-studio"
-              >
-                Open Flow Studio →
-              </Button>
-            </div>
-          </div>
+      <div className="px-5 py-4 flex flex-col gap-4">
+        <p className="text-xs text-muted-foreground">This is the pre-built process flow for your outcome. Review and optionally edit it — these steps will inform how your AI agents are named and configured.</p>
 
-          <div className="flex items-start gap-1.5 overflow-x-auto pb-2">
-            {steps.map((step, i) => {
-              const meta = BSTEP_MAP[step.type] || BUSINESS_STEP_TYPES[0];
-              return (
-                <div key={step.id} className="flex items-center gap-1 shrink-0">
-                  <div
-                    className={`flex flex-col rounded-xl border ${meta.border} ${meta.bg} p-2.5 w-36 cursor-pointer transition-all hover:shadow-sm`}
-                    data-testid={`flow-step-${i}`}
-                  >
-                    <span className={`text-[9px] font-semibold uppercase tracking-wide mb-0.5 ${meta.color}`}>{meta.label}</span>
-                    {editMode ? (
-                      <input
-                        value={step.label}
-                        onChange={e => setSteps(prev => prev.map(s => s.id === step.id ? { ...s, label: e.target.value } : s))}
-                        className="text-xs font-medium bg-transparent border-b border-dashed border-muted-foreground/40 outline-none w-full mb-1"
-                        data-testid={`flow-step-input-${i}`}
-                      />
-                    ) : (
-                      <p className="text-xs font-medium text-foreground leading-snug line-clamp-2 mb-1">{step.label}</p>
-                    )}
-                    <p className="text-[10px] text-muted-foreground leading-snug line-clamp-2">{step.description}</p>
-                    {step.actor && <span className="text-[9px] text-muted-foreground/70 mt-1">{step.actor}</span>}
-                    {editMode && (
-                      <button
-                        type="button"
-                        onClick={() => setSteps(prev => prev.filter(s => s.id !== step.id))}
-                        className="mt-1 text-[9px] text-red-500 hover:underline self-end"
-                        data-testid={`flow-step-remove-${i}`}
-                      >
-                        Remove
-                      </button>
-                    )}
-                  </div>
-                  {i < steps.length - 1 && <ArrowRight className="w-3 h-3 text-muted-foreground/40 shrink-0" />}
+        <div className="flex items-start gap-1.5 overflow-x-auto pb-2">
+          {steps.map((step, i) => {
+            const meta = BSTEP_MAP[step.type] || BUSINESS_STEP_TYPES[0];
+            return (
+              <div key={step.id} className="flex items-center gap-1 shrink-0">
+                <div
+                  className={`flex flex-col rounded-xl border ${meta.border} ${meta.bg} p-2.5 w-36 cursor-pointer transition-all hover:shadow-sm`}
+                  data-testid={`flow-step-${i}`}
+                >
+                  <span className={`text-[9px] font-semibold uppercase tracking-wide mb-0.5 ${meta.color}`}>{meta.label}</span>
+                  {editMode ? (
+                    <input
+                      value={step.label}
+                      onChange={e => setSteps(prev => prev.map(s => s.id === step.id ? { ...s, label: e.target.value } : s))}
+                      className="text-xs font-medium bg-transparent border-b border-dashed border-muted-foreground/40 outline-none w-full mb-1"
+                      data-testid={`flow-step-input-${i}`}
+                    />
+                  ) : (
+                    <p className="text-xs font-medium text-foreground leading-snug line-clamp-2 mb-1">{step.label}</p>
+                  )}
+                  <p className="text-[10px] text-muted-foreground leading-snug line-clamp-2">{step.description}</p>
+                  {step.actor && <span className="text-[9px] text-muted-foreground/70 mt-1">{step.actor}</span>}
+                  {editMode && (
+                    <button
+                      type="button"
+                      onClick={() => setSteps(prev => prev.filter(s => s.id !== step.id))}
+                      className="mt-1 text-[9px] text-red-500 hover:underline self-end"
+                      data-testid={`flow-step-remove-${i}`}
+                    >
+                      Remove
+                    </button>
+                  )}
                 </div>
-              );
-            })}
-          </div>
+                {i < steps.length - 1 && <ArrowRight className="w-3 h-3 text-muted-foreground/40 shrink-0" />}
+              </div>
+            );
+          })}
+        </div>
 
-          <div className="flex items-center gap-2 pt-1 border-t">
-            <p className="text-xs text-muted-foreground flex-1">These steps inform how your Digital Workers will be named and configured.</p>
+        <div className="flex items-center gap-2 pt-1 border-t">
+          <p className="text-xs text-muted-foreground flex-1">These steps inform how your Digital Workers will be named and configured.</p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            onClick={() => setSteps(buildAutoFlow(outcome, kpis))}
+            data-testid="button-reset-flow"
+          >
+            <RefreshCw className="w-3 h-3 mr-1" /> Reset
+          </Button>
+          {onNavigateToAgentPlan && (
             <Button
               size="sm"
-              variant="outline"
               className="h-7 text-xs"
-              onClick={() => setSteps(buildAutoFlow(outcome, kpis))}
-              data-testid="button-reset-flow"
+              onClick={onNavigateToAgentPlan}
+              data-testid="button-continue-to-agent-plan"
             >
-              <RefreshCw className="w-3 h-3 mr-1" /> Reset
+              Continue to Agent Plan →
             </Button>
-          </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
 
-function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: OutcomeContract; kpis: KpiDefinition[]; initialTemplateId?: string | null }) {
+function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps }: { outcome: OutcomeContract; kpis: KpiDefinition[]; initialTemplateId?: string | null; processFlowSteps?: AutoProcessStep[] }) {
   const { toast } = useToast();
   const { industry, workspaceConfig, activeFrameworks, activeDepartments } = useIndustry();
   const agentPerm = usePermission("create_modify_blueprints");
@@ -5704,6 +5792,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
         industryContext: industryContextPayload,
       };
       if (pendingTemplateId) feedbackPayload.templateId = pendingTemplateId;
+      if (processFlowSteps && processFlowSteps.length > 0) feedbackPayload.processFlowSteps = processFlowSteps;
       const res = await apiRequest("POST", "/api/ai/propose-agents", feedbackPayload);
       const data = await res.json();
       pushUndo("Regenerate with feedback");
@@ -5919,6 +6008,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId }: { outcome: Outc
         industryContext: industryContextPayload,
       };
       if (pendingTemplateId) payload.templateId = pendingTemplateId;
+      if (processFlowSteps && processFlowSteps.length > 0) payload.processFlowSteps = processFlowSteps;
       const res = await apiRequest("POST", "/api/ai/propose-agents", payload);
       const data = await res.json();
       setProposals(data.agents || []);
