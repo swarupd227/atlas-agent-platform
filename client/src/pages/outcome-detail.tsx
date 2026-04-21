@@ -462,7 +462,7 @@ export default function OutcomeDetail() {
   });
 
   useEffect(() => {
-    if (outcome && processFlowSteps.length === 0) {
+    if (outcome) {
       setProcessFlowSteps(buildAutoFlow(outcome, kpis || []));
     }
   }, [outcome?.id, (kpis || []).length]);
@@ -5199,7 +5199,7 @@ function inferStepType(role: string): AutoProcessStep["type"] {
 function buildFlowFromProposals(agents: Array<{ name: string; role: string; description: string }>, orchestrator: { name: string; role: string; description: string } | null): AutoProcessStep[] {
   const steps: AutoProcessStep[] = [];
   steps.push({ id: "pf0", type: "trigger", label: "Initiate Process", description: orchestrator?.role || "A business event triggers the automation", actor: "System" });
-  agents.slice(0, 6).forEach((a, i) => {
+  agents.forEach((a, i) => {
     steps.push({
       id: `pf${i + 1}`,
       type: inferStepType(a.role || a.description),

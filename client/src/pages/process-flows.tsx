@@ -2,19 +2,17 @@ import { useState, useCallback, useMemo } from "react";
 import { useLocation, useSearch } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import {
-  Workflow, Zap, BookOpen, Users, Brain, CheckCircle2, Bell, Square,
-  Plus, Trash2, ArrowRight, ChevronRight, Sparkles, Loader2,
-  Filter, Play, ChevronDown, ChevronUp, Info, Settings2,
-  MousePointer, Database, GitBranch,
+  Workflow, Zap, Users, Brain, Bell, Square,
+  Trash2, ArrowRight, ChevronRight, Sparkles, Loader2,
+  Play, Database, GitBranch,
 } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
 export interface ProcessStep {
@@ -311,7 +309,7 @@ export default function ProcessFlows() {
   const [steps, setSteps] = useState<ProcessStep[]>([]);
   const [activeTemplate, setActiveTemplate] = useState<ProcessTemplate | null>(null);
   const [editingStepId, setEditingStepId] = useState<string | null>(null);
-  const [addingType, setAddingType] = useState<ProcessStep["type"] | null>(null);
+
   const [aiDescription, setAiDescription] = useState(() => urlParams.outcomeName || "");
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [generatingBlueprint, setGeneratingBlueprint] = useState(false);
@@ -364,7 +362,6 @@ export default function ProcessFlows() {
       setSteps(prev => [...prev, newStep]);
     }
     setEditingStepId(newStep.id);
-    setAddingType(null);
   };
 
   const deleteStep = (id: string) => {

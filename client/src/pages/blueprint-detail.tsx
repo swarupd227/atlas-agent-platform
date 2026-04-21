@@ -73,7 +73,7 @@ import {
   CheckCircle, ChevronDown, ChevronRight, X, MousePointer, Link2, FileText, MessageSquare, Server, Network,
   Scale, BookMarked, Diff, Globe2, Lock, Crown, Copy, Eye, Code2, SendHorizonal,
 } from "lucide-react";
-import { useRole } from "@/components/role-provider";
+
 import {
   Tooltip,
   TooltipContent,
@@ -179,7 +179,6 @@ export default function BlueprintDetail() {
   const [kgBindingsOpen, setKgBindingsOpen] = useState(false);
   const [ontologyReadinessOpen, setOntologyReadinessOpen] = useState(false);
   const [businessView, setBusinessView] = useState(false);
-  const { isBusinessMode } = useRole();
 
   const BUSINESS_LABEL_MAP: Record<string, string> = {
     llm_call: "AI Reasoning Step",
