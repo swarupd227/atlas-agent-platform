@@ -1186,7 +1186,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
     });
   });
 
-  router.post("/api/approvals", checkPermission("approve_changes"), async (req, res) => {
+  router.post("/api/approvals", async (req, res) => {
     try {
       const data = insertApprovalSchema.omit({ organizationId: true }).parse(req.body);
       const approval = await storage.createApproval({ ...data, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? undefined });
