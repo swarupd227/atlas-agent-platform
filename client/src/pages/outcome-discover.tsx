@@ -357,7 +357,7 @@ function renderMessageContent(content: string, isStreaming?: boolean) {
           <CheckCircle className="w-4 h-4 text-primary shrink-0" />
           <div className="flex flex-col gap-0.5">
             <span className="text-sm font-medium">Outcome proposal ready</span>
-            <span className="text-xs text-muted-foreground">Review the details in the panel on the right, then click "Create Outcome Contract" when you're satisfied.</span>
+            <span className="text-xs text-muted-foreground">Review the details in the panel on the right, then click "Launch This Plan" when you're ready.</span>
           </div>
         </div>
         {afterJson && <p className="whitespace-pre-wrap text-sm">{afterJson}</p>}
@@ -745,7 +745,7 @@ export default function OutcomeDiscover() {
       queryClient.invalidateQueries({ queryKey: ["/api/kpis"] });
       queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
       setCreatedOutcome(outcome);
-      toast({ title: "Outcome Contract created", description: `"${outcome.name}" has been created with KPIs.` });
+      toast({ title: "Plan created", description: `"${outcome.name}" has been created with success metrics.` });
       try {
         await apiRequest("PATCH", `/api/outcomes/${outcome.id}`, { status: "awaiting_agent_plan" });
         queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
@@ -1640,9 +1640,9 @@ export default function OutcomeDiscover() {
                                 "border-red-500/40 text-red-600 dark:text-red-400 bg-red-500/5"
                               }`}
                               title={
-                                tc.status === "exists" ? `Registered · risk: ${tc.matchedTool?.riskClassification || "low"}` :
-                                tc.status === "partial" ? `Partial match → ${tc.matchedTool?.name || tc.proposedName}` :
-                                "Not registered in MCP catalog"
+                                tc.status === "exists" ? "Connected" :
+                                tc.status === "partial" ? `Similar available: ${tc.matchedTool?.name || tc.proposedName}` :
+                                "Not yet connected"
                               }
                               data-testid={`form-intel-tool-chip-${i}`}
                             >
@@ -1655,7 +1655,7 @@ export default function OutcomeDiscover() {
                     )}
                     {formIntel && formIntel.compositeRisk && (
                       <div className="flex items-center gap-2 p-1.5 rounded bg-background/50" data-testid="form-intel-composite-risk">
-                        <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide shrink-0">Composite Risk</span>
+                        <span className="text-[10px] text-muted-foreground font-semibold uppercase tracking-wide shrink-0">Risk Level</span>
                         <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${
                           formIntel.compositeRisk.level === "CRITICAL" ? "bg-red-500/10 text-red-600 dark:text-red-400" :
                           formIntel.compositeRisk.level === "HIGH" ? "bg-orange-500/10 text-orange-600 dark:text-orange-400" :
@@ -1697,7 +1697,7 @@ export default function OutcomeDiscover() {
                     )}
                     <div className="px-3 pb-2">
                       <p className="text-[10px] text-muted-foreground/70 italic leading-relaxed" data-testid="text-form-intel-risk-note">
-                        Composite risk is derived from tool-level MCP catalog data and autonomy mode.
+                        Risk level is calculated from the systems required and how much human oversight is involved.
                       </p>
                     </div>
                     </div>
@@ -1722,7 +1722,7 @@ export default function OutcomeDiscover() {
                     <ChevronLeft className="w-4 h-4 mr-1" /> Back
                   </Button>
                   <Button onClick={() => createFormOutcomeMutation.mutate()} disabled={!canProceedToReview || createFormOutcomeMutation.isPending} data-testid="button-form-create">
-                    {createFormOutcomeMutation.isPending ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Creating...</> : "Create Outcome Contract"}
+                    {createFormOutcomeMutation.isPending ? <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Creating...</> : "Launch This Plan"}
                   </Button>
                 </div>
               </div>
@@ -1739,14 +1739,14 @@ export default function OutcomeDiscover() {
                     </div>
                   </div>
                   <div className="flex flex-col items-center gap-1.5 text-center">
-                    <p className="text-xl font-semibold tracking-tight" data-testid="text-form-success">Outcome Contract Created</p>
+                    <p className="text-xl font-semibold tracking-tight" data-testid="text-form-success">Plan Created</p>
                     <p className="text-sm text-muted-foreground max-w-md leading-relaxed">
-                      Your outcome contract and KPIs have been saved. Continue to generate an AI-powered agent development plan.
+                      Your plan and success metrics have been saved. Continue to configure and launch your automations.
                     </p>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap justify-center mt-1">
                     <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[11px] text-emerald-700 dark:text-emerald-300">
-                      <CheckCircle className="w-3 h-3" /> Contract Saved
+                      <CheckCircle className="w-3 h-3" /> Plan Saved
                     </div>
                     <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[11px] text-emerald-700 dark:text-emerald-300">
                       <BarChart3 className="w-3 h-3" /> KPIs Created
@@ -1759,7 +1759,7 @@ export default function OutcomeDiscover() {
 
                 <div className="flex flex-col items-center gap-3 relative z-10">
                   <Button onClick={() => navigate(`/outcomes/${formCreatedOutcome.id}?tab=agent-map`)} data-testid="button-form-continue-to-agents" className="w-full max-w-sm shadow-sm shadow-primary/10" size="lg">
-                    <Sparkles className="w-4 h-4 mr-1.5" /> Continue to Agent Plan <ArrowRight className="w-4 h-4 ml-1.5" />
+                    <Sparkles className="w-4 h-4 mr-1.5" /> View Your Plan <ArrowRight className="w-4 h-4 ml-1.5" />
                   </Button>
                   <div className="flex items-center gap-3">
                     <Button variant="ghost" size="sm" onClick={() => { setFormStep(1); setFormCreatedOutcome(null); setFormPlanRequested(false); setFormName(""); setFormDescription(""); setFormRiskTier("MEDIUM"); setFormPricingModel("PER_OUTCOME_EVENT"); setFormPricePerUnit(0); setFormRiskThreshold(0.8); setFormMaxDriftPercent(10); setFormSlaDescription(""); setFormKpis([]); }} data-testid="button-form-new" className="text-muted-foreground">
@@ -1803,7 +1803,7 @@ export default function OutcomeDiscover() {
                 <p className="text-muted-foreground text-xs max-w-md leading-relaxed">
                   {isBusinessMode
                     ? "Describe your challenge in plain language — we'll map it to Digital Workers, set success metrics, and track results for you."
-                    : "Describe your business challenge in plain language. The platform will map workflows, propose agent roles, define metrics, and draft an Outcome Contract."}
+                    : "Describe your business challenge in plain language. The platform will map your process, propose automation roles, define success metrics, and draft your automation plan."}
                 </p>
                 <div className="flex items-center gap-2 flex-wrap justify-center" data-testid="hero-feature-pills">
                   {(isBusinessMode ? [
@@ -1812,9 +1812,9 @@ export default function OutcomeDiscover() {
                     { label: "Digital Workers", icon: Zap },
                     { label: "Value Tracking", icon: TrendingUp },
                   ] : [
-                    { label: "Workflow Mapping", icon: Workflow },
-                    { label: "KPI Design", icon: BarChart3 },
-                    { label: "Agent Proposals", icon: Bot },
+                    { label: "Process Mapping", icon: Workflow },
+                    { label: "Metrics Design", icon: BarChart3 },
+                    { label: "Automation Plan", icon: Zap },
                     { label: "Compliance", icon: Shield },
                   ]).map((pill) => (
                     <div key={pill.label} className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/60 border border-border/50 text-[11px] text-muted-foreground">
@@ -2126,7 +2126,7 @@ export default function OutcomeDiscover() {
                             ))}
                           </div>
                           <Button variant="outline" size="sm" onClick={() => useOpportunityForDiscovery(opp)} data-testid={`button-use-opportunity-${i}`}>
-                            <ArrowRight className="w-3 h-3 mr-1" /> Create Outcome Contract
+                            <ArrowRight className="w-3 h-3 mr-1" /> Start Planning
                           </Button>
                         </CardContent>
                       </Card>
@@ -2217,7 +2217,7 @@ export default function OutcomeDiscover() {
                   </div>
                   <div className="flex flex-col gap-0">
                     <h3 className="text-sm font-semibold tracking-tight">Outcome Proposal</h3>
-                    <span className="text-xs text-muted-foreground">Review and accept to create contract</span>
+                    <span className="text-xs text-muted-foreground">Review, adjust, and launch when ready</span>
                   </div>
                 </div>
               </div>
@@ -2228,7 +2228,7 @@ export default function OutcomeDiscover() {
                     <CardTitle className="text-sm font-medium flex items-center justify-between gap-1.5 flex-wrap">
                       <div className="flex items-center gap-1.5">
                         <Target className="w-3.5 h-3.5" />
-                        Outcome Contract
+                        Your Business Goal
                       </div>
                       <Button
                         variant="ghost"
@@ -2261,25 +2261,17 @@ export default function OutcomeDiscover() {
                     <div className="flex flex-col gap-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
                         {platformIntel?.compositeRisk ? (
-                          <>
-                            <Badge
-                              variant={platformIntel.compositeRisk.level === "CRITICAL" || platformIntel.compositeRisk.level === "HIGH" ? "destructive" : "outline"}
-                              className={`text-xs ${platformIntel.compositeRisk.level === "LOW" ? "border-emerald-500/50 text-emerald-600 dark:text-emerald-400" : platformIntel.compositeRisk.level === "MEDIUM" ? "border-amber-500/50 text-amber-600 dark:text-amber-400" : ""}`}
-                              data-testid="badge-composite-risk"
-                            >
-                              {platformIntel.compositeRisk.level} Risk
-                            </Badge>
-                            {proposal.outcomeContract.riskTier && platformIntel.compositeRisk.level !== proposal.outcomeContract.riskTier && (
-                              <Badge variant="secondary" className="text-xs opacity-70" data-testid="badge-ai-risk-tier">
-                                Proposed: {proposal.outcomeContract.riskTier}
-                              </Badge>
-                            )}
-                          </>
+                          <Badge
+                            variant={platformIntel.compositeRisk.level === "CRITICAL" || platformIntel.compositeRisk.level === "HIGH" ? "destructive" : "outline"}
+                            className={`text-xs ${platformIntel.compositeRisk.level === "LOW" ? "border-emerald-500/50 text-emerald-600 dark:text-emerald-400" : platformIntel.compositeRisk.level === "MEDIUM" ? "border-amber-500/50 text-amber-600 dark:text-amber-400" : ""}`}
+                            data-testid="badge-composite-risk"
+                          >
+                            {platformIntel.compositeRisk.level} Risk
+                          </Badge>
                         ) : (
                           <Badge variant="outline" className="text-xs">{proposal.outcomeContract.riskTier} Risk</Badge>
                         )}
-                        <Badge variant="outline" className="text-xs">{proposal.outcomeContract.pricingModel.replace(/_/g, " ")}</Badge>
-                        {loadingIntel && <span className="text-xs text-muted-foreground animate-pulse">Computing risk…</span>}
+                        {loadingIntel && <span className="text-xs text-muted-foreground animate-pulse">Analysing…</span>}
                       </div>
                       {platformIntel?.compositeRisk?.rationale && platformIntel.compositeRisk.rationale.length > 0 && (
                         <div className="flex flex-col gap-0.5" data-testid="text-composite-risk-rationale">
@@ -2300,7 +2292,7 @@ export default function OutcomeDiscover() {
                         return (
                           <div className="flex items-center gap-2 mt-1 px-2 py-1.5 rounded bg-yellow-500/10 border border-yellow-500/30" data-testid="banner-risk-upgrade">
                             <AlertTriangle className="w-3.5 h-3.5 text-yellow-600 dark:text-yellow-400 shrink-0" />
-                            <span className="text-xs text-yellow-700 dark:text-yellow-300 flex-1">Platform analysis suggests upgrading risk tier to <strong>{suggestedTier}</strong></span>
+                            <span className="text-xs text-yellow-700 dark:text-yellow-300 flex-1">We recommend a higher oversight level: <strong>{suggestedTier}</strong></span>
                             <Button
                               size="sm"
                               variant="outline"
@@ -2322,7 +2314,7 @@ export default function OutcomeDiscover() {
                     <CardTitle className="text-sm font-medium flex items-center justify-between gap-1.5 flex-wrap">
                       <div className="flex items-center gap-1.5">
                         <BarChart3 className="w-3.5 h-3.5" />
-                        Success Metrics ({proposal.kpis.length} KPIs)
+                        Success Metrics ({proposal.kpis.length})
                       </div>
                       <Button
                         variant="ghost"
@@ -2332,7 +2324,7 @@ export default function OutcomeDiscover() {
                         data-testid="button-ai-generate-kpis"
                       >
                         {generatingKpis ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />}
-                        AI Generate KPIs
+                        Suggest More
                       </Button>
                     </CardTitle>
                   </CardHeader>
@@ -2446,7 +2438,7 @@ export default function OutcomeDiscover() {
                             {toolChips.length > 0 && (
                               <div className="flex flex-col gap-1" data-testid={`tool-chips-proposed-${i}`}>
                                 <span className="text-[10px] text-muted-foreground/60 uppercase tracking-wide font-semibold">
-                                  Capabilities ({registeredCount}/{agentTools.length} ready)
+                                  Systems Used ({registeredCount}/{agentTools.length} connected)
                                 </span>
                                 <div className="flex flex-wrap gap-1">
                                   {toolChips.map((tc, j) => (
@@ -2458,9 +2450,9 @@ export default function OutcomeDiscover() {
                                         "border-red-500/40 text-red-600 dark:text-red-400 bg-red-500/5"
                                       }`}
                                       title={
-                                        tc.status === "exists" ? "Available in platform" :
-                                        tc.status === "partial" ? `Partial match → ${tc.matchedName || tc.name}` :
-                                        "Needs to be configured"
+                                        tc.status === "exists" ? "Connected" :
+                                        tc.status === "partial" ? `Similar available: ${tc.matchedName || tc.name}` :
+                                        "Not yet connected"
                                       }
                                       data-testid={`tool-chip-proposed-${i}-${j}`}
                                     >
@@ -2550,18 +2542,17 @@ export default function OutcomeDiscover() {
                                             strokeLinecap="round"
                                             transform="rotate(-90 13 13)"
                                           />
-                                          <text x="13" y="16" textAnchor="middle" fontSize="6" fill={ringColor} fontWeight="600">{score}</text>
                                         </svg>
                                         <div className="flex flex-col min-w-0">
                                           <div className="flex items-center gap-1.5 flex-wrap">
                                             <span className="text-sm font-medium truncate">{a.name}</span>
                                             {isUnhealthy && (
-                                              <span className="text-xs font-semibold px-1 py-0.5 rounded bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/30" data-testid={`badge-unhealthy-${a.id}`}>UNHEALTHY</span>
+                                              <span className="text-xs font-semibold px-1 py-0.5 rounded bg-red-500/10 text-red-600 dark:text-red-400 border border-red-500/30" data-testid={`badge-unhealthy-${a.id}`}>Needs Attention</span>
                                             )}
                                           </div>
                                           <div className="flex items-center gap-2 flex-wrap">
                                             <span className="text-xs text-muted-foreground capitalize">{a.status}</span>
-                                            <span className="text-xs text-muted-foreground">{a.totalRuns.toLocaleString()} runs</span>
+                                            <span className="text-xs text-muted-foreground">{a.totalRuns.toLocaleString()} tasks run</span>
                                             <span className="text-xs text-primary/70 italic">for: {r.role}</span>
                                           </div>
                                         </div>
@@ -2579,7 +2570,7 @@ export default function OutcomeDiscover() {
                                           onClick={() => setAgentDecision(a.id, 'rejected')}
                                           className={`text-xs px-2 py-0.5 rounded border transition-colors ${agentDecision === 'rejected' ? "border-red-500/60 text-red-600 dark:text-red-400 bg-red-500/10 font-semibold" : "border-muted-foreground/30 text-muted-foreground hover:border-red-500/50 hover:text-red-600"}`}
                                           data-testid={`button-reject-agent-${a.id}`}
-                                          title="Reject — exclude from Agent Map"
+                                          title="Reject — skip this option"
                                         >✗ Reject</button>
                                       </div>
                                     </div>
@@ -2587,7 +2578,7 @@ export default function OutcomeDiscover() {
                                       <div className="flex flex-col gap-1">
                                         <div className="flex items-center justify-between">
                                           <span className="text-xs text-muted-foreground font-medium" data-testid={`text-tool-score-${a.id}`}>
-                                            {registeredCount}/{agentToolChips.length} tools registered
+                                            {registeredCount}/{agentToolChips.length} systems connected
                                           </span>
                                         </div>
                                         <div className="flex flex-wrap gap-1">
@@ -2600,19 +2591,14 @@ export default function OutcomeDiscover() {
                                                 "border-red-500/40 text-red-600 dark:text-red-400 bg-red-500/5"
                                               }`}
                                               title={
-                                                tc.status === "exists" ? `Registered · risk: ${tc.riskClassification || "low"}` :
-                                                tc.status === "partial" ? `Partial match → ${tc.matchedName || tc.name}` :
-                                                "Not registered in MCP catalog"
+                                                tc.status === "exists" ? "Connected" :
+                                                tc.status === "partial" ? `Similar available: ${tc.matchedName || tc.name}` :
+                                                "Not yet connected"
                                               }
                                               data-testid={`tool-chip-${a.id}-${i}`}
                                             >
                                               {tc.status === "exists" ? <Check className="w-2 h-2" /> : tc.status === "partial" ? <Minus className="w-2 h-2" /> : <X className="w-2 h-2" />}
-                                              {tc.status === "exists"
-                                                ? <>{tc.name}{tc.riskClassification && tc.riskClassification !== "low" && <span className="ml-0.5 opacity-60">·{tc.riskClassification.toUpperCase()}</span>}</>
-                                                : tc.status === "partial"
-                                                  ? <>{tc.name}{tc.matchedName && tc.matchedName !== tc.name && <span className="ml-0.5 opacity-70">~{tc.matchedName}</span>}</>
-                                                  : tc.name
-                                              }
+                                              {tc.name}
                                             </span>
                                           ))}
                                         </div>
@@ -2641,7 +2627,7 @@ export default function OutcomeDiscover() {
                                       <div className="flex items-center gap-2 flex-wrap">
                                         {t.category && <span className="text-xs text-muted-foreground capitalize">{t.category}</span>}
                                         <span className="text-xs text-muted-foreground capitalize">{t.complexity} complexity</span>
-                                        <span className="text-xs text-muted-foreground">{t.estimatedTimeToProd} to prod</span>
+                                        <span className="text-xs text-muted-foreground">{t.estimatedTimeToProd} to launch</span>
                                         <span className="text-xs text-primary">{t.deploymentCount} deployments</span>
                                         {t.defaultRiskTier && (
                                           <Badge variant="outline" className={`text-xs ${t.defaultRiskTier === "HIGH" || t.defaultRiskTier === "CRITICAL" ? "border-red-500/40 text-red-600 dark:text-red-400" : t.defaultRiskTier === "MEDIUM" ? "border-amber-500/40 text-amber-600 dark:text-amber-400" : "border-emerald-500/40 text-emerald-600 dark:text-emerald-400"}`}>
@@ -2656,14 +2642,14 @@ export default function OutcomeDiscover() {
                                       onClick={() => setTemplateDecision(t.id, 'accepted')}
                                       className={`text-xs px-2 py-0.5 rounded border transition-colors ${templateDecision === 'accepted' ? "border-emerald-500/60 text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 font-semibold" : "border-muted-foreground/30 text-muted-foreground hover:border-emerald-500/50 hover:text-emerald-600"}`}
                                       data-testid={`button-accept-template-${t.id}`}
-                                      title="Accept — open Agent Plan with this template after creation"
+                                      title="Accept — use this playbook"
                                     >✓ Accept</button>
                                     <button
                                       type="button"
                                       onClick={() => setTemplateDecision(t.id, 'rejected')}
                                       className={`text-xs px-2 py-0.5 rounded border transition-colors ${templateDecision === 'rejected' ? "border-red-500/60 text-red-600 dark:text-red-400 bg-red-500/10 font-semibold" : "border-muted-foreground/30 text-muted-foreground hover:border-red-500/50 hover:text-red-600"}`}
                                       data-testid={`button-reject-template-${t.id}`}
-                                      title="Reject — skip this template in Agent Plan"
+                                      title="Reject — skip this option"
                                     >✗ Reject</button>
                                   </div>
                                 </div>
@@ -2686,7 +2672,7 @@ export default function OutcomeDiscover() {
                                 )}
                                 {t.toolNames && t.toolNames.length > 0 && (
                                   <div className="flex flex-col gap-0.5" data-testid={`template-tools-${t.id}`}>
-                                    <span className="text-xs text-muted-foreground/60 uppercase tracking-wide font-semibold">Tool Set</span>
+                                    <span className="text-xs text-muted-foreground/60 uppercase tracking-wide font-semibold">Systems Required</span>
                                     <div className="flex flex-wrap gap-1">
                                       {t.toolNames.slice(0, 5).map((tn, ti) => (
                                         <span key={ti} className="text-[10px] px-1 py-0.5 rounded border border-muted-foreground/20 text-muted-foreground bg-muted/30">{tn}</span>
@@ -2730,7 +2716,7 @@ export default function OutcomeDiscover() {
                       <CardTitle className="text-sm font-medium flex items-center justify-between gap-1.5 flex-wrap">
                         <div className="flex items-center gap-1.5">
                           <Shield className="w-3.5 h-3.5" />
-                          Regulatory Constraints
+                          Compliance Requirements
                         </div>
                         <Button
                           variant="ghost"
@@ -2819,7 +2805,7 @@ export default function OutcomeDiscover() {
                       >
                         <div className="flex items-center gap-1.5">
                           <ShieldCheck className="w-3.5 h-3.5" />
-                          Applicable Platform Policies
+                          Governance Guardrails
                           {platformIntel?.summary?.matchedPolicyCount !== undefined && (
                             <Badge variant="outline" className="text-xs ml-1 border-primary/40 text-primary">
                               {platformIntel.summary.matchedPolicyCount} live
@@ -2840,11 +2826,9 @@ export default function OutcomeDiscover() {
                                 <div key={pol.id} className="flex flex-col gap-1 p-2 rounded-md bg-primary/5 border border-primary/10" data-testid={`real-policy-${i}`}>
                                   <div className="flex items-center gap-2 flex-wrap">
                                     <span className="text-sm font-medium">{pol.name}</span>
-                                    <span className="text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary font-mono">{pol.domain}</span>
-                                    <span className="text-xs text-primary font-medium bg-primary/5 px-1 py-0.5 rounded-full border border-primary/20">LIVE</span>
                                     {pol.enforcementType && (
                                       <span className={`text-xs font-medium px-1 py-0.5 rounded-full border ${pol.enforcementType === "auto" ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" : "border-amber-500/30 text-amber-600 dark:text-amber-400 bg-amber-500/5"}`}>
-                                        {pol.enforcementType}
+                                        {pol.enforcementType === "auto" ? "Auto-enforced" : "Review Required"}
                                       </span>
                                     )}
                                   </div>
@@ -2916,7 +2900,7 @@ export default function OutcomeDiscover() {
                     <CardHeader className="p-4 pb-2">
                       <CardTitle className="text-sm font-medium flex items-center gap-1.5 flex-wrap">
                         <ClipboardCheck className="w-3.5 h-3.5" />
-                        Validation Checklist
+                        Pre-Launch Checklist
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="p-4 pt-1 flex flex-col gap-1.5">
@@ -2937,7 +2921,7 @@ export default function OutcomeDiscover() {
                       <div className="mt-2 flex flex-col gap-1">
                         <Progress value={(checkedItems.size / proposal.validationChecklist.length) * 100} className="h-1.5" />
                         <div className="flex items-center justify-between">
-                          <span className="text-xs text-muted-foreground">{checkedItems.size}/{proposal.validationChecklist.length} validated</span>
+                          <span className="text-xs text-muted-foreground">{checkedItems.size}/{proposal.validationChecklist.length} confirmed</span>
                           {allChecked && <span className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">All confirmed</span>}
                         </div>
                       </div>
@@ -2956,11 +2940,11 @@ export default function OutcomeDiscover() {
                           </div>
                         </div>
                         <div className="flex flex-col gap-1">
-                          <span className="text-sm font-semibold" data-testid="text-discover-success-title">Outcome Contract Created</span>
+                          <span className="text-sm font-semibold" data-testid="text-discover-success-title">Plan Created</span>
                           <span className="text-xs text-muted-foreground">{createdOutcome.name}</span>
                         </div>
                         <p className="text-xs text-muted-foreground leading-relaxed">
-                          Your outcome contract is ready. Continue to generate an AI-powered agent development plan.
+                          Your automation plan is ready. Continue to configure and launch your automations.
                         </p>
                       </div>
                       <Button
@@ -2969,7 +2953,7 @@ export default function OutcomeDiscover() {
                         onClick={() => navigate(`/outcomes/${createdOutcome.id}?tab=agent-map`)}
                         data-testid="button-discover-continue-to-agents"
                       >
-                        <Sparkles className="w-3.5 h-3.5 mr-1.5" /> Continue to Agent Plan <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
+                        <Sparkles className="w-3.5 h-3.5 mr-1.5" /> View Your Plan <ArrowRight className="w-3.5 h-3.5 ml-1.5" />
                       </Button>
                       <Button
                         variant="ghost"
@@ -3046,17 +3030,17 @@ export default function OutcomeDiscover() {
                                     ) : (
                                       <CheckCircle className="w-4 h-4 mr-1.5" />
                                     )}
-                                    Create Outcome Contract
+                                    Launch This Plan
                                     {_readiness !== null && !createOutcomeMutation.isPending && (
                                       <span className={`ml-2 text-xs font-normal tabular-nums ${_lowReadiness ? "text-amber-500" : "opacity-60"}`}>
-                                        {_readiness}/100
+                                        {_readiness}% ready
                                       </span>
                                     )}
                                   </Button>
                                 </TooltipTrigger>
                                 {_lowReadiness && (
                                   <TooltipContent side="top" className="max-w-[240px] text-xs">
-                                    Governance readiness is {_readiness}/100 — consider addressing gaps above before creating.
+                                    Your plan is {_readiness}% complete — review the checklist items above before launching.
                                   </TooltipContent>
                                 )}
                               </Tooltip>

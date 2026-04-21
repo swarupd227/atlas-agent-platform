@@ -2333,7 +2333,7 @@ Guidelines:
         .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
 
       const claudeStream = anthropicClient.messages.stream({
-        model: "claude-opus-4-5",
+        model: "claude-haiku-4-5",
         system: systemPrompt,
         messages: anthropicMessages,
         max_tokens: 2400,
