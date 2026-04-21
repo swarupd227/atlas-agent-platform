@@ -25,11 +25,44 @@ import {
 import { resolveOntologyTags, handleZodError, checkPatchSafety, generateKpiAlignedEvalSuite } from "./helpers";
 import billingRouter from "./billing";
 import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
+
+const anthropicClient = new Anthropic({
+  apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
+  baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
+});
+
+async function callClaude(opts: {
+  system: string;
+  user: string;
+  maxTokens?: number;
+  jsonMode?: boolean;
+  model?: string;
+}): Promise<string> {
+  const systemPrompt = opts.jsonMode
+    ? `${opts.system}\n\nReturn ONLY valid JSON with no markdown fences or prose.`
+    : opts.system;
+  const response = await anthropicClient.messages.create({
+    model: opts.model ?? "claude-opus-4-5",
+    system: systemPrompt,
+    messages: [{ role: "user", content: opts.user }],
+    max_tokens: opts.maxTokens ?? 4096,
+  });
+  return (response.content.find((b: any) => b.type === "text") as any)?.text ?? "";
+}
+
+function stripJsonFences(raw: string): string {
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenced) return fenced[1].trim();
+  const openFence = raw.match(/```(?:json)?\s*([\s\S]*)/);
+  if (openFence) return openFence[1].trim();
+  return raw.trim();
+}
 
 const router = Router();
 router.use(billingRouter);
@@ -78,13 +111,8 @@ router.use(billingRouter);
       }
       const effectiveDescription = description || `Policy for ${policyName} in the ${domain} domain`;
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        max_tokens: 2048,
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert in regulatory compliance and AI governance policy design. You specialize in creating detailed, production-grade policy rule configurations for AI agent management platforms.
+      const policyRulesRaw = await callClaude({
+        system: `You are an expert in regulatory compliance and AI governance policy design. You specialize in creating detailed, production-grade policy rule configurations for AI agent management platforms.
 
 When given a policy name, domain, description, regulatory framework, and industry context, you must produce a comprehensive, deeply detailed JSON policy rules object that reflects real-world regulatory requirements and industry best practices.
 
@@ -96,11 +124,8 @@ Your output must be a single valid JSON object with a "rules" array. Each rule s
 - "enforcement": "block" | "warn" | "audit" | "require_approval"
 - "remediation": what to do when the rule is violated
 
-Be thorough and specific to the ${industry || "general"} industry and ${framework || "general"} regulatory framework. Include at least 4-6 detailed rules per policy. Use realistic thresholds, identifiers, and terminology from the actual regulatory framework.`
-          },
-          {
-            role: "user",
-            content: `Enhance and deeply enrich the following policy rules for production use:
+Be thorough and specific to the ${industry || "general"} industry and ${framework || "general"} regulatory framework. Include at least 4-6 detailed rules per policy. Use realistic thresholds, identifiers, and terminology from the actual regulatory framework.`,
+        user: `Enhance and deeply enrich the following policy rules for production use:
 
 Policy Name: ${policyName}
 Domain: ${domain}
@@ -109,15 +134,12 @@ Framework: ${framework || "General"}
 Industry: ${industry || "General"}
 
 Current (basic) rules:
-${JSON.stringify(existingRules, null, 2)}
-
-Return ONLY a valid JSON object with an enriched "rules" array. Do not include markdown formatting or code blocks.`
-          }
-        ],
-        response_format: { type: "json_object" },
+${JSON.stringify(existingRules, null, 2)}`,
+        maxTokens: 2048,
+        jsonMode: true,
       });
 
-      const content = response.choices[0]?.message?.content;
+      const content = stripJsonFences(policyRulesRaw);
       if (!content) {
         return res.status(500).json({ error: "No response from AI" });
       }
@@ -182,13 +204,8 @@ Return ONLY a valid JSON object with an enriched "rules" array. Do not include m
         ? `\n\nAVAILABLE CONCEPTS IN THIS ONTOLOGY (you MUST only reference these as relationship targets):\n${availableConceptLabels.join(", ")}`
         : "";
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        max_tokens: 3000,
-        messages: [
-          {
-            role: "system",
-            content: `You are a domain expert in ${ontologyName || "industry"} ontology and ${industry || "enterprise"} operations. You specialize in explaining how ontology concepts relate to AI agent lifecycle management.
+      const conceptRaw = await callClaude({
+        system: `You are a domain expert in ${ontologyName || "industry"} ontology and ${industry || "enterprise"} operations. You specialize in explaining how ontology concepts relate to AI agent lifecycle management.
 
 When given an ontology concept, produce a comprehensive JSON enrichment with ALL of these fields:
 - "enrichedDescription": A detailed 3-5 sentence explanation of the concept in the context of ${industry || "enterprise"} operations
@@ -202,26 +219,20 @@ When given an ontology concept, produce a comprehensive JSON enrichment with ALL
 - "suggestedRelationships": Array of 1-3 additional relationships this concept should have. Each object must have: {"type": "related|parent|child|depends_on", "targetId": "The EXACT concept name from the available concepts list", "label": "Human-readable relationship description"}. CRITICAL: The targetId MUST be the exact name of a concept that exists in the available concepts list. Do NOT invent or suggest concepts that are not in the list. If no suitable existing concept exists for a relationship, omit that relationship.
 - "suggestedTags": Array of 3-5 additional classification tags for this concept. Only suggest tags NOT already present in the existing tags.
 - "agentSkills": Array of 3-5 specific skills an AI agent would need to work with THIS concept (e.g., "Trade Lifecycle Tracking", "Counterparty Exposure Calculation"). Be concept-specific, not generic.
-- "agentTypes": Array of 2-4 specific AI agent types that would directly operate on THIS concept (e.g., "Derivatives Pricing Agent", "Settlement Reconciliation Agent"). Be concept-specific, not generic.`
-          },
-          {
-            role: "user",
-            content: `Enrich the following ${ontologyName || "ontology"} concept for ${industry || "enterprise"} AI agent operations:
+- "agentTypes": Array of 2-4 specific AI agent types that would directly operate on THIS concept (e.g., "Derivatives Pricing Agent", "Settlement Reconciliation Agent"). Be concept-specific, not generic.`,
+        user: `Enrich the following ${ontologyName || "ontology"} concept for ${industry || "enterprise"} AI agent operations:
 
 Concept: ${label}
 Category: ${category}
 Description: ${description}
 Properties: ${JSON.stringify(properties || [])}
 Relationships: ${JSON.stringify(relationships || [])}
-Existing Tags: ${JSON.stringify(existingTags)}${conceptListStr}
-
-Return ONLY a valid JSON object. Do not include markdown formatting or code blocks.`
-          }
-        ],
-        response_format: { type: "json_object" },
+Existing Tags: ${JSON.stringify(existingTags)}${conceptListStr}`,
+        maxTokens: 3000,
+        jsonMode: true,
       });
 
-      const content = response.choices[0]?.message?.content;
+      const content = stripJsonFences(conceptRaw);
       if (!content) {
         return res.status(500).json({ error: "No response from AI" });
       }
@@ -278,13 +289,8 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
         return res.status(409).json({ error: "Ontology concepts already exist for this industry. Delete existing concepts before regenerating." });
       }
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        max_tokens: 8000,
-        messages: [
-          {
-            role: "system",
-            content: `You are a domain ontology expert specializing in ${ontologyName || industryName} knowledge models for enterprise AI agent lifecycle management.
+      const ontologyRaw = await callClaude({
+        system: `You are a domain ontology expert specializing in ${ontologyName || industryName} knowledge models for enterprise AI agent lifecycle management.
 
 Generate a ${industryName} ontology with 6 categories, each containing 3 concepts. Keep descriptions concise.
 
@@ -298,17 +304,13 @@ Return a JSON object with a "categories" array. Each category has:
   - "tags": Array of 3 classification tags
   - "industryRelevance": One sentence
 
-Use real ${industryName} terminology and standards (${ontologyName || "industry frameworks"}).`
-          },
-          {
-            role: "user",
-            content: `Generate a ${ontologyName || industryName} ontology for ${industryName}. Return ONLY valid JSON.`
-          }
-        ],
-        response_format: { type: "json_object" },
+Use real ${industryName} terminology and standards (${ontologyName || "industry frameworks"}).`,
+        user: `Generate a ${ontologyName || industryName} ontology for ${industryName}.`,
+        maxTokens: 8000,
+        jsonMode: true,
       });
 
-      const content = response.choices[0]?.message?.content;
+      const content = stripJsonFences(ontologyRaw);
       if (!content) {
         return res.status(500).json({ error: "No response from AI" });
       }
@@ -389,13 +391,8 @@ Use real ${industryName} terminology and standards (${ontologyName || "industry 
         ? `\n\nThe user is building this for a company context like: ${companyContext}. Tailor concepts to this type of organization.`
         : "";
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        max_tokens: 12000,
-        messages: [
-          {
-            role: "system",
-            content: `You are a domain ontology expert specializing in ${subdomain} within ${industryName}. You are building a knowledge graph ontology for an AI agent lifecycle management platform.${companyHint}
+      const subdomainRaw = await callClaude({
+        system: `You are a domain ontology expert specializing in ${subdomain} within ${industryName}. You are building a knowledge graph ontology for an AI agent lifecycle management platform.${companyHint}
 
 Generate a comprehensive ${subdomain} ontology with 5-7 categories, each containing 3-5 concepts (20-30 total). These concepts should be specific to the ${subdomain} sub-domain, not general ${industryName} concepts.
 
@@ -412,17 +409,13 @@ Return a JSON object with a "categories" array. Each category has:
   - "synonyms": Array of 1-3 alternative names or abbreviations
   - "industryRelevance": One sentence on why this matters for ${subdomain}
 
-Use real ${subdomain} terminology, standards, and frameworks. For credit rating domains, include concepts like rating scales, methodologies, committees, rating actions, issuer types, credit events, etc.`
-          },
-          {
-            role: "user",
-            content: `Generate a comprehensive ${subdomain} knowledge graph ontology for ${industryName}. Return ONLY valid JSON.`
-          }
-        ],
-        response_format: { type: "json_object" },
+Use real ${subdomain} terminology, standards, and frameworks. For credit rating domains, include concepts like rating scales, methodologies, committees, rating actions, issuer types, credit events, etc.`,
+        user: `Generate a comprehensive ${subdomain} knowledge graph ontology for ${industryName}.`,
+        maxTokens: 12000,
+        jsonMode: true,
       });
 
-      const content = response.choices[0]?.message?.content;
+      const content = stripJsonFences(subdomainRaw);
       if (!content) {
         return res.status(500).json({ error: "No response from AI" });
       }
@@ -498,13 +491,8 @@ Use real ${subdomain} terminology, standards, and frameworks. For credit rating 
         return res.status(400).json({ error: "regulationName and industry are required" });
       }
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        max_tokens: 3000,
-        messages: [
-          {
-            role: "system",
-            content: `You are a regulatory compliance expert specializing in ${industry} industry regulations. You help organizations understand and implement regulatory requirements for AI agent operations.
+      const regulationRaw = await callClaude({
+        system: `You are a regulatory compliance expert specializing in ${industry} industry regulations. You help organizations understand and implement regulatory requirements for AI agent operations.
 
 When given a regulation, produce a comprehensive JSON enrichment with these fields:
 - "overview": A detailed 3-5 sentence overview of the regulation and its purpose
@@ -513,24 +501,18 @@ When given a regulation, produce a comprehensive JSON enrichment with these fiel
 - "complianceChecklist": Array of { "item", "category", "priority": "must"|"should"|"may" }
 - "penaltiesAndRisks": Brief description of non-compliance risks
 - "relatedRegulations": Array of related regulatory frameworks
-- "automationOpportunities": Array of compliance tasks that can be automated by AI agents`
-          },
-          {
-            role: "user",
-            content: `Provide detailed regulatory enrichment for:
+- "automationOpportunities": Array of compliance tasks that can be automated by AI agents`,
+        user: `Provide detailed regulatory enrichment for:
 
 Regulation: ${regulationName}
 Industry: ${industry}
 Jurisdictions: ${JSON.stringify(jurisdictions || [])}
-Known Requirements: ${JSON.stringify(requirements || [])}
-
-Return ONLY a valid JSON object. Do not include markdown formatting or code blocks.`
-          }
-        ],
-        response_format: { type: "json_object" },
+Known Requirements: ${JSON.stringify(requirements || [])}`,
+        maxTokens: 3000,
+        jsonMode: true,
       });
 
-      const content = response.choices[0]?.message?.content;
+      const content = stripJsonFences(regulationRaw);
       if (!content) {
         return res.status(500).json({ error: "No response from AI" });
       }
@@ -553,13 +535,8 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
         return res.status(400).json({ error: "packName and framework are required" });
       }
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        max_tokens: 3000,
-        messages: [
-          {
-            role: "system",
-            content: `You are a regulatory compliance expert specializing in AI agent governance. Given a policy pack definition, generate enhanced policy suggestions.
+      const policyPackRaw = await callClaude({
+        system: `You are a regulatory compliance expert specializing in AI agent governance. Given a policy pack definition, generate enhanced policy suggestions.
 
 Return a JSON object with:
 - "enhancedDescription": An improved 2-4 sentence description of the policy pack
@@ -568,26 +545,20 @@ Return a JSON object with:
   - "domain": One of "data_handling", "tool_permissions", "allowed_actions", "content_boundaries", "logging"
   - "description": Detailed description of what the policy enforces
 - "complianceNotes": Brief text about regulatory alignment
-- "riskConsiderations": Brief text about risk factors to consider`
-          },
-          {
-            role: "user",
-            content: `Enhance this policy pack:
+- "riskConsiderations": Brief text about risk factors to consider`,
+        user: `Enhance this policy pack:
 
 Pack Name: ${packName}
 Framework: ${framework}
 Industry: ${industry || "cross_industry"}
 Risk Level: ${riskLevel || "high"}
 Description: ${description || "No description provided"}
-Existing Policies: ${JSON.stringify(existingPolicies || [])}
-
-Return ONLY a valid JSON object. Do not include markdown formatting or code blocks.`
-          }
-        ],
-        response_format: { type: "json_object" },
+Existing Policies: ${JSON.stringify(existingPolicies || [])}`,
+        maxTokens: 3000,
+        jsonMode: true,
       });
 
-      const content = response.choices[0]?.message?.content;
+      const content = stripJsonFences(policyPackRaw);
       if (!content) {
         return res.status(500).json({ error: "No response from AI" });
       }
@@ -610,13 +581,8 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
         return res.status(400).json({ error: "regulationName and industry are required" });
       }
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        max_tokens: 4000,
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert in AI governance policy design for ${industry} organizations. You create production-grade policy configurations that implement regulatory requirements.
+      const regPoliciesRaw = await callClaude({
+        system: `You are an expert in AI governance policy design for ${industry} organizations. You create production-grade policy configurations that implement regulatory requirements.
 
 When given a regulation, generate a JSON object with a "policies" array. Each policy should have:
 - "name": descriptive policy name
@@ -629,24 +595,18 @@ When given a regulation, generate a JSON object with a "policies" array. Each po
   - "enforcement": "block"|"warn"|"audit"|"require_approval"
   - Relevant configuration fields (thresholds, lists, conditions)
 
-Generate 3-5 comprehensive policies per regulation. Use realistic regulatory identifiers and terminology.`
-          },
-          {
-            role: "user",
-            content: `Generate compliance policies for:
+Generate 3-5 comprehensive policies per regulation. Use realistic regulatory identifiers and terminology.`,
+        user: `Generate compliance policies for:
 
 Regulation: ${regulationName}
 Industry: ${industry}
 Jurisdictions: ${JSON.stringify(jurisdictions || [])}
-Key Requirements: ${JSON.stringify(requirements || [])}
-
-Return ONLY a valid JSON object with a "policies" array. Do not include markdown formatting or code blocks.`
-          }
-        ],
-        response_format: { type: "json_object" },
+Key Requirements: ${JSON.stringify(requirements || [])}`,
+        maxTokens: 4000,
+        jsonMode: true,
       });
 
-      const content = response.choices[0]?.message?.content;
+      const content = stripJsonFences(regPoliciesRaw);
       if (!content) {
         return res.status(500).json({ error: "No response from AI" });
       }
@@ -669,37 +629,26 @@ Return ONLY a valid JSON object with a "policies" array. Do not include markdown
         return res.status(400).json({ error: "agentName, agentDescription, and industry are required" });
       }
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        max_tokens: 1500,
-        messages: [
-          {
-            role: "system",
-            content: `You are a domain expert in ${ontologyName || "industry"} ontology for ${industry} operations. Given an AI agent's description and skills, suggest relevant ontology concepts to tag it with.
+      const tagsRaw = await callClaude({
+        system: `You are a domain expert in ${ontologyName || "industry"} ontology for ${industry} operations. Given an AI agent's description and skills, suggest relevant ontology concepts to tag it with.
 
 Return a JSON object with:
 - "suggestedTags": Array of objects with { "conceptId": string, "conceptLabel": string, "relevanceScore": number (0-1), "reasoning": string }
 - "enrichedSkills": Array of objects with { "originalSkill": string, "enrichedDescription": string, "ontologyConcepts": string[] }
 
-Suggest 5-8 relevant ontology tags and enrich 3-5 skills with domain terminology.`
-          },
-          {
-            role: "user",
-            content: `Suggest ontology tags for this AI agent:
+Suggest 5-8 relevant ontology tags and enrich 3-5 skills with domain terminology.`,
+        user: `Suggest ontology tags for this AI agent:
 
 Agent Name: ${agentName}
 Description: ${agentDescription}
 Skills: ${JSON.stringify(agentSkills || [])}
 Industry: ${industry}
-Ontology: ${ontologyName || "industry standard"}
-
-Return ONLY a valid JSON object. Do not include markdown formatting or code blocks.`
-          }
-        ],
-        response_format: { type: "json_object" },
+Ontology: ${ontologyName || "industry standard"}`,
+        maxTokens: 1500,
+        jsonMode: true,
       });
 
-      const content = response.choices[0]?.message?.content;
+      const content = stripJsonFences(tagsRaw);
       if (!content) {
         return res.status(500).json({ error: "No response from AI" });
       }
@@ -3333,12 +3282,8 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
             const driftSignals = recommendations.filter(r => r.source === "drift" || r.severity === "high" || r.severity === "critical");
             const evalSuites = await storage.getEvalsByAgent(agentId);
 
-            const response = await openai.chat.completions.create({
-              model: "gpt-4.1",
-              messages: [
-                {
-                  role: "system",
-                  content: `You are an autonomous agent self-healing engine responding to an active incident. Based on the incident details and agent data, generate 1-3 targeted patch candidates to remediate the issue.
+            const healRaw = await callClaude({
+              system: `You are an autonomous agent self-healing engine responding to an active incident. Based on the incident details and agent data, generate 1-3 targeted patch candidates to remediate the issue.
 
 Return a JSON array. Each patch must have:
 - changeType: one of "prompt_tweak", "retrieval_change", "tool_retry_fallback", "model_upgrade_downgrade", "cost_cap_tuning"
@@ -3355,13 +3300,8 @@ SAFETY CONSTRAINTS:
 - Cannot propose expanding tool permissions
 - Cannot change write-action behavior without high-tier approval
 - Cannot alter redaction/audit policies autonomously
-- Focus on minimal, targeted fixes for the specific incident
-
-Return ONLY valid JSON array.`,
-                },
-                {
-                  role: "user",
-                  content: `ACTIVE INCIDENT: ${metricLabel} threshold violation
+- Focus on minimal, targeted fixes for the specific incident`,
+              user: `ACTIVE INCIDENT: ${metricLabel} threshold violation
 Agent: ${agent.name} (${agent.modelProvider || "general"})
 Severity: ${severity || "medium"}
 Drift: ${driftPercent || 0}% from baseline
@@ -3370,15 +3310,13 @@ Success Rate: ${((agent.successRate || 0) * 100).toFixed(1)}%
 Avg Latency: ${agent.avgLatencyMs || 0}ms
 Drift Signals: ${JSON.stringify(driftSignals.slice(0, 3))}
 Eval Suites: ${evalSuites.length} configured`,
-                },
-              ],
-              response_format: { type: "json_object" },
+              maxTokens: 2048,
+              jsonMode: true,
             });
 
-            const content = response.choices[0]?.message?.content || "[]";
             let parsedPatches: any[];
             try {
-              const parsed = JSON.parse(content);
+              const parsed = JSON.parse(stripJsonFences(healRaw) || "[]");
               parsedPatches = Array.isArray(parsed) ? parsed : parsed.patches || [parsed];
             } catch {
               parsedPatches = [];

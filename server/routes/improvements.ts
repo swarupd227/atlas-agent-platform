@@ -50,6 +50,33 @@ const anthropicClient = new Anthropic({
   baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
 });
 
+async function callClaude(opts: {
+  system: string;
+  user: string;
+  maxTokens?: number;
+  jsonMode?: boolean;
+  model?: string;
+}): Promise<string> {
+  const systemPrompt = opts.jsonMode
+    ? `${opts.system}\n\nReturn ONLY valid JSON with no markdown fences or prose.`
+    : opts.system;
+  const response = await anthropicClient.messages.create({
+    model: opts.model ?? "claude-opus-4-5",
+    system: systemPrompt,
+    messages: [{ role: "user", content: opts.user }],
+    max_tokens: opts.maxTokens ?? 4096,
+  });
+  return (response.content.find((b: any) => b.type === "text") as any)?.text ?? "";
+}
+
+function stripJsonFences(raw: string): string {
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenced) return fenced[1].trim();
+  const openFence = raw.match(/```(?:json)?\s*([\s\S]*)/);
+  if (openFence) return openFence[1].trim();
+  return raw.trim();
+}
+
 const router = Router();
 
   // Policy Violation Stream (recent violations from traces + audit events)
@@ -1380,24 +1407,15 @@ For "executionGraph", provide an explicit stage-by-stage execution plan:
   - waitForAll: true if the next tier must wait for ALL agents in this tier to complete (default true for fan_out_fan_in, configurable for others)
   - This must be consistent with parallelGroups but provides additional control metadata.`;
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: stagedPipelines.length > 0
-            ? `Generate an agent development plan for the outcome "${outcomeContract?.name}".
+      const userMsg = stagedPipelines.length > 0
+        ? `Generate an agent development plan for the outcome "${outcomeContract?.name}".
 
 MANDATORY: You MUST create EXACTLY ${stagedPipelines[0].count} worker agents — one per pipeline stage from your system instructions. Required stages: ${stagedPipelines[0].stages.map((s: string, i: number) => `${i + 1}. ${s}`).join(", ")}.
 
 After assigning one agent to each stage, bind the following ${kpiDetails.length} KPIs to the most relevant existing stage agent (do NOT create extra agents for KPIs): ${kpiDetails.map((k: any) => `${k.name} (baseline: ${k.baseline} → target: ${k.target}, weight: ${k.weight}, SLA: ${k.slaThreshold || "none"})`).join("; ")}`
-            : `Generate an agent development plan for the outcome "${outcomeContract?.name}" targeting ${kpiDetails.length} KPIs: ${kpiDetails.map((k: any) => `${k.name} (baseline: ${k.baseline} → target: ${k.target}, weight: ${k.weight}, SLA: ${k.slaThreshold || "none"})`).join("; ")}`
-          },
-        ],
-        response_format: { type: "json_object" },
-        max_completion_tokens: 8000,
-      });
+        : `Generate an agent development plan for the outcome "${outcomeContract?.name}" targeting ${kpiDetails.length} KPIs: ${kpiDetails.map((k: any) => `${k.name} (baseline: ${k.baseline} → target: ${k.target}, weight: ${k.weight}, SLA: ${k.slaThreshold || "none"})`).join("; ")}`;
 
-      const content = response.choices[0]?.message?.content || "";
+      const content = await callClaude({ system: systemPrompt, user: userMsg, maxTokens: 8000, jsonMode: true });
       let jsonStr = content;
       const fencedMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (fencedMatch) {
@@ -2134,12 +2152,9 @@ Execution Summary (${reportPeriod || "All time"}):
 - Billable events: ${executionStats.billableEvents}
 - Total cost: $${executionStats.totalCost?.toFixed(2) || "0.00"}` : "Execution data: Not yet available";
 
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4.1-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are a business report writer for the ${industryLabel} industry. Today's date is ${reportDate || new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}. This report covers the period: ${reportPeriod || "All time"}.
+      const report = await callClaude({
+        model: "claude-haiku-4-5",
+        system: `You are a business report writer for the ${industryLabel} industry. Today's date is ${reportDate || new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}. This report covers the period: ${reportPeriod || "All time"}.
 
 CRITICAL RULES:
 - Use ONLY the data provided below. Do NOT invent dates, statistics, percentages, or numbers.
@@ -2153,11 +2168,8 @@ Include these sections:
 3. Agent Performance & Reliability (using exact execution stats)
 4. Business Impact & ROI (using actual revenue and event data)
 5. Compliance & Governance Status
-6. Recommendations (actionable, based on the actual data trends)`
-          },
-          {
-            role: "user",
-            content: `Generate a customer value report for outcome "${outcomeName}".
+6. Recommendations (actionable, based on the actual data trends)`,
+        user: `Generate a customer value report for outcome "${outcomeName}".
 
 Report Date: ${reportDate || new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}
 Reporting Period: ${reportPeriod || "All time"}
@@ -2176,14 +2188,9 @@ ${execSummary}
 Revenue:
 - Billing Model: ${revenue?.billingModel || "N/A"}
 - Price per Unit: $${revenue?.pricePerUnit || 0}
-- Estimated Revenue: $${revenue?.estimatedRevenue || 0}`
-          }
-        ],
-        response_format: { type: "text" },
-        max_tokens: 2500,
-      });
-
-      const report = completion.choices[0]?.message?.content || "Failed to generate report.";
+- Estimated Revenue: $${revenue?.estimatedRevenue || 0}`,
+        maxTokens: 2500,
+      }) || "Failed to generate report.";
       res.json({ report });
     } catch (error: any) {
       console.error("Customer value report error:", error);
@@ -2223,14 +2230,8 @@ Rules:
 
 Respond ONLY with valid JSON, no markdown fences.`;
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1-mini",
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: 1500,
-        response_format: { type: "json_object" },
-      });
-
-      const content = response.choices[0]?.message?.content || "{}";
+      const rawFlow = await callClaude({ model: "claude-haiku-4-5", system: "", user: prompt, maxTokens: 1500, jsonMode: true });
+      const content = stripJsonFences(rawFlow);
       let parsed: any = {};
       try { parsed = JSON.parse(content); } catch {}
 
@@ -2398,23 +2399,22 @@ Guidelines:
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
 
-      const stream = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...messages,
-        ],
-        stream: true,
-        max_completion_tokens: 4000,
+      const anthropicMessages = (messages as Array<{ role: string; content: string }>)
+        .filter((m) => m.role !== "system")
+        .map((m) => ({ role: m.role as "user" | "assistant", content: m.content }));
+
+      const claudeStream = anthropicClient.messages.stream({
+        model: "claude-opus-4-5",
+        system: systemPrompt,
+        messages: anthropicMessages,
+        max_tokens: 4000,
       });
 
-      for await (const chunk of stream) {
-        const content = chunk.choices[0]?.delta?.content || "";
-        if (content) {
-          res.write(`data: ${JSON.stringify({ content })}\n\n`);
-        }
-      }
+      claudeStream.on("text", (text: string) => {
+        res.write(`data: ${JSON.stringify({ content: text })}\n\n`);
+      });
 
+      await claudeStream.finalMessage();
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
       res.end();
     } catch (error) {
@@ -2438,20 +2438,14 @@ Guidelines:
 
       const industryNote = industry ? `The user operates in the "${industry.label}" industry. Use industry-standard terminology, reference relevant regulations, and ensure the outcome aligns with ${industry.label} best practices.` : '';
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are an AI outcome contract enhancer. Given an outcome proposal, improve its name, description, risk assessment, and pricing to be more precise, measurable, and industry-appropriate. ${industryNote} Return a JSON object with the same structure as the input outcomeContract (name, description, riskTier, pricingModel, pricePerUnit, riskThreshold, maxDriftPercent). Only return the JSON, no markdown.`,
-          },
-          { role: "user", content: JSON.stringify(proposal.outcomeContract) },
-        ],
-        max_completion_tokens: 1000,
-        response_format: { type: "json_object" },
+      const enhancedRaw = await callClaude({
+        model: "claude-haiku-4-5",
+        system: `You are an AI outcome contract enhancer. Given an outcome proposal, improve its name, description, risk assessment, and pricing to be more precise, measurable, and industry-appropriate. ${industryNote} Return a JSON object with the same structure as the input outcomeContract (name, description, riskTier, pricingModel, pricePerUnit, riskThreshold, maxDriftPercent).`,
+        user: JSON.stringify(proposal.outcomeContract),
+        maxTokens: 1000,
+        jsonMode: true,
       });
-
-      const enhanced = JSON.parse(response.choices[0]?.message?.content || "{}");
+      const enhanced = JSON.parse(stripJsonFences(enhancedRaw) || "{}");
       res.json(enhanced);
     } catch (error) {
       console.error("Enhance outcome error:", error);
@@ -2468,20 +2462,14 @@ Guidelines:
 
       const industryNote = industry ? `The user operates in the "${industry.label}" industry. Use industry-standard KPIs, benchmarks, and measurement methods specific to ${industry.label}. Reference standards like ${industry.id === 'financial_services' ? 'SLA adherence, STP rates, false positive rates' : industry.id === 'healthcare' ? 'HEDIS measures, CMS Star ratings, readmission rates' : industry.id === 'manufacturing' ? 'OEE, MTBF, MTTR, first-pass yield' : industry.id === 'insurance' ? 'loss ratio, combined ratio, claims cycle time' : industry.id === 'retail' ? 'forecast accuracy, conversion rate, inventory turnover' : 'industry-standard metrics'}.` : '';
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are an AI KPI generator for outcome contracts. Given an outcome name and description, generate 3-5 highly specific, measurable KPIs. ${industryNote} Return a JSON object with a "kpis" array where each KPI has: name (string), target (number), unit (string like %, count, $, minutes), measurement (string describing how to measure), currentBaseline (number or null). Only return the JSON.`,
-          },
-          { role: "user", content: `Outcome: ${outcomeName}\nDescription: ${outcomeDescription}\nExisting KPIs: ${JSON.stringify(existingKpis || [])}` },
-        ],
-        max_completion_tokens: 1500,
-        response_format: { type: "json_object" },
+      const kpiRaw = await callClaude({
+        model: "claude-haiku-4-5",
+        system: `You are an AI KPI generator for outcome contracts. Given an outcome name and description, generate 3-5 highly specific, measurable KPIs. ${industryNote} Return a JSON object with a "kpis" array where each KPI has: name (string), target (number), unit (string like %, count, $, minutes), measurement (string describing how to measure), currentBaseline (number or null).`,
+        user: `Outcome: ${outcomeName}\nDescription: ${outcomeDescription}\nExisting KPIs: ${JSON.stringify(existingKpis || [])}`,
+        maxTokens: 1500,
+        jsonMode: true,
       });
-
-      const result = JSON.parse(response.choices[0]?.message?.content || '{"kpis":[]}');
+      const result = JSON.parse(stripJsonFences(kpiRaw) || '{"kpis":[]}');
       res.json(result);
     } catch (error) {
       console.error("Generate KPIs error:", error);
@@ -2510,23 +2498,14 @@ Guidelines:
         .map(p => `- [${p.domain}] ${p.name}: ${p.description || ""}`)
         .join("\n");
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are a regulatory compliance analyst. Given a business outcome description and an industry, identify 4–8 applicable EXTERNAL statutory or regulatory frameworks. ONLY return external government or industry regulations (e.g. SOX, GDPR, FINRA, HIPAA, PCI-DSS, NIST SP 800-53, EU AI Act, BSA/AML). Do NOT list internal platform governance policies as separate items — they are provided only as background context to help you write precise requirements under each regulation. For each regulation return: regulation (string — the external regulation name only), classification (one of "Critical", "High-Risk", "Medium"), requirements (string array of 2-4 specific requirements this regulation places on the outcome), autoApplied (boolean — true if automatically enforced), rationale (string — one sentence explaining why this applies). Return a JSON object with a "constraints" array.`,
-          },
-          {
-            role: "user",
-            content: `Industry: ${industry.label || industry} (${industry.id || industry})\nOutcome: ${description || "(no description provided)"}\n\nInternal platform policies (background context only — do NOT list these as separate constraint items):\n${policyContext || "(none)"}`,
-          },
-        ],
-        max_completion_tokens: 1800,
-        response_format: { type: "json_object" },
+      const constraintsRaw = await callClaude({
+        model: "claude-haiku-4-5",
+        system: `You are a regulatory compliance analyst. Given a business outcome description and an industry, identify 4–8 applicable EXTERNAL statutory or regulatory frameworks. ONLY return external government or industry regulations (e.g. SOX, GDPR, FINRA, HIPAA, PCI-DSS, NIST SP 800-53, EU AI Act, BSA/AML). Do NOT list internal platform governance policies as separate items — they are provided only as background context to help you write precise requirements under each regulation. For each regulation return: regulation (string — the external regulation name only), classification (one of "Critical", "High-Risk", "Medium"), requirements (string array of 2-4 specific requirements this regulation places on the outcome), autoApplied (boolean — true if automatically enforced), rationale (string — one sentence explaining why this applies). Return a JSON object with a "constraints" array.`,
+        user: `Industry: ${industry.label || industry} (${industry.id || industry})\nOutcome: ${description || "(no description provided)"}\n\nInternal platform policies (background context only — do NOT list these as separate constraint items):\n${policyContext || "(none)"}`,
+        maxTokens: 1800,
+        jsonMode: true,
       });
-
-      const result = JSON.parse(response.choices[0]?.message?.content || '{"constraints":[]}');
+      const result = JSON.parse(stripJsonFences(constraintsRaw) || '{"constraints":[]}');
       res.json(Array.isArray(result) ? result : (result.constraints || []));
     } catch (error) {
       console.error("Regulatory constraints error:", error);
@@ -2556,12 +2535,8 @@ Guidelines:
 
       const transcript = transcription.text;
 
-      const analysisResponse = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert business process analyst. Analyze the following meeting transcript and identify automation opportunities. Look for:
+      const transcriptAnalysisRaw = await callClaude({
+        system: `You are an expert business process analyst. Analyze the following meeting transcript and identify automation opportunities. Look for:
 - Repetitive manual processes that could be automated
 - Pain points and bottlenecks mentioned by participants
 - Data entry or transfer tasks between systems
@@ -2576,17 +2551,12 @@ For each opportunity found, provide:
 - suggestedSystems: An array of strings listing systems or tools that could be integrated
 
 Return ONLY a valid JSON array of opportunity objects. Do not include any text before or after the JSON array.`,
-          },
-          {
-            role: "user",
-            content: `Meeting Transcript:\n\n${transcript}`,
-          },
-        ],
-        temperature: 0.3,
-        max_tokens: 4000,
+        user: `Meeting Transcript:\n\n${transcript}`,
+        maxTokens: 4000,
+        jsonMode: true,
       });
 
-      const rawContent = analysisResponse.choices[0]?.message?.content || "[]";
+      const rawContent = transcriptAnalysisRaw;
       let opportunities;
       try {
         opportunities = JSON.parse(rawContent);
@@ -2638,12 +2608,8 @@ Return ONLY a valid JSON array of opportunity objects. Do not include any text b
         activeCycles: existingCycles.filter(c => !["applied", "dismissed"].includes(c.status)).length,
       };
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        messages: [
-          {
-            role: "system",
-            content: `You are an AI agent lifecycle optimization engine. Analyze the agent's performance data and generate improvement cycle proposals. Each proposal represents one autonomous optimization the platform can perform.
+      const improvementRaw = await callClaude({
+        system: `You are an AI agent lifecycle optimization engine. Analyze the agent's performance data and generate improvement cycle proposals. Each proposal represents one autonomous optimization the platform can perform.
 
 For each proposal, classify:
 - triggerType: one of "drift_detected", "eval_regression", "cost_anomaly", "latency_spike", "model_update_available", "policy_violation", "workflow_change"
@@ -2661,17 +2627,12 @@ For each proposal provide:
 - blastRadius: JSON with { affectedOutcomes: number, affectedUsers: string, rollbackPlan: string }
 
 Return a JSON array of 3-5 improvement cycle proposals. Return ONLY valid JSON.`,
-          },
-          {
-            role: "user",
-            content: `Agent Performance Data:\n${JSON.stringify(agentContext, null, 2)}`,
-          },
-        ],
-        temperature: 0.4,
-        max_tokens: 4000,
+        user: `Agent Performance Data:\n${JSON.stringify(agentContext, null, 2)}`,
+        maxTokens: 4000,
+        jsonMode: true,
       });
 
-      const rawContent = response.choices[0]?.message?.content || "[]";
+      const rawContent = improvementRaw;
       let proposals;
       try {
         proposals = JSON.parse(rawContent);
@@ -2873,13 +2834,8 @@ Return a JSON array of 3-5 improvement cycle proposals. Return ONLY valid JSON.`
             const genPrompt = `Generate 2 additional test cases for an AI agent eval suite. Suite: "${suite.name}". Agent: "${agent.name}". Existing cases: ${existingCases.map(c => c.name).join(", ")}.
 
 Respond in JSON: { "testCases": [{ "name": string, "inputData": object, "expectedOutput": object, "tags": string[] }] }`;
-            const genResponse = await openai.chat.completions.create({
-              model: "gpt-4.1-mini",
-              messages: [{ role: "user", content: genPrompt }],
-              max_completion_tokens: 1024,
-              response_format: { type: "json_object" },
-            });
-            const generated = JSON.parse(genResponse.choices[0]?.message?.content || "{}");
+            const genRaw = await callClaude({ model: "claude-haiku-4-5", system: "", user: genPrompt, maxTokens: 1024, jsonMode: true });
+            const generated = JSON.parse(stripJsonFences(genRaw) || "{}");
             const newCases = generated.testCases || [];
             for (const tc of newCases) {
               await storage.createEvalTestCase({
@@ -3294,13 +3250,8 @@ Respond in JSON: { "testCases": [{ "name": string, "inputData": object, "expecte
         : "";
       const industryContext = agentIndustry ? `\nIndustry: ${agentIndustry}` : "";
 
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content: `You are an AI evaluation engineer specializing in creating high-quality test cases for AI agent evaluation suites. Generate new test cases that target failure patterns and coverage gaps.
+      const evalCasesRaw = await callClaude({
+        system: `You are an AI evaluation engineer specializing in creating high-quality test cases for AI agent evaluation suites. Generate new test cases that target failure patterns and coverage gaps.
 
 CRITICAL: Use domain-specific ontology terminology in all test case names and descriptions. Never use generic labels like "Document selection task #7" — instead use terms from the agent's domain ontology, e.g., "Reg DD disclosure selection", "KYC document verification", "Account Opening form validation". Each test case name must reference the specific domain concept being tested.
 
@@ -3317,11 +3268,8 @@ Return JSON with this structure:
     }
   ],
   "coverageAnalysis": "string - summary using domain terminology"
-}`
-          },
-          {
-            role: "user",
-            content: `Generate 3-5 new evaluation test cases for this suite:
+}`,
+        user: `Generate 3-5 new evaluation test cases for this suite:
 
 Suite: ${suite.name} (type: ${suite.type || "regression"})
 Agent: ${agent ? `${agent.name} - ${agent.description || "No description"}` : "Unknown agent"}
@@ -3338,20 +3286,18 @@ Generate diverse test cases that:
 2. Cover gaps in existing test coverage
 3. Include edge cases and adversarial scenarios
 4. Test different aspects of the agent's capabilities
-5. Use domain ontology terms in EVERY test case name — e.g., "Reg DD disclosure selection" not "Task #7"`
-          }
-        ],
-        temperature: 0.7,
-        max_tokens: 2000,
+5. Use domain ontology terms in EVERY test case name — e.g., "Reg DD disclosure selection" not "Task #7"`,
+        maxTokens: 2000,
+        jsonMode: true,
       });
 
-      const responseText = completion.choices[0]?.message?.content || "{}";
-      const parsed = JSON.parse(responseText);
+      const responseText = stripJsonFences(evalCasesRaw);
+      const parsed = JSON.parse(responseText || "{}");
 
       res.json({
         cases: parsed.cases || [],
         coverageAnalysis: parsed.coverageAnalysis || "",
-        model: "gpt-4.1",
+        model: "claude-opus-4-5",
       });
     } catch (e: any) {
       console.error("AI generate eval cases error:", e);
@@ -3372,12 +3318,8 @@ Generate diverse test cases that:
       const agents = await storage.getAgents(getOrgId(req));
       const activeAgents = agents.filter(a => a.id !== agentId && a.status === "active");
 
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        messages: [
-          {
-            role: "system",
-            content: `You are an AI agent lifecycle advisor. An agent is being considered for retirement. Analyze the agent and suggest replacement options from existing templates or active agents. Return JSON with:
+      const replacementRaw = await callClaude({
+        system: `You are an AI agent lifecycle advisor. An agent is being considered for retirement. Analyze the agent and suggest replacement options from existing templates or active agents. Return JSON with:
 {
   "replacementStrategy": "template" | "existing_agent" | "new_design" | "no_replacement",
   "reasoning": "why this strategy",
@@ -3387,11 +3329,8 @@ Generate diverse test cases that:
   "migrationComplexity": "low" | "medium" | "high",
   "estimatedTransitionDays": number,
   "knowledgeTransferSteps": ["ordered list of transfer steps"]
-}`
-          },
-          {
-            role: "user",
-            content: `Agent to retire:
+}`,
+        user: `Agent to retire:
 Name: ${agent.name}
 Description: ${agent.description || "N/A"}
 Tools: ${JSON.stringify(agent.toolsConfig || [])}
@@ -3401,14 +3340,12 @@ Outcome ID: ${agent.outcomeId || "none"}
 
 Available templates: ${JSON.stringify(templates.map(t => ({ id: t.id, name: t.name, description: t.description, category: t.category, tags: t.tags })).slice(0, 10))}
 
-Active agents: ${JSON.stringify(activeAgents.map(a => ({ id: a.id, name: a.name, description: a.description, outcomeId: a.outcomeId })).slice(0, 10))}`
-          }
-        ],
-        response_format: { type: "json_object" },
-        temperature: 0.3,
+Active agents: ${JSON.stringify(activeAgents.map(a => ({ id: a.id, name: a.name, description: a.description, outcomeId: a.outcomeId })).slice(0, 10))}`,
+        maxTokens: 2048,
+        jsonMode: true,
       });
 
-      const result = JSON.parse(completion.choices[0].message.content || "{}");
+      const result = JSON.parse(stripJsonFences(replacementRaw) || "{}");
       res.json({ ...result, agentId, agentName: agent.name, proposedAt: new Date().toISOString() });
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Failed to propose replacement" });
@@ -3443,12 +3380,8 @@ Active agents: ${JSON.stringify(activeAgents.map(a => ({ id: a.id, name: a.name,
         tags: s.tags || [],
       }));
 
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert AI agent architect for the ATLAS (Nous Agent Orchestrator Platform). Your task is to enhance and enrich an existing agent template to make it more robust, production-ready, and comprehensive.
+      const templateRaw = await callClaude({
+        system: `You are an expert AI agent architect for the ATLAS (Nous Agent Orchestrator Platform). Your task is to enhance and enrich an existing agent template to make it more robust, production-ready, and comprehensive.
 
 You MUST return recommendations for ALL of the following sections — no exceptions. Every section must be present in your JSON response even if you only make minor improvements to existing content.
 
@@ -3474,13 +3407,8 @@ Required sections in your JSON response:
 AVAILABLE SKILL LIBRARY (${industryFilter} industry — select ONLY from these):
 ${JSON.stringify(skillCatalogSummary, null, 2)}
 
-IMPORTANT: Preserve the agent's core identity (name, category, industry) but significantly enrich all other fields. If a field already has good content, improve it rather than replacing it entirely. You MUST include ALL 15 sections listed above in your response. For preloadedSkills, requiredSkills, and optionalSkills, you MUST select ONLY from the skill catalog provided above — never invent skill names.
-
-Return a JSON object with all the enhanced template fields. The response must be valid JSON with no markdown wrapping.`
-          },
-          {
-            role: "user",
-            content: `Please enhance this agent template:
+IMPORTANT: Preserve the agent's core identity (name, category, industry) but significantly enrich all other fields. If a field already has good content, improve it rather than replacing it entirely. You MUST include ALL 15 sections listed above in your response. For preloadedSkills, requiredSkills, and optionalSkills, you MUST select ONLY from the skill catalog provided above — never invent skill names.`,
+        user: `Please enhance this agent template:
 
 Name: ${template.name || "Unnamed Agent"}
 Description: ${template.description || "No description"}
@@ -3504,15 +3432,12 @@ Rollback Plan: ${JSON.stringify(template.rollbackPlan || null)}
 Tags: ${JSON.stringify(template.tags || [])}
 Current Industry Context: ${industryFilter}
 
-Enhance this template to be production-ready and comprehensive. For preloadedSkills, select ONLY from the available skill library provided. Return valid JSON only.`
-          }
-        ],
-        response_format: { type: "json_object" },
-        max_completion_tokens: 4096,
-        temperature: 0.7,
+Enhance this template to be production-ready and comprehensive. For preloadedSkills, select ONLY from the available skill library provided.`,
+        maxTokens: 4096,
+        jsonMode: true,
       });
 
-      const content = completion.choices[0]?.message?.content || "{}";
+      const content = stripJsonFences(templateRaw);
       let enhanced: Record<string, any>;
       try {
         enhanced = JSON.parse(content);
@@ -3558,7 +3483,7 @@ Enhance this template to be production-ready and comprehensive. For preloadedSki
         enhanced.optionalSkills = validateSkillEntries(enhanced.optionalSkills);
       }
 
-      res.json({ enhanced, model: "gpt-4.1", availableSkillCount: industrySkills.length });
+      res.json({ enhanced, model: "claude-opus-4-5", availableSkillCount: industrySkills.length });
     } catch (e: any) {
       console.error("AI enhance template error:", e);
       res.status(500).json({ error: e.message || "Failed to enhance template" });
@@ -3936,14 +3861,8 @@ Analyze and respond in JSON:
   "reasoning": "brief explanation"
 }`;
 
-        const simResponse = await openai.chat.completions.create({
-          model: "gpt-4.1-mini",
-          messages: [{ role: "user", content: simPrompt }],
-          max_completion_tokens: 1024,
-          response_format: { type: "json_object" },
-        });
-
-        const parsed = JSON.parse(simResponse.choices[0]?.message?.content || "{}");
+        const simRaw = await callClaude({ model: "claude-haiku-4-5", system: "", user: simPrompt, maxTokens: 1024, jsonMode: true });
+        const parsed = JSON.parse(stripJsonFences(simRaw) || "{}");
         simulationResult = {
           sandboxId: `sandbox-${crypto.randomUUID().slice(0, 8)}`,
           status: "completed",
@@ -4095,12 +4014,8 @@ Analyze and respond in JSON:
         if (oMargin < 20) marginContext += ` [MARGIN ALERT: Below 20% threshold - prioritize cost reduction patches]`;
       }
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        messages: [
-          {
-            role: "system",
-            content: `You are an autonomous agent optimization engine. Based on agent performance data, drift signals, margin analysis, and evaluation results, generate candidate patches that could improve the agent. Each patch is a self-contained change proposal.
+      const patchRaw = await callClaude({
+        system: `You are an autonomous agent optimization engine. Based on agent performance data, drift signals, margin analysis, and evaluation results, generate candidate patches that could improve the agent. Each patch is a self-contained change proposal.
 
 Return a JSON array of 2-4 patch proposals. Each patch must have:
 - changeType: one of "prompt_tweak", "retrieval_change", "tool_retry_fallback", "model_upgrade_downgrade", "cost_cap_tuning"
@@ -4121,13 +4036,8 @@ SAFETY CONSTRAINTS:
 - Cannot propose expanding tool permissions (requires explicit approval)
 - Cannot change write-action behavior without high-tier approval
 - Cannot alter redaction/audit policies autonomously
-- Cost increases must be flagged with higher risk
-
-Return ONLY valid JSON array.`,
-          },
-          {
-            role: "user",
-            content: `Agent: ${agent.name} (${agent.modelProvider || "general"})
+- Cost increases must be flagged with higher risk`,
+        user: `Agent: ${agent.name} (${agent.modelProvider || "general"})
 Success Rate: ${((agent.successRate || 0) * 100).toFixed(1)}%
 Avg Latency: ${agent.avgLatencyMs || 0}ms
 Cost/Run: $${agent.costPerRun || 0}
@@ -4136,15 +4046,14 @@ Drift Signals: ${JSON.stringify(driftSignals.slice(0, 5))}
 Cost Reduction Signals: ${JSON.stringify(costReductionSignals.slice(0, 3).map(r => ({ type: r.type, title: r.title, severity: r.severity, suggestedChanges: r.suggestedChanges })))}
 Recent Recommendations: ${JSON.stringify(recommendations.slice(0, 3).map(r => ({ type: r.type, title: r.title, severity: r.severity })))}
 Eval Suites: ${evalSuites.length} configured`,
-          },
-        ],
-        response_format: { type: "json_object" },
+        maxTokens: 2048,
+        jsonMode: true,
       });
 
-      const content = response.choices[0]?.message?.content || "[]";
+      const content = patchRaw;
       let parsedPatches: any[];
       try {
-        const parsed = JSON.parse(content);
+        const parsed = JSON.parse(stripJsonFences(content));
         parsedPatches = Array.isArray(parsed) ? parsed : parsed.patches || [parsed];
       } catch {
         parsedPatches = [];
