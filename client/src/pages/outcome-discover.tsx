@@ -2217,9 +2217,22 @@ export default function OutcomeDiscover() {
                       </Button>
                     </CardTitle>
                   </CardHeader>
-                  <CardContent className="p-4 pt-1 flex flex-col gap-2">
-                    <span className="text-sm font-semibold" data-testid="text-proposal-name">{proposal.outcomeContract.name}</span>
-                    <span className="text-sm text-muted-foreground">{proposal.outcomeContract.description}</span>
+                  <CardContent className="p-4 pt-1 flex flex-col gap-3">
+                    <div className="flex flex-col gap-1">
+                      <span className="text-base font-semibold leading-snug" data-testid="text-proposal-name">{proposal.outcomeContract.name}</span>
+                      {proposal.outcomeContract.description && (
+                        <p className="text-sm text-muted-foreground leading-relaxed" data-testid="text-proposal-description">{proposal.outcomeContract.description}</p>
+                      )}
+                    </div>
+                    {proposal.outcomeContract.slaDescription && (
+                      <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-muted/50 border border-muted" data-testid="text-proposal-sla">
+                        <ClipboardCheck className="w-3.5 h-3.5 text-muted-foreground shrink-0 mt-0.5" />
+                        <div className="flex flex-col gap-0.5">
+                          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Service Commitment</span>
+                          <span className="text-xs text-foreground/80 leading-relaxed">{proposal.outcomeContract.slaDescription}</span>
+                        </div>
+                      </div>
+                    )}
                     <div className="flex flex-col gap-1.5">
                       <div className="flex items-center gap-2 flex-wrap">
                         {platformIntel?.compositeRisk ? (
@@ -2229,11 +2242,11 @@ export default function OutcomeDiscover() {
                               className={`text-xs ${platformIntel.compositeRisk.level === "LOW" ? "border-emerald-500/50 text-emerald-600 dark:text-emerald-400" : platformIntel.compositeRisk.level === "MEDIUM" ? "border-amber-500/50 text-amber-600 dark:text-amber-400" : ""}`}
                               data-testid="badge-composite-risk"
                             >
-                              {platformIntel.compositeRisk.level} Composite Risk
+                              {platformIntel.compositeRisk.level} Risk
                             </Badge>
-                            {proposal.outcomeContract.riskTier && (
+                            {proposal.outcomeContract.riskTier && platformIntel.compositeRisk.level !== proposal.outcomeContract.riskTier && (
                               <Badge variant="secondary" className="text-xs opacity-70" data-testid="badge-ai-risk-tier">
-                                AI: {proposal.outcomeContract.riskTier}
+                                Proposed: {proposal.outcomeContract.riskTier}
                               </Badge>
                             )}
                           </>
@@ -2354,18 +2367,18 @@ export default function OutcomeDiscover() {
                   </Card>
                 )}
 
-                {/* AI Proposed Agent Architecture — with per-agent MCP tool coverage chips */}
+                {/* Proposed Automation Roles — business-friendly agent cards */}
                 {proposal.proposedAgents && proposal.proposedAgents.length > 0 && (
                   <Card data-testid="card-proposed-agents">
                     <CardHeader className="p-4 pb-2">
                       <CardTitle className="text-sm font-medium flex items-center gap-1.5">
-                        <Bot className="w-3.5 h-3.5" />
-                        AI Proposed Agent Architecture ({proposal.proposedAgents.length})
+                        <Users className="w-3.5 h-3.5" />
+                        Proposed Automation Roles ({proposal.proposedAgents.length})
                       </CardTitle>
                     </CardHeader>
                     <CardContent className="p-4 pt-1 flex flex-col gap-2">
-                      {proposal.proposedAgents.map((agent: { role?: string; name?: string; requiredTools?: string[]; tools?: string[]; autonomyMode?: string; riskTier?: string; description?: string }, i: number) => {
-                        const agentName = agent.role || agent.name || `Agent ${i + 1}`;
+                      {proposal.proposedAgents.map((agent: { role?: string; name?: string; requiredTools?: string[]; tools?: string[]; autonomyMode?: string; riskTier?: string; description?: string; estimatedImpact?: string }, i: number) => {
+                        const agentName = agent.role || agent.name || `Role ${i + 1}`;
                         const agentTools: string[] = agent.requiredTools || agent.tools || [];
                         const toolChips = agentTools.map((toolName) => {
                           const toolNameLower = toolName.toLowerCase();
@@ -2378,58 +2391,60 @@ export default function OutcomeDiscover() {
                           };
                         });
                         const registeredCount = toolChips.filter((c) => c.status === "exists" || c.status === "partial").length;
+                        const oversightLabel = agent.autonomyMode === "full_auto" ? "Fully Automated" : agent.autonomyMode === "supervised" ? "Human-in-the-Loop" : agent.autonomyMode === "semi_auto" ? "Semi-Automated" : agent.autonomyMode ? agent.autonomyMode.replace(/_/g, " ") : null;
                         return (
-                          <div key={i} className="flex flex-col gap-1.5 p-2 rounded-md bg-muted/50 border border-transparent" data-testid={`proposed-agent-card-${i}`}>
-                            <div className="flex items-center justify-between gap-2 flex-wrap">
-                              <div className="flex flex-col min-w-0 flex-1">
-                                <span className="text-sm font-medium truncate" data-testid={`text-proposed-agent-name-${i}`}>{agentName}</span>
+                          <div key={i} className="flex flex-col gap-2 p-3 rounded-md bg-muted/50 border border-transparent" data-testid={`proposed-agent-card-${i}`}>
+                            <div className="flex items-start justify-between gap-2 flex-wrap">
+                              <div className="flex flex-col min-w-0 flex-1 gap-0.5">
+                                <span className="text-sm font-semibold truncate" data-testid={`text-proposed-agent-name-${i}`}>{agentName}</span>
                                 <div className="flex items-center gap-2 flex-wrap">
-                                  {agent.autonomyMode && (
-                                    <span className="text-xs text-muted-foreground capitalize">{agent.autonomyMode}</span>
+                                  {oversightLabel && (
+                                    <span className="text-xs text-muted-foreground">{oversightLabel}</span>
                                   )}
                                   {agent.riskTier && (
                                     <Badge variant="outline" className={`text-xs ${agent.riskTier === "HIGH" || agent.riskTier === "CRITICAL" ? "border-red-500/40 text-red-600 dark:text-red-400" : agent.riskTier === "MEDIUM" ? "border-amber-500/40 text-amber-600 dark:text-amber-400" : "border-emerald-500/40 text-emerald-600 dark:text-emerald-400"}`}>
-                                      {agent.riskTier}
+                                      {agent.riskTier === "LOW" ? "Low Risk" : agent.riskTier === "MEDIUM" ? "Medium Risk" : agent.riskTier === "HIGH" ? "High Risk" : agent.riskTier} 
                                     </Badge>
-                                  )}
-                                  {agentTools.length > 0 && (
-                                    <span className="text-xs text-muted-foreground" data-testid={`text-tool-score-proposed-${i}`}>
-                                      {registeredCount}/{agentTools.length} tools registered
-                                    </span>
                                   )}
                                 </div>
                               </div>
                             </div>
-                            {toolChips.length > 0 && (
-                              <div className="flex flex-wrap gap-1" data-testid={`tool-chips-proposed-${i}`}>
-                                {toolChips.map((tc, j) => (
-                                  <span
-                                    key={j}
-                                    className={`inline-flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded border ${
-                                      tc.status === "exists" ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" :
-                                      tc.status === "partial" ? "border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/5" :
-                                      "border-red-500/40 text-red-600 dark:text-red-400 bg-red-500/5"
-                                    }`}
-                                    title={
-                                      tc.status === "exists" ? `Registered · risk: ${tc.riskClassification || "low"}` :
-                                      tc.status === "partial" ? `Partial match → ${tc.matchedName || tc.name}` :
-                                      "Not registered in MCP catalog"
-                                    }
-                                    data-testid={`tool-chip-proposed-${i}-${j}`}
-                                  >
-                                    {tc.status === "exists" ? <Check className="w-2 h-2" /> : tc.status === "partial" ? <Minus className="w-2 h-2" /> : <X className="w-2 h-2" />}
-                                    {tc.status === "exists"
-                                      ? <>{tc.name}{tc.riskClassification && tc.riskClassification !== "low" && <span className="ml-0.5 opacity-60">·{tc.riskClassification.toUpperCase()}</span>}</>
-                                      : tc.status === "partial"
-                                        ? <>{tc.name}{tc.matchedName && tc.matchedName !== tc.name && <span className="ml-0.5 opacity-70">~{tc.matchedName}</span>}</>
-                                        : tc.name
-                                    }
-                                  </span>
-                                ))}
+                            {agent.description && (
+                              <p className="text-xs text-muted-foreground leading-relaxed" data-testid={`text-proposed-agent-desc-${i}`}>{agent.description}</p>
+                            )}
+                            {agent.estimatedImpact && (
+                              <div className="flex items-start gap-1.5 px-2 py-1.5 rounded bg-primary/5 border border-primary/15" data-testid={`text-proposed-agent-impact-${i}`}>
+                                <TrendingUp className="w-3 h-3 text-primary shrink-0 mt-0.5" />
+                                <span className="text-xs text-primary/90 leading-relaxed">{agent.estimatedImpact}</span>
                               </div>
                             )}
-                            {!platformIntel && agentTools.length > 0 && (
-                              <span className="text-xs text-muted-foreground/60 italic">{agentTools.length} tools required — coverage loads with Platform Match</span>
+                            {toolChips.length > 0 && (
+                              <div className="flex flex-col gap-1" data-testid={`tool-chips-proposed-${i}`}>
+                                <span className="text-[10px] text-muted-foreground/60 uppercase tracking-wide font-semibold">
+                                  Capabilities ({registeredCount}/{agentTools.length} ready)
+                                </span>
+                                <div className="flex flex-wrap gap-1">
+                                  {toolChips.map((tc, j) => (
+                                    <span
+                                      key={j}
+                                      className={`inline-flex items-center gap-0.5 text-[10px] px-1 py-0.5 rounded border ${
+                                        tc.status === "exists" ? "border-emerald-500/40 text-emerald-600 dark:text-emerald-400 bg-emerald-500/5" :
+                                        tc.status === "partial" ? "border-amber-500/40 text-amber-600 dark:text-amber-400 bg-amber-500/5" :
+                                        "border-red-500/40 text-red-600 dark:text-red-400 bg-red-500/5"
+                                      }`}
+                                      title={
+                                        tc.status === "exists" ? "Available in platform" :
+                                        tc.status === "partial" ? `Partial match → ${tc.matchedName || tc.name}` :
+                                        "Needs to be configured"
+                                      }
+                                      data-testid={`tool-chip-proposed-${i}-${j}`}
+                                    >
+                                      {tc.status === "exists" ? <Check className="w-2 h-2" /> : tc.status === "partial" ? <Minus className="w-2 h-2" /> : <X className="w-2 h-2" />}
+                                      {tc.name}
+                                    </span>
+                                  ))}
+                                </div>
+                              </div>
                             )}
                           </div>
                         );
@@ -2449,10 +2464,10 @@ export default function OutcomeDiscover() {
                       >
                         <div className="flex items-center gap-1.5">
                           <Cpu className="w-3.5 h-3.5" />
-                          Platform Match
+                          Platform Readiness
                           {platformIntel?.summary && (
                             <Badge variant="outline" className="text-xs ml-1">
-                              {platformIntel.summary.liveAgentMatchCount} live · {platformIntel.summary.templateCount} templates
+                              {platformIntel.summary.liveAgentMatchCount} ready · {platformIntel.summary.templateCount} playbooks
                             </Badge>
                           )}
                         </div>
@@ -2465,12 +2480,12 @@ export default function OutcomeDiscover() {
                     </CardHeader>
                     {showPlatformMatch && !loadingIntel && platformIntel && (
                       <CardContent className="p-4 pt-1 flex flex-col gap-3">
-                        {/* Tier 1 — Live Agents with per-agent tool coverage chips */}
+                        {/* Ready-to-Deploy Automations (formerly "Tier 1 — Live Agents") */}
                         {platformIntel.matchedAgents.some((r) => r.matches.length > 0) && (
                           <div className="flex flex-col gap-1.5">
                             <div className="flex items-center justify-between gap-2">
-                              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tier 1 — Live Agents</span>
-                              <span className="text-xs text-muted-foreground italic">Accept → bound on create · Reject → excluded</span>
+                              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Ready-to-Deploy Automations</span>
+                              <span className="text-xs text-muted-foreground italic">Accept → assign · Reject → skip</span>
                             </div>
                             {platformIntel.matchedAgents.filter((r) => r.matches.length > 0).flatMap((r) => {
                               const rRoleLower = r.role.toLowerCase();
@@ -2584,12 +2599,12 @@ export default function OutcomeDiscover() {
                             })}
                           </div>
                         )}
-                        {/* Tier 2 — Templates with select-to-build-after-creation action */}
+                        {/* Recommended Solution Playbooks (formerly "Tier 2 — Templates") */}
                         {platformIntel.matchedTemplates.length > 0 && (
                           <div className="flex flex-col gap-1.5">
                             <div className="flex items-center justify-between gap-2">
-                              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Tier 2 — Templates</span>
-                              <span className="text-xs text-muted-foreground italic">Accept → opens with template · Reject → skip</span>
+                              <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Recommended Solution Playbooks</span>
+                              <span className="text-xs text-muted-foreground italic">Accept → use playbook · Reject → skip</span>
                             </div>
                             {platformIntel.matchedTemplates.slice(0, 3).map((t) => {
                               const templateDecision = templateDecisions[t.id];
@@ -2664,7 +2679,7 @@ export default function OutcomeDiscover() {
                         {platformIntel.matchedAgents.every((r) => r.matches.length === 0) && platformIntel.matchedTemplates.length === 0 && (
                           <div className="flex items-center gap-2 p-2 rounded-md bg-muted/30 text-muted-foreground">
                             <Info className="w-3.5 h-3.5 shrink-0" />
-                            <span className="text-xs">No live agents or templates found matching the proposed roles. These will need to be built from scratch.</span>
+                            <span className="text-xs">No pre-built automations or solution playbooks match this outcome yet. A custom build plan will be created after you launch.</span>
                           </div>
                         )}
                       </CardContent>
@@ -2674,11 +2689,11 @@ export default function OutcomeDiscover() {
 
                 <Card>
                   <CardContent className="p-4 flex items-center gap-2">
-                    <Bot className="w-4 h-4 text-muted-foreground shrink-0" />
+                    <Workflow className="w-4 h-4 text-muted-foreground shrink-0" />
                     <div className="flex flex-col gap-0.5">
-                      <span className="text-sm font-medium">Agent Development Plan</span>
+                      <span className="text-sm font-medium">Automation Build Plan</span>
                       <span className="text-xs text-muted-foreground">
-                        After creating this outcome, you can request an Agent Development Plan. An Agent Engineer will then propose and create agents from the outcome detail page.
+                        After creating this outcome, you can request a full Automation Build Plan. The platform will design and configure the automations needed to deliver your target results.
                       </span>
                     </div>
                   </CardContent>
