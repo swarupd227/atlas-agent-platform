@@ -1,5 +1,4 @@
 import { Router } from "express";
-import OpenAI from "openai";
 import { z } from "zod";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
@@ -13,11 +12,7 @@ import {
   executeTeamPipeline,
   type RuntimeAgent,
 } from "../agent-runtime";
-
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+import { callClaude, stripJsonFences } from "../claude";
 
 const router = Router();
 
@@ -100,12 +95,8 @@ const router = Router();
   router.post("/api/ai/generate-shadow-traces", async (req, res) => {
     try {
       const { industry, count = 3 } = req.body;
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        messages: [
-          {
-            role: "system",
-            content: `You are an AI agent testing expert generating realistic production trace data for shadow replay testing. Generate traces that represent real agent interactions in production environments.
+      const raw = await callClaude({
+        system: `You are an AI agent testing expert generating realistic production trace data for shadow replay testing. Generate traces that represent real agent interactions in production environments.
 
 Return JSON with this structure:
 {
@@ -128,19 +119,12 @@ Return JSON with this structure:
   ]
 }
 
-Generate diverse, realistic traces with varying complexity, risk levels, and edge-case patterns. Include realistic input/output data specific to the industry domain.`
-          },
-          {
-            role: "user",
-            content: `Generate ${Math.min(count, 5)} realistic production traces for the ${industry || "financial_services"} industry. Make them diverse in scenario complexity and risk level. Return ONLY valid JSON.`
-          }
-        ],
-        response_format: { type: "json_object" },
+Generate diverse, realistic traces with varying complexity, risk levels, and edge-case patterns. Include realistic input/output data specific to the industry domain.`,
+        user: `Generate ${Math.min(count, 5)} realistic production traces for the ${industry || "financial_services"} industry. Make them diverse in scenario complexity and risk level. Return ONLY valid JSON.`,
+        jsonMode: true,
+        maxTokens: 4096,
       });
-
-      const content = response.choices[0]?.message?.content;
-      if (!content) return res.status(500).json({ error: "No response from AI" });
-      const parsed = JSON.parse(content);
+      const parsed = JSON.parse(stripJsonFences(raw));
       const createdTraces = [];
       for (const t of (parsed.traces || [])) {
         const trace = await storage.createShadowTrace({
@@ -181,12 +165,8 @@ Generate diverse, realistic traces with varying complexity, risk levels, and edg
 
       if (traces.length === 0) return res.status(400).json({ error: "No traces found for this session" });
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        messages: [
-          {
-            role: "system",
-            content: `You are an AI agent evaluation expert performing shadow replay analysis. Compare baseline agent outputs with candidate agent outputs using industry-specific rubrics.
+      const raw = await callClaude({
+        system: `You are an AI agent evaluation expert performing shadow replay analysis. Compare baseline agent outputs with candidate agent outputs using industry-specific rubrics.
 
 For ${industry || "financial_services"} industry, evaluate using these rubrics:
 ${industry === "healthcare" ? "- Clinical Accuracy (0-100): Correctness of clinical recommendations\n- Guideline Adherence (0-100): Following established clinical guidelines\n- Patient Safety (0-100): Risk to patient wellbeing\n- Documentation Quality (0-100): Completeness of clinical documentation" :
@@ -223,11 +203,8 @@ Return JSON with this structure:
     "recommendation": "approve|review|reject",
     "summary": "string - 2-3 sentence summary of replay results"
   }
-}`
-          },
-          {
-            role: "user",
-            content: `Analyze shadow replay for session "${session.name}".
+}`,
+        user: `Analyze shadow replay for session "${session.name}".
 Candidate version: ${session.candidateAgentVersion}
 Baseline version: ${session.baselineAgentVersion}
 Comparison criteria: ${JSON.stringify(session.comparisonCriteria)}
@@ -237,15 +214,11 @@ ${traces.map((t, i) => `Trace ${i + 1} (${t.id}): ${t.scenarioCategory} [${t.sce
 Input: ${JSON.stringify(t.traceInput)}
 Output: ${JSON.stringify(t.traceOutput)}`).join("\n\n")}
 
-Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid JSON.`
-          }
-        ],
-        response_format: { type: "json_object" },
+Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid JSON.`,
+        jsonMode: true,
+        maxTokens: 6000,
       });
-
-      const content = response.choices[0]?.message?.content;
-      if (!content) return res.status(500).json({ error: "No response from AI" });
-      const analysis = JSON.parse(content);
+      const analysis = JSON.parse(stripJsonFences(raw));
 
       const replayResults = analysis.replayResults || [];
       const passedTraces = replayResults.filter((r: any) => r.verdict === "equivalent" || r.verdict === "improved" || r.verdict === "different_but_acceptable").length;
@@ -1256,16 +1229,9 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
       const selectedIndustry = industry || deployment?.industry || "financial_services";
       const context = industryContext[selectedIndustry] || industryContext.financial_services;
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert in canary deployment analysis for ${selectedIndustry} AI agents. Analyze the deployment metrics and provide recommendations.`
-          },
-          {
-            role: "user",
-            content: `Analyze this canary deployment and provide KPI metrics, blast radius assessment, and promotion/rollback recommendation.
+      const canaryRaw = await callClaude({
+        system: `You are an expert in canary deployment analysis for ${selectedIndustry} AI agents. Analyze the deployment metrics and provide recommendations.`,
+        user: `Analyze this canary deployment and provide KPI metrics, blast radius assessment, and promotion/rollback recommendation.
 
 Industry: ${selectedIndustry}
 Industry KPIs: ${JSON.stringify(context.kpis)}
@@ -1284,14 +1250,13 @@ Respond in JSON:
   "reasoning": string,
   "riskScore": number,
   "safetyGateStatus": [{ "gate": string, "passed": boolean, "detail": string }]
-}`
-          }
-        ],
-        temperature: 0.3,
-        response_format: { type: "json_object" },
+}`,
+        model: "claude-haiku-4-5",
+        jsonMode: true,
+        maxTokens: 2048,
       });
 
-      const analysis = JSON.parse(response.choices[0].message.content || "{}");
+      const analysis = JSON.parse(stripJsonFences(canaryRaw) || "{}");
 
       if (deployment) {
         await storage.updateCanaryDeployment(deployment.id, {

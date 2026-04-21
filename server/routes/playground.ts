@@ -7,6 +7,7 @@ import { conversations, messages as chatMessages } from "@shared/schema";
 import { buildAgentSystemPrompt } from "./helpers";
 import { executePromptWithMcp, type RuntimeProgressEvent } from "../agent-runtime";
 import OpenAI from "openai";
+import { callClaude, stripJsonFences, anthropicClient } from "../claude";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -227,28 +228,24 @@ const router = Router();
           });
         } catch {}
       } else {
-        const chatMsgs: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
-          { role: "system", content: systemPrompt },
-          ...existingMsgs.map(m => ({
-            role: m.role as "user" | "assistant",
-            content: m.content,
-          })),
-        ];
+        const claudeMsgs = existingMsgs.map(m => ({
+          role: m.role as "user" | "assistant",
+          content: m.content,
+        }));
 
-        const stream = await openai.chat.completions.create({
-          model: agent.modelName || "gpt-4.1",
-          messages: chatMsgs,
-          stream: true,
-          max_completion_tokens: 4096,
+        const claudeStream = anthropicClient.messages.stream({
+          model: "claude-opus-4-5",
+          system: systemPrompt,
+          messages: claudeMsgs,
+          max_tokens: 4096,
         });
 
-        for await (const chunk of stream) {
-          const c = chunk.choices[0]?.delta?.content || "";
-          if (c) {
-            fullResponse += c;
-            res.write(`data: ${JSON.stringify({ content: c })}\n\n`);
-          }
-        }
+        claudeStream.on("text", (text) => {
+          fullResponse += text;
+          res.write(`data: ${JSON.stringify({ content: text })}\n\n`);
+        });
+
+        await claudeStream.finalMessage();
 
         try {
           await storage.createTrace({
@@ -258,7 +255,7 @@ const router = Router();
             latencyMs: Date.now() - playgroundStartTime,
             inputSummary: `Playground: ${content.length > 120 ? content.substring(0, 117) + "..." : content}`,
             outputSummary: fullResponse.length > 300 ? fullResponse.substring(0, 297) + "..." : fullResponse,
-            modelId: agent.modelName || "gpt-4.1",
+            modelId: "claude-opus-4-5",
           });
         } catch {}
       }
@@ -308,8 +305,7 @@ const router = Router();
 
       let fullResponse = "";
 
-      const chatMsgs: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
-        { role: "system", content: genericPrompt },
+      const genericMsgs = [
         ...existingMsgs.map(m => ({
           role: m.role as "user" | "assistant",
           content: m.content,
@@ -317,20 +313,19 @@ const router = Router();
         { role: "user" as const, content },
       ];
 
-      const stream = await openai.chat.completions.create({
-        model: agent.modelName || "gpt-4.1",
-        messages: chatMsgs,
-        stream: true,
-        max_completion_tokens: 4096,
+      const claudeGenericStream = anthropicClient.messages.stream({
+        model: "claude-opus-4-5",
+        system: genericPrompt,
+        messages: genericMsgs,
+        max_tokens: 4096,
       });
 
-      for await (const chunk of stream) {
-        const c = chunk.choices[0]?.delta?.content || "";
-        if (c) {
-          fullResponse += c;
-          res.write(`data: ${JSON.stringify({ content: c })}\n\n`);
-        }
-      }
+      claudeGenericStream.on("text", (text) => {
+        fullResponse += text;
+        res.write(`data: ${JSON.stringify({ content: text })}\n\n`);
+      });
+
+      await claudeGenericStream.finalMessage();
 
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
       res.end();
@@ -387,20 +382,19 @@ Return ONLY a JSON array where each element has:
 
 Return ONLY valid JSON array, no explanation.`;
 
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4.1-mini",
-        messages: [{ role: "user", content: prompt }],
-        max_completion_tokens: 1024,
-        temperature: 0.1,
+      const annotateRaw = await callClaude({
+        system: "",
+        user: prompt,
+        model: "claude-haiku-4-5",
+        maxTokens: 1024,
       });
 
-      const content = completion.choices[0]?.message?.content || "[]";
       let parsed: any[] = [];
       try {
-        const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+        const cleaned = stripJsonFences(annotateRaw);
         parsed = JSON.parse(cleaned);
       } catch {
-        const arrayMatch = content.match(/\[[\s\S]*\]/);
+        const arrayMatch = annotateRaw.match(/\[[\s\S]*\]/);
         if (arrayMatch) {
           try { parsed = JSON.parse(arrayMatch[0]); } catch { /* fallback */ }
         }

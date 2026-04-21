@@ -1,12 +1,7 @@
-import OpenAI from "openai";
 import { ZodError } from "zod";
 import { completeWithFallback } from "../llm-provider";
 import { storage } from "../storage";
-
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+import { callClaude, stripJsonFences } from "../claude";
 
 async function routeAIComplete(
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
@@ -508,25 +503,16 @@ export async function runParameterMatching(serverId: string, industryId?: string
   if (unmatchedNames.length > 0 && allConcepts.length > 0) {
     try {
       const conceptLabels = allConcepts.slice(0, 100).map(c => c.label).join(", ");
-      const aiRes = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are a domain vocabulary matcher. Given a list of parameter names and a list of ontology concepts, suggest matches. Return JSON array of objects with: parameterName, matchedConceptLabel (exact match from concept list or null if no match), confidence (0.5-0.85). Only suggest matches where there is a genuine semantic relationship.`,
-          },
-          {
-            role: "user",
-            content: `Parameters: ${unmatchedNames.join(", ")}\n\nOntology concepts: ${conceptLabels}`,
-          },
-        ],
-        response_format: { type: "json_object" },
-        temperature: 0.3,
+      const paramRaw = await callClaude({
+        system: `You are a domain vocabulary matcher. Given a list of parameter names and a list of ontology concepts, suggest matches. Return JSON array of objects with: parameterName, matchedConceptLabel (exact match from concept list or null if no match), confidence (0.5-0.85). Only suggest matches where there is a genuine semantic relationship.`,
+        user: `Parameters: ${unmatchedNames.join(", ")}\n\nOntology concepts: ${conceptLabels}`,
+        model: "claude-haiku-4-5",
+        jsonMode: true,
+        maxTokens: 1024,
       });
 
-      const content = aiRes.choices[0]?.message?.content;
-      if (content) {
-        const parsed = JSON.parse(content);
+      if (paramRaw) {
+        const parsed = JSON.parse(stripJsonFences(paramRaw));
         const aiMatches: Array<{ parameterName: string; matchedConceptLabel: string | null; confidence: number }> =
           Array.isArray(parsed) ? parsed : parsed.matches || parsed.results || [];
 

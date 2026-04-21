@@ -1,5 +1,4 @@
 import { Router } from "express";
-import OpenAI from "openai";
 import { z, ZodError } from "zod";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
@@ -7,11 +6,7 @@ import {
   insertAutonomyProfileSchema,
   insertOversightDecisionSchema,
 } from "@shared/schema";
-
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+import { callClaude, stripJsonFences } from "../claude";
 
 const router = Router();
 
@@ -109,12 +104,8 @@ const router = Router();
   router.post("/api/ai/generate-oversight-decisions", async (req, res) => {
     try {
       const { industry, count = 3 } = req.body;
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        messages: [
-          {
-            role: "system",
-            content: `You are an AI governance expert generating realistic oversight decision scenarios for AI agent management platforms. Generate decisions that require human review.
+      const raw = await callClaude({
+        system: `You are an AI governance expert generating realistic oversight decision scenarios for AI agent management platforms. Generate decisions that require human review.
 
 Return JSON with this structure:
 {
@@ -137,19 +128,12 @@ Return JSON with this structure:
   ]
 }
 
-Make each decision unique, realistic, and industry-appropriate. Include diverse risk levels and action types. Use real regulation names and realistic agent scenarios.`
-          },
-          {
-            role: "user",
-            content: `Generate ${Math.min(count, 5)} realistic pending oversight decisions for the ${industry || "financial_services"} industry. Make them diverse in risk level and action type. Return ONLY valid JSON.`
-          }
-        ],
-        response_format: { type: "json_object" },
+Make each decision unique, realistic, and industry-appropriate. Include diverse risk levels and action types. Use real regulation names and realistic agent scenarios.`,
+        user: `Generate ${Math.min(count, 5)} realistic pending oversight decisions for the ${industry || "financial_services"} industry. Make them diverse in risk level and action type. Return ONLY valid JSON.`,
+        jsonMode: true,
+        maxTokens: 4096,
       });
-
-      const content = response.choices[0]?.message?.content;
-      if (!content) return res.status(500).json({ error: "No response from AI" });
-      const parsed = JSON.parse(content);
+      const parsed = JSON.parse(stripJsonFences(raw));
       const createdDecisions = [];
       for (const d of (parsed.decisions || [])) {
         const decision = await storage.createOversightDecision({
@@ -178,12 +162,8 @@ Make each decision unique, realistic, and industry-appropriate. Include diverse 
   router.post("/api/ai/oversight-context", async (req, res) => {
     try {
       const { decision, industry } = req.body;
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        messages: [
-          {
-            role: "system",
-            content: `You are an AI governance expert providing decision context for human oversight of AI agents. Given a pending agent decision, provide rich context including similar historical decisions, risk analysis, and regulatory implications.
+      const raw = await callClaude({
+        system: `You are an AI governance expert providing decision context for human oversight of AI agents. Given a pending agent decision, provide rich context including similar historical decisions, risk analysis, and regulatory implications.
 
 Return JSON with this structure:
 {
@@ -214,23 +194,16 @@ Return JSON with this structure:
     "confidence": number 0-1,
     "reasoning": "string - why this action is recommended"
   }
-}`
-          },
-          {
-            role: "user",
-            content: `Provide decision context for this pending AI agent action in the ${industry || "financial_services"} industry.
+}`,
+        user: `Provide decision context for this pending AI agent action in the ${industry || "financial_services"} industry.
 
 Decision Details: ${JSON.stringify(decision || {})}
 
-Analyze risk dimensions, find similar past decisions, identify applicable regulations, and provide a recommendation. Return ONLY valid JSON.`
-          }
-        ],
-        response_format: { type: "json_object" },
+Analyze risk dimensions, find similar past decisions, identify applicable regulations, and provide a recommendation. Return ONLY valid JSON.`,
+        jsonMode: true,
+        maxTokens: 4096,
       });
-
-      const content = response.choices[0]?.message?.content;
-      if (!content) return res.status(500).json({ error: "No response from AI" });
-      res.json(JSON.parse(content));
+      res.json(JSON.parse(stripJsonFences(raw)));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
@@ -238,12 +211,8 @@ Analyze risk dimensions, find similar past decisions, identify applicable regula
   router.post("/api/ai/generate-autonomy-profile", async (req, res) => {
     try {
       const { industry, profileName, description } = req.body;
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        messages: [
-          {
-            role: "system",
-            content: `You are an AI governance expert specializing in adaptive autonomy calibration. Generate a complete autonomy profile with industry-specific risk dimensions and calibrated autonomy levels.
+      const raw = await callClaude({
+        system: `You are an AI governance expert specializing in adaptive autonomy calibration. Generate a complete autonomy profile with industry-specific risk dimensions and calibrated autonomy levels.
 
 Return JSON with this structure:
 {
@@ -285,37 +254,26 @@ Return JSON with this structure:
   "summary": "string - brief summary of the generated profile"
 }
 
-Generate 6-8 risk dimensions specific to the industry, 8-12 action types with appropriate autonomy levels, and 2-3 reasonable override rules for common business periods. Levels 0=Full Auto, 1=Log Only, 2=Notify After, 3=Confirm Before, 4=Expert Approval.`
-          },
-          {
-            role: "user",
-            content: `Generate a complete autonomy profile for the "${industry || "financial_services"}" industry.
+Generate 6-8 risk dimensions specific to the industry, 8-12 action types with appropriate autonomy levels, and 2-3 reasonable override rules for common business periods. Levels 0=Full Auto, 1=Log Only, 2=Notify After, 3=Confirm Before, 4=Expert Approval.`,
+        user: `Generate a complete autonomy profile for the "${industry || "financial_services"}" industry.
 Profile name: "${profileName || "Auto-Generated Profile"}"
 Description: "${description || "AI-generated autonomy configuration"}"
 
 Consider industry-specific regulations, risk tolerances, and common business patterns. Generate realistic risk dimensions, well-calibrated autonomy levels for typical agent actions, and sensible override rules.
 
-Return ONLY valid JSON.`
-          }
-        ],
-        response_format: { type: "json_object" },
+Return ONLY valid JSON.`,
+        jsonMode: true,
+        maxTokens: 4096,
       });
-
-      const content = response.choices[0]?.message?.content;
-      if (!content) return res.status(500).json({ error: "No response from AI" });
-      res.json(JSON.parse(content));
+      res.json(JSON.parse(stripJsonFences(raw)));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   router.post("/api/ai/enhance-autonomy-profile", async (req, res) => {
     try {
       const { industry, riskDimensions, autonomyLevels, overrideRules } = req.body;
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        messages: [
-          {
-            role: "system",
-            content: `You are an AI governance expert specializing in adaptive autonomy optimization. Analyze an existing autonomy profile and suggest enhancements to improve its effectiveness, coverage, and risk calibration.
+      const raw = await callClaude({
+        system: `You are an AI governance expert specializing in adaptive autonomy optimization. Analyze an existing autonomy profile and suggest enhancements to improve its effectiveness, coverage, and risk calibration.
 
 Return JSON with this structure:
 {
@@ -335,11 +293,8 @@ Return JSON with this structure:
   "summary": "string - overall enhancement summary"
 }
 
-Analyze gaps in risk coverage, identify miscalibrated autonomy levels, suggest missing override rules, and optimize weights. Preserve the overall structure but enhance it with better calibration.`
-          },
-          {
-            role: "user",
-            content: `Enhance this autonomy profile for the "${industry || "financial_services"}" industry.
+Analyze gaps in risk coverage, identify miscalibrated autonomy levels, suggest missing override rules, and optimize weights. Preserve the overall structure but enhance it with better calibration.`,
+        user: `Enhance this autonomy profile for the "${industry || "financial_services"}" industry.
 
 Current Risk Dimensions: ${JSON.stringify(riskDimensions || [])}
 Current Autonomy Levels: ${JSON.stringify(autonomyLevels || [])}
@@ -347,27 +302,19 @@ Current Override Rules: ${JSON.stringify(overrideRules || [])}
 
 Analyze the current configuration and suggest specific enhancements. Identify gaps in risk coverage, miscalibrated autonomy levels, and missing override rules. Provide before/after scores.
 
-Return ONLY valid JSON.`
-          }
-        ],
-        response_format: { type: "json_object" },
+Return ONLY valid JSON.`,
+        jsonMode: true,
+        maxTokens: 4096,
       });
-
-      const content = response.choices[0]?.message?.content;
-      if (!content) return res.status(500).json({ error: "No response from AI" });
-      res.json(JSON.parse(content));
+      res.json(JSON.parse(stripJsonFences(raw)));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   router.post("/api/ai/autonomy-recommendations", async (req, res) => {
     try {
       const { industry, riskDimensions, autonomyLevels, approvalHistory } = req.body;
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        messages: [
-          {
-            role: "system",
-            content: `You are an AI governance expert specializing in adaptive autonomy calibration for AI agent platforms. Analyze approval patterns and risk dimensions to recommend autonomy adjustments.
+      const raw = await callClaude({
+        system: `You are an AI governance expert specializing in adaptive autonomy calibration for AI agent platforms. Analyze approval patterns and risk dimensions to recommend autonomy adjustments.
 
 Return JSON with this structure:
 {
@@ -397,11 +344,8 @@ Return JSON with this structure:
     "reducedApprovals": number,
     "currentBottlenecks": ["string - current bottleneck descriptions"]
   }
-}`
-          },
-          {
-            role: "user",
-            content: `Analyze these autonomy settings and recommend adjustments for the ${industry || "general"} industry.
+}`,
+        user: `Analyze these autonomy settings and recommend adjustments for the ${industry || "general"} industry.
 
 Current Risk Dimensions: ${JSON.stringify(riskDimensions || [])}
 Current Autonomy Levels: ${JSON.stringify(autonomyLevels || [])}
@@ -409,15 +353,11 @@ Recent Approval History: ${JSON.stringify(approvalHistory || { totalDecisions: 2
 
 Provide specific, actionable recommendations for calibrating autonomy levels based on the approval patterns and risk dimensions. Consider industry-specific regulations and risk tolerances.
 
-Return ONLY valid JSON.`
-          }
-        ],
-        response_format: { type: "json_object" },
+Return ONLY valid JSON.`,
+        jsonMode: true,
+        maxTokens: 4096,
       });
-
-      const content = response.choices[0]?.message?.content;
-      if (!content) return res.status(500).json({ error: "No response from AI" });
-      res.json(JSON.parse(content));
+      res.json(JSON.parse(stripJsonFences(raw)));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

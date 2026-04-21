@@ -1,5 +1,4 @@
 import { Router } from "express";
-import OpenAI from "openai";
 import { z } from "zod";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
@@ -13,11 +12,7 @@ import {
   insertEvalCaseResultSchema,
   insertBlueprintSchema,
 } from "@shared/schema";
-
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+import { callClaude, stripJsonFences, anthropicClient } from "../claude";
 
 export default function createEvaluationsRouter(industryEvalFrameworks: Record<string, any>) {
   const router = Router();
@@ -1307,7 +1302,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
   // AI Template Matching
   router.post("/api/ai/match-templates", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI matching is not configured" });
       }
       const { basicInfo, templates: templateList } = req.body;
@@ -1350,20 +1345,19 @@ Return a JSON array of the TOP 5 most relevant template recommendations, ranked 
 Only include templates with matchScore >= 30. Respond ONLY with a valid JSON array, no markdown, no explanation outside the JSON. Example format:
 [{"id": "abc", "matchScore": 92, "reasoning": "This template's ticket classification and KB search align with your support-focused agent description."}]`;
 
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        messages: [{ role: "user", content: prompt }],
-        max_completion_tokens: 2048,
-        temperature: 0.3,
+      const rawContent = await callClaude({
+        system: "",
+        user: prompt,
+        model: "claude-haiku-4-5",
+        maxTokens: 2048,
       });
 
-      const content = completion.choices[0]?.message?.content || "[]";
       let parsed: any[] = [];
       try {
-        const cleaned = content.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+        const cleaned = stripJsonFences(rawContent);
         parsed = JSON.parse(cleaned);
       } catch {
-        const arrayMatch = content.match(/\[[\s\S]*\]/);
+        const arrayMatch = rawContent.match(/\[[\s\S]*\]/);
         if (arrayMatch) {
           try { parsed = JSON.parse(arrayMatch[0]); } catch { /* fallback empty */ }
         }
@@ -1378,7 +1372,7 @@ Only include templates with matchScore >= 30. Respond ONLY with a valid JSON arr
   // AI Agent Design Assistant
   router.post("/api/ai/agent-assist", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI assistant is not configured" });
       }
       const { messages, wizardState } = req.body;
@@ -1409,22 +1403,22 @@ Guidelines:
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
 
-      const stream = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        messages: [
-          { role: "system", content: systemPrompt },
-          ...messages,
-        ],
-        stream: true,
-        max_completion_tokens: 2048,
+      const anthropicMessages = (messages as Array<{ role: string; content: string }>)
+        .filter(m => m.role === "user" || m.role === "assistant")
+        .map(m => ({ role: m.role as "user" | "assistant", content: m.content }));
+
+      const claudeStream = anthropicClient.messages.stream({
+        model: "claude-opus-4-5",
+        system: systemPrompt,
+        messages: anthropicMessages,
+        max_tokens: 2048,
       });
 
-      for await (const chunk of stream) {
-        const content = chunk.choices[0]?.delta?.content || "";
-        if (content) {
-          res.write(`data: ${JSON.stringify({ content })}\n\n`);
-        }
-      }
+      claudeStream.on("text", (text) => {
+        res.write(`data: ${JSON.stringify({ content: text })}\n\n`);
+      });
+
+      await claudeStream.finalMessage();
 
       res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
       res.end();

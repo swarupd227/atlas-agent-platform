@@ -1,5 +1,4 @@
 import { Router } from "express";
-import OpenAI from "openai";
 import { z, ZodError } from "zod";
 import { storage } from "../storage";
 import { checkPermission, getOntologySensitivityKeys, invalidateOntologySensitivityCache } from "../permissions";
@@ -21,10 +20,7 @@ import {
   insertTemporalGraphEntrySchema,
 } from "@shared/schema";
 
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+import { callClaude, stripJsonFences } from "../claude";
 
 const router = Router();
 
@@ -888,29 +884,20 @@ const router = Router();
       }
 
       let aiSuggestions: typeof kgRelationships = [];
-      if (process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         try {
           const concepts = await storage.getOntologyConcepts(industry || "");
           const conceptLabels = concepts.map(c => c.label).join(", ");
           const conceptLabelSet = new Set(concepts.map(c => c.label.toLowerCase()));
 
-          const response = await openai.chat.completions.create({
-            model: "gpt-4o-mini",
-            messages: [
-              {
-                role: "system",
-                content: `You are an industry ontology expert. Given an ontology term and its industry context, suggest meaningful relationships to other entities. Return a JSON object with a "relationships" array where each object has: type (e.g., "applies_to", "required_in", "governs", "depends_on", "related_to", "part_of", "regulates", "measured_by"), targetEntity (the related entity name — MUST be from the provided existing concepts list), confidence (a number between 0.0 and 1.0 reflecting how strong/certain this relationship is — use varied scores, not the same for all), and context (brief explanation of the relationship). Suggest 4-8 relationships that would be valuable for an AI agent operating in this domain. CRITICAL: Only suggest relationships to concepts that exist in the provided list. Do NOT invent new concept names.`
-              },
-              {
-                role: "user",
-                content: `Term: "${term}"\nIndustry: ${industry || "general"}\nExisting ontology concepts in this domain: ${conceptLabels}\n\nSuggest relationships for this term.`
-              }
-            ],
-            response_format: { type: "json_object" },
-            temperature: 0.7,
+          const ontologyRaw = await callClaude({
+            system: `You are an industry ontology expert. Given an ontology term and its industry context, suggest meaningful relationships to other entities. Return a JSON object with a "relationships" array where each object has: type (e.g., "applies_to", "required_in", "governs", "depends_on", "related_to", "part_of", "regulates", "measured_by"), targetEntity (the related entity name — MUST be from the provided existing concepts list), confidence (a number between 0.0 and 1.0 reflecting how strong/certain this relationship is — use varied scores, not the same for all), and context (brief explanation of the relationship). Suggest 4-8 relationships that would be valuable for an AI agent operating in this domain. CRITICAL: Only suggest relationships to concepts that exist in the provided list. Do NOT invent new concept names.`,
+            user: `Term: "${term}"\nIndustry: ${industry || "general"}\nExisting ontology concepts in this domain: ${conceptLabels}\n\nSuggest relationships for this term.`,
+            model: "claude-haiku-4-5",
+            jsonMode: true,
+            maxTokens: 1024,
           });
-
-          const parsed = JSON.parse(response.choices[0]?.message?.content || "{}");
+          const parsed = JSON.parse(stripJsonFences(ontologyRaw) || "{}");
           const suggestions = parsed.relationships || parsed.suggestions || [];
           aiSuggestions = suggestions.map((s: any) => ({
             type: s.type || "related_to",
@@ -949,7 +936,7 @@ const router = Router();
   // AI: Enhance a skill with detailed analysis
   router.post("/api/ai/enhance-skill", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { skillName, skillDescription, industry, domain, dependencies, tags } = req.body;
@@ -957,13 +944,8 @@ const router = Router();
         return res.status(400).json({ error: "skillName, skillDescription, and industry are required" });
       }
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        max_tokens: 4096,
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert in AI agent skill design and enterprise automation for the ${industry.replace(/_/g, " ")} industry, specifically the ${domain || "general"} domain.
+      const enhanceRaw = await callClaude({
+        system: `You are an expert in AI agent skill design and enterprise automation for the ${industry.replace(/_/g, " ")} industry, specifically the ${domain || "general"} domain.
 
 When given an agent skill, produce a comprehensive JSON enrichment with these fields:
 - "enhancedDescription": A polished, professional 2-4 sentence description that improves upon the original. It should be clearer, more specific about capabilities, and highlight the business value. Do NOT just repeat the original - genuinely improve it.
@@ -977,11 +959,8 @@ When given an agent skill, produce a comprehensive JSON enrichment with these fi
 - "useCases": Array of { "scenario": string, "outcome": string, "industry": string }
 - "complianceConsiderations": Array of { "regulation": string, "requirement": string, "howSkillAddresses": string }
 - "performanceBenchmarks": { "typicalLatency": string, "throughput": string, "accuracy": string, "errorRate": string }
-- "integrationPoints": Array of { "system": string, "protocol": string, "dataFlow": "inbound"|"outbound"|"bidirectional" }`
-          },
-          {
-            role: "user",
-            content: `Provide detailed enrichment for this agent skill:
+- "integrationPoints": Array of { "system": string, "protocol": string, "dataFlow": "inbound"|"outbound"|"bidirectional" }`,
+        user: `Provide detailed enrichment for this agent skill:
 
 Skill: ${skillName}
 Description: ${skillDescription}
@@ -990,15 +969,11 @@ Domain: ${domain || "General"}
 Dependencies: ${JSON.stringify(dependencies || [])}
 Tags: ${JSON.stringify(tags || [])}
 
-Return ONLY a valid JSON object. Do not include markdown formatting or code blocks.`
-          }
-        ],
-        response_format: { type: "json_object" },
+Return ONLY a valid JSON object. Do not include markdown formatting or code blocks.`,
+        jsonMode: true,
+        maxTokens: 4096,
       });
-
-      const content = response.choices[0]?.message?.content;
-      if (!content) return res.status(500).json({ error: "No response from AI" });
-      const enriched = JSON.parse(content);
+      const enriched = JSON.parse(stripJsonFences(enhanceRaw));
       res.json({ enriched });
     } catch (e: any) {
       console.error("AI enhance skill error:", e);
@@ -1009,7 +984,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
   // AI: Generate new skills for an industry/domain
   router.post("/api/ai/generate-skills", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { industry, domain, skillName, skillDescription, existingSkillNames, count } = req.body;
@@ -1029,13 +1004,8 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
         ? `Use this description as the basis (expand and refine it into a production-quality 2-3 sentence description): "${skillDescription}"`
         : "Write a detailed 2-3 sentence description explaining what the skill does, when it activates, and what outcomes it produces.";
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        max_completion_tokens: 6144,
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert in AI agent skill design for enterprise automation. You create detailed, production-ready agent skill definitions for the ${industry.replace(/_/g, " ")} industry.
+      const generateRaw = await callClaude({
+        system: `You are an expert in AI agent skill design for enterprise automation. You create detailed, production-ready agent skill definitions for the ${industry.replace(/_/g, " ")} industry.
 
 Generate a JSON object with a "skills" array. Each skill MUST have:
 - "name": ${nameDirective}
@@ -1053,25 +1023,19 @@ Generate a JSON object with a "skills" array. Each skill MUST have:
 - "status": "active"
 - "complexity": "beginner" | "intermediate" | "advanced"
 
-Generate exactly ${numSkills} unique, practical skills that would be valuable in real enterprise deployments.`
-          },
-          {
-            role: "user",
-            content: `Generate ${numSkills} new agent skill${numSkills > 1 ? 's' : ''} for:
+Generate exactly ${numSkills} unique, practical skills that would be valuable in real enterprise deployments.`,
+        user: `Generate ${numSkills} new agent skill${numSkills > 1 ? 's' : ''} for:
 
 Industry: ${industry.replace(/_/g, " ")}
 Domain: ${domain}${skillName ? `\nSkill Name: ${skillName}` : ""}${skillDescription ? `\nSkill Description: ${skillDescription}` : ""}
 ${existingContext}
 
-Return ONLY a valid JSON object with a "skills" array.`
-          }
-        ],
-        response_format: { type: "json_object" },
+Return ONLY a valid JSON object with a "skills" array.`,
+        jsonMode: true,
+        maxTokens: 6144,
       });
 
-      const content = response.choices[0]?.message?.content;
-      if (!content) return res.status(500).json({ error: "No response from AI" });
-      const result = JSON.parse(content);
+      const result = JSON.parse(stripJsonFences(generateRaw));
       res.json(result);
     } catch (e: any) {
       console.error("AI generate skills error:", e);
@@ -1378,18 +1342,15 @@ Return ONLY a valid JSON object with a "skills" array.`
       }
       const limitedNodes = nodes.slice(0, 20);
       const skillSummaries = limitedNodes.map((n: any) => `- "${String(n.skillName || "").slice(0, 200)}": ${String(n.description || "No description").slice(0, 500)}`).join("\n");
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: "You are an expert at analyzing AI agent skill chains. Identify potential conflicts where skills may give contradictory guidance. Return JSON: { conflicts: [{ skillA: string, skillB: string, type: 'contradiction' | 'overlap' | 'ordering', description: string, severity: 'high' | 'medium' | 'low', resolution: string }] }" },
-          { role: "user", content: `Analyze these skills in a chain for conflicts:\n${skillSummaries}` },
-        ],
-        temperature: 0.3,
-        response_format: { type: "json_object" },
+      const conflictsRaw = await callClaude({
+        system: "You are an expert at analyzing AI agent skill chains. Identify potential conflicts where skills may give contradictory guidance. Return JSON: { conflicts: [{ skillA: string, skillB: string, type: 'contradiction' | 'overlap' | 'ordering', description: string, severity: 'high' | 'medium' | 'low', resolution: string }] }",
+        user: `Analyze these skills in a chain for conflicts:\n${skillSummaries}`,
+        model: "claude-haiku-4-5",
+        jsonMode: true,
+        maxTokens: 1024,
       });
-      const raw = response.choices[0].message.content || "{}";
       let result;
-      try { result = JSON.parse(raw); } catch { result = { conflicts: [] }; }
+      try { result = JSON.parse(stripJsonFences(conflictsRaw)); } catch { result = { conflicts: [] }; }
       res.json(result);
     } catch (e: any) {
       res.status(500).json({ error: e.message });
@@ -1399,33 +1360,22 @@ Return ONLY a valid JSON object with a "skills" array.`
   // AI: Score description quality
   router.post("/api/ai/skill-description-quality", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { description, industry, domain } = req.body;
       if (!description) return res.status(400).json({ error: "description is required" });
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1-mini",
-        max_tokens: 512,
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert at evaluating AI agent skill descriptions for the ${(industry || "general").replace(/_/g, " ")} industry.
+      const qualityRaw = await callClaude({
+        system: `You are an expert at evaluating AI agent skill descriptions for the ${(industry || "general").replace(/_/g, " ")} industry.
 Score the description on a 0-100 scale based on: clarity (does it clearly explain what the skill does?), specificity (does it mention concrete actions, data, or outcomes?), activation guidance (would an agent know when to activate this skill?), and completeness (does it cover scope, constraints, and expected results?).
-Return JSON: { "score": number, "feedback": string (1-2 sentences of improvement advice), "strengths": string[], "weaknesses": string[] }`
-          },
-          {
-            role: "user",
-            content: `Score this skill description for the ${(domain || "general")} domain:\n\n"${description}"`
-          }
-        ],
-        response_format: { type: "json_object" },
+Return JSON: { "score": number, "feedback": string (1-2 sentences of improvement advice), "strengths": string[], "weaknesses": string[] }`,
+        user: `Score this skill description for the ${(domain || "general")} domain:\n\n"${description}"`,
+        model: "claude-haiku-4-5",
+        jsonMode: true,
+        maxTokens: 512,
       });
-
-      const content = response.choices[0]?.message?.content;
-      if (!content) return res.status(500).json({ error: "No response from AI" });
-      res.json(JSON.parse(content));
+      res.json(JSON.parse(stripJsonFences(qualityRaw)));
     } catch (e: any) {
       res.status(500).json({ error: e.message || "Failed to score description" });
     }
@@ -1434,19 +1384,14 @@ Return JSON: { "score": number, "feedback": string (1-2 sentences of improvement
   // AI: Instruction Builder - convert natural language to structured SKILL.md
   router.post("/api/ai/skill-instruction-builder", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { naturalLanguageInput, skillName, industry, domain } = req.body;
       if (!naturalLanguageInput) return res.status(400).json({ error: "naturalLanguageInput is required" });
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        max_tokens: 4096,
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert AI agent skill designer for the ${(industry || "general").replace(/_/g, " ")} industry, ${(domain || "general")} domain.
+      const instructionRaw = await callClaude({
+        system: `You are an expert AI agent skill designer for the ${(industry || "general").replace(/_/g, " ")} industry, ${(domain || "general")} domain.
 
 Convert the user's natural language workflow description into a structured SKILL.md format. Return JSON with:
 - "name": Skill name (use provided name or infer one)
@@ -1461,24 +1406,17 @@ Convert the user's natural language workflow description into a structured SKILL
   - "## Output Format" - expected output structure
   - "## Review Checklist" - verification steps
 - "suggestedDependencies": Array of { name, type: "mcp-tool"|"data-source"|"skill"|"policy" }
-- "suggestedTags": Array of relevant tags`
-          },
-          {
-            role: "user",
-            content: `Skill Name: ${skillName || "Auto-detect from description"}
+- "suggestedTags": Array of relevant tags`,
+        user: `Skill Name: ${skillName || "Auto-detect from description"}
 Industry: ${(industry || "general").replace(/_/g, " ")}
 Domain: ${domain || "General"}
 
 Domain expert description:
-${naturalLanguageInput}`
-          }
-        ],
-        response_format: { type: "json_object" },
+${naturalLanguageInput}`,
+        jsonMode: true,
+        maxTokens: 4096,
       });
-
-      const content = response.choices[0]?.message?.content;
-      if (!content) return res.status(500).json({ error: "No response from AI" });
-      res.json(JSON.parse(content));
+      res.json(JSON.parse(stripJsonFences(instructionRaw)));
     } catch (e: any) {
       console.error("AI instruction builder error:", e);
       res.status(500).json({ error: e.message || "Failed to generate instructions" });
@@ -1488,7 +1426,7 @@ ${naturalLanguageInput}`
   // AI: Skill Testing Sandbox - simulate agent execution
   router.post("/api/ai/skill-test-sandbox", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { skillName, description, markdownBody, testScenario, withSkill } = req.body;
@@ -1501,13 +1439,8 @@ Description: ${description}
 Instructions:
 ${markdownBody || "No instructions defined"}` : "The agent has NO specific skill active and must rely on general knowledge.";
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        max_tokens: 2048,
-        messages: [
-          {
-            role: "system",
-            content: `You are simulating an AI agent's behavior when given a scenario. ${skillContext}
+      const sandboxRaw = await callClaude({
+        system: `You are simulating an AI agent's behavior when given a scenario. ${skillContext}
 
 Simulate how the agent would handle the scenario. Return JSON:
 - "activationTriggered": boolean (would the skill activate?)
@@ -1517,19 +1450,12 @@ Simulate how the agent would handle the scenario. Return JSON:
 - "output": string (the agent's final output/response)
 - "qualityScore": number (0-100, how well the agent handled it)
 - "issues": string[] (potential problems or gaps)
-- "recommendations": string[] (how to improve the skill for this scenario)`
-          },
-          {
-            role: "user",
-            content: `Test Scenario:\n${testScenario}`
-          }
-        ],
-        response_format: { type: "json_object" },
+- "recommendations": string[] (how to improve the skill for this scenario)`,
+        user: `Test Scenario:\n${testScenario}`,
+        jsonMode: true,
+        maxTokens: 2048,
       });
-
-      const content = response.choices[0]?.message?.content;
-      if (!content) return res.status(500).json({ error: "No response from AI" });
-      res.json(JSON.parse(content));
+      res.json(JSON.parse(stripJsonFences(sandboxRaw)));
     } catch (e: any) {
       console.error("AI sandbox test error:", e);
       res.status(500).json({ error: e.message || "Failed to run sandbox test" });
@@ -2016,26 +1942,19 @@ Simulate how the agent would handle the scenario. Return JSON:
         tags: [industry.replace(/_/g, "-"), useCase.toLowerCase().replace(/\s+/g, "-")],
       } as any);
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert at creating golden evaluation test cases for AI agents in the ${industry.replace(/_/g, " ")} industry. Generate ${Math.min(count, 50)} diverse test cases for the "${useCase}" use case. Each test case should have varied difficulty tiers and scenario categories.
+      const goldenRaw = await callClaude({
+        system: `You are an expert at creating golden evaluation test cases for AI agents in the ${industry.replace(/_/g, " ")} industry. Generate ${Math.min(count, 50)} diverse test cases for the "${useCase}" use case. Each test case should have varied difficulty tiers and scenario categories.
 
 Return JSON: { "testCases": [{ "name": string, "inputScenario": string (detailed scenario description), "expectedBehavior": string (what the agent should do), "evaluationCriteria": [{ "dimension": string, "weight": number, "description": string }], "rubricScoring": { "dimensions": [{ "name": string, "maxScore": number, "criteria": string }], "passingScore": number }, "difficultyTier": "routine"|"complex"|"edge_case"|"adversarial", "scenarioCategory": "happy_path"|"edge_case"|"adversarial"|"compliance_critical", "tags": string[] }] }
 
-Mix difficulties evenly across the test cases.`
-          },
-          { role: "user", content: `Generate ${Math.min(count, 50)} golden evaluation test cases for "${useCase}" in ${industry.replace(/_/g, " ")}.` }
-        ],
-        temperature: 0.7,
-        response_format: { type: "json_object" },
+Mix difficulties evenly across the test cases.`,
+        user: `Generate ${Math.min(count, 50)} golden evaluation test cases for "${useCase}" in ${industry.replace(/_/g, " ")}.`,
+        model: "claude-haiku-4-5",
+        jsonMode: true,
+        maxTokens: 4096,
       });
-
-      const raw = response.choices[0].message.content || "{}";
       let result;
-      try { result = JSON.parse(raw); } catch { result = { testCases: [] }; }
+      try { result = JSON.parse(stripJsonFences(goldenRaw)); } catch { result = { testCases: [] }; }
 
       const created = [];
       for (const tc of (result.testCases || []).slice(0, 50)) {
@@ -2072,12 +1991,8 @@ Mix difficulties evenly across the test cases.`
       }
       const numRecords = Math.min(Math.max(1, count), 50);
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert at generating evaluation data records for AI agent testing in the ${industry} industry. Generate ${numRecords} realistic structured data records for the "${useCase}" use case, specifically for the "${category}" evaluation category.
+      const dataRecordsRaw = await callClaude({
+        system: `You are an expert at generating evaluation data records for AI agent testing in the ${industry} industry. Generate ${numRecords} realistic structured data records for the "${useCase}" use case, specifically for the "${category}" evaluation category.
 
 Each record represents a real-world input that an AI agent would process, paired with the known-correct output (ground truth). Records should be diverse, realistic, and cover various complexity levels.
 
@@ -2087,17 +2002,14 @@ ${promptGuideline ? `IMPORTANT — User-provided generation guidelines (follow t
 
 Return JSON: { "records": [{ "inputData": object (realistic structured input the agent would receive), "expectedOutput": object (the known-correct output/result), "metadata": { "complexity": "low"|"medium"|"high", "expertLabels": string[], "notes": string }, "tags": string[] }] }
 
-Make inputData and expectedOutput realistic structured objects with multiple fields relevant to the industry and use case. Vary the complexity and edge cases across records.${promptGuideline ? " Follow the user's generation guidelines for field structure, value ranges, edge case distribution, and data formats." : ""}`
-          },
-          { role: "user", content: `Generate ${numRecords} evaluation data records for category "${category}" in the "${useCase}" use case (${industry} industry).${description ? ` Focus: ${description}` : ""}${promptGuideline ? `\n\nGeneration guidelines:\n${promptGuideline}` : ""}` }
-        ],
-        temperature: 0.7,
-        response_format: { type: "json_object" },
+Make inputData and expectedOutput realistic structured objects with multiple fields relevant to the industry and use case. Vary the complexity and edge cases across records.${promptGuideline ? " Follow the user's generation guidelines for field structure, value ranges, edge case distribution, and data formats." : ""}`,
+        user: `Generate ${numRecords} evaluation data records for category "${category}" in the "${useCase}" use case (${industry} industry).${description ? ` Focus: ${description}` : ""}${promptGuideline ? `\n\nGeneration guidelines:\n${promptGuideline}` : ""}`,
+        model: "claude-haiku-4-5",
+        jsonMode: true,
+        maxTokens: 4096,
       });
-
-      const raw = response.choices[0].message.content || "{}";
       let result;
-      try { result = JSON.parse(raw); } catch { result = { records: [] }; }
+      try { result = JSON.parse(stripJsonFences(dataRecordsRaw)); } catch { result = { records: [] }; }
 
       const recordsToCreate = (result.records || []).slice(0, 50).map((r: any) => ({
         datasetId,
@@ -2124,26 +2036,19 @@ Make inputData and expectedOutput realistic structured objects with multiple fie
         return res.status(400).json({ error: "datasetId, industry, and useCase are required" });
       }
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert at defining performance benchmarks for AI agent evaluation in the ${industry} industry. Given a use case and data categories, suggest appropriate performance benchmarks.
+      const benchmarksRaw = await callClaude({
+        system: `You are an expert at defining performance benchmarks for AI agent evaluation in the ${industry} industry. Given a use case and data categories, suggest appropriate performance benchmarks.
 
 Return JSON: { "benchmarks": [{ "name": string, "type": "latency"|"throughput"|"accuracy"|"detection"|"custom", "target": string (human readable target), "threshold": number (0-1 for percentages, or raw number), "unit": string, "category": string (which eval category this applies to), "description": string }] }
 
-Include benchmarks for latency, throughput, accuracy per category, and any industry-specific requirements.`
-          },
-          { role: "user", content: `Suggest performance benchmarks for "${useCase}" in ${industry}.${categories?.length ? ` Data categories: ${categories.join(", ")}` : ""}` }
-        ],
-        temperature: 0.7,
-        response_format: { type: "json_object" },
+Include benchmarks for latency, throughput, accuracy per category, and any industry-specific requirements.`,
+        user: `Suggest performance benchmarks for "${useCase}" in ${industry}.${categories?.length ? ` Data categories: ${categories.join(", ")}` : ""}`,
+        model: "claude-haiku-4-5",
+        jsonMode: true,
+        maxTokens: 1024,
       });
-
-      const raw = response.choices[0].message.content || "{}";
       let result;
-      try { result = JSON.parse(raw); } catch { result = { benchmarks: [] }; }
+      try { result = JSON.parse(stripJsonFences(benchmarksRaw)); } catch { result = { benchmarks: [] }; }
 
       res.json(result);
     } catch (e: any) {
@@ -2162,27 +2067,20 @@ Include benchmarks for latency, throughput, accuracy per category, and any indus
       const existing = await storage.getGoldenTestCases(datasetId);
       const existingSummary = existing.slice(0, 10).map(tc => `- ${tc.name}: ${tc.inputScenario.slice(0, 100)}`).join("\n");
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert at creating golden evaluation test cases for AI agents in the ${industry} industry. Generate ${Math.min(count, 50)} diverse test cases for the "${useCase}" use case. Each test case should have varied difficulty tiers and scenario categories.
+      const goldenTCRaw = await callClaude({
+        system: `You are an expert at creating golden evaluation test cases for AI agents in the ${industry} industry. Generate ${Math.min(count, 50)} diverse test cases for the "${useCase}" use case. Each test case should have varied difficulty tiers and scenario categories.
 
 Return JSON: { "testCases": [{ "name": string, "inputScenario": string (detailed scenario description), "expectedBehavior": string (what the agent should do), "evaluationCriteria": [{ "dimension": string, "weight": number, "description": string }], "rubricScoring": { "dimensions": [{ "name": string, "maxScore": number, "criteria": string }], "passingScore": number }, "difficultyTier": "routine"|"complex"|"edge_case"|"adversarial", "scenarioCategory": "happy_path"|"edge_case"|"adversarial"|"compliance_critical", "tags": string[] }] }
 
 ${difficultyMix ? `Difficulty distribution preference: ${JSON.stringify(difficultyMix)}` : "Mix difficulties evenly."}
-${existingSummary ? `\nExisting test cases (avoid duplicates):\n${existingSummary}` : ""}`
-          },
-          { role: "user", content: `Generate ${Math.min(count, 50)} golden evaluation test cases for "${useCase}" in ${industry}.` }
-        ],
-        temperature: 0.7,
-        response_format: { type: "json_object" },
+${existingSummary ? `\nExisting test cases (avoid duplicates):\n${existingSummary}` : ""}`,
+        user: `Generate ${Math.min(count, 50)} golden evaluation test cases for "${useCase}" in ${industry}.`,
+        model: "claude-haiku-4-5",
+        jsonMode: true,
+        maxTokens: 4096,
       });
-
-      const raw = response.choices[0].message.content || "{}";
       let result;
-      try { result = JSON.parse(raw); } catch { result = { testCases: [] }; }
+      try { result = JSON.parse(stripJsonFences(goldenTCRaw)); } catch { result = { testCases: [] }; }
 
       const created = [];
       for (const tc of (result.testCases || []).slice(0, 50)) {
@@ -2226,12 +2124,8 @@ ${existingSummary ? `\nExisting test cases (avoid duplicates):\n${existingSummar
       const industryLabel = industry.replace(/_/g, " ");
       const useCaseLabel = useCase || "general";
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert at creating golden evaluation test cases for AI agents in the ${industryLabel} industry, specifically for the "${useCaseLabel}" use case.
+      const enhanceDraftRaw = await callClaude({
+        system: `You are an expert at creating golden evaluation test cases for AI agents in the ${industryLabel} industry, specifically for the "${useCaseLabel}" use case.
 
 Given a test case name and a brief input scenario, enhance and expand all fields to create a comprehensive, production-quality test case.
 
@@ -2245,20 +2139,14 @@ Return JSON: {
   "tags": string[]
 }
 
-Choose the difficulty tier and scenario category that best fits the scenario content. Make the enhanced input scenario significantly more detailed than the original while preserving its core intent.`
-          },
-          {
-            role: "user",
-            content: `Test case name: "${name}"\nBrief input scenario: "${inputScenario}"\nIndustry: ${industryLabel}\nUse case: ${useCaseLabel}`
-          }
-        ],
-        temperature: 0.7,
-        response_format: { type: "json_object" },
+Choose the difficulty tier and scenario category that best fits the scenario content. Make the enhanced input scenario significantly more detailed than the original while preserving its core intent.`,
+        user: `Test case name: "${name}"\nBrief input scenario: "${inputScenario}"\nIndustry: ${industryLabel}\nUse case: ${useCaseLabel}`,
+        model: "claude-haiku-4-5",
+        jsonMode: true,
+        maxTokens: 2048,
       });
-
-      const raw = response.choices[0].message.content || "{}";
       let enhanced;
-      try { enhanced = JSON.parse(raw); } catch { return res.status(500).json({ error: "Failed to parse AI response" }); }
+      try { enhanced = JSON.parse(stripJsonFences(enhanceDraftRaw)); } catch { return res.status(500).json({ error: "Failed to parse AI response" }); }
 
       res.json({
         inputScenario: enhanced.inputScenario || inputScenario,
@@ -2292,27 +2180,17 @@ Choose the difficulty tier and scenario category that best fits the scenario con
         ? "Make this test case more adversarial and challenging, testing edge cases and failure modes."
         : "Improve all aspects: make the scenario more realistic, criteria more specific, and rubric more comprehensive.";
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert at enhancing golden evaluation test cases for AI agents. ${enhancePrompt}
+      const enhanceTCRaw = await callClaude({
+        system: `You are an expert at enhancing golden evaluation test cases for AI agents. ${enhancePrompt}
 
-Return JSON with the enhanced fields: { "name": string, "inputScenario": string, "expectedBehavior": string, "evaluationCriteria": [{ "dimension": string, "weight": number, "description": string }], "rubricScoring": { "dimensions": [{ "name": string, "maxScore": number, "criteria": string }], "passingScore": number }, "difficultyTier": string, "tags": string[] }`
-          },
-          {
-            role: "user",
-            content: `Enhance this test case:\nName: ${tc.name}\nScenario: ${tc.inputScenario}\nExpected: ${tc.expectedBehavior}\nCriteria: ${JSON.stringify(tc.evaluationCriteria)}\nRubric: ${JSON.stringify(tc.rubricScoring)}\nDifficulty: ${tc.difficultyTier}`
-          }
-        ],
-        temperature: 0.5,
-        response_format: { type: "json_object" },
+Return JSON with the enhanced fields: { "name": string, "inputScenario": string, "expectedBehavior": string, "evaluationCriteria": [{ "dimension": string, "weight": number, "description": string }], "rubricScoring": { "dimensions": [{ "name": string, "maxScore": number, "criteria": string }], "passingScore": number }, "difficultyTier": string, "tags": string[] }`,
+        user: `Enhance this test case:\nName: ${tc.name}\nScenario: ${tc.inputScenario}\nExpected: ${tc.expectedBehavior}\nCriteria: ${JSON.stringify(tc.evaluationCriteria)}\nRubric: ${JSON.stringify(tc.rubricScoring)}\nDifficulty: ${tc.difficultyTier}`,
+        model: "claude-haiku-4-5",
+        jsonMode: true,
+        maxTokens: 2048,
       });
-
-      const raw = response.choices[0].message.content || "{}";
       let enhanced;
-      try { enhanced = JSON.parse(raw); } catch { return res.status(500).json({ error: "Failed to parse AI response" }); }
+      try { enhanced = JSON.parse(stripJsonFences(enhanceTCRaw)); } catch { return res.status(500).json({ error: "Failed to parse AI response" }); }
 
       const updated = await storage.updateGoldenTestCase(testCaseId, {
         name: enhanced.name || tc.name,
@@ -2487,21 +2365,13 @@ Return JSON with the enhanced fields: { "name": string, "inputScenario": string,
 
   router.post("/api/ai/suggest-memory-rules", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
-        return res.status(503).json({ error: "AI service not configured" });
-      }
       const { industry, tier } = req.body;
       if (!industry) {
         return res.status(400).json({ error: "industry is required" });
       }
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        max_tokens: 2000,
-        messages: [
-          {
-            role: "system",
-            content: `You are a compliance and data governance expert for the ${industry} industry. Generate memory governance rules for AI agents.
+      const memRulesRaw = await callClaude({
+        system: `You are a compliance and data governance expert for the ${industry} industry. Generate memory governance rules for AI agents.
 
 Return a JSON object with:
 - "rules": Array of rule objects, each with:
@@ -2512,21 +2382,14 @@ Return a JSON object with:
   - "retentionDays": Number of days to retain (-1 for indefinite)
   - "encryptionRequired": boolean
   - "accessControl": "open" | "restricted" | "audit-required"
-  - "autoActions": Array of automatic actions (e.g., "encrypt", "redact", "purge", "archive")`
-          },
-          {
-            role: "user",
-            content: `Generate ${tier ? `${tier} tier` : "all tier"} memory governance rules for ${industry} industry AI agents. Return ONLY valid JSON.`
-          }
-        ],
-        response_format: { type: "json_object" },
+  - "autoActions": Array of automatic actions (e.g., "encrypt", "redact", "purge", "archive")`,
+        user: `Generate ${tier ? `${tier} tier` : "all tier"} memory governance rules for ${industry} industry AI agents. Return ONLY valid JSON.`,
+        jsonMode: true,
+        maxTokens: 2000,
       });
 
-      const content = response.choices[0]?.message?.content;
-      if (!content) return res.status(500).json({ error: "No response from AI" });
-
       let parsed;
-      try { parsed = JSON.parse(content); } catch { return res.status(500).json({ error: "AI returned malformed response" }); }
+      try { parsed = JSON.parse(stripJsonFences(memRulesRaw)); } catch { return res.status(500).json({ error: "AI returned malformed response" }); }
       res.json(parsed);
     } catch (e: any) {
       console.error("AI suggest memory rules error:", e);
@@ -2748,21 +2611,13 @@ Return a JSON object with:
 
   router.post("/api/ai/resolve-entities", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
-        return res.status(503).json({ error: "AI service not configured" });
-      }
       const { entityA, sourceA, entityB, sourceB, entityType, industry } = req.body;
       if (!entityA || !entityB) {
         return res.status(400).json({ error: "entityA and entityB are required" });
       }
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        max_tokens: 1500,
-        messages: [
-          {
-            role: "system",
-            content: `You are a data quality expert specializing in entity resolution for ${industry || "enterprise"} knowledge graphs. Analyze two entity references and determine if they refer to the same real-world entity.
+      const resolveRaw = await callClaude({
+        system: `You are a data quality expert specializing in entity resolution for ${industry || "enterprise"} knowledge graphs. Analyze two entity references and determine if they refer to the same real-world entity.
 
 Return a JSON object with:
 - "isMatch": boolean - whether these entities are the same
@@ -2771,46 +2626,31 @@ Return a JSON object with:
 - "matchingAttributes": array of strings - what attributes suggest a match (e.g., "name similarity", "industry alignment", "acronym expansion")
 - "differentiatingAttributes": array of strings - what attributes suggest they might be different
 - "canonicalName": string - the recommended canonical/official name if they match
-- "category": string - "exact_match" | "alias" | "abbreviation" | "subsidiary" | "related_but_different" | "no_match"`
-          },
-          {
-            role: "user",
-            content: `Analyze whether these two entity references refer to the same real-world entity:
+- "category": string - "exact_match" | "alias" | "abbreviation" | "subsidiary" | "related_but_different" | "no_match"`,
+        user: `Analyze whether these two entity references refer to the same real-world entity:
 
 Entity A: "${entityA}" (Source: ${sourceA || "unknown"}, Type: ${entityType || "unknown"})
 Entity B: "${entityB}" (Source: ${sourceB || "unknown"}, Type: ${entityType || "unknown"})
 
 Industry context: ${industry || "general"}
 
-Return ONLY valid JSON.`
-          }
-        ],
-        response_format: { type: "json_object" },
+Return ONLY valid JSON.`,
+        jsonMode: true,
+        maxTokens: 1500,
       });
-
-      const content = response.choices[0]?.message?.content;
-      if (!content) return res.status(500).json({ error: "No response from AI" });
-      res.json(JSON.parse(content));
+      res.json(JSON.parse(stripJsonFences(resolveRaw)));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   router.post("/api/ai/extract-relationships", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
-        return res.status(503).json({ error: "AI service not configured" });
-      }
       const { text, industry, documentName } = req.body;
       if (!text) {
         return res.status(400).json({ error: "text is required" });
       }
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        max_tokens: 3000,
-        messages: [
-          {
-            role: "system",
-            content: `You are an expert in ${industry || "enterprise"} knowledge graph construction. Extract entities and their relationships from text.
+      const extractRaw = await callClaude({
+        system: `You are an expert in ${industry || "enterprise"} knowledge graph construction. Extract entities and their relationships from text.
 
 Return a JSON object with:
 - "entities": array of objects with:
@@ -2825,11 +2665,8 @@ Return a JSON object with:
   - "extractedText": string - the exact text snippet that supports this relationship
   - "validFrom": string or null - ISO date if mentioned
   - "validTo": string or null - ISO date if mentioned
-- "summary": string - brief summary of what was extracted`
-          },
-          {
-            role: "user",
-            content: `Extract entities and relationships from this ${industry || "enterprise"} text:
+- "summary": string - brief summary of what was extracted`,
+        user: `Extract entities and relationships from this ${industry || "enterprise"} text:
 
 Document: ${documentName || "Unnamed Document"}
 
@@ -2837,32 +2674,20 @@ Document: ${documentName || "Unnamed Document"}
 ${text.substring(0, 3000)}
 """
 
-Return ONLY valid JSON.`
-          }
-        ],
-        response_format: { type: "json_object" },
+Return ONLY valid JSON.`,
+        jsonMode: true,
+        maxTokens: 3000,
       });
-
-      const content = response.choices[0]?.message?.content;
-      if (!content) return res.status(500).json({ error: "No response from AI" });
-      res.json(JSON.parse(content));
+      res.json(JSON.parse(stripJsonFences(extractRaw)));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 
   router.post("/api/ai/knowledge-graph-suggestions", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
-        return res.status(503).json({ error: "AI service not configured" });
-      }
       const { entities, relationships, industry } = req.body;
 
-      const response = await openai.chat.completions.create({
-        model: "gpt-4.1",
-        max_tokens: 3000,
-        messages: [
-          {
-            role: "system",
-            content: `You are a knowledge graph quality expert for the ${industry || "enterprise"} industry. Analyze an existing knowledge graph and suggest improvements.
+      const kgSuggestRaw = await callClaude({
+        system: `You are a knowledge graph quality expert for the ${industry || "enterprise"} industry. Analyze an existing knowledge graph and suggest improvements.
 
 Return a JSON object with:
 - "missingRelationships": array of objects with:
@@ -2886,11 +2711,8 @@ Return a JSON object with:
   - "suggestion": string - what could be enriched
   - "source": string - where to find this data
 - "overallScore": number 0-100 - graph completeness/quality score
-- "summary": string - 2-3 sentence summary of graph health`
-          },
-          {
-            role: "user",
-            content: `Analyze this ${industry || "enterprise"} knowledge graph and suggest improvements:
+- "summary": string - 2-3 sentence summary of graph health`,
+        user: `Analyze this ${industry || "enterprise"} knowledge graph and suggest improvements:
 
 Entities (${(entities || []).length} total):
 ${(entities || []).slice(0, 20).map((e: any) => `- ${e.name || e.entityName} (${e.type || e.entityType})`).join("\n")}
@@ -2900,15 +2722,11 @@ ${(relationships || []).slice(0, 20).map((r: any) => `- ${r.sourceEntity} --[${r
 
 Industry: ${industry || "general"}
 
-Return ONLY valid JSON.`
-          }
-        ],
-        response_format: { type: "json_object" },
+Return ONLY valid JSON.`,
+        jsonMode: true,
+        maxTokens: 3000,
       });
-
-      const content = response.choices[0]?.message?.content;
-      if (!content) return res.status(500).json({ error: "No response from AI" });
-      res.json(JSON.parse(content));
+      res.json(JSON.parse(stripJsonFences(kgSuggestRaw)));
     } catch (e: any) { res.status(500).json({ error: e.message }); }
   });
 

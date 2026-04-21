@@ -41,12 +41,7 @@ import {
   checkOntologyCompliance,
   canonicalJsonStringify,
 } from "../agent-runtime";
-import OpenAI from "openai";
-
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
+import { callClaude, stripJsonFences } from "../claude";
 
 const router = Router();
 
@@ -3142,19 +3137,17 @@ Respond in JSON format:
   "qualityScore": 0.0 to 1.0
 }`;
 
-          const evalResponse = await openai.chat.completions.create({
-            model: "gpt-4.1-mini",
-            messages: [{ role: "user", content: evalPrompt }],
-            max_completion_tokens: 1024,
-            response_format: { type: "json_object" },
+          const rawContent = await callClaude({
+            system: "",
+            user: evalPrompt,
+            model: "claude-haiku-4-5",
+            maxTokens: 1024,
+            jsonMode: true,
           });
-
-          const rawContent = evalResponse.choices[0]?.message?.content || "{}";
-          const usage = evalResponse.usage;
-          costUsd = usage ? ((usage.prompt_tokens || 0) * 0.0000004 + (usage.completion_tokens || 0) * 0.0000016) : 0.001;
+          costUsd = 0.001;
 
           try {
-            actualOutput = JSON.parse(rawContent);
+            actualOutput = JSON.parse(stripJsonFences(rawContent));
           } catch {
             actualOutput = { raw: rawContent };
           }
