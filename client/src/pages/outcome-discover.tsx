@@ -869,6 +869,31 @@ export default function OutcomeDiscover() {
         setActiveRegConstraints(extracted.regulatoryConstraints);
         setActiveApplicablePolicies(extracted.applicablePolicies);
         setExpandedRegulations(new Set());
+        // Auto-detect regulations in the background — no user action needed
+        if (extracted.outcomeContract?.description) {
+          setDetectingRegulations(true);
+          fetch("/api/ai/regulatory-constraints", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              description: extracted.outcomeContract.description,
+              industry: industry?.id || null,
+            }),
+          })
+            .then((r) => r.ok ? r.json() : Promise.reject())
+            .then((data: Array<{ regulation: string; classification?: string; requirements?: string[]; autoApplied?: boolean }>) => {
+              if (Array.isArray(data) && data.length > 0) {
+                setActiveRegConstraints(data.map(d => ({
+                  regulation: d.regulation || "Unknown",
+                  classification: (d.classification as RegulatoryConstraint["classification"]) || "High-Risk",
+                  requirements: d.requirements || [],
+                  autoApplied: d.autoApplied ?? true,
+                })));
+              }
+            })
+            .catch(() => {})
+            .finally(() => setDetectingRegulations(false));
+        }
       }
     } catch (err) {
       toast({ title: "Discovery assistant error", description: "Please try again.", variant: "destructive" });

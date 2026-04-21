@@ -2225,24 +2225,6 @@ Respond ONLY with valid JSON, no markdown fences.`;
 
       const templates = await storage.getAgentTemplates();
       const outcomes = await storage.getOutcomes(getOrgId(req));
-      const allPolicies = await storage.getPolicies(getOrgId(req));
-      const activePolicies = allPolicies.filter(p => p.status === "active");
-      const seenPolicyKeys = new Set<string>();
-      const uniquePolicies = activePolicies.filter(p => {
-        const key = `${p.domain}::${p.name}`;
-        if (seenPolicyKeys.has(key)) return false;
-        seenPolicyKeys.add(key);
-        return true;
-      });
-      const packPolicies = uniquePolicies.filter(p => /^\[[^\]]+\]/.test(p.name));
-      const standalonePolicies = uniquePolicies.filter(p => !/^\[[^\]]+\]/.test(p.name));
-      const packPoliciesBlock = packPolicies.length > 0
-        ? `COMPLIANCE PACK POLICIES (installed from governance packs):\n${packPolicies.map(p => `- id:${p.id} [${p.domain}] ${p.name}${p.description ? ": " + p.description : ""}`).join("\n")}`
-        : "";
-      const standalonePoliciesBlock = standalonePolicies.length > 0
-        ? `STANDALONE PLATFORM POLICIES (custom org-level policies):\n${standalonePolicies.map(p => `- id:${p.id} [${p.domain}] ${p.name}${p.description ? ": " + p.description : ""}`).join("\n")}`
-        : "";
-      const policyListForPrompt = [packPoliciesBlock, standalonePoliciesBlock].filter(Boolean).join("\n\n");
 
       const industryContext = industry ? `\n\nIMPORTANT: The user is operating in the "${industry.label}" industry workspace. Tailor all suggestions, KPIs, agent designs, and compliance considerations to this industry. Use industry-standard terminology and reference relevant regulations (${industry.id === 'financial_services' ? 'BSA/AML, SOX, PCI-DSS, EU AI Act' : industry.id === 'healthcare' ? 'HIPAA, HITECH, CMS, FDA 21 CFR Part 11' : industry.id === 'manufacturing' ? 'ISO 9001, OSHA, EPA' : industry.id === 'insurance' ? 'State Insurance Regulations, NAIC, ACORD' : industry.id === 'retail' ? 'PCI-DSS, CCPA/CPRA, FTC Act' : industry.id === 'technology_saas' ? 'SOC 2 Type II, GDPR, CCPA, ISO 27001, FedRAMP' : industry.id === 'legal_services' ? 'ABA Model Rules, GDPR, FCPA, FRCP eDiscovery, SOX' : 'general compliance frameworks'}). When proposing agents, include industry-specific skills, MCP connections for industry systems, and note which governance policies will auto-apply.` : '';
 
@@ -2291,23 +2273,6 @@ When you have enough information (usually after 2-3 exchanges), produce a struct
       "estimatedImpact": "string - expected business impact"
     }
   ],
-  "regulatoryConstraints": [
-    {
-      "regulation": "string - EXTERNAL regulation or compliance framework name only (e.g. SOX Section 404, HIPAA, PCI-DSS, GDPR, FINRA, NIST SP 800-53)",
-      "classification": "Critical | High-Risk | Medium",
-      "requirements": ["string - 2-4 specific requirements this regulation imposes on this outcome"],
-      "autoApplied": boolean
-    }
-  ],
-  "applicablePolicies": [
-    {
-      "policyId": "string - the exact policy id from the platform policy list",
-      "name": "string - policy name exactly as listed",
-      "domain": "string - policy domain",
-      "packName": "string or null - if the policy name has a [Framework] prefix (e.g. '[SOX] Financial Data Integrity'), set this to the compliance pack name (e.g. 'SOX Compliance Pack'); otherwise null",
-      "rationale": "string - one sentence explaining why this platform policy applies to this specific outcome"
-    }
-  ],
   "validationChecklist": [
     "string - items the expert/business owner should validate before proceeding"
   ],
@@ -2322,9 +2287,6 @@ When you have enough information (usually after 2-3 exchanges), produce a struct
 
 Existing outcome contracts for reference (do NOT duplicate these, use them for context only): ${JSON.stringify(outcomes.slice(0, 5).map(o => ({ name: o.name, description: o.description })))}
 Available agent templates (reference these when relevant): ${JSON.stringify(templates.slice(0, 10).map(t => ({ name: t.name, category: t.category, industry: t.industry, description: t.description })))}
-
-ACTIVE PLATFORM GOVERNANCE POLICIES (select applicable ones for this outcome — prefer COMPLIANCE PACK POLICIES over standalone ones):
-${policyListForPrompt || "(no active policies)"}
 
 ${(() => {
   const ctx = discoveryContext || {};
@@ -2360,8 +2322,7 @@ Guidelines:
 - CRITICAL: If CURRENT PROPOSAL TO REFINE is present, output a new full proposal JSON that addresses the user's latest request while preserving the parts they haven't asked to change. Always output the complete JSON, not a partial update.
 - CRITICAL: If PLATFORM INTELLIGENCE DECISIONS is present, you MUST respect it: reference accepted agents/templates by name in your proposal and do NOT re-propose any rejected agent or template. If a user rejected an agent, acknowledge it and suggest a meaningfully different alternative approach instead.
 - IMPORTANT: Include "roiEstimate" ONLY when the user has explicitly mentioned concrete financial numbers (e.g., hours spent per week, cost per incident, number of FTEs, failure rates with dollar impact, processing volume x cost). Derive all figures from those specific numbers — do NOT invent or assume figures the user did not provide. If no financial numbers were mentioned, omit "roiEstimate" entirely. Quote the source assumption in "assumptionsSummary" (e.g., "Based on your 3 FTEs spending 20h/week at $75/hr on manual processing").
-- CRITICAL: Always include a regulatoryConstraints array in the proposal with 4–8 EXTERNAL statutory or regulatory frameworks (e.g. SOX, GDPR, FINRA, HIPAA, PCI-DSS, NIST). Do NOT put internal platform governance policies in this array — those go in applicablePolicies. Do not dump generic industry regulations; select only those genuinely relevant to this specific outcome. For each, include 2-4 specific requirements.
-- CRITICAL: Always include an applicablePolicies array. Review the ACTIVE PLATFORM GOVERNANCE POLICIES listed above — prioritize COMPLIANCE PACK POLICIES (those listed under "COMPLIANCE PACK POLICIES") over standalone ones. Select ONLY the policies genuinely applicable to this specific outcome. For each selected policy include: policyId (the exact UUID shown after "id:"), name exactly as listed (including any [Framework] prefix), domain, a one-sentence rationale, and packName (if the policy name has a [Framework] prefix extract the compliance pack name from it, e.g. "[SOX]" → "SOX Compliance Pack", "[MiFID II]" → "MiFID II Compliance Pack", "[HIPAA]" → "HIPAA Compliance Pack"; for standalone policies set packName to null). If no policies apply, return an empty array.`;
+- NOTE: Do NOT include "regulatoryConstraints" or "applicablePolicies" fields in the proposal JSON — these are loaded separately in the background after the core proposal is shown.`;
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache");
@@ -2375,7 +2336,7 @@ Guidelines:
         model: "claude-opus-4-5",
         system: systemPrompt,
         messages: anthropicMessages,
-        max_tokens: 4000,
+        max_tokens: 2400,
       });
 
       claudeStream.on("text", (text: string) => {
