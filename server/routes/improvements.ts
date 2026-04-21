@@ -2261,18 +2261,6 @@ When you have enough information (usually after 2-3 exchanges), produce a struct
       "currentBaseline": number or null
     }
   ],
-  "proposedAgents": [
-    {
-      "name": "string - agent name",
-      "description": "string - what this agent does",
-      "role": "string - the business role this agent fills",
-      "workflowSteps": ["string - steps in the agent's workflow"],
-      "tools": ["string - tools/integrations needed"],
-      "riskTier": "LOW | MEDIUM | HIGH",
-      "autonomyMode": "manual | assisted | autonomous",
-      "estimatedImpact": "string - expected business impact"
-    }
-  ],
   "validationChecklist": [
     "string - items the expert/business owner should validate before proceeding"
   ],
@@ -2308,10 +2296,8 @@ ${(() => {
 
 Rules:
 - Business language, no jargon. Ask 1-2 clarifying questions when needed, then produce the proposal.
-- Use the user's own numbers for KPIs and ROI. Specific agent names (e.g. "KYC Verification Agent").
-- workflowSteps must be specific tasks, not generic steps.
+- Use the user's own numbers for KPIs and ROI.
 - If PROPOSAL TO REFINE is present: output a complete updated JSON preserving unchanged parts.
-- If ACCEPTED/REJECTED is present: honour those choices.
 - Include roiEstimate only when the user gave concrete financial numbers. Omit it otherwise.
 - Do NOT include "regulatoryConstraints" or "applicablePolicies" in the JSON.`;
 
