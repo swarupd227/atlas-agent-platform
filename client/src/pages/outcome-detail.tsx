@@ -5516,7 +5516,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
         const dots = ".".repeat((waitTick % 3) + 1);
         setStreamLogs(prev => {
           const last = prev[prev.length - 1];
-          const isWaiting = last?.message.startsWith("Waiting for AI response");
+          const isWaiting = last?.message?.startsWith("Waiting for AI response");
           if (isWaiting) {
             return [...prev.slice(0, -1), { time: now(), message: `Waiting for AI response${dots}` }];
           }
@@ -6301,7 +6301,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
                   {streamLogs.map((entry, i) => (
                     <div key={i} className="flex gap-2 items-start" data-testid={`log-entry-${i}`}>
                       <span className="text-muted-foreground/60 shrink-0 select-none">{entry.time}</span>
-                      <span className={entry.message.startsWith("Waiting") ? "text-muted-foreground/70" : "text-emerald-600 dark:text-emerald-400"}>{entry.message}</span>
+                      <span className={entry.message?.startsWith("Waiting") ? "text-muted-foreground/70" : "text-emerald-600 dark:text-emerald-400"}>{entry.message}</span>
                     </div>
                   ))}
                   <div className="flex gap-2 items-center">
@@ -6341,7 +6341,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
             {streamLogs.map((entry, i) => (
               <div key={i} className="flex gap-2 items-start">
                 <span className="text-muted-foreground/60 shrink-0 select-none">{entry.time}</span>
-                <span className={entry.message.startsWith("Waiting") ? "text-muted-foreground/70" : "text-emerald-600 dark:text-emerald-400"}>{entry.message}</span>
+                <span className={entry.message?.startsWith("Waiting") ? "text-muted-foreground/70" : "text-emerald-600 dark:text-emerald-400"}>{entry.message}</span>
               </div>
             ))}
             <div className="flex gap-2 items-center">
