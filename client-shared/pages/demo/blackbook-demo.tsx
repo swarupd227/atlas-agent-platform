@@ -359,8 +359,14 @@ export default function BlackBookDemo() {
       setShowLiveFeed(false);
       liveEventId.current = 0;
       queryClient.invalidateQueries({ queryKey: ["/demo-api/blackbook/agent-runs"] });
+      queryClient.invalidateQueries({ queryKey: ["/demo-api/blackbook/outcome"] });
+      queryClient.invalidateQueries({ queryKey: ["/demo-api/blackbook/self-healing"] });
     },
   });
+
+  useEffect(() => {
+    apiRequest("POST", "/demo-api/blackbook/reset").catch(() => {});
+  }, []);
 
   const addEvent = useCallback((type: string, agentName: string, message: string, tool?: string, success?: boolean) => {
     const now  = new Date();
@@ -451,7 +457,7 @@ export default function BlackBookDemo() {
   };
 
   const renderScreen = () => {
-    if (!hasRun && !liveRunning && scenario !== "self-healing") {
+    if (!hasRun && !liveRunning && activeScreen !== "self-healing") {
       return <PreRunPlaceholder screen={activeScreen} onRun={startLiveRun} />;
     }
     switch (activeScreen) {
@@ -500,8 +506,8 @@ export default function BlackBookDemo() {
             </button>
           )}
 
-          {/* Reset Demo — only after a run has completed */}
-          {liveComplete && (
+          {/* Reset Demo — once pipeline has been run */}
+          {(liveComplete || hasRun) && (
             <button
               onClick={() => resetMutation.mutate()}
               disabled={resetMutation.isPending}
