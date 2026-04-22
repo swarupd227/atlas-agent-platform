@@ -478,7 +478,7 @@ function BusinessModeSidebar() {
                       {item.badge !== undefined && (
                         <span
                           className="ml-auto text-[10px] font-bold bg-amber-500 text-white rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-none"
-                          data-testid="badge-my-actions-count"
+                          data-testid={`badge-${item.title.toLowerCase().replace(/\s+/g, "-")}-count`}
                         >
                           {item.badge > 99 ? "99+" : item.badge}
                         </span>

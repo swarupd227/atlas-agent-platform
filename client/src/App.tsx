@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -229,6 +230,16 @@ function BusinessModeBadge() {
   );
 }
 
+function BusinessOnlyRoute({ component: Comp }: { component: React.ComponentType }) {
+  const { isBusinessMode } = useRole();
+  const [, navigate] = useLocation();
+  useEffect(() => {
+    if (!isBusinessMode) navigate("/dashboard");
+  }, [isBusinessMode, navigate]);
+  if (!isBusinessMode) return null;
+  return <Comp />;
+}
+
 function DashboardRouter() {
   return (
     <Switch>
@@ -239,7 +250,7 @@ function DashboardRouter() {
       <Route path="/outcomes" component={Outcomes} />
       <Route path="/outcomes/discover" component={OutcomeDiscover} />
       <Route path="/outcomes/:id" component={OutcomeDetail} />
-      <Route path="/my-workers" component={MyWorkers} />
+      <Route path="/my-workers">{() => <BusinessOnlyRoute component={MyWorkers} />}</Route>
       <Route path="/process-flows" component={ProcessFlows} />
       <Route path="/agents" component={Agents} />
       <Route path="/templates" component={Templates} />

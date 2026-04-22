@@ -83,7 +83,7 @@ export default function MyWorkers() {
   }, {});
 
   const workerAgents = (allAgents || []).filter(
-    (a) => !!a.outcomeId && !!outcomesById[a.outcomeId]
+    (a) => !!a.outcomeId && !!outcomesById[a.outcomeId] && a.status !== "draft"
   );
 
   const filteredAgents = workerAgents.filter((a) => {
