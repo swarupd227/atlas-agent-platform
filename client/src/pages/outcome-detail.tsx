@@ -1136,10 +1136,15 @@ export default function OutcomeDetail() {
       }
 
       setLaunchStep(3);
+      let deploySuccesses = 0;
       for (const agentId of createdAgentIds) {
         try {
-          await apiRequest("POST", `/api/agents/${agentId}/deploy-and-run`, {});
+          const deployRes = await apiRequest("POST", `/api/agents/${agentId}/deploy-and-run`, {});
+          if (deployRes.ok) deploySuccesses++;
         } catch {}
+      }
+      if (deploySuccesses === 0) {
+        throw new Error("Workers were created but could not be activated. Please contact your IT team or try again.");
       }
 
       queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
@@ -1173,9 +1178,11 @@ export default function OutcomeDetail() {
         objectId: outcomeId,
         objectName: outcome.name,
         status: "pending",
-        requestedBy: "business_user",
+        requestedBy: "current_user",
         description: `Business user has requested IT support for: "${outcome.name}"`,
       });
+      queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId, "approvals"] });
       setSupportRequestSent(true);
       toast({ title: "IT team notified", description: "Your IT team has been notified and will reach out to help." });
     } catch {
