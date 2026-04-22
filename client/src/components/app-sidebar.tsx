@@ -61,6 +61,7 @@ import {
 import { useRole } from "./role-provider";
 import { type LucideIcon } from "lucide-react";
 import { FeedbackTrigger } from "./feedback-modal";
+import type { Agent, OutcomeContract } from "@shared/schema";
 
 interface NavItem {
   title: string;
@@ -420,16 +421,16 @@ function BusinessModeSidebar() {
     return location.startsWith(url);
   };
 
-  const { data: workersData } = useQuery<any[]>({
+  const { data: workersData } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
     refetchInterval: 30000,
     staleTime: 20000,
   });
-  const { data: workersOutcomesData } = useQuery<any[]>({
+  const { data: workersOutcomesData } = useQuery<OutcomeContract[]>({
     queryKey: ["/api/outcomes"],
     staleTime: 60000,
   });
-  const outcomeIdSet = new Set((workersOutcomesData || []).map((o: any) => o.id));
+  const outcomeIdSet = new Set((workersOutcomesData || []).map((o) => o.id));
   const runningWorkersCount = Array.isArray(workersData)
     ? workersData.filter(
         (a) =>

@@ -58,12 +58,6 @@ export default function MyWorkers() {
   const [, navigate] = useLocation();
   const [filter, setFilter] = useState<StatusFilter>("all");
 
-  useEffect(() => {
-    if (!isBusinessMode) navigate("/agents");
-  }, [isBusinessMode, navigate]);
-
-  if (!isBusinessMode) return null;
-
   const { data: allAgents, isLoading: agentsLoading } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
     refetchInterval: 30000,
@@ -74,6 +68,12 @@ export default function MyWorkers() {
     queryKey: ["/api/outcomes"],
     staleTime: 60000,
   });
+
+  useEffect(() => {
+    if (!isBusinessMode) navigate("/agents");
+  }, [isBusinessMode, navigate]);
+
+  if (!isBusinessMode) return null;
 
   const isLoading = agentsLoading || outcomesLoading;
 
@@ -251,9 +251,7 @@ export default function MyWorkers() {
                       <span className="truncate">{outcome.name}</span>
                     </div>
                   </Link>
-                ) : (
-                  <p className="text-xs text-muted-foreground">No initiative linked</p>
-                )}
+                ) : null}
 
                 {/* Health bar */}
                 <div className="h-1 bg-muted rounded-full overflow-hidden">
