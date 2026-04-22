@@ -66,6 +66,8 @@ import advSupportTriageRouter         from "./mock-mcp/adv-support-triage";
 import advSupportKbRouter             from "./mock-mcp/adv-support-kb";
 import advSupportDiagnosticRouter     from "./mock-mcp/adv-support-diagnostic";
 import advSupportEscalationRouter     from "./mock-mcp/adv-support-escalation";
+import otcCashPaymentEngineRouter     from "./mock-mcp/otc-cash-payment-engine";
+import otcCashArPostingRouter         from "./mock-mcp/otc-cash-ar-posting";
 import { ensureAdvSupportAgents }     from "./advantive-support-live-run";
 import { bbLiveRunHandler, getBBAgentRuns, getBBOutcomeData, getBBSelfHealingStatus, resetBBDemo, ensureBBAgents } from "./blackbook-live-run";
 import { registerMockMcpServers } from "./mock-mcp/register";
@@ -213,6 +215,9 @@ export async function registerRoutes(
   app.use("/api/mock/adv-support-kb",             advSupportKbRouter);
   app.use("/api/mock/adv-support-diagnostic",     advSupportDiagnosticRouter);
   app.use("/api/mock/adv-support-escalation",     advSupportEscalationRouter);
+  // OTC Cash Application Demo 4 — AI-Powered Cash Application
+  app.use("/api/mock/otc-cash-payment-engine",    otcCashPaymentEngineRouter);
+  app.use("/api/mock/otc-cash-ar-posting",        otcCashArPostingRouter);
 
   app.get("/demo-api/blackbook/live-run",    bbLiveRunHandler);
   app.get("/demo-api/blackbook/agent-runs",  getBBAgentRuns);

@@ -9,6 +9,7 @@ import { pkgSchedLiveRunHandler, resetPkgSchedDemo, getPkgSchedAgentRuns } from 
 import { runOnespanDemo, setupOnespanDemo, resetOnespanDemo, getOnespanAgentRuns, ensureOnespanAgents } from "../onespan-live-run";
 import { otcFulfillmentLiveRunHandler, getOtcFulfillmentAgentRuns, resetOtcFulfillmentDemo, ensureOtcFulfillmentAgents } from "../otc-fulfillment-live-run";
 import { advSupportLiveRunHandler, getAdvSupportAgentRuns, resetAdvSupportDemo } from "../advantive-support-live-run";
+import { otcCashLiveRunHandler, getOtcCashAgentRuns, resetOtcCashDemo, ensureOtcCashAgents } from "../otc-cash-application-live-run";
 
 import { seedPartnerPortalRegistry } from "../seed-blackrock2-partner-portal";
 import { storage } from "../storage";
@@ -1223,6 +1224,29 @@ Complete all 3 steps. Compute scorecard-indicated rating and gap vs. current rat
 
   // ============================================================
   // END OTC FULFILLMENT DEMO ROUTES
+  // ============================================================
+
+  // ============================================================
+  // NOVATECH INDUSTRIES — OTC CASH APPLICATION
+  // Demo 4: AI-Powered Cash Application
+  // $42.3M month-end batch · 94.1% auto-match · GlobalTech $2.3M resolution
+  // OTC-AGT-009 (Cash Application) → OTC-AGT-006 (Billing & Collections)
+  // ============================================================
+
+  router.post("/demo-api/otc-cash/setup", async (_req, res) => {
+    try {
+      await ensureOtcCashAgents();
+      res.json({ ok: true, message: "OTC Cash Application agents provisioned" });
+    } catch (err: unknown) {
+      res.status(500).json({ ok: false, error: err instanceof Error ? err.message : "Setup failed" });
+    }
+  });
+  router.get("/demo-api/otc-cash/live-run",   otcCashLiveRunHandler);
+  router.get("/demo-api/otc-cash/agent-runs", getOtcCashAgentRuns);
+  router.post("/demo-api/otc-cash/reset",     resetOtcCashDemo);
+
+  // ============================================================
+  // END OTC CASH APPLICATION DEMO ROUTES
   // ============================================================
 
   // ============================================================

@@ -235,6 +235,23 @@ const DEMOS: Demo[] = [
     badge: "New",
   },
   {
+    id: "otc-cash",
+    title: "AI-Powered Cash Application",
+    client: "NovaTech Industries",
+    description:
+      "Financial stage of the Order-to-Cash cycle. Month-end: $42.3M in payments received across 387 transactions. OTC-AGT-009 (Cash Application) runs first — ingests all channels (wire/ACH/check/EDI 820), achieves 94.1% auto-match rate, and identifies 14 exceptions. Top exception: GlobalTech Corp's $2.3M wire covering 47 invoices with 3 deductions and a $38.1K overpayment. In Step 2, OTC-AGT-009 parses the EDI 820 remittance, matches all 47 invoices at 99.2% confidence, validates the freight claim and early pay discount, and flags the quantity short for investigation. OTC-AGT-006 (Billing & Collections) then validates deduction policy, posts journal entries, issues credit memo CM-2026-0328-GT, closes all 47 invoices, and reduces GlobalTech's AR balance from $3.1M to $0.73M. Exception sub-scenarios include Vertex Systems ACH reference mismatch (auto-resolved) and Regional Supply Co no-remittance check. Traditional processing time: 4–6 hours. Atlas: under 2 minutes.",
+    industry: "Manufacturing",
+    industryId: "manufacturing",
+    stage: "Cash Application",
+    route: "/demo/otc-cash",
+    icon: CreditCard,
+    iconColor: "#10B981",
+    duration: "2 min",
+    screens: 2,
+    tags: ["Order-to-Cash", "Cash Application", "AR Posting", "Deduction Management", "Month-End Close"],
+    badge: "New",
+  },
+  {
     id: "advantive-pkg-sched",
     title: "Predictive Production Scheduling",
     client: "Advantive",

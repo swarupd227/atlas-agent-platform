@@ -1,0 +1,26 @@
+Demo 4: AI-Powered Cash Application
+PROBLEM STATEMENT: It's the last week of the month. NovaTech receives $42M in payments from 380+ customers via wire transfers, ACH, checks, and EDI 820 remittances. The current cash application team of 6 people manually matches payments to invoices - achieving only 62% auto-match rate, with the remaining 38% ($16M) requiring manual research averaging 4.2 hours per unmatched payment. A complex $2.3M payment from GlobalTech Corp covers 47 invoices with 3 deductions and a $12K overpayment.
+
+DEMO OBJECTIVE: Show Atlas achieving 94%+ auto-match rate and resolving the complex GlobalTech payment in seconds, turning a week-long month-end crunch into a same-day close.
+
+AGENTS INVOKED: OTC-AGT-009 (Cash Application & Reconciliation Agent), OTC-AGT-006 (Billing & Collections Agent)
+
+Screen 5.1: Cash Application Command Center
+The month-end cash application dashboard showing today's payment activity.
+Layout: Cash Flow Summary + Match Progress + Exception Queue
+Top Row - Cash Summary Metrics: Five metric cards: Payments Received Today: $42.3M (blue), Auto-Matched: $39.8M / 94.1% (green with celebration sparkle animation), Manual Review Needed: $2.5M / 5.9% (amber), Deductions Identified: $890K across 47 payments (amber), Unidentified Remittances: 3 payments / $127K (red).
+Center Left (55%) - Match Progress Funnel: A visual funnel/Sankey diagram showing payment flow: Total Received ($42.3M, 387 payments) > Perfect Match ($31.2M, 298 payments, green) > High-Confidence Match ($8.6M, 52 payments, light green) > Low-Confidence Suggested ($1.8M, 23 payments, amber) > Unmatched ($0.7M, 14 payments, red). Each stage is clickable to see the underlying payments. The funnel animates as new matches resolve.
+Center Right (45%) - Exception Spotlight: A prioritized exception queue sorted by value: (1) GlobalTech Corp - $2,300,847 - 47 invoices, 3 deductions, overpayment - HIGH COMPLEXITY (red badge), (2) Vertex Systems - $487,200 - customer reference mismatch - MEDIUM, (3) Regional Supply Co - $127,000 - no remittance data - MEDIUM. Each exception card shows: customer, amount, issue type, AI-suggested resolution (with confidence %), and action buttons: Accept / Review / Escalate.
+Bottom Bar - Bank Reconciliation Status: "March 2026 Bank Reconciliation: 98.7% matched. Remaining items: 4 timing differences ($23K), 1 error ($1.2K under investigation)." Progress bar. "View Full Reconciliation" link.
+Key Interaction
+The controller clicks the GlobalTech Corp exception card to investigate the complex payment.
+
+Screen 5.2: Complex Payment Resolution - GlobalTech Deep Dive
+Atlas unpacks the $2.3M multi-invoice payment with deductions and overpayment.
+Layout: Payment Breakdown + Invoice Matching + Deduction Analysis
+Top Section - Payment Summary Bar: Payment reference: Wire #WF-20260328-7742, Amount: $2,300,847.00, Payer: GlobalTech Corp, Date: March 28, 2026. Remittance source: EDI 820 attached. OTC-AGT-009 badge.
+Center Left (50%) - Invoice Matching Waterfall: A visual waterfall showing how the payment breaks down: Starting Balance: 47 open invoices totaling $2,372,000.00. Matched Amount: $2,312,847.00 (47 invoices - all matched with 99.2% confidence). Deduction 1: -$28,500 (Code: freight claim - "Carrier damaged shipment SHP-77201"). Deduction 2: -$14,200 (Code: early pay discount - "2% discount on invoices INV-44721, INV-44722, taken within 10-day window"). Deduction 3: -$7,400 (Code: quantity short - "3 units short on INV-44680"). Remaining after deductions: $2,262,747.00. Overpayment: $38,100.00 (payment exceeds net invoices). Each waterfall block is clickable for detail.
+Center Right (50%) - Deduction Validity Assessment: OTC-AGT-009 badge. Three deduction cards with auto-assessed validity: (1) Freight Claim $28,500 - VALID (green) - "Carrier damage confirmed. POD shows damage notation. Recommend: Accept deduction, file carrier claim." (2) Early Pay Discount $14,200 - VALID (green) - "Payment received Day 9. 2/10 net 45 terms apply. Discount correctly calculated." (3) Quantity Short $7,400 - INVESTIGATE (amber) - "Delivery receipt shows 50 units received. Invoice shows 53. Warehouse records show 53 shipped. Recommend: Request customer receiving documentation." Each card has: Accept / Dispute / Investigate buttons.
+Bottom Section - Resolution Actions: Summary: Apply $2,262,747 to 47 invoices (all closed). Accept 2 valid deductions ($42,700). Investigate 1 deduction ($7,400). Apply $38,100 overpayment as: (a) credit to customer account, (b) apply to oldest open invoice, (c) refund. Dropdown selector with recommendation. "Apply & Close" orange CTA. Before/After AR impact: "Applying this payment closes $2.37M in receivables, reducing GlobalTech AR from $3.1M to $0.73M."
+Demo Talking Point
+"That $2.3M payment covering 47 invoices with 3 deductions and an overpayment? The current team takes 4-6 hours to untangle it. Atlas matched all 47 invoices in seconds, identified and validated two deductions automatically, flagged one for investigation with supporting evidence, and presented the controller with a one-click resolution. Multiply that by 380 payments per month-end."
