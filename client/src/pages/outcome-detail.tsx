@@ -1955,28 +1955,48 @@ export default function OutcomeDetail() {
         if (boundAgents.length > 0 || launchStep === 4) {
           return (
             <div className="flex flex-col gap-5" data-testid="section-business-dashboard">
-              {/* Action Required banner */}
-              {pendingApprovals.length > 0 && (
-                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-5 py-4 flex flex-col gap-3" data-testid="section-action-required">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
-                    <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">
-                      Needs Your Attention ({pendingApprovals.length})
-                    </span>
-                  </div>
-                  {pendingApprovals.slice(0, 3).map((approval) => (
-                    <div key={approval.id} className="flex items-center gap-3">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium text-foreground truncate">{approval.description || (approval.type as string).replace(/_/g, " ")}</p>
-                        {(approval as any).objectName && <p className="text-xs text-muted-foreground truncate">{(approval as any).objectName}</p>}
+              {/* Action Required banners — split IT-review from business-action */}
+              {pendingApprovals.length > 0 && (() => {
+                const itReviewTypes = ["blueprint_review", "high_risk_agent", "risk_gate", "risk_escalation"];
+                const itApprovals = pendingApprovals.filter(a => itReviewTypes.includes(a.type as string));
+                const businessApprovals = pendingApprovals.filter(a => !itReviewTypes.includes(a.type as string));
+                return (
+                  <>
+                    {itApprovals.length > 0 && (
+                      <div className="rounded-lg border border-blue-500/30 bg-blue-500/10 px-5 py-4 flex items-start gap-3" data-testid="section-it-review">
+                        <Shield className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+                        <div className="flex flex-col gap-0.5">
+                          <p className="text-sm font-semibold text-blue-700 dark:text-blue-400">Being reviewed by your IT team</p>
+                          <p className="text-xs text-blue-600/80 dark:text-blue-300/70">
+                            {itApprovals.length === 1 ? "One of your" : `${itApprovals.length} of your`} workers {itApprovals.length === 1 ? "is" : "are"} being checked before going live. Your IT team has been notified and will complete this shortly.
+                          </p>
+                        </div>
                       </div>
-                      <Link href="/approvals">
-                        <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" data-testid={`button-review-approval-${approval.id}`}>Review →</Button>
-                      </Link>
-                    </div>
-                  ))}
-                </div>
-              )}
+                    )}
+                    {businessApprovals.length > 0 && (
+                      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-5 py-4 flex flex-col gap-3" data-testid="section-action-required">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                          <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">
+                            Needs Your Attention ({businessApprovals.length})
+                          </span>
+                        </div>
+                        {businessApprovals.slice(0, 3).map((approval) => (
+                          <div key={approval.id} className="flex items-center gap-3">
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-medium text-foreground truncate">{approval.description || (approval.type as string).replace(/_/g, " ")}</p>
+                              {(approval as any).objectName && <p className="text-xs text-muted-foreground truncate">{(approval as any).objectName}</p>}
+                            </div>
+                            <Link href="/approvals">
+                              <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" data-testid={`button-review-approval-${approval.id}`}>Review →</Button>
+                            </Link>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
 
               {/* Digital Workers */}
               <div className="flex flex-col gap-3">
