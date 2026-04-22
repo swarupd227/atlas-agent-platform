@@ -308,9 +308,11 @@ interface Props {
 }
 
 export default function OtcCashS2Resolution({ state }: Props) {
-  const { phase } = state;
-  const hasResolution = phase === "resolution" || phase === "posting" || phase === "complete";
-  const hasPosting    = phase === "posting" || phase === "complete";
+  const { phase, agents } = state;
+  const step2Done = agents.find(a => a.step === 2)?.status === "complete";
+  const step3Done = agents.find(a => a.step === 3)?.status === "complete";
+  const hasResolution = step2Done || step3Done || phase === "complete";
+  const hasPosting    = step3Done || phase === "complete";
   const isComplete    = phase === "complete";
 
   return (

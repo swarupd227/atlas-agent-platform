@@ -197,11 +197,12 @@ interface Props {
 }
 
 export default function OtcCashS1Dashboard({ state, onDeepDive }: Props) {
-  const { phase, metrics } = state;
+  const { phase } = state;
+  const metrics = state.metrics as any;
   const isRunning = phase !== "idle" && phase !== "error";
-  const hasIngestion = phase !== "idle" && phase !== "setup";
-  const hasResolution = phase === "resolution" || phase === "posting" || phase === "complete";
-  const hasPosting = phase === "posting" || phase === "complete";
+  const hasIngestion = phase !== "idle" && phase !== "setup" && phase !== "error";
+  const hasResolution = phase === "running" || phase === "complete";
+  const hasPosting = phase === "complete";
 
   return (
     <div className="flex flex-col gap-6 min-h-0">

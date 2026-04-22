@@ -1,23 +1,59 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 
-// ─── Brand color ──────────────────────────────────────────────────────────────
-export const OTC_CASH_COLOR = "#10B981"; // emerald — financial/treasury theme
+// ─── Brand colors ─────────────────────────────────────────────────────────────
+export const OTC_CASH_COLOR = "#10B981";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-export type CashPhase =
-  | "idle"
-  | "setup"
-  | "ingestion"        // OTC-AGT-009 step 1: auto-matching
-  | "resolution"       // OTC-AGT-009 step 2: GlobalTech deep dive
-  | "posting"          // OTC-AGT-006: AR posting + closure
-  | "complete"
-  | "error";
+// ─── Scenario types ───────────────────────────────────────────────────────────
+export type ScenarioKey = "main" | "vertex" | "regional";
+
+export interface ScenarioInfo {
+  label:       string;
+  subtitle:    string;
+  description: string;
+  steps:       number;
+  agentCodes:  string[];
+  color:       string;
+  badge:       string;
+}
+
+export const SCENARIO_INFO: Record<ScenarioKey, ScenarioInfo> = {
+  main: {
+    label:       "Month-End Batch Processing",
+    subtitle:    "387 payments · $42.3M",
+    badge:       "3-Agent Pipeline",
+    description: "Full month-end cash application: ingest 387 payments, run intelligent auto-matching at 94%+ rate, and resolve GlobalTech's $2.3M complex EDI 820 payment covering 47 invoices with 3 deduction codes.",
+    steps:       3,
+    agentCodes:  ["OTC-AGT-009", "OTC-AGT-009", "OTC-AGT-006"],
+    color:       "#10B981",
+  },
+  vertex: {
+    label:       "Vertex Systems — Fuzzy Reference Match",
+    subtitle:    "ACH · $487,200",
+    badge:       "2-Agent Pipeline",
+    description: "ACH payment flagged as exception due to a reference mismatch. Agent investigates open AR, runs PO cross-reference fuzzy matching to find the correct invoices, and posts the confirmed cash receipt.",
+    steps:       2,
+    agentCodes:  ["OTC-AGT-009", "OTC-AGT-006"],
+    color:       "#6366F1",
+  },
+  regional: {
+    label:       "Regional Supply Co — No Remittance",
+    subtitle:    "Check · $127,000",
+    badge:       "2-Agent Pipeline",
+    description: "Check received with no remittance stub. Agent analyses open invoices, proposes oldest-first allocation, initiates automated customer chase, and posts provisionally to clear aging.",
+    steps:       2,
+    agentCodes:  ["OTC-AGT-009", "OTC-AGT-006"],
+    color:       "#F59E0B",
+  },
+};
+
+// ─── Pipeline types ───────────────────────────────────────────────────────────
+export type CashPhase = "idle" | "setup" | "running" | "complete" | "error";
 
 export interface CashLogEntry {
-  timestamp:  number;
-  agentCode:  string;
-  type:       "info" | "tool_call" | "analysis" | "complete" | "error";
-  message:    string;
+  timestamp: number;
+  agentCode: string;
+  type:      "info" | "tool_call" | "analysis" | "complete" | "error";
+  message:   string;
 }
 
 export interface AgentStatus {
@@ -31,51 +67,25 @@ export interface AgentStatus {
 }
 
 export interface CashPipelineState {
-  phase:   CashPhase;
-  log:     CashLogEntry[];
-  agents:  AgentStatus[];
-  metrics: {
-    total_amount:        number;
-    total_payments:      number;
-    match_rate_pct:      number;
-    auto_matched_usd:    number;
-    manual_review_usd:   number;
-    deductions_usd:      number;
-    unidentified_usd:    number;
-    globaltech_invoices: number;
-    ar_reduction:        number;
-    bank_rec_pct:        number;
-    elapsed_secs:        number;
-  };
+  phase:       CashPhase;
+  scenarioKey: ScenarioKey | null;
+  log:         CashLogEntry[];
+  agents:      AgentStatus[];
+  metrics:     Record<string, number | boolean | string>;
   agentSummaries: Record<string, string>;
-  error?:         string;
+  error?:      string;
+  elapsed_secs: number;
 }
 
-const AGENT_DEFS: Omit<AgentStatus, "status">[] = [
-  { code: "OTC-AGT-009", name: "Cash Application & Reconciliation Agent", label: "Payment Ingestion & Auto-Matching",   step: 1 },
-  { code: "OTC-AGT-009", name: "Cash Application & Reconciliation Agent", label: "Complex Payment Resolution",          step: 2 },
-  { code: "OTC-AGT-006", name: "Billing & Collections Agent",             label: "AR Posting & Invoice Closure",        step: 3 },
-];
-
-function makeInitialState(): CashPipelineState {
+function makeIdleState(): CashPipelineState {
   return {
-    phase:   "idle",
-    log:     [],
-    agents:  AGENT_DEFS.map(a => ({ ...a, status: "idle" })),
-    metrics: {
-      total_amount:        42_313_847,
-      total_payments:      387,
-      match_rate_pct:      0,
-      auto_matched_usd:    0,
-      manual_review_usd:   2_487_000,
-      deductions_usd:      890_200,
-      unidentified_usd:    127_000,
-      globaltech_invoices: 47,
-      ar_reduction:        0,
-      bank_rec_pct:        0,
-      elapsed_secs:        0,
-    },
+    phase:       "idle",
+    scenarioKey: null,
+    log:         [],
+    agents:      [],
+    metrics:     {},
     agentSummaries: {},
+    elapsed_secs: 0,
   };
 }
 
@@ -113,9 +123,9 @@ export function parseAgentJson(text: string): Record<string, unknown> | null {
 
 // ─── Pipeline hook ────────────────────────────────────────────────────────────
 export function useOtcCashPipeline() {
-  const [state, setState] = useState<CashPipelineState>(makeInitialState);
-  const esRef = { current: null as EventSource | null };
-  const startRef = { current: 0 };
+  const [state, setState] = useState<CashPipelineState>(makeIdleState);
+  const esRef    = useRef<EventSource | null>(null);
+  const startRef = useRef<number>(0);
 
   const addLog = (agentCode: string, type: CashLogEntry["type"], message: string) => {
     setState(prev => ({
@@ -124,29 +134,46 @@ export function useOtcCashPipeline() {
     }));
   };
 
-  const trigger = useCallback(() => {
+  const trigger = useCallback((scenarioKey: ScenarioKey) => {
     if (esRef.current) { esRef.current.close(); esRef.current = null; }
 
-    setState(prev => ({
-      ...makeInitialState(),
-      phase: "setup",
-      log: [{ timestamp: Date.now(), agentCode: "ATLAS", type: "info", message: "Connecting to Atlas Cash Application Command Center…" }],
+    const info = SCENARIO_INFO[scenarioKey];
+    const initialAgents: AgentStatus[] = info.agentCodes.map((code, i) => ({
+      code,
+      name:   code === "OTC-AGT-009" ? "Cash Application & Reconciliation Agent" : "Billing & Collections Agent",
+      label:  "Pending…",
+      step:   i + 1,
+      status: "idle",
     }));
+
+    const seedMetrics: Record<string, number | boolean | string> = scenarioKey === "main"
+      ? { total_amount: 42_313_847, total_payments: 387, match_rate_pct: 0, auto_matched_usd: 0, ar_reduction: 0, bank_rec_pct: 0 }
+      : {};
+
+    setState({
+      phase:        "setup",
+      scenarioKey,
+      log:          [{ timestamp: Date.now(), agentCode: "ATLAS", type: "info", message: `Starting: ${info.label}` }],
+      agents:       initialAgents,
+      metrics:      seedMetrics,
+      agentSummaries: {},
+      elapsed_secs: 0,
+    });
     startRef.current = Date.now();
 
-    const es = new EventSource("/demo-api/otc-cash/live-run");
+    const es = new EventSource(`/demo-api/otc-cash/live-run?scenario=${scenarioKey}`);
     esRef.current = es;
 
     const elapsed = setInterval(() => {
       setState(prev => ({
         ...prev,
-        metrics: { ...prev.metrics, elapsed_secs: Math.round((Date.now() - startRef.current) / 1000) },
+        elapsed_secs: Math.round((Date.now() - startRef.current) / 1000),
       }));
     }, 1000);
 
     es.addEventListener("run_start", (e) => {
       const d = JSON.parse(e.data);
-      setState(prev => ({ ...prev, phase: "ingestion" }));
+      setState(prev => ({ ...prev, phase: "running" }));
       addLog("ATLAS", "info", d.message);
     });
 
@@ -158,13 +185,14 @@ export function useOtcCashPipeline() {
     es.addEventListener("agent_start", (e) => {
       const d = JSON.parse(e.data);
       const stepIdx = (d.step ?? 1) - 1;
-      const phase: CashPhase = stepIdx === 0 ? "ingestion" : stepIdx === 1 ? "resolution" : "posting";
       setState(prev => ({
         ...prev,
-        phase,
-        agents: prev.agents.map((a, i) => i === stepIdx ? { ...a, status: "running", deploymentId: d.deploymentId } : a),
+        phase: "running",
+        agents: prev.agents.map((a, i) =>
+          i === stepIdx ? { ...a, label: d.label ?? a.label, status: "running", deploymentId: d.deploymentId } : a
+        ),
       }));
-      addLog(d.agentCode, "info", `▶ Starting: ${d.label}`);
+      addLog(d.agentCode, "info", `▶ ${d.label}`);
     });
 
     es.addEventListener("agent_event", (e) => {
@@ -186,12 +214,14 @@ export function useOtcCashPipeline() {
         const updated = prev.agents.map((a, i) =>
           i === stepIdx ? { ...a, status: d.success ? "complete" : "error", summary: d.summary?.slice(0, 300) } : a
         );
-        let metrics = { ...prev.metrics };
-        // Update metrics from agent output
-        if (json?.match_rate_pct) metrics.match_rate_pct = Number(json.match_rate_pct);
-        if (json?.auto_matched_usd) metrics.auto_matched_usd = Number(json.auto_matched_usd);
-        if (json?.ar_reduction) metrics.ar_reduction = Number(json.ar_reduction);
-        if (json?.bank_rec_pct) metrics.bank_rec_pct = Number(json.bank_rec_pct);
+        const metrics = { ...prev.metrics };
+        if (json) {
+          Object.entries(json).forEach(([k, v]) => {
+            if (typeof v === "number" || typeof v === "boolean" || typeof v === "string") {
+              metrics[k] = v;
+            }
+          });
+        }
         return {
           ...prev,
           agents:  updated,
@@ -199,7 +229,8 @@ export function useOtcCashPipeline() {
           agentSummaries: { ...prev.agentSummaries, [`${d.agentCode}-step${d.step}`]: d.summary ?? "" },
         };
       });
-      addLog(d.agentCode, d.success ? "complete" : "error", d.success ? `✓ Complete: ${d.label}` : `✗ Error in ${d.label}`);
+      addLog(d.agentCode, d.success ? "complete" : "error",
+        d.success ? `✓ ${d.label}` : `✗ Error in ${d.label}`);
     });
 
     es.addEventListener("agent_error", (e) => {
@@ -213,23 +244,19 @@ export function useOtcCashPipeline() {
       clearInterval(elapsed);
       setState(prev => ({
         ...prev,
-        phase: "complete",
-        metrics: {
-          ...prev.metrics,
-          match_rate_pct:   d.metrics?.match_rate_pct ?? prev.metrics.match_rate_pct,
-          auto_matched_usd: d.metrics?.auto_matched_usd ?? prev.metrics.auto_matched_usd,
-          ar_reduction:     d.metrics?.ar_reduction ?? prev.metrics.ar_reduction,
-          bank_rec_pct:     d.metrics?.bank_rec_pct ?? prev.metrics.bank_rec_pct,
-          elapsed_secs:     Math.round((Date.now() - startRef.current) / 1000),
-        },
+        phase:       "complete",
+        elapsed_secs: Math.round((Date.now() - startRef.current) / 1000),
+        metrics:     { ...prev.metrics, ...(d.metrics ?? {}) },
       }));
-      addLog("ATLAS", "complete", `✓ Pipeline complete — ${d.message}`);
+      addLog("ATLAS", "complete", `✓ ${d.message}`);
       es.close();
     });
 
     es.addEventListener("error", (e) => {
       clearInterval(elapsed);
-      const msg = (e as MessageEvent).data ? JSON.parse((e as MessageEvent).data)?.message : "SSE connection error";
+      const msg = (e as MessageEvent).data
+        ? JSON.parse((e as MessageEvent).data)?.message
+        : "SSE connection error";
       setState(prev => ({ ...prev, phase: "error", error: msg }));
       addLog("ATLAS", "error", `✗ ${msg}`);
       es.close();
@@ -238,7 +265,11 @@ export function useOtcCashPipeline() {
     es.onerror = () => {
       clearInterval(elapsed);
       if (es.readyState === EventSource.CLOSED) {
-        setState(prev => prev.phase === "complete" || prev.phase === "error" ? prev : { ...prev, phase: "error", error: "SSE connection lost" });
+        setState(prev =>
+          prev.phase === "complete" || prev.phase === "error"
+            ? prev
+            : { ...prev, phase: "error", error: "SSE connection lost" }
+        );
       }
     };
   }, []);
@@ -246,7 +277,7 @@ export function useOtcCashPipeline() {
   const reset = useCallback(() => {
     if (esRef.current) { esRef.current.close(); esRef.current = null; }
     fetch("/demo-api/otc-cash/reset", { method: "POST" }).catch(() => {});
-    setState(makeInitialState());
+    setState(makeIdleState());
   }, []);
 
   useEffect(() => () => { if (esRef.current) esRef.current.close(); }, []);

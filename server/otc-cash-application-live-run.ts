@@ -24,83 +24,144 @@ const _skillIdByName:   Record<string, string> = {};
 const _mcpIdByName:     Record<string, string> = {};
 const _deployIdByAgent: Record<string, string> = {};
 
-// ─── Pipeline steps ───────────────────────────────────────────────────────────
-const PIPELINE_STEPS = [
+// ─── Scenario definitions ─────────────────────────────────────────────────────
+type ScenarioStep = { agentName: string; agentCode: string; label: string; maxIter: number; taskPrompt: string };
+
+const SCENARIO_MAIN: ScenarioStep[] = [
   {
     agentName: OTC_AGT_009_NAME,
-    agentCode:  "OTC-AGT-009",
-    label:      "Payment Ingestion & Intelligent Auto-Matching",
-    maxIter:    6,
+    agentCode: "OTC-AGT-009",
+    label:     "Month-End Batch — Payment Ingestion & Auto-Matching",
+    maxIter:   7,
     taskPrompt: `You are NovaTech's Cash Application & Reconciliation Agent (OTC-AGT-009).
 
-SITUATION: It is month-end. March 28, 2026. NovaTech's treasury team has received today's payment batch for month-end close.
+Today is March 28, 2026 — month-end close. The treasury team has just handed you the daily payment batch for processing.
 
-MISSION: Run the Cash Application Command Center — ingest the payment batch, achieve 94%+ auto-match rate, and identify exceptions for resolution.
+Your goal is to get NovaTech's AR in order before books close. You have tools to ingest the payment batch, run the intelligent matching engine, surface the exception queue, and check the bank reconciliation status.
 
-EXECUTE THESE STEPS IN ORDER:
-1. Call ingest_daily_payment_batch — capture all 387 payments ($42.3M) across wire, ACH, check, and EDI 820 channels
-2. Call run_auto_matching — apply intelligent matching algorithm; target ≥94% match rate
-3. Call identify_exceptions — return the prioritised exception queue; note GlobalTech Corp as HIGH COMPLEXITY ($2.3M / 47 invoices)
-4. Call get_bank_reconciliation — confirm March 2026 bank rec status (target 98%+ matched)
+Start by pulling in the batch to understand what you're working with. Then run the matching algorithms — NovaTech targets 94% or better auto-match rates at month-end. Once matching is complete, surface the exception queue so the team knows what needs human attention. GlobalTech Corp tends to come in with complex multi-invoice payments, so flag anything that looks like a high-complexity exception. Wrap up by confirming the bank reconciliation status for March.
 
-IMPORTANT: After completing all 4 tool calls, output a JSON summary:
+Summarise your findings in a JSON block when done:
 {"status":"BATCH_PROCESSED","total_amount":42313847,"payments":387,"match_rate_pct":94.1,"auto_matched_usd":39826847,"exceptions":14,"high_complexity_exception":"GlobalTech Corp $2,300,847","bank_rec_pct":98.7,"next_step":"RESOLVE_GLOBALTECH"}`,
   },
   {
     agentName: OTC_AGT_009_NAME,
-    agentCode:  "OTC-AGT-009",
-    label:      "Complex Payment Resolution — GlobalTech $2.3M",
-    maxIter:    7,
+    agentCode: "OTC-AGT-009",
+    label:     "GlobalTech $2.3M — Complex EDI 820 Resolution",
+    maxIter:   8,
     taskPrompt: `You are NovaTech's Cash Application & Reconciliation Agent (OTC-AGT-009).
 
-HANDOFF FROM PREVIOUS STEP: Payment batch processed. 94.1% auto-match rate achieved. Exception queue identified GlobalTech Corp as Priority 1 — HIGH COMPLEXITY.
+GlobalTech Corp's wire transfer (WF-20260328-7742, $2,300,847.00) came in with an EDI 820 remittance attachment covering 47 open invoices. The matching engine flagged it HIGH COMPLEXITY because it has multiple deduction codes and what looks like an overpayment. The cash team estimates this kind of payment takes 4–6 hours to resolve manually.
 
-GLOBALTECH PAYMENT: Wire #WF-20260328-7742, $2,300,847.00, EDI 820 remittance attached, covers 47 open invoices with 3 deductions and an overpayment.
+You have tools to parse their EDI 820, apply the payment waterfall across the invoices, dig into each deduction, and validate whether each deduction is legitimate under NovaTech policy. Once you have a clear picture, package everything up as a one-click resolution for the treasury controller.
 
-MISSION: Resolve the GlobalTech complex payment — the kind that takes 4–6 hours manually. Do it in seconds.
+Investigate this thoroughly — the deductions especially. One of them may warrant a carrier investigation rather than immediate acceptance.
 
-EXECUTE THESE STEPS IN ORDER:
-1. Call parse_edi_remittance — extract the full remittance from GlobalTech's EDI 820 (47 invoice refs, 3 deduction codes)
-2. Call match_payment_to_invoices — apply $2,300,847 to all 47 open GlobalTech invoices (target 99%+ confidence)
-3. Call analyze_deductions — identify and detail all 3 deductions: freight claim (-$28,500), early pay discount (-$14,200), quantity short (-$7,400)
-4. Call validate_deduction_details — issue VALID/INVESTIGATE rulings with evidence for each deduction
-5. Call apply_payment_resolution — prepare the complete resolution package for one-click controller approval
-
-EXCEPTION SUB-SCENARIOS TO NOTE IN YOUR ANALYSIS:
-- Vertex Systems ACH $487,200: customer reference mismatch resolved via fuzzy PO cross-reference (auto-confirm available)
-- Regional Supply Co $127K check: no remittance data, contact customer for allocation guidance
-- EDI 820 parse: one payment had partial remittance — flagged but GlobalTech is clean
-
-IMPORTANT: After completing all 5 tool calls, output a JSON summary:
+Summarise your resolution in a JSON block when done:
 {"status":"RESOLVED","payment_ref":"WF-20260328-7742","invoices_matched":47,"match_confidence_pct":99.2,"deductions_accepted":2,"accepted_amount":42700,"deduction_investigated":1,"investigate_amount":7400,"overpayment_credit":38100,"ar_reduction":2370000,"next_agent":"OTC-AGT-006"}`,
   },
   {
     agentName: OTC_AGT_006_NAME,
-    agentCode:  "OTC-AGT-006",
-    label:      "AR Posting, Deduction Validation & Invoice Closure",
-    maxIter:    6,
+    agentCode: "OTC-AGT-006",
+    label:     "AR Posting, Deduction Validation & Invoice Closure",
+    maxIter:   7,
     taskPrompt: `You are NovaTech's Billing & Collections Agent (OTC-AGT-006).
 
-HANDOFF FROM OTC-AGT-009: GlobalTech Corp payment resolution package prepared.
-- $2,262,747 matched to 47 invoices (all will close)
-- 2 deductions VALID: freight claim $28,500 + early pay discount $14,200 = $42,700 accepted
-- 1 deduction INVESTIGATE: quantity short $7,400 (carrier trace pending)
-- $38,100 overpayment to credit to account
-- Treasury controller one-click approval obtained
+OTC-AGT-009 has prepared the GlobalTech Corp resolution package. The payment ($2,300,847 on wire WF-20260328-7742) has been matched to 47 invoices, 3 deductions have been analysed, and an overpayment credit of $38,100 has been identified. The treasury controller has given one-click approval.
 
-MISSION: Execute the AR posting, close all 47 invoices, and report the balance impact.
+Your job is to execute the AR side: validate each deduction against NovaTech's policy matrix, post the journal entries to the AR sub-ledger, issue the credit memo for the overpayment, close all 47 invoices in the ERP, and report the impact on GlobalTech's AR aging.
 
-EXECUTE THESE STEPS IN ORDER:
-1. Call validate_deduction_against_policy — confirm policy authority for all 3 deductions per NovaTech deduction matrix
-2. Call post_ar_entries — post journal entries: debit Bank, credit AR 47 invoices, post deduction GL entries, credit memo entry
-3. Call generate_credit_memo — issue CM-2026-0328-GT for $38,100 overpayment credit
-4. Call close_invoice_batch — mark all 47 invoices CLOSED-PAID, update GlobalTech AR balance ($3.1M → $0.73M)
-5. Call get_ar_aging_impact — confirm AR aging improvement and DSO impact
+Be precise with GL account codes and journal entry references — this is a SOX-controlled process. When you're done, the AR balance should move from roughly $3.1M to $0.73M for GlobalTech.
 
-IMPORTANT: After completing all 5 tool calls, output a JSON summary:
+Summarise the posting in a JSON block when done:
 {"status":"POSTED","posting_id":"JE-2026-CA-0328-GT","invoices_closed":47,"total_posted_usd":2262747,"deductions_posted_usd":42700,"credit_memo":"CM-2026-0328-GT","credit_amount":38100,"globaltech_ar_before":3100000,"globaltech_ar_after":730000,"dso_improvement_days":4.2,"bank_rec_ready":true}`,
   },
 ];
+
+const SCENARIO_VERTEX: ScenarioStep[] = [
+  {
+    agentName: OTC_AGT_009_NAME,
+    agentCode: "OTC-AGT-009",
+    label:     "Vertex Systems — ACH Reference Mismatch Investigation",
+    maxIter:   6,
+    taskPrompt: `You are NovaTech's Cash Application & Reconciliation Agent (OTC-AGT-009).
+
+An ACH payment from Vertex Systems (ACH-2026-0328-0447, $487,200) has landed in the exception queue with a reference mismatch flag. The memo field contains "VS-2026-MAR" but that reference doesn't match any open invoice number in NovaTech's AR system. The payment is sitting unmatched.
+
+Look up the payment and their open invoices. You have a fuzzy matching tool that cross-references customer PO codes against open AR — see if it can find a clean match for this payment. If you find a high-confidence match, prepare a confirmation package so the AR supervisor can approve it with one click.
+
+Be specific about which invoices you believe this covers, the total, and your confidence level.
+
+Summarise your findings in a JSON block when done:
+{"status":"MATCH_FOUND","payment_ref":"ACH-2026-0328-0447","customer":"Vertex Systems","payment_amount":487200,"invoices_matched":5,"match_confidence_pct":91,"match_method":"PO_CROSS_REFERENCE","resolution":"AUTO_CONFIRM_AVAILABLE"}`,
+  },
+  {
+    agentName: OTC_AGT_006_NAME,
+    agentCode: "OTC-AGT-006",
+    label:     "Vertex Systems — Confirmed Match AR Posting",
+    maxIter:   5,
+    taskPrompt: `You are NovaTech's Billing & Collections Agent (OTC-AGT-006).
+
+OTC-AGT-009 resolved the Vertex Systems ACH reference mismatch — their $487,200 payment (ACH-2026-0328-0447) was matched to invoices INV-47210 through INV-47214 via PO cross-reference with 91% confidence. The AR supervisor has confirmed the match.
+
+Post the cash receipt to AR and close those 5 invoices. There are no deductions and no overpayment — this is a clean posting, just a non-standard reference that caused the initial exception. Once posted, confirm the customer's updated AR balance.
+
+Summarise the posting in a JSON block when done:
+{"status":"POSTED","posting_id":"JE-2026-CA-0328-VS","customer":"Vertex Systems","payment_ref":"ACH-2026-0328-0447","invoices_closed":5,"total_posted_usd":487200,"ar_before":512800,"ar_after":25600}`,
+  },
+];
+
+const SCENARIO_REGIONAL: ScenarioStep[] = [
+  {
+    agentName: OTC_AGT_009_NAME,
+    agentCode: "OTC-AGT-009",
+    label:     "Regional Supply Co — No Remittance, Allocation Investigation",
+    maxIter:   6,
+    taskPrompt: `You are NovaTech's Cash Application & Reconciliation Agent (OTC-AGT-009).
+
+A check for $127,000 arrived from Regional Supply Co (CHK-2026-77421) with no remittance stub and no reference. The check is sitting unmatched. The customer has 8 open invoices totalling $143,200 — this payment doesn't cover everything, so you need to decide how to allocate it.
+
+Look up the payment and the customer's open AR. Use your allocation tool to figure out the best way to apply $127,000 across their open invoices — NovaTech's standard policy is oldest-first for unapplied payments, but check whether that makes sense here. Document your recommended allocation with reasoning.
+
+Summarise your findings in a JSON block when done:
+{"status":"ALLOCATION_PROPOSED","payment_ref":"CHK-2026-77421","customer":"Regional Supply Co","payment_amount":127000,"invoices_to_close":3,"allocation_method":"OLDEST_FIRST","confidence_pct":72,"unapplied":3700,"action_required":"PROVISIONAL_APPLY_PLUS_CHASE"}`,
+  },
+  {
+    agentName: OTC_AGT_006_NAME,
+    agentCode: "OTC-AGT-006",
+    label:     "Regional Supply Co — Chase Workflow & Provisional AR Posting",
+    maxIter:   6,
+    taskPrompt: `You are NovaTech's Billing & Collections Agent (OTC-AGT-006).
+
+OTC-AGT-009 has proposed an oldest-first provisional allocation for Regional Supply Co's $127K check (CHK-2026-77421). The customer hasn't provided remittance, so you need to do two things simultaneously: contact them to get it, and post the payment provisionally so it doesn't age further in the exception queue.
+
+Initiate the automated chase workflow — send them a notification via their preferred contact method asking for remittance confirmation. Then post the payment provisionally to their oldest overdue invoices. Be sure to flag it as provisional so the posting can be revised once they respond. Report the aging impact.
+
+Summarise the outcome in a JSON block when done:
+{"status":"CHASE_INITIATED_AND_PROVISIONAL_POSTED","payment_ref":"CHK-2026-77421","customer":"Regional Supply Co","chase_id":"CHASE-2026-RSC-0328","provisional_posting_id":"JE-2026-PROV-RSC-0328","invoices_provisionally_closed":3,"ar_before":143200,"ar_after":16200,"days_30_cleared":89400}`,
+  },
+];
+
+const SCENARIOS: Record<string, { label: string; steps: ScenarioStep[]; pipelineCompleteMsg: string; metrics: Record<string, unknown> }> = {
+  main: {
+    label: "Month-End Batch Processing",
+    steps: SCENARIO_MAIN,
+    pipelineCompleteMsg: "Month-end cash application complete. 94.1% auto-match rate. GlobalTech $2.3M / 47 invoices resolved. AR reduced by $2.37M.",
+    metrics: { total_payments: 387, total_amount: 42_313_847, match_rate_pct: 94.1, auto_matched_usd: 39_826_847, globaltech_invoices: 47, ar_reduction: 2_370_000, bank_rec_pct: 98.7 },
+  },
+  vertex: {
+    label: "Vertex Systems — Fuzzy Reference Match",
+    steps: SCENARIO_VERTEX,
+    pipelineCompleteMsg: "Vertex Systems ACH $487.2K resolved via PO cross-reference fuzzy match. 5 invoices closed. Exception cleared in seconds.",
+    metrics: { payment_amount: 487_200, invoices_closed: 5, match_confidence_pct: 91, ar_reduction: 487_200, match_method: "PO_CROSS_REFERENCE" },
+  },
+  regional: {
+    label: "Regional Supply Co — No Remittance Recovery",
+    steps: SCENARIO_REGIONAL,
+    pipelineCompleteMsg: "Regional Supply Co $127K provisionally posted. 3 overdue invoices cleared. Automated chase workflow initiated — 3-day response window.",
+    metrics: { payment_amount: 127_000, invoices_provisional: 3, days_30_cleared: 89_400, ar_after: 16_200, chase_initiated: true },
+  },
+};
 
 // ─── Ensure deployment helper ─────────────────────────────────────────────────
 async function _ensureDeployment(agentId: string, agentName: string): Promise<string> {
@@ -486,6 +547,10 @@ export async function otcCashLiveRunHandler(req: Request, res: Response): Promis
     try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch {}
   };
 
+  // Resolve scenario
+  const scenarioKey = (req.query.scenario as string) || "main";
+  const scenario = SCENARIOS[scenarioKey] ?? SCENARIOS.main;
+
   let aborted = false;
   const keepalive = setInterval(() => {
     if (aborted) { clearInterval(keepalive); return; }
@@ -526,14 +591,14 @@ export async function otcCashLiveRunHandler(req: Request, res: Response): Promis
   });
 
   const agentResults: Record<string, string> = {};
-  // Use per-step unique keys to allow OTC-AGT-009 to appear twice in pipeline
   const deployKeyForStep: Record<number, string> = {};
 
   try {
     sse("run_start", {
-      message:  "MONTH-END CASH APPLICATION — March 2026. $42.3M in payments received across 387 transactions. Initiating Atlas AI-Powered Cash Application Command Center…",
-      scenario: "OTC-SCN-004",
-      period:   "March 2026",
+      message:     `Initiating Atlas Cash Application — Scenario: ${scenario.label}`,
+      scenario:    scenarioKey,
+      scenarioLabel: scenario.label,
+      period:      "March 2026",
     });
 
     sse("setup", { message: "Provisioning OTC-AGT-009 (Cash Application) and OTC-AGT-006 (Billing & Collections)…" });
@@ -549,15 +614,11 @@ export async function otcCashLiveRunHandler(req: Request, res: Response): Promis
       res.end(); return;
     }
 
-    sse("setup", {
-      message:  `Agents ready — OTC-AGT-009 ✓ · OTC-AGT-006 ✓`,
-      agentIds: ids,
-    });
+    sse("setup", { message: `Agents ready — OTC-AGT-009 ✓ · OTC-AGT-006 ✓`, agentIds: ids });
 
-    // Sequential pipeline: AGT-009 (step 1) → AGT-009 (step 2) → AGT-006 (step 3)
-    for (let stepIdx = 0; stepIdx < PIPELINE_STEPS.length; stepIdx++) {
+    for (let stepIdx = 0; stepIdx < scenario.steps.length; stepIdx++) {
       if (aborted) break;
-      const step = PIPELINE_STEPS[stepIdx];
+      const step = scenario.steps[stepIdx];
 
       const agentId = _agentIdByName[step.agentName];
       if (!agentId) {
@@ -565,9 +626,6 @@ export async function otcCashLiveRunHandler(req: Request, res: Response): Promis
         continue;
       }
 
-      // Give each pipeline step a unique deployment key so AGT-009 step 1 and step 2
-      // get the same deployment ID (real behaviour) but SSE events are distinguished by label
-      const deployKey = `${step.agentName}-step${stepIdx}`;
       if (!deployKeyForStep[stepIdx]) {
         const deployId = await _ensureDeployment(agentId, step.agentName);
         deployKeyForStep[stepIdx] = deployId;
@@ -584,7 +642,7 @@ export async function otcCashLiveRunHandler(req: Request, res: Response): Promis
         deploymentId: deployId,
         label:        step.label,
         step:         stepIdx + 1,
-        totalSteps:   PIPELINE_STEPS.length,
+        totalSteps:   scenario.steps.length,
       });
 
       const result = await runAgentOnce(deployId, step.taskPrompt, step.maxIter);
@@ -615,21 +673,11 @@ export async function otcCashLiveRunHandler(req: Request, res: Response): Promis
 
     if (!aborted) {
       sse("pipeline_complete", {
-        message:   "Cash Application Command Center pipeline complete. 94.1% auto-match rate achieved. GlobalTech $2.3M / 47 invoices resolved in seconds. AR reduced by $2.37M.",
-        scenario:  "OTC-SCN-004",
+        message:        scenario.pipelineCompleteMsg,
+        scenario:       scenarioKey,
+        scenarioLabel:  scenario.label,
         agentSummaries: agentResults,
-        metrics: {
-          total_payments:        387,
-          total_amount:          42_313_847,
-          match_rate_pct:        94.1,
-          auto_matched_usd:      39_826_847,
-          globaltech_invoices:   47,
-          deductions_accepted:   2,
-          accepted_usd:          42_700,
-          ar_reduction:          2_370_000,
-          bank_rec_pct:          98.7,
-          time_to_close_mins:    1.2,
-        },
+        metrics:        scenario.metrics,
       });
     }
   } catch (err: unknown) {
