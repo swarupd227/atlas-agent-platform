@@ -306,7 +306,26 @@ export default function ProcessFlows() {
   }, [searchString]);
 
   const [activeCategory, setActiveCategory] = useState<typeof CATEGORIES[number]>("All");
-  const [steps, setSteps] = useState<ProcessStep[]>([]);
+  const [steps, setSteps] = useState<ProcessStep[]>(() => {
+    try {
+      const raw = sessionStorage.getItem("process-flow-import-steps");
+      if (raw) {
+        sessionStorage.removeItem("process-flow-import-steps");
+        const parsed: Array<{ id?: string; type?: string; label?: string; description?: string; actor?: string; estimatedMins?: number }> = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((s, i) => ({
+            id: s.id || `imported_${i}`,
+            type: (s.type as ProcessStep["type"]) || "take_action",
+            label: s.label || `Step ${i + 1}`,
+            description: s.description || "",
+            actor: s.actor,
+            estimatedMins: s.estimatedMins,
+          }));
+        }
+      }
+    } catch {}
+    return [];
+  });
   const [activeTemplate, setActiveTemplate] = useState<ProcessTemplate | null>(null);
   const [editingStepId, setEditingStepId] = useState<string | null>(null);
 

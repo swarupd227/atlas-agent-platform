@@ -5365,6 +5365,11 @@ function BusinessProcessFlowSection({
             className="h-7 text-xs"
             onClick={() => {
               const params = new URLSearchParams({ outcomeName: outcome.name || "", kpis: kpis.slice(0, 3).map(k => k.name).join(",") });
+              if (steps.length > 0) {
+                sessionStorage.setItem("process-flow-import-steps", JSON.stringify(steps));
+              } else {
+                sessionStorage.removeItem("process-flow-import-steps");
+              }
               navigate(`/process-flows?${params.toString()}`);
             }}
             data-testid="button-open-flow-studio"
