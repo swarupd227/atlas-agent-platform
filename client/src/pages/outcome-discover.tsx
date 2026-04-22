@@ -1737,7 +1737,7 @@ export default function OutcomeDiscover() {
                 </div>
 
                 <div className="flex flex-col items-center gap-3 relative z-10">
-                  <Button onClick={() => navigate(`/outcomes/${formCreatedOutcome.id}?tab=agent-map`)} data-testid="button-form-continue-to-agents" className="w-full max-w-sm shadow-sm shadow-primary/10" size="lg">
+                  <Button onClick={() => navigate(isBusinessMode ? `/outcomes/${formCreatedOutcome.id}` : `/outcomes/${formCreatedOutcome.id}?tab=agent-map`)} data-testid="button-form-continue-to-agents" className="w-full max-w-sm shadow-sm shadow-primary/10" size="lg">
                     <Sparkles className="w-4 h-4 mr-1.5" /> View Your Plan <ArrowRight className="w-4 h-4 ml-1.5" />
                   </Button>
                   <div className="flex items-center gap-3">
@@ -2615,7 +2615,7 @@ export default function OutcomeDiscover() {
                       <Button
                         size="sm"
                         className="w-full shadow-sm shadow-primary/10"
-                        onClick={() => navigate(`/outcomes/${createdOutcome.id}?tab=agent-map`)}
+                        onClick={() => navigate(isBusinessMode ? `/outcomes/${createdOutcome.id}` : `/outcomes/${createdOutcome.id}?tab=agent-map`)}
                         data-testid="button-discover-continue-to-agents"
                       >
                         <Sparkles className="w-3.5 h-3.5 mr-1.5" /> View Your Plan <ArrowRight className="w-3.5 h-3.5 ml-1.5" />

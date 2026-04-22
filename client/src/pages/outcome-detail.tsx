@@ -436,6 +436,9 @@ export default function OutcomeDetail() {
   const [impactNetworkOpen, setImpactNetworkOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [processAnalysisOpen, setProcessAnalysisOpen] = useState(false);
+  const [launchStep, setLaunchStep] = useState<number>(0);
+  const [launchingWorkers, setLaunchingWorkers] = useState(false);
+  const [supportRequestSent, setSupportRequestSent] = useState(false);
   const [, setLocation] = useLocation();
 
   const deleteOutcomeMutation = useMutation({
@@ -1067,6 +1070,117 @@ export default function OutcomeDetail() {
     a.click();
     URL.revokeObjectURL(url);
     toast({ title: "Report downloaded" });
+  }
+
+  async function launchWorkersAutomatically() {
+    if (!outcomeId || !outcome) return;
+    setLaunchingWorkers(true);
+    setLaunchStep(1);
+    try {
+      const proposalsRes = await apiRequest("POST", "/api/ai/propose-agents", {
+        outcomeContract: outcome,
+        kpis: kpis || [],
+        industryContext: { industryId: industry?.id || "general", frameworks: [], jurisdictions: [], departments: [] },
+        ...(processFlowSteps.length > 0 && { processFlowSteps }),
+      });
+      if (!proposalsRes.ok) throw new Error("Failed to design your Digital Workers. Please try again.");
+      const proposalsData = await proposalsRes.json();
+
+      const agentWorkers: any[] = proposalsData.agents || [];
+      const orchestratorProp: any = proposalsData.orchestrator || null;
+      const pipeline: any = proposalsData.pipeline || null;
+
+      if (agentWorkers.length === 0 && !orchestratorProp) {
+        throw new Error("No workers could be designed for this outcome. Please try again.");
+      }
+
+      setLaunchStep(2);
+      let createdAgentIds: string[] = [];
+
+      if (orchestratorProp && agentWorkers.length > 0) {
+        const teamRes = await apiRequest("POST", "/api/ai/create-team-from-proposals", {
+          outcomeId,
+          industry: industry?.id || "general",
+          orchestrator: { ...orchestratorProp, suggestedKnowledgeBases: orchestratorProp.suggestedKnowledgeBases || [] },
+          workers: agentWorkers.map((w: any) => ({ ...w, suggestedKnowledgeBases: w.suggestedKnowledgeBases || [] })),
+          pipeline,
+        });
+        if (!teamRes.ok) throw new Error("Failed to build your worker team. Please try again.");
+        const teamData = await teamRes.json();
+        createdAgentIds = [
+          teamData.teamAgent?.id,
+          ...(teamData.workers || []).map((w: any) => w.id),
+        ].filter(Boolean);
+      } else {
+        const allWorkers = orchestratorProp ? [orchestratorProp, ...agentWorkers] : agentWorkers;
+        for (const worker of allWorkers) {
+          try {
+            const agentRes = await apiRequest("POST", "/api/agents", {
+              name: worker.name,
+              description: worker.description,
+              owner: "system",
+              agentType: "single",
+              riskTier: worker.riskTier || "MEDIUM",
+              autonomyMode: worker.autonomyMode || "assisted",
+              outcomeId,
+              systemPrompt: worker.systemPrompt || worker.description,
+            });
+            const agentData = await agentRes.json();
+            if (agentData.id) createdAgentIds.push(agentData.id);
+          } catch {}
+        }
+      }
+
+      if (createdAgentIds.length === 0) {
+        throw new Error("Workers could not be created. Please try again.");
+      }
+
+      setLaunchStep(3);
+      for (const agentId of createdAgentIds) {
+        try {
+          await apiRequest("POST", `/api/agents/${agentId}/deploy-and-run`, {});
+        } catch {}
+      }
+
+      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes", outcomeId, "agent-contributions"] });
+
+      setLaunchStep(4);
+      toast({
+        title: "Your Digital Workers are live!",
+        description: `${createdAgentIds.length} worker${createdAgentIds.length !== 1 ? "s have" : " has"} been set up and activated.`,
+      });
+    } catch (err: any) {
+      setLaunchStep(-1);
+      toast({
+        title: "Setup failed",
+        description: err?.message || "Please try again or contact your IT team.",
+        variant: "destructive",
+      });
+    } finally {
+      setLaunchingWorkers(false);
+    }
+  }
+
+  async function requestITSupport() {
+    if (!outcomeId || !outcome) return;
+    try {
+      await apiRequest("POST", "/api/approvals", {
+        type: "it_support_request",
+        objectType: "outcome",
+        objectId: outcomeId,
+        objectName: outcome.name,
+        status: "pending",
+        requestedBy: "business_user",
+        description: `Business user has requested IT support for: "${outcome.name}"`,
+      });
+      setSupportRequestSent(true);
+      toast({ title: "IT team notified", description: "Your IT team has been notified and will reach out to help." });
+    } catch {
+      toast({ title: "Could not send request", description: "Please contact your IT team directly.", variant: "destructive" });
+    }
   }
 
   return (
@@ -1792,100 +1906,231 @@ export default function OutcomeDetail() {
       })()}
 
       {isBusinessMode && (() => {
-        const bStatus: "on-track" | "at-risk" | "paused" = outcome.status === "paused" ? "paused" : avgProgress >= 75 ? "on-track" : "at-risk";
-        const bStatusConfig = {
-          "on-track": { label: "On Track", cls: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/20", dotCls: "bg-emerald-500" },
-          "at-risk": { label: "At Risk", cls: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/20", dotCls: "bg-amber-500" },
-          "paused": { label: "Paused", cls: "bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20", dotCls: "bg-slate-400" },
-        }[bStatus];
-        const roi = outcome.roiEstimate as { annualizedSavingsMin: number; annualizedSavingsMax: number; paybackPeriodMonths: number | null; assumptionsSummary: string } | null | undefined;
-        const fmtK = (n: number) => n >= 1000000 ? `$${(n / 1000000).toFixed(1)}M` : `$${Math.round(n / 1000)}K`;
-
-        const narrativeParts: string[] = [];
-        if (kpis && kpis.length > 0) {
-          const topKpi = kpis[0];
-          const pct = topKpi.target > 0 ? Math.round(((topKpi.currentValue || 0) / topKpi.target) * 100) : 0;
-          narrativeParts.push(`Your Digital Workers are delivering against "${topKpi.name}" — currently at ${pct}% of target.`);
-        }
-        if (boundAgents.length > 0) {
-          narrativeParts.push(`${boundAgents.length} Digital Worker${boundAgents.length !== 1 ? "s" : ""} ${boundAgents.length === 1 ? "is" : "are"} actively running.`);
-        }
-        if (estimatedRevenue > 0) {
-          narrativeParts.push(`Estimated value generated: ${outcome.currency || "USD"} ${estimatedRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}.`);
-        }
-        if (bStatus === "at-risk") {
-          narrativeParts.push("Some goals need attention — review the details below.");
-        }
-        const narrative = narrativeParts.join(" ");
-
-        return (
-          <div className="rounded-lg border bg-card px-5 py-4 flex flex-col gap-4" data-testid="section-business-summary">
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex items-center gap-3">
-                <span className={`text-[11px] px-2.5 py-1 rounded-full border font-semibold ${bStatusConfig.cls}`}>{bStatusConfig.label}</span>
-                <span className="text-sm font-semibold text-foreground">Overall Progress: {Math.round(avgProgress)}%</span>
+        // Phase 3: Launch in progress — show step-by-step progress screen
+        if (launchingWorkers) {
+          return (
+            <div className="rounded-lg border bg-card px-6 py-10 flex flex-col items-center gap-8" data-testid="section-launch-progress">
+              <div className="text-center flex flex-col gap-2">
+                <h2 className="text-base font-semibold">Setting up your Digital Workers</h2>
+                <p className="text-sm text-muted-foreground">This takes about 30 seconds — please stay on the page.</p>
               </div>
-              {roi && roi.annualizedSavingsMin != null && (
-                <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400" data-testid="text-business-roi">
-                  <TrendingUp className="w-3.5 h-3.5" />
-                  {fmtK(roi.annualizedSavingsMin)} – {fmtK(roi.annualizedSavingsMax)} / yr estimated
-                </span>
-              )}
+              <div className="flex flex-col gap-5 w-full max-w-sm">
+                {([
+                  { label: "Designing your Digital Workers", step: 1 },
+                  { label: "Building your team", step: 2 },
+                  { label: "Activating your workers", step: 3 },
+                ] as { label: string; step: number }[]).map(({ label, step }) => (
+                  <div key={step} className="flex items-center gap-3">
+                    {launchStep > step ? (
+                      <CheckCircle className="w-5 h-5 text-emerald-500 shrink-0" />
+                    ) : launchStep === step ? (
+                      <Loader2 className="w-5 h-5 text-primary animate-spin shrink-0" />
+                    ) : (
+                      <div className="w-5 h-5 rounded-full border-2 border-muted-foreground/30 shrink-0" />
+                    )}
+                    <span className={`text-sm transition-colors ${launchStep > step ? "text-emerald-700 dark:text-emerald-400" : launchStep === step ? "text-foreground font-medium" : "text-muted-foreground"}`}>
+                      {label}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
+          );
+        }
 
-            {narrative && (
-              <p className="text-sm text-muted-foreground leading-relaxed" data-testid="text-business-narrative">{narrative}</p>
-            )}
+        // Phase 4: Workers are running — executive monitoring dashboard
+        if (boundAgents.length > 0 || launchStep === 4) {
+          return (
+            <div className="flex flex-col gap-5" data-testid="section-business-dashboard">
+              {/* Action Required banner */}
+              {pendingApprovals.length > 0 && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-5 py-4 flex flex-col gap-3" data-testid="section-action-required">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                    <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">
+                      Needs Your Attention ({pendingApprovals.length})
+                    </span>
+                  </div>
+                  {pendingApprovals.slice(0, 3).map((approval) => (
+                    <div key={approval.id} className="flex items-center gap-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium text-foreground truncate">{approval.description || (approval.type as string).replace(/_/g, " ")}</p>
+                        {(approval as any).objectName && <p className="text-xs text-muted-foreground truncate">{(approval as any).objectName}</p>}
+                      </div>
+                      <Link href="/approvals">
+                        <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" data-testid={`button-review-approval-${approval.id}`}>Review →</Button>
+                      </Link>
+                    </div>
+                  ))}
+                </div>
+              )}
 
-            {kpis && kpis.length > 0 && (
-              <div className="flex flex-col gap-2.5" data-testid="section-business-kpi-bars">
-                {kpis.map((kpi) => {
-                  const pct = kpiProgress(kpi);
-                  const isOnTrack = pct >= 75;
-                  return (
-                    <div key={kpi.id} className="flex flex-col gap-1" data-testid={`business-kpi-bar-${kpi.id}`}>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-medium text-foreground truncate">{kpi.name}</span>
-                        <div className="flex items-center gap-2 shrink-0">
+              {/* Digital Workers */}
+              <div className="flex flex-col gap-3">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-sm font-semibold">Your Digital Workers</h3>
+                  <Badge variant="secondary" className="text-[10px] h-4 px-1.5">{boundAgents.length}</Badge>
+                </div>
+                {agentContributions && agentContributions.contributions.length > 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {agentContributions.contributions.map((agent) => {
+                      const isActive = agent.status === "active" || agent.status === "deployed";
+                      return (
+                        <div key={agent.agentId} className="rounded-lg border bg-card px-4 py-3 flex flex-col gap-2" data-testid={`card-worker-${agent.agentId}`}>
+                          <div className="flex items-start gap-2.5">
+                            <div className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${isActive ? "bg-emerald-500" : "bg-amber-500"}`} />
+                            <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+                              <span className="text-sm font-medium leading-tight">{agent.agentName}</span>
+                              <span className="text-xs text-muted-foreground">
+                                {isActive ? "Running" : "Setting up"}
+                                {agent.totalRuns > 0 && ` · ${agent.totalRuns.toLocaleString()} runs`}
+                              </span>
+                            </div>
+                            {agent.isUnderperforming && (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-700 dark:text-amber-400 shrink-0">Needs attention</span>
+                            )}
+                          </div>
+                          <div className="h-1 bg-muted rounded-full overflow-hidden">
+                            <div
+                              className={`h-1 rounded-full transition-all ${agent.healthScore >= 80 ? "bg-emerald-500" : agent.healthScore >= 60 ? "bg-amber-500" : "bg-red-500"}`}
+                              style={{ width: `${agent.healthScore}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {boundAgents.map((agent) => (
+                      <div key={agent.id} className="rounded-lg border bg-card px-4 py-3 flex items-center gap-2.5" data-testid={`card-worker-${agent.id}`}>
+                        <div className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                        <div className="flex flex-col gap-0.5 min-w-0">
+                          <span className="text-sm font-medium">{agent.name}</span>
                           <span className="text-xs text-muted-foreground">
-                            {(kpi.currentValue || 0).toLocaleString()} / {kpi.target.toLocaleString()} {kpi.unit}
-                          </span>
-                          <span className={`text-xs font-semibold ${isOnTrack ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400"}`}>
-                            {Math.round(pct)}%
+                            {agent.status === "deployed" || agent.status === "active" ? "Running" : "Starting up"}
                           </span>
                         </div>
                       </div>
-                      <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                        <div
-                          className={`h-1.5 rounded-full transition-all ${isOnTrack ? "bg-emerald-500" : "bg-amber-500"}`}
-                          style={{ width: `${Math.min(pct, 100)}%` }}
-                        />
-                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* KPI Progress */}
+              {kpis && kpis.length > 0 && (
+                <div className="flex flex-col gap-3">
+                  <h3 className="text-sm font-semibold">Goal Progress</h3>
+                  <div className="rounded-lg border bg-card px-5 py-4 flex flex-col gap-3">
+                    {kpis.map((kpi) => {
+                      const pct = kpiProgress(kpi);
+                      const isOnTrack = pct >= 75;
+                      return (
+                        <div key={kpi.id} className="flex flex-col gap-1.5" data-testid={`kpi-progress-${kpi.id}`}>
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <span className="text-xs font-medium">{kpi.name}</span>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="text-xs text-muted-foreground">{(kpi.currentValue || 0).toLocaleString()} / {kpi.target.toLocaleString()} {kpi.unit}</span>
+                              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${isOnTrack ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/20" : "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/20"}`}>
+                                {isOnTrack ? "On track" : "Needs attention"}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                            <div className={`h-1.5 rounded-full transition-all ${isOnTrack ? "bg-emerald-500" : "bg-amber-500"}`} style={{ width: `${Math.min(pct, 100)}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Value Delivered */}
+              {estimatedRevenue > 0 && (
+                <div className="rounded-lg border bg-card px-5 py-4" data-testid="section-value-delivered">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center justify-center w-10 h-10 rounded-md bg-emerald-500/10 shrink-0">
+                      <TrendingUp className="w-5 h-5 text-emerald-600 dark:text-emerald-400" />
                     </div>
-                  );
-                })}
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-xs text-muted-foreground">Estimated value generated</span>
+                      <span className="text-2xl font-bold text-emerald-600 dark:text-emerald-400">
+                        {outcome.currency || "USD"} {estimatedRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Get IT Support */}
+              <div className="flex justify-end">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-xs text-muted-foreground h-8"
+                  onClick={requestITSupport}
+                  disabled={supportRequestSent}
+                  data-testid="button-it-support"
+                >
+                  {supportRequestSent ? (
+                    <><CheckCircle className="w-3.5 h-3.5 mr-1.5 text-emerald-500" /> IT team notified</>
+                  ) : (
+                    <><MessageSquare className="w-3.5 h-3.5 mr-1.5" /> Get IT Support</>
+                  )}
+                </Button>
+              </div>
+            </div>
+          );
+        }
+
+        // Phase 2: No agents yet — show process flow review and Launch CTA
+        return (
+          <div className="flex flex-col gap-5" data-testid="section-business-setup">
+            <div className="flex flex-col gap-1">
+              <h2 className="text-base font-semibold">Review Your Process</h2>
+              <p className="text-sm text-muted-foreground">
+                Here's how your automation will work. Make any changes, then launch your Digital Workers.
+              </p>
+            </div>
+
+            <BusinessProcessFlowSection
+              outcome={outcome}
+              kpis={kpis || []}
+              steps={processFlowSteps}
+              onStepsChange={setProcessFlowSteps}
+            />
+
+            {launchStep === -1 && (
+              <div className="flex items-center gap-3 px-4 py-3 rounded-lg border border-red-500/30 bg-red-500/10" data-testid="section-launch-error">
+                <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
+                <p className="text-sm text-red-700 dark:text-red-400 flex-1">
+                  Setup encountered a problem. Please try again.
+                </p>
+                <Button size="sm" variant="outline" onClick={launchWorkersAutomatically} className="shrink-0" data-testid="button-retry-launch">
+                  Try Again
+                </Button>
               </div>
             )}
+
+            <div className="flex items-center justify-between gap-4">
+              <p className="text-xs text-muted-foreground">Ready? Your workers will be designed, built, and activated automatically.</p>
+              <Button
+                size="default"
+                onClick={launchWorkersAutomatically}
+                disabled={launchingWorkers}
+                data-testid="button-launch-workers"
+                className="shrink-0 shadow-sm shadow-primary/10"
+              >
+                <Rocket className="w-4 h-4 mr-1.5" />
+                Launch My Workers
+              </Button>
+            </div>
           </div>
         );
       })()}
 
-      {isBusinessMode && (
-        <button
-          type="button"
-          onClick={() => setAdvancedOpen(!advancedOpen)}
-          className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
-          data-testid="button-toggle-advanced-details"
-        >
-          <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${advancedOpen ? "rotate-180" : ""}`} />
-          Advanced Details
-          {!advancedOpen && (
-            <span className="text-xs text-muted-foreground/60">(KPI delivery, agents, governance…)</span>
-          )}
-        </button>
-      )}
-
-      <Tabs value={activeTab} onValueChange={setActiveTab} className={`space-y-4${isBusinessMode && !advancedOpen ? " hidden" : ""}`}>
+      <Tabs value={activeTab} onValueChange={setActiveTab} className={`space-y-4${isBusinessMode ? " hidden" : ""}`}>
         <TabsList className="flex-wrap">
           <TabsTrigger value="kpi-delivery" data-testid="tab-kpi-delivery">KPI Delivery</TabsTrigger>
           <TabsTrigger value="process-flow" data-testid="tab-process-flow">

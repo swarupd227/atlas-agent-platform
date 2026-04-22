@@ -515,6 +515,21 @@ export default function Outcomes() {
                       <div className="h-1.5 bg-muted rounded-full overflow-hidden">
                         <div className={`h-1.5 rounded-full transition-all ${cfg.barCls}`} style={{ width: `${Math.min(avgPct, 100)}%` }} />
                       </div>
+                      {(() => {
+                        const workerAgents = getAgentsForOutcome(outcome.id);
+                        const runningCount = workerAgents.filter(a => a.status === "deployed" || a.status === "active").length;
+                        const needsAttention = workerAgents.filter(a => (a as any).healthScore != null && (a as any).healthScore < 60).length;
+                        if (workerAgents.length === 0) return null;
+                        return (
+                          <div className="flex items-center gap-1.5 mt-1">
+                            <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${needsAttention > 0 ? "bg-amber-500" : "bg-emerald-500"}`} />
+                            <span className="text-[11px] text-muted-foreground">
+                              {runningCount > 0 ? `${runningCount} worker${runningCount !== 1 ? "s" : ""} running` : `${workerAgents.length} worker${workerAgents.length !== 1 ? "s" : ""} configured`}
+                              {needsAttention > 0 && <span className="text-amber-600 dark:text-amber-400 font-medium"> · {needsAttention} needs attention</span>}
+                            </span>
+                          </div>
+                        );
+                      })()}
                       {outcomeKpis.length > 1 && (
                         <div className="flex items-center gap-3 mt-2 pt-2 border-t">
                           {outcomeKpis.slice(0, 3).map((k) => {

@@ -66,6 +66,7 @@ interface NavItem {
   title: string;
   url: string;
   icon: LucideIcon;
+  badge?: number;
 }
 
 interface NavGroup {
@@ -92,6 +93,15 @@ function FullAppSidebar() {
   });
   const unacknowledgedAlerts = Array.isArray(alertsData)
     ? alertsData.filter((a: any) => !a.acknowledgedAt).length
+    : 0;
+
+  const { data: approvalsData } = useQuery<any[]>({
+    queryKey: ["/api/approvals"],
+    refetchInterval: 60000,
+    staleTime: 30000,
+  });
+  const pendingApprovalsCount = Array.isArray(approvalsData)
+    ? approvalsData.filter((a: any) => a.status === "pending").length
     : 0;
 
   const primaryNav: NavItem[] = [
@@ -146,7 +156,7 @@ function FullAppSidebar() {
       items: [
         { title: "Autonomy Engine", url: "/autonomy-engine", icon: Gauge },
         { title: "Oversight Console", url: "/oversight-console", icon: Scale },
-        { title: "Approvals", url: "/approvals", icon: CheckCircle },
+        { title: "Approvals", url: "/approvals", icon: CheckCircle, badge: pendingApprovalsCount > 0 ? pendingApprovalsCount : undefined },
         { title: "Audit Trail", url: "/audit-trail", icon: ScrollText },
       ],
     },
@@ -369,7 +379,15 @@ function CollapsibleNavGroup({
                   <SidebarMenuButton asChild data-active={isActive(item.url)}>
                     <Link href={item.url} data-testid={`link-nav-${item.title.toLowerCase()}`}>
                       <item.icon className="w-4 h-4" />
-                      <span>{item.title}</span>
+                      <span className="flex-1">{item.title}</span>
+                      {item.badge !== undefined && (
+                        <span
+                          className="ml-auto text-[10px] font-bold bg-amber-500 text-white rounded-full px-1.5 py-0.5 min-w-[18px] text-center leading-none"
+                          data-testid={`badge-${item.title.toLowerCase().replace(/\s+/g, "-")}-count`}
+                        >
+                          {item.badge > 99 ? "99+" : item.badge}
+                        </span>
+                      )}
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
