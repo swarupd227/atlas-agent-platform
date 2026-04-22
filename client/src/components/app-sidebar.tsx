@@ -425,8 +425,18 @@ function BusinessModeSidebar() {
     refetchInterval: 30000,
     staleTime: 20000,
   });
+  const { data: workersOutcomesData } = useQuery<any[]>({
+    queryKey: ["/api/outcomes"],
+    staleTime: 60000,
+  });
+  const outcomeIdSet = new Set((workersOutcomesData || []).map((o: any) => o.id));
   const runningWorkersCount = Array.isArray(workersData)
-    ? workersData.filter((a) => (a.status === "deployed" || a.status === "active") && !!a.outcomeId).length
+    ? workersData.filter(
+        (a) =>
+          (a.status === "deployed" || a.status === "active") &&
+          !!a.outcomeId &&
+          outcomeIdSet.has(a.outcomeId)
+      ).length
     : 0;
 
   const navItems = [

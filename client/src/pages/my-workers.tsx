@@ -1,39 +1,43 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
-import { Link } from "wouter";
+import { useState, useEffect } from "react";
+import { Link, useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useRole } from "@/components/role-provider";
 import {
   Bot,
   Zap,
   AlertTriangle,
-  PauseCircle,
   ExternalLink,
   CheckCircle,
 } from "lucide-react";
 import type { Agent, OutcomeContract } from "@shared/schema";
 
-type StatusFilter = "all" | "running" | "attention";
+type StatusFilter = "all" | "running" | "alert";
 
-function workerStatus(agent: Agent): { label: string; dot: string; pillCls: string } {
+function workerStatus(agent: Agent): { label: "Running" | "Idle" | "Alert"; dot: string; pillCls: string } {
   const isRunning = agent.status === "deployed" || agent.status === "active";
-  const needsAttention = isRunning && agent.healthScore != null && agent.healthScore < 60;
-  const isPaused = agent.status === "paused";
-  const isDraft = agent.status === "draft";
+  const isAlert = isRunning && agent.healthScore != null && agent.healthScore < 60;
 
-  if (needsAttention) {
-    return { label: "Needs Attention", dot: "bg-amber-500", pillCls: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/20" };
+  if (isAlert) {
+    return {
+      label: "Alert",
+      dot: "bg-amber-500",
+      pillCls: "bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/20",
+    };
   }
   if (isRunning) {
-    return { label: "Running", dot: "bg-emerald-500", pillCls: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/20" };
+    return {
+      label: "Running",
+      dot: "bg-emerald-500",
+      pillCls: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/20",
+    };
   }
-  if (isPaused) {
-    return { label: "Paused", dot: "bg-slate-400", pillCls: "bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20" };
-  }
-  if (isDraft) {
-    return { label: "Setting up", dot: "bg-blue-500", pillCls: "bg-blue-500/15 text-blue-700 dark:text-blue-400 border-blue-500/20" };
-  }
-  return { label: "Inactive", dot: "bg-muted-foreground/30", pillCls: "bg-muted text-muted-foreground border-muted" };
+  return {
+    label: "Idle",
+    dot: "bg-slate-400",
+    pillCls: "bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20",
+  };
 }
 
 function lastActivityLabel(agent: Agent): string {
@@ -46,11 +50,19 @@ function lastActivityLabel(agent: Agent): string {
     if (days === 1) return "Incident yesterday";
     return `Incident ${days} days ago`;
   }
-  return "Standing by";
+  return "Idle — no runs yet";
 }
 
 export default function MyWorkers() {
+  const { isBusinessMode } = useRole();
+  const [, navigate] = useLocation();
   const [filter, setFilter] = useState<StatusFilter>("all");
+
+  useEffect(() => {
+    if (!isBusinessMode) navigate("/agents");
+  }, [isBusinessMode, navigate]);
+
+  if (!isBusinessMode) return null;
 
   const { data: allAgents, isLoading: agentsLoading } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
@@ -70,21 +82,33 @@ export default function MyWorkers() {
     return acc;
   }, {});
 
-  const workerAgents = (allAgents || []).filter((a) => !!a.outcomeId);
+  const workerAgents = (allAgents || []).filter(
+    (a) => !!a.outcomeId && !!outcomesById[a.outcomeId]
+  );
 
   const filteredAgents = workerAgents.filter((a) => {
-    if (filter === "running") return a.status === "deployed" || a.status === "active";
-    if (filter === "attention") {
+    if (filter === "running") {
+      const isRunning = a.status === "deployed" || a.status === "active";
+      const isAlert = isRunning && a.healthScore != null && a.healthScore < 60;
+      return isRunning && !isAlert;
+    }
+    if (filter === "alert") {
       const isRunning = a.status === "deployed" || a.status === "active";
       return isRunning && a.healthScore != null && a.healthScore < 60;
     }
     return true;
   });
 
-  const runningCount = workerAgents.filter((a) => a.status === "deployed" || a.status === "active").length;
-  const attentionCount = workerAgents.filter(
-    (a) => (a.status === "deployed" || a.status === "active") && a.healthScore != null && a.healthScore < 60
-  ).length;
+  const runningCount = workerAgents.filter((a) => {
+    const isRunning = a.status === "deployed" || a.status === "active";
+    const isAlert = isRunning && a.healthScore != null && a.healthScore < 60;
+    return isRunning && !isAlert;
+  }).length;
+
+  const alertCount = workerAgents.filter((a) => {
+    const isRunning = a.status === "deployed" || a.status === "active";
+    return isRunning && a.healthScore != null && a.healthScore < 60;
+  }).length;
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-my-workers">
@@ -95,7 +119,8 @@ export default function MyWorkers() {
           <h1 className="text-xl font-semibold tracking-tight">My Digital Workers</h1>
         </div>
         <p className="text-sm text-muted-foreground">
-          All workers running across your initiatives — {runningCount} currently active.
+          All workers running across your initiatives
+          {!isLoading && ` — ${runningCount} currently active`}.
         </p>
       </div>
 
@@ -122,17 +147,17 @@ export default function MyWorkers() {
           Running
           <span className="ml-1.5 text-[10px] font-bold opacity-70">{runningCount}</span>
         </Button>
-        {attentionCount > 0 && (
+        {alertCount > 0 && (
           <Button
-            variant={filter === "attention" ? "default" : "outline"}
+            variant={filter === "alert" ? "default" : "outline"}
             size="sm"
-            className={`h-8 text-xs ${filter !== "attention" ? "border-amber-500/30 text-amber-700 dark:text-amber-400 hover:bg-amber-500/5" : ""}`}
-            onClick={() => setFilter("attention")}
-            data-testid="filter-attention-workers"
+            className={`h-8 text-xs ${filter !== "alert" ? "border-amber-500/30 text-amber-700 dark:text-amber-400 hover:bg-amber-500/5" : ""}`}
+            onClick={() => setFilter("alert")}
+            data-testid="filter-alert-workers"
           >
             <AlertTriangle className="w-3 h-3 mr-1.5" />
-            Needs Attention
-            <span className="ml-1.5 text-[10px] font-bold opacity-70">{attentionCount}</span>
+            Alert
+            <span className="ml-1.5 text-[10px] font-bold opacity-70">{alertCount}</span>
           </Button>
         )}
       </div>
@@ -176,7 +201,7 @@ export default function MyWorkers() {
         <div className="flex flex-col items-center gap-3 py-12 text-center">
           <CheckCircle className="w-8 h-8 text-emerald-500" />
           <p className="text-sm text-muted-foreground">
-            {filter === "attention" ? "No workers need attention right now." : "No workers match this filter."}
+            {filter === "alert" ? "No workers are in Alert right now." : "No workers match this filter."}
           </p>
           <Button variant="ghost" size="sm" onClick={() => setFilter("all")} data-testid="button-clear-filter">
             Show all workers
@@ -231,24 +256,17 @@ export default function MyWorkers() {
                 )}
 
                 {/* Health bar */}
-                <div className="flex flex-col gap-1">
-                  <div className="h-1 bg-muted rounded-full overflow-hidden">
-                    <div
-                      className={`h-1 rounded-full transition-all ${healthPct >= 80 ? "bg-emerald-500" : healthPct >= 60 ? "bg-amber-500" : "bg-red-500"}`}
-                      style={{ width: `${Math.min(healthPct, 100)}%` }}
-                    />
-                  </div>
+                <div className="h-1 bg-muted rounded-full overflow-hidden">
+                  <div
+                    className={`h-1 rounded-full transition-all ${healthPct >= 80 ? "bg-emerald-500" : healthPct >= 60 ? "bg-amber-500" : "bg-red-500"}`}
+                    style={{ width: `${Math.min(healthPct, 100)}%` }}
+                  />
                 </div>
 
                 {/* Activity footer */}
-                <div className="flex items-center justify-between gap-2 pt-0.5">
-                  <span className="text-[11px] text-muted-foreground" data-testid={`text-worker-activity-${agent.id}`}>
-                    {activity}
-                  </span>
-                  {agent.status === "paused" && (
-                    <PauseCircle className="w-3.5 h-3.5 text-muted-foreground" />
-                  )}
-                </div>
+                <span className="text-[11px] text-muted-foreground" data-testid={`text-worker-activity-${agent.id}`}>
+                  {activity}
+                </span>
               </div>
             );
           })}
