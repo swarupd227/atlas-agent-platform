@@ -96,13 +96,12 @@ function FullAppSidebar() {
     : 0;
 
   const { data: approvalsData } = useQuery<any[]>({
-    queryKey: ["/api/approvals"],
+    queryKey: ["/api/approvals", "pending"],
+    queryFn: () => fetch("/api/approvals?status=pending").then((r) => r.json()),
     refetchInterval: 60000,
     staleTime: 30000,
   });
-  const pendingApprovalsCount = Array.isArray(approvalsData)
-    ? approvalsData.filter((a: any) => a.status === "pending").length
-    : 0;
+  const pendingApprovalsCount = Array.isArray(approvalsData) ? approvalsData.length : 0;
 
   const primaryNav: NavItem[] = [
     { title: "Overview", url: "/dashboard", icon: LayoutDashboard },

@@ -474,6 +474,12 @@ export default function OutcomeDetail() {
     }
   }, [outcome?.id]);
 
+  useEffect(() => {
+    setLaunchStep(0);
+    setLaunchingWorkers(false);
+    setSupportRequestSent(false);
+  }, [outcomeId]);
+
   const { data: evidence, dataUpdatedAt: evidenceUpdatedAt } = useQuery<{
     kpiTimeSeries: Array<{
       kpiId: string;

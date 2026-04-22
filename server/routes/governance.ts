@@ -1063,6 +1063,10 @@ Ontology: ${ontologyName || "industry standard"}`,
 
   router.get("/api/approvals", async (req, res) => {
     const approvals = await storage.getApprovals(getOrgId(req));
+    const statusFilter = req.query.status as string | undefined;
+    if (statusFilter) {
+      return res.json(approvals.filter((a: any) => a.status === statusFilter));
+    }
     res.json(approvals);
   });
 
