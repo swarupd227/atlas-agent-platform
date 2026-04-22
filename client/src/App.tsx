@@ -125,6 +125,7 @@ import ProcessFlows from "@/pages/process-flows";
 import BusinessCommandCenter from "@/pages/business-command-center";
 import MyActions from "@/pages/my-actions";
 import BusinessSettings from "@/pages/business-settings";
+import MyWorkers from "@/pages/my-workers";
 import { Shield, LogOut, Briefcase } from "lucide-react";
 import { useRole } from "@/components/role-provider";
 
@@ -238,6 +239,7 @@ function DashboardRouter() {
       <Route path="/outcomes" component={Outcomes} />
       <Route path="/outcomes/discover" component={OutcomeDiscover} />
       <Route path="/outcomes/:id" component={OutcomeDetail} />
+      <Route path="/my-workers" component={MyWorkers} />
       <Route path="/process-flows" component={ProcessFlows} />
       <Route path="/agents" component={Agents} />
       <Route path="/templates" component={Templates} />

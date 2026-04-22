@@ -420,9 +420,19 @@ function BusinessModeSidebar() {
     return location.startsWith(url);
   };
 
+  const { data: workersData } = useQuery<any[]>({
+    queryKey: ["/api/agents"],
+    refetchInterval: 30000,
+    staleTime: 20000,
+  });
+  const runningWorkersCount = Array.isArray(workersData)
+    ? workersData.filter((a) => (a.status === "deployed" || a.status === "active") && !!a.outcomeId).length
+    : 0;
+
   const navItems = [
     { title: "Home", url: "/dashboard", icon: Home },
     { title: "Outcomes", url: "/outcomes", icon: Target },
+    { title: "My Workers", url: "/my-workers", icon: Bot, badge: runningWorkersCount > 0 ? runningWorkersCount : undefined },
     { title: "Process Flows", url: "/process-flows", icon: Workflow },
     { title: "My Actions", url: "/actions", icon: CheckCircle2, badge: pendingActions > 0 ? pendingActions : undefined },
     { title: "Settings", url: "/business-settings", icon: Settings },
