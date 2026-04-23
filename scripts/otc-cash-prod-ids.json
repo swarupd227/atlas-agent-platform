@@ -1,0 +1,29 @@
+{
+  "kbs": {
+    "Cash Application & Deduction Policy Handbook": "e5ef14a4-6e06-4221-a81c-c9a68a36d3c9",
+    "Customer Remittance & Billing Reference": "1696059b-782f-4474-b74b-dc82e7c91309",
+    "Bank Reconciliation & AR Closing Standards": "91823b15-447e-4f1f-a3f5-fd9dd13fa955"
+  },
+  "mcpServers": {
+    "OTC Cash -- Payment Matching Engine": "67864499-7f06-4b43-a216-d064db31ae96",
+    "OTC Cash -- AR & Billing Engine": "bc4fd4a0-d88b-4efe-8340-4ba4846c4082"
+  },
+  "skills": {
+    "Intelligent Payment Matching": "3454bbcb-7815-4416-b769-7b1bea97731a",
+    "Remittance Parsing & Extraction": "9e77e3f5-1f72-4d4f-bd54-7a91d25d0f22",
+    "Deduction Classification & Validity Assessment": "113941d8-e7d8-4b9c-b1aa-57a28edca437",
+    "AR Posting & Invoice Closure": "cf091445-fac5-424b-a3ba-8ed0f53a9e69",
+    "Collections Dunning Management": "bf627ec0-0083-4739-82de-6cf032720e85",
+    "Invoice Generation & Tax Application": "4a8cff9e-a3d3-4652-b25a-da8b569e9b4a"
+  },
+  "agents": {
+    "OTC-AGT-009": "154b4fbe-92aa-4512-a0bb-483a18ea4fc6",
+    "OTC-AGT-006": "f516ede4-3ceb-4858-8b23-ede8cc851e78"
+  },
+  "deployments": {
+    "OTC-AGT-009": "2c236aed-7ada-45bc-8f2b-89c20f85597f",
+    "OTC-AGT-006": "662dac22-748f-4228-ba78-084c012371cf"
+  },
+  "targetUrl": "https://agent-lifecycle-management-platform.replit.app",
+  "migratedAt": "2026-04-23T09:25:00Z"
+}
