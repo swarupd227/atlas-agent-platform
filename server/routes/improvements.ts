@@ -768,12 +768,19 @@ const router = Router();
         }
       } catch {}
 
+      // Limit MCP servers to top 8 most relevant (by keyword match) to keep prompt concise
+      const rankedMcpServers = allMcpServers
+        .map(s => ({ server: s, score: relevanceScore(s) }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 8)
+        .map(x => x.server);
       const mcpToolsByServer: Record<string, any[]> = {};
-      for (const server of allMcpServers.slice(0, 15)) {
+      for (const server of rankedMcpServers) {
         try {
           const tools = await storage.getMcpServerTools(server.id);
           if (tools.length > 0) {
-            mcpToolsByServer[server.name] = tools.map(t => ({ name: t.name, description: t.description, inputSchema: t.inputSchema }));
+            // Strip inputSchema — only name+description needed for planning (schema adds thousands of tokens)
+            mcpToolsByServer[server.name] = tools.slice(0, 5).map(t => ({ name: t.name, description: t.description }));
           }
         } catch {}
       }
