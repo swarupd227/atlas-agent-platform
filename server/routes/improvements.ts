@@ -763,28 +763,12 @@ const router = Router();
       try {
         ontologyConcepts = await storage.getOntologyConcepts(industryId);
         if (ontologyConcepts.length > 0) {
-          const conceptIds = ontologyConcepts.slice(0, 30).map((c: any) => c.id);
+          const conceptIds = ontologyConcepts.slice(0, 15).map((c: any) => c.id);
           ontologyEnhancements = await storage.getOntologyEnhancements(conceptIds);
         }
       } catch {}
 
-      // Limit MCP servers to top 8 most relevant (by keyword match) to keep prompt concise
-      const rankedMcpServers = allMcpServers
-        .map(s => ({ server: s, score: relevanceScore(s) }))
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 8)
-        .map(x => x.server);
-      const mcpToolsByServer: Record<string, any[]> = {};
-      for (const server of rankedMcpServers) {
-        try {
-          const tools = await storage.getMcpServerTools(server.id);
-          if (tools.length > 0) {
-            // Strip inputSchema — only name+description needed for planning (schema adds thousands of tokens)
-            mcpToolsByServer[server.name] = tools.slice(0, 5).map(t => ({ name: t.name, description: t.description }));
-          }
-        } catch {}
-      }
-
+      // Build relevance scorer first so it can filter MCP servers and all other slices
       const outcomeKeywords = [
         ...(outcomeContract?.name || "").toLowerCase().split(/\W+/),
         ...(outcomeContract?.description || "").toLowerCase().split(/\W+/),
@@ -802,17 +786,36 @@ const router = Router();
         return outcomeKeywords.filter((k: string) => text.includes(k)).length;
       };
 
+      // Rank MCP servers by outcome relevance; take top 8 only to keep prompt concise
+      const rankedMcpServers = allMcpServers
+        .map(s => ({ server: s, score: relevanceScore(s) }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 8)
+        .map(x => x.server);
+      const mcpToolsByServer: Record<string, any[]> = {};
+      for (const server of rankedMcpServers) {
+        try {
+          const tools = await storage.getMcpServerTools(server.id);
+          if (tools.length > 0) {
+            // Strip inputSchema — only name+description needed for planning (schemas add thousands of tokens)
+            mcpToolsByServer[server.name] = tools.slice(0, 5).map(t => ({ name: t.name, description: t.description }));
+          }
+        } catch {}
+      }
+
       const industrySkills = allSkills
         .filter(s => s.industry === industryId || s.industry === "cross_industry")
         .sort((a, b) => relevanceScore(b) - relevanceScore(a))
+        .slice(0, 6);
+      const activePolicies = allPolicies.filter(p => p.status === "active")
+        .sort((a, b) => relevanceScore(b) - relevanceScore(a))
         .slice(0, 8);
-      const activePolicies = allPolicies.filter(p => p.status === "active").slice(0, 15);
       const existingOutcomeAgents = allAgents.filter(a => a.outcomeId === outcomeContract?.id);
       const industryTemplates = templates
         .filter(t => t.industry === industryId || t.industry === "cross_industry")
         .sort((a, b) => relevanceScore(b) - relevanceScore(a))
-        .slice(0, 8);
-      const industryRagPipelines = ragPipelines.filter((r: any) => r.industry === industryId || !r.industry).slice(0, 5);
+        .slice(0, 5);
+      const industryRagPipelines = ragPipelines.filter((r: any) => r.industry === industryId || !r.industry).slice(0, 4);
 
       let feedbackSection = "";
       if (feedback && previousPlan) {
@@ -870,7 +873,7 @@ You MUST incorporate this feedback into the new plan. Adjust the agents, roles, 
         linkedRegulations: c.linkedRegulations,
       }));
 
-      const enhancementSummary = ontologyEnhancements.slice(0, 15).map(e => ({
+      const enhancementSummary = ontologyEnhancements.slice(0, 8).map(e => ({
         conceptId: e.conceptId,
         agentUseCases: e.agentUseCases,
         riskFactors: e.riskFactors,
@@ -1061,7 +1064,7 @@ ${coveredLines}
 
       const industryKnowledgeBases = allKnowledgeBases.filter(
         (kb: any) => kb.industry === industryId || kb.industry === "general"
-      ).slice(0, 10);
+      ).sort((a: any, b: any) => relevanceScore(b) - relevanceScore(a)).slice(0, 6);
       const kbSummary = industryKnowledgeBases.map((kb: any) => ({
         id: kb.id,
         name: kb.name,
@@ -1385,7 +1388,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         : `Generate an agent development plan for the outcome "${outcomeContract?.name}" targeting ${kpiDetails.length} KPIs: ${kpiDetails.map((k: any) => `${k.name} (baseline: ${k.baseline} → target: ${k.target}, weight: ${k.weight}, SLA: ${k.slaThreshold || "none"})`).join("; ")}`;
 
       const openAIAbort = new AbortController();
-      const openAITimeout = setTimeout(() => openAIAbort.abort(), 90_000);
+      const openAITimeout = setTimeout(() => openAIAbort.abort(), 120_000);
       let openAIResp: Awaited<ReturnType<typeof openai.chat.completions.create>>;
       try {
         openAIResp = await openai.chat.completions.create({
@@ -1395,7 +1398,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
             { role: "system", content: systemPrompt },
             { role: "user", content: userMsg },
           ],
-          max_tokens: 7000,
+          max_tokens: 4000,
         }, { signal: openAIAbort.signal });
       } catch (aiErr: any) {
         clearTimeout(openAITimeout);
