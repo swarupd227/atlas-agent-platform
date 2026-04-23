@@ -25,7 +25,15 @@ const _mcpIdByName:     Record<string, string> = {};
 const _deployIdByAgent: Record<string, string> = {};
 
 // ─── Scenario definitions ─────────────────────────────────────────────────────
-type ScenarioStep = { agentName: string; agentCode: string; label: string; maxIter: number; taskPrompt: string };
+type SimulatedTool = { name: string; label: string; durationMs: number };
+type ScenarioStep = {
+  agentName: string;
+  agentCode: string;
+  label: string;
+  maxIter: number;
+  taskPrompt: string;
+  simulatedTools: SimulatedTool[];
+};
 
 const SCENARIO_MAIN: ScenarioStep[] = [
   {
@@ -33,6 +41,12 @@ const SCENARIO_MAIN: ScenarioStep[] = [
     agentCode: "OTC-AGT-009",
     label:     "Month-End Batch — Payment Ingestion & Auto-Matching",
     maxIter:   7,
+    simulatedTools: [
+      { name: "ingest_daily_payment_batch", label: "Ingesting 387-payment batch ($42.3M, 4 channels)…",          durationMs: 2800 },
+      { name: "run_auto_matching",          label: "Running NovaTech-CashMatch-v4.2 on full batch…",             durationMs: 3500 },
+      { name: "identify_exceptions",        label: "Scoring & ranking exception queue by complexity…",           durationMs: 2200 },
+      { name: "get_bank_reconciliation",    label: "Pulling March bank reconciliation status…",                  durationMs: 2000 },
+    ],
     taskPrompt: `You are NovaTech's Cash Application & Reconciliation Agent (OTC-AGT-009).
 
 Today is March 28, 2026 — month-end close. The treasury team has just handed you the daily payment batch for processing.
@@ -49,6 +63,13 @@ Summarise your findings in a JSON block when done:
     agentCode: "OTC-AGT-009",
     label:     "GlobalTech $2.3M — Complex EDI 820 Resolution",
     maxIter:   8,
+    simulatedTools: [
+      { name: "parse_edi_remittance",       label: "Parsing GlobalTech EDI 820 remittance (47 invoices, 3 codes)…", durationMs: 3200 },
+      { name: "match_payment_to_invoices",  label: "Running invoice waterfall match on $2,300,847…",                durationMs: 2800 },
+      { name: "analyze_deductions",         label: "Analysing 3 deduction codes (FRGT-DMG / EPD-2PCT / QTY-SHT)…", durationMs: 2500 },
+      { name: "validate_deduction_details", label: "Validating deductions against NovaTech policy matrix…",          durationMs: 3000 },
+      { name: "apply_payment_resolution",   label: "Packaging one-click resolution for treasury controller…",        durationMs: 2200 },
+    ],
     taskPrompt: `You are NovaTech's Cash Application & Reconciliation Agent (OTC-AGT-009).
 
 GlobalTech Corp's wire transfer (WF-20260328-7742, $2,300,847.00) came in with an EDI 820 remittance attachment covering 47 open invoices. The matching engine flagged it HIGH COMPLEXITY because it has multiple deduction codes and what looks like an overpayment. The cash team estimates this kind of payment takes 4–6 hours to resolve manually.
@@ -65,6 +86,13 @@ Summarise your resolution in a JSON block when done:
     agentCode: "OTC-AGT-006",
     label:     "AR Posting, Deduction Validation & Invoice Closure",
     maxIter:   7,
+    simulatedTools: [
+      { name: "validate_deduction_against_policy", label: "Cross-referencing deductions against SOX-controlled policy matrix…", durationMs: 2800 },
+      { name: "post_ar_entries",                   label: "Posting journal entries — debit Bank, credit AR 47 invoices…",       durationMs: 3200 },
+      { name: "generate_credit_memo",              label: "Generating credit memo CM-2026-0328-GT ($38,100)…",                  durationMs: 2000 },
+      { name: "close_invoice_batch",               label: "Closing 47 GlobalTech invoices in ERP — AR $3.1M → $0.73M…",        durationMs: 2500 },
+      { name: "get_ar_aging_impact",               label: "Calculating DSO improvement and updated aging buckets…",              durationMs: 1800 },
+    ],
     taskPrompt: `You are NovaTech's Billing & Collections Agent (OTC-AGT-006).
 
 OTC-AGT-009 has prepared the GlobalTech Corp resolution package. The payment ($2,300,847 on wire WF-20260328-7742) has been matched to 47 invoices, 3 deductions have been analysed, and an overpayment credit of $38,100 has been identified. The treasury controller has given one-click approval.
@@ -84,6 +112,11 @@ const SCENARIO_VERTEX: ScenarioStep[] = [
     agentCode: "OTC-AGT-009",
     label:     "Vertex Systems — ACH Reference Mismatch Investigation",
     maxIter:   6,
+    simulatedTools: [
+      { name: "get_vertex_payment",        label: "Pulling ACH-2026-0328-0447 details — reference mismatch flagged…", durationMs: 2500 },
+      { name: "run_fuzzy_match",           label: "Running PO cross-reference fuzzy match on $487,200 ACH…",          durationMs: 3500 },
+      { name: "confirm_vertex_resolution", label: "Packaging one-click supervisor confirmation (91% confidence)…",     durationMs: 2200 },
+    ],
     taskPrompt: `You are NovaTech's Cash Application & Reconciliation Agent (OTC-AGT-009).
 
 An ACH payment from Vertex Systems (ACH-2026-0328-0447, $487,200) has landed in the exception queue with a reference mismatch flag. The memo field contains "VS-2026-MAR" but that reference doesn't match any open invoice number in NovaTech's AR system. The payment is sitting unmatched.
@@ -100,6 +133,10 @@ Summarise your findings in a JSON block when done:
     agentCode: "OTC-AGT-006",
     label:     "Vertex Systems — Confirmed Match AR Posting",
     maxIter:   5,
+    simulatedTools: [
+      { name: "post_vertex_payment",    label: "Posting ACH $487,200 — closing INV-47210 through INV-47214…", durationMs: 2800 },
+      { name: "get_customer_ar_summary", label: "Confirming Vertex Systems updated AR balance ($25,600)…",    durationMs: 2000 },
+    ],
     taskPrompt: `You are NovaTech's Billing & Collections Agent (OTC-AGT-006).
 
 OTC-AGT-009 resolved the Vertex Systems ACH reference mismatch — their $487,200 payment (ACH-2026-0328-0447) was matched to invoices INV-47210 through INV-47214 via PO cross-reference with 91% confidence. The AR supervisor has confirmed the match.
@@ -117,6 +154,10 @@ const SCENARIO_REGIONAL: ScenarioStep[] = [
     agentCode: "OTC-AGT-009",
     label:     "Regional Supply Co — No Remittance, Allocation Investigation",
     maxIter:   6,
+    simulatedTools: [
+      { name: "get_regional_payment",       label: "Pulling CHK-2026-77421 — no remittance stub found…",                        durationMs: 2500 },
+      { name: "suggest_payment_allocation", label: "Analysing 8 open invoices ($143.2K), proposing oldest-first allocation…",    durationMs: 3200 },
+    ],
     taskPrompt: `You are NovaTech's Cash Application & Reconciliation Agent (OTC-AGT-009).
 
 A check for $127,000 arrived from Regional Supply Co (CHK-2026-77421) with no remittance stub and no reference. The check is sitting unmatched. The customer has 8 open invoices totalling $143,200 — this payment doesn't cover everything, so you need to decide how to allocate it.
@@ -131,6 +172,10 @@ Summarise your findings in a JSON block when done:
     agentCode: "OTC-AGT-006",
     label:     "Regional Supply Co — Chase Workflow & Provisional AR Posting",
     maxIter:   6,
+    simulatedTools: [
+      { name: "initiate_remittance_chase", label: "Initiating automated remittance chase — notifying AP Manager & Controller…", durationMs: 2500 },
+      { name: "post_provisional_ar",       label: "Posting provisional AR — clearing $89.4K from 30-day aging bucket…",         durationMs: 3000 },
+    ],
     taskPrompt: `You are NovaTech's Billing & Collections Agent (OTC-AGT-006).
 
 OTC-AGT-009 has proposed an oldest-first provisional allocation for Regional Supply Co's $127K check (CHK-2026-77421). The customer hasn't provided remittance, so you need to do two things simultaneously: contact them to get it, and post the payment provisionally so it doesn't age further in the exception queue.
@@ -509,7 +554,7 @@ export async function runOtcCashPipeline(): Promise<OtcCashPipelineResult> {
   await ensureOtcCashAgents();
   const steps: OtcCashPipelineResult["steps"] = [];
 
-  for (const step of PIPELINE_STEPS) {
+  for (const step of SCENARIOS.main.steps) {
     const agentId = _agentIdByName[step.agentName];
     if (!agentId) {
       steps.push({ agentCode: step.agentCode, agentName: step.agentName, success: false, toolCallCount: 0, message: `Agent not found: ${step.agentName}` });
@@ -593,6 +638,50 @@ export async function otcCashLiveRunHandler(req: Request, res: Response): Promis
   const agentResults: Record<string, string> = {};
   const deployKeyForStep: Record<number, string> = {};
 
+  // Helper: run simulated tool-call stream in parallel with the real agent run
+  async function streamSimulatedTools(
+    step: ScenarioStep,
+    agentCode: string,
+    doneSignal: { done: boolean },
+  ): Promise<void> {
+    const pause = (ms: number) => new Promise<void>(resolve => {
+      const timer = setTimeout(resolve, ms);
+      const checker = setInterval(() => {
+        if (doneSignal.done) { clearTimeout(timer); clearInterval(checker); resolve(); }
+      }, 100);
+      // suppress unused-variable warnings; both are captured by closures above
+      void timer; void checker;
+    });
+
+    // Brief initial thinking pause before first tool call
+    await pause(800);
+
+    for (const tool of step.simulatedTools) {
+      if (aborted || doneSignal.done) break;
+
+      sse("tool_call", {
+        agentCode,
+        tool:    tool.name,
+        label:   tool.label,
+        status:  "running",
+      });
+
+      await pause(tool.durationMs);
+
+      if (aborted) break;
+
+      sse("tool_call", {
+        agentCode,
+        tool:    tool.name,
+        label:   tool.label,
+        status:  "complete",
+      });
+
+      // Thinking gap between tool calls
+      if (!doneSignal.done) await pause(600);
+    }
+  }
+
   try {
     sse("run_start", {
       message:     `Initiating Atlas Cash Application — Scenario: ${scenario.label}`,
@@ -645,7 +734,16 @@ export async function otcCashLiveRunHandler(req: Request, res: Response): Promis
         totalSteps:   scenario.steps.length,
       });
 
-      const result = await runAgentOnce(deployId, step.taskPrompt, step.maxIter);
+      // Run simulated tool stream + real agent run in parallel
+      const doneSignal = { done: false };
+      const [result] = await Promise.all([
+        runAgentOnce(deployId, step.taskPrompt, step.maxIter).then(r => {
+          doneSignal.done = true;
+          return r;
+        }),
+        streamSimulatedTools(step, step.agentCode, doneSignal),
+      ]);
+
       agentResults[`${step.agentCode}-step${stepIdx + 1}`] = result.message ?? "";
 
       activeDeployIds.delete(deployId);

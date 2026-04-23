@@ -195,6 +195,15 @@ export function useOtcCashPipeline() {
       addLog(d.agentCode, "info", `▶ ${d.label}`);
     });
 
+    es.addEventListener("tool_call", (e) => {
+      const d = JSON.parse(e.data);
+      if (d.status === "running") {
+        addLog(d.agentCode ?? "OTC-AGT-009", "tool_call", `⚙ ${d.label ?? d.tool}`);
+      } else if (d.status === "complete") {
+        addLog(d.agentCode ?? "OTC-AGT-009", "analysis", `✓ ${d.tool} — done`);
+      }
+    });
+
     es.addEventListener("agent_event", (e) => {
       const d = JSON.parse(e.data);
       if (d.type === "tool_call_result") {
