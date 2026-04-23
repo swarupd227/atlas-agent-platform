@@ -1159,6 +1159,23 @@ ${processFlowSteps.map((s: any, i: number) => `Step ${i + 1} [${s.type || "actio
 IMPORTANT: Name agents using the business vocabulary above. Avoid generic names like "Worker Agent 1". Prefer names like "Invoice Validation Agent", "Risk Assessment Agent" etc., derived from the step labels above.
 ` : ""}
 ═══════════════════════════════════════════
+OUTPUT CONCISENESS RULES — MANDATORY
+═══════════════════════════════════════════
+Token budget is limited. Every field MUST be brief:
+- description fields: ≤15 words
+- systemPrompt: 1 sentence only
+- patternReasoning: ≤2 sentences total
+- estimatedImpact: 1 line per KPI, format exactly as shown
+- errorHandling / handoffRules: 1 sentence each
+- workflowSteps: ≤4 steps per agent, each ≤8 words
+- purpose / missingCapabilities: ≤10 words each
+- outputSchema.description: ≤10 words
+- outputSchema.fields: max 3 fields, description ≤5 words each
+- matchedOntologyConcepts / complianceTags: max 3 items each
+- quote: exact substring, max 40 chars
+Do NOT write full sentences in array items. Be concise everywhere.
+
+═══════════════════════════════════════════
 RESPONSE FORMAT
 ═══════════════════════════════════════════
 
@@ -1221,10 +1238,10 @@ Respond with a JSON object matching this schema exactly:
   ],
   "pipeline": {
     "systemsExtracted": [
-      {"name": "string - exact proper noun of the system", "systemRole": "orchestration_system | target_system", "purpose": "string - what this system does in the workflow", "mcpCoverage": "covered | partial | missing | not_applicable", "existingMcpServer": "string | null - name of matching MCP server if covered/partial", "requiredCapabilities": ["string - tool capabilities needed (empty for target_system)"], "source": "outcome_text | server_description | tool_description | schema_hint", "quote": "string - exact substring (max 80 chars) where this system name appeared in the source"}
+      {"name": "string - exact proper noun", "systemRole": "orchestration_system | target_system", "purpose": "string - ≤8 words", "mcpCoverage": "covered | partial | missing | not_applicable", "existingMcpServer": "string | null", "requiredCapabilities": ["string - ≤5 words, max 2 items"]}
     ],
     "mcpGaps": [
-      {"system": "string - system name with missing/partial coverage", "purpose": "string - what it does", "missingCapabilities": ["string - specific tools or API operations needed"], "suggestedMcpServerName": "string - proposed name for new MCP server", "priority": "critical | high | medium - based on whether system is in the workflow critical path"}
+      {"system": "string - system name", "missingCapabilities": ["string - ≤5 words, max 3"], "suggestedMcpServerName": "string - proposed MCP name", "priority": "critical | high | medium"}
     ],
     "agentDependencyMatrix": [
       {"agent": "string - agent role name", "inputs": ["string - what this agent needs to start"], "outputs": ["string - what this agent produces"], "dependsOn": ["string - roles of agents whose output this agent requires"]}
@@ -1398,7 +1415,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
             { role: "system", content: systemPrompt },
             { role: "user", content: userMsg },
           ],
-          max_tokens: 4000,
+          max_tokens: 7000,
         }, { signal: openAIAbort.signal });
       } catch (aiErr: any) {
         clearTimeout(openAITimeout);
@@ -1428,6 +1445,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
       try {
         parsed = JSON.parse(jsonStr);
       } catch {
+        // Phase 1: brace-counting repair
         const braceStart = jsonStr.indexOf("{");
         if (braceStart >= 0) {
           let truncated = jsonStr.slice(braceStart);
@@ -1444,9 +1462,24 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           try {
             parsed = JSON.parse(truncated);
           } catch {
-            console.error("Could not repair truncated JSON from AI response");
-          }
-        }
+            // Phase 2: pipeline section is likely what's truncated — extract orchestrator + agents slice
+            // The JSON structure is always { "orchestrator": {...}, "agents": [...], "pipeline": {...} }
+            // If pipeline is cut off, recover the parts that completed before it.
+            try {
+              const pipelineIdx = jsonStr.lastIndexOf('"pipeline"');
+              const slice = pipelineIdx > 0
+                ? jsonStr.slice(braceStart, pipelineIdx).trimEnd().replace(/,\s*$/, "") + ', "pipeline": null }'
+                : null;
+              if (slice) {
+                const repaired = slice.replace(/,\s*([}\]])/g, "$1");
+                parsed = JSON.parse(repaired);
+                console.warn("[propose-agents] Pipeline section truncated — returned orchestrator + agents without pipeline");
+              }
+            } catch {
+              console.error("Could not repair truncated JSON from AI response");
+            }
+          }        // close Phase 1 catch
+        }          // close if (braceStart >= 0)
         if (!parsed) {
           res.json({ agents: [], orchestrator: null, pipeline: null, raw: content });
           return;
