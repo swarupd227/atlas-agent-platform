@@ -411,6 +411,15 @@ export default function BlackBookDemo() {
     liveEventId.current = 0;
     setLiveRunning(true);
     setLiveComplete(false);
+    setHasRun(false);
+    setResetKey(k => k + 1);
+    queryClient.removeQueries({ queryKey: ["/demo-api/blackbook/agent-runs"] });
+    queryClient.removeQueries({ queryKey: ["/demo-api/blackbook/outcome"] });
+    queryClient.removeQueries({ queryKey: ["/demo-api/blackbook/self-healing"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-odometer-verify/scan-batch"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-odometer-verify/financial-impact"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-odometer-verify/fraud-report"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-odometer-verify/vin-history"] });
 
     const es = new EventSource(`/demo-api/blackbook/live-run?scenario=${scenario}`);
     esRef.current = es;
@@ -474,7 +483,7 @@ export default function BlackBookDemo() {
         setLiveAgentName(null);
       }
     };
-  }, [addEvent, stopLiveRun, queryClient]);
+  }, [addEvent, stopLiveRun, queryClient, scenario]);
 
   useEffect(() => () => { stopLiveRun(); }, [stopLiveRun]);
 
