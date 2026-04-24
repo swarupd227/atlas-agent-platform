@@ -71,8 +71,8 @@ const SCENARIOS: {
     id: "odometer-fraud",
     label: "Odometer Fraud Detection",
     sub: "3 VIN rollbacks · $55K valuation risk",
-    tags: ["Extension 1", "BB-AGT-005", "Fraud Detection"],
-    description: "Extension 1 — Dedicated odometer verification agent cross-references mileage across all auction appearances. Catches 3 confirmed rollbacks including a 4,790-mile reversal. Sub-scenarios: aggressive rollback + CARFAX service record conflict escalation.",
+    tags: ["Fraud Detection", "5 Agents"],
+    description: "Dedicated odometer verification agent cross-references mileage across all auction appearances. Catches 3 confirmed rollbacks including a 4,790-mile reversal. Sub-scenarios: aggressive rollback + CARFAX service record conflict escalation.",
     defaultScreen: "odometer-fraud",
   },
 ];
@@ -93,7 +93,7 @@ const SCREENS: { id: ScreenId; label: string; sub: string; icon: any; step: numb
   { id: "market-shift",   label: "Market Shift Alerts",       sub: "2-4 week early warning",      icon: TrendingDown,    step: 3 },
   { id: "weekly-report",  label: "Weekly Report Draft",       sub: "85% auto-generated",          icon: FileText,        step: 4 },
   { id: "self-healing",   label: "Self-Healing",              sub: "Outage detection & recovery", icon: Activity,        step: 5 },
-  { id: "odometer-fraud", label: "Odometer Fraud",            sub: "Extension 1 — BB-AGT-005",    icon: Gauge,           step: 6 },
+  { id: "odometer-fraud", label: "Odometer Fraud",            sub: "Odometer verification",       icon: Gauge,           step: 6 },
 ];
 
 const STATUS_MAP: Record<string, { dot: string; label: string }> = {
@@ -156,7 +156,7 @@ const SCREEN_PREVIEWS: Record<ScreenId, { description: string; bullets: string[]
     ],
   },
   "odometer-fraud": {
-    description: "Extension 1 — BB-AGT-005 cross-referencing 142K VINs for odometer rollback fraud",
+    description: "Odometer verification agent cross-referencing 142K VINs for rollback fraud",
     bullets: [
       "3 confirmed rollbacks detected · highest: 4,790-mile reversal in 23 days",
       "$55,718 total valuation overstatement quarantined from pricing model",
@@ -365,6 +365,7 @@ export default function BlackBookDemo() {
   const [liveEvents, setLiveEvents]         = useState<LiveEvent[]>([]);
   const [liveAgentName, setLiveAgentName]   = useState<string | null>(null);
   const [showLiveFeed, setShowLiveFeed]     = useState(false);
+  const [resetKey, setResetKey]             = useState(0);
 
   const esRef       = useRef<EventSource | null>(null);
   const liveEventId = useRef(0);
@@ -378,6 +379,7 @@ export default function BlackBookDemo() {
       setLiveEvents([]);
       setShowLiveFeed(false);
       liveEventId.current = 0;
+      setResetKey(k => k + 1);
       queryClient.invalidateQueries({ queryKey: ["/demo-api/blackbook/agent-runs"] });
       queryClient.invalidateQueries({ queryKey: ["/demo-api/blackbook/outcome"] });
       queryClient.invalidateQueries({ queryKey: ["/demo-api/blackbook/self-healing"] });
@@ -478,7 +480,7 @@ export default function BlackBookDemo() {
   };
 
   const renderScreen = () => {
-    if (!hasRun && !liveRunning && activeScreen !== "self-healing" && activeScreen !== "odometer-fraud") {
+    if (!hasRun && !liveRunning) {
       return <PreRunPlaceholder screen={activeScreen} onRun={startLiveRun} />;
     }
     switch (activeScreen) {
@@ -486,8 +488,8 @@ export default function BlackBookDemo() {
       case "anomaly":        return <BBScreen2AnomalyDetection scenario={scenario} />;
       case "market-shift":   return <BBScreen3MarketShift scenario={scenario} />;
       case "weekly-report":  return <BBScreen4WeeklyReport />;
-      case "self-healing":   return <BBScreen5SelfHealing scenario={scenario} />;
-      case "odometer-fraud": return <BBScreen6OdometerFraud />;
+      case "self-healing":   return <BBScreen5SelfHealing key={resetKey} scenario={scenario} />;
+      case "odometer-fraud": return <BBScreen6OdometerFraud key={resetKey} />;
     }
   };
 
@@ -505,7 +507,7 @@ export default function BlackBookDemo() {
           <div>
             <h1 className="text-sm font-bold leading-none">Black Book Valuation Intelligence</h1>
             <p className="text-[11px] text-muted-foreground mt-0.5">
-              Atlas AI Agent Platform · {scenario === "odometer-fraud" ? "5 agents (Ext. 1)" : "4 agents"} · 142K+ daily auction transactions
+              Atlas AI Agent Platform · {scenario === "odometer-fraud" ? "5 agents" : "4 agents"} · 142K+ daily auction transactions
             </p>
           </div>
           <Badge className="text-[10px] bg-green-500/20 text-green-400 border-green-500/30 ml-2">Live</Badge>
@@ -530,19 +532,17 @@ export default function BlackBookDemo() {
             </button>
           )}
 
-          {/* Reset Demo — once pipeline has been run */}
-          {(liveComplete || hasRun) && (
-            <button
-              onClick={() => resetMutation.mutate()}
-              disabled={resetMutation.isPending}
-              data-testid="bb-reset-demo"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-border/60 bg-muted/30 text-muted-foreground hover:text-foreground hover:border-border transition-all disabled:opacity-50"
-            >
-              {resetMutation.isPending
-                ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Resetting…</>
-                : <><RotateCcw className="w-3.5 h-3.5" /> Reset Demo</>}
-            </button>
-          )}
+          {/* Reset Demo — always visible */}
+          <button
+            onClick={() => resetMutation.mutate()}
+            disabled={resetMutation.isPending || liveRunning}
+            data-testid="bb-reset-demo"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium border border-border/60 bg-muted/30 text-muted-foreground hover:text-foreground hover:border-border transition-all disabled:opacity-50"
+          >
+            {resetMutation.isPending
+              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Resetting…</>
+              : <><RotateCcw className="w-3.5 h-3.5" /> Reset Demo</>}
+          </button>
 
           {/* Run Pipeline */}
           <button

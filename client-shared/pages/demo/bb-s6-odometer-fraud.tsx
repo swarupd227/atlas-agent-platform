@@ -224,7 +224,7 @@ export default function BBScreen6OdometerFraud() {
         <StatCard
           label="Detection Rate"
           value={`${exec?.detectionRatePct ?? 99.87}%`}
-          sub="BB-AGT-005 accuracy"
+          sub="Agent accuracy"
         />
       </div>
 
@@ -233,7 +233,7 @@ export default function BBScreen6OdometerFraud() {
         <Search className="w-4 h-4 mt-0.5 shrink-0" style={{ color: BB_COLOR }} />
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[11px] font-semibold">BB-AGT-005 — Odometer Fraud Detection Agent</span>
+            <span className="text-[11px] font-semibold">Odometer Fraud Detection Agent</span>
             <span className="text-[9px] px-1.5 py-0.5 rounded-full border bg-green-500/10 text-green-400 border-green-500/20">Active</span>
             <span className="text-[9px] px-1.5 py-0.5 rounded-full border bg-muted/20 text-muted-foreground/60 border-border/30 font-mono">BB Odometer Verification Service</span>
           </div>
@@ -511,7 +511,7 @@ export default function BBScreen6OdometerFraud() {
             </div>
 
             <div className="rounded-xl border border-border/40 bg-muted/5 px-4 py-3 space-y-3">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/50">Why BB-AGT-005 Cannot Auto-Resolve</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/50">Why This Cannot Auto-Resolve</p>
               <div className="space-y-2">
                 {[
                   "CARFAX records dealer-entered mileage — susceptible to typos (71,400 → 7,1400 transposition)",
