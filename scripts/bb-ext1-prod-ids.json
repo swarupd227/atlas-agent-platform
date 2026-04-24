@@ -1,0 +1,52 @@
+{
+  "createdAt": "2026-04-24T15:53:24.629Z",
+  "environment": "production",
+  "orgId": "cf5754b1-ee80-4b51-8bf6-7be263c97527",
+  "prodBase": "https://agent-lifecycle-management-platform.replit.app",
+  "agentCode": "BB-AGT-005",
+  "agentName": "Odometer Fraud Detection Agent",
+  "skillIds": [
+    "13fcc6c8-684f-4ef0-a30a-5a3f8707b4f5",
+    "5d16a1ab-a136-408c-8936-e93c832fd993",
+    "e5dcf007-9a40-4262-8954-c5d04dc593c7",
+    "8076bc57-b74c-468c-b025-0ede5bfda6be",
+    "861570e4-7b45-47d6-8df0-123060d460b2",
+    "19a6b965-1a3b-452d-a610-7561c7f0e42c"
+  ],
+  "kbId": "3ecb1dab-07c6-43f5-940a-9c45d9bd5ceb",
+  "kbSourceIds": [
+    "74ac5ef8-a8a6-4fda-808c-29384853c666",
+    "9ea1c5bc-d3ab-4fb3-95aa-faf58eef3ccd",
+    "402d4048-88d6-45e7-b0cf-355b92f9b2ad",
+    "2a042480-c55d-415a-8344-fabe44f56550",
+    "2e241399-f14a-4877-b3cf-8bceb999c10c",
+    "86db99d8-b8fa-49fc-ad35-366541f9820c"
+  ],
+  "runbookIds": [
+    "30a59653-56e7-43ca-8c9e-4a8ae2bdee19",
+    "7148adcc-b041-44d7-ab47-ea51fb22d870",
+    "9edf5d15-d6c0-48e5-ba1d-59dafaad406b",
+    "c79aed7e-d549-425a-b818-14a7aab74083",
+    "dd3067a9-a9f3-400a-a410-4da7d55d4e69",
+    "0b55228e-b058-4ead-82a0-efecf380f27f"
+  ],
+  "policyIds": [
+    "78129d15-5e32-4212-bf93-0b9fd3f2bd63",
+    "7a3ecbcd-e127-4620-a4f6-2503480bc26f",
+    "71736b72-5d5c-4393-9512-c2040e76d6dc",
+    "5f9a239f-db33-4cbf-a603-612d53b0163c",
+    "3ae07dea-88b4-4270-a3dc-42707dccb380"
+  ],
+  "agentId": "4eaa685f-6048-47b2-8e1f-111f8149618d",
+  "goldenDatasetId": "13ec90da-401d-4348-9ef1-4a160b66d47c",
+  "testCaseIds": [
+    "d61476ea-21ad-4b5f-8d7e-4f5cc94a9d5f",
+    "8a1e9522-6b8c-4a2d-aa77-bd47b726bbea",
+    "33a0f297-f92d-43fd-b0a0-8af13c55deb1",
+    "c2adc36a-3174-49b8-b26c-84cad09de62f",
+    "a337420e-87f4-461c-bc7c-9f28da262130",
+    "e08473e3-3549-4193-beb4-2671cfe78418"
+  ],
+  "evalSuiteId": "7b63fd24-1e6b-4c18-a96f-24632cd6abe5",
+  "outcomeId": "4d0570f8-849d-4287-96cd-84951053d53b"
+}
