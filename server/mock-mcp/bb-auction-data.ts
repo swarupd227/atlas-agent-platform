@@ -85,7 +85,7 @@ router.get("/outlier-detection", (_req: Request, res: Response) => {
     ],
     geographicInconsistencies: [
       { segment: "Mid-Size Car", make: "Toyota", model: "Camry", year: 2023, pricePhoenix: 24800, priceAtlanta: 16800, variance: 8000, justification: null, riskLevel: "HIGH", note: "No condition difference justifies $8K spread; likely feed error or fraud" },
-      { segment: "Compact SUV/CUV", make: "Honda", model: "CR-V", year: 2022, priceNW: 27200, priceSE: 21400, variance: 5800, justification: "Demand variation", riskLevel: "MEDIUM" },
+      { segment: "Compact SUV/CUV", make: "Honda", model: "CR-V", year: 2022, pricePhoenix: 27200, priceAtlanta: 21400, variance: 5800, justification: null, riskLevel: "MEDIUM", note: "Regional demand gap — no condition report filed to justify spread" },
     ],
     volumeAnomalies: [
       { segment: "Luxury SUV", auctionSource: "Manheim Southeast", currentWeekVolume: 187, priorWeekAvg: 283, changePercent: -33.9, riskLevel: "HIGH", note: "Sudden 34% volume drop — possible feed outage or fleet pullback" },
