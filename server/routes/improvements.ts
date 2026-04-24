@@ -1404,29 +1404,27 @@ MANDATORY: You MUST create EXACTLY ${stagedPipelines[0].count} worker agents —
 After assigning one agent to each stage, bind the following ${kpiDetails.length} KPIs to the most relevant existing stage agent (do NOT create extra agents for KPIs): ${kpiDetails.map((k: any) => `${k.name} (baseline: ${k.baseline} → target: ${k.target}, weight: ${k.weight}, SLA: ${k.slaThreshold || "none"})`).join("; ")}`
         : `Generate an agent development plan for the outcome "${outcomeContract?.name}" targeting ${kpiDetails.length} KPIs: ${kpiDetails.map((k: any) => `${k.name} (baseline: ${k.baseline} → target: ${k.target}, weight: ${k.weight}, SLA: ${k.slaThreshold || "none"})`).join("; ")}`;
 
-      const openAIAbort = new AbortController();
-      const openAITimeout = setTimeout(() => openAIAbort.abort(), 120_000);
-      let openAIResp: Awaited<ReturnType<typeof openai.chat.completions.create>>;
+      const anthropicAbort = new AbortController();
+      const anthropicTimeout = setTimeout(() => anthropicAbort.abort(), 120_000);
+      let anthropicResp: Awaited<ReturnType<typeof anthropicClient.messages.create>>;
       try {
-        openAIResp = await openai.chat.completions.create({
-          model: "gpt-4.1-mini",
-          response_format: { type: "json_object" },
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userMsg },
-          ],
+        anthropicResp = await anthropicClient.messages.create({
+          model: "claude-opus-4-5",
+          system: systemPrompt + "\n\nReturn ONLY valid JSON — no markdown fences, no prose.",
+          messages: [{ role: "user", content: userMsg }],
           max_tokens: 7000,
-        }, { signal: openAIAbort.signal });
+        }, { signal: anthropicAbort.signal });
       } catch (aiErr: any) {
-        clearTimeout(openAITimeout);
+        clearTimeout(anthropicTimeout);
         if (aiErr?.name === "AbortError" || aiErr?.code === "ERR_CANCELED") {
           res.status(504).json({ error: "Agent plan generation timed out. Please try again." });
           return;
         }
         throw aiErr;
       }
-      clearTimeout(openAITimeout);
-      const content = openAIResp.choices[0]?.message?.content ?? "";
+      clearTimeout(anthropicTimeout);
+      const textBlock = anthropicResp.content.find((b): b is import("@anthropic-ai/sdk").TextBlock => b.type === "text");
+      const content = textBlock?.text ?? "";
       let jsonStr = content;
       const fencedMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
       if (fencedMatch) {
