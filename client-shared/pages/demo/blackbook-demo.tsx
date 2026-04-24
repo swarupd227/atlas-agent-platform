@@ -505,8 +505,30 @@ export default function BlackBookDemo() {
   useEffect(() => () => { stopLiveRun(); }, [stopLiveRun]);
 
   const handleScenarioChange = (s: ScenarioId) => {
+    stopLiveRun();
     setScenario(s);
     setActiveScreen(SCENARIOS.find(sc => sc.id === s)?.defaultScreen ?? "outcome");
+    setHasRun(false);
+    setLiveRunning(false);
+    setLiveComplete(false);
+    setLiveEvents([]);
+    setLiveAgentName(null);
+    setShowLiveFeed(false);
+    liveEventId.current = 0;
+    setResetKey(k => k + 1);
+    queryClient.removeQueries({ queryKey: ["/demo-api/blackbook/agent-runs"] });
+    queryClient.removeQueries({ queryKey: ["/demo-api/blackbook/outcome"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-auction-data/outlier-detection"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-auction-data/fraud-patterns"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-market-data/shift-alerts"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-market-data/segment-price-trends"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-report-engine/finalize-report"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-report-engine/draft-market-summary"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-report-engine/draft-segment-analysis"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-odometer-verify/scan-batch"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-odometer-verify/financial-impact"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-odometer-verify/fraud-report"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-odometer-verify/vin-history"] });
   };
 
   const renderScreen = () => {
