@@ -147,46 +147,53 @@ function MileageTimeline({ history, rollbackWindow }: {
 
 type TabId = "rollbacks" | "aggressive" | "service-conflict";
 
-export default function BBScreen6OdometerFraud() {
+export default function BBScreen6OdometerFraud({ pipelineComplete = false }: { pipelineComplete?: boolean }) {
   const [activeTab, setActiveTab] = useState<TabId>("rollbacks");
   const [expandedVin, setExpandedVin] = useState<string | null>("1GCUYDED3NZ182741");
 
   const { data: scanData, isLoading: scanLoading } = useQuery<ScanData>({
     queryKey: ["/api/mock/bb-odometer-verify/scan-batch"],
-    refetchInterval: 60000,
+    enabled: pipelineComplete,
+    refetchInterval: false,
   });
 
   const { data: financialData, isLoading: finLoading } = useQuery<FinancialData>({
     queryKey: ["/api/mock/bb-odometer-verify/financial-impact"],
-    refetchInterval: 60000,
+    enabled: pipelineComplete,
+    refetchInterval: false,
   });
 
   const { data: reportData, isLoading: repLoading } = useQuery<ReportData>({
     queryKey: ["/api/mock/bb-odometer-verify/fraud-report"],
-    refetchInterval: 60000,
+    enabled: pipelineComplete,
+    refetchInterval: false,
   });
 
   const { data: aggressiveVinData } = useQuery<VinHistoryData>({
     queryKey: ["/api/mock/bb-odometer-verify/vin-history", "3TMCZ5AN1NM489012"],
     queryFn: () => fetch("/api/mock/bb-odometer-verify/vin-history?vin=3TMCZ5AN1NM489012").then(r => r.json()),
+    enabled: pipelineComplete,
     refetchInterval: false,
   });
 
   const { data: expandedVinData } = useQuery<VinHistoryData>({
     queryKey: ["/api/mock/bb-odometer-verify/vin-history", expandedVin],
     queryFn: () => fetch(`/api/mock/bb-odometer-verify/vin-history?vin=${expandedVin}`).then(r => r.json()),
-    enabled: !!expandedVin && activeTab === "rollbacks",
+    enabled: pipelineComplete && !!expandedVin && activeTab === "rollbacks",
     refetchInterval: false,
   });
 
-  const isLoading = scanLoading || finLoading || repLoading;
+  const isLoading = pipelineComplete && (scanLoading || finLoading || repLoading);
 
-  if (isLoading) {
+  if (!pipelineComplete || isLoading) {
+    const loadingMsg = !pipelineComplete
+      ? "Waiting for agent pipeline to complete…"
+      : "Agent analyzing 142,183 VINs — cross-referencing odometer history…";
     return (
       <div className="flex items-center justify-center h-48">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="w-4 h-4 animate-spin" style={{ color: BB_COLOR }} />
-          Loading odometer fraud analysis…
+          {loadingMsg}
         </div>
       </div>
     );

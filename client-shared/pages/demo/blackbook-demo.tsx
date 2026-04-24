@@ -383,6 +383,10 @@ export default function BlackBookDemo() {
       queryClient.invalidateQueries({ queryKey: ["/demo-api/blackbook/agent-runs"] });
       queryClient.invalidateQueries({ queryKey: ["/demo-api/blackbook/outcome"] });
       queryClient.invalidateQueries({ queryKey: ["/demo-api/blackbook/self-healing"] });
+      queryClient.removeQueries({ queryKey: ["/api/mock/bb-odometer-verify/scan-batch"] });
+      queryClient.removeQueries({ queryKey: ["/api/mock/bb-odometer-verify/financial-impact"] });
+      queryClient.removeQueries({ queryKey: ["/api/mock/bb-odometer-verify/fraud-report"] });
+      queryClient.removeQueries({ queryKey: ["/api/mock/bb-odometer-verify/vin-history"] });
     },
   });
 
@@ -489,7 +493,7 @@ export default function BlackBookDemo() {
       case "market-shift":   return <BBScreen3MarketShift scenario={scenario} />;
       case "weekly-report":  return <BBScreen4WeeklyReport />;
       case "self-healing":   return <BBScreen5SelfHealing key={resetKey} scenario={scenario} />;
-      case "odometer-fraud": return <BBScreen6OdometerFraud key={resetKey} />;
+      case "odometer-fraud": return <BBScreen6OdometerFraud key={resetKey} pipelineComplete={hasRun && !liveRunning} />;
     }
   };
 

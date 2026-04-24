@@ -2,6 +2,8 @@ import { Router, type Request, type Response } from "express";
 
 const router = Router();
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 function seededRng(seed: number) {
   let s = seed;
   return () => {
@@ -97,7 +99,8 @@ const SERVICE_CONFLICT_VIN = {
   recommendedAction: "Manual escalation — cannot auto-resolve. Title history pull required.",
 };
 
-router.get("/scan-batch", (_req: Request, res: Response) => {
+router.get("/scan-batch", async (_req: Request, res: Response) => {
+  await sleep(1400);
   const rng = seededRng(Date.now() % 99991);
   const date = new Date().toISOString().split("T")[0];
   const totalVins = 142183;
@@ -150,7 +153,8 @@ router.get("/scan-batch", (_req: Request, res: Response) => {
   });
 });
 
-router.get("/vin-history", (req: Request, res: Response) => {
+router.get("/vin-history", async (req: Request, res: Response) => {
+  await sleep(700);
   const vin = (req.query.vin as string) || FLAGGED_VINS[0].vin;
   const match = FLAGGED_VINS.find(v => v.vin === vin);
 
@@ -180,7 +184,8 @@ router.get("/vin-history", (req: Request, res: Response) => {
   });
 });
 
-router.get("/service-records", (_req: Request, res: Response) => {
+router.get("/service-records", async (_req: Request, res: Response) => {
+  await sleep(1000);
   res.json({
     success: true,
     recordsChecked: FLAGGED_VINS.length + 1,
@@ -214,7 +219,8 @@ router.get("/service-records", (_req: Request, res: Response) => {
   });
 });
 
-router.get("/financial-impact", (_req: Request, res: Response) => {
+router.get("/financial-impact", async (_req: Request, res: Response) => {
+  await sleep(900);
   const perMileValue = 3.0;
   const impacts = FLAGGED_VINS.map(v => ({
     vin:                   v.vin,
@@ -247,7 +253,8 @@ router.get("/financial-impact", (_req: Request, res: Response) => {
   });
 });
 
-router.get("/fraud-report", (_req: Request, res: Response) => {
+router.get("/fraud-report", async (_req: Request, res: Response) => {
+  await sleep(1800);
   const date = new Date().toISOString().split("T")[0];
   const totalOverstatement = FLAGGED_VINS.reduce((s, v) => s + v.valuationOverstatement, 0);
   const escConflict = Math.round(SERVICE_CONFLICT_VIN.discrepancy * 3.0);
