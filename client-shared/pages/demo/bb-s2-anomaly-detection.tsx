@@ -68,22 +68,34 @@ const FRAUD_RING_BANNER = {
   historicalAccuracy: { confirmedFraudRate: 0.89, falsePositiveRate: 0.07 },
 };
 
-export default function BBScreen2AnomalyDetection({ scenario }: { scenario?: ScenarioType }) {
+export default function BBScreen2AnomalyDetection({ scenario, pipelineComplete = false }: { scenario?: ScenarioType; pipelineComplete?: boolean }) {
   const isFraudRing = scenario === "fraud-ring";
   const [selectedFraud, setSelectedFraud] = useState<any | null>(null);
 
   const { data: anomalyData, isLoading: aLoading } = useQuery<AnomalyData>({
     queryKey: ["/api/mock/bb-auction-data/outlier-detection"],
     refetchInterval: 60000,
+    enabled: pipelineComplete,
   });
 
   const { data: fraudData, isLoading: fLoading } = useQuery<FraudData>({
     queryKey: ["/api/mock/bb-auction-data/fraud-patterns"],
     refetchInterval: 60000,
+    enabled: pipelineComplete,
   });
 
-  if (aLoading || fLoading) {
-    return <div className="flex items-center justify-center py-24"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+  if (!pipelineComplete || aLoading || fLoading) {
+    const msg = !pipelineComplete
+      ? "Waiting for agent pipeline to complete…"
+      : "Agent scanning 142,183 auction records for anomalies…";
+    return (
+      <div className="flex items-center justify-center h-48">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          {msg}
+        </div>
+      </div>
+    );
   }
 
   const anomaly = anomalyData!;

@@ -78,22 +78,34 @@ const FRAUD_RING_ALERT = {
   recommendedAction: "Quarantine all 11 flagged VINs from Luxury SUV pricing model. Notify lender clients with exposure. Escalate to BB Fraud Investigations.",
 };
 
-export default function BBScreen3MarketShift({ scenario }: { scenario?: ScenarioType }) {
+export default function BBScreen3MarketShift({ scenario, pipelineComplete = false }: { scenario?: ScenarioType; pipelineComplete?: boolean }) {
   const isFraudRing = scenario === "fraud-ring";
   const [expandedAlert, setExpandedAlert] = useState<string | null>(isFraudRing ? "MSA-2026-CRIT-001" : "MSA-2026-0089");
 
   const { data: shiftData, isLoading: sLoading } = useQuery<ShiftData>({
     queryKey: ["/api/mock/bb-market-data/shift-alerts"],
     refetchInterval: 60000,
+    enabled: pipelineComplete,
   });
 
   const { data: priceData, isLoading: pLoading } = useQuery<PriceTrendData>({
     queryKey: ["/api/mock/bb-market-data/segment-price-trends"],
     refetchInterval: 60000,
+    enabled: pipelineComplete,
   });
 
-  if (sLoading || pLoading) {
-    return <div className="flex items-center justify-center py-24"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+  if (!pipelineComplete || sLoading || pLoading) {
+    const msg = !pipelineComplete
+      ? "Waiting for agent pipeline to complete…"
+      : "Agent analyzing regional price movements and market signals…";
+    return (
+      <div className="flex items-center justify-center h-48">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          {msg}
+        </div>
+      </div>
+    );
   }
 
   const shifts = shiftData!;

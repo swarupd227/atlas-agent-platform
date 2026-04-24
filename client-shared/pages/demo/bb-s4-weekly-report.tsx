@@ -27,24 +27,37 @@ interface SegmentData {
   segments: { segment: string; weeklyChange: number; fourWeekChange: number; autoText: string; alertLevel: string | null; analystHighlightRequired: boolean; confidence: number }[];
 }
 
-export default function BBScreen4WeeklyReport() {
+export default function BBScreen4WeeklyReport({ pipelineComplete = false }: { pipelineComplete?: boolean }) {
   const { data: reportData, isLoading: rLoading } = useQuery<ReportData>({
     queryKey: ["/api/mock/bb-report-engine/finalize-report"],
     refetchInterval: 60000,
+    enabled: pipelineComplete,
   });
 
   const { data: summaryData, isLoading: sLoading } = useQuery<MarketSummaryData>({
     queryKey: ["/api/mock/bb-report-engine/draft-market-summary"],
     refetchInterval: 60000,
+    enabled: pipelineComplete,
   });
 
   const { data: segData, isLoading: segLoading } = useQuery<SegmentData>({
     queryKey: ["/api/mock/bb-report-engine/draft-segment-analysis"],
     refetchInterval: 60000,
+    enabled: pipelineComplete,
   });
 
-  if (rLoading || sLoading || segLoading) {
-    return <div className="flex items-center justify-center py-24"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
+  if (!pipelineComplete || rLoading || sLoading || segLoading) {
+    const msg = !pipelineComplete
+      ? "Waiting for agent pipeline to complete…"
+      : "Agent compiling weekly valuation report…";
+    return (
+      <div className="flex items-center justify-center h-48">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          {msg}
+        </div>
+      </div>
+    );
   }
 
   const report = reportData!;

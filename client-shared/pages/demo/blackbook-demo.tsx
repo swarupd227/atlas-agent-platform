@@ -380,9 +380,16 @@ export default function BlackBookDemo() {
       setShowLiveFeed(false);
       liveEventId.current = 0;
       setResetKey(k => k + 1);
-      queryClient.invalidateQueries({ queryKey: ["/demo-api/blackbook/agent-runs"] });
-      queryClient.invalidateQueries({ queryKey: ["/demo-api/blackbook/outcome"] });
-      queryClient.invalidateQueries({ queryKey: ["/demo-api/blackbook/self-healing"] });
+      queryClient.removeQueries({ queryKey: ["/demo-api/blackbook/agent-runs"] });
+      queryClient.removeQueries({ queryKey: ["/demo-api/blackbook/outcome"] });
+      queryClient.removeQueries({ queryKey: ["/demo-api/blackbook/self-healing"] });
+      queryClient.removeQueries({ queryKey: ["/api/mock/bb-auction-data/outlier-detection"] });
+      queryClient.removeQueries({ queryKey: ["/api/mock/bb-auction-data/fraud-patterns"] });
+      queryClient.removeQueries({ queryKey: ["/api/mock/bb-market-data/shift-alerts"] });
+      queryClient.removeQueries({ queryKey: ["/api/mock/bb-market-data/segment-price-trends"] });
+      queryClient.removeQueries({ queryKey: ["/api/mock/bb-report-engine/finalize-report"] });
+      queryClient.removeQueries({ queryKey: ["/api/mock/bb-report-engine/draft-market-summary"] });
+      queryClient.removeQueries({ queryKey: ["/api/mock/bb-report-engine/draft-segment-analysis"] });
       queryClient.removeQueries({ queryKey: ["/api/mock/bb-odometer-verify/scan-batch"] });
       queryClient.removeQueries({ queryKey: ["/api/mock/bb-odometer-verify/financial-impact"] });
       queryClient.removeQueries({ queryKey: ["/api/mock/bb-odometer-verify/fraud-report"] });
@@ -416,6 +423,13 @@ export default function BlackBookDemo() {
     queryClient.removeQueries({ queryKey: ["/demo-api/blackbook/agent-runs"] });
     queryClient.removeQueries({ queryKey: ["/demo-api/blackbook/outcome"] });
     queryClient.removeQueries({ queryKey: ["/demo-api/blackbook/self-healing"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-auction-data/outlier-detection"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-auction-data/fraud-patterns"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-market-data/shift-alerts"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-market-data/segment-price-trends"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-report-engine/finalize-report"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-report-engine/draft-market-summary"] });
+    queryClient.removeQueries({ queryKey: ["/api/mock/bb-report-engine/draft-segment-analysis"] });
     queryClient.removeQueries({ queryKey: ["/api/mock/bb-odometer-verify/scan-batch"] });
     queryClient.removeQueries({ queryKey: ["/api/mock/bb-odometer-verify/financial-impact"] });
     queryClient.removeQueries({ queryKey: ["/api/mock/bb-odometer-verify/fraud-report"] });
@@ -498,9 +512,9 @@ export default function BlackBookDemo() {
     }
     switch (activeScreen) {
       case "outcome":        return <BBScreen1OutcomeCockpit />;
-      case "anomaly":        return <BBScreen2AnomalyDetection scenario={scenario} />;
-      case "market-shift":   return <BBScreen3MarketShift scenario={scenario} />;
-      case "weekly-report":  return <BBScreen4WeeklyReport />;
+      case "anomaly":        return <BBScreen2AnomalyDetection scenario={scenario} pipelineComplete={hasRun && !liveRunning} />;
+      case "market-shift":   return <BBScreen3MarketShift scenario={scenario} pipelineComplete={hasRun && !liveRunning} />;
+      case "weekly-report":  return <BBScreen4WeeklyReport pipelineComplete={hasRun && !liveRunning} />;
       case "self-healing":   return <BBScreen5SelfHealing key={resetKey} scenario={scenario} />;
       case "odometer-fraud": return <BBScreen6OdometerFraud key={resetKey} pipelineComplete={hasRun && !liveRunning} />;
     }
