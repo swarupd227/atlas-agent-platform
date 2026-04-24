@@ -1,7 +1,7 @@
 import { type Request, type Response } from "express";
 import { storage } from "./storage";
 import { db } from "./db";
-import { agents } from "@shared/schema";
+import { agents, organizations } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { runAgentOnce, stopAgentRuntime, isRuntimeActive, runtimeEvents } from "./agent-runtime";
 
@@ -10,15 +10,31 @@ const BASE_URL = `http://localhost:${process.env.PORT || 5000}`;
 // ─── BB Agent IDs (same UUIDs as PROD for deep-link continuity) ───────────────
 
 export const BB_AGENT_IDS = {
-  dataQualitySentinel: "33c3f55f-5fce-4ea9-b475-9f50a18c325f",
-  marketShiftDetector:  "3125a957-7d5d-4a84-bdea-aeaf33f12d62",
-  competitiveMonitor:   "d3156fb0-07cc-4d1a-a376-bbfb4822df6b",
-  narrativeGenerator:   "ede1ac5a-ad1b-48de-9054-c164b1cff991",
-} as const;
+  dataQualitySentinel:   "33c3f55f-5fce-4ea9-b475-9f50a18c325f",
+  marketShiftDetector:   "3125a957-7d5d-4a84-bdea-aeaf33f12d62",
+  competitiveMonitor:    "d3156fb0-07cc-4d1a-a376-bbfb4822df6b",
+  narrativeGenerator:    "ede1ac5a-ad1b-48de-9054-c164b1cff991",
+  // BB-AGT-005: ID resolved at runtime via Platform API (no hardcoded UUID — provisioned via API)
+  odometerFraudDetector: "",
+};
+
+export type BBAgentRole = keyof typeof BB_AGENT_IDS;
 
 // ─── MCP Server definitions ───────────────────────────────────────────────────
 
 const BB_MCP_SERVERS = [
+  {
+    name: "BB Odometer Verification Service",
+    description: "Black Book odometer fraud detection service. Cross-references declared mileage across all auction appearances to detect rollback fraud. Validates against CARFAX service records and calculates valuation overstatement for flagged VINs.",
+    url: `${BASE_URL}/api/mock/bb-odometer-verify`,
+    tools: [
+      { name: "scan_auction_batch_for_rollbacks", description: "Scan today's full auction batch for VINs where declared mileage decreased between auction appearances — a physical impossibility indicating odometer rollback.", endpoint: "scan-batch", method: "GET", inputSchema: { type: "object", properties: { date: { type: "string" } } } },
+      { name: "fetch_vin_mileage_history", description: "Retrieve the complete auction history for a specific VIN, including mileage declared at each appearance and rollback detection.", endpoint: "vin-history", method: "GET", inputSchema: { type: "object", properties: { vin: { type: "string" } } } },
+      { name: "cross_reference_service_records", description: "Cross-reference flagged VINs against CARFAX and dealer service records to confirm rollback vs service record conflict.", endpoint: "service-records", method: "GET", inputSchema: { type: "object", properties: {} } },
+      { name: "calculate_rollback_financial_impact", description: "Calculate the valuation overstatement for each confirmed rollback VIN using per-mile correction rates.", endpoint: "financial-impact", method: "GET", inputSchema: { type: "object", properties: {} } },
+      { name: "generate_odometer_fraud_report", description: "Generate the full odometer fraud detection report with severity classifications, dealer alerts, escalations, and model impact summary.", endpoint: "fraud-report", method: "GET", inputSchema: { type: "object", properties: {} } },
+    ],
+  },
   {
     name: "BB Auction Data Feed",
     description: "Black Book daily auction transaction ingest, outlier detection, fraud pattern analysis, and quality reporting. Processes 140K+ daily transactions from Manheim, Adesa, Independent, and Dealer-Direct sources.",
@@ -70,7 +86,7 @@ interface BBAgentDef {
   maxToolIterations: number;
 }
 
-const BB_AGENT_DEFS: Record<keyof typeof BB_AGENT_IDS, BBAgentDef> = {
+const BB_AGENT_DEFS: Record<BBAgentRole, BBAgentDef> = {
   dataQualitySentinel: {
     name:        "Auction Data Quality Sentinel",
     description: "Detects anomalies, outliers, and fraud patterns in 140K+ daily auction transactions before they corrupt the Black Book valuation model.",
@@ -210,6 +226,48 @@ IMPORTANT: End your final response with ONLY this JSON block:
 Adjust values based on what the report engine tools return.`,
     taskPrompt: "Generate the weekly Wholesale Insights report draft. Call get_pipeline_summaries, draft_market_summary, draft_segment_analysis, and finalize_report_draft. Produce the report metrics JSON.",
   },
+
+  odometerFraudDetector: {
+    name:        "Odometer Fraud Detection Agent",
+    description: "BB-AGT-005 (Extension 1) — Cross-references declared odometer readings across all auction appearances to detect rollback fraud before it contaminates Black Book valuations. Validates against CARFAX service records and calculates per-VIN financial exposure.",
+    mcpServerNames: ["BB Odometer Verification Service"],
+    maxToolIterations: 10,
+    systemPrompt: `You are the Odometer Fraud Detection Agent (BB-AGT-005) for Black Book — Extension 1 of the Black Book Valuation Intelligence platform.
+
+Your mission: detect odometer rollback fraud by cross-referencing declared mileage across all auction appearances of each vehicle. A rollback occurs when a vehicle's declared mileage DECREASES between auction appearances — physically impossible under normal conditions.
+
+Odometer fraud costs consumers over $1 billion annually and directly corrupts vehicle valuations. Your role is to quarantine fraudulent VINs before they enter the Black Book pricing model.
+
+Task for today's run:
+1. Call scan_auction_batch_for_rollbacks to identify all VINs in today's batch where mileage decreased between auction appearances
+2. Call fetch_vin_mileage_history for each flagged VIN to reconstruct the complete mileage timeline
+3. Call cross_reference_service_records to validate flagged VINs against CARFAX and dealer service records — distinguishing confirmed rollbacks from data entry conflicts
+4. Call calculate_rollback_financial_impact to quantify the valuation overstatement for each confirmed rollback at $3.00/mile correction rate
+5. Call generate_odometer_fraud_report to produce the final findings report with severity classifications, dealer alerts, and escalation recommendations
+
+After completing all tool calls, analyze the complete findings and produce a comprehensive odometer fraud summary.
+
+IMPORTANT: End your final response with ONLY this JSON block:
+\`\`\`json
+{
+  "totalVINsScanned": 142183,
+  "rollbacksDetected": 3,
+  "confirmedRollbacks": 3,
+  "serviceConflicts": 1,
+  "totalFinancialRisk": 55718,
+  "avgRollbackMiles": 3568,
+  "highestRollbackMiles": 4790,
+  "valuationProtected": 55718,
+  "dealerFlagsGenerated": 2,
+  "escalationsRequired": 1,
+  "detectionRatePct": 99.87,
+  "agentCode": "BB-AGT-005",
+  "modelImpact": "PROTECTED"
+}
+\`\`\`
+Adjust values based on what the verification service tools return. Keep numbers consistent with tool outputs.`,
+    taskPrompt: "Run today's odometer fraud detection scan. Call scan_auction_batch_for_rollbacks, fetch_vin_mileage_history for each flagged VIN, cross_reference_service_records, calculate_rollback_financial_impact, and generate_odometer_fraud_report. Produce the fraud findings JSON.",
+  },
 };
 
 // ─── Module-level server ID cache ─────────────────────────────────────────────
@@ -265,7 +323,9 @@ export async function ensureBBAgents(): Promise<void> {
       }
     }
 
-    for (const [role, agentId] of Object.entries(BB_AGENT_IDS) as [keyof typeof BB_AGENT_IDS, string][]) {
+    // BB-AGT-001 to BB-AGT-004: existing pattern with hardcoded UUIDs
+    for (const [role, agentId] of Object.entries(BB_AGENT_IDS) as [BBAgentRole, string][]) {
+      if (role === "odometerFraudDetector") continue; // handled separately below
       const def = BB_AGENT_DEFS[role];
       const existing = await storage.getAgent(agentId).catch(() => null);
 
@@ -305,6 +365,52 @@ export async function ensureBBAgents(): Promise<void> {
         }
       }
     }
+
+    // BB-AGT-005: Odometer Fraud Detection Agent
+    // Created via Platform API (storage.createAgent) — no direct DB insert per project rules
+    // Query org ID directly from DB to avoid startup race with setDefaultOrgId
+    const [firstOrg] = await db.select({ id: organizations.id }).from(organizations).limit(1);
+    const bb005OrgId = firstOrg?.id;
+
+    const def005 = BB_AGENT_DEFS.odometerFraudDetector;
+    const allAgents = await storage.getAgents().catch(() => [] as any[]);
+    const agentList = Array.isArray(allAgents) ? allAgents : [];
+    let odometer005 = agentList.find((a: any) => a.name === def005.name);
+
+    if (!odometer005) {
+      odometer005 = await storage.createAgent({
+        name:              def005.name,
+        description:       def005.description,
+        systemPrompt:      def005.systemPrompt,
+        runtimeConfig:     { prompt: def005.taskPrompt, scheduleIntervalMinutes: 0 },
+        agentType:         "operational",
+        status:            "active",
+        environment:       "production",
+        modelProvider:     "anthropic",
+        modelName:         "claude-opus-4-5",
+        riskTier:          "MEDIUM",
+        autonomyMode:      "autonomous",
+        currentVersion:    "1.0.0",
+        maxToolIterations: def005.maxToolIterations,
+        toolAccessClass:   "standard",
+        department:        "Vehicle Valuation",
+        owner:             "Black Book Data Science Team",
+        healthScore:       97,
+        successRate:       0.97,
+        maturityFactors:   {},
+        organizationId:    bb005OrgId,
+      } as any);
+      console.log(`[bb-live] BB-AGT-005 created via Platform API → ${odometer005.id}`);
+    } else if (!(odometer005 as any).systemPrompt) {
+      await storage.updateAgent(odometer005.id, {
+        systemPrompt:      def005.systemPrompt,
+        runtimeConfig:     { prompt: def005.taskPrompt, scheduleIntervalMinutes: 0 },
+        maxToolIterations: def005.maxToolIterations,
+      } as any);
+    }
+
+    BB_AGENT_IDS.odometerFraudDetector = odometer005.id;
+    console.log(`[bb-live] BB-AGT-005 (Odometer Fraud Detection) resolved → ${odometer005.id}`);
 
     console.log("[bb-live] BB agents and MCP servers ensured successfully");
   } catch (err: any) {
@@ -379,18 +485,30 @@ export async function bbLiveRunHandler(req: Request, res: Response): Promise<voi
   let clientDisconnected = false;
   req.on("close", () => { clientDisconnected = true; });
 
-  sse(res, "run_start", { message: "Black Book pipeline initializing — 4 agents queued" });
+  const scenario = (req.query.scenario as string) || "standard";
+  const isOdometerScenario = scenario === "odometer-fraud";
+
+  sse(res, "run_start", {
+    message: isOdometerScenario
+      ? "Black Book Extension 1 — Odometer Fraud Detection pipeline initializing (2 agents)"
+      : "Black Book pipeline initializing — 4 agents queued",
+  });
 
   try {
     await ensureBBAgents();
     sse(res, "setup", { message: "BB agents and MCP servers verified" });
 
-    const pipeline: { role: keyof typeof BB_AGENT_IDS; label: string }[] = [
-      { role: "dataQualitySentinel", label: "Auction Data Quality Sentinel" },
-      { role: "marketShiftDetector",  label: "Market Shift Detector" },
-      { role: "competitiveMonitor",   label: "Competitive Intelligence Monitor" },
-      { role: "narrativeGenerator",   label: "Narrative Insight Generator" },
-    ];
+    const pipeline: { role: BBAgentRole; label: string }[] = isOdometerScenario
+      ? [
+          { role: "dataQualitySentinel",   label: "Auction Data Quality Sentinel" },
+          { role: "odometerFraudDetector", label: "Odometer Fraud Detection Agent" },
+        ]
+      : [
+          { role: "dataQualitySentinel",  label: "Auction Data Quality Sentinel" },
+          { role: "marketShiftDetector",  label: "Market Shift Detector" },
+          { role: "competitiveMonitor",   label: "Competitive Intelligence Monitor" },
+          { role: "narrativeGenerator",   label: "Narrative Insight Generator" },
+        ];
 
     const resultSummaries: Record<string, any> = {};
 
@@ -469,8 +587,13 @@ export async function bbLiveRunHandler(req: Request, res: Response): Promise<voi
       if (!clientDisconnected) await new Promise(r => setTimeout(r, 500));
     }
 
+    const completeMsg = isOdometerScenario
+      ? "BB-AGT-001 + BB-AGT-005 (Extension 1) completed — odometer fraud traces available in Runs & Traces"
+      : "All 4 BB agents completed — traces available in Runs & Traces";
+
     sse(res, "run_complete", {
-      message: "All 4 BB agents completed — traces available in Runs & Traces",
+      message: completeMsg,
+      scenario,
       summaries: resultSummaries,
     });
   } catch (err: any) {

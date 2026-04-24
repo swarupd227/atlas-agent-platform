@@ -10,6 +10,7 @@ import {
   TrendingDown,
   FileText,
   Activity,
+  Gauge,
   CheckCircle2,
   Loader2,
   ArrowRight,
@@ -29,9 +30,10 @@ import BBScreen2AnomalyDetection from "./bb-s2-anomaly-detection";
 import BBScreen3MarketShift from "./bb-s3-market-shift";
 import BBScreen4WeeklyReport from "./bb-s4-weekly-report";
 import BBScreen5SelfHealing from "./bb-s5-self-healing";
+import BBScreen6OdometerFraud from "./bb-s6-odometer-fraud";
 
-type ScreenId = "outcome" | "anomaly" | "market-shift" | "weekly-report" | "self-healing";
-type ScenarioId = "standard" | "fraud-ring" | "self-healing";
+type ScreenId = "outcome" | "anomaly" | "market-shift" | "weekly-report" | "self-healing" | "odometer-fraud";
+type ScenarioId = "standard" | "fraud-ring" | "self-healing" | "odometer-fraud";
 
 const SCENARIOS: {
   id: ScenarioId;
@@ -65,6 +67,14 @@ const SCENARIOS: {
     description: "Manheim Southeast data feed goes offline mid-run. Watch Atlas self-healing pipeline animate through 5 stages in real time: Detect → Diagnose → Remediate → Backfill → Validate.",
     defaultScreen: "self-healing",
   },
+  {
+    id: "odometer-fraud",
+    label: "Odometer Fraud Detection",
+    sub: "3 VIN rollbacks · $55K valuation risk",
+    tags: ["Extension 1", "BB-AGT-005", "Fraud Detection"],
+    description: "Extension 1 — Dedicated odometer verification agent cross-references mileage across all auction appearances. Catches 3 confirmed rollbacks including a 4,790-mile reversal. Sub-scenarios: aggressive rollback + CARFAX service record conflict escalation.",
+    defaultScreen: "odometer-fraud",
+  },
 ];
 
 interface LiveEvent {
@@ -78,11 +88,12 @@ interface LiveEvent {
 }
 
 const SCREENS: { id: ScreenId; label: string; sub: string; icon: any; step: number }[] = [
-  { id: "outcome",       label: "Outcome Cockpit",           sub: "KPIs & agent portfolio",     icon: LayoutDashboard, step: 1 },
-  { id: "anomaly",       label: "Anomaly Detection",         sub: "142K transactions scanned",  icon: AlertTriangle,   step: 2 },
-  { id: "market-shift",  label: "Market Shift Alerts",       sub: "2-4 week early warning",     icon: TrendingDown,    step: 3 },
-  { id: "weekly-report", label: "Weekly Report Draft",       sub: "85% auto-generated",         icon: FileText,        step: 4 },
-  { id: "self-healing",  label: "Self-Healing",              sub: "Outage detection & recovery", icon: Activity,        step: 5 },
+  { id: "outcome",        label: "Outcome Cockpit",           sub: "KPIs & agent portfolio",      icon: LayoutDashboard, step: 1 },
+  { id: "anomaly",        label: "Anomaly Detection",         sub: "142K transactions scanned",   icon: AlertTriangle,   step: 2 },
+  { id: "market-shift",   label: "Market Shift Alerts",       sub: "2-4 week early warning",      icon: TrendingDown,    step: 3 },
+  { id: "weekly-report",  label: "Weekly Report Draft",       sub: "85% auto-generated",          icon: FileText,        step: 4 },
+  { id: "self-healing",   label: "Self-Healing",              sub: "Outage detection & recovery", icon: Activity,        step: 5 },
+  { id: "odometer-fraud", label: "Odometer Fraud",            sub: "Extension 1 — BB-AGT-005",    icon: Gauge,           step: 6 },
 ];
 
 const STATUS_MAP: Record<string, { dot: string; label: string }> = {
@@ -142,6 +153,15 @@ const SCREEN_PREVIEWS: Record<ScreenId, { description: string; bullets: string[]
       "8,200 transactions recovered without analyst intervention",
       "Comparison: 247 minutes vs 4 minutes without / with ATLAS",
       "All 5 data feed health scores restored to 99%+",
+    ],
+  },
+  "odometer-fraud": {
+    description: "Extension 1 — BB-AGT-005 cross-referencing 142K VINs for odometer rollback fraud",
+    bullets: [
+      "3 confirmed rollbacks detected · highest: 4,790-mile reversal in 23 days",
+      "$55,718 total valuation overstatement quarantined from pricing model",
+      "CARFAX cross-validation for all flagged VINs with service record conflict escalation",
+      "Exception sub-scenarios: aggressive rollback ring + service record conflict manual review",
     ],
   },
 };
@@ -386,7 +406,7 @@ export default function BlackBookDemo() {
     setLiveRunning(true);
     setLiveComplete(false);
 
-    const es = new EventSource("/demo-api/blackbook/live-run");
+    const es = new EventSource(`/demo-api/blackbook/live-run?scenario=${scenario}`);
     esRef.current = es;
 
     es.addEventListener("run_start", (e: MessageEvent) => {
@@ -420,8 +440,9 @@ export default function BlackBookDemo() {
       addEvent("agent_complete", d.agentName, `${d.success ? "✓ Complete" : "✗ Failed"}: ${d.agentName}`, undefined, d.success);
       queryClient.invalidateQueries({ queryKey: ["/demo-api/blackbook/agent-runs"] });
     });
-    es.addEventListener("run_complete", () => {
-      addEvent("run_complete", "Atlas Runtime", "All 4 BB agents completed — traces available in Runs & Traces", undefined, true);
+    es.addEventListener("run_complete", (e: MessageEvent) => {
+      const d = e.data ? JSON.parse(e.data) : {};
+      addEvent("run_complete", "Atlas Runtime", d.message || "BB pipeline completed — traces available in Runs & Traces", undefined, true);
       es.close();
       esRef.current = null;
       setLiveRunning(false);
@@ -457,7 +478,7 @@ export default function BlackBookDemo() {
   };
 
   const renderScreen = () => {
-    if (!hasRun && !liveRunning && activeScreen !== "self-healing") {
+    if (!hasRun && !liveRunning && activeScreen !== "self-healing" && activeScreen !== "odometer-fraud") {
       return <PreRunPlaceholder screen={activeScreen} onRun={startLiveRun} />;
     }
     switch (activeScreen) {
@@ -466,6 +487,7 @@ export default function BlackBookDemo() {
       case "market-shift":   return <BBScreen3MarketShift scenario={scenario} />;
       case "weekly-report":  return <BBScreen4WeeklyReport />;
       case "self-healing":   return <BBScreen5SelfHealing scenario={scenario} />;
+      case "odometer-fraud": return <BBScreen6OdometerFraud />;
     }
   };
 
@@ -482,7 +504,9 @@ export default function BlackBookDemo() {
           </div>
           <div>
             <h1 className="text-sm font-bold leading-none">Black Book Valuation Intelligence</h1>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Atlas AI Agent Platform · 4 agents · 142K+ daily auction transactions</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">
+              Atlas AI Agent Platform · {scenario === "odometer-fraud" ? "5 agents (Ext. 1)" : "4 agents"} · 142K+ daily auction transactions
+            </p>
           </div>
           <Badge className="text-[10px] bg-green-500/20 text-green-400 border-green-500/30 ml-2">Live</Badge>
           {liveComplete && (
@@ -565,9 +589,14 @@ export default function BlackBookDemo() {
         <div className="flex items-center gap-1 mb-1">
           <span className="text-[9px] font-mono text-muted-foreground/50 uppercase tracking-widest">Scenario</span>
         </div>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
           {SCENARIOS.map(sc => {
             const isActive = scenario === sc.id;
+            const tagStyle =
+              sc.id === "fraud-ring"     ? "bg-red-500/10 text-red-400 border-red-500/20" :
+              sc.id === "self-healing"   ? "bg-blue-500/10 text-blue-400 border-blue-500/20" :
+              sc.id === "odometer-fraud" ? "bg-amber-500/10 text-amber-400 border-amber-500/20" :
+                                          "bg-green-500/10 text-green-400 border-green-500/20";
             return (
               <button
                 key={sc.id}
@@ -586,14 +615,7 @@ export default function BlackBookDemo() {
                 </div>
                 <div className="flex flex-wrap gap-1">
                   {sc.tags.map(t => (
-                    <span
-                      key={t}
-                      className={`text-[9px] px-1.5 py-0.5 rounded-full border ${
-                        sc.id === "fraud-ring"  ? "bg-red-500/10 text-red-400 border-red-500/20" :
-                        sc.id === "self-healing" ? "bg-blue-500/10 text-blue-400 border-blue-500/20" :
-                        "bg-green-500/10 text-green-400 border-green-500/20"
-                      }`}
-                    >
+                    <span key={t} className={`text-[9px] px-1.5 py-0.5 rounded-full border ${tagStyle}`}>
                       {t}
                     </span>
                   ))}

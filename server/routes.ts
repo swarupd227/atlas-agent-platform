@@ -43,6 +43,7 @@ import fitchReportEngineRouter from "./mock-mcp/fitch-report-engine";
 import bbAuctionDataRouter from "./mock-mcp/bb-auction-data";
 import bbMarketDataRouter from "./mock-mcp/bb-market-data";
 import bbReportEngineRouter from "./mock-mcp/bb-report-engine";
+import bbOdometerVerifyRouter from "./mock-mcp/bb-odometer-verify";
 import fitchRwBloombergRouter from "./mock-mcp/fitch-rw-bloomberg";
 import fitchRwSecEdgarRouter from "./mock-mcp/fitch-rw-sec-edgar";
 import fitchRwAnalyticsRouter from "./mock-mcp/fitch-rw-analytics";
@@ -183,6 +184,7 @@ export async function registerRoutes(
   app.use("/api/mock/bb-auction-data", bbAuctionDataRouter);
   app.use("/api/mock/bb-market-data", bbMarketDataRouter);
   app.use("/api/mock/bb-report-engine", bbReportEngineRouter);
+  app.use("/api/mock/bb-odometer-verify", bbOdometerVerifyRouter);
   app.use("/api/mock/fitch-rw-bloomberg", fitchRwBloombergRouter);
   app.use("/api/mock/fitch-rw-sec-edgar", fitchRwSecEdgarRouter);
   app.use("/api/mock/fitch-rw-analytics", fitchRwAnalyticsRouter);
