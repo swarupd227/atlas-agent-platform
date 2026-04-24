@@ -291,21 +291,24 @@ function LiveFeedPanel({ events, activeAgentName, running, onClose }: {
 
 // ─── Pipeline header ──────────────────────────────────────────────────────────
 
-function PipelineHeader({ liveRunning, activeAgentName, hasRun }: {
-  liveRunning: boolean; activeAgentName: string | null; hasRun: boolean;
+function PipelineHeader({ liveRunning, activeAgentName, hasRun, scenario }: {
+  liveRunning: boolean; activeAgentName: string | null; hasRun: boolean; scenario: ScenarioId;
 }) {
   const { data } = useQuery<any>({
-    queryKey: ["/demo-api/blackbook/agent-runs"],
+    queryKey: ["/demo-api/blackbook/agent-runs", scenario],
+    queryFn: () => fetch(`/demo-api/blackbook/agent-runs?scenario=${scenario}`).then(r => r.json()),
     refetchInterval: liveRunning ? 4000 : 30000,
   });
 
   const runs: any[] = data?.agentRuns || [];
-  const placeholders = [
-    "Auction Data Quality Sentinel",
-    "Market Shift Detector",
-    "Competitive Intelligence Monitor",
-    "Narrative Insight Generator",
-  ];
+  const placeholders = scenario === "odometer-fraud"
+    ? ["Auction Data Quality Sentinel", "Odometer Fraud Detection Agent"]
+    : [
+        "Auction Data Quality Sentinel",
+        "Market Shift Detector",
+        "Competitive Intelligence Monitor",
+        "Narrative Insight Generator",
+      ];
 
   if (!runs.length) {
     return (
@@ -606,9 +609,9 @@ export default function BlackBookDemo() {
         </div>
       )}
 
-      {/* Pipeline header — 4 BB agents */}
+      {/* Pipeline header — scenario-aware agent list */}
       <div className="px-6 shrink-0">
-        <PipelineHeader liveRunning={liveRunning} activeAgentName={liveAgentName} hasRun={hasRun} />
+        <PipelineHeader liveRunning={liveRunning} activeAgentName={liveAgentName} hasRun={hasRun} scenario={scenario} />
       </div>
 
       {/* Scenario selector */}

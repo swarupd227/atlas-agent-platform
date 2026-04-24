@@ -626,14 +626,21 @@ export async function resetBBDemo(_req: Request, res: Response): Promise<void> {
 
 // ─── Agent runs list for pipeline header ─────────────────────────────────────
 
-export async function getBBAgentRuns(_req: Request, res: Response): Promise<void> {
+export async function getBBAgentRuns(req: Request, res: Response): Promise<void> {
   try {
-    const agentRoles: { key: keyof typeof BB_AGENT_IDS; label: string; step: number }[] = [
-      { key: "dataQualitySentinel", label: "Auction Data Quality Sentinel", step: 1 },
-      { key: "marketShiftDetector",  label: "Market Shift Detector",          step: 2 },
-      { key: "competitiveMonitor",   label: "Competitive Intelligence Monitor", step: 3 },
-      { key: "narrativeGenerator",   label: "Narrative Insight Generator",     step: 4 },
-    ];
+    const scenario = (req.query.scenario as string) || "standard";
+    const agentRoles: { key: keyof typeof BB_AGENT_IDS; label: string; step: number }[] =
+      scenario === "odometer-fraud"
+        ? [
+            { key: "dataQualitySentinel",   label: "Auction Data Quality Sentinel",   step: 1 },
+            { key: "odometerFraudDetector", label: "Odometer Fraud Detection Agent",  step: 2 },
+          ]
+        : [
+            { key: "dataQualitySentinel", label: "Auction Data Quality Sentinel",       step: 1 },
+            { key: "marketShiftDetector",  label: "Market Shift Detector",              step: 2 },
+            { key: "competitiveMonitor",   label: "Competitive Intelligence Monitor",   step: 3 },
+            { key: "narrativeGenerator",   label: "Narrative Insight Generator",        step: 4 },
+          ];
 
     const runs = await Promise.all(agentRoles.map(async ({ key, label, step }) => {
       const agentId = BB_AGENT_IDS[key];
