@@ -69,7 +69,10 @@ import advSupportDiagnosticRouter     from "./mock-mcp/adv-support-diagnostic";
 import advSupportEscalationRouter     from "./mock-mcp/adv-support-escalation";
 import otcCashPaymentEngineRouter     from "./mock-mcp/otc-cash-payment-engine";
 import otcCashArPostingRouter         from "./mock-mcp/otc-cash-ar-posting";
+import otcDisputeResolutionRouter     from "./mock-mcp/otc-dispute-resolution";
+import otcDisputeContractRouter       from "./mock-mcp/otc-dispute-contract";
 import { ensureAdvSupportAgents }     from "./advantive-support-live-run";
+import { otcDisputeLiveRunHandler, getOtcDisputeAgentRuns, resetOtcDisputeDemo, ensureOtcDisputeAgents } from "./otc-dispute-live-run";
 import { bbLiveRunHandler, getBBAgentRuns, getBBOutcomeData, getBBSelfHealingStatus, resetBBDemo, ensureBBAgents } from "./blackbook-live-run";
 import { registerMockMcpServers } from "./mock-mcp/register";
 import piiRouter from "./routes/pii";
@@ -221,6 +224,13 @@ export async function registerRoutes(
   app.use("/api/mock/otc-cash-payment-engine",    otcCashPaymentEngineRouter);
   app.use("/api/mock/otc-cash-ar-posting",        otcCashArPostingRouter);
 
+  // OTC Dispute Resolution Demo 5 — Dispute Resolution Intelligence
+  app.use("/api/mock/otc-dispute-resolution",     otcDisputeResolutionRouter);
+  app.use("/api/mock/otc-dispute-contract",       otcDisputeContractRouter);
+  app.get("/demo-api/otc-dispute/live-run",       otcDisputeLiveRunHandler);
+  app.get("/demo-api/otc-dispute/agent-runs",     getOtcDisputeAgentRuns);
+  app.post("/demo-api/otc-dispute/reset",         resetOtcDisputeDemo);
+
   app.get("/demo-api/blackbook/live-run",    bbLiveRunHandler);
   app.get("/demo-api/blackbook/agent-runs",  getBBAgentRuns);
   app.get("/demo-api/blackbook/outcome",     getBBOutcomeData);
@@ -297,6 +307,7 @@ export async function registerRoutes(
   ensureFitchAgents().catch((err: any) => console.error("[startup] ensureFitchAgents:", err?.message));
   ensureBBAgents().catch((err: any) => console.error("[startup] ensureBBAgents:", err?.message));
   ensureOnespanAgents().catch((err: any) => console.error("[startup] ensureOnespanAgents:", err?.message));
+  // OTC Dispute agents use lazy initialization (ensureOtcDisputeAgents is called inside otcDisputeLiveRunHandler)
   // OTC Order agents use lazy initialization (ensureOtcOrderAgents is called inside the live-run handler)
   // PKG Sched agents use lazy initialization (ensurePackagingSchedAgents is called inside pkgSchedLiveRunHandler)
   // OTC Fulfillment agents use lazy initialization (ensureOtcFulfillmentAgents is called inside the live-run handler)

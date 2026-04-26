@@ -252,6 +252,23 @@ const DEMOS: Demo[] = [
     badge: "New",
   },
   {
+    id: "otc-dispute",
+    title: "Dispute Resolution Intelligence",
+    client: "NovaTech Industries",
+    description:
+      "Apex Industries disputes $380K across 12 invoices in 45 days — a 400% spike above historical baseline. OTC-AGT-008 (Dispute Resolution — new agent) detects the pattern, traces the root cause to a pricing error: contract MSA-2025-1104 (Feb 12, 2026) introduced new Category C rates, but ERP price list PL-2024-C was never replaced by PL-2025-C-APEX, causing a 4.7% systematic overcharge. OTC-AGT-011 (Contract & Pricing Compliance) scans the full customer portfolio and finds 3 more affected customers — Meridian Manufacturing, Cascade Dynamics, and Stonebridge Industries — totalling $165K systemic exposure across 123 invoices. OTC-AGT-006 (Billing & Collections) issues bulk credits, submits ERP change request CR-2026-PL-0047, and notifies all 4 customers proactively. Exception sub-scenarios: legal hold on invoice CRN-2026-AX-0005 (REF-LEGAL-2026-047), and ERP price list validation failure blocking the switch due to 8 open orders.",
+    industry: "Manufacturing",
+    industryId: "manufacturing",
+    stage: "Dispute Resolution",
+    route: "/demo/otc-dispute",
+    icon: Scale,
+    iconColor: "#EF4444",
+    duration: "4 min",
+    screens: 2,
+    tags: ["Order-to-Cash", "Dispute Resolution", "Pricing Compliance", "ERP Correction", "Systemic Risk"],
+    badge: "New",
+  },
+  {
     id: "advantive-pkg-sched",
     title: "Predictive Production Scheduling",
     client: "Advantive",
