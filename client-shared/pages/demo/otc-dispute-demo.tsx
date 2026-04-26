@@ -7,6 +7,7 @@ import {
 } from "lucide-react";
 import OtcDisputeS1Pattern    from "./otc-dispute-s1-pattern";
 import OtcDisputeS2Resolution from "./otc-dispute-s2-resolution";
+import OtcDisputeS3Portfolio  from "./otc-dispute-s3-portfolio";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const DISPUTE_COLOR  = "#EF4444";
@@ -14,7 +15,7 @@ const DEMO_TITLE     = "Dispute Resolution Intelligence";
 const CLIENT_NAME    = "NovaTech Industries";
 
 type ScenarioKey  = "happy" | "legal-hold" | "erp-fail";
-type ScreenId     = "pattern" | "resolution";
+type ScreenId     = "pattern" | "resolution" | "portfolio";
 
 interface LiveEvent {
   id:         number;
@@ -48,8 +49,9 @@ const SCENARIOS: { key: ScenarioKey; label: string; badge?: string; description:
 ];
 
 const SCREENS: { id: ScreenId; label: string; icon: typeof Activity }[] = [
-  { id: "pattern",    label: "6.1 — Dispute Pattern & Root Cause", icon: AlertTriangle },
-  { id: "resolution", label: "6.2 — Bulk Resolution & Credits",     icon: FileText     },
+  { id: "pattern",    label: "6.1 — Dispute Pattern & Root Cause",  icon: AlertTriangle },
+  { id: "resolution", label: "6.2 — Bulk Resolution & Credits",      icon: FileText      },
+  { id: "portfolio",  label: "6.3 — Portfolio Exposure & ERP CR",    icon: Scale         },
 ];
 
 // ─── Log panel ────────────────────────────────────────────────────────────────
@@ -350,6 +352,7 @@ export default function OtcDisputeDemo() {
       esRef.current = null;
       setLiveRunning(false);
       setHasRun(true);
+      setActiveScreen("portfolio");
       queryClient.invalidateQueries({ queryKey: ["/demo-api/otc-dispute/agent-runs"] });
     });
     es.addEventListener("error", (e: MessageEvent) => {
@@ -378,6 +381,7 @@ export default function OtcDisputeDemo() {
     switch (activeScreen) {
       case "pattern":    return <OtcDisputeS1Pattern    pipelineComplete={pipelineComplete} scenario={scenario} resultSummaries={resultSummaries} />;
       case "resolution": return <OtcDisputeS2Resolution pipelineComplete={pipelineComplete} scenario={scenario} resultSummaries={resultSummaries} />;
+      case "portfolio":  return <OtcDisputeS3Portfolio  pipelineComplete={pipelineComplete} scenario={scenario} resultSummaries={resultSummaries} />;
     }
   };
 
