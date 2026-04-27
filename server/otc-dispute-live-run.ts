@@ -141,6 +141,7 @@ export async function ensureOtcDisputeAgents(): Promise<void> {
           version:     skillDef.version,
           tags:        skillDef.tags,
           status:      "active",
+          author:      "NovaTech Industries / Atlas Demo",
         } as any);
       }
       skillIdByName[skillDef.name] = skill.id;
@@ -192,16 +193,8 @@ export async function ensureOtcDisputeAgents(): Promise<void> {
         }
       }
 
-      // Link skills
-      const agentSkills = OTC_DISPUTE_SKILLS.filter(s => s.agentKey === def.key);
-      const existingSkillLinks = await storage.getAgentSkills(agent.id).catch((): any[] => []);
-      const linkedSkillIds = new Set(existingSkillLinks.map((l: any) => l.skillId));
-      for (const s of agentSkills) {
-        const sid = skillIdByName[s.name];
-        if (sid && !linkedSkillIds.has(sid)) {
-          await storage.createAgentSkill({ agentId: agent.id, skillId: sid }).catch(() => {});
-        }
-      }
+      // Note: skill linking is handled by the provisioning script (bb-ext1-provision-dev.mjs / create-otc-agt-008-dev.mjs)
+      // agentSkills is a JSONB column on the agents table — not a join table — skip here.
 
       // Link MCP server
       if (mcpServerId) {

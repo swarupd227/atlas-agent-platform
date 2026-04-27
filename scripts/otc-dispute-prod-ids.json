@@ -1,0 +1,48 @@
+{
+  "migratedAt": "2026-04-27T07:49:00.929Z",
+  "environment": "prod",
+  "agentCode": "OTC-AGT-008",
+  "agentName": "Dispute Resolution Agent",
+  "skillIds": [
+    "5a66400a-9cb3-479f-93ea-08410fb59c2a",
+    "2fe72817-2d04-4fcf-8af3-184d821c5e87",
+    "699649e1-9099-4200-a967-647de98cabc5",
+    "e6125fda-ba1b-4cf4-bd0b-14bac60655bc",
+    "93c3d988-442b-49a3-88a3-632ad9a80196",
+    "1d47e312-2b89-4f03-a9fb-a8762d187866"
+  ],
+  "kbId": "de38b741-e592-4bc8-97f9-3b750f38fe61",
+  "kbSourceIds": [
+    "796d8405-384f-4e90-8ef3-14ba5296b6f2",
+    "860a6a05-69b1-4ffb-ab8d-814b9b48aa2b",
+    "ddeaf56c-f8ca-484e-8b1b-d4b4e568004f",
+    "1b26c096-7a09-475b-bb48-1062d83338ae",
+    "8c59e608-f9e1-4c5f-a602-e8051839c60a"
+  ],
+  "runbookIds": [
+    "a48f7b40-98c8-49be-9cf9-d41387676cb9",
+    "ab25c6b6-d885-4644-a98e-71c4b931b1ae",
+    "f9d7f1d8-4361-44dc-a7aa-c9c712fb2d6e",
+    "5843e682-72d9-4798-91f0-61367e5c8a41",
+    "02ab8878-d83d-4503-8154-60d56562ec41"
+  ],
+  "policyIds": [
+    "67d57ad7-5172-427a-a919-32f5f7fb1352",
+    "a313ae90-1e80-4899-b8e5-544c2bc0852d",
+    "a1e1ddde-f937-4c3d-b148-209c816a6879",
+    "e99a2356-6bf0-4ff2-a3b1-12dca4ea5c4b",
+    "856a128b-0c6f-4c2b-8eab-9d09a684ce92"
+  ],
+  "agentId": "eead43c5-a87b-4f21-a1f3-6f2b5598f850",
+  "goldenDatasetId": "8172c957-f4de-4c8d-b701-4ee5f468673b",
+  "testCaseIds": [
+    "e59e76d8-858d-4b0c-8f01-b3a4f948e40b",
+    "fae9c507-f1a3-4f72-b57c-707f2fde51ec",
+    "a610bb7c-5e76-4a59-80bd-4aecb2dd2a4f",
+    "94d5c313-cc6f-477c-9348-d07303321789",
+    "5e445f14-89df-415a-a93f-c92e18764ad6",
+    "b4d9173f-cb6e-4f2e-bf4e-4494f4739c4f"
+  ],
+  "evalSuiteId": "ba98354b-8914-4dfc-91b7-f0ffa58035be",
+  "outcomeId": "271d93bf-efd3-4958-ae71-59564b9c2818"
+}
