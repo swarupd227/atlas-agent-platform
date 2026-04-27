@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Link } from "wouter";
 import {
   Shield, BarChart2, Activity, MessageSquare, AlertTriangle, FileText,
-  ChevronLeft, ChevronRight, Users, Play,
+  ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Users, Play,
   CheckCircle, XCircle, CheckCircle2, Zap, Loader2, Terminal, ArrowRight,
   ExternalLink, Clock,
 } from "lucide-react";
@@ -235,26 +235,36 @@ function LiveFeedPanel({
   onClose: () => void;
 }) {
   const feedRef = useRef<HTMLDivElement>(null);
+  const [collapsed, setCollapsed] = useState(false);
   const running = pipelineState.status === "running";
 
   useEffect(() => {
-    if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
-  }, [pipelineState.toolEvents.length]);
+    if (!collapsed && feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
+  }, [pipelineState.toolEvents.length, collapsed]);
 
   return (
     <div className="border border-border/50 rounded-lg bg-black/40 overflow-hidden mb-4" data-testid="fitch-live-feed">
       <div className="flex items-center justify-between px-3 py-2 border-b border-border/30 bg-muted/10">
-        <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${running ? "bg-rose-400 animate-pulse" : "bg-muted-foreground/40"}`} />
+        <button
+          onClick={() => setCollapsed(v => !v)}
+          className="flex items-center gap-2 min-w-0"
+          data-testid="btn-toggle-sse-log"
+        >
+          <div className={`w-2 h-2 rounded-full shrink-0 ${running ? "bg-rose-400 animate-pulse" : "bg-muted-foreground/40"}`} />
           <span className="text-[11px] font-medium font-mono">Live Pipeline Execution</span>
           {pipelineState.currentRole && running && (
-            <span className="text-[10px] text-muted-foreground/70">— {pipelineState.currentRole}</span>
+            <span className="text-[10px] text-muted-foreground/70 truncate">— {pipelineState.currentRole}</span>
           )}
-        </div>
-        <button onClick={onClose} className="text-muted-foreground/50 hover:text-foreground transition-colors text-[10px]">
+          {collapsed
+            ? <ChevronDown className="w-3 h-3 text-muted-foreground/50 shrink-0 ml-1" />
+            : <ChevronUp className="w-3 h-3 text-muted-foreground/50 shrink-0 ml-1" />
+          }
+        </button>
+        <button onClick={onClose} className="text-muted-foreground/50 hover:text-foreground transition-colors text-[10px] shrink-0 ml-2">
           hide ×
         </button>
       </div>
+      {!collapsed && (
       <div ref={feedRef} className="h-48 overflow-y-auto px-3 py-2 space-y-1 font-mono">
         {pipelineState.toolEvents.length === 0 && (
           <p className="text-[10px] text-muted-foreground/40 italic">Waiting for pipeline to start…</p>
@@ -290,6 +300,7 @@ function LiveFeedPanel({
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

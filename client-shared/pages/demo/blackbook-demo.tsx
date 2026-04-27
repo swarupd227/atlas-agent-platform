@@ -243,48 +243,59 @@ function LiveFeedPanel({ events, activeAgentName, running, onClose }: {
   events: LiveEvent[]; activeAgentName: string | null; running: boolean; onClose: () => void;
 }) {
   const feedRef = useRef<HTMLDivElement>(null);
+  const [collapsed, setCollapsed] = useState(false);
   useEffect(() => {
-    if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
-  }, [events]);
+    if (!collapsed && feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
+  }, [events, collapsed]);
 
   return (
     <div className="border border-border/50 rounded-lg bg-black/40 overflow-hidden" data-testid="bb-live-feed">
       <div className="flex items-center justify-between px-3 py-2 border-b border-border/30 bg-muted/10">
-        <div className="flex items-center gap-2">
+        <button
+          onClick={() => setCollapsed(v => !v)}
+          className="flex items-center gap-2 min-w-0"
+          data-testid="btn-toggle-sse-log"
+        >
           <div
-            className="w-2 h-2 rounded-full"
+            className="w-2 h-2 rounded-full shrink-0"
             style={{ backgroundColor: running ? BB_COLOR : "hsl(var(--muted-foreground) / 0.4)" }}
           />
           <span className="text-[11px] font-medium font-mono">Agent SSE Log</span>
           {activeAgentName && running && (
-            <span className="text-[10px] text-muted-foreground/70">— {activeAgentName}</span>
+            <span className="text-[10px] text-muted-foreground/70 truncate">— {activeAgentName}</span>
+          )}
+          {collapsed
+            ? <ChevronDown className="w-3 h-3 text-muted-foreground/50 shrink-0 ml-1" />
+            : <ChevronUp className="w-3 h-3 text-muted-foreground/50 shrink-0 ml-1" />
+          }
+        </button>
+        <button onClick={onClose} className="text-muted-foreground/50 hover:text-foreground transition-colors text-[10px] shrink-0 ml-2">hide ×</button>
+      </div>
+      {!collapsed && (
+        <div ref={feedRef} className="h-48 overflow-y-auto px-3 py-2 space-y-1 font-mono">
+          {events.length === 0 && (
+            <p className="text-[10px] text-muted-foreground/40 italic">Waiting for pipeline to start…</p>
+          )}
+          {events.map(ev => (
+            <div key={ev.id} className="flex items-start gap-2" data-testid={`bb-live-event-${ev.id}`}>
+              {getEventIcon(ev)}
+              <div className="flex-1 min-w-0">
+                <span className="text-[9px] text-muted-foreground/40 mr-2">{ev.time}</span>
+                {ev.type === "tool_call_result" && ev.tool && (
+                  <span className="text-[9px] text-muted-foreground/60 mr-1">[{ev.tool}]</span>
+                )}
+                <span className={`text-[10px] ${getEventStyle(ev)}`}>{ev.message}</span>
+              </div>
+            </div>
+          ))}
+          {running && (
+            <div className="flex items-center gap-2">
+              <Loader2 className="w-3 h-3 animate-spin shrink-0" style={{ color: BB_COLOR }} />
+              <span className="text-[10px] animate-pulse" style={{ color: `${BB_COLOR}99` }}>Agents running…</span>
+            </div>
           )}
         </div>
-        <button onClick={onClose} className="text-muted-foreground/50 hover:text-foreground transition-colors text-[10px]">hide ×</button>
-      </div>
-      <div ref={feedRef} className="h-48 overflow-y-auto px-3 py-2 space-y-1 font-mono">
-        {events.length === 0 && (
-          <p className="text-[10px] text-muted-foreground/40 italic">Waiting for pipeline to start…</p>
-        )}
-        {events.map(ev => (
-          <div key={ev.id} className="flex items-start gap-2" data-testid={`bb-live-event-${ev.id}`}>
-            {getEventIcon(ev)}
-            <div className="flex-1 min-w-0">
-              <span className="text-[9px] text-muted-foreground/40 mr-2">{ev.time}</span>
-              {ev.type === "tool_call_result" && ev.tool && (
-                <span className="text-[9px] text-muted-foreground/60 mr-1">[{ev.tool}]</span>
-              )}
-              <span className={`text-[10px] ${getEventStyle(ev)}`}>{ev.message}</span>
-            </div>
-          </div>
-        ))}
-        {running && (
-          <div className="flex items-center gap-2">
-            <Loader2 className="w-3 h-3 animate-spin shrink-0" style={{ color: BB_COLOR }} />
-            <span className="text-[10px] animate-pulse" style={{ color: `${BB_COLOR}99` }}>Agents running…</span>
-          </div>
-        )}
-      </div>
+      )}
     </div>
   );
 }

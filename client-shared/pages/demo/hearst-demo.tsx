@@ -189,10 +189,11 @@ function LiveFeedPanel({ events, activeAgentName, running, onClose }: {
   onClose: () => void;
 }) {
   const feedRef = useRef<HTMLDivElement>(null);
+  const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
-    if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
-  }, [events]);
+    if (!collapsed && feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
+  }, [events, collapsed]);
 
   const getEventStyle = (ev: LiveEvent) => {
     if (ev.type === "run_start" || ev.type === "setup")    return "text-blue-400";
@@ -221,40 +222,50 @@ function LiveFeedPanel({ events, activeAgentName, running, onClose }: {
   return (
     <div className="border border-border/50 rounded-lg bg-black/40 overflow-hidden" data-testid="hearst-live-feed">
       <div className="flex items-center justify-between px-3 py-2 border-b border-border/30 bg-muted/10">
-        <div className="flex items-center gap-2">
-          <div className={`w-2 h-2 rounded-full ${running ? "bg-[#E91E8C] animate-pulse" : "bg-muted-foreground/40"}`} />
+        <button
+          onClick={() => setCollapsed(v => !v)}
+          className="flex items-center gap-2 min-w-0"
+          data-testid="btn-toggle-sse-log"
+        >
+          <div className={`w-2 h-2 rounded-full shrink-0 ${running ? "bg-[#E91E8C] animate-pulse" : "bg-muted-foreground/40"}`} />
           <span className="text-[11px] font-medium font-mono">Live Pipeline Execution</span>
           {activeAgentName && running && (
-            <span className="text-[10px] text-muted-foreground/70">— {activeAgentName}</span>
+            <span className="text-[10px] text-muted-foreground/70 truncate">— {activeAgentName}</span>
           )}
-        </div>
-        <button onClick={onClose} className="text-muted-foreground/50 hover:text-foreground transition-colors text-[10px]">
+          {collapsed
+            ? <ChevronDown className="w-3 h-3 text-muted-foreground/50 shrink-0 ml-1" />
+            : <ChevronUp className="w-3 h-3 text-muted-foreground/50 shrink-0 ml-1" />
+          }
+        </button>
+        <button onClick={onClose} className="text-muted-foreground/50 hover:text-foreground transition-colors text-[10px] shrink-0 ml-2">
           hide ×
         </button>
       </div>
-      <div ref={feedRef} className="h-48 overflow-y-auto px-3 py-2 space-y-1 font-mono">
-        {events.length === 0 && (
-          <p className="text-[10px] text-muted-foreground/40 italic">Waiting for pipeline to start…</p>
-        )}
-        {events.map(ev => (
-          <div key={ev.id} className="flex items-start gap-2" data-testid={`hearst-live-event-${ev.id}`}>
-            {getEventIcon(ev)}
-            <div className="flex-1 min-w-0">
-              <span className="text-[9px] text-muted-foreground/40 mr-2">{ev.time}</span>
-              {ev.type === "tool_call_result" && ev.tool && (
-                <span className="text-[9px] text-muted-foreground/60 mr-1">[{ev.tool}]</span>
-              )}
-              <span className={`text-[10px] ${getEventStyle(ev)}`}>{ev.message}</span>
+      {!collapsed && (
+        <div ref={feedRef} className="h-48 overflow-y-auto px-3 py-2 space-y-1 font-mono">
+          {events.length === 0 && (
+            <p className="text-[10px] text-muted-foreground/40 italic">Waiting for pipeline to start…</p>
+          )}
+          {events.map(ev => (
+            <div key={ev.id} className="flex items-start gap-2" data-testid={`hearst-live-event-${ev.id}`}>
+              {getEventIcon(ev)}
+              <div className="flex-1 min-w-0">
+                <span className="text-[9px] text-muted-foreground/40 mr-2">{ev.time}</span>
+                {ev.type === "tool_call_result" && ev.tool && (
+                  <span className="text-[9px] text-muted-foreground/60 mr-1">[{ev.tool}]</span>
+                )}
+                <span className={`text-[10px] ${getEventStyle(ev)}`}>{ev.message}</span>
+              </div>
             </div>
-          </div>
-        ))}
-        {running && (
-          <div className="flex items-center gap-2">
-            <Loader2 className="w-3 h-3 text-[#E91E8C] animate-spin shrink-0" />
-            <span className="text-[10px] text-[#E91E8C]/70 animate-pulse">Agents running…</span>
-          </div>
-        )}
-      </div>
+          ))}
+          {running && (
+            <div className="flex items-center gap-2">
+              <Loader2 className="w-3 h-3 text-[#E91E8C] animate-spin shrink-0" />
+              <span className="text-[10px] text-[#E91E8C]/70 animate-pulse">Agents running…</span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

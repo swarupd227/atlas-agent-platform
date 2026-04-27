@@ -57,7 +57,10 @@ const SCREENS: { id: ScreenId; label: string; icon: typeof Activity }[] = [
 // ─── Log panel ────────────────────────────────────────────────────────────────
 function LiveFeedPanel({ events, onClose }: { events: LiveEvent[]; onClose: () => void }) {
   const bottomRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [events]);
+  const [collapsed, setCollapsed] = useState(false);
+  useEffect(() => {
+    if (!collapsed) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [events, collapsed]);
 
   const colorMap: Record<string, string> = {
     run_start:         "text-blue-400",
@@ -71,27 +74,37 @@ function LiveFeedPanel({ events, onClose }: { events: LiveEvent[]; onClose: () =
   };
 
   return (
-    <div className="border-t border-border/50 bg-black/50 flex flex-col" style={{ height: 200 }}>
+    <div className="border-t border-border/50 bg-black/50 flex flex-col">
       <div className="flex items-center justify-between px-4 py-1.5 border-b border-white/5 shrink-0">
-        <div className="flex items-center gap-2">
-          <Terminal className="w-3.5 h-3.5 text-white/40" />
+        <button
+          onClick={() => setCollapsed(v => !v)}
+          className="flex items-center gap-2 min-w-0"
+          data-testid="btn-toggle-sse-log"
+        >
+          <Terminal className="w-3.5 h-3.5 text-white/40 shrink-0" />
           <span className="text-xs text-white/40 font-mono">Agent SSE Trace Log</span>
-          <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+          {collapsed
+            ? <ChevronDown className="w-3 h-3 text-white/30 shrink-0 ml-1" />
+            : <ChevronUp className="w-3 h-3 text-white/30 shrink-0 ml-1" />
+          }
+        </button>
+        <button onClick={onClose} className="text-white/30 hover:text-white/60 text-xs shrink-0 ml-2" data-testid="btn-close-sse-log">✕</button>
+      </div>
+      {!collapsed && (
+        <div className="overflow-y-auto px-4 py-2 font-mono text-xs space-y-1" style={{ height: 192 }}>
+          {events.map(ev => (
+            <div key={ev.id} className={`flex items-start gap-2 ${colorMap[ev.type] ?? "text-white/50"}`}>
+              <span className="shrink-0 text-white/20 tabular-nums">
+                {ev.timestamp.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+              </span>
+              <span className="text-white/25 shrink-0">[{ev.agentName.split(" ")[0]}]</span>
+              <span className="min-w-0 break-all">{ev.message}</span>
+            </div>
+          ))}
+          <div ref={bottomRef} />
         </div>
-        <button onClick={onClose} className="text-white/30 hover:text-white/60 text-xs">✕</button>
-      </div>
-      <div className="flex-1 overflow-y-auto px-4 py-2 font-mono text-xs space-y-1">
-        {events.map(ev => (
-          <div key={ev.id} className={`flex items-start gap-2 ${colorMap[ev.type] ?? "text-white/50"}`}>
-            <span className="shrink-0 text-white/20 tabular-nums">
-              {ev.timestamp.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}
-            </span>
-            <span className="text-white/25 shrink-0">[{ev.agentName.split(" ")[0]}]</span>
-            <span className="min-w-0 break-all">{ev.message}</span>
-          </div>
-        ))}
-        <div ref={bottomRef} />
-      </div>
+      )}
     </div>
   );
 }
