@@ -80,6 +80,7 @@ waitForPort = 5001
 
 [agent]
 integrations = ["javascript_openai_ai_integrations:2.0.0", "javascript_anthropic_ai_integrations:2.0.0"]
+stack = "FULLSTACK_JS"
 
 [postMerge]
 path = "scripts/post-merge.sh"
