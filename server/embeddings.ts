@@ -2,9 +2,17 @@ import OpenAI from "openai";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const embeddingsApiKey = process.env.OPENAI_API_KEY;
+const openai = embeddingsApiKey
+  ? new OpenAI({ apiKey: embeddingsApiKey })
+  : null;
+
+if (!openai) {
+  console.warn(
+    "[embeddings] OPENAI_API_KEY not set; vector embeddings disabled. " +
+      "Set OPENAI_API_KEY to enable semantic search.",
+  );
+}
 
 let pgvectorState: "unknown" | "available" | "unavailable" = "unknown";
 let initPromise: Promise<void> | null = null;
