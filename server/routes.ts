@@ -73,6 +73,11 @@ import otcDisputeResolutionRouter     from "./mock-mcp/otc-dispute-resolution";
 import otcDisputeContractRouter       from "./mock-mcp/otc-dispute-contract";
 import { ensureAdvSupportAgents }     from "./advantive-support-live-run";
 import { otcDisputeLiveRunHandler, getOtcDisputeAgentRuns, resetOtcDisputeDemo, ensureOtcDisputeAgents } from "./otc-dispute-live-run";
+import hnpAssemblyRouter      from "./mock-mcp/hnp-assembly";
+import hnpKnowledgeBaseRouter from "./mock-mcp/hnp-knowledge-base";
+import hnpPublicRecordsRouter from "./mock-mcp/hnp-public-records";
+import hnpCmsRouter           from "./mock-mcp/hnp-cms";
+import { hnpGovtLiveRunHandler, getHnpGovtAgentRuns, resetHnpGovtDemo } from "./hnp-govt-live-run";
 import { bbLiveRunHandler, getBBAgentRuns, getBBOutcomeData, getBBSelfHealingStatus, resetBBDemo, ensureBBAgents } from "./blackbook-live-run";
 import { registerMockMcpServers } from "./mock-mcp/register";
 import piiRouter from "./routes/pii";
@@ -230,6 +235,15 @@ export async function registerRoutes(
   app.get("/demo-api/otc-dispute/live-run",       otcDisputeLiveRunHandler);
   app.get("/demo-api/otc-dispute/agent-runs",     getOtcDisputeAgentRuns);
   app.post("/demo-api/otc-dispute/reset",         resetOtcDisputeDemo);
+
+  // HNP Government Beat Intelligence (HNP-GOVT) — Hearst Newspapers demo
+  app.use("/api/mock/hnp-assembly",        hnpAssemblyRouter);
+  app.use("/api/mock/hnp-knowledge-base",  hnpKnowledgeBaseRouter);
+  app.use("/api/mock/hnp-public-records",  hnpPublicRecordsRouter);
+  app.use("/api/mock/hnp-cms",             hnpCmsRouter);
+  app.get("/demo-api/hnp-govt/live-run",   hnpGovtLiveRunHandler);
+  app.get("/demo-api/hnp-govt/agent-runs", getHnpGovtAgentRuns);
+  app.post("/demo-api/hnp-govt/reset",     resetHnpGovtDemo);
 
   app.get("/demo-api/blackbook/live-run",    bbLiveRunHandler);
   app.get("/demo-api/blackbook/agent-runs",  getBBAgentRuns);

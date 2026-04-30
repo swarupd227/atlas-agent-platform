@@ -1,0 +1,74 @@
+SCN-HNP-1 Government Beat Intelligence — From Meeting Transcript to Published Story
+
+Sub-segment: Metro & Regional Newsrooms — Government Accountability | Newsrooms: Houston Chronicle, San Antonio Express-News, Austin American-Statesman
+
+Business Problem
+Hearst’s Assembly tool already does what no other newspaper group has done at scale: it automatically transcribes government meetings, keyword-detects topics of interest, and makes the transcripts searchable for reporters. Between May 2024 and April 2025, Assembly transcribed 13,119 hours of government meetings — more than 547 days’ worth of content. But the bottleneck has simply moved: reporters now have the transcripts but still face 2–4 hours of manual reading, note-taking, and story-building per meeting to determine whether a publishable story exists.
+
+In the context of Hurricane Mara, the immediate challenge is acute: 47 Houston City Council and Harris County emergency preparedness meetings from the past 90 days are sitting in the Assembly corpus. Hidden in those transcripts is the critical context reporters need right now — past flood mitigation promises, infrastructure commitments, contractor names, elected official statements, prior emergency response critiques. Without Atlas, a reporter would need 3–5 days to synthesise all 47 transcripts. Atlas does it in 45 minutes.
+
+Demo Narrative & Story Arc
+1.  Open the Atlas pipeline for HNP-HOUSTON-GOVT-BEAT. Show the Assembly corpus: 47 meeting transcripts, 1,247 total hours for Harris County and Houston City Council. Trigger the ‘Emergency Context Brief’ workflow — designed for exactly this situation: a breaking disaster requiring rapid synthesis of months of government deliberation history.
+2.  Show HNP-GOVT-01 (Meeting Corpus Analyst) processing all 47 transcripts in parallel. Watch the structured extraction populate in real time: commitments made and not yet delivered, contractor names tied to drainage infrastructure, specific council member statements about flood readiness, dollar figures promised and released or withheld. Each finding is cited back to the specific transcript, timestamp, and speaker.
+3.  Show the story angle surface in the HNP-GOVT-02 (Investigation Angle Detector) output. Three angles identified: (1) $340M in drainage improvements promised in 2023 Council vote — only 34% delivered by storm date; (2) Harris County Flood Control District’s own risk model predicted Category 3 scenario with this exact landfall path; (3) Two council members who voted against the infrastructure package received contributions from the contractor that won the contract anyway. Show confidence scores and source citations for each angle.
+4.  Open the approval gate: Reporter Brief Review. Houston Chronicle investigative reporter Clara Mendez receives a structured brief in her Assembly/Slack interface: three ranked story angles, key evidence for each, suggested interview targets, and draft FOIA request templates for the documents that would verify each claim. She approves angles 1 and 3, marks angle 2 as ‘monitor — verify independently before publishing.’
+5.  HNP-GOVT-03 (Story Draft Agent) activates for approved angles. Show a partial draft being produced: not a finished article, but a structured skeleton with the facts in the correct places, quotes extracted verbatim from transcripts, and placeholders where reporter-gathered new information should go. This is not a publishable article — it is a 40-minute head start on an investigation that would otherwise take days.
+6.  Show the Atlas audit trail: every transcript consulted, every extraction, every confidence score, and every decision Clara made at the review gate. When the story is published and sources challenge the reporting, the newsroom can reconstruct the exact provenance of every claim.
+
+Agent Pipeline
+Agent ID	Agent Name	Model	Role	MCP Tools	Skills
+HNP-GOVT-01	Meeting Corpus Analyst	claude-opus-4-5	Processes the entire Assembly transcript corpus for a specified jurisdiction and time window. Runs parallel extraction across all transcripts: identifies commitments (with status: kept/broken/pending), extracts named entities (people, organisations, dollar amounts, infrastructure project names), and surfaces topic clusters relevant to the current breaking event context injected by the orchestrator.	• hnp_assembly_mcp
+• hnp_knowledge_base_mcp	• Multi-Document Synthesis
+• Commitment Tracking
+• Named Entity Extraction
+• Timeline Reconstruction
+• Evidence Citation with Timestamps
+HNP-GOVT-02	Investigation Angle Detector	claude-opus-4-5	Receives the structured corpus extraction and applies investigative journalism heuristics to identify publishable story angles. Scores each angle on: newsworthiness (1–10), evidence strength (0–1.0), public interest (1–10), verification complexity, and estimated publication timeline. Returns ranked angle list with evidence summary and suggested next steps per angle.	• hnp_knowledge_base_mcp
+• hnp_public_records_mcp	• Investigative Angle Assessment
+• Evidence Strength Scoring
+• Journalistic Newsworthiness Analysis
+• FOIA Request Generation
+HNP-GOVT-03	Story Draft Agent	claude-opus-4-5	Triggered only after reporter approves at least one angle at the Review Brief gate. Produces a structured story skeleton: lede options (3 variants), key facts in narrative order, verbatim quotes extracted from approved sources, data visualisation suggestions, interview target list with suggested questions, and placeholder markers for reporter-gathered material. Explicitly marks every claim with its source citation. Does NOT produce a publishable article — produces a structured foundation that a reporter completes.	• hnp_assembly_mcp
+• hnp_cms_mcp	• Structured Story Scaffolding
+• Lede Generation
+• Source Quote Extraction
+• Interview Question Generation
+• Data Visualisation Suggestion
+HNP-GOVT-04	FOIA Request Generator	claude-sonnet-4-6	Triggered alongside Story Draft. Analyses approved story angles to identify public records that would strengthen or confirm each claim. Generates formal FOIA request letters to the correct government agencies using jurisdiction-specific FOIA language templates. Addresses each letter to the appropriate records officer based on the jurisdiction knowledge base. Files requests via HNP Public Records MCP.	• hnp_public_records_mcp
+• hnp_knowledge_base_mcp	• FOIA Request Drafting
+• Jurisdiction-Specific Legal Language
+• Records Gap Analysis
+• Government Agency Routing
+
+⚙ Platform Intelligence Setup in Atlas
+Outcome Contract
+Contract Name: HNP Government Beat Intelligence — Assembly-to-Investigation Pipeline
+Risk Tier: High — outputs inform published journalism with legal and reputational stakes
+KPIs: Time from Meeting Transcription to Reporter Brief (<45 min) | Story Angles per Brief (2–4 ranked) | Evidence Confidence Mean (>0.82) | Reporter Approval Rate (>75% of surfaced angles) | FOIA Conversion Rate (filed within 24 hrs of angle approval)
+Drift Threshold: Reporter rejection rate above 30% for two consecutive weeks triggers KB review and extraction model recalibration
+
+Knowledge Bases (KB System)
+•  HNP Assembly Corpus — All government meeting transcripts in the Assembly system — Houston: 47 transcripts (past 90 days), San Antonio: 31 transcripts, Austin: 28 transcripts. Indexed with meeting type, date, attending officials, keyword tags.
+•  HNP Investigative Journalism Standards — Internal HNP editorial standards for evidence requirements, attribution rules, and what constitutes a publishable fact vs. an unverified claim. Agent outputs are checked against these standards before surfacing to reporters.
+•  Texas Government Entity Ontology — Structured knowledge of Texas government structure: Harris County, City of Houston, HCFCD, TCEQ, TxDOT — with official names, jurisdiction boundaries, FOIA officer contacts, and public records laws.
+•  Elected Official Profile Index — Named entities for all covered elected officials with role, term dates, voting history on major local ordinances, and known campaign contributors.
+
+MCP Server Integrations
+•  HNP Assembly MCP — get_transcripts, search_transcript_corpus, get_transcript_by_meeting, get_keyword_alerts — full Assembly corpus access
+•  HNP Knowledge Base MCP — get_investigative_standards, get_entity_ontology, get_official_profile, get_jurisdiction_foia_rules
+•  HNP Public Records MCP — submit_foia_request, get_foia_status, search_prior_requests, get_agency_officer — interfaces with government FOIA portals
+•  HNP CMS MCP — create_story_draft, assign_to_reporter, set_story_tags, set_seo_fields — pushes story skeletons into Hearst’s CMS
+
+Governance Policies
+Human Reporter Gate — no story draft enters the CMS without explicit reporter angle approval; the AI never initiates a publication pathway
+Source Attribution Requirement — every fact in the story skeleton must carry a source citation to a specific transcript, timestamp, and speaker; uncited claims are blocked
+Publication Boundary — all agent outputs are marked DRAFT — NOT FOR PUBLICATION; removal of this mark requires editorial sign-off through normal CMS workflow
+FOIA Accuracy Gate — FOIA request letters require reporter acknowledgement before filing; the agent cannot file unilaterally
+
+Key Atlas Screens to Demo
+Multi-Agent Pipeline → HNP-HOUSTON-GOVT-BEAT with Assembly corpus counter (47 transcripts / 1,247 hours)
+Live Runs → HNP-GOVT-01 parallel extraction showing real-time evidence accumulation across all transcripts
+Live Runs → HNP-GOVT-02 angle ranking output with confidence scores and evidence citations
+Approvals → Reporter Brief Review queue showing Clara Mendez’s interface with angle accept/defer/reject controls
+CMS Preview → Story skeleton with source citations visible, publication boundary watermark, placeholder markers for reporter additions
+Audit Trail → Full provenance chain from raw transcript to story skeleton
