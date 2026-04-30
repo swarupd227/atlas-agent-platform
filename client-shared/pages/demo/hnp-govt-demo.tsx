@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "wouter";
 import {
   Play, RotateCcw, Activity, Terminal, ChevronUp, ChevronDown,
   Newspaper, FileSearch, Users, FileText, Scale, CheckCircle2,
-  AlertTriangle, Clock,
+  AlertTriangle, Clock, ExternalLink,
 } from "lucide-react";
 
 const HNP_COLOR    = "#6B21A8";
@@ -28,6 +29,7 @@ interface LiveAgent {
   summary?:  any;
   startedAt?: number;
   finishedAt?: number;
+  agentId?:  string;   // platform UUID — populated from agent_start / agent_complete SSE
 }
 
 function unwrapPayload(s: any): any {
@@ -385,7 +387,10 @@ export default function HnpGovtDemo() {
   const eventIdRef = useRef(0);
   const evtSrcRef  = useRef<EventSource | null>(null);
 
-  const { data: runs, refetch: refetchRuns } = useQuery<{ agentRuns: any[] }>({
+  // Server returns { pipeline, agents, scenario } — `agents` (not `agentRuns`)
+  // is the correct key. Each row carries agentId + traceUrl so the demo cards
+  // can deep-link into the Agent Registry trace.
+  const { data: runs, refetch: refetchRuns } = useQuery<{ agents: any[] }>({
     queryKey: ["/demo-api/hnp-govt/agent-runs", scenario],
     queryFn:  () => fetch(`/demo-api/hnp-govt/agent-runs?scenario=${scenario}`).then(r => r.json()),
     enabled:  hasRun,
@@ -432,7 +437,10 @@ export default function HnpGovtDemo() {
       // post-run /agent-runs poll, otherwise cards stay "Idle" the whole run.
       const externalId: string | undefined = data.externalId;
       if (eventName === "agent_start") {
-        updateAgent(externalId, { state: "running", toolCalls: 0, summary: undefined, startedAt: Date.now() });
+        updateAgent(externalId, {
+          state: "running", toolCalls: 0, summary: undefined,
+          startedAt: Date.now(), agentId: data.agentId,
+        });
       } else if (eventName === "agent_event" && data.type === "tool_call_result") {
         updateAgent(externalId, prev => ({ ...prev, toolCalls: prev.toolCalls + 1 }));
       } else if (eventName === "agent_complete") {
@@ -441,6 +449,7 @@ export default function HnpGovtDemo() {
           state:      data.success === false ? "fail" : "ok",
           summary:    data.resultSummary ?? data.summary ?? prev.summary,
           finishedAt: Date.now(),
+          agentId:    data.agentId ?? prev.agentId,
         }));
       }
     };
@@ -490,8 +499,8 @@ export default function HnpGovtDemo() {
 
   const activeScenario = SCENARIOS.find(s => s.key === scenario)!;
   const runsByAgent: Record<string, any> = {};
-  (runs?.agentRuns ?? []).forEach((r: any) => {
-    const key = r.agentExternalId ?? r.externalId ?? r.agentName ?? "";
+  (runs?.agents ?? []).forEach((r: any) => {
+    const key = r.externalId ?? r.agentExternalId ?? r.agentName ?? "";
     if (key) runsByAgent[key] = r;
   });
 
@@ -591,10 +600,14 @@ export default function HnpGovtDemo() {
                  : polled?.success === false ? "fail"
                  : polled ? "running" : "idle");
               const toolCalls = live?.toolCalls ?? polled?.toolCalls;
-              const summary   = live?.summary   ?? polled?.summary ?? polled?.message;
+              const summary   = live?.summary   ?? polled?.resultSummary ?? polled?.summary ?? polled?.message;
               const elapsedMs = live?.startedAt
                 ? (live.finishedAt ?? Date.now()) - live.startedAt
                 : null;
+              // Prefer the live SSE-captured agentId, fall back to the row from
+              // the post-run /agent-runs poll. Either way we deep-link into the
+              // Agent Registry detail page so the user can open the full trace.
+              const agentTraceId: string | undefined = live?.agentId ?? polled?.agentId;
               const statusText =
                 runState === "running" ? "Running on Claude…"
                 : runState === "ok"    ? "Completed"
@@ -641,7 +654,7 @@ export default function HnpGovtDemo() {
                     </div>
                   )}
                   {(toolCalls != null || elapsedMs != null) && (
-                    <div className="mt-auto text-[11px] text-muted-foreground border-t pt-2 flex items-center justify-between">
+                    <div className="text-[11px] text-muted-foreground border-t pt-2 flex items-center justify-between">
                       {toolCalls != null && (
                         <span>Tool calls <span className="font-mono ml-1">{toolCalls}</span></span>
                       )}
@@ -649,6 +662,16 @@ export default function HnpGovtDemo() {
                         <span className="font-mono">{(elapsedMs / 1000).toFixed(1)}s</span>
                       )}
                     </div>
+                  )}
+                  {agentTraceId && (runState === "ok" || runState === "fail") && (
+                    <Link
+                      href={`/agents/${agentTraceId}`}
+                      className="mt-auto inline-flex items-center justify-center gap-1.5 text-[11px] font-medium border rounded px-2 py-1.5 hover:bg-muted/40 hover:border-foreground/30 transition"
+                      data-testid={`link-trace-${a.externalId}`}
+                    >
+                      Open trace in Agent Registry
+                      <ExternalLink className="w-3 h-3" />
+                    </Link>
                   )}
                 </div>
               );
