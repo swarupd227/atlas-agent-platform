@@ -30,6 +30,7 @@ interface LiveAgent {
   startedAt?: number;
   finishedAt?: number;
   agentId?:  string;   // platform UUID — populated from agent_start / agent_complete SSE
+  currentAction?: string;  // human-readable label for the in-flight tool call / reasoning step
 }
 
 function unwrapPayload(s: any): any {
@@ -92,9 +93,33 @@ function safeParse(s: string): any {
   try { return JSON.parse(s); } catch { return { message: s }; }
 }
 
+// Friendly label for the underlying MCP tool/server. Tool names come through
+// the backend as snake_case strings (e.g. "search_transcript_corpus"); we
+// humanise them so the trace reads as a real reporter workflow rather than as
+// a wall of identifiers.
+const TOOL_LABELS: Record<string, string> = {
+  search_transcript_corpus:    "Searching meeting transcript corpus",
+  get_transcript_by_meeting:   "Pulling full meeting transcript",
+  get_official_profile:        "Fetching official profile",
+  get_jurisdiction_foia_rules: "Looking up FOIA rules",
+  search_prior_requests:       "Checking prior records requests",
+  submit_foia_request:         "Filing public-records request",
+  get_foia_status:             "Checking records-request status",
+  get_agency_officer:          "Identifying agency records officer",
+  get_investigative_standards: "Loading newsroom investigative standards",
+  publish_to_cms:              "Publishing draft to CMS",
+};
+const SERVER_LABELS: Record<string, string> = {
+  "hnp-assembly":        "Hearst Assembly",
+  "hnp-knowledge-base":  "Hearst Knowledge Base",
+  "hnp-public-records":  "Public Records portal",
+  "hnp-cms":             "CMS",
+};
+function labelTool(tool?: string)  { return tool   ? (TOOL_LABELS[tool]   ?? tool)   : ""; }
+function labelServer(server?: string) { return server ? (SERVER_LABELS[server] ?? server) : ""; }
+
 function formatEventMessage(eventName: string, d: any): string {
   if (!d || typeof d !== "object") return String(d ?? "");
-  if (d.message) return String(d.message);
   switch (eventName) {
     case "run_start":
       return `Pipeline ${d.pipeline ?? ""} starting · scenario: ${d.scenario ?? ""} · ${d.assemblyCorpus?.transcripts ?? "?"} transcripts`;
@@ -102,14 +127,27 @@ function formatEventMessage(eventName: string, d: any): string {
       return d.message ?? "Setup complete";
     case "agent_start":
       return `Agent ${d.externalId ?? d.agentName ?? ""} starting${d.model ? ` (${d.model})` : ""}`;
-    case "agent_event":
-      if (d.type === "tool_call_result") {
-        const args = d.toolName ? ` ${d.toolName}` : "";
-        const res = d.preview ?? d.summary ?? "";
-        return `tool_call${args}${res ? ` → ${String(res).slice(0, 200)}` : ""}`;
+    case "agent_event": {
+      // Backend nests tool details under `data` — pull them out so the trace
+      // shows the actual MCP tool name + which server, not just "tool_call".
+      const sub = d.data ?? {};
+      const tool = labelTool(sub.tool);
+      const server = labelServer(sub.server);
+      const iter = sub.iteration != null ? ` · turn ${sub.iteration}` : "";
+      if (d.type === "tool_call") {
+        return `→ ${tool || "Tool call"}${server ? ` (${server})` : ""}${iter}`;
       }
-      if (d.type === "llm_response") return `llm: ${String(d.text ?? d.preview ?? "").slice(0, 200)}`;
-      return d.summary ?? d.type ?? JSON.stringify(d).slice(0, 200);
+      if (d.type === "tool_call_result") {
+        const ok = sub.success === false ? " · FAILED" : "";
+        const err = sub.error ? ` — ${String(sub.error).slice(0, 160)}` : "";
+        return `← ${tool || "Tool result"}${server ? ` (${server})` : ""}${ok}${err}${iter}`;
+      }
+      if (d.type === "llm_response") {
+        const tools = sub.toolsCalled != null ? ` · ${sub.toolsCalled} tool call${sub.toolsCalled === 1 ? "" : "s"}` : "";
+        return `Claude reasoning${iter}${tools}`;
+      }
+      return d.message ?? d.type ?? JSON.stringify(d).slice(0, 200);
+    }
     case "agent_complete":
       return `Agent ${d.externalId ?? d.agentName ?? ""} complete${d.toolCalls != null ? ` · ${d.toolCalls} tool calls` : ""}${d.success === false ? " · FAILED" : ""}`;
     case "approval_gate":
@@ -123,7 +161,7 @@ function formatEventMessage(eventName: string, d: any): string {
     case "error":
       return `ERROR: ${d.message ?? "unknown"}`;
     default:
-      return JSON.stringify(d).slice(0, 200);
+      return d.message ?? JSON.stringify(d).slice(0, 200);
   }
 }
 
@@ -384,6 +422,11 @@ export default function HnpGovtDemo() {
   const [showLog,      setShowLog]      = useState(false);
   const [logCollapsed, setLogCollapsed] = useState(false);
   const [liveAgents,   setLiveAgents]   = useState<Record<string, LiveAgent>>({});
+  // 200ms wall-clock tick — purely so each card's elapsed counter visibly
+  // advances during the run. Without this the elapsed text only re-renders
+  // when an SSE event arrives, which makes long Claude reasoning turns feel
+  // frozen even though work is happening.
+  const [, setNowTick] = useState(0);
   const eventIdRef = useRef(0);
   const evtSrcRef  = useRef<EventSource | null>(null);
 
@@ -440,9 +483,34 @@ export default function HnpGovtDemo() {
         updateAgent(externalId, {
           state: "running", toolCalls: 0, summary: undefined,
           startedAt: Date.now(), agentId: data.agentId,
+          currentAction: "Initialising on Claude…",
         });
-      } else if (eventName === "agent_event" && data.type === "tool_call_result") {
-        updateAgent(externalId, prev => ({ ...prev, toolCalls: prev.toolCalls + 1 }));
+      } else if (eventName === "agent_event") {
+        const sub = data.data ?? {};
+        if (data.type === "tool_call") {
+          // Show what the agent is reaching for right now.
+          const tool   = labelTool(sub.tool);
+          const server = labelServer(sub.server);
+          updateAgent(externalId, prev => ({
+            ...prev,
+            currentAction: `${tool || "Calling tool"}${server ? ` · ${server}` : ""}`,
+          }));
+        } else if (data.type === "tool_call_result") {
+          updateAgent(externalId, prev => ({
+            ...prev,
+            toolCalls: prev.toolCalls + 1,
+            currentAction: sub.success === false
+              ? `Tool failed — ${labelTool(sub.tool) || "unknown tool"}`
+              : "Reasoning over results…",
+          }));
+        } else if (data.type === "llm_response") {
+          updateAgent(externalId, prev => ({
+            ...prev,
+            currentAction: sub.iteration != null
+              ? `Reasoning · turn ${sub.iteration}`
+              : "Reasoning…",
+          }));
+        }
       } else if (eventName === "agent_complete") {
         updateAgent(externalId, prev => ({
           ...prev,
@@ -450,6 +518,7 @@ export default function HnpGovtDemo() {
           summary:    data.resultSummary ?? data.summary ?? prev.summary,
           finishedAt: Date.now(),
           agentId:    data.agentId ?? prev.agentId,
+          currentAction: undefined,
         }));
       }
     };
@@ -496,6 +565,14 @@ export default function HnpGovtDemo() {
   }, [scenario]);
 
   useEffect(() => () => { if (evtSrcRef.current) evtSrcRef.current.close(); }, []);
+
+  // Drive the per-card elapsed timer while the run is active. Cleared as soon
+  // as the run finishes so we don't burn cycles on idle pages.
+  useEffect(() => {
+    if (!running) return;
+    const id = window.setInterval(() => setNowTick(n => n + 1), 200);
+    return () => window.clearInterval(id);
+  }, [running]);
 
   const activeScenario = SCENARIOS.find(s => s.key === scenario)!;
   const runsByAgent: Record<string, any> = {};
@@ -609,7 +686,8 @@ export default function HnpGovtDemo() {
               // Agent Registry detail page so the user can open the full trace.
               const agentTraceId: string | undefined = live?.agentId ?? polled?.agentId;
               const statusText =
-                runState === "running" ? "Running on Claude…"
+                runState === "running"
+                  ? (live?.currentAction ?? "Running on Claude…")
                 : runState === "ok"    ? "Completed"
                 : runState === "fail"  ? "Failed"
                 : running              ? "Queued"
