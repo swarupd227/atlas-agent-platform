@@ -38,14 +38,24 @@ function unwrapPayload(s: any): any {
   return s;
 }
 
+// Returns a short, human-readable one-liner for the agent card preview, or
+// null if the only candidate is a raw JSON / fenced-markdown blob (in which
+// case the caller should fall back to "Output ready — see Pipeline Output").
 function summaryOneLine(raw: any): string | null {
   if (!raw) return null;
-  if (typeof raw === "string") return raw.slice(0, 200);
-  const s = unwrapPayload(raw);
-  if (s.summary && typeof s.summary === "string") {
+  const looksLikeJsonBlob = (s: string) =>
+    /^\s*```/.test(s) || /^\s*[{[]/.test(s);
+  if (typeof raw === "string") {
+    if (looksLikeJsonBlob(raw)) return null;
+    return raw.length > 180 ? raw.slice(0, 177) + "…" : raw;
+  }
+  const s = unwrapPayload(raw) || {};
+  if (typeof s.summary === "string" && !looksLikeJsonBlob(s.summary)) {
     return s.summary.length > 180 ? s.summary.slice(0, 177) + "…" : s.summary;
   }
-  if (s.headline) return String(s.headline);
+  if (typeof s.headline === "string" && !looksLikeJsonBlob(s.headline)) {
+    return s.headline.length > 180 ? s.headline.slice(0, 177) + "…" : s.headline;
+  }
   return null;
 }
 
@@ -167,7 +177,7 @@ function AgentOutputCard({
         )}
       </div>
 
-      {s.summary && typeof s.summary === "string" && (
+      {typeof s.summary === "string" && !/^\s*(```|[{[])/.test(s.summary) && (
         <p className="text-sm text-foreground/90 leading-relaxed mb-4" data-testid={`summary-${externalId}`}>
           {s.summary}
         </p>

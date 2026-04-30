@@ -55,11 +55,27 @@ function sse(res: Response, event: string, data: object) {
 }
 
 function extractJson(text: string): Record<string, any> | null {
+  if (!text) return null;
   const blockMatch = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   if (blockMatch) { try { return JSON.parse(blockMatch[1]); } catch {} }
   const objectMatch = text.match(/\{[\s\S]*\}/);
   if (objectMatch) { try { return JSON.parse(objectMatch[0]); } catch {} }
   return null;
+}
+
+// True if the parsed analysis object actually carries real structured fields
+// (not the degenerate { summary: "<unparsed fenced blob>" } the runtime falls
+// back to when JSON.parse on the raw LLM content fails).
+function hasStructuredShape(o: Record<string, any>): boolean {
+  if (!o || typeof o !== "object") return false;
+  if (Array.isArray(o.findings) && o.findings.length > 0) return true;
+  if (Array.isArray(o.recommendedActions) && o.recommendedActions.length > 0) return true;
+  if (Array.isArray(o.processedRecords) && o.processedRecords.length > 0) return true;
+  if (Array.isArray(o.riskFactors) && o.riskFactors.length > 0) return true;
+  if (o.emergency_context_brief && typeof o.emergency_context_brief === "object") return true;
+  // Plain { summary: "```json ..." } from the JSON.parse-fallback is not structured.
+  if (typeof o.summary === "string" && /```/.test(o.summary)) return false;
+  return false;
 }
 
 // ─── Deployment lookup (no DB write — provisioning script created the deployment) ──
@@ -288,7 +304,14 @@ async function runOneAgent(
     resultText = err?.message || "Agent run failed";
   }
 
-  const parsed = finalAnalysisObj || extractJson(resultText);
+  // Prefer extractJson on the raw LLM text — it strips ```json fences that the
+  // runtime's JSON.parse can't handle (in which case the runtime falls back to
+  // a degenerate { summary: "<fenced blob>" } analysis object). Only fall back
+  // to finalAnalysisObj when extractJson can't recover anything.
+  const extracted = extractJson(resultText);
+  const parsed =
+    extracted ??
+    (finalAnalysisObj && hasStructuredShape(finalAnalysisObj) ? finalAnalysisObj : null);
   if (parsed) summaries[externalId] = parsed;
 
   await storage.updateDeployment(deploymentId, {
