@@ -504,12 +504,12 @@ export default function DemoCenter() {
 
           <div className="mt-4 flex flex-col gap-3">
             <div className="relative w-full">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground pointer-events-none" />
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
               <Input
                 placeholder="Search demos, clients, tags…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-12 pr-4 h-12 text-base bg-background border-2 focus-visible:ring-2 focus-visible:ring-primary"
+                className="w-full pl-11 pr-4 h-12 !text-base bg-background border-2 focus-visible:ring-2 focus-visible:ring-primary"
                 data-testid="input-demo-search"
               />
             </div>

@@ -48,50 +48,110 @@ const AGENTS = [
   { idx: 4, externalId: "HNP-GOVT-04", name: "FOIA Request Generator",      icon: Scale      },
 ];
 
-function LiveFeedPanel({ events, onClose }: { events: LiveEvent[]; onClose: () => void }) {
+function safeParse(s: string): any {
+  try { return JSON.parse(s); } catch { return { message: s }; }
+}
+
+function formatEventMessage(eventName: string, d: any): string {
+  if (!d || typeof d !== "object") return String(d ?? "");
+  if (d.message) return String(d.message);
+  switch (eventName) {
+    case "run_start":
+      return `Pipeline ${d.pipeline ?? ""} starting · scenario: ${d.scenario ?? ""} · ${d.assemblyCorpus?.transcripts ?? "?"} transcripts`;
+    case "setup":
+      return d.message ?? "Setup complete";
+    case "agent_start":
+      return `Agent ${d.externalId ?? d.agentName ?? ""} starting${d.model ? ` (${d.model})` : ""}`;
+    case "agent_event":
+      if (d.type === "tool_call_result") {
+        const args = d.toolName ? ` ${d.toolName}` : "";
+        const res = d.preview ?? d.summary ?? "";
+        return `tool_call${args}${res ? ` → ${String(res).slice(0, 200)}` : ""}`;
+      }
+      if (d.type === "llm_response") return `llm: ${String(d.text ?? d.preview ?? "").slice(0, 200)}`;
+      return d.summary ?? d.type ?? JSON.stringify(d).slice(0, 200);
+    case "agent_complete":
+      return `Agent ${d.externalId ?? d.agentName ?? ""} complete${d.toolCalls != null ? ` · ${d.toolCalls} tool calls` : ""}${d.success === false ? " · FAILED" : ""}`;
+    case "approval_gate":
+      return `Gate: ${d.gate ?? ""} · ${d.reporter ?? ""} (${d.desk ?? ""}, ${d.newspaper ?? ""}) · action=${d.action ?? "approved"}`;
+    case "phase_start":
+      return `Phase ${d.phase ?? ""} → ${(d.agents ?? []).join(", ")}`;
+    case "audit_trail":
+      return `Provenance chain captured for ${(d.tracesAvailableAt ?? []).length} agents`;
+    case "run_complete":
+      return d.message ?? `Run complete · scenario: ${d.scenario ?? ""}`;
+    case "error":
+      return `ERROR: ${d.message ?? "unknown"}`;
+    default:
+      return JSON.stringify(d).slice(0, 200);
+  }
+}
+
+const EVENT_COLORS: Record<string, string> = {
+  run_start:        "text-blue-400",
+  setup:            "text-white/40",
+  agent_start:      "text-emerald-400",
+  agent_event:      "text-purple-400",
+  agent_complete:   "text-emerald-300",
+  approval_gate:    "text-amber-400",
+  phase_start:      "text-blue-300",
+  audit_trail:      "text-cyan-400",
+  run_complete:     "text-emerald-400",
+  error:            "text-red-400",
+};
+
+function LiveFeedPanel({
+  events, collapsed, onToggleCollapsed, onClose,
+}: {
+  events: LiveEvent[];
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
+  onClose: () => void;
+}) {
   const bottomRef = useRef<HTMLDivElement>(null);
-  const [collapsed, setCollapsed] = useState(false);
   useEffect(() => {
     if (!collapsed) bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [events, collapsed]);
 
-  const colorMap: Record<string, string> = {
-    run_start:        "text-blue-400",
-    setup:            "text-white/40",
-    agent_start:      "text-emerald-400",
-    tool_call_result: "text-purple-400",
-    llm_response:     "text-white/40",
-    agent_complete:   "text-emerald-300",
-    run_complete:     "text-emerald-400",
-    error:            "text-red-400",
-  };
-
   return (
-    <div className="border-t border-border/50 bg-black/80 flex flex-col">
-      <div className="flex items-center justify-between px-4 py-1.5 border-b border-white/5 shrink-0">
-        <button
-          onClick={() => setCollapsed(v => !v)}
-          className="flex items-center gap-2 min-w-0"
-          data-testid="btn-toggle-sse-log"
-        >
-          <Terminal className="w-3.5 h-3.5 text-white/40 shrink-0" />
-          <span className="text-xs text-white/40 font-mono">Agent SSE Trace Log</span>
+    <div className="border-t border-border/50 bg-black/90 flex flex-col shrink-0">
+      <button
+        onClick={onToggleCollapsed}
+        className="flex items-center justify-between gap-3 px-4 py-2 border-b border-white/5 hover:bg-white/5 transition-colors w-full text-left"
+        data-testid="btn-toggle-sse-log"
+        aria-expanded={!collapsed}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <Terminal className="w-4 h-4 text-white/60 shrink-0" />
+          <span className="text-xs text-white/70 font-mono uppercase tracking-wide">Agent SSE Trace Log</span>
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/60 font-mono">{events.length}</span>
           <div className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-[11px] text-white/50">{collapsed ? "Show" : "Hide"}</span>
           {collapsed
-            ? <ChevronDown className="w-3 h-3 text-white/30 shrink-0 ml-1" />
-            : <ChevronUp className="w-3 h-3 text-white/30 shrink-0 ml-1" />}
-        </button>
-        <button onClick={onClose} className="text-white/30 hover:text-white/60 text-xs shrink-0 ml-2" data-testid="btn-close-sse-log">✕</button>
-      </div>
+            ? <ChevronUp className="w-4 h-4 text-white/60" />
+            : <ChevronDown className="w-4 h-4 text-white/60" />}
+          <span
+            onClick={(e) => { e.stopPropagation(); onClose(); }}
+            className="ml-1 px-1.5 py-0.5 rounded text-white/40 hover:text-white hover:bg-white/10 text-xs cursor-pointer"
+            data-testid="btn-close-sse-log"
+            role="button"
+          >✕</span>
+        </div>
+      </button>
       {!collapsed && (
-        <div className="overflow-y-auto px-4 py-2 font-mono text-xs space-y-1" style={{ height: 240 }}>
-          {events.map(ev => (
-            <div key={ev.id} className={`flex items-start gap-2 ${colorMap[ev.type] ?? "text-white/50"}`}>
+        <div className="overflow-y-auto px-4 py-2 font-mono text-xs space-y-1" style={{ height: 260 }}>
+          {events.length === 0 ? (
+            <div className="text-white/30 italic py-2">Waiting for first SSE event…</div>
+          ) : events.map(ev => (
+            <div key={ev.id} className={`flex items-start gap-2 ${EVENT_COLORS[ev.type] ?? "text-white/50"}`}>
               <span className="shrink-0 text-white/20 tabular-nums">
                 {ev.timestamp.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" })}
               </span>
-              <span className="text-white/25 shrink-0">[{ev.agentName?.split(" ")[0] ?? "system"}]</span>
-              <span className="min-w-0 break-all">{ev.message}</span>
+              <span className="text-white/25 shrink-0">[{(ev.agentName || "system").split(" ")[0]}]</span>
+              <span className="text-white/30 shrink-0 uppercase tracking-wide text-[10px] mt-0.5">{ev.type}</span>
+              <span className="min-w-0 break-words">{ev.message}</span>
             </div>
           ))}
           <div ref={bottomRef} />
@@ -102,11 +162,12 @@ function LiveFeedPanel({ events, onClose }: { events: LiveEvent[]; onClose: () =
 }
 
 export default function HnpGovtDemo() {
-  const [scenario,   setScenario]   = useState<ScenarioKey>("happy");
-  const [running,    setRunning]    = useState(false);
-  const [hasRun,     setHasRun]     = useState(false);
-  const [events,     setEvents]     = useState<LiveEvent[]>([]);
-  const [showLog,    setShowLog]    = useState(false);
+  const [scenario,     setScenario]     = useState<ScenarioKey>("happy");
+  const [running,      setRunning]      = useState(false);
+  const [hasRun,       setHasRun]       = useState(false);
+  const [events,       setEvents]       = useState<LiveEvent[]>([]);
+  const [showLog,      setShowLog]      = useState(false);
+  const [logCollapsed, setLogCollapsed] = useState(false);
   const eventIdRef = useRef(0);
   const evtSrcRef  = useRef<EventSource | null>(null);
 
@@ -122,39 +183,58 @@ export default function HnpGovtDemo() {
     setEvents([]);
     setRunning(true);
     setShowLog(true);
+    setLogCollapsed(false);
     eventIdRef.current = 0;
 
     const es = new EventSource(`/demo-api/hnp-govt/live-run?scenario=${scenario}`);
     evtSrcRef.current = es;
 
-    es.addEventListener("agent_event", (e: MessageEvent) => {
-      try {
-        const data = JSON.parse(e.data);
-        setEvents(prev => [...prev, {
-          id:        ++eventIdRef.current,
-          type:      data.type ?? "agent_event",
-          agentName: data.agentName ?? data.agent ?? "system",
-          message:   data.message ?? data.summary ?? JSON.stringify(data).slice(0, 300),
-          timestamp: new Date(),
-        }]);
-      } catch {}
+    const pushEvent = (eventName: string, raw: any) => {
+      const data = typeof raw === "string" ? safeParse(raw) : raw;
+      const agentName: string =
+        data.agentName ?? data.agent ?? data.externalId ??
+        (Array.isArray(data.agents) ? data.agents.join("+") : "") ??
+        "system";
+      const message: string = formatEventMessage(eventName, data);
+      setEvents(prev => [...prev, {
+        id:        ++eventIdRef.current,
+        type:      eventName,
+        agentName: agentName || "system",
+        message,
+        timestamp: new Date(),
+      }]);
+    };
+
+    // Backend emits each of these as a NAMED SSE event — EventSource only
+    // delivers named events to handlers explicitly registered for that name,
+    // so subscribe to every one we know about.
+    const NAMED_EVENTS = [
+      "run_start", "setup", "approval_gate", "phase_start",
+      "agent_start", "agent_event", "agent_complete",
+      "audit_trail", "run_complete",
+    ];
+    NAMED_EVENTS.forEach(name => {
+      es.addEventListener(name, (e: MessageEvent) => pushEvent(name, e.data));
     });
 
-    es.addEventListener("error", () => {
-      setRunning(false);
-      setHasRun(true);
-      es.close();
-      evtSrcRef.current = null;
-      refetchRuns();
+    // server-sent "error" event (payload error, NOT a transport error)
+    es.addEventListener("error" as any, (e: MessageEvent) => {
+      if (e?.data) pushEvent("error", e.data);
     });
 
-    es.addEventListener("done", () => {
+    const finish = () => {
       setRunning(false);
       setHasRun(true);
-      es.close();
+      try { es.close(); } catch {}
       evtSrcRef.current = null;
       refetchRuns();
-    });
+    };
+
+    es.addEventListener("run_complete", () => setTimeout(finish, 300));
+    // EventSource fires onerror when the stream is closed by res.end() —
+    // treat that as the run finishing if we already saw run_complete or as a
+    // hard transport failure otherwise.
+    es.onerror = () => finish();
   }, [running, scenario, refetchRuns]);
 
   const reset = useCallback(() => {
@@ -312,7 +392,25 @@ export default function HnpGovtDemo() {
         </div>
       </div>
 
-      {showLog && <LiveFeedPanel events={events} onClose={() => setShowLog(false)} />}
+      {showLog && (
+        <LiveFeedPanel
+          events={events}
+          collapsed={logCollapsed}
+          onToggleCollapsed={() => setLogCollapsed(v => !v)}
+          onClose={() => setShowLog(false)}
+        />
+      )}
+      {!showLog && hasRun && (
+        <button
+          onClick={() => { setShowLog(true); setLogCollapsed(false); }}
+          className="border-t bg-muted/30 hover:bg-muted/60 px-4 py-2 text-xs font-mono text-muted-foreground flex items-center gap-2 transition-colors"
+          data-testid="btn-show-sse-log"
+        >
+          <Terminal className="w-3.5 h-3.5" />
+          Show SSE Trace Log ({events.length} events)
+          <ChevronUp className="w-3.5 h-3.5 ml-auto" />
+        </button>
+      )}
     </div>
   );
 }
