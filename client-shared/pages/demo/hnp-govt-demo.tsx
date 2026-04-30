@@ -21,6 +21,15 @@ interface LiveEvent {
   timestamp: Date;
 }
 
+type AgentState = "idle" | "running" | "ok" | "fail";
+interface LiveAgent {
+  state:     AgentState;
+  toolCalls: number;
+  summary?:  string;
+  startedAt?: number;
+  finishedAt?: number;
+}
+
 const SCENARIOS: { key: ScenarioKey; label: string; badge?: string; description: string }[] = [
   {
     key:         "happy",
@@ -168,6 +177,7 @@ export default function HnpGovtDemo() {
   const [events,       setEvents]       = useState<LiveEvent[]>([]);
   const [showLog,      setShowLog]      = useState(false);
   const [logCollapsed, setLogCollapsed] = useState(false);
+  const [liveAgents,   setLiveAgents]   = useState<Record<string, LiveAgent>>({});
   const eventIdRef = useRef(0);
   const evtSrcRef  = useRef<EventSource | null>(null);
 
@@ -184,10 +194,20 @@ export default function HnpGovtDemo() {
     setRunning(true);
     setShowLog(true);
     setLogCollapsed(false);
+    setLiveAgents({});
     eventIdRef.current = 0;
 
     const es = new EventSource(`/demo-api/hnp-govt/live-run?scenario=${scenario}`);
     evtSrcRef.current = es;
+
+    const updateAgent = (externalId: string | undefined, patch: Partial<LiveAgent> | ((prev: LiveAgent) => LiveAgent)) => {
+      if (!externalId) return;
+      setLiveAgents(prev => {
+        const cur: LiveAgent = prev[externalId] ?? { state: "idle", toolCalls: 0 };
+        const next: LiveAgent = typeof patch === "function" ? patch(cur) : { ...cur, ...patch };
+        return { ...prev, [externalId]: next };
+      });
+    };
 
     const pushEvent = (eventName: string, raw: any) => {
       const data = typeof raw === "string" ? safeParse(raw) : raw;
@@ -203,6 +223,22 @@ export default function HnpGovtDemo() {
         message,
         timestamp: new Date(),
       }]);
+
+      // Drive the agent-card UI directly off SSE — don't wait for the
+      // post-run /agent-runs poll, otherwise cards stay "Idle" the whole run.
+      const externalId: string | undefined = data.externalId;
+      if (eventName === "agent_start") {
+        updateAgent(externalId, { state: "running", toolCalls: 0, summary: undefined, startedAt: Date.now() });
+      } else if (eventName === "agent_event" && data.type === "tool_call_result") {
+        updateAgent(externalId, prev => ({ ...prev, toolCalls: prev.toolCalls + 1 }));
+      } else if (eventName === "agent_complete") {
+        updateAgent(externalId, prev => ({
+          ...prev,
+          state:      data.success === false ? "fail" : "ok",
+          summary:    data.resultSummary ?? data.summary ?? prev.summary,
+          finishedAt: Date.now(),
+        }));
+      }
     };
 
     // Backend emits each of these as a NAMED SSE event — EventSource only
@@ -340,13 +376,36 @@ export default function HnpGovtDemo() {
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {AGENTS.map(a => {
-              const run = runsByAgent[a.externalId];
+              const polled = runsByAgent[a.externalId];
+              const live   = liveAgents[a.externalId];
               const Icon = a.icon;
-              const runState = run?.success === true ? "ok" : run?.success === false ? "fail" : run ? "running" : "idle";
+              // Prefer the live SSE-derived state during the run; fall back to
+              // the polled /agent-runs row after the run completes.
+              const runState: AgentState =
+                live?.state ??
+                (polled?.success === true ? "ok"
+                 : polled?.success === false ? "fail"
+                 : polled ? "running" : "idle");
+              const toolCalls = live?.toolCalls ?? polled?.toolCalls;
+              const summary   = live?.summary   ?? polled?.summary ?? polled?.message;
+              const elapsedMs = live?.startedAt
+                ? (live.finishedAt ?? Date.now()) - live.startedAt
+                : null;
+              const statusText =
+                runState === "running" ? "Running on Claude…"
+                : runState === "ok"    ? "Completed"
+                : runState === "fail"  ? "Failed"
+                : running              ? "Queued"
+                : "Idle — press Start live run.";
               return (
                 <div
                   key={a.externalId}
-                  className="border rounded-lg bg-background p-4 flex flex-col gap-3 min-h-[140px]"
+                  className={`border rounded-lg bg-background p-4 flex flex-col gap-2 min-h-[140px] transition ${
+                    runState === "running" ? "border-blue-500/60 ring-1 ring-blue-500/20"
+                    : runState === "ok"    ? "border-emerald-500/40"
+                    : runState === "fail"  ? "border-red-500/40"
+                    : ""
+                  }`}
                   data-testid={`card-agent-${a.externalId}`}
                 >
                   <div className="flex items-start justify-between">
@@ -359,18 +418,30 @@ export default function HnpGovtDemo() {
                         <div className="text-sm font-medium leading-tight">{a.name}</div>
                       </div>
                     </div>
-                    {runState === "ok"   && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
-                    {runState === "fail" && <AlertTriangle className="w-4 h-4 text-red-500" />}
+                    {runState === "ok"      && <CheckCircle2 className="w-4 h-4 text-emerald-500" />}
+                    {runState === "fail"    && <AlertTriangle className="w-4 h-4 text-red-500" />}
                     {runState === "running" && <Activity className="w-4 h-4 text-blue-500 animate-pulse" />}
-                    {runState === "idle" && <Clock className="w-4 h-4 text-muted-foreground/40" />}
+                    {runState === "idle"    && <Clock className="w-4 h-4 text-muted-foreground/40" />}
                   </div>
-                  <div className="text-xs text-muted-foreground line-clamp-4 min-h-[3.5rem]">
-                    {run?.summary ?? run?.message ?? (running ? "Awaiting trace…" : "Idle — start a live run to populate.")}
+                  <div className={`text-xs font-medium ${
+                    runState === "running" ? "text-blue-500"
+                    : runState === "ok"    ? "text-emerald-600 dark:text-emerald-400"
+                    : runState === "fail"  ? "text-red-500"
+                    : "text-muted-foreground"
+                  }`}>
+                    {statusText}
                   </div>
-                  {run?.toolCalls != null && (
-                    <div className="text-[11px] text-muted-foreground border-t pt-2 flex items-center justify-between">
-                      <span>Tool calls</span>
-                      <span className="font-mono">{run.toolCalls}</span>
+                  {summary && (
+                    <div className="text-xs text-muted-foreground line-clamp-3">{summary}</div>
+                  )}
+                  {(toolCalls != null || elapsedMs != null) && (
+                    <div className="mt-auto text-[11px] text-muted-foreground border-t pt-2 flex items-center justify-between">
+                      {toolCalls != null && (
+                        <span>Tool calls <span className="font-mono ml-1">{toolCalls}</span></span>
+                      )}
+                      {elapsedMs != null && (
+                        <span className="font-mono">{(elapsedMs / 1000).toFixed(1)}s</span>
+                      )}
                     </div>
                   )}
                 </div>
