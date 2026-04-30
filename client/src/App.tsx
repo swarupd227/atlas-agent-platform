@@ -113,6 +113,7 @@ import OtcOrderDemo from "@client-shared/pages/demo/otc-order-demo";
 import OtcFulfillmentDemo from "@client-shared/pages/demo/otc-fulfillment-demo";
 import OtcCashDemo from "@client-shared/pages/demo/otc-cash-demo";
 import OtcDisputeDemo from "@client-shared/pages/demo/otc-dispute-demo";
+import HnpGovtDemo from "@client-shared/pages/demo/hnp-govt-demo";
 import PkgSchedDemo from "@client-shared/pages/demo/pkg-sched-demo";
 import SHHealthcareDemo from "@client-shared/pages/demo/sh-healthcare-demo";
 import SHFinancialDemo from "@client-shared/pages/demo/sh-financial-demo";
@@ -337,6 +338,7 @@ function DashboardRouter() {
       <Route path="/demo/otc-fulfillment" component={OtcFulfillmentDemo} />
       <Route path="/demo/otc-cash" component={OtcCashDemo} />
       <Route path="/demo/otc-dispute" component={OtcDisputeDemo} />
+      <Route path="/demo/hnp-govt" component={HnpGovtDemo} />
       <Route path="/demo/pkg-sched" component={PkgSchedDemo} />
           <Route path="/demo/onespan" component={OnespanDemo} />
       <Route path="/demo/sh-healthcare" component={SHHealthcareDemo} />

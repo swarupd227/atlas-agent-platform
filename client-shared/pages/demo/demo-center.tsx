@@ -28,6 +28,7 @@ import {
   Umbrella,
   TrendingDown,
   FileSignature,
+  Newspaper,
 } from "lucide-react";
 
 interface Demo {
@@ -399,6 +400,23 @@ const DEMOS: Demo[] = [
     badge: "Self-Healing",
   },
   {
+    id: "hnp-govt",
+    title: "Government Beat Intelligence",
+    client: "Hearst Newspapers",
+    description:
+      "SCN-HNP-1 — Hurricane Mara 36-hour landfall. Four live agents on real Claude process 47 Houston transcripts (90 days) and surface the $340M drainage bond / 34% delivered story (Allied Hydro contractor, Mayor Whitmire, Council Pollard/Huffman). HNP-GOVT-01 (Meeting Corpus Analyst) → HNP-GOVT-02 (Investigation Angle Detector) → reporter approval at the Review Brief gate → HNP-GOVT-03 (Story Draft) + HNP-GOVT-04 (FOIA Request Generator) running in parallel. 4 mock MCP servers (Hearst Assembly, Knowledge Base, TX Public Records portal, CMS) with 16 tools. Editorial governance enforced by 4 policies — Human Reporter Gate, Source Attribution Requirement, Publication Boundary, FOIA Accuracy Gate. Happy path + 2 exception sub-scenarios (source-attribution block, FOIA routing failure).",
+    industry: "Media & Entertainment",
+    industryId: "media_entertainment",
+    stage: "Investigative Journalism",
+    route: "/demo/hnp-govt",
+    icon: Newspaper,
+    iconColor: "#6B21A8",
+    duration: "12 min",
+    screens: 1,
+    tags: ["Government Accountability", "Investigative Journalism", "Houston", "FOIA", "Source Attribution"],
+    badge: "New",
+  },
+  {
     id: "advantive-support",
     title: "AI-First Tier 1 Support Intelligence",
     client: "Advantive ONE",
@@ -485,13 +503,13 @@ export default function DemoCenter() {
           </div>
 
           <div className="mt-4 flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+            <div className="relative flex-1 sm:max-w-md">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
               <Input
                 placeholder="Search demos, clients, tags…"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="pl-8 h-8 text-sm"
+                className="pl-10 h-10 text-sm"
                 data-testid="input-demo-search"
               />
             </div>
