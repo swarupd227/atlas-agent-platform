@@ -63,6 +63,56 @@ function extractJson(text: string): Record<string, any> | null {
   return null;
 }
 
+// Build a downstream agent prompt by prepending the upstream agent's real
+// resultSummary as a "Handoff context" block. This keeps the agent's task
+// prompt unchanged while making the actual upstream output the source of
+// truth — not a baked-in mock. We trim the JSON to ~6 KB to leave headroom
+// for the agent's own reasoning + tool calls within the model's context.
+function withUpstreamContext(
+  basePrompt: string,
+  upstreamLabel: string,
+  upstreamSummary: any,
+): string {
+  if (!upstreamSummary || typeof upstreamSummary !== "object") return basePrompt;
+  let json: string;
+  try {
+    json = JSON.stringify(upstreamSummary, null, 2);
+  } catch {
+    return basePrompt;
+  }
+  const MAX = 6000;
+  if (json.length > MAX) json = json.slice(0, MAX) + "\n…[truncated]";
+  return [
+    `Handoff context — structured output from ${upstreamLabel}:`,
+    "```json",
+    json,
+    "```",
+    "",
+    "Use the handoff context above as your authoritative input. Then perform your own task as described below.",
+    "",
+    basePrompt,
+  ].join("\n");
+}
+
+// Pull a short, human-readable angle list out of HNP-GOVT-02's resultSummary
+// for inclusion in the reporter-gate event payload.
+function extractAngleSummary(s: any): string | null {
+  if (!s || typeof s !== "object") return null;
+  const findings = Array.isArray(s.findings) ? s.findings : [];
+  if (findings.length === 0) return null;
+  return findings
+    .slice(0, 3)
+    .map((f: any, i: number) => {
+      if (!f) return null;
+      if (typeof f === "string") return `${i + 1}. ${f}`;
+      const head = f.angle ?? f.category ?? f.headline ?? `Angle ${i + 1}`;
+      const obs  = f.observation ?? f.summary ?? "";
+      return `${i + 1}. ${head}${obs ? " — " + String(obs).slice(0, 140) : ""}`;
+    })
+    .filter(Boolean)
+    .join(" · ");
+}
+
 // True if the parsed analysis object actually carries real structured fields
 // (not the degenerate { summary: "<unparsed fenced blob>" } the runtime falls
 // back to when JSON.parse on the raw LLM content fails).
@@ -139,8 +189,6 @@ export async function hnpGovtLiveRunHandler(req: Request, res: Response): Promis
     agents: HNP_GOVT_AGENT_DEFS.map(a => ({ externalId: a.externalId, name: a.name })),
   });
 
-  let gateTimeout: ReturnType<typeof setTimeout> | undefined;
-
   try {
     await _refreshCaches();
 
@@ -155,40 +203,74 @@ export async function hnpGovtLiveRunHandler(req: Request, res: Response): Promis
       res.end();
       return;
     }
-    sse(res, "setup", { message: "All 4 HNP-GOVT agents and 4 MCP servers verified in registry — running 4 agents in parallel on Claude" });
+    sse(res, "setup", { message: "All 4 HNP-GOVT agents and 4 MCP servers verified in registry — running real pipeline on Claude (sequential handoffs)." });
 
-    // All 4 agents run in parallel — each scenario prompt is self-contained
-    // (the upstream "handoff context" is baked into each agent's task prompt).
-    // The narrative approval gate is emitted as an in-flight visual milestone.
+    // True sequential pipeline with real upstream → downstream handoffs:
+    //
+    //   Stage 1 — HNP-GOVT-01 Corpus Analyst (alone)
+    //   Stage 2 — HNP-GOVT-02 Angle Detector (consumes 01's resultSummary)
+    //   Stage 3 — Reporter Brief Review approval gate (narrative milestone —
+    //             see note in payload; production enforces via attached policy)
+    //   Stage 4 — HNP-GOVT-03 Story Draft  ┐ both consume 02's ranked angles,
+    //             HNP-GOVT-04 FOIA Generator┘ run in parallel after the gate
+    //
+    // Each downstream agent's prompt is built at runtime from the real
+    // resultSummary of the upstream agent — not from baked-in mock context.
     const summaries: Record<string, any> = {};
 
-    sse(res, "phase_start", { phase: "parallel_execution", agents: ["HNP-GOVT-01", "HNP-GOVT-02", "HNP-GOVT-03", "HNP-GOVT-04"] });
+    // ── Stage 1: Corpus Analyst alone ──────────────────────────────────────
+    sse(res, "phase_start", { phase: "stage_1_corpus_synthesis", agents: ["HNP-GOVT-01"] });
+    await runOneAgent(
+      res, "HNP-GOVT-01", HNP_GOVT_AGENT_NAMES.corpusAnalyst,
+      scenarioDef.agent01, summaries, () => clientDisconnected,
+    );
+    if (clientDisconnected) return;
 
-    // Fire the reporter-brief approval gate ~1.2s in so it shows up in the
-    // SSE timeline between the agent_start events and the agent_complete
-    // events. This is a *narrative* milestone for the demo — no real approval
-    // record is created and the agents run in parallel regardless of any
-    // human action. Production deployments enforce the actual Human Reporter
-    // Gate via the policy attached to the agents (see provisioning script).
-    gateTimeout = setTimeout(() => {
-      if (clientDisconnected) return;
-      sse(res, "approval_gate", {
-        gate: "Reporter Brief Review",
-        reporter: "Clara Mendez",
-        desk: "Investigations",
-        newspaper: "Houston Chronicle",
-        action: scenarioDef.reporterGate,
-        policyReference: "Human Reporter Gate",
-        narrative: true,
-        note: "Simulated milestone — production runs enforce this gate via attached policy.",
-      });
-    }, 1200);
+    // ── Stage 2: Angle Detector consumes 01's real output ──────────────────
+    sse(res, "phase_start", { phase: "stage_2_angle_detection", agents: ["HNP-GOVT-02"] });
+    const agent02Prompt = withUpstreamContext(
+      scenarioDef.agent02,
+      "HNP-GOVT-01 Meeting Corpus Analyst",
+      summaries["HNP-GOVT-01"],
+    );
+    await runOneAgent(
+      res, "HNP-GOVT-02", HNP_GOVT_AGENT_NAMES.angleDetector,
+      agent02Prompt, summaries, () => clientDisconnected,
+    );
+    if (clientDisconnected) return;
 
+    // ── Stage 3: Reporter Brief Review (narrative milestone) ───────────────
+    // The pipeline pauses briefly here so the gate is visually distinct in
+    // the SSE timeline between Stage 2 completing and Stage 4 starting.
+    sse(res, "approval_gate", {
+      gate: "Reporter Brief Review",
+      reporter: "Clara Mendez",
+      desk: "Investigations",
+      newspaper: "Houston Chronicle",
+      action: scenarioDef.reporterGate,
+      policyReference: "Human Reporter Gate",
+      narrative: true,
+      note: "Simulated milestone — production runs enforce this gate via attached policy and require a real approval record before Stage 4.",
+      angleSummary: extractAngleSummary(summaries["HNP-GOVT-02"]),
+    });
+    await new Promise(r => setTimeout(r, 800));
+    if (clientDisconnected) return;
+
+    // ── Stage 4: Story Draft + FOIA Generator (parallel, both see 02's output) ──
+    sse(res, "phase_start", { phase: "stage_4_publication_prep", agents: ["HNP-GOVT-03", "HNP-GOVT-04"] });
+    const agent03Prompt = withUpstreamContext(
+      scenarioDef.agent03,
+      "HNP-GOVT-02 Investigation Angle Detector (reporter-approved)",
+      summaries["HNP-GOVT-02"],
+    );
+    const agent04Prompt = withUpstreamContext(
+      scenarioDef.agent04,
+      "HNP-GOVT-02 Investigation Angle Detector (reporter-approved)",
+      summaries["HNP-GOVT-02"],
+    );
     await Promise.all([
-      runOneAgent(res, "HNP-GOVT-01", HNP_GOVT_AGENT_NAMES.corpusAnalyst,    scenarioDef.agent01, summaries, () => clientDisconnected),
-      runOneAgent(res, "HNP-GOVT-02", HNP_GOVT_AGENT_NAMES.angleDetector,    scenarioDef.agent02, summaries, () => clientDisconnected),
-      runOneAgent(res, "HNP-GOVT-03", HNP_GOVT_AGENT_NAMES.storyDraftAgent,  scenarioDef.agent03, summaries, () => clientDisconnected),
-      runOneAgent(res, "HNP-GOVT-04", HNP_GOVT_AGENT_NAMES.foiaGenerator,    scenarioDef.agent04, summaries, () => clientDisconnected),
+      runOneAgent(res, "HNP-GOVT-03", HNP_GOVT_AGENT_NAMES.storyDraftAgent, agent03Prompt, summaries, () => clientDisconnected),
+      runOneAgent(res, "HNP-GOVT-04", HNP_GOVT_AGENT_NAMES.foiaGenerator,   agent04Prompt, summaries, () => clientDisconnected),
     ]);
 
     sse(res, "audit_trail", {
@@ -200,7 +282,6 @@ export async function hnpGovtLiveRunHandler(req: Request, res: Response): Promis
       })),
     });
 
-    if (gateTimeout) clearTimeout(gateTimeout);
     clearInterval(keepalive);
     sse(res, "run_complete", {
       message: scenarioDef.completeMsg,
@@ -208,7 +289,6 @@ export async function hnpGovtLiveRunHandler(req: Request, res: Response): Promis
       summaries,
     });
   } catch (err: any) {
-    if (gateTimeout) clearTimeout(gateTimeout);
     clearInterval(keepalive);
     sse(res, "error", { message: err?.message || "Pipeline error" });
   } finally {
