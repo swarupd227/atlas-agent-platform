@@ -520,8 +520,14 @@ class AnthropicProvider implements LLMProvider {
   private client: Anthropic;
 
   constructor() {
+    const useGateway = !!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY;
     this.client = new Anthropic({
-      apiKey: process.env.ANTHROPIC_API_KEY || "not-configured",
+      apiKey: useGateway
+        ? process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY!
+        : process.env.ANTHROPIC_API_KEY || "not-configured",
+      baseURL: useGateway
+        ? process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL || undefined
+        : undefined,
     });
   }
 
@@ -781,7 +787,9 @@ class AnthropicProvider implements LLMProvider {
     return {
       name: "anthropic",
       displayName: "Anthropic",
-      configured: !!process.env.ANTHROPIC_API_KEY,
+      configured:
+        !!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY ||
+        !!process.env.ANTHROPIC_API_KEY,
       models: ANTHROPIC_MODELS,
     };
   }

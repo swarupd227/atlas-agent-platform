@@ -49,7 +49,7 @@ The Nous Agent Orchestrator utilizes a modern web stack: React, Vite, Tailwind C
 
 ### External Dependencies
 - **OpenAI**: Primary LLM provider for agent runtime, evaluations, AI enhancements, and embeddings.
-- **Anthropic**: Secondary LLM provider for Claude models with tool calling.
+- **Anthropic**: Secondary LLM provider for Claude models with tool calling. Routed through Replit AI Integrations gateway (`AI_INTEGRATIONS_ANTHROPIC_API_KEY` + `AI_INTEGRATIONS_ANTHROPIC_BASE_URL`, both auto-injected by the `javascript_anthropic_ai_integrations` blueprint — charges go to Replit credits, no personal Anthropic account required). Falls back to direct `ANTHROPIC_API_KEY` when the gateway env vars are absent. Configured in `server/llm-provider.ts` `AnthropicProvider` constructor.
 - **PostgreSQL**: Primary database for data persistence.
 - **Express.js**: Backend web application framework.
 - **React**: Frontend JavaScript library.
