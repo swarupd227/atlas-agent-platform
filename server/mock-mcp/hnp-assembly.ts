@@ -133,7 +133,7 @@ const CORPUS: Transcript[] = buildCorpus();
 
 router.get("/get-transcripts", (req: Request, res: Response) => {
   const { jurisdiction, limit, lookback_days } = req.query;
-  const limitN = Math.min(parseInt(limit as string) || 50, 100);
+  const limitN = Math.min(parseInt(limit as string) || 8, 30);
   const lookback = parseInt(lookback_days as string) || 90;
   const cutoff = new Date(TODAY.getTime() - lookback * 86400000);
 
@@ -142,33 +142,37 @@ router.get("/get-transcripts", (req: Request, res: Response) => {
     const j = (jurisdiction as string).toLowerCase();
     results = results.filter(t => t.jurisdiction.toLowerCase().includes(j));
   }
+  const total = results.length;
   results = results.slice(0, limitN);
 
-  const totalHours = results.reduce((acc, t) => acc + t.durationMinutes / 60, 0);
+  const totalHours = CORPUS
+    .filter(t => new Date(t.date) >= cutoff)
+    .reduce((acc, t) => acc + t.durationMinutes / 60, 0);
+
   res.json({
-    success:        true,
-    corpus:         "HNP Assembly Corpus",
+    success:            true,
+    corpus:             "HNP Assembly Corpus",
     jurisdictionFilter: jurisdiction || "all",
-    transcriptCount: results.length,
-    totalHours:     Math.round(totalHours * 10) / 10,
-    transcripts:    results.map(t => ({
+    transcriptCount:    total,
+    transcriptsReturned: results.length,
+    totalHoursAnalyzed: Math.round(totalHours * 10) / 10,
+    transcripts:        results.map(t => ({
       meetingId:       t.meetingId,
       jurisdiction:    t.jurisdiction,
-      body:            t.body,
       meetingType:     t.meetingType,
       date:            t.date,
       durationMinutes: t.durationMinutes,
-      attendeeCount:   t.attendees.length,
       keywordTags:     t.keywordTags,
       excerptCount:    t.excerpts.length,
     })),
+    note: "Transcript bodies omitted — use search_transcript_corpus to retrieve cited excerpts.",
   });
 });
 
 router.get("/search-transcript-corpus", (req: Request, res: Response) => {
   const { query, jurisdiction, limit } = req.query;
   const q = ((query as string) || "").toLowerCase();
-  const limitN = Math.min(parseInt(limit as string) || 25, 100);
+  const limitN = Math.min(parseInt(limit as string) || 6, 30);
 
   const matches: Array<{
     meetingId: string; jurisdiction: string; date: string; meetingType: string;

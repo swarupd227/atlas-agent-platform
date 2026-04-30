@@ -152,9 +152,20 @@ echo "STEP 3: Registering tools on each MCP server..." >&2
 
 post_tool() {
   local server_id="$1" name="$2" desc="$3" risk="$4" schema="$5"
+  # Auto-derive HTTP endpoint + method from tool name so the agent runtime
+  # can call the mock MCP server's hyphenated route. Without these annotations,
+  # callMcpTool() falls back to the bare baseUrl which returns Vite HTML.
+  local endpoint method
+  endpoint="/${name//_/-}"
+  case "$name" in
+    create_story_draft|assign_to_reporter|set_story_tags|set_seo_fields|submit_foia_request) method="POST" ;;
+    *) method="GET" ;;
+  esac
   local body
   body=$(jq -n --arg n "$name" --arg d "$desc" --arg r "$risk" --argjson s "$schema" \
-    '{name: $n, description: $d, riskClassification: $r, inputSchema: $s}')
+                --arg ep "$endpoint" --arg m "$method" \
+    '{name: $n, description: $d, riskClassification: $r, inputSchema: $s,
+      annotations: { endpoint: $ep, method: $m }}')
   local response id
   response=$(curl -s -X POST "${BASE_URL}/api/mcp-servers/${server_id}/tools" \
     -H "Content-Type: application/json" -d "$body")
@@ -163,7 +174,7 @@ post_tool() {
     echo "    ✗ tool FAILED: $name :: $response" >&2
     exit 1
   fi
-  echo "    ✓ tool $name" >&2
+  echo "    ✓ tool $name  ($method $endpoint)" >&2
 }
 
 # Assembly (4 tools)
@@ -380,7 +391,7 @@ patch_agent() {
     runtimeConfig: {
       prompt: $p,
       scheduleIntervalMinutes: 0,
-      maxToolIterations: 12,
+      maxToolIterations: 4,
       timeoutMs: 180000,
       latencyTargetMs: 90000,
       retryPolicy: { maxRetries: 2, backoffMs: 2000 },

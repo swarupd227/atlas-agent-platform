@@ -12,7 +12,7 @@
 
 import { type Request, type Response } from "express";
 import { storage } from "./storage";
-import { runAgentOnce, stopAgentRuntime, runtimeEvents } from "./agent-runtime";
+import { runAgentOnce, stopAgentRuntime } from "./agent-runtime";
 import {
   HNP_GOVT_AGENT_NAMES,
   HNP_GOVT_AGENT_DEFS,
@@ -123,6 +123,8 @@ export async function hnpGovtLiveRunHandler(req: Request, res: Response): Promis
     agents: HNP_GOVT_AGENT_DEFS.map(a => ({ externalId: a.externalId, name: a.name })),
   });
 
+  let gateTimeout: ReturnType<typeof setTimeout> | undefined;
+
   try {
     await _refreshCaches();
 
@@ -137,33 +139,40 @@ export async function hnpGovtLiveRunHandler(req: Request, res: Response): Promis
       res.end();
       return;
     }
-    sse(res, "setup", { message: "All 4 HNP-GOVT agents and 4 MCP servers verified in registry" });
+    sse(res, "setup", { message: "All 4 HNP-GOVT agents and 4 MCP servers verified in registry — running 4 agents in parallel on Claude" });
 
-    // ── Phase 1: HNP-GOVT-01 Corpus Analyst ──────────────────────────
+    // All 4 agents run in parallel — each scenario prompt is self-contained
+    // (the upstream "handoff context" is baked into each agent's task prompt).
+    // The narrative approval gate is emitted as an in-flight visual milestone.
     const summaries: Record<string, any> = {};
-    await runOneAgent(res, "HNP-GOVT-01", HNP_GOVT_AGENT_NAMES.corpusAnalyst, scenarioDef.agent01, summaries, () => clientDisconnected);
-    if (clientDisconnected) { clearInterval(keepalive); res.end(); return; }
 
-    // ── Phase 2: HNP-GOVT-02 Angle Detector ──────────────────────────
-    await runOneAgent(res, "HNP-GOVT-02", HNP_GOVT_AGENT_NAMES.angleDetector, scenarioDef.agent02, summaries, () => clientDisconnected);
-    if (clientDisconnected) { clearInterval(keepalive); res.end(); return; }
+    sse(res, "phase_start", { phase: "parallel_execution", agents: ["HNP-GOVT-01", "HNP-GOVT-02", "HNP-GOVT-03", "HNP-GOVT-04"] });
 
-    // ── Phase 3: Reporter Brief Review approval gate ─────────────────
-    sse(res, "approval_gate", {
-      gate: "Reporter Brief Review",
-      reporter: "Clara Mendez",
-      desk: "Investigations",
-      newspaper: "Houston Chronicle",
-      action: scenarioDef.reporterGate,
-      policyEnforced: "Human Reporter Gate",
-    });
-    await new Promise(r => setTimeout(r, 800));
+    // Fire the reporter-brief approval gate ~1.2s in so it shows up in the
+    // SSE timeline between the agent_start events and the agent_complete
+    // events. This is a *narrative* milestone for the demo — no real approval
+    // record is created and the agents run in parallel regardless of any
+    // human action. Production deployments enforce the actual Human Reporter
+    // Gate via the policy attached to the agents (see provisioning script).
+    gateTimeout = setTimeout(() => {
+      if (clientDisconnected) return;
+      sse(res, "approval_gate", {
+        gate: "Reporter Brief Review",
+        reporter: "Clara Mendez",
+        desk: "Investigations",
+        newspaper: "Houston Chronicle",
+        action: scenarioDef.reporterGate,
+        policyReference: "Human Reporter Gate",
+        narrative: true,
+        note: "Simulated milestone — production runs enforce this gate via attached policy.",
+      });
+    }, 1200);
 
-    // ── Phase 4: HNP-GOVT-03 + HNP-GOVT-04 in parallel ───────────────
-    sse(res, "phase_start", { phase: "parallel_execution", agents: ["HNP-GOVT-03", "HNP-GOVT-04"] });
     await Promise.all([
-      runOneAgent(res, "HNP-GOVT-03", HNP_GOVT_AGENT_NAMES.storyDraftAgent, scenarioDef.agent03, summaries, () => clientDisconnected),
-      runOneAgent(res, "HNP-GOVT-04", HNP_GOVT_AGENT_NAMES.foiaGenerator, scenarioDef.agent04, summaries, () => clientDisconnected),
+      runOneAgent(res, "HNP-GOVT-01", HNP_GOVT_AGENT_NAMES.corpusAnalyst,    scenarioDef.agent01, summaries, () => clientDisconnected),
+      runOneAgent(res, "HNP-GOVT-02", HNP_GOVT_AGENT_NAMES.angleDetector,    scenarioDef.agent02, summaries, () => clientDisconnected),
+      runOneAgent(res, "HNP-GOVT-03", HNP_GOVT_AGENT_NAMES.storyDraftAgent,  scenarioDef.agent03, summaries, () => clientDisconnected),
+      runOneAgent(res, "HNP-GOVT-04", HNP_GOVT_AGENT_NAMES.foiaGenerator,    scenarioDef.agent04, summaries, () => clientDisconnected),
     ]);
 
     sse(res, "audit_trail", {
@@ -175,6 +184,7 @@ export async function hnpGovtLiveRunHandler(req: Request, res: Response): Promis
       })),
     });
 
+    if (gateTimeout) clearTimeout(gateTimeout);
     clearInterval(keepalive);
     sse(res, "run_complete", {
       message: scenarioDef.completeMsg,
@@ -182,6 +192,7 @@ export async function hnpGovtLiveRunHandler(req: Request, res: Response): Promis
       summaries,
     });
   } catch (err: any) {
+    if (gateTimeout) clearTimeout(gateTimeout);
     clearInterval(keepalive);
     sse(res, "error", { message: err?.message || "Pipeline error" });
   } finally {
@@ -223,42 +234,61 @@ async function runOneAgent(
   await stopAgentRuntime(deploymentId).catch(() => {});
   await new Promise(r => setTimeout(r, 200));
 
-  const traceHandler = (ev: any) => {
-    if (ev.agentId !== agentId && ev.deploymentId !== deploymentId) return;
-    if (ev.type === "tool_call_result") {
-      sse(res, "agent_event", {
-        externalId, agentId, type: "tool_call_result",
-        data: { tool: ev.toolName, success: !!ev.success, recordCount: ev.recordCount, error: ev.error },
-      });
-    } else if (ev.type === "llm_response") {
-      sse(res, "agent_event", {
-        externalId, agentId, type: "llm_response",
-        data: { message: "Agent reasoning step…" },
-      });
-    } else if (ev.type === "tool_call") {
+  let toolCallCount = 0;
+  let finalAnalysisText = "";
+  let finalAnalysisObj: Record<string, any> | null = null;
+
+  const onProgress = (ev: any) => {
+    if (!ev || !ev.type) return;
+    if (ev.type === "tool_call_start") {
       sse(res, "agent_event", {
         externalId, agentId, type: "tool_call",
-        data: { tool: ev.toolName, args: ev.args },
+        data: { tool: ev.data?.tool, server: ev.data?.server, iteration: ev.data?.iteration },
       });
+    } else if (ev.type === "tool_call_result") {
+      toolCallCount++;
+      sse(res, "agent_event", {
+        externalId, agentId, type: "tool_call_result",
+        data: {
+          tool: ev.data?.tool,
+          server: ev.data?.server,
+          success: !!ev.data?.success,
+          error: ev.data?.error,
+          iteration: ev.data?.iteration,
+        },
+      });
+    } else if (ev.type === "iteration_complete") {
+      sse(res, "agent_event", {
+        externalId, agentId, type: "llm_response",
+        data: { iteration: ev.data?.iteration, toolsCalled: ev.data?.toolsCalled },
+      });
+    } else if (ev.type === "final_analysis") {
+      // Prefer the full structured `analysis` object emitted by the runtime;
+      // fall back to rawContent (full LLM JSON text) and finally the short
+      // summary string. This makes JSON capture robust regardless of which
+      // field the LLM populated.
+      if (ev.data?.analysis && typeof ev.data.analysis === "object") {
+        finalAnalysisObj = ev.data.analysis;
+      }
+      finalAnalysisText = String(
+        ev.data?.rawContent || ev.data?.summary || ""
+      );
     }
   };
-  runtimeEvents.on("agent_execution", traceHandler);
 
   let runSuccess = false;
   let resultText = "";
 
   try {
-    const result = await runAgentOnce(deploymentId, prompt);
+    const result = await runAgentOnce(deploymentId, prompt, undefined, onProgress);
     runSuccess = !!result?.success;
-    resultText = result?.message || "";
+    resultText = finalAnalysisText || result?.message || "";
   } catch (err: any) {
     runSuccess = false;
     resultText = err?.message || "Agent run failed";
-  } finally {
-    runtimeEvents.off("agent_execution", traceHandler);
   }
 
-  const parsed = extractJson(resultText);
+  const parsed = finalAnalysisObj || extractJson(resultText);
   if (parsed) summaries[externalId] = parsed;
 
   await storage.updateDeployment(deploymentId, {

@@ -1828,6 +1828,10 @@ After receiving tool results, provide a structured analysis with key findings, s
           severity: analysis.severity,
           iterationsUsed,
           isConversational,
+          // Additive fields so callers can reliably reconstruct the full LLM
+          // output even when `analysis.summary` is a short string.
+          rawContent,
+          analysis,
         });
         
         if (isConversational) {

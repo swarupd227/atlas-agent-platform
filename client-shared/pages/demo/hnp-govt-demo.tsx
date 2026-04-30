@@ -25,9 +25,28 @@ type AgentState = "idle" | "running" | "ok" | "fail";
 interface LiveAgent {
   state:     AgentState;
   toolCalls: number;
-  summary?:  string;
+  summary?:  any;
   startedAt?: number;
   finishedAt?: number;
+}
+
+function unwrapPayload(s: any): any {
+  // Agent 01 returns { emergency_context_brief: {...} }; others return flat shape.
+  if (s && typeof s === "object" && s.emergency_context_brief && typeof s.emergency_context_brief === "object") {
+    return s.emergency_context_brief;
+  }
+  return s;
+}
+
+function summaryOneLine(raw: any): string | null {
+  if (!raw) return null;
+  if (typeof raw === "string") return raw.slice(0, 200);
+  const s = unwrapPayload(raw);
+  if (s.summary && typeof s.summary === "string") {
+    return s.summary.length > 180 ? s.summary.slice(0, 177) + "…" : s.summary;
+  }
+  if (s.headline) return String(s.headline);
+  return null;
 }
 
 const SCENARIOS: { key: ScenarioKey; label: string; badge?: string; description: string }[] = [
@@ -108,6 +127,181 @@ const EVENT_COLORS: Record<string, string> = {
   run_complete:     "text-emerald-400",
   error:            "text-red-400",
 };
+
+const SEVERITY_COLORS: Record<string, string> = {
+  critical: "bg-red-100 text-red-900 dark:bg-red-950/40 dark:text-red-300",
+  high:     "bg-orange-100 text-orange-900 dark:bg-orange-950/40 dark:text-orange-300",
+  medium:   "bg-amber-100 text-amber-900 dark:bg-amber-950/40 dark:text-amber-300",
+  low:      "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300",
+};
+
+function AgentOutputCard({
+  externalId, displayName, icon: Icon, raw,
+}: {
+  externalId: string;
+  displayName: string;
+  icon: React.ComponentType<{ className?: string; style?: any }>;
+  raw: any;
+}) {
+  if (!raw) return null;
+  const s = unwrapPayload(raw) || {};
+  const severity = typeof s.severity === "string" ? s.severity.toLowerCase() : null;
+  // Filter out nullish entries so map callbacks below can safely read fields.
+  const findings = (Array.isArray(s.findings) ? s.findings : []).filter((x: any) => x != null);
+  const actions  = (Array.isArray(s.recommendedActions) ? s.recommendedActions : []).filter((x: any) => x != null);
+  const risks    = (Array.isArray(s.riskFactors) ? s.riskFactors : []).filter((x: any) => x != null);
+  const records  = (Array.isArray(s.processedRecords) ? s.processedRecords : []).filter(
+    (x: any) => x != null && typeof x === "object",
+  );
+
+  return (
+    <div className="border rounded-lg bg-background p-5" data-testid={`output-${externalId}`}>
+      <div className="flex items-center gap-2 mb-3">
+        <Icon className="w-4 h-4" style={{ color: HNP_COLOR }} />
+        <span className="text-xs font-mono text-muted-foreground">{externalId}</span>
+        <span className="text-sm font-semibold">{displayName}</span>
+        {severity && (
+          <span className={`ml-auto text-[10px] px-2 py-0.5 rounded uppercase tracking-wide font-medium ${SEVERITY_COLORS[severity] ?? "bg-muted text-muted-foreground"}`}>
+            severity: {severity}
+          </span>
+        )}
+      </div>
+
+      {s.summary && typeof s.summary === "string" && (
+        <p className="text-sm text-foreground/90 leading-relaxed mb-4" data-testid={`summary-${externalId}`}>
+          {s.summary}
+        </p>
+      )}
+
+      {findings.length > 0 && (
+        <div className="mb-4">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium mb-2">
+            Findings ({findings.length})
+          </div>
+          <ul className="space-y-2">
+            {findings.slice(0, 4).map((f: any, i: number) => (
+              <li key={i} className="border rounded p-3 bg-muted/20 text-sm">
+                {typeof f === "string" ? (
+                  <div>{f}</div>
+                ) : (
+                  <>
+                    {(f.category || f.angle) && (
+                      <div className="text-[11px] font-mono text-muted-foreground mb-1">
+                        {f.category ?? f.angle}
+                      </div>
+                    )}
+                    {f.observation && <div className="font-medium">{f.observation}</div>}
+                    {f.implication && (
+                      <div className="text-xs text-muted-foreground mt-1">→ {f.implication}</div>
+                    )}
+                    {Array.isArray(f.keyQuotes) && f.keyQuotes.length > 0 && (
+                      <ul className="mt-2 space-y-1">
+                        {f.keyQuotes.slice(0, 2).map((q: string, j: number) => (
+                          <li key={j} className="text-xs italic text-foreground/80 pl-2 border-l-2 border-muted">
+                            {q}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {(f.citations != null || f.urgency) && (
+                      <div className="mt-2 flex gap-3 text-[11px] text-muted-foreground font-mono">
+                        {f.citations != null && <span>{f.citations} citations</span>}
+                        {f.urgency && <span>· {f.urgency}</span>}
+                      </div>
+                    )}
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {actions.length > 0 && (
+        <div className="mb-4">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium mb-2">
+            Recommended actions ({actions.length})
+          </div>
+          <ul className="space-y-1.5">
+            {actions.slice(0, 4).map((a: any, i: number) => (
+              <li key={i} className="text-sm text-foreground/90 flex gap-2">
+                <span className="text-muted-foreground shrink-0">{i + 1}.</span>
+                <span>{typeof a === "string" ? a : JSON.stringify(a)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {risks.length > 0 && (
+        <div className="mb-4">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium mb-2">
+            Risk factors ({risks.length})
+          </div>
+          <ul className="space-y-1">
+            {risks.slice(0, 3).map((r: any, i: number) => (
+              <li key={i} className="text-xs text-foreground/80 flex gap-2">
+                <span className="text-amber-600 dark:text-amber-400 shrink-0">!</span>
+                <span>{typeof r === "string" ? r : JSON.stringify(r)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {records.length > 0 && (
+        <details className="border-t border-border/50 pt-3">
+          <summary className="cursor-pointer text-[10px] uppercase tracking-wide text-muted-foreground font-medium hover:text-foreground">
+            Top processed records ({records.length})
+          </summary>
+          <ul className="mt-2 space-y-1.5">
+            {records.slice(0, 8).map((r: any, i: number) => (
+              <li key={i} className="text-xs flex items-baseline gap-2">
+                {r.score != null && (
+                  <span className="font-mono tabular-nums text-muted-foreground shrink-0 w-8 text-right">{r.score}</span>
+                )}
+                <span className="font-medium truncate">{r.name ?? r.id ?? `Record ${i + 1}`}</span>
+                {r.decision && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground font-mono uppercase shrink-0">
+                    {r.decision}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
+function PipelineOutputPanel({
+  liveAgents, hasRun,
+}: {
+  liveAgents: Record<string, LiveAgent>;
+  hasRun: boolean;
+}) {
+  const a01 = liveAgents["HNP-GOVT-01"]?.summary;
+  const a02 = liveAgents["HNP-GOVT-02"]?.summary;
+  const a03 = liveAgents["HNP-GOVT-03"]?.summary;
+  const a04 = liveAgents["HNP-GOVT-04"]?.summary;
+  const anyOutput = a01 || a02 || a03 || a04;
+  if (!hasRun || !anyOutput) return null;
+
+  return (
+    <div className="mt-8 space-y-4" data-testid="pipeline-output">
+      <div className="flex items-center gap-2">
+        <FileText className="w-4 h-4" style={{ color: HNP_COLOR }} />
+        <h2 className="text-sm font-semibold uppercase tracking-wide">Pipeline Output — Reporter Brief</h2>
+      </div>
+
+      <AgentOutputCard externalId="HNP-GOVT-01" displayName="Meeting Corpus Analyst — Hurricane Mara Brief" icon={FileSearch} raw={a01} />
+      <AgentOutputCard externalId="HNP-GOVT-02" displayName="Investigation Angle Detector — Ranked Angles" icon={Newspaper} raw={a02} />
+      <AgentOutputCard externalId="HNP-GOVT-03" displayName="Story Draft Agent — Sourcing Pack" icon={FileText} raw={a03} />
+      <AgentOutputCard externalId="HNP-GOVT-04" displayName="FOIA Request Generator — Texas PIA Filings" icon={Scale} raw={a04} />
+    </div>
+  );
+}
 
 function LiveFeedPanel({
   events, collapsed, onToggleCollapsed, onClose,
@@ -432,7 +626,9 @@ export default function HnpGovtDemo() {
                     {statusText}
                   </div>
                   {summary && (
-                    <div className="text-xs text-muted-foreground line-clamp-3">{summary}</div>
+                    <div className="text-xs text-muted-foreground line-clamp-3">
+                      {summaryOneLine(summary) ?? "Output ready — see Pipeline Output below."}
+                    </div>
                   )}
                   {(toolCalls != null || elapsedMs != null) && (
                     <div className="mt-auto text-[11px] text-muted-foreground border-t pt-2 flex items-center justify-between">
@@ -460,6 +656,8 @@ export default function HnpGovtDemo() {
               </div>
             </div>
           )}
+
+          <PipelineOutputPanel liveAgents={liveAgents} hasRun={hasRun} />
         </div>
       </div>
 
