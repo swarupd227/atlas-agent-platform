@@ -325,7 +325,7 @@ mk_agent_payload() {
   }'
 }
 
-A1=$(post_inline "Agent: HNP-GOVT-01 Meeting Corpus Analyst" "/api/agents" "$(mk_agent_payload "HNP-GOVT-01" "HNP-GOVT-01 Meeting Corpus Analyst" "Processes the entire Hearst Assembly transcript corpus for a specified jurisdiction and time window. Runs parallel extraction across transcripts: identifies commitments, named entities, dollar amounts, and topic clusters relevant to the breaking event context." "claude-opus-4-5" "MEDIUM" "$SP01" '[
+A1=$(post_inline "Agent: HNP-GOVT-01 Meeting Corpus Analyst" "/api/agents" "$(mk_agent_payload "HNP-GOVT-01" "HNP-GOVT-01 Meeting Corpus Analyst" "Processes the entire Hearst Assembly transcript corpus for a specified jurisdiction and time window. Runs parallel extraction across transcripts: identifies commitments, named entities, dollar amounts, and topic clusters relevant to the breaking event context." "claude-haiku-4-5" "MEDIUM" "$SP01" '[
   {"id":"get_transcripts","name":"get_transcripts","description":"List meeting transcripts","rateLimit":100,"timeout":15000},
   {"id":"search_transcript_corpus","name":"search_transcript_corpus","description":"Full-text search transcripts","rateLimit":100,"timeout":15000},
   {"id":"get_transcript_by_meeting","name":"get_transcript_by_meeting","description":"Retrieve full transcript","rateLimit":100,"timeout":15000},
@@ -334,7 +334,7 @@ A1=$(post_inline "Agent: HNP-GOVT-01 Meeting Corpus Analyst" "/api/agents" "$(mk
   {"id":"get_investigative_standards","name":"get_investigative_standards","description":"HNP editorial standards","rateLimit":100,"timeout":10000}
 ]')")
 
-A2=$(post_inline "Agent: HNP-GOVT-02 Investigation Angle Detector" "/api/agents" "$(mk_agent_payload "HNP-GOVT-02" "HNP-GOVT-02 Investigation Angle Detector" "Receives the structured corpus extraction and applies investigative-journalism heuristics to identify publishable story angles. Scores each angle on newsworthiness, evidence strength, public interest, verification complexity, and estimated publication timeline." "claude-opus-4-5" "HIGH" "$SP02" '[
+A2=$(post_inline "Agent: HNP-GOVT-02 Investigation Angle Detector" "/api/agents" "$(mk_agent_payload "HNP-GOVT-02" "HNP-GOVT-02 Investigation Angle Detector" "Receives the structured corpus extraction and applies investigative-journalism heuristics to identify publishable story angles. Scores each angle on newsworthiness, evidence strength, public interest, verification complexity, and estimated publication timeline." "claude-haiku-4-5" "HIGH" "$SP02" '[
   {"id":"get_investigative_standards","name":"get_investigative_standards","description":"HNP editorial standards","rateLimit":100,"timeout":10000},
   {"id":"get_official_profile","name":"get_official_profile","description":"Official term/votes/contributors","rateLimit":100,"timeout":10000},
   {"id":"get_entity_ontology","name":"get_entity_ontology","description":"TX govt entity definitions","rateLimit":100,"timeout":10000},
@@ -342,7 +342,7 @@ A2=$(post_inline "Agent: HNP-GOVT-02 Investigation Angle Detector" "/api/agents"
   {"id":"get_jurisdiction_foia_rules","name":"get_jurisdiction_foia_rules","description":"Jurisdiction FOIA rules","rateLimit":100,"timeout":10000}
 ]')")
 
-A3=$(post_inline "Agent: HNP-GOVT-03 Story Draft Agent" "/api/agents" "$(mk_agent_payload "HNP-GOVT-03" "HNP-GOVT-03 Story Draft Agent" "Triggered after reporter approves at least one angle at the Review Brief gate. Produces a structured story skeleton: lede options, key facts in narrative order, verbatim quotes, interview-target list, and placeholder markers for reporter-gathered material. Every claim is marked with its source citation." "claude-opus-4-5" "HIGH" "$SP03" '[
+A3=$(post_inline "Agent: HNP-GOVT-03 Story Draft Agent" "/api/agents" "$(mk_agent_payload "HNP-GOVT-03" "HNP-GOVT-03 Story Draft Agent" "Triggered after reporter approves at least one angle at the Review Brief gate. Produces a structured story skeleton: lede options, key facts in narrative order, verbatim quotes, interview-target list, and placeholder markers for reporter-gathered material. Every claim is marked with its source citation." "claude-haiku-4-5" "HIGH" "$SP03" '[
   {"id":"search_transcript_corpus","name":"search_transcript_corpus","description":"Full-text search transcripts","rateLimit":100,"timeout":15000},
   {"id":"get_transcript_by_meeting","name":"get_transcript_by_meeting","description":"Retrieve full transcript","rateLimit":100,"timeout":15000},
   {"id":"create_story_draft","name":"create_story_draft","description":"Create CMS story draft (source-attribution gate)","rateLimit":50,"timeout":20000},
@@ -350,7 +350,7 @@ A3=$(post_inline "Agent: HNP-GOVT-03 Story Draft Agent" "/api/agents" "$(mk_agen
   {"id":"set_story_tags","name":"set_story_tags","description":"Set story tags","rateLimit":100,"timeout":10000}
 ]')")
 
-A4=$(post_inline "Agent: HNP-GOVT-04 FOIA Request Generator" "/api/agents" "$(mk_agent_payload "HNP-GOVT-04" "HNP-GOVT-04 FOIA Request Generator" "Triggered alongside Story Draft. Analyses approved story angles to identify public records that would strengthen each claim. Generates Texas PIA letters addressed to the correct records officer based on the jurisdiction knowledge base, then files them via the public-records portal." "claude-sonnet-4-5" "MEDIUM" "$SP04" '[
+A4=$(post_inline "Agent: HNP-GOVT-04 FOIA Request Generator" "/api/agents" "$(mk_agent_payload "HNP-GOVT-04" "HNP-GOVT-04 FOIA Request Generator" "Triggered alongside Story Draft. Analyses approved story angles to identify public records that would strengthen each claim. Generates Texas PIA letters addressed to the correct records officer based on the jurisdiction knowledge base, then files them via the public-records portal." "claude-haiku-4-5" "MEDIUM" "$SP04" '[
   {"id":"get_jurisdiction_foia_rules","name":"get_jurisdiction_foia_rules","description":"Jurisdiction FOIA rules","rateLimit":100,"timeout":10000},
   {"id":"get_agency_officer","name":"get_agency_officer","description":"Confirm agency routing","rateLimit":100,"timeout":10000},
   {"id":"get_entity_ontology","name":"get_entity_ontology","description":"TX govt entity disambiguation","rateLimit":100,"timeout":10000},
