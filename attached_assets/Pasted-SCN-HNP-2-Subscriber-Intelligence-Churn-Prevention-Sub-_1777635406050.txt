@@ -1,0 +1,70 @@
+SCN-HNP-2 Subscriber Intelligence & Churn Prevention
+
+Sub-segment: Metro Digital Subscriptions — Audience Retention | Newsrooms: Houston Chronicle, San Antonio Express-News
+
+Business Problem
+Hurricane Mara creates an acute subscriber management challenge that plays out across every major weather event, election night, and breaking news cycle at HNP. During a crisis, digital subscriptions spike dramatically as readers seek trusted local coverage. But the post-event drop-off is equally sharp: readers who subscribed during the storm cancel within 30–60 days once the acute news cycle ends, reasoning they ‘got what they needed.’ HNP currently has no systematic mechanism to identify these at-risk subscribers, personalise their post-event content experience, or trigger retention offers before they cancel. By the time the cancellation request arrives, the opportunity is gone.
+
+The Houston Chronicle has 280,000 digital subscribers. 23% are in storm-affected zip codes. Historical data from Hurricane Harvey shows that cancellation rates in storm-affected zip codes spike 340% in weeks 3–6 post-event. Atlas must identify the at-risk cohort now — while they are still engaged — and execute a personalised retention sequence before the disengagement pattern takes hold.
+
+Demo Narrative & Story Arc
+1.  Show the Atlas Subscriber Intelligence pipeline triggering automatically on the storm landfall event (fed from the Breaking News pipeline in SCN-HNP-4). The event context injection activates: storm_affected_subscriber_analysis mode. Pipeline begins processing Houston Chronicle’s subscriber behavioural data.
+2.  HNP-SUB-01 (Subscriber Signal Monitor) output populates in real time: 64,400 subscribers in storm-affected zip codes identified. Behavioural segmentation running: storm-driven new subscribers (subscribed in last 72 hrs) vs. existing subscribers now in high-engagement mode vs. existing subscribers showing early disengagement signals.
+3.  Open the churn risk heatmap. Show the three cohorts: ‘High engagement, low churn risk’ (green, 41K subscribers) — currently consuming 3x their normal content; ‘Event-driven new subscribers’ (amber, 8K) — subscribed in past 72 hours, not yet price-aware, highest 60-day churn risk; ‘Pre-existing low engagement’ (red, 15K) — were already reducing engagement before the storm, now paradoxically re-engaged but most likely to cancel in weeks 3–4.
+4.  HNP-SUB-02 (Churn Prediction Engine) produces individual risk scores for each subscriber in the amber and red cohorts. Show two sample subscribers: one with 87% 60-day churn probability (subscribed 6 months ago, had already reduced to 1 session/week, storm-driven spike is temporary), one with 34% risk (18 months tenure, steady 4–5 sessions/week, lives in flood-affected area).
+5.  HNP-SUB-03 (Personalised Re-engagement Generator) activates for the amber and red cohorts. Show three content sequences being generated in parallel: (a) storm-driven new subscribers receive a ‘This is what the Chronicle does for Houston’ sequence — surfacing 3 non-storm stories from their inferred interest areas to demonstrate year-round value; (b) red-cohort subscribers in flooded zip codes receive a 30-day free extension offer plus a curated ‘Recovery guide for your neighbourhood’ content package; (c) red-cohort price-sensitive subscribers receive a reduced-rate offer triggered only after two days of no engagement.
+6.  Show the editorial approval gate: Audience Editor Review. The Audience Editor reviews the content sequence logic for each cohort (not every individual email — the cohort-level rules). She approves sequences for cohorts (a) and (c), modifies cohort (b) — ‘add the flood assistance resource links from the county’ — and the pipeline updates the template.
+
+Agent Pipeline
+Agent ID	Agent Name	Model	Role	MCP Tools	Skills
+HNP-SUB-01	Subscriber Signal Monitor	claude-sonnet-4-6	Ingests real-time subscriber behavioural signals from HNP’s subscriber data platform: session frequency, article depth, section preferences, notification open rates, and device patterns. Applies geographic segmentation against storm-impact zone shapefiles. Classifies each subscriber into engagement cohorts. Updates continuously as new behavioural signals arrive.	• hnp_subscriber_mcp
+• hnp_geo_mcp	• Behavioural Signal Processing
+• Geographic Segmentation
+• Cohort Classification
+• Real-Time Data Streaming
+HNP-SUB-02	Churn Prediction Engine	claude-sonnet-4-6	Applies trained churn prediction model to each subscriber in at-risk cohorts. Features: tenure, engagement velocity (acceleration/deceleration), content breadth, payment method, acquisition channel, past pause/cancel behaviour. Returns 30-day and 60-day churn probability scores with primary churn driver explanation per subscriber. Does not use LLM for prediction — deterministic ML model via MCP, LLM used only for explanation generation.	• hnp_subscriber_mcp
+• hnp_churn_model_mcp	• Churn Probability Scoring
+• Feature Importance Explanation
+• Cohort Risk Stratification
+HNP-SUB-03	Re-engagement Content Generator	claude-opus-4-5	Generates personalised content sequences for each at-risk cohort. Reads subscriber’s inferred interest profile, tenure, and churn driver to determine the appropriate intervention: content recommendation sequence, offer type, message tone, and send timing. Produces email subject line variants (3 per cohort), in-app notification copy, and content package curation logic. All outputs require Audience Editor approval before activation.	• hnp_content_api_mcp
+• hnp_subscriber_mcp
+• hnp_knowledge_base_mcp	• Personalised Content Sequencing
+• Email Copy Generation
+• Offer Logic Design
+• Tone Calibration by Tenure and Risk Profile
+HNP-SUB-04	Retention Outcome Tracker	claude-sonnet-4-6	Background observer agent. Records cohort assignment, intervention applied, and outcome (retained, paused, cancelled) for every subscriber in the re-engagement pipeline. Produces weekly cohort-level performance reports with A/B test results where intervention variants were deployed. Feeds outcome data back to the KB as training signal for future churn model calibration.	• hnp_subscriber_mcp
+• atlas_audit_trail_mcp	• A/B Test Tracking
+• Cohort Performance Reporting
+• Model Feedback Loop
+• Retention ROI Calculation
+
+⚙ Platform Intelligence Setup in Atlas
+Outcome Contract
+Contract Name: HNP Subscriber Churn Prevention — Post-Event Retention
+Risk Tier: Medium — personalised subscriber outreach; brand voice and offer accuracy matter
+KPIs: At-Risk Cohort Identification Time (<4 hours post-event) | 60-Day Retained Rate for Amber Cohort (target: >65% vs. 45% baseline) | New-Subscriber 90-Day Retention (target: >55% vs. 38% baseline) | Revenue Retained per Pipeline Run
+Drift Threshold: Cohort retained rate drops below baseline for two consecutive events triggers re-engagement sequence review
+
+Knowledge Bases (KB System)
+•  HNP Subscriber Behavioural History — 24-month engagement history for Houston Chronicle digital subscribers: session data, content consumption patterns, notification interactions, payment history, past churn/re-subscription events
+•  HNP Brand Voice Guide — Editorial tone standards for subscriber-facing communications: what the Chronicle sounds like vs. a generic media brand. Prohibits artificial urgency language; requires genuine local connection.
+•  HNP Retention Playbook — Historical retention campaign performance data: which offers worked for which cohorts in past events (Harvey 2017, Winter Storm Uri 2021, COVID surge 2020). Evidence base for cohort-specific intervention design.
+
+MCP Server Integrations
+•  HNP Subscriber MCP — get_subscriber_profile, get_engagement_signals, update_subscriber_segment, get_cohort_stats, send_trigger_event
+•  HNP Churn Model MCP — get_churn_score, get_feature_importance, get_cohort_risk_distribution
+•  HNP Geo MCP — classify_zip_by_storm_impact, get_flood_zone_data, get_neighbourhood_profile
+•  HNP Content API MCP — get_articles_by_interest_profile, get_recovery_resource_content, get_section_top_stories
+
+Governance Policies
+Audience Editor Approval Gate — all re-engagement sequences require cohort-level editorial review before activation; no automated sends without approval
+Offer Authority Boundary — agents can propose but not activate subscription price changes; all offer activations require confirmation from subscription operations
+No Dark Pattern Policy — re-engagement copy reviewed against HNP brand voice guide; artificial scarcity, countdown timers, and misleading subject lines are blocked
+
+Key Atlas Screens to Demo
+Pipeline Dashboard → Subscriber Intelligence pipeline showing 64,400 storm-affected subscriber count
+Live Runs → Cohort heatmap with three risk segments (green/amber/red) and subscriber counts
+Live Runs → HNP-SUB-02 sample subscriber cards showing churn probability and primary driver
+Live Runs → HNP-SUB-03 content sequence output for each cohort with email variants
+Approvals → Audience Editor Review queue with cohort-level approve/modify controls
+Analytics → Retention Outcome Tracker showing live cohort response rates as sequence deploys

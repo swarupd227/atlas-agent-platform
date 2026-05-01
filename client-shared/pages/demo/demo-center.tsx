@@ -417,6 +417,23 @@ const DEMOS: Demo[] = [
     badge: "New",
   },
   {
+    id: "hnp-sub",
+    title: "Subscriber Intelligence & Churn Prevention",
+    client: "Hearst Newspapers",
+    description:
+      "SCN-HNP-2 — Hurricane Mara landfall +24 hours. 280,000 Houston Chronicle digital subscribers; 64,400 in storm-affected zip codes. HNP-SUB-01 (Signal Monitor) classifies green / amber / red cohorts using live engagement signals and FEMA flood-zone data → HNP-SUB-02 (Churn Prediction Engine) applies Harvey-calibrated model across 23,400 at-risk subscribers → Audience Editor gate → HNP-SUB-03 (Content Generator) + HNP-SUB-04 (Outcome Tracker) in parallel. 4 mock MCP servers (Subscriber Platform, Churn Model, Geo Intelligence, Content API) with 15 tools. Governance: Audience Editor Approval Gate, Offer Authority Boundary, No Dark Pattern Policy. Happy path + 2 exceptions: editor modifies cohort-b to add flood links; offer-boundary-breach blocks 30% discount activation.",
+    industry: "Media & Entertainment",
+    industryId: "media_entertainment",
+    stage: "Subscriber Retention",
+    route: "/demo/hnp-sub",
+    icon: TrendingDown,
+    iconColor: "#6B21A8",
+    duration: "10 min",
+    screens: 1,
+    tags: ["Churn Prevention", "Subscriber Intelligence", "Hurricane Mara", "Houston Chronicle", "Audience Editor"],
+    badge: "New",
+  },
+  {
     id: "advantive-support",
     title: "AI-First Tier 1 Support Intelligence",
     client: "Advantive ONE",

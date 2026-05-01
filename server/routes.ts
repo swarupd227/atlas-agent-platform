@@ -77,7 +77,12 @@ import hnpAssemblyRouter      from "./mock-mcp/hnp-assembly";
 import hnpKnowledgeBaseRouter from "./mock-mcp/hnp-knowledge-base";
 import hnpPublicRecordsRouter from "./mock-mcp/hnp-public-records";
 import hnpCmsRouter           from "./mock-mcp/hnp-cms";
+import hnpSubscriberRouter    from "./mock-mcp/hnp-subscriber";
+import hnpChurnModelRouter    from "./mock-mcp/hnp-churn-model";
+import hnpGeoRouter           from "./mock-mcp/hnp-geo";
+import hnpContentApiRouter    from "./mock-mcp/hnp-content-api";
 import { hnpGovtLiveRunHandler, getHnpGovtAgentRuns, resetHnpGovtDemo } from "./hnp-govt-live-run";
+import { hnpSubLiveRunHandler, getHnpSubAgentRuns, resetHnpSubDemo } from "./hnp-sub-live-run";
 import { bbLiveRunHandler, getBBAgentRuns, getBBOutcomeData, getBBSelfHealingStatus, resetBBDemo, ensureBBAgents } from "./blackbook-live-run";
 import { registerMockMcpServers } from "./mock-mcp/register";
 import piiRouter from "./routes/pii";
@@ -244,6 +249,15 @@ export async function registerRoutes(
   app.get("/demo-api/hnp-govt/live-run",   hnpGovtLiveRunHandler);
   app.get("/demo-api/hnp-govt/agent-runs", getHnpGovtAgentRuns);
   app.post("/demo-api/hnp-govt/reset",     resetHnpGovtDemo);
+
+  // HNP Subscriber Intelligence & Churn Prevention (HNP-SUB) — Hearst Newspapers demo
+  app.use("/api/mock/hnp-subscriber",      hnpSubscriberRouter);
+  app.use("/api/mock/hnp-churn-model",     hnpChurnModelRouter);
+  app.use("/api/mock/hnp-geo",             hnpGeoRouter);
+  app.use("/api/mock/hnp-content-api",     hnpContentApiRouter);
+  app.get("/demo-api/hnp-sub/live-run",    hnpSubLiveRunHandler);
+  app.get("/demo-api/hnp-sub/agent-runs",  getHnpSubAgentRuns);
+  app.post("/demo-api/hnp-sub/reset",      resetHnpSubDemo);
 
   app.get("/demo-api/blackbook/live-run",    bbLiveRunHandler);
   app.get("/demo-api/blackbook/agent-runs",  getBBAgentRuns);
