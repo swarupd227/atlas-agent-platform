@@ -389,9 +389,18 @@ function Sub04OutputCard({ raw }: { raw: any }) {
       )}
       {Array.isArray(raw.outcomeCheckpoints) && (
         <div className="flex flex-wrap gap-2">
-          {raw.outcomeCheckpoints.map((cp: string, i: number) => (
-            <span key={i} className="text-[11px] px-2 py-0.5 rounded bg-muted text-muted-foreground font-mono">{cp}</span>
-          ))}
+          {raw.outcomeCheckpoints.map((cp: any, i: number) => {
+            const label = typeof cp === "string"
+              ? cp
+              : cp?.week != null
+                ? `Week ${cp.week}: ${cp.metric}`
+                : cp?.day != null
+                  ? `Day ${cp.day}: ${cp.metric}`
+                  : JSON.stringify(cp);
+            return (
+              <span key={i} className="text-[11px] px-2 py-0.5 rounded bg-muted text-muted-foreground font-mono">{label}</span>
+            );
+          })}
         </div>
       )}
       {raw.harveySentinel && (
