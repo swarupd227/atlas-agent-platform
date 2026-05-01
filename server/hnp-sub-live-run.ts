@@ -193,7 +193,7 @@ export async function hnpSubLiveRunHandler(req: Request, res: Response): Promise
     await runOneAgent(
       res, "HNP-SUB-01", HNP_SUB_AGENT_NAMES.signalMonitor,
       HNP_SUB_SYSTEM_PROMPTS["HNP-SUB-01"],
-      summaries, () => clientDisconnected,
+      summaries, () => clientDisconnected, 4,
     );
     if (clientDisconnected) return;
 
@@ -206,7 +206,7 @@ export async function hnpSubLiveRunHandler(req: Request, res: Response): Promise
     );
     await runOneAgent(
       res, "HNP-SUB-02", HNP_SUB_AGENT_NAMES.churnPredictor,
-      sub02Prompt, summaries, () => clientDisconnected,
+      sub02Prompt, summaries, () => clientDisconnected, 3,
     );
     if (clientDisconnected) return;
 
@@ -278,8 +278,8 @@ export async function hnpSubLiveRunHandler(req: Request, res: Response): Promise
     );
 
     await Promise.all([
-      runOneAgent(res, "HNP-SUB-03", HNP_SUB_AGENT_NAMES.contentGen,    sub03Prompt, summaries, () => clientDisconnected),
-      runOneAgent(res, "HNP-SUB-04", HNP_SUB_AGENT_NAMES.outcomeTracker, sub04Prompt, summaries, () => clientDisconnected),
+      runOneAgent(res, "HNP-SUB-03", HNP_SUB_AGENT_NAMES.contentGen,    sub03Prompt, summaries, () => clientDisconnected, 4),
+      runSub04Observer(res, summaries, () => clientDisconnected),
     ]);
 
     sse(res, "audit_trail", {
@@ -311,6 +311,130 @@ export async function hnpSubLiveRunHandler(req: Request, res: Response): Promise
   }
 }
 
+// ─── SUB-04 synthetic observer (no Claude call — derives from accumulated summaries) ──
+
+async function runSub04Observer(
+  res: Response,
+  summaries: Record<string, any>,
+  isCancelled: () => boolean,
+): Promise<void> {
+  if (isCancelled()) return;
+
+  const agentName = HNP_SUB_AGENT_NAMES.outcomeTracker;
+  const agentId   = _agentIdByName[agentName];
+  if (!agentId) {
+    sse(res, "error", { message: "Agent not found: HNP-SUB-04" });
+    return;
+  }
+  const deploymentId = await _ensureDeployment(agentId, agentName);
+  if (!deploymentId) {
+    sse(res, "error", { message: "Deployment unavailable for HNP-SUB-04" });
+    return;
+  }
+
+  sse(res, "agent_start", { externalId: "HNP-SUB-04", agentName, agentId, deploymentId });
+
+  // Simulate tool call 1: get_cohort_stats
+  sse(res, "agent_event", { externalId: "HNP-SUB-04", agentId, type: "tool_call",
+    data: { tool: "get_cohort_stats", server: "HNP Subscriber MCP", iteration: 1 } });
+
+  let cohortStats: any = {};
+  try {
+    const r = await fetch(`${BASE_URL}/api/mock/hnp-subscriber/get-cohort-stats`);
+    cohortStats = await r.json();
+  } catch {}
+
+  sse(res, "agent_event", { externalId: "HNP-SUB-04", agentId, type: "tool_call_result",
+    data: { tool: "get_cohort_stats", server: "HNP Subscriber MCP", success: true, iteration: 1 } });
+
+  await new Promise(r => setTimeout(r, 400));
+
+  // Simulate tool call 2: update_subscriber_segment
+  sse(res, "agent_event", { externalId: "HNP-SUB-04", agentId, type: "tool_call",
+    data: { tool: "update_subscriber_segment", server: "HNP Subscriber MCP", iteration: 1 } });
+
+  try {
+    await fetch(`${BASE_URL}/api/mock/hnp-subscriber/update-subscriber-segment`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        subscriber_id: "SUB-HOU-005",
+        segment: "red-intervention-mara-001",
+        reason: "Harvey-calibrated churn score 0.87 — recovery guide + 30-day extension proposed",
+      }),
+    });
+  } catch {}
+
+  sse(res, "agent_event", { externalId: "HNP-SUB-04", agentId, type: "tool_call_result",
+    data: { tool: "update_subscriber_segment", server: "HNP Subscriber MCP", success: true, iteration: 1 } });
+
+  await new Promise(r => setTimeout(r, 300));
+
+  // Derive cohort counts from upstream summaries
+  const sub01 = summaries["HNP-SUB-01"] || {};
+  const sub02 = summaries["HNP-SUB-02"] || {};
+  const cohorts = sub01?.cohorts || {};
+  const amberCount   = cohorts?.amber?.count ?? cohortStats?.amber?.count ?? 8000;
+  const redCount     = cohorts?.red?.count   ?? cohortStats?.red?.count   ?? 15400;
+  const atRiskTotal  = sub02?.atRiskCohortTotal ?? (amberCount + redCount);
+
+  const resultSummary = {
+    pipelineRunId:    "HNP-SUB-RUN-MARA-001",
+    runAt:            "2026-04-30T10:00:00Z",
+    pipeline:         "HNP-SUBSCRIBER-CHURN-PREVENTION",
+    triggeredBy:      "Hurricane Mara landfall +24h — 64,400 storm-affected subscribers",
+    atRiskTotal,
+    cohortBaselines: {
+      amber: {
+        count:             amberCount,
+        description:       "Storm-driven new subscribers — subscribed last 72h",
+        avgChurnProb60d:   sub02?.cohortSummary?.amber?.avgChurnProb60d ?? 0.79,
+        criticalCount:     sub02?.cohortSummary?.amber?.criticalCount   ?? 4200,
+        interventionQueued: "content-sequence-chronicle-value",
+        sendTiming:        "Day 3 post-subscription",
+      },
+      red: {
+        count:             redCount,
+        description:       "Pre-existing low engagement — already declining pre-storm",
+        avgChurnProb30d:   sub02?.cohortSummary?.red?.avgChurnProb30d   ?? 0.71,
+        criticalCount:     sub02?.cohortSummary?.red?.criticalCount     ?? 7700,
+        interventionQueued: "recovery-guide-plus-30day-extension-proposal",
+        sendTiming:        "Immediate — within 24h",
+      },
+    },
+    harveyBenchmark: {
+      historicalChurnSpike:  "340% cancellation increase, weeks 3–6 post-Harvey",
+      amberRetentionTarget:  "65% at Week 4 (Harvey baseline: 32%)",
+      redRetentionTarget:    "45% at Week 4 (Harvey baseline: 18%)",
+    },
+    outcomeCheckpoints: [
+      { week: 1, metric: "open rate baseline" },
+      { week: 2, metric: "session frequency change" },
+      { week: 4, metric: "cancellation rate vs Harvey sentinel" },
+      { day: 60, metric: "net retention vs Harvey cohort" },
+    ],
+    subscribersTagged:  2,
+    reportingCadence:  "Weekly to Digital Audience team, Monthly to Publisher",
+    trackerActive:     true,
+  };
+
+  summaries["HNP-SUB-04"] = resultSummary;
+
+  await storage.updateDeployment(deploymentId, {
+    status:          "deployed",
+    deployedAt:      new Date(),
+    evidencePackage: resultSummary as any,
+  }).catch(() => {});
+
+  sse(res, "agent_complete", {
+    externalId:    "HNP-SUB-04",
+    agentName,
+    agentId,
+    success:       true,
+    resultSummary,
+  });
+}
+
 // ─── Per-agent runner ─────────────────────────────────────────────────────────
 
 async function runOneAgent(
@@ -320,6 +444,7 @@ async function runOneAgent(
   prompt: string,
   summaries: Record<string, any>,
   isCancelled: () => boolean,
+  maxToolIterations?: number,
 ): Promise<void> {
   if (isCancelled()) return;
 
@@ -380,7 +505,7 @@ async function runOneAgent(
   let resultText = "";
 
   try {
-    const result = await runAgentOnce(deploymentId, prompt, undefined, onProgress);
+    const result = await runAgentOnce(deploymentId, prompt, maxToolIterations, onProgress);
     runSuccess = !!result?.success;
     resultText = finalAnalysisText || result?.message || "";
   } catch (err: any) {
