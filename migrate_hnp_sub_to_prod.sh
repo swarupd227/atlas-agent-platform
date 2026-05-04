@@ -21,7 +21,7 @@
 
 set -euo pipefail
 
-PROD_BASE_URL="${PROD_BASE_URL:-https://agent-lifecycle-management-platform.replit.app}"
+PROD_BASE_URL="${PROD_BASE_URL:-https://atlas-agent-platform.replit.app}"
 BASE_URL="$PROD_BASE_URL"
 MOCK_BASE_URL="${MOCK_BASE_URL:-$PROD_BASE_URL}"
 
