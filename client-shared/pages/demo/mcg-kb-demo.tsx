@@ -801,6 +801,53 @@ export default function McgKbDemo() {
 
   const selectedDef = ARTIFACT_DEFS.find(a => a.key === selectedArtifact);
 
+  // Derive per-artifact status from QA results so the grid is scenario-aware
+  const flaggedArtifacts = useMemo<Set<string>>(() => {
+    const violations: any[] = agentRun.summary?.hard_violations ?? [];
+    const s = new Set<string>();
+    for (const v of violations) {
+      // Primary: location field like "brand_policy.naming_rules.legacy_alias"
+      const loc: string = v.location ?? v.artifact ?? "";
+      const locKey = loc.split(".")[0].split("[")[0];
+      if (locKey) { s.add(locKey); continue; }
+      // Fallback: derive affected artifacts from known rule IDs
+      const rule: string = (v.rule ?? v.rule_id ?? "").toLowerCase();
+      if (rule.includes("prohibited_term")) {
+        s.add("brand_policy");
+        s.add("naming_alias_map");
+      } else if (rule.includes("trademark")) {
+        s.add("brand_policy");
+      }
+    }
+    // If QA is blocked but Claude didn't include violation details, flag by count
+    if (s.size === 0 && agentRun.summary?.status === "QA_BLOCKED" && (agentRun.summary?.hard_violations_count ?? 0) > 0) {
+      s.add("brand_policy");
+      s.add("naming_alias_map");
+    }
+    return s;
+  }, [agentRun.summary]);
+
+  const warnedArtifacts = useMemo<Set<string>>(() => {
+    const warnings: any[] = agentRun.summary?.soft_warnings ?? [];
+    const s = new Set<string>();
+    for (const w of warnings) {
+      // Primary: location field
+      const loc: string = w.location ?? w.artifact ?? "";
+      const locKey = loc.split(".")[0].split("[")[0];
+      if (locKey) { s.add(locKey); continue; }
+      // Fallback: derive from known rule names
+      const rule: string = (w.rule ?? w.rule_id ?? "").toLowerCase();
+      if (rule.includes("source_hash") || rule.includes("hash_required")) {
+        s.add("source_provenance");
+      }
+    }
+    // If QA passed with warnings but no location, flag source_provenance by default
+    if (s.size === 0 && agentRun.summary?.status === "QA_WARN" && (agentRun.summary?.soft_warnings_count ?? 0) > 0) {
+      s.add("source_provenance");
+    }
+    return s;
+  }, [agentRun.summary]);
+
   return (
     <div className="min-h-screen bg-background">
       {/* ── Header ─────────────────────────────────────────────────────────────── */}
@@ -1026,7 +1073,7 @@ export default function McgKbDemo() {
         {/* ── Bundle artifacts grid ─────────────────────────────────────────────── */}
         {agentRun.state === "ok" && agentRun.summary && (
           <div className="border rounded-lg overflow-hidden" data-testid="bundle-artifacts">
-            <div className="flex items-center gap-2 px-5 pt-5 pb-4">
+            <div className="flex items-center gap-2 px-5 pt-5 pb-3">
               <Package className="w-4 h-4" style={{ color: MCG_COLOR }} />
               <span className="font-semibold text-sm">Bundle Artifacts</span>
               <span className="text-xs text-muted-foreground">
@@ -1039,28 +1086,95 @@ export default function McgKbDemo() {
               )}
             </div>
 
+            {/* ── QA status banner (scenario-aware) ── */}
+            {qaResult && (
+              <div className={`mx-5 mb-3 px-3 py-2 rounded border flex items-start gap-2 text-xs ${
+                qaResult.status === "QA_BLOCKED"
+                  ? "bg-red-950/20 border-red-500/30 text-red-300"
+                  : qaResult.status === "QA_WARN"
+                  ? "bg-amber-950/20 border-amber-500/30 text-amber-300"
+                  : "bg-emerald-950/20 border-emerald-500/20 text-emerald-300"
+              }`} data-testid="qa-status-banner">
+                <span className="mt-0.5 shrink-0">{qaStatusIcon}</span>
+                <div>
+                  <span className="font-semibold">
+                    {qaResult.status === "QA_BLOCKED" ? "QA Blocked" :
+                     qaResult.status === "QA_WARN"    ? "QA Passed with Warnings" :
+                     "QA Passed"}
+                  </span>
+                  {qaResult.status !== "QA_BLOCKED" && (
+                    <span className="ml-1.5 font-mono opacity-80">Score: {qaResult.qa_score} / 100</span>
+                  )}
+                  {qaResult.status === "QA_BLOCKED" && (
+                    <span className="ml-1.5 opacity-80">
+                      {qaResult.hard_violations_count} hard violation{qaResult.hard_violations_count !== 1 ? "s" : ""} detected — bundle cannot be promoted until resolved.
+                    </span>
+                  )}
+                  {qaResult.status === "QA_WARN" && (
+                    <span className="ml-1.5 opacity-80">
+                      {qaResult.soft_warnings_count} warning{qaResult.soft_warnings_count !== 1 ? "s" : ""} — human acknowledgement required before promotion.
+                    </span>
+                  )}
+                  {flaggedArtifacts.size > 0 && (
+                    <div className="mt-1 opacity-70">
+                      Affected artifacts: {[...flaggedArtifacts].join(", ")}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-3 md:grid-cols-4 gap-2 px-5 pb-4">
               {ARTIFACT_DEFS.map(def => {
                 const isSelected = selectedArtifact === def.key;
                 const isLoading  = artifactLoadingKey === def.key;
+                const isFlagged  = flaggedArtifacts.has(def.key);
+                const isWarned   = !isFlagged && warnedArtifacts.has(def.key);
+
+                const baseStyle = isSelected
+                  ? {}
+                  : isFlagged
+                  ? {}
+                  : isWarned
+                  ? {}
+                  : {};
+
+                const cardClass = isSelected
+                  ? "border-current bg-background shadow-sm"
+                  : isFlagged
+                  ? "border-red-500/50 bg-red-950/15 hover:border-red-500/70"
+                  : isWarned
+                  ? "border-amber-500/40 bg-amber-950/10 hover:border-amber-500/60"
+                  : "border-emerald-500/25 bg-emerald-500/8 hover:border-emerald-500/50 hover:bg-emerald-500/12";
+
+                const cardStyle = isSelected
+                  ? { borderColor: MCG_COLOR, color: MCG_COLOR }
+                  : {};
+
                 return (
                   <button
                     key={def.key}
                     onClick={() => handleArtifactClick(def.key)}
                     data-testid={`artifact-${def.key}`}
-                    className={`text-left flex items-start gap-1.5 text-[11px] px-2.5 py-2 rounded border transition-all ${
-                      isSelected
-                        ? "border-current bg-background shadow-sm"
-                        : "border-emerald-500/25 bg-emerald-500/8 hover:border-emerald-500/50 hover:bg-emerald-500/12"
-                    }`}
-                    style={isSelected ? { borderColor: MCG_COLOR, color: MCG_COLOR } : {}}
+                    className={`text-left flex items-start gap-1.5 text-[11px] px-2.5 py-2 rounded border transition-all ${cardClass}`}
+                    style={cardStyle}
                   >
-                    {isLoading
-                      ? <Activity className="w-3 h-3 mt-0.5 shrink-0 animate-spin text-muted-foreground" />
-                      : <CheckCircle2 className={`w-3 h-3 mt-0.5 shrink-0 ${isSelected ? "" : "text-emerald-400"}`} style={isSelected ? { color: MCG_COLOR } : {}} />
-                    }
+                    {isLoading ? (
+                      <Activity className="w-3 h-3 mt-0.5 shrink-0 animate-spin text-muted-foreground" />
+                    ) : isFlagged ? (
+                      <XCircle className="w-3 h-3 mt-0.5 shrink-0 text-red-400" />
+                    ) : isWarned ? (
+                      <AlertTriangle className="w-3 h-3 mt-0.5 shrink-0 text-amber-400" />
+                    ) : (
+                      <CheckCircle2
+                        className={`w-3 h-3 mt-0.5 shrink-0 ${isSelected ? "" : "text-emerald-400"}`}
+                        style={isSelected ? { color: MCG_COLOR } : {}}
+                      />
+                    )}
                     <div>
-                      <div className={`font-medium leading-tight ${isSelected ? "" : "text-foreground/80"}`}>{def.label}</div>
+                      <div className={`font-medium leading-tight ${
+                        isFlagged ? "text-red-300" : isWarned ? "text-amber-300" : isSelected ? "" : "text-foreground/80"
+                      }`}>{def.label}</div>
                       <div className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{def.description}</div>
                     </div>
                   </button>
