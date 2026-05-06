@@ -614,7 +614,8 @@ export default function McgKbDemo() {
   const [promoting, setPromoting]           = useState(false);
   const [selectedArtifact, setSelectedArtifact] = useState<string | null>(null);
   const [artifactData, setArtifactData]         = useState<Record<string, any>>({});
-  const [artifactLoading, setArtifactLoading]   = useState(false);
+  const [artifactLoadingKey, setArtifactLoadingKey] = useState<string | null>(null);
+  const detailPanelRef = useRef<HTMLDivElement | null>(null);
 
   const esRef      = useRef<EventSource | null>(null);
   const logEndRef  = useRef<HTMLDivElement | null>(null);
@@ -624,29 +625,40 @@ export default function McgKbDemo() {
     logEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [events]);
 
-  // Fetch artifact data from KB MCP when run completes
-  useEffect(() => {
-    if (agentRun.state !== "ok") return;
-    setArtifactLoading(true);
-    const KB_ENDPOINTS: Record<string, string> = {
-      brand_policy:     "/api/mock/mcg-knowledge-base/extract-brand-policy",
-      language_policy:  "/api/mock/mcg-knowledge-base/extract-language-policy",
-      segment_lexicon:  "/api/mock/mcg-knowledge-base/extract-segment-lexicon",
-      naming_alias_map: "/api/mock/mcg-knowledge-base/extract-naming-aliases",
-      dictionary_index: "/api/mock/mcg-knowledge-base/extract-dictionary-index",
-      theme_tokens:     "/api/mock/mcg-knowledge-base/extract-theme-tokens",
-      qa_rules:         "/api/mock/mcg-knowledge-base/derive-qa-rules",
-    };
-    Promise.all(
-      Object.entries(KB_ENDPOINTS).map(([key, url]) =>
-        fetch(url).then(r => r.json()).then(d => [key, d] as [string, any]).catch(() => [key, null] as [string, null])
-      )
-    ).then(results => {
-      const map: Record<string, any> = {};
-      for (const [key, data] of results) if (data) map[key] = data;
-      setArtifactData(map);
-    }).finally(() => setArtifactLoading(false));
-  }, [agentRun.state]);
+  const KB_ENDPOINTS: Record<string, string> = {
+    brand_policy:     "/api/mock/mcg-knowledge-base/extract-brand-policy",
+    language_policy:  "/api/mock/mcg-knowledge-base/extract-language-policy",
+    segment_lexicon:  "/api/mock/mcg-knowledge-base/extract-segment-lexicon",
+    naming_alias_map: "/api/mock/mcg-knowledge-base/extract-naming-aliases",
+    dictionary_index: "/api/mock/mcg-knowledge-base/extract-dictionary-index",
+    theme_tokens:     "/api/mock/mcg-knowledge-base/extract-theme-tokens",
+    qa_rules:         "/api/mock/mcg-knowledge-base/derive-qa-rules",
+  };
+
+  // Lazy-fetch per artifact click; cache results so subsequent clicks are instant
+  const handleArtifactClick = useCallback((key: string) => {
+    setSelectedArtifact(prev => {
+      if (prev === key) return null; // toggle off
+      return key;
+    });
+
+    // If we already have the data, just select; otherwise fetch
+    if (artifactData[key] !== undefined || !KB_ENDPOINTS[key]) {
+      // data already cached or it's a meta-artifact — nothing to fetch
+      setTimeout(() => detailPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 50);
+      return;
+    }
+
+    setArtifactLoadingKey(key);
+    fetch(KB_ENDPOINTS[key])
+      .then(r => r.json())
+      .then(data => setArtifactData(prev => ({ ...prev, [key]: data })))
+      .catch(() => setArtifactData(prev => ({ ...prev, [key]: null })))
+      .finally(() => {
+        setArtifactLoadingKey(null);
+        setTimeout(() => detailPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 50);
+      });
+  }, [artifactData]);
 
   const addEvent = useCallback((type: string, d: any) => {
     counterRef.current += 1;
@@ -668,6 +680,7 @@ export default function McgKbDemo() {
     setRunComplete(null);
     setSelectedArtifact(null);
     setArtifactData({});
+    setArtifactLoadingKey(null);
     counterRef.current = 0;
     setAgentRun(prev => ({ ...prev, state: "idle", toolCalls: 0, summary: undefined, startedAt: undefined, finishedAt: undefined }));
 
@@ -741,6 +754,7 @@ export default function McgKbDemo() {
     setRunComplete(null);
     setSelectedArtifact(null);
     setArtifactData({});
+    setArtifactLoadingKey(null);
     setAgentRun({ externalId: "MCG-KB-INGEST-001", name: "Knowledge Base Ingestion Agent", state: "idle", toolCalls: 0 });
     await fetch("/demo-api/mcg-kb/reset", { method: "POST" }).catch(() => {});
   }, []);
@@ -1023,20 +1037,16 @@ export default function McgKbDemo() {
                   {agentRun.summary.bundle_id} · v1.0.0
                 </span>
               )}
-              {artifactLoading && (
-                <span className="text-[10px] text-muted-foreground flex items-center gap-1">
-                  <Activity className="w-3 h-3 animate-pulse" /> Loading content…
-                </span>
-              )}
             </div>
 
             <div className="grid grid-cols-3 md:grid-cols-4 gap-2 px-5 pb-4">
               {ARTIFACT_DEFS.map(def => {
                 const isSelected = selectedArtifact === def.key;
+                const isLoading  = artifactLoadingKey === def.key;
                 return (
                   <button
                     key={def.key}
-                    onClick={() => setSelectedArtifact(isSelected ? null : def.key)}
+                    onClick={() => handleArtifactClick(def.key)}
                     data-testid={`artifact-${def.key}`}
                     className={`text-left flex items-start gap-1.5 text-[11px] px-2.5 py-2 rounded border transition-all ${
                       isSelected
@@ -1045,7 +1055,10 @@ export default function McgKbDemo() {
                     }`}
                     style={isSelected ? { borderColor: MCG_COLOR, color: MCG_COLOR } : {}}
                   >
-                    <CheckCircle2 className={`w-3 h-3 mt-0.5 shrink-0 ${isSelected ? "" : "text-emerald-400"}`} style={isSelected ? { color: MCG_COLOR } : {}} />
+                    {isLoading
+                      ? <Activity className="w-3 h-3 mt-0.5 shrink-0 animate-spin text-muted-foreground" />
+                      : <CheckCircle2 className={`w-3 h-3 mt-0.5 shrink-0 ${isSelected ? "" : "text-emerald-400"}`} style={isSelected ? { color: MCG_COLOR } : {}} />
+                    }
                     <div>
                       <div className={`font-medium leading-tight ${isSelected ? "" : "text-foreground/80"}`}>{def.label}</div>
                       <div className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{def.description}</div>
@@ -1057,7 +1070,7 @@ export default function McgKbDemo() {
 
             {/* ── Artifact detail panel ── */}
             {selectedArtifact && selectedDef && (
-              <div className="border-t border-border mx-0">
+              <div ref={detailPanelRef} className="border-t border-border mx-0">
                 <div className="px-5 py-4">
                   <div className="flex items-center justify-between mb-4">
                     <div>
@@ -1075,11 +1088,23 @@ export default function McgKbDemo() {
                       <XCircle className="w-4 h-4" />
                     </button>
                   </div>
-                  <ArtifactDetail
-                    artifactKey={selectedArtifact}
-                    artifactData={artifactData}
-                    summary={agentRun.summary}
-                  />
+
+                  {/* Loading skeleton while fetching */}
+                  {artifactLoadingKey === selectedArtifact ? (
+                    <div className="space-y-2 animate-pulse">
+                      <div className="h-3 bg-muted/40 rounded w-2/3" />
+                      <div className="h-3 bg-muted/30 rounded w-full" />
+                      <div className="h-3 bg-muted/30 rounded w-5/6" />
+                      <div className="h-3 bg-muted/20 rounded w-3/4 mt-2" />
+                      <div className="h-3 bg-muted/20 rounded w-full" />
+                    </div>
+                  ) : (
+                    <ArtifactDetail
+                      artifactKey={selectedArtifact}
+                      artifactData={artifactData}
+                      summary={agentRun.summary}
+                    />
+                  )}
                 </div>
               </div>
             )}

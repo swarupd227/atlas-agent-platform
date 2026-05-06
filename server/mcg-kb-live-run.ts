@@ -81,18 +81,20 @@ async function _ensureDeployment(agentId: string): Promise<string | null> {
   if (!deploy) {
     deploy = await storage.createDeployment({
       agentId,
-      agentName: MCG_KB_AGENT_NAME,
+      agentName:        MCG_KB_AGENT_NAME,
       environment:      "production",
-      status:           "pending",
+      status:           "active",       // "active" is not picked up by the auto-run scheduler
       version:          "1.0.0",
       rolloutStrategy:  "canary",
       canaryPercent:    100,
-      pipelineComplete: true,
+      pipelineComplete: false,           // must stay false — true triggers background auto-execution
       deployedAt:       new Date(),
     }).catch(() => null as any);
     if (!deploy) return null;
-  } else {
-    await storage.updateDeployment(deploy.id, { status: "pending", resultSummary: null as any }).catch(() => {});
+  }
+  // Ensure existing deployments don't get picked up by the background scheduler
+  if (deploy.pipelineComplete) {
+    await storage.updateDeployment(deploy.id, { pipelineComplete: false } as any).catch(() => {});
   }
   _deployId = deploy.id;
   return deploy.id;
