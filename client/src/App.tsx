@@ -115,6 +115,7 @@ import OtcCashDemo from "@client-shared/pages/demo/otc-cash-demo";
 import OtcDisputeDemo from "@client-shared/pages/demo/otc-dispute-demo";
 import HnpGovtDemo from "@client-shared/pages/demo/hnp-govt-demo";
 import HnpSubDemo from "@client-shared/pages/demo/hnp-sub-demo";
+import McgKbDemo from "@client-shared/pages/demo/mcg-kb-demo";
 import PkgSchedDemo from "@client-shared/pages/demo/pkg-sched-demo";
 import SHHealthcareDemo from "@client-shared/pages/demo/sh-healthcare-demo";
 import SHFinancialDemo from "@client-shared/pages/demo/sh-financial-demo";
@@ -341,6 +342,7 @@ function DashboardRouter() {
       <Route path="/demo/otc-dispute" component={OtcDisputeDemo} />
       <Route path="/demo/hnp-govt" component={HnpGovtDemo} />
       <Route path="/demo/hnp-sub" component={HnpSubDemo} />
+      <Route path="/demo/mcg-kb" component={McgKbDemo} />
       <Route path="/demo/pkg-sched" component={PkgSchedDemo} />
           <Route path="/demo/onespan" component={OnespanDemo} />
       <Route path="/demo/sh-healthcare" component={SHHealthcareDemo} />

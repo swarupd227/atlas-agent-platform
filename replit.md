@@ -16,9 +16,9 @@ _Populate as you build_
 - **Backend Source**: `server/`
 - **Database Migrations/Schema**: `db/schema.ts`, `drizzle.config.ts`
 - **LLM Provider Abstraction**: `server/llm-provider.ts`
-- **Demo Scripts**: `scripts/` (e.g., `scripts/create-otc-agt-009-dev.js`, `scripts/bb-ext1-provision-dev.mjs`, `provision_hnp_govt_dev.sh`)
+- **Demo Scripts**: `scripts/`, `provision_hnp_govt_dev.sh`, `provision_mcg_kb_dev.sh`, `migrate_mcg_kb_to_prod.sh`
 - **Mock MCP Servers**: `server/mock-mcp/`
-- **Shared Demo Definitions**: `server/hnp-govt-shared-defs.ts`, `server/hnp-sub-shared-defs.ts`
+- **Shared Demo Definitions**: `server/hnp-govt-shared-defs.ts`, `server/hnp-sub-shared-defs.ts`, `server/mcg-kb-shared-defs.ts`
 
 ## Architecture decisions
 - **Blueprint-First Agent Creation**: All agent creation processes are centered around blueprints.
@@ -40,12 +40,14 @@ The Nous Agent Orchestrator is an AI agent lifecycle management platform for aut
 - **Odometer Fraud Detection Demo**: `/demo/blackbook`
 - **HNP Government Beat Intelligence Demo**: `/demo/hnp-govt`
 - **HNP Subscriber Intelligence & Churn Prevention Demo**: `/demo/hnp-sub`
+- **MCG Health KB Onboarding Demo**: `/demo/mcg-kb` — single agent, 7 extraction nodes, 12-artifact bundle, QA gate, human promotion (SCN-MCG-1)
 
 ## User preferences
 I prefer that you ask me before making any major changes to the codebase. When suggesting code, please provide clear explanations for the choices made. I value an iterative development approach, where we can discuss and refine solutions progressively.
 
 ## Gotchas
-- Agent-MCP junction records for HNP Subscriber demo are inserted directly via psql, as the `/api/agents/:id` endpoint does not update `agent_mcp_servers`.
+- Agent-MCP junction records must be inserted via psql for reliability — `POST /api/agents/:id/mcp-servers` with `{serverId}` creates records in `agent_mcp_servers.server_id` but sometimes only the first bind succeeds via the API; use psql for the second binding.
+- MCG-KB dev agent IDs: agent=`fc6bf730`, KB-MCP=`376e6249`, BundleStore-MCP=`930c32d5` (org `09d0d9c2`).
 - `resultSummary` capture for HNP Subscriber demo uses `evidencePackage` DB column for persistence, as `deployments` table lacks a `result_summary` column.
 - For HNP demos, `extractJson()` strips ` ```json``` ` fences; only falls back to runtime `analysis` object if it has a structured shape.
 - MCP tools registered with `annotations: { endpoint, method }` will call hyphenated mock routes (e.g., `get_transcripts` → `GET /get-transcripts`).

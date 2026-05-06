@@ -83,6 +83,9 @@ import hnpGeoRouter           from "./mock-mcp/hnp-geo";
 import hnpContentApiRouter    from "./mock-mcp/hnp-content-api";
 import { hnpGovtLiveRunHandler, getHnpGovtAgentRuns, resetHnpGovtDemo } from "./hnp-govt-live-run";
 import { hnpSubLiveRunHandler, getHnpSubAgentRuns, resetHnpSubDemo } from "./hnp-sub-live-run";
+import mcgKnowledgeBaseRouter from "./mock-mcp/mcg-knowledge-base";
+import mcgBundleStoreRouter   from "./mock-mcp/mcg-bundle-store";
+import { mcgKbLiveRunHandler, getMcgKbAgentRuns, resetMcgKbDemo } from "./mcg-kb-live-run";
 import { bbLiveRunHandler, getBBAgentRuns, getBBOutcomeData, getBBSelfHealingStatus, resetBBDemo, ensureBBAgents } from "./blackbook-live-run";
 import { registerMockMcpServers } from "./mock-mcp/register";
 import piiRouter from "./routes/pii";
@@ -249,6 +252,13 @@ export async function registerRoutes(
   app.get("/demo-api/hnp-govt/live-run",   hnpGovtLiveRunHandler);
   app.get("/demo-api/hnp-govt/agent-runs", getHnpGovtAgentRuns);
   app.post("/demo-api/hnp-govt/reset",     resetHnpGovtDemo);
+
+  // MCG Health — Knowledge Base Onboarding (SCN-MCG-1)
+  app.use("/api/mock/mcg-knowledge-base",  mcgKnowledgeBaseRouter);
+  app.use("/api/mock/mcg-bundle-store",    mcgBundleStoreRouter);
+  app.get("/demo-api/mcg-kb/live-run",     mcgKbLiveRunHandler);
+  app.get("/demo-api/mcg-kb/agent-runs",   getMcgKbAgentRuns);
+  app.post("/demo-api/mcg-kb/reset",       resetMcgKbDemo);
 
   // HNP Subscriber Intelligence & Churn Prevention (HNP-SUB) — Hearst Newspapers demo
   app.use("/api/mock/hnp-subscriber",      hnpSubscriberRouter);
