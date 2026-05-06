@@ -1,62 +1,58 @@
-## Nous Agent Orchestrator
+# Nous Agent Orchestrator
 
-### Overview
-The Nous Agent Orchestrator is an AI agent lifecycle management platform designed for autonomous execution and expert validation. It integrates compliance frameworks, policies, and industry-specific ontologies into AI agent behavior. The platform aims to automate and optimize the AI agent lifecycle across various sectors by providing tools for agent creation, deployment, monitoring, and governance. Its core purpose is to enable AI agents to reason effectively within specific industry contexts, thereby driving business value and ensuring efficient AI operations.
+## Run & Operate
+_Populate as you build_
 
-### User Preferences
+## Stack
+- **Frontend**: React 18, Vite, Tailwind CSS, shadcn/ui, wouter
+- **Backend**: Express.js 4.x
+- **Database**: PostgreSQL
+- **ORM**: Drizzle ORM
+- **LLM Providers**: OpenAI, Anthropic (via Replit AI Integrations gateway or direct API key)
+- **Build Tool**: Vite
+
+## Where things live
+- **Frontend Source**: `client-shared/`
+- **Backend Source**: `server/`
+- **Database Migrations/Schema**: `db/schema.ts`, `drizzle.config.ts`
+- **LLM Provider Abstraction**: `server/llm-provider.ts`
+- **Demo Scripts**: `scripts/` (e.g., `scripts/create-otc-agt-009-dev.js`, `scripts/bb-ext1-provision-dev.mjs`, `provision_hnp_govt_dev.sh`)
+- **Mock MCP Servers**: `server/mock-mcp/`
+- **Shared Demo Definitions**: `server/hnp-govt-shared-defs.ts`, `server/hnp-sub-shared-defs.ts`
+
+## Architecture decisions
+- **Blueprint-First Agent Creation**: All agent creation processes are centered around blueprints.
+- **Multi-Tenancy**: Organization-level data isolation is enforced via `organization_id` in core tables and filtered storage methods.
+- **Unified Workflow State (UWS)**: Provides typed, persistent, reducer-based workflow state across pipeline stages with checkpointing and interrupt gates.
+- **LLM Provider Abstraction**: Supports multiple LLM providers with a uniform interface and per-agent selection.
+- **Event-Driven Trigger System**: Configurable triggers (`webhook`, `schedule`, `agent_completion`, `mcp_resource_change`) for agent automation.
+
+## Product
+The Nous Agent Orchestrator is an AI agent lifecycle management platform for autonomous execution and expert validation.
+- **Agent Lifecycle Management**: Tools for creation, deployment, monitoring, and governance.
+- **Compliance & Governance**: Certified Agent Compliance Layer for policy management, enforcement, and audit trails.
+- **Validation & Deployment Safety**: Shadow Replay Studio for pre-deployment validation and Canary Deployment Console for graduated rollouts.
+- **Knowledge Management**: Vector-embedded document collections for RAG, supporting web crawl and structured data import.
+- **Multi-Agent Orchestration**: Supports team-based orchestration, skills library, and context engineering.
+- **API Gateway**: Deployed agents are exposed as REST API endpoints with key management and tracing.
+- **Business Mode**: Simplified multi-tenant UX for business stakeholders.
+- **AI-Powered Cash Application Demo**: `/demo/otc-cash`
+- **Odometer Fraud Detection Demo**: `/demo/blackbook`
+- **HNP Government Beat Intelligence Demo**: `/demo/hnp-govt`
+- **HNP Subscriber Intelligence & Churn Prevention Demo**: `/demo/hnp-sub`
+
+## User preferences
 I prefer that you ask me before making any major changes to the codebase. When suggesting code, please provide clear explanations for the choices made. I value an iterative development approach, where we can discuss and refine solutions progressively.
 
-### System Architecture
-The Nous Agent Orchestrator utilizes a modern web stack: React, Vite, Tailwind CSS, shadcn/ui, and wouter for the frontend, and Express.js for its REST API backend. PostgreSQL with Drizzle ORM handles data persistence.
+## Gotchas
+- Agent-MCP junction records for HNP Subscriber demo are inserted directly via psql, as the `/api/agents/:id` endpoint does not update `agent_mcp_servers`.
+- `resultSummary` capture for HNP Subscriber demo uses `evidencePackage` DB column for persistence, as `deployments` table lacks a `result_summary` column.
+- For HNP demos, `extractJson()` strips ` ```json``` ` fences; only falls back to runtime `analysis` object if it has a structured shape.
+- MCP tools registered with `annotations: { endpoint, method }` will call hyphenated mock routes (e.g., `get_transcripts` → `GET /get-transcripts`).
 
-**UI/UX Design Principles**:
-- Outcome-first navigation focused on KPI delivery.
-- Evidence-by-default for approvals.
-- Autonomy with integrated guardrails via policy checks.
-- Time travel functionality for agent timelines and audit events.
-
-**Core Technical Implementations & Features**:
-- **Agent Lifecycle Management**: Comprehensive tools for creation, deployment, monitoring, and governance, including Blueprint Studio and an Industry-Governed Deployment Pipeline.
-- **Real Agent Runtime**: Deployed agents execute blueprints as background workers, resolving API calls through registered integrations, and tracking execution with compliance checks.
-- **Validation and Deployment Safety**: Features like Shadow Replay Studio for zero-risk deployment validation and Canary Deployment Console for graduated rollouts.
-- **Governance & Compliance**: A Certified Agent Compliance Layer provides policy management, enforcement, immutable audit trails, Ontology Structural Enforcement, and Regulatory Change Propagation.
-- **Optimization & Healing**: Autonomous optimization, self-healing mechanisms, and AI-proposed changes to enhance agent performance.
-- **Knowledge Management**: Vector-embedded document collections for RAG grounding, supporting web crawl ingestion and structured data import.
-- **Conversational AI**: Outcome Builder for defining goals and generating AI agent development plans.
-- **Multi-Agent Orchestration**: Supports team-based multi-agent orchestration, an Agent Skills Library, and a Context Engineering Studio.
-- **API Gateway**: Deployed agents are exposed as REST API endpoints with API key management and tracing.
-- **Autonomy Engine & Oversight**: Dynamic human oversight is managed with a risk dimension matrix and expert intervention thresholds.
-- **Outcome Traceability & KPI Binding**: Links agent creation to outcome contracts, inheriting specifications like risk tier, KPI targets, and compliance guardrails.
-- **Industry Contextualization**: Auto-applies industry presets in agent wizards and evaluates industry compliance readiness.
-- **Event-Driven Trigger System**: Configurable triggers (`webhook`, `schedule`, `agent_completion`, `mcp_resource_change`) for automating agent runs.
-- **Developer Experience**: A Developer Portal offers Quick Start guides, Authentication docs, an interactive API Reference, and SDKs.
-- **Blueprint-First Agent Creation**: Blueprints are central to all agent creation processes.
-- **Configurable Tool Iterations**: Agents can have a per-agent `maxToolIterations` setting.
-- **Deployment Activation Flow**: Pending/inactive deployments can be activated directly from the release detail page.
-- **Product Intelligence in Code Generation**: Exported code integrates Product Intelligence data, including `maxIterations`, matched skills, KB retrieval config, outcome contract, policy module, and agent metadata.
-- **Full-Screen Export Page**: Dedicated page for agent code export with configure, preview, and deliver steps, including file search, per-file regeneration, diff view, dynamic deployment checklist, and export presets.
-- **Table-Aware Document Chunking**: Knowledge base ingestion preserves tabular data structure from Word documents and HTML, converting tables to Markdown.
-- **Eval Dataset Transformation**: Supports structured Data Records, AI-generated evaluation data, and performance benchmarks.
-- **LLM Provider Abstraction Layer**: Multi-provider LLM support (OpenAI, Anthropic) with uniform interfaces and per-agent provider selection.
-- **SSE Streaming for Agent Runtime**: Real-time progress streaming of agent execution via Server-Sent Events.
-- **Agentic Chat Widget**: An embeddable chat widget with SSE streaming, real-time status indicators, markdown rendering, AI-generated suggested actions, and configurable greetings.
-- **Multi-Tenancy**: Organization-level data isolation is implemented across schema and storage, with `organization_id` added to core tables and filtering applied to storage methods.
-- **Unified Workflow State (UWS)**: Provides typed, persistent, reducer-based workflow state across pipeline stages. This includes `workflow_state_schemas` and `workflow_state_checkpoints` tables for storing per-pipeline state schemas and per-run state snapshots. State updates are merged using field-level reducers via `/advance`, `/approve`, `/reject`, and `/simulate-stage` endpoints. Approval gate interrupts create interrupt checkpoints. A Workflow State panel in the pipeline run view displays current state, checkpoint history, and interrupt gate records.
-- **Business Mode**: A multi-tenant UX layer for business stakeholders (`outcome_owner` role) featuring a `BusinessModeSidebar`, `BusinessCommandCenter` dashboard, and progressive disclosure rules to simplify the interface for business users.
-- **Demo 4 — AI-Powered Cash Application** (`/demo/otc-cash`): NovaTech Industries / Financial demo featuring OTC-AGT-009 (Cash Application & Reconciliation) and OTC-AGT-006 (Billing & Collections). Scenario: $42M month-end payments, 94% auto-match, GlobalTech $2.3M cross-invoice remittance (47 invoices, 3 deductions, overpayment). Live SSE pipeline execution, agent runs visible in Agent Registry. Dev agent creation: `scripts/create-otc-agt-009-dev.js`. Dev→Prod migration: `scripts/migrate-otc-cash-to-prod.sh`.
-- **BB Extension 1 — Odometer Fraud Detection** (`/demo/blackbook` → "Odometer Fraud Detection" scenario): BB-AGT-005 detects rollback fraud by cross-referencing declared odometer readings across all auction appearances. 2-agent pipeline (BB-AGT-001 + BB-AGT-005), SSE trace logs, 3 exception sub-scenarios (standard rollbacks, aggressive CRITICAL rollback, CARFAX service conflict). Agent created via Platform API (no direct DB write). 13-step provisioning: `node scripts/bb-ext1-provision-dev.mjs`. Dev IDs saved to `scripts/bb-ext1-dev-ids.json`. Prod migration: `node scripts/migrate-bb-ext1-to-prod.js`. Mock MCP: `server/mock-mcp/bb-odometer-verify.ts` (5 tools). Screen: `client-shared/pages/demo/bb-s6-odometer-fraud.tsx`.
-- **HNP Government Beat Intelligence** (SCN-HNP-1, customer Hearst Newspapers): 4-agent pipeline `HNP-HOUSTON-GOVT-BEAT` — HNP-GOVT-01 Meeting Corpus Analyst → HNP-GOVT-02 Investigation Angle Detector → [Reporter Brief Review narrative gate] → parallel(HNP-GOVT-03 Story Draft, HNP-GOVT-04 FOIA Request Generator). **True sequential pipeline with real upstream→downstream handoffs**: `server/hnp-govt-live-run.ts` runs Stage 1 alone, then Stage 2 with 01's actual `resultSummary` injected as a "Handoff context" JSON block in the prompt via `withUpstreamContext()`, fires the reporter-gate SSE event (narrative — flagged `narrative: true` with explicit `note`; production enforces via attached policy), then Stage 4 runs 03 + 04 in parallel both consuming 02's ranked-angles output. Real Claude execution (Haiku 4.5 across all 4 agents) via `runAgentOnce`, `maxToolIterations: 4`. The SSE handler passes `onProgress` to `runAgentOnce` to capture the LLM final-analysis text and parse it into `agent_complete.resultSummary` (used by the demo UI's `PipelineOutputPanel`). Each agent card carries an "Open trace in Agent Registry" deep-link (`<Link href="/agents/${agentId}">`) populated from the SSE-captured `agentId` (with `/demo-api/hnp-govt/agent-runs` polled fallback — note the response key is `agents`, not `agentRuns`). Result-summary capture: `extractJson()` strips ` ```json``` ` fences first; only falls back to the runtime's `analysis` object when it has structured shape (avoids the degenerate `{summary:"<unparsed fenced blob>"}` case from the runtime's failed `JSON.parse`). MCP tools registered with `annotations: { endpoint, method }` so the runtime calls the hyphenated mock route (e.g. `get_transcripts` → `GET /get-transcripts`) instead of falling back to the bare base URL. Wall-clock: ~3.5–5 min for happy path (sequential is slower than the previous parallel mode but accurate to the architectural diagram). Mock MCP servers (4): `server/mock-mcp/hnp-assembly.ts`, `hnp-knowledge-base.ts`, `hnp-public-records.ts`, `hnp-cms.ts` (16 tools total — Hurricane Mara / Houston dataset, $340M drainage bond, Allied Hydro contractor, Mayor Whitmire, Council Pollard/Huffman). Dataset: 47 Houston transcripts past 90 days. Shared scenario defs: `server/hnp-govt-shared-defs.ts` (system prompts, scenario prompts for happy / source-attribution-fail / foia-routing-fail). Dev provisioning (13 steps, all via Platform APIs — 4 KBs, 4 MCP servers + 16 tools, 6 skills, outcome contract, 4 policies, 6 ontology concepts, 4 agents fully wired with skills/policies/KB-RAG/runtime/blueprint, KB+MCP links, eval suite + bindings, deployments per agent): `bash provision_hnp_govt_dev.sh`. Dev→Prod migration with org-ID discovery + X-Organization-Id headers + configurable MOCK_BASE_URL: `bash migrate_hnp_govt_to_prod.sh`. Editorial governance enforced by 4 policies (Human Reporter Gate, Source Attribution Requirement, Publication Boundary, FOIA Accuracy Gate).
-
-- **HNP Subscriber Intelligence & Churn Prevention** (SCN-HNP-2, customer Hearst Newspapers): 4-agent pipeline `HNP-SUBSCRIBER-CHURN-PREVENTION` — HNP-SUB-01 Subscriber Signal Monitor → HNP-SUB-02 Churn Prediction Engine → [Audience Editor Approval Gate narrative gate] → parallel(HNP-SUB-03 Re-engagement Content Generator, HNP-SUB-04 Retention Outcome Tracker). **Storm-event context**: Hurricane Mara landfall +24h, 280,000 Houston Chronicle digital subscribers, 64,400 in storm-affected zip codes; Harvey-calibrated churn model (340% cancellation spike in weeks 3–6 post-event). True sequential pipeline: `server/hnp-sub-live-run.ts` runs SUB-01 → SUB-02 (receives upstream handoff JSON via `withUpstreamContext()`) → Audience Editor gate SSE event → parallel SUB-03 + SUB-04. **3 scenarios**: happy (editor approves all cohorts, 3 content sequences queued); editor-modify (editor requires cohort-B to include Harris County emergency links before activation); offer-boundary-breach (SUB-03 attempts 30% discount activation, blocked by Offer Authority Boundary policy). `resultSummary` capture uses `extractJson()` on Claude's raw output, with `hasStructuredShape()` fallback; stored in `evidencePackage` DB column (deployments table has no `result_summary` column — using `evidencePackage` as the persistence field). Prose fallback: even when Claude doesn't emit a JSON block, `agent_complete.resultSummary` is always non-null (strips code fences, truncates to 600 chars). Mock MCP servers (4): `server/mock-mcp/hnp-subscriber.ts` (5 tools — `get_subscriber_profile`, `get_engagement_signals`, `update_subscriber_segment`, `get_cohort_stats`, `send_trigger_event`), `hnp-churn-model.ts` (3 tools — `get_churn_score`, `get_feature_importance`, `get_cohort_risk_distribution`), `hnp-geo.ts` (3 tools — `classify_zip_by_storm_impact`, `get_flood_zone_data`, `get_neighbourhood_profile`), `hnp-content-api.ts` (4 tools — `get_articles_by_interest_profile`, `get_recovery_resource_content`, `get_section_top_stories`, and a 4th). 15 tools total. Agent-MCP junction records created via psql direct-insert (8 records: SUB-01↔Subscriber+Geo, SUB-02↔Churn+Subscriber, SUB-03↔Subscriber+Content+Geo, SUB-04↔Subscriber) since the PATCH /api/agents/:id endpoint doesn't write to `agent_mcp_servers`. 3 governance policies: Audience Editor Approval Gate (block), Offer Authority Boundary (block — prevents `activate_*_discount` / `price_change` / `offer_activate` events), No Dark Pattern Policy (block). Dev provisioning: `bash provision_hnp_sub_dev.sh` (11 steps, all via Platform APIs). Dev→Prod migration: `bash migrate_hnp_sub_to_prod.sh` (13 steps — 3 KBs, 4 MCPs + 15 tools, 6 skills, outcome contract, 3 policies, 6 ontology concepts, 4 agents wired, KB/MCP links, eval suite, deployments). Shared defs: `server/hnp-sub-shared-defs.ts`. Demo page route: `/demo/hnp-sub`. Wall-clock: ~2.5–4 min for all 4 agents (SUB-03 + SUB-04 run in parallel for final stage).
-
-### External Dependencies
-- **OpenAI**: Primary LLM provider for agent runtime, evaluations, AI enhancements, and embeddings.
-- **Anthropic**: Secondary LLM provider for Claude models with tool calling. Routed through Replit AI Integrations gateway (`AI_INTEGRATIONS_ANTHROPIC_API_KEY` + `AI_INTEGRATIONS_ANTHROPIC_BASE_URL`, both auto-injected by the `javascript_anthropic_ai_integrations` blueprint — charges go to Replit credits, no personal Anthropic account required). Falls back to direct `ANTHROPIC_API_KEY` when the gateway env vars are absent. Configured in `server/llm-provider.ts` `AnthropicProvider` constructor.
-- **PostgreSQL**: Primary database for data persistence.
-- **Express.js**: Backend web application framework.
-- **React**: Frontend JavaScript library.
-- **Vite**: Frontend build tool.
-- **Tailwind CSS**: Utility-first CSS framework.
-- **shadcn/ui**: UI component library.
-- **wouter**: Client-side routing library.
-- **Drizzle ORM**: Object-Relational Mapper for PostgreSQL.
+## Pointers
+- **Drizzle ORM Docs**: `https://orm.drizzle.team/docs/overview`
+- **Replit AI Integrations**: `https://docs.replit.com/ai/integrations`
+- **Tailwind CSS Docs**: `https://tailwindcss.com/docs`
+- **shadcn/ui Docs**: `https://ui.shadcn.com/docs`
+- **Express.js Docs**: `https://expressjs.com/`

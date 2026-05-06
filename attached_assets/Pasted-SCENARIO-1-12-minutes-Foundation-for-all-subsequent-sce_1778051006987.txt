@@ -1,0 +1,31 @@
+SCENARIO 1   ·   12 minutes   ·   Foundation for all subsequent scenarios
+Knowledge Base Onboarding — Brand, Language & Segment Intelligence
+MCG's brand policy, language rules, and clinical segment lexicon ingested and structured as a governed KB bundle
+
+Business Context
+Every proposal MCG sends must comply with their Brand Style Guide (naming rules, forbidden terms, capitalization, formatting), their language policy (tense, POV, grammatical preferences, prohibited phrases), and their segment lexicon (different messaging frames for health plans vs. hospital systems vs. employers). Today, sellers self-interpret these guidelines. Errors are caught in manual review — or worse, after delivery. Atlas ingests all of this once and enforces it automatically on every proposal thereafter.
+
+What the Audience Sees
+1.	Open Blueprint Studio → show the KB Ingestion Agent blueprint (MCG-KB-INGEST-001). Point out: the agent reads the Brand Style Guide PDF and MCG Dictionary PDF as inputs, runs 8 structured extraction nodes in parallel, and produces a typed JSON bundle — not just embedded chunks.
+2.	Trigger the agent run. Show the live execution trace as each node completes: extract_brand_policy → extract_language_policy → extract_segment_lexicon → extract_naming_aliases → extract_dictionary_index → extract_theme_tokens → derive_qa_rules → produce_bundle.
+3.	When the run completes, open the bundle in the Atlas KB browser. Show each of the 12 artifacts: brand_policy, language_policy, segment_lexicon, naming_alias_map, dictionary_index, theme_tokens, qa_rules, source_provenance, token_usage, passed_qa, qa_score, schema_version.
+4.	Drill into naming_alias_map. Show: 'MCG Health' maps to first-reference canonical. Show prohibited_terms list: 'Milliman', 'Milliman Care Guidelines', 'MCG™'. Explain: any proposal agent bound to this bundle will fail QA if it uses these terms — automatically, without human review.
+5.	Drill into segment_lexicon. Show the health_plan segment: preferred_terms, value_drivers ('administrative efficiency', 'NCQA compliance', 'medical cost ratio reduction'), messaging_frame. Contrast with hospital_system segment: different value_drivers ('length-of-stay optimization', 'denials management'), different messaging_frame. The proposal agent uses the correct frame automatically based on the account type.
+6.	Show the QA result panel: passed_qa: true · qa_score: 97.4 · 1 soft warning (2 source documents missing SHA-256 hash). Show the Promote button. Explain: until a human promotes this bundle, no agent can be bound to it. This is the governance gate.
+
+Key Demo Talking Points
+What Atlas adds vs the manual system
+The manual LangGraph code produces a bundle.json file stored on a file system with no versioning, no QA gate, no promotion workflow, and no audit trail. If someone updates the Brand Style Guide and re-runs the ingestion, the old bundle is silently overwritten.
+Atlas Bundle Store provides: semantic versioning (v1.0.3), immutable ACTIVE bundles, a human promotion gate, full SHA-256 provenance for every source document, and a complete QA audit trail. Every proposal can be reproduced exactly by re-loading the bundle_id from the run trace.
+This is the difference between a prototype and a production system.
+
+Agents Featured
+MCG-KB-INGEST-001   Knowledge Base Ingestion Agent
+Type: Single — sequential pipeline   Autonomy: Supervised (requires human promotion before bundle is usable)
+
+MCP Servers Active
+Server	Purpose	Tools Used
+mcg-knowledge-base-mcp	Source document access	get_brand_style_guide, get_mcg_dictionary, get_segment_profiles
+atlas-bundle-store-mcp	Bundle creation, versioning, QA	create_bundle, run_qa_check, promote_bundle
+
+ 
