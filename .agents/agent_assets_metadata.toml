@@ -12,3 +12,9 @@ id = "0s47kEBfVNBFFbiKiyGpo"
 uri = "file://PRODUCT_DOCUMENTATION.md"
 type = "text"
 title = "ALMP Product Documentation (April 2026)"
+
+[[outputs]]
+id = "WZDIhUrBwef3DVek05L2r"
+uri = "file://exports/Atlas_Accelerator_Proposal.md"
+type = "text"
+title = "Atlas Accelerator Proposal — Packaging Industry Platform"
