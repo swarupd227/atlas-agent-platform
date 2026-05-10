@@ -30,6 +30,7 @@ import {
   BookOpen,
   Database,
   ChevronDown,
+  ChevronUp,
   Check,
   Minus,
   Settings2,
@@ -45,6 +46,7 @@ import {
   Star,
   AlertTriangle,
   DollarSign,
+  MessageSquare,
 } from "lucide-react";
 import { findPolicyPackName } from "@/lib/policy-packs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -414,7 +416,7 @@ export default function OutcomeDiscover() {
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const [audioChunks, setAudioChunks] = useState<Blob[]>([]);
   const [analyzing, setAnalyzing] = useState(false);
-  const [transcriptResult, setTranscriptResult] = useState<{ transcript: string; opportunities: Array<{ name: string; description: string; businessValue: string; keyRequirements: string[]; suggestedSystems: string[] }> } | null>(null);
+  const [transcriptResult, setTranscriptResult] = useState<{ transcript: string; opportunities: Array<{ name: string; description: string; businessValue: string; keyRequirements: string[]; suggestedSystems: string[]; draftKpis?: Array<{name: string; target: number; unit: string}>; riskTier?: string; estimatedRoiNarrative?: string }>; topProposal?: OutcomeProposal } | null>(null);
   const [activeTab, setActiveTab] = useState<"chat" | "record">("chat");
   const [processSteps, setProcessSteps] = useState<ProcessFlowStep[]>([]);
   const [showProcessFlow, setShowProcessFlow] = useState(false);
@@ -451,6 +453,8 @@ export default function OutcomeDiscover() {
   const [showRealPolicies, setShowRealPolicies] = useState(true);
   const [showFormIntel, setShowFormIntel] = useState(true);
   const [showRoiEstimate, setShowRoiEstimate] = useState(true);
+  const [generatingProposal, setGeneratingProposal] = useState(false);
+  const [showMeetingContext, setShowMeetingContext] = useState(true);
   const [agentDecisions, setAgentDecisions] = useState<Record<string, 'accepted' | 'rejected'>>({});
   const [templateDecisions, setTemplateDecisions] = useState<Record<string, 'accepted' | 'rejected'>>({});
   const setAgentDecision = (id: string, decision: 'accepted' | 'rejected') =>
@@ -1118,6 +1122,8 @@ export default function OutcomeDiscover() {
       const blob = new Blob(chunks, { type: "audio/webm" });
       const formData = new FormData();
       formData.append("audio", blob, "recording.webm");
+      if (industry) formData.append("industry", JSON.stringify({ id: industry.id, label: industry.label }));
+      formData.append("generateTopProposal", "true");
 
       const res = await fetch("/api/ai/transcribe-analyze", {
         method: "POST",
@@ -1132,7 +1138,46 @@ export default function OutcomeDiscover() {
       }
       const result = await res.json();
       setTranscriptResult(result);
-      toast({ title: "Analysis complete", description: `Found ${result.opportunities.length} automation opportunities.` });
+
+      if (result.topProposal?.type === "outcome_proposal") {
+        const p = result.topProposal;
+        p.regulatoryConstraints = p.regulatoryConstraints ?? [];
+        p.applicablePolicies = p.applicablePolicies ?? [];
+        setProposal(p);
+        setCheckedItems(new Set());
+        setActiveRegConstraints(p.regulatoryConstraints);
+        setActiveApplicablePolicies(p.applicablePolicies);
+        setExpandedRegulations(new Set());
+        const proposalName = p.outcomeContract?.name || result.opportunities[0]?.name || "Top Opportunity";
+        setMessages([{
+          role: "assistant",
+          content: `I've analyzed your meeting recording and generated an outcome proposal for **${proposalName}**. Review the full plan in the panel on the right — including KPIs, proposed agents, validation checklist, and ROI estimate. You can refine any detail by chatting with me below, or click **Launch This Plan** when you're ready.`,
+        }]);
+        if (p.outcomeContract?.description && industry?.id) {
+          setDetectingRegulations(true);
+          fetch("/api/ai/regulatory-constraints", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ description: p.outcomeContract.description, industry: industry.id }),
+          })
+            .then((r) => r.ok ? r.json() : Promise.reject())
+            .then((data: Array<{ regulation: string; classification?: string; requirements?: string[]; autoApplied?: boolean }>) => {
+              if (Array.isArray(data) && data.length > 0) {
+                setActiveRegConstraints(data.map(d => ({
+                  regulation: d.regulation || "Unknown",
+                  classification: (d.classification as RegulatoryConstraint["classification"]) || "High-Risk",
+                  requirements: d.requirements || [],
+                  autoApplied: d.autoApplied ?? true,
+                })));
+              }
+            })
+            .catch(() => {})
+            .finally(() => setDetectingRegulations(false));
+        }
+        toast({ title: "Plan ready", description: `Outcome proposal generated for "${proposalName}".` });
+      } else {
+        toast({ title: "Analysis complete", description: `Found ${result.opportunities.length} automation opportunities. Click "Build Plan" on any card to generate a full proposal.` });
+      }
     } catch (err: any) {
       setAnalysisFailed(true);
       toast({ title: "Analysis failed", description: err.message || "Could not analyze the recording. Please try again.", variant: "destructive" });
@@ -1147,11 +1192,28 @@ export default function OutcomeDiscover() {
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   }
 
-  function useOpportunityForDiscovery(opp: { name: string; description: string; keyRequirements: string[] }) {
+  function generateProposalForOpportunity(opp: { name: string; description: string; keyRequirements: string[]; suggestedSystems: string[]; draftKpis?: Array<{name: string; target: number; unit: string}>; riskTier?: string; estimatedRoiNarrative?: string }) {
+    if (generatingProposal || streaming) return;
     const processContext = processSteps.length > 0
-      ? ` Current process has ${processSteps.length} steps: ${processSteps.map((s, i) => `Step ${i + 1}: ${s.description} (${s.actor}, ${s.timeMins} mins, Pain: ${s.painPoints})`).join("; ")}.`
+      ? ` Current process: ${processSteps.map((s, i) => `Step ${i + 1}: ${s.description} (${s.actor}, ${s.timeMins} mins, Pain: ${s.painPoints})`).join("; ")}.`
       : "";
-    const prompt = `I want to automate: ${opp.name}. ${opp.description}. Key requirements include: ${opp.keyRequirements.join(", ")}.${processContext} Please help me define an outcome contract for this.`;
+    const kpiContext = opp.draftKpis?.length
+      ? ` Draft KPIs from meeting: ${opp.draftKpis.map(k => `${k.name} → ${k.target}${k.unit}`).join(", ")}.`
+      : "";
+    const roiContext = opp.estimatedRoiNarrative ? ` ROI context: ${opp.estimatedRoiNarrative}` : "";
+    const prompt = `GENERATE PROPOSAL NOW — do not ask clarifying questions, produce the complete outcome_proposal JSON immediately.\n\nAutomation opportunity from meeting recording:\nName: ${opp.name}\nDescription: ${opp.description}\nKey requirements: ${opp.keyRequirements.join(", ")}\nSuggested systems: ${opp.suggestedSystems.join(", ")}\nRisk level: ${opp.riskTier || "MEDIUM"}${kpiContext}${roiContext}${processContext}`;
+    setActiveTab("chat");
+    sendMessage(prompt);
+  }
+
+  function useOpportunityForDiscovery(opp: { name: string; description: string; keyRequirements: string[]; suggestedSystems: string[]; draftKpis?: Array<{name: string; target: number; unit: string}>; riskTier?: string; estimatedRoiNarrative?: string }) {
+    const processContext = processSteps.length > 0
+      ? ` Current process: ${processSteps.map((s, i) => `Step ${i + 1}: ${s.description} (${s.actor}, ${s.timeMins} mins, Pain: ${s.painPoints})`).join("; ")}.`
+      : "";
+    const kpiContext = opp.draftKpis?.length
+      ? ` Draft KPIs from meeting analysis: ${opp.draftKpis.map(k => `${k.name} → ${k.target}${k.unit}`).join(", ")}.`
+      : "";
+    const prompt = `GENERATE PROPOSAL NOW — do not ask clarifying questions, produce the complete outcome_proposal JSON immediately.\n\nAutomation opportunity: ${opp.name}. ${opp.description}. Key requirements: ${opp.keyRequirements.join(", ")}. Suggested systems: ${opp.suggestedSystems.join(", ")}. Risk level: ${opp.riskTier || "MEDIUM"}.${kpiContext}${processContext}`;
     setActiveTab("chat");
     sendMessage(prompt);
   }
@@ -2087,26 +2149,62 @@ export default function OutcomeDiscover() {
                     <h3 className="text-sm font-semibold flex items-center gap-2">
                       <Zap className="w-4 h-4 text-primary" /> Identified Opportunities ({transcriptResult.opportunities.length})
                     </h3>
+                    {transcriptResult.topProposal && (
+                      <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-primary/5 border border-primary/20 text-xs text-primary font-medium">
+                        <Sparkles className="w-3.5 h-3.5 shrink-0" />
+                        Proposal auto-generated for the top opportunity — review the plan on the right
+                      </div>
+                    )}
                     {transcriptResult.opportunities.map((opp, i) => (
                       <Card key={i} className="hover-elevate" data-testid={`card-opportunity-${i}`}>
                         <CardContent className="p-4 flex flex-col gap-2">
                           <div className="flex items-start justify-between gap-2 flex-wrap">
                             <div className="flex flex-col gap-1 min-w-0 flex-1">
-                              <span className="text-sm font-semibold">{opp.name}</span>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="text-sm font-semibold">{opp.name}</span>
+                                {i === 0 && transcriptResult.topProposal && (
+                                  <Badge variant="default" className="text-[9px] px-1.5 py-0">Plan Ready</Badge>
+                                )}
+                              </div>
                               <span className="text-xs text-muted-foreground">{opp.description}</span>
                             </div>
-                            <Badge variant={opp.businessValue === "high" ? "default" : "outline"} className="text-[10px] shrink-0">
-                              {opp.businessValue} value
-                            </Badge>
+                            <div className="flex flex-col items-end gap-1 shrink-0">
+                              <Badge variant={opp.businessValue === "high" ? "default" : "outline"} className="text-[10px]">
+                                {opp.businessValue} value
+                              </Badge>
+                              {opp.riskTier && (
+                                <Badge variant="outline" className={`text-[9px] ${opp.riskTier === "LOW" ? "border-emerald-500/50 text-emerald-600 dark:text-emerald-400" : opp.riskTier === "HIGH" ? "border-red-500/50 text-red-600 dark:text-red-400" : "border-amber-500/50 text-amber-600 dark:text-amber-400"}`}>
+                                  {opp.riskTier} risk
+                                </Badge>
+                              )}
+                            </div>
                           </div>
+                          {opp.draftKpis && opp.draftKpis.length > 0 && (
+                            <div className="flex flex-col gap-1 px-2.5 py-2 rounded bg-muted/40 border border-muted">
+                              <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Draft KPIs</span>
+                              <div className="flex flex-wrap gap-x-3 gap-y-0.5">
+                                {opp.draftKpis.map((kpi, k) => (
+                                  <span key={k} className="text-xs text-foreground/80">{kpi.name}: <span className="font-semibold">{kpi.target}{kpi.unit}</span></span>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {opp.estimatedRoiNarrative && (
+                            <p className="text-xs text-muted-foreground italic leading-relaxed">{opp.estimatedRoiNarrative}</p>
+                          )}
                           <div className="flex items-center gap-1.5 flex-wrap">
                             {opp.suggestedSystems.map((sys, j) => (
                               <Badge key={j} variant="secondary" className="text-[9px]">{sys}</Badge>
                             ))}
                           </div>
-                          <Button variant="outline" size="sm" onClick={() => useOpportunityForDiscovery(opp)} data-testid={`button-use-opportunity-${i}`}>
-                            <ArrowRight className="w-3 h-3 mr-1" /> Start Planning
-                          </Button>
+                          <div className="flex items-center gap-2">
+                            <Button variant="default" size="sm" onClick={() => generateProposalForOpportunity(opp)} disabled={generatingProposal || streaming} data-testid={`button-build-plan-${i}`}>
+                              {generatingProposal ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />} Build Plan
+                            </Button>
+                            <Button variant="outline" size="sm" onClick={() => useOpportunityForDiscovery(opp)} data-testid={`button-use-opportunity-${i}`}>
+                              <MessageSquare className="w-3 h-3 mr-1" /> Refine via Chat
+                            </Button>
+                          </div>
                         </CardContent>
                       </Card>
                     ))}
@@ -2202,6 +2300,32 @@ export default function OutcomeDiscover() {
               </div>
 
               <div className="p-4 flex flex-col gap-4">
+                {transcriptResult && (
+                  <div className="rounded-md border bg-muted/30 overflow-hidden" data-testid="panel-meeting-context">
+                    <button
+                      className="w-full flex items-center justify-between px-3 py-2 hover:bg-muted/50 transition-colors"
+                      onClick={() => setShowMeetingContext(v => !v)}
+                      data-testid="button-toggle-meeting-context"
+                    >
+                      <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+                        <Mic className="w-3.5 h-3.5 text-primary" />
+                        Meeting Recording Context
+                        <Badge variant="outline" className="text-[9px] ml-1">{transcriptResult.opportunities.length} opportunities</Badge>
+                      </div>
+                      {showMeetingContext ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
+                    </button>
+                    {showMeetingContext && (
+                      <div className="px-3 pb-3 flex flex-col gap-2 border-t">
+                        <p className="text-xs text-muted-foreground leading-relaxed mt-2 max-h-20 overflow-y-auto whitespace-pre-wrap">{transcriptResult.transcript.slice(0, 400)}{transcriptResult.transcript.length > 400 ? "…" : ""}</p>
+                        <div className="flex flex-wrap gap-1 mt-0.5">
+                          {transcriptResult.opportunities.slice(0, 4).map((o, i) => (
+                            <Badge key={i} variant="secondary" className="text-[9px]">{o.name}</Badge>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <Card>
                   <CardHeader className="p-4 pb-2">
                     <CardTitle className="text-sm font-medium flex items-center justify-between gap-1.5 flex-wrap">
