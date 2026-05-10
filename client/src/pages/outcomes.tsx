@@ -594,11 +594,11 @@ export default function Outcomes() {
         <div className="flex items-center gap-2 flex-wrap">
           {!outcomesPerm.allowed ? (
             <Button disabled title="You do not have permission to create plans" data-testid="button-create-outcome">
-              <Plus className="w-4 h-4 mr-1.5" /> New Plan
+              <Plus className="w-4 h-4 mr-1.5" /> New Intent
             </Button>
           ) : (
             <Button onClick={() => navigate("/outcomes/discover")} data-testid="button-create-outcome">
-              <Plus className="w-4 h-4 mr-1.5" /> New Plan
+              <Plus className="w-4 h-4 mr-1.5" /> New Intent
             </Button>
           )}
         </div>
