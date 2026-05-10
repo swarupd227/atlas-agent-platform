@@ -455,6 +455,12 @@ export default function OutcomeDiscover() {
   const [showRoiEstimate, setShowRoiEstimate] = useState(true);
   const [generatingProposal, setGeneratingProposal] = useState(false);
   const [showMeetingContext, setShowMeetingContext] = useState(true);
+  const [reviewDraft, setReviewDraft] = useState<{
+    name: string;
+    description: string;
+    riskTier: string;
+    kpis: Array<{ name: string; target: number; unit: string }>;
+  } | null>(null);
   const [agentDecisions, setAgentDecisions] = useState<Record<string, 'accepted' | 'rejected'>>({});
   const [templateDecisions, setTemplateDecisions] = useState<Record<string, 'accepted' | 'rejected'>>({});
   const setAgentDecision = (id: string, decision: 'accepted' | 'rejected') =>
@@ -1143,16 +1149,13 @@ export default function OutcomeDiscover() {
         const p = result.topProposal;
         p.regulatoryConstraints = p.regulatoryConstraints ?? [];
         p.applicablePolicies = p.applicablePolicies ?? [];
-        setProposal(p);
-        setCheckedItems(new Set());
-        setActiveRegConstraints(p.regulatoryConstraints);
-        setActiveApplicablePolicies(p.applicablePolicies);
-        setExpandedRegulations(new Set());
         const proposalName = p.outcomeContract?.name || result.opportunities[0]?.name || "Top Opportunity";
-        setMessages([{
-          role: "assistant",
-          content: `I've analyzed your meeting recording and generated an outcome proposal for **${proposalName}**. Review the full plan in the panel on the right — including KPIs, proposed agents, validation checklist, and ROI estimate. You can refine any detail by chatting with me below, or click **Launch This Plan** when you're ready.`,
-        }]);
+        setReviewDraft({
+          name: proposalName,
+          description: p.outcomeContract?.description || "",
+          riskTier: p.outcomeContract?.riskTier || "MEDIUM",
+          kpis: (p.kpis || []).map(k => ({ name: k.name, target: k.target, unit: k.unit })),
+        });
         if (p.outcomeContract?.description && industry?.id) {
           setDetectingRegulations(true);
           fetch("/api/ai/regulatory-constraints", {
@@ -1174,7 +1177,7 @@ export default function OutcomeDiscover() {
             .catch(() => {})
             .finally(() => setDetectingRegulations(false));
         }
-        toast({ title: "Plan ready", description: `Outcome proposal generated for "${proposalName}".` });
+        toast({ title: "Plan ready — review before launching", description: `Outcome proposal generated for "${proposalName}". Edit and confirm below.` });
       } else {
         toast({ title: "Analysis complete", description: `Found ${result.opportunities.length} automation opportunities. Click "Build Plan" on any card to generate a full proposal.` });
       }
@@ -1287,6 +1290,51 @@ export default function OutcomeDiscover() {
     } finally {
       setGeneratingProposal(false);
     }
+  }
+
+  function confirmReviewDraft() {
+    if (!reviewDraft || !transcriptResult?.topProposal) return;
+    const p = { ...transcriptResult.topProposal };
+    p.outcomeContract = { ...p.outcomeContract, name: reviewDraft.name, description: reviewDraft.description, riskTier: reviewDraft.riskTier };
+    p.kpis = reviewDraft.kpis.map((k, i) => ({
+      name: k.name,
+      target: k.target,
+      unit: k.unit,
+      measurement: transcriptResult.topProposal?.kpis[i]?.measurement || "",
+      currentBaseline: transcriptResult.topProposal?.kpis[i]?.currentBaseline ?? null,
+    }));
+    p.regulatoryConstraints = p.regulatoryConstraints ?? [];
+    p.applicablePolicies = p.applicablePolicies ?? [];
+    setProposal(p);
+    setCheckedItems(new Set());
+    setActiveRegConstraints(activeRegConstraints ?? p.regulatoryConstraints);
+    setActiveApplicablePolicies(p.applicablePolicies);
+    setExpandedRegulations(new Set());
+    setMessages([{
+      role: "assistant",
+      content: `I've analyzed your meeting recording and generated an outcome proposal for **${reviewDraft.name}**. Review the full plan in the panel on the right — including KPIs, proposed agents, validation checklist, and ROI estimate. You can refine any detail by chatting with me below, or click **Launch This Plan** when you're ready.`,
+    }]);
+    setReviewDraft(null);
+    setActiveTab("chat");
+  }
+
+  function openTopProposalInChat() {
+    if (!transcriptResult?.topProposal) return;
+    const p = transcriptResult.topProposal;
+    p.regulatoryConstraints = p.regulatoryConstraints ?? [];
+    p.applicablePolicies = p.applicablePolicies ?? [];
+    setProposal(p);
+    setCheckedItems(new Set());
+    setActiveRegConstraints(activeRegConstraints ?? p.regulatoryConstraints);
+    setActiveApplicablePolicies(p.applicablePolicies);
+    setExpandedRegulations(new Set());
+    const proposalName = p.outcomeContract?.name || "Top Opportunity";
+    setMessages([{
+      role: "assistant",
+      content: `I've analyzed your meeting recording and generated an outcome proposal for **${proposalName}**. Review the full plan in the panel on the right — including KPIs, proposed agents, validation checklist, and ROI estimate. You can refine any detail by chatting with me below, or click **Launch This Plan** when you're ready.`,
+    }]);
+    setReviewDraft(null);
+    setActiveTab("chat");
   }
 
   function useOpportunityForDiscovery(opp: { name: string; description: string; keyRequirements: string[]; suggestedSystems: string[]; draftKpis?: Array<{name: string; target: number; unit: string}>; riskTier?: string; estimatedRoiNarrative?: string }) {
@@ -2104,7 +2152,7 @@ export default function OutcomeDiscover() {
                   </div>
                 )}
                 {transcriptResult && (
-                  <Button variant="outline" onClick={() => { setAudioChunks([]); setRecordingTime(0); setTranscriptResult(null); setAnalysisFailed(false); setLiveTranscript(""); setInterimText(""); }} data-testid="button-new-recording">
+                  <Button variant="outline" onClick={() => { setAudioChunks([]); setRecordingTime(0); setTranscriptResult(null); setAnalysisFailed(false); setLiveTranscript(""); setInterimText(""); setReviewDraft(null); }} data-testid="button-new-recording">
                     <Mic className="w-4 h-4 mr-2" /> New Recording
                   </Button>
                 )}
@@ -2228,14 +2276,146 @@ export default function OutcomeDiscover() {
                     )}
                   </Card>
 
+                  {transcriptResult.topProposal && reviewDraft && (
+                    <Card className="border-primary/30 bg-primary/[0.02]" data-testid="card-review-draft">
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-sm font-semibold flex items-center gap-2">
+                          <Sparkles className="w-4 h-4 text-primary" />
+                          Review Generated Plan
+                          <Badge variant="secondary" className="text-[9px] ml-auto font-normal">Auto-generated from meeting</Badge>
+                        </CardTitle>
+                        <p className="text-xs text-muted-foreground">Edit any field below before confirming — changes are reflected in the full proposal.</p>
+                      </CardHeader>
+                      <CardContent className="flex flex-col gap-4">
+                        <div className="flex flex-col gap-1.5">
+                          <Label className="text-xs font-medium">Plan Name</Label>
+                          <Input
+                            value={reviewDraft.name}
+                            onChange={(e) => setReviewDraft(prev => prev ? { ...prev, name: e.target.value } : prev)}
+                            className="h-8 text-sm"
+                            data-testid="input-review-name"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          <Label className="text-xs font-medium">Description</Label>
+                          <Textarea
+                            value={reviewDraft.description}
+                            onChange={(e) => setReviewDraft(prev => prev ? { ...prev, description: e.target.value } : prev)}
+                            className="text-sm resize-none"
+                            rows={3}
+                            data-testid="input-review-description"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                          <Label className="text-xs font-medium">Risk Tier</Label>
+                          <Select
+                            value={reviewDraft.riskTier}
+                            onValueChange={(v) => setReviewDraft(prev => prev ? { ...prev, riskTier: v } : prev)}
+                          >
+                            <SelectTrigger className="h-8 text-sm" data-testid="select-review-risk-tier">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="LOW">LOW — Minimal oversight</SelectItem>
+                              <SelectItem value="MEDIUM">MEDIUM — Standard review</SelectItem>
+                              <SelectItem value="HIGH">HIGH — Elevated governance</SelectItem>
+                              <SelectItem value="CRITICAL">CRITICAL — Human-in-the-loop required</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <div className="flex flex-col gap-2">
+                          <Label className="text-xs font-medium">KPIs</Label>
+                          <div className="flex flex-col gap-2">
+                            {reviewDraft.kpis.map((kpi, ki) => (
+                                <div key={ki} className="grid grid-cols-[1fr_80px_70px_auto] gap-1.5 items-center" data-testid={`review-kpi-row-${ki}`}>
+                                  <Input
+                                    value={kpi.name}
+                                    onChange={(e) => setReviewDraft(prev => {
+                                      if (!prev) return prev;
+                                      const kpis = [...prev.kpis];
+                                      kpis[ki] = { ...kpis[ki], name: e.target.value };
+                                      return { ...prev, kpis };
+                                    })}
+                                    placeholder="KPI name"
+                                    className="h-7 text-xs"
+                                    data-testid={`input-review-kpi-name-${ki}`}
+                                  />
+                                  <Input
+                                    type="number"
+                                    value={kpi.target}
+                                    onChange={(e) => setReviewDraft(prev => {
+                                      if (!prev) return prev;
+                                      const kpis = [...prev.kpis];
+                                      kpis[ki] = { ...kpis[ki], target: parseFloat(e.target.value) || 0 };
+                                      return { ...prev, kpis };
+                                    })}
+                                    placeholder="Target"
+                                    className="h-7 text-xs"
+                                    data-testid={`input-review-kpi-target-${ki}`}
+                                  />
+                                  <Input
+                                    value={kpi.unit}
+                                    onChange={(e) => setReviewDraft(prev => {
+                                      if (!prev) return prev;
+                                      const kpis = [...prev.kpis];
+                                      kpis[ki] = { ...kpis[ki], unit: e.target.value };
+                                      return { ...prev, kpis };
+                                    })}
+                                    placeholder="Unit"
+                                    className="h-7 text-xs"
+                                    data-testid={`input-review-kpi-unit-${ki}`}
+                                  />
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7 shrink-0"
+                                    onClick={() => setReviewDraft(prev => prev ? { ...prev, kpis: prev.kpis.filter((_, j) => j !== ki) } : prev)}
+                                    data-testid={`button-review-remove-kpi-${ki}`}
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </Button>
+                                </div>
+                              ))}
+                            </div>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="self-start text-xs h-7"
+                            onClick={() => setReviewDraft(prev => prev ? { ...prev, kpis: [...prev.kpis, { name: "", target: 0, unit: "%" }] } : prev)}
+                            data-testid="button-review-add-kpi"
+                          >
+                            <Plus className="w-3 h-3 mr-1" /> Add KPI
+                          </Button>
+                        </div>
+                        <div className="flex items-center gap-2 pt-1">
+                          <Button
+                            onClick={confirmReviewDraft}
+                            disabled={!reviewDraft.name.trim()}
+                            className="flex-1"
+                            data-testid="button-confirm-review-draft"
+                          >
+                            <CheckCircle2 className="w-4 h-4 mr-1.5" /> Confirm & Review Full Plan
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={openTopProposalInChat}
+                            data-testid="button-open-proposal-chat"
+                          >
+                            <MessageSquare className="w-3.5 h-3.5 mr-1.5" /> Edit via Chat
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+
                   <div className="flex flex-col gap-3">
                     <h3 className="text-sm font-semibold flex items-center gap-2">
                       <Zap className="w-4 h-4 text-primary" /> Identified Opportunities ({transcriptResult.opportunities.length})
                     </h3>
-                    {transcriptResult.topProposal && (
+                    {transcriptResult.topProposal && !reviewDraft && (
                       <div className="flex items-center gap-2 px-3 py-2 rounded-md bg-primary/5 border border-primary/20 text-xs text-primary font-medium">
-                        <Sparkles className="w-3.5 h-3.5 shrink-0" />
-                        Proposal auto-generated for the top opportunity — review the plan on the right
+                        <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                        Plan confirmed — check the proposal panel or chat to refine further
                       </div>
                     )}
                     {transcriptResult.opportunities.map((opp, i) => (
