@@ -1192,18 +1192,101 @@ export default function OutcomeDiscover() {
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   }
 
-  function generateProposalForOpportunity(opp: { name: string; description: string; keyRequirements: string[]; suggestedSystems: string[]; draftKpis?: Array<{name: string; target: number; unit: string}>; riskTier?: string; estimatedRoiNarrative?: string }) {
+  async function generateProposalForOpportunity(opp: { name: string; description: string; keyRequirements: string[]; suggestedSystems: string[]; draftKpis?: Array<{name: string; target: number; unit: string}>; riskTier?: string; estimatedRoiNarrative?: string }) {
     if (generatingProposal || streaming) return;
-    const processContext = processSteps.length > 0
-      ? ` Current process: ${processSteps.map((s, i) => `Step ${i + 1}: ${s.description} (${s.actor}, ${s.timeMins} mins, Pain: ${s.painPoints})`).join("; ")}.`
-      : "";
-    const kpiContext = opp.draftKpis?.length
-      ? ` Draft KPIs from meeting: ${opp.draftKpis.map(k => `${k.name} → ${k.target}${k.unit}`).join(", ")}.`
-      : "";
-    const roiContext = opp.estimatedRoiNarrative ? ` ROI context: ${opp.estimatedRoiNarrative}` : "";
-    const prompt = `GENERATE PROPOSAL NOW — do not ask clarifying questions, produce the complete outcome_proposal JSON immediately.\n\nAutomation opportunity from meeting recording:\nName: ${opp.name}\nDescription: ${opp.description}\nKey requirements: ${opp.keyRequirements.join(", ")}\nSuggested systems: ${opp.suggestedSystems.join(", ")}\nRisk level: ${opp.riskTier || "MEDIUM"}${kpiContext}${roiContext}${processContext}`;
-    setActiveTab("chat");
-    sendMessage(prompt);
+    setGeneratingProposal(true);
+    try {
+      const processContext = processSteps.length > 0
+        ? ` Current process: ${processSteps.map((s, i) => `Step ${i + 1}: ${s.description} (${s.actor}, ${s.timeMins} mins, Pain: ${s.painPoints})`).join("; ")}.`
+        : "";
+      const kpiContext = opp.draftKpis?.length
+        ? ` Draft KPIs from meeting: ${opp.draftKpis.map(k => `${k.name} → ${k.target}${k.unit}`).join(", ")}.`
+        : "";
+      const roiContext = opp.estimatedRoiNarrative ? ` ROI context: ${opp.estimatedRoiNarrative}` : "";
+      const userMessage = `GENERATE PROPOSAL NOW — do not ask clarifying questions, produce the complete outcome_proposal JSON immediately.\n\nAutomation opportunity from meeting recording:\nName: ${opp.name}\nDescription: ${opp.description}\nKey requirements: ${opp.keyRequirements.join(", ")}\nSuggested systems: ${opp.suggestedSystems.join(", ")}\nRisk level: ${opp.riskTier || "MEDIUM"}${kpiContext}${roiContext}${processContext}`;
+
+      const discoveryCtx: Record<string, unknown> = {};
+      if (transcriptResult) discoveryCtx.transcriptAnalysis = transcriptResult;
+      if (processSteps.length > 0) discoveryCtx.processSteps = processSteps;
+
+      const res = await fetch("/api/ai/outcome-discover", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{ role: "user", content: userMessage }],
+          industry: industry || undefined,
+          discoveryContext: Object.keys(discoveryCtx).length > 0 ? discoveryCtx : undefined,
+        }),
+      });
+
+      if (!res.ok) throw new Error("Proposal generation failed");
+      const reader = res.body?.getReader();
+      if (!reader) throw new Error("No response body");
+
+      const decoder = new TextDecoder();
+      let content = "";
+      let sseBuffer = "";
+
+      outer: while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        sseBuffer += decoder.decode(value, { stream: true });
+        const lines = sseBuffer.split("\n");
+        sseBuffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const data = JSON.parse(line.slice(6));
+            if (data.done) break outer;
+            if (data.content) content += data.content;
+          } catch {}
+        }
+      }
+
+      const extracted = extractProposal(content);
+      if (extracted) {
+        extracted.regulatoryConstraints = extracted.regulatoryConstraints ?? [];
+        extracted.applicablePolicies = extracted.applicablePolicies ?? [];
+        setProposal(extracted);
+        setCheckedItems(new Set());
+        setActiveRegConstraints(extracted.regulatoryConstraints);
+        setActiveApplicablePolicies(extracted.applicablePolicies);
+        setExpandedRegulations(new Set());
+        const proposalName = extracted.outcomeContract?.name || opp.name;
+        setMessages([{
+          role: "assistant",
+          content: `I've generated an outcome proposal for **${proposalName}** based on the meeting recording. Review the full plan in the panel on the right — including KPIs, proposed agents, validation checklist, and ROI estimate. You can refine any detail by chatting below.`,
+        }]);
+        if (extracted.outcomeContract?.description && industry?.id) {
+          setDetectingRegulations(true);
+          fetch("/api/ai/regulatory-constraints", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ description: extracted.outcomeContract.description, industry: industry.id }),
+          })
+            .then((r) => r.ok ? r.json() : Promise.reject())
+            .then((data: Array<{ regulation: string; classification?: string; requirements?: string[]; autoApplied?: boolean }>) => {
+              if (Array.isArray(data) && data.length > 0) {
+                setActiveRegConstraints(data.map(d => ({
+                  regulation: d.regulation || "Unknown",
+                  classification: (d.classification as RegulatoryConstraint["classification"]) || "High-Risk",
+                  requirements: d.requirements || [],
+                  autoApplied: d.autoApplied ?? true,
+                })));
+              }
+            })
+            .catch(() => {})
+            .finally(() => setDetectingRegulations(false));
+        }
+        toast({ title: "Plan ready", description: `Proposal generated for "${proposalName}".` });
+      } else {
+        toast({ title: "Could not parse proposal", description: "Please use 'Refine via Chat' instead.", variant: "destructive" });
+      }
+    } catch (err: any) {
+      toast({ title: "Plan generation failed", description: err.message || "Please try again.", variant: "destructive" });
+    } finally {
+      setGeneratingProposal(false);
+    }
   }
 
   function useOpportunityForDiscovery(opp: { name: string; description: string; keyRequirements: string[]; suggestedSystems: string[]; draftKpis?: Array<{name: string; target: number; unit: string}>; riskTier?: string; estimatedRoiNarrative?: string }) {
