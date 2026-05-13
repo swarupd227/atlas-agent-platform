@@ -54,6 +54,7 @@ import { runAgentOnce, stopAgentRuntime, isRuntimeActive, runtimeEvents, type Ru
 import { setBk2LiveScenario, clearBk2LiveScenario, getLastEmailSnapshot, clearLastEmailSnapshot, type Bk2LiveScenario } from "./blackrock2-live-store";
 import {
   DEH_AGENT_NAME,
+  DEH_AGENT_ID,
   DEH_MCP_SERVER_NAME,
   makeDehMcpServerDef,
   DEH_AGENT_DEF,
@@ -3312,45 +3313,55 @@ async function dehEnsureMcpServer(): Promise<string> {
 }
 
 async function dehEnsureAgent(mcpServerId: string): Promise<string> {
-  const allAgents = await storage.getAgents();
-  const agentList = Array.isArray(allAgents) ? allAgents : (allAgents as any)?.agents ?? [];
-  let agent = agentList.find((a: any) => a.name === DEH_AGENT_NAME);
+  // Use a fixed UUID so we can look up by ID (avoids storage.getAgents() which needs orgId)
+  const agentId = DEH_AGENT_ID;
+  const existing = await storage.getAgent(agentId).catch(() => null);
 
-  if (!agent) {
-    agent = await storage.createAgent({
+  if (!existing) {
+    await db.insert(agents).values({
+      id:                agentId,
       name:              DEH_AGENT_DEF.name,
       description:       DEH_AGENT_DEF.description,
       systemPrompt:      DEH_AGENT_DEF.systemPrompt,
+      runtimeConfig:     { prompt: DEH_AGENT_DEF.systemPrompt, scheduleIntervalMinutes: 0 },
       agentType:         "single",
       status:            "active",
+      environment:       "production",
       modelProvider:     DEH_AGENT_DEF.modelProvider,
       modelName:         DEH_AGENT_DEF.modelName,
-      maxToolIterations: DEH_AGENT_DEF.maxToolIterations,
       riskTier:          DEH_AGENT_DEF.riskTier,
+      autonomyMode:      "autonomous",
+      currentVersion:    "1.0.0",
+      maxToolIterations: DEH_AGENT_DEF.maxToolIterations,
+      toolAccessClass:   "standard",
       department:        DEH_AGENT_DEF.department,
-      runtimeConfig:     { prompt: DEH_AGENT_DEF.systemPrompt, scheduleIntervalMinutes: 0 },
-    } as any);
-    console.log(`[solifi-deh] Created agent: ${DEH_AGENT_DEF.name} (${agent.id})`);
+      owner:             "Solifi Dealer Finance Platform",
+      healthScore:       98,
+      successRate:       0.97,
+      maturityFactors:   {},
+    } as any).onConflictDoNothing();
+    console.log(`[solifi-deh] Created agent: ${DEH_AGENT_DEF.name} (${agentId})`);
   } else {
-    // Reconcile: ensure systemPrompt and runtimeConfig.prompt are set
-    const needsPatch = !(agent as any).systemPrompt || !(agent as any).runtimeConfig?.prompt;
+    const needsPatch = !(existing as any).systemPrompt || !(existing as any).runtimeConfig?.prompt;
     if (needsPatch) {
-      await storage.updateAgent(agent.id, {
-        systemPrompt:  DEH_AGENT_DEF.systemPrompt,
-        runtimeConfig: { prompt: DEH_AGENT_DEF.systemPrompt, scheduleIntervalMinutes: 0 },
-      } as any);
+      await db.update(agents)
+        .set({
+          systemPrompt:  DEH_AGENT_DEF.systemPrompt,
+          runtimeConfig: { prompt: DEH_AGENT_DEF.systemPrompt, scheduleIntervalMinutes: 0 },
+        } as any)
+        .where(eq(agents.id, agentId));
       console.log(`[solifi-deh] Reconciled agent system prompt: ${DEH_AGENT_DEF.name}`);
     }
   }
 
   // Bind MCP server — idempotent
-  const existingLinks = await storage.getAgentMcpServers(agent.id);
+  const existingLinks = await storage.getAgentMcpServers(agentId);
   const alreadyLinked = (existingLinks as any[]).some((l: any) => l.serverId === mcpServerId);
   if (!alreadyLinked) {
-    await storage.createAgentMcpServer({ agentId: agent.id, serverId: mcpServerId, assignedBy: "solifi-deh-ensure-agents" });
+    await storage.createAgentMcpServer({ agentId, serverId: mcpServerId, assignedBy: "solifi-deh-ensure-agents" });
   }
 
-  return agent.id;
+  return agentId;
 }
 
 async function dehEnsureDeployment(agentId: string): Promise<string> {

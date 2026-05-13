@@ -13,6 +13,9 @@ export const DEH_AGENT_NAME = "DEH-CONV-001 Solifi Dealer Experience Agent";
 
 export const DEH_MCP_SERVER_NAME = "Solifi Experience Hub MCP";
 
+// Fixed UUIDs — stable across dev and prod so `storage.getAgent(id)` works without orgId
+export const DEH_AGENT_ID      = "2d2cb5b9-73cf-4f8d-96ea-617117e421ca";
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 export type DehToolDef = {
