@@ -786,9 +786,14 @@ const router = Router();
         return outcomeKeywords.filter((k: string) => text.includes(k)).length;
       };
 
-      // Rank MCP servers by outcome relevance; take top 8 only to keep prompt concise
+      // Rank MCP servers by outcome relevance; take top 8 only to keep prompt concise.
+      // Exclude servers whose industryId is set to a DIFFERENT industry than the current outcome
+      // (prevents cross-demo MCP tools from leaking into unrelated agent plans).
+      // Also require at least 1 keyword match (score >= 1) so zero-relevance servers are never included.
       const rankedMcpServers = allMcpServers
+        .filter(s => !s.industryId || s.industryId === industryId)
         .map(s => ({ server: s, score: relevanceScore(s) }))
+        .filter(x => x.score >= 1)
         .sort((a, b) => b.score - a.score)
         .slice(0, 8)
         .map(x => x.server);
@@ -1035,7 +1040,7 @@ ${toolLines}
 
 PRE-COMPUTED SYSTEM COVERAGE (DO NOT OVERRIDE — use these as-is in systemsExtracted):
 ${coveredLines}
-  - Systems named in the outcome contract as "critical systems" targets (e.g. Aladdin OMS, Charles River IMS, Bloomberg Terminal) are target_system entries — they are NOT orchestration pipeline systems and must NOT appear in mcpGaps.
+  - Systems named in the outcome contract as downstream access targets (e.g. "access to X", "accounts on X", "critical systems including X") are target_system entries — they are NOT orchestration pipeline systems and must NOT appear in mcpGaps.
 
 ────────────────────────────────────────────────────────────────────────────
 `;
@@ -1276,8 +1281,8 @@ For every extracted system, record:
 - "source": one of "outcome_text" | "server_description" | "tool_description" | "schema_hint"
 - "quote": the exact substring (max 80 chars) from the source text where the name appeared
 - "systemRole": CRITICAL — classify each system as exactly one of:
-    "orchestration_system" — a system that ACTIVELY EXECUTES steps in the provisioning pipeline (calls are made TO this system during workflow execution; it performs identity operations, provisioning actions, certifications, compliance checks, or workflow tracking). Examples: Aquera, SailPoint, RadiantOne, Brainwave, ServiceNow (as workflow tracker).
-    "target_system" — a system that is the DESTINATION or RESOURCE being managed; it receives the result of provisioning but the orchestrator does NOT call it directly. These are downstream applications or platforms that synthetic workers will ACCESS after provisioning is complete. Examples: Aladdin OMS, Charles River IMS, Bloomberg Terminal (when mentioned as systems that need access, not as provisioning intermediaries).
+    "orchestration_system" — a system that ACTIVELY EXECUTES steps in the provisioning pipeline (calls are made TO this system during workflow execution; it performs identity operations, provisioning actions, certifications, compliance checks, or workflow tracking). A system qualifies as an orchestration_system if it has MCP tools in the registry above, or if the outcome/MCP text describes it as a step-executor.
+    "target_system" — a system that is the DESTINATION or RESOURCE being managed; it receives the result of provisioning but the orchestrator does NOT call it directly. These are downstream applications or platforms that users or synthetic workers will ACCESS after provisioning is complete. A system qualifies as a target_system if it appears in phrases like "access to X", "accounts on X", or "applications including X" — meaning it is the destination of provisioning, not a provisioning executor.
 
 CLASSIFICATION RULES:
 - A system is "orchestration_system" if: it has MCP tools in the registry, its name appears in a tool description as the system a tool acts upon, or the outcome/MCP text describes it as a step-executor in the pipeline.
