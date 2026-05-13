@@ -3258,6 +3258,20 @@ demoRouter.post("/moodys/ensure-agents", moodysEnsureAgentsHandler);
 
 const PP_DEALER_ID = "PP-2847";
 
+function floorplanStatusData() {
+  return {
+    total_units:  23,
+    total_balance: 847200,
+    units: [
+      { vin: "1KAWSAKI24ZX61234", make_model_year: "2024 Kawasaki Ninja ZX-6R",  days_on_floor: 12, curtailment_due: "2026-05-30", curtailment_amount: 980,  overdue_flag: false },
+      { vin: "1HONDA024CBR11111", make_model_year: "2024 Honda CBR1000RR-R",      days_on_floor: 47, curtailment_due: "2026-05-14", curtailment_amount: 1820, overdue_flag: true  },
+      { vin: "1YAMA024MT0922222", make_model_year: "2024 Yamaha MT-09",           days_on_floor: 53, curtailment_due: "2026-05-14", curtailment_amount: 860,  overdue_flag: true  },
+      { vin: "1SUZU024GSXR33333", make_model_year: "2024 Suzuki GSX-R750",       days_on_floor: 8,  curtailment_due: "2026-06-05", curtailment_amount: 1010, overdue_flag: false },
+      { vin: "1KAWA024KX45044444", make_model_year: "2024 Kawasaki KX450",       days_on_floor: 21, curtailment_due: "2026-05-28", curtailment_amount: 720,  overdue_flag: false },
+    ],
+  };
+}
+
 // ── ensure-agents bootstrap ────────────────────────────────────────────────────
 
 async function dehEnsureMcpServer(): Promise<string> {
@@ -3411,13 +3425,11 @@ demoRouter.post("/solifi-dealer/ensure-agents", dehEnsureAgentsHandler);
 // GET /demo-api/solifi-dealer/agent-runs — returns agent registry info for the Registry link
 demoRouter.get("/solifi-dealer/agent-runs", async (_req: Request, res: Response) => {
   try {
-    const allAgents = await storage.getAgents();
-    const agentList = Array.isArray(allAgents) ? allAgents : (allAgents as any)?.agents ?? [];
-    const agent = agentList.find((a: any) => a.name === DEH_AGENT_NAME);
+    const agent = await storage.getAgent(DEH_AGENT_ID).catch(() => null);
     if (!agent) return res.json([]);
-    const deps = await storage.getDeploymentsByAgentId(agent.id);
+    const deps = await storage.getDeploymentsByAgentId(DEH_AGENT_ID);
     const dep  = (deps as any[])[0];
-    res.json([{ agentId: agent.id, deploymentId: dep?.id, agentName: agent.name }]);
+    res.json([{ agentId: DEH_AGENT_ID, deploymentId: dep?.id, agentName: DEH_AGENT_NAME }]);
   } catch {
     res.json([]);
   }
@@ -3516,36 +3528,108 @@ async function dehLiveRunHandler(req: Request, res: Response): Promise<void> {
 
     const result = await runAgentOnce(deploymentId, scenarioDef.prompt, DEH_AGENT_DEF.maxToolIterations);
 
+    // Build structured result summary from mock data (Claude responds in natural language,
+    // so we derive the structured card data directly from the same source the agent queried).
     let resultSummary: any = null;
-    if (result.success && result.message) {
-      const jsonMatch = result.message.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        try { resultSummary = JSON.parse(jsonMatch[0]); } catch {}
+    if (result.success) {
+      if (scenarioId === "floorplan-status") {
+        const fpData = floorplanStatusData();
+        const overdue = fpData.units.filter((u: any) => u.overdue_flag);
+        resultSummary = {
+          total_units:             fpData.total_units,
+          total_balance:           fpData.total_balance,
+          flagged_units:           overdue.length,
+          units_requiring_action:  overdue.map((u: any) => ({
+            make_model_year: u.make_model_year,
+            vin:             u.vin,
+            days_on_floor:   u.days_on_floor,
+            curtailment_due: u.curtailment_due,
+            amount_due:      u.curtailment_amount,
+          })),
+          recommended_action: `${overdue.length} unit${overdue.length !== 1 ? "s" : ""} past curtailment due date — arrange payments with Solifi immediately to avoid additional fees.`,
+          status:  "overdue_units_identified",
+          summary: `${overdue.length} of ${fpData.total_units} financed units flagged for curtailment action. Total floor plan balance $${(fpData.total_balance / 1000).toFixed(0)}K.`,
+        };
+      } else if (scenarioId === "payoff-quote") {
+        const vin      = "1KAWSAKI24ZX61234";
+        const balance  = 9800;
+        const rate     = 6.75 / 100 / 365;
+        const perDiem  = parseFloat((balance * rate).toFixed(2));
+        const accrued  = parseFloat((perDiem * 5).toFixed(2));
+        const quoteId  = `PQ-${Date.now().toString(36).toUpperCase()}`;
+        resultSummary = {
+          vin,
+          make_model_year:  "2024 Kawasaki Ninja ZX-6R",
+          current_balance:  balance,
+          per_diem:         perDiem,
+          accrued_interest: accrued,
+          total_payoff:     parseFloat((balance + accrued).toFixed(2)),
+          payoff_date:      "2026-05-16",
+          quote_id:         quoteId,
+          quote_expiry:     "2026-05-21",
+          email_sent_to:    "mike.chen@pacificpowersports.com",
+          email_status:     "pending Finance Manager approval",
+          status:  "quote_ready",
+          summary: `Payoff quote for 2024 Kawasaki Ninja ZX-6R: $${(balance + accrued).toLocaleString()} total as of 2026-05-16. Quote emailed pending approval.`,
+        };
+      } else if (scenarioId === "audit-schedule") {
+        resultSummary = {
+          days_until_audit: 21,
+          next_audit_date:  "2026-06-03",
+          audit_type:       "routine",
+          required_docs: [
+            "Title documents for all financed units on lot",
+            "Signed Dealer Floor Plan Agreement (current year)",
+            "Insurance certificate (minimum $500K liability)",
+            "Lot layout map with unit placements",
+            "Payment history printout (last 90 days)",
+            "Demo unit log with signed dealer acknowledgement",
+          ],
+          absent_unit_policy: "Units not physically present during audit must be logged as SOLD (with buyer info) or DEMO (with signed demo agreement). Repeated absences without documentation may trigger a special audit and curtailment acceleration.",
+          status:  "schedule_confirmed",
+          summary: "Next routine audit in 21 days (June 3). 6 documents required. Demo units absent during audit must have signed agreements on file.",
+        };
+      } else if (scenarioId === "human-handoff") {
+        resultSummary = {
+          request_type:      "curtailment_deferral",
+          units_in_scope:    4,
+          requested_amount:  47200,
+          autonomous_limit:  25000,
+          routed_to:         "Jordan Reeves — Solifi Account Manager, Pacific Region",
+          reason:            "Bulk curtailment deferral of $47,200 across 4 aged snowmobile units exceeds the $25,000 autonomous approval threshold. Policy DEH-POL-CURT-AUTO-001 requires human sign-off for any deferral above this limit.",
+          estimated_response: "Within 1 business day",
+          status:  "pending_review",
+          summary: "Deferral request routed to Solifi account manager for approval.",
+        };
       }
     }
 
-    // Emit human_gate event for human-handoff scenario
-    if (scenarioId === "human-handoff" && resultSummary) {
+    // Emit human_gate for human-handoff scenario
+    if (scenarioId === "human-handoff") {
       sendEvent("human_gate", {
         gate_type:  "curtailment_deferral",
-        message:    `Curtailment deferral of $${resultSummary.requested_amount?.toLocaleString() ?? "47,200"} across ${resultSummary.units_in_scope ?? 4} units exceeds autonomous approval threshold of $${resultSummary.autonomous_limit?.toLocaleString() ?? "25,000"}. Routing to Solifi Account Manager.`,
+        message:    "Curtailment deferral of $47,200 across 4 aged snowmobile units exceeds the $25,000 autonomous approval threshold. Routing to Solifi Account Manager for review.",
         context:    {
-          dealer_id:         PP_DEALER_ID,
-          requested_amount:  resultSummary.requested_amount,
-          autonomous_limit:  resultSummary.autonomous_limit,
-          units_in_scope:    resultSummary.units_in_scope,
-          estimated_response: resultSummary.estimated_response,
+          dealer_id:          PP_DEALER_ID,
+          requested_amount:   "$47,200",
+          autonomous_limit:   "$25,000",
+          units_in_scope:     4,
+          estimated_response: "Within 1 business day",
         },
         policy_ref: "DEH-POL-CURT-AUTO-001",
       });
     }
 
-    // Emit email human_gate for payoff-quote scenario
-    if (scenarioId === "payoff-quote" && resultSummary?.email_sent_to) {
+    // Emit human_gate for payoff-quote email approval
+    if (scenarioId === "payoff-quote" && resultSummary) {
       sendEvent("human_gate", {
         gate_type:  "email_confirmation",
-        message:    `Payoff quote email to ${resultSummary.email_sent_to} approved by Finance Manager Jordan Reeves.`,
-        context:    { recipient: resultSummary.email_sent_to, quote_id: resultSummary.quote_id, total_payoff: resultSummary.total_payoff ?? (resultSummary.current_balance ?? 0) + (resultSummary.accrued_interest ?? 0) },
+        message:    `Payoff quote email to ${resultSummary.email_sent_to} requires Finance Manager approval before sending.`,
+        context:    {
+          recipient:   resultSummary.email_sent_to,
+          quote_id:    resultSummary.quote_id,
+          total_payoff: `$${resultSummary.total_payoff?.toLocaleString()}`,
+        },
         policy_ref: "DEH-POL-EMAIL-AUTH-001",
       });
     }
