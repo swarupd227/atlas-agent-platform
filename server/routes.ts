@@ -87,6 +87,8 @@ import mcgKnowledgeBaseRouter from "./mock-mcp/mcg-knowledge-base";
 import mcgBundleStoreRouter   from "./mock-mcp/mcg-bundle-store";
 import { mcgKbLiveRunHandler, getMcgKbAgentRuns, resetMcgKbDemo } from "./mcg-kb-live-run";
 import { bbLiveRunHandler, getBBAgentRuns, getBBOutcomeData, getBBSelfHealingStatus, resetBBDemo, ensureBBAgents } from "./blackbook-live-run";
+import solifiDehRouter from "./mock-mcp/solifi-deh";
+import { dehEnsureAgentsHandler } from "./demo-routes";
 import { registerMockMcpServers } from "./mock-mcp/register";
 import piiRouter from "./routes/pii";
 import feedbackRouter from "./routes/feedback";
@@ -259,6 +261,10 @@ export async function registerRoutes(
   app.get("/demo-api/mcg-kb/live-run",     mcgKbLiveRunHandler);
   app.get("/demo-api/mcg-kb/agent-runs",   getMcgKbAgentRuns);
   app.post("/demo-api/mcg-kb/reset",       resetMcgKbDemo);
+
+  // Solifi — Dealer Experience Hub (SCN-SOLIFI-DEH-1)
+  app.use("/api/mock/solifi-deh",                    solifiDehRouter);
+  app.post("/demo-api/solifi-dealer/ensure-agents",  dehEnsureAgentsHandler);
 
   // HNP Subscriber Intelligence & Churn Prevention (HNP-SUB) — Hearst Newspapers demo
   app.use("/api/mock/hnp-subscriber",      hnpSubscriberRouter);

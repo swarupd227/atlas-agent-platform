@@ -30,6 +30,7 @@ import {
   TrendingDown,
   FileSignature,
   Newspaper,
+  Car,
 } from "lucide-react";
 
 interface Demo {
@@ -452,6 +453,23 @@ const DEMOS: Demo[] = [
     badge: "New",
   },
   {
+    id: "solifi-dealer",
+    title: "Dealer Experience Hub",
+    client: "Solifi",
+    description:
+      "SCN-SOLIFI-DEH-1 — DEH-CONV-001 on real Claude serves Pacific Powersports (dealer_id PP-2847). Natural-language queries resolve via 8 Solifi Experience Hub MCP tools. Scenario A: floorplan pull surfaces 2 units 15+ days overdue with curtailments due in 7 days. Scenario B: payoff quote for sold Kawasaki Ninja ZX-6R with email delivery via human approval gate. Scenario C: audit schedule + policy KB lookup for absent demo-unit question. Scenario D: $47,200 bulk curtailment deferral exceeds $25K autonomous threshold — routed to Solifi Account Manager with full context pre-populated.",
+    industry: "Automotive Finance",
+    industryId: "automotive_finance",
+    stage: "Dealer Finance Operations",
+    route: "/demo/solifi-dealer",
+    icon: Car,
+    iconColor: "#E8640A",
+    duration: "8 min",
+    screens: 1,
+    tags: ["Floorplan Finance", "Payoff Quotes", "Audit Scheduling", "Human-in-the-Loop", "Automotive"],
+    badge: "New",
+  },
+  {
     id: "advantive-support",
     title: "AI-First Tier 1 Support Intelligence",
     client: "Advantive ONE",
@@ -476,6 +494,7 @@ const INDUSTRY_FILTERS = [
   { id: "financial_services", label: "Financial Services" },
   { id: "media_entertainment", label: "Media & Entertainment" },
   { id: "automotive", label: "Automotive Data" },
+  { id: "automotive_finance", label: "Automotive Finance" },
   { id: "legal_services", label: "Legal Services" },
   { id: "manufacturing", label: "Manufacturing" },
   { id: "technology_saas", label: "Technology / SaaS" },
@@ -489,6 +508,8 @@ const industryBadgeStyle: Record<string, string> = {
   media_entertainment:
     "bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-950 dark:text-purple-300 dark:border-purple-800",
   automotive:
+    "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950 dark:text-orange-300 dark:border-orange-800",
+  automotive_finance:
     "bg-orange-50 text-orange-700 border-orange-200 dark:bg-orange-950 dark:text-orange-300 dark:border-orange-800",
   manufacturing:
     "bg-orange-50 text-orange-800 border-orange-300 dark:bg-orange-950/50 dark:text-orange-300 dark:border-orange-800/50",

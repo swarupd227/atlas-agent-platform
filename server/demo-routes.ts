@@ -52,6 +52,14 @@ import { eq } from "drizzle-orm";
 import { runTraces, agentRuntimeRuns, agents, mcpServers, deployments } from "@shared/schema";
 import { runAgentOnce, stopAgentRuntime, isRuntimeActive, runtimeEvents, type RuntimeProgressEvent } from "./agent-runtime";
 import { setBk2LiveScenario, clearBk2LiveScenario, getLastEmailSnapshot, clearLastEmailSnapshot, type Bk2LiveScenario } from "./blackrock2-live-store";
+import {
+  DEH_AGENT_NAME,
+  DEH_MCP_SERVER_NAME,
+  makeDehMcpServerDef,
+  DEH_AGENT_DEF,
+  DEH_SCENARIO_PROMPTS,
+  type DehScenarioKey,
+} from "./solifi-dealer-shared-defs";
 
 export const demoRouter = Router();
 
@@ -3240,4 +3248,322 @@ export async function moodysEnsureAgentsHandler(_req: Request, res: Response): P
 }
 
 demoRouter.post("/moodys/ensure-agents", moodysEnsureAgentsHandler);
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Solifi — Dealer Experience Hub (SCN-SOLIFI-DEH-1)
+// SSE live-run handler + ensure-agents bootstrap
+// (Mock MCP routes are registered in server/routes.ts via server/mock-mcp/solifi-deh.ts)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const PP_DEALER_ID = "PP-2847";
+
+// ── ensure-agents bootstrap ────────────────────────────────────────────────────
+
+async function dehEnsureMcpServer(): Promise<string> {
+  const baseUrl = `http://localhost:${process.env.PORT || 5000}`;
+  const def = makeDehMcpServerDef(baseUrl);
+  const allServers = await storage.getMcpServers();
+  let server = (allServers as any[]).find((s: any) => s.name === DEH_MCP_SERVER_NAME);
+
+  if (!server) {
+    server = await storage.createMcpServer({
+      name:          def.name,
+      description:   def.description,
+      url:           def.url,
+      transportType: "http",
+      status:        "active",
+      riskTier:      "MEDIUM",
+      allowlisted:   true,
+      industryId:    "automotive",
+      addedBy:       "solifi-deh-ensure-agents",
+      capabilities:  { tools: true, resources: false, prompts: false, sampling: false },
+      serverInfo:    { vendor: def.vendor, version: "1.0.0" },
+    });
+    console.log(`[solifi-deh] Created MCP server: ${def.name} (${server.id})`);
+  }
+
+  const existingTools = await storage.getMcpServerTools(server.id);
+  const existingByName = new Map((existingTools || []).map((t: any) => [t.name, t]));
+
+  for (const tool of def.tools) {
+    const canonicalAnnotations = { endpoint: tool.endpoint, method: tool.method };
+    if (!existingByName.has(tool.name)) {
+      await storage.createMcpServerTool({
+        serverId:          server.id,
+        name:              tool.name,
+        description:       tool.description,
+        inputSchema:       tool.inputSchema,
+        outputSchema:      null,
+        annotations:       canonicalAnnotations,
+        riskClassification: "low",
+        owner:             "Solifi Dealer Finance Platform",
+        enabled:           true,
+      });
+    } else {
+      const existing = existingByName.get(tool.name);
+      const ann = (existing as any).annotations || {};
+      if (ann.endpoint !== canonicalAnnotations.endpoint || !(existing as any).enabled) {
+        await storage.updateMcpServerTool(existing.id, { annotations: canonicalAnnotations, enabled: true, description: tool.description } as any);
+      }
+    }
+  }
+
+  return server.id;
+}
+
+async function dehEnsureAgent(mcpServerId: string): Promise<string> {
+  const allAgents = await storage.getAgents();
+  const agentList = Array.isArray(allAgents) ? allAgents : (allAgents as any)?.agents ?? [];
+  let agent = agentList.find((a: any) => a.name === DEH_AGENT_NAME);
+
+  if (!agent) {
+    agent = await storage.createAgent({
+      name:              DEH_AGENT_DEF.name,
+      description:       DEH_AGENT_DEF.description,
+      systemPrompt:      DEH_AGENT_DEF.systemPrompt,
+      agentType:         "single",
+      status:            "active",
+      modelProvider:     DEH_AGENT_DEF.modelProvider,
+      modelName:         DEH_AGENT_DEF.modelName,
+      maxToolIterations: DEH_AGENT_DEF.maxToolIterations,
+      riskTier:          DEH_AGENT_DEF.riskTier,
+      department:        DEH_AGENT_DEF.department,
+      runtimeConfig:     { prompt: DEH_AGENT_DEF.systemPrompt, scheduleIntervalMinutes: 0 },
+    } as any);
+    console.log(`[solifi-deh] Created agent: ${DEH_AGENT_DEF.name} (${agent.id})`);
+  } else {
+    // Reconcile: ensure systemPrompt and runtimeConfig.prompt are set
+    const needsPatch = !(agent as any).systemPrompt || !(agent as any).runtimeConfig?.prompt;
+    if (needsPatch) {
+      await storage.updateAgent(agent.id, {
+        systemPrompt:  DEH_AGENT_DEF.systemPrompt,
+        runtimeConfig: { prompt: DEH_AGENT_DEF.systemPrompt, scheduleIntervalMinutes: 0 },
+      } as any);
+      console.log(`[solifi-deh] Reconciled agent system prompt: ${DEH_AGENT_DEF.name}`);
+    }
+  }
+
+  // Bind MCP server — idempotent
+  const existingLinks = await storage.getAgentMcpServers(agent.id);
+  const alreadyLinked = (existingLinks as any[]).some((l: any) => l.serverId === mcpServerId);
+  if (!alreadyLinked) {
+    await storage.createAgentMcpServer({ agentId: agent.id, serverId: mcpServerId, assignedBy: "solifi-deh-ensure-agents" });
+  }
+
+  return agent.id;
+}
+
+async function dehEnsureDeployment(agentId: string): Promise<string> {
+  const deps = await storage.getDeploymentsByAgentId(agentId);
+  let deployment = (deps as any[])[0];
+
+  if (!deployment) {
+    deployment = await storage.createDeployment({
+      agentId,
+      agentName:        DEH_AGENT_DEF.name,
+      environment:      "production",
+      status:           "pending",
+      version:          "1.0.0",
+      rolloutStrategy:  "canary",
+      canaryPercent:    100,
+      pipelineComplete: true,
+      deployedAt:       new Date(),
+    });
+  } else if (deployment.status === "deployed") {
+    await storage.updateDeployment(deployment.id, { status: "pending" });
+  }
+
+  return deployment.id;
+}
+
+export async function dehEnsureAgentsHandler(_req: Request, res: Response): Promise<void> {
+  try {
+    const mcpServerId  = await dehEnsureMcpServer();
+    const agentId      = await dehEnsureAgent(mcpServerId);
+    const deploymentId = await dehEnsureDeployment(agentId);
+
+    res.json({
+      success:      true,
+      mcpServerId,
+      agentId,
+      deploymentId,
+      message:      "Solifi DEH agent, MCP server, and deployment are ready in this environment.",
+    });
+  } catch (err: any) {
+    console.error("[solifi-deh] ensure-agents error:", err?.message);
+    res.status(500).json({ success: false, error: err?.message || "Setup failed" });
+  }
+}
+
+demoRouter.post("/solifi-dealer/ensure-agents", dehEnsureAgentsHandler);
+
+// GET /demo-api/solifi-dealer/agent-runs — returns agent registry info for the Registry link
+demoRouter.get("/solifi-dealer/agent-runs", async (_req: Request, res: Response) => {
+  try {
+    const allAgents = await storage.getAgents();
+    const agentList = Array.isArray(allAgents) ? allAgents : (allAgents as any)?.agents ?? [];
+    const agent = agentList.find((a: any) => a.name === DEH_AGENT_NAME);
+    if (!agent) return res.json([]);
+    const deps = await storage.getDeploymentsByAgentId(agent.id);
+    const dep  = (deps as any[])[0];
+    res.json([{ agentId: agent.id, deploymentId: dep?.id, agentName: agent.name }]);
+  } catch {
+    res.json([]);
+  }
+});
+
+// POST /demo-api/solifi-dealer/reset
+demoRouter.post("/solifi-dealer/reset", (_req: Request, res: Response) => {
+  res.json({ success: true });
+});
+
+// ── SSE live-run handler ───────────────────────────────────────────────────────
+
+async function dehLiveRunHandler(req: Request, res: Response): Promise<void> {
+  const scenarioId = (req.query.scenario as DehScenarioKey) || "floorplan-status";
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.flushHeaders();
+
+  const sendEvent = (eventType: string, payload: object) => {
+    try { res.write(`event: ${eventType}\ndata: ${JSON.stringify(payload)}\n\n`); } catch {}
+  };
+
+  let aborted = false;
+  const keepaliveTimer = setInterval(() => {
+    if (aborted) { clearInterval(keepaliveTimer); return; }
+    try { res.write(": keepalive\n\n"); } catch { clearInterval(keepaliveTimer); }
+  }, 15_000);
+
+  req.on("close", () => { aborted = true; });
+
+  const onRuntimeEvent = (evt: RuntimeProgressEvent) => {
+    if (aborted) return;
+    if (evt.deploymentId !== deploymentId) return;
+
+    const steps: any[] = evt.result?.steps ?? [];
+    for (const step of steps) {
+      if (step.type !== "api_call" || step.mcpServer === "unknown") continue;
+      const tool = step.mcpTool || step.output?.mcpTool || step.name || "unknown_tool";
+      const responseData = step.output?.data ?? step.output ?? null;
+      const success = (() => {
+        if (!responseData) return step.status === "completed";
+        if (typeof responseData.success === "boolean") return responseData.success;
+        if (responseData.error) return false;
+        return true;
+      })();
+      sendEvent("agent_event", {
+        type:      success ? "tool_call_result" : "tool_call_result",
+        tool,
+        success,
+        data:      { tool, success, iteration: step.iteration, error: responseData?.error },
+        message:   `Tool ${tool} ${success ? "completed" : "failed"}`,
+      });
+    }
+
+    const lastStep = steps[steps.length - 1];
+    if (lastStep?.type === "llm_response") {
+      sendEvent("agent_event", {
+        type:       "llm_response",
+        data:       { toolsCalled: steps.filter((s: any) => s.type === "api_call").length, iteration: lastStep.iteration },
+        message:    "Claude reasoning",
+      });
+    }
+  };
+
+  let deploymentId = "";
+
+  try {
+    sendEvent("run_start", { pipeline: "DEH-CONV-001", scenario: scenarioId });
+
+    // Ensure agent/MCP/deployment exist
+    const mcpServerId = await dehEnsureMcpServer();
+    const agentId     = await dehEnsureAgent(mcpServerId);
+    deploymentId      = await dehEnsureDeployment(agentId);
+
+    const agent = await storage.getAgent(agentId);
+    sendEvent("setup", { message: `Agent ${DEH_AGENT_NAME} ready · deployment ${deploymentId}` });
+
+    const scenarioDef = DEH_SCENARIO_PROMPTS[scenarioId] ?? DEH_SCENARIO_PROMPTS["floorplan-status"];
+
+    sendEvent("agent_start", {
+      externalId:  DEH_AGENT_DEF.externalId,
+      agentId,
+      deploymentId,
+      model:       DEH_AGENT_DEF.modelName,
+    });
+
+    if (await isRuntimeActive(deploymentId)) {
+      await stopAgentRuntime(deploymentId);
+    }
+
+    runtimeEvents.on("agent_execution", onRuntimeEvent);
+
+    const result = await runAgentOnce(deploymentId, scenarioDef.prompt, DEH_AGENT_DEF.maxToolIterations);
+
+    let resultSummary: any = null;
+    if (result.success && result.message) {
+      const jsonMatch = result.message.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        try { resultSummary = JSON.parse(jsonMatch[0]); } catch {}
+      }
+    }
+
+    // Emit human_gate event for human-handoff scenario
+    if (scenarioId === "human-handoff" && resultSummary) {
+      sendEvent("human_gate", {
+        gate_type:  "curtailment_deferral",
+        message:    `Curtailment deferral of $${resultSummary.requested_amount?.toLocaleString() ?? "47,200"} across ${resultSummary.units_in_scope ?? 4} units exceeds autonomous approval threshold of $${resultSummary.autonomous_limit?.toLocaleString() ?? "25,000"}. Routing to Solifi Account Manager.`,
+        context:    {
+          dealer_id:         PP_DEALER_ID,
+          requested_amount:  resultSummary.requested_amount,
+          autonomous_limit:  resultSummary.autonomous_limit,
+          units_in_scope:    resultSummary.units_in_scope,
+          estimated_response: resultSummary.estimated_response,
+        },
+        policy_ref: "DEH-POL-CURT-AUTO-001",
+      });
+    }
+
+    // Emit email human_gate for payoff-quote scenario
+    if (scenarioId === "payoff-quote" && resultSummary?.email_sent_to) {
+      sendEvent("human_gate", {
+        gate_type:  "email_confirmation",
+        message:    `Payoff quote email to ${resultSummary.email_sent_to} approved by Finance Manager Jordan Reeves.`,
+        context:    { recipient: resultSummary.email_sent_to, quote_id: resultSummary.quote_id, total_payoff: resultSummary.total_payoff ?? (resultSummary.current_balance ?? 0) + (resultSummary.accrued_interest ?? 0) },
+        policy_ref: "DEH-POL-EMAIL-AUTH-001",
+      });
+    }
+
+    sendEvent("agent_complete", {
+      externalId:    DEH_AGENT_DEF.externalId,
+      agentId,
+      deploymentId,
+      toolCalls:     result.steps?.length ?? 0,
+      success:       result.success,
+      message:       result.message,
+      resultSummary,
+    });
+
+    sendEvent("run_complete", {
+      scenario: scenarioId,
+      success:  result.success,
+      message:  scenarioDef.completeMsg,
+    });
+
+  } catch (err: any) {
+    console.error("[solifi-deh-live-run] Error:", err?.message);
+    sendEvent("error", { message: err?.message || "Live run failed" });
+  } finally {
+    clearInterval(keepaliveTimer);
+    runtimeEvents.off("agent_execution", onRuntimeEvent);
+    if (!aborted) res.end();
+  }
+}
+
+demoRouter.get("/solifi-dealer/live-run", dehLiveRunHandler);
 
