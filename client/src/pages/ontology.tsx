@@ -115,6 +115,7 @@ interface ConceptView {
   label: string;
   category: string;
   description: string;
+  industryId: string;
   properties: OntologyProperty[];
   relationships: OntologyRelationship[];
   tags: string[];
@@ -231,6 +232,7 @@ function toConceptView(c: DbOntologyConcept): ConceptView {
     label: c.label,
     category: c.category,
     description: c.description,
+    industryId: c.industryId,
     properties: (c.properties as OntologyProperty[]) || [],
     relationships: (c.relationships as OntologyRelationship[]) || [],
     tags: c.tags || [],
@@ -305,7 +307,7 @@ function buildCsvExport(concepts: ConceptView[]): string {
       escape(c.label),
       escape(c.category),
       escape(c.description),
-      escape(c.industryRelevance ?? c.source ?? ""),
+      escape(c.industryId),
       escape(c.tags.join(";")),
       escape(c.synonyms.join(";")),
       escape(c.linkedRegulations.map((r) => r.name).join(";")),
@@ -901,11 +903,14 @@ export default function OntologyExplorer() {
     reader.onload = (ev) => {
       const text = ev.target?.result as string;
       const parsed = parseCsvText(text);
-      const existingLabels = new Set(concepts.map((c) => c.label.toLowerCase().trim()));
-      const rows: CsvImportRow[] = parsed.map((r) => ({
-        ...r,
-        isDuplicate: existingLabels.has(r.label.toLowerCase().trim()),
-      }));
+      const existingKeys = new Set(
+        concepts.map((c) => `${c.label.toLowerCase().trim()}|${c.industryId.toLowerCase().trim()}`)
+      );
+      const rows: CsvImportRow[] = parsed.map((r) => {
+        const rowIndustry = (r.industryId || industryId || "").toLowerCase().trim();
+        const key = `${r.label.toLowerCase().trim()}|${rowIndustry}`;
+        return { ...r, isDuplicate: existingKeys.has(key) };
+      });
       setCsvRows(rows);
       const defaultSelected = new Set(
         rows.map((_, i) => i).filter((i) => !rows[i].isDuplicate)
@@ -917,10 +922,11 @@ export default function OntologyExplorer() {
 
   const handleCsvImport = async () => {
     const selectedRows = csvRows.filter((_, i) => csvSelected.has(i));
-    if (selectedRows.length === 0) return;
+    const toImport = selectedRows.filter((r) => !r.isDuplicate);
+    if (toImport.length === 0) return;
     setCsvImporting(true);
     try {
-      const concepts = selectedRows.map((r) => ({
+      const conceptsToCreate = toImport.map((r) => ({
         id: crypto.randomUUID(),
         label: r.label,
         category: r.category,
@@ -934,13 +940,13 @@ export default function OntologyExplorer() {
         source: "custom-extension",
         ontologyName: "Custom Import",
       }));
-      const res = await apiRequest("POST", "/api/ontology/concepts/bulk", { concepts });
+      const res = await apiRequest("POST", "/api/ontology/concepts/bulk", { concepts: conceptsToCreate });
       const data = await res.json();
       queryClient.invalidateQueries({ queryKey: ["/api/ontology/concepts", industryId] });
-      const skipped = csvRows.filter((r) => r.isDuplicate).length;
+      const skippedDups = csvRows.filter((r) => r.isDuplicate).length;
       toast({
         title: "Import complete",
-        description: `${data.count} imported${skipped > 0 ? `, ${skipped} skipped (already exist)` : ""}${data.errors?.length > 0 ? `, ${data.errors.length} had errors` : ""}.`,
+        description: `${data.count} imported${skippedDups > 0 ? `, ${skippedDups} skipped (already exist)` : ""}${data.errors?.length > 0 ? `, ${data.errors.length} had errors` : ""}.`,
       });
       setCsvImportOpen(false);
       setCsvRows([]);
@@ -954,11 +960,7 @@ export default function OntologyExplorer() {
   };
 
   const handleExportCsv = () => {
-    const toExport = concepts.filter((c) => {
-      if (sourceFilter === "standard") return c.source !== "custom-extension";
-      if (sourceFilter === "custom") return c.source === "custom-extension";
-      return true;
-    });
+    const toExport = Object.values(filteredCategories).flat();
     const csv = buildCsvExport(toExport);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
