@@ -4,7 +4,7 @@ import { EventEmitter } from "events";
 import OpenAI from "openai";
 import { createHash } from "crypto";
 import { sql } from "drizzle-orm";
-import { searchKnowledgeBaseChunks } from "./embeddings";
+import { searchKnowledgeBaseChunks, generateEmbeddings } from "./embeddings";
 import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
 import { outputContractEnforcer, StructuredOutputValidationError } from "./services/output-contract-enforcer";
 import { isRealMcpServer, mcpListTools, mcpCallTool as mcpSdkCallTool } from "./mcp-client";
@@ -819,12 +819,82 @@ export interface OntologyComplianceResult {
   totalDomainMentions: number;
   canonicalCount: number;
   deprecatedCount: number;
+  semanticScores?: Record<string, number>;
+  overallScore?: number;
+  semanticMode?: boolean;
+}
+
+function _cosineSimilarity(a: number[], b: number[]): number {
+  let dot = 0, magA = 0, magB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    magA += a[i] * a[i];
+    magB += b[i] * b[i];
+  }
+  return magA && magB ? dot / (Math.sqrt(magA) * Math.sqrt(magB)) : 0;
 }
 
 export async function checkOntologyCompliance(
   text: string,
   ontologyTags: Array<{ conceptId: string; conceptLabel: string }>
 ): Promise<OntologyComplianceResult> {
+  // Semantic mode: use embeddings when OpenAI key is available
+  const hasOpenAI = !!process.env.OPENAI_API_KEY;
+  if (hasOpenAI && ontologyTags.length > 0) {
+    try {
+      const concepts = await Promise.all(
+        ontologyTags.slice(0, 15).map(tag =>
+          storage.getOntologyConcept(tag.conceptId).catch(() => null)
+        )
+      );
+      const validConcepts = concepts.filter(Boolean) as any[];
+
+      if (validConcepts.length > 0) {
+        const conceptTexts = validConcepts.map(
+          (c: any) => `${c.label}: ${c.description || c.label}`
+        );
+        const allTexts = [text.slice(0, 3000), ...conceptTexts];
+        const embeddings = await generateEmbeddings(allTexts);
+        const outputEmbedding = embeddings[0];
+        const conceptEmbeddings = embeddings.slice(1);
+
+        const SEMANTIC_THRESHOLD = 0.35;
+        const semanticScores: Record<string, number> = {};
+        const semanticMatched: string[] = [];
+
+        for (let i = 0; i < validConcepts.length; i++) {
+          const sim = _cosineSimilarity(outputEmbedding, conceptEmbeddings[i]);
+          semanticScores[validConcepts[i].label] = Math.round(sim * 100) / 100;
+          if (sim >= SEMANTIC_THRESHOLD) {
+            semanticMatched.push(validConcepts[i].label);
+          }
+        }
+
+        const overallScore = Math.round(
+          (semanticMatched.length / validConcepts.length) * 100
+        );
+
+        return {
+          score: overallScore,
+          canonicalTermsUsed: semanticMatched,
+          deprecatedTermsUsed: [],
+          totalDomainMentions: semanticMatched.length,
+          canonicalCount: semanticMatched.length,
+          deprecatedCount: 0,
+          semanticScores,
+          overallScore,
+          semanticMode: true,
+        };
+      }
+    } catch (err: any) {
+      console.warn(
+        "[checkOntologyCompliance] Semantic mode failed, falling back to lexical:",
+        err.message
+      );
+    }
+  }
+
+  // Lexical fallback
   const canonicalTermsUsed: string[] = [];
   const deprecatedTermsUsed: Array<{ term: string; shouldUse: string }> = [];
   const textLower = text.toLowerCase();
@@ -866,6 +936,7 @@ export async function checkOntologyCompliance(
     totalDomainMentions,
     canonicalCount: canonicalTermsUsed.length,
     deprecatedCount: deprecatedTermsUsed.length,
+    semanticMode: false,
   };
 }
 

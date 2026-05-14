@@ -762,10 +762,6 @@ const router = Router();
       let ontologyEnhancements: any[] = [];
       try {
         ontologyConcepts = await storage.getOntologyConcepts(industryId);
-        if (ontologyConcepts.length > 0) {
-          const conceptIds = ontologyConcepts.slice(0, 15).map((c: any) => c.id);
-          ontologyEnhancements = await storage.getOntologyEnhancements(conceptIds);
-        }
       } catch {}
 
       // Build relevance scorer first so it can filter MCP servers and all other slices
@@ -778,6 +774,7 @@ const router = Router();
       const relevanceScore = (obj: any): number => {
         const text = [
           obj.name || "",
+          obj.label || "",
           obj.description || "",
           ...(Array.isArray(obj.tags) ? obj.tags : []),
           obj.domain || "",
@@ -821,6 +818,20 @@ const router = Router();
         .sort((a, b) => relevanceScore(b) - relevanceScore(a))
         .slice(0, 5);
       const industryRagPipelines = ragPipelines.filter((r: any) => r.industry === industryId || !r.industry).slice(0, 4);
+
+      // Rank ontology concepts by outcome relevance; cap at top 12 to keep prompt concise.
+      // Prevents unrelated concepts from polluting the agent plan prompt.
+      const rankedOntologyConcepts = ontologyConcepts
+        .map((c: any) => ({ concept: c, score: relevanceScore(c) }))
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 12)
+        .map((x) => x.concept);
+      try {
+        if (rankedOntologyConcepts.length > 0) {
+          const conceptIds = rankedOntologyConcepts.map((c: any) => c.id);
+          ontologyEnhancements = await storage.getOntologyEnhancements(conceptIds);
+        }
+      } catch {}
 
       let feedbackSection = "";
       if (feedback && previousPlan) {
@@ -867,9 +878,7 @@ You MUST incorporate this feedback into the new plan. Adjust the agents, roles, 
         memoryRagConfig: t.memoryRagConfig,
       }));
 
-      const ontologySummary = [...ontologyConcepts]
-        .sort((a, b) => relevanceScore(b) - relevanceScore(a))
-        .slice(0, 8).map(c => ({
+      const ontologySummary = rankedOntologyConcepts.slice(0, 8).map((c: any) => ({
         id: c.id,
         label: c.label,
         category: c.category,
@@ -3362,6 +3371,106 @@ Generate diverse test cases that:
     } catch (e: any) {
       console.error("AI generate eval cases error:", e);
       res.status(500).json({ error: e.message || "Failed to generate eval cases" });
+    }
+  });
+
+  // ── Auto-generate ontology-grounded eval test cases ─────────────────
+  router.post("/api/ai/auto-generate-eval-suite", async (req, res) => {
+    try {
+      const { suiteId } = req.body;
+      if (!suiteId) return res.status(400).json({ message: "suiteId is required" });
+
+      const suite = await storage.getEvalSuite(suiteId);
+      if (!suite) return res.status(404).json({ message: "Eval suite not found" });
+      if (!suite.agentId) return res.status(400).json({ message: "Suite has no linked agent" });
+
+      const agent = await storage.getAgent(suite.agentId, getOrgId(req));
+      if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+      const ontologyTags = (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) || [];
+      if (ontologyTags.length === 0) {
+        return res.status(400).json({ message: "Agent has no ontology tags to generate from" });
+      }
+
+      const conceptIds = ontologyTags.map(t => t.conceptId);
+      const [enhancements, rawConcepts] = await Promise.all([
+        storage.getOntologyEnhancements(conceptIds),
+        Promise.all(conceptIds.map(id => storage.getOntologyConcept(id).catch(() => null))),
+      ]);
+      const validConcepts = rawConcepts.filter(Boolean) as any[];
+
+      const conceptContext = validConcepts.map((c: any) => {
+        const enh = enhancements.find(e => e.conceptId === c.id);
+        return {
+          label: c.label,
+          category: c.category,
+          description: c.description || c.label,
+          agentUseCases: (enh?.agentUseCases as any[]) || [],
+          riskFactors: (enh?.riskFactors as any[]) || [],
+        };
+      });
+
+      const raw = await callClaude({
+        system: "You are an expert AI evaluation engineer. Return only a valid JSON array — no prose or markdown fences.",
+        user: `Generate 6–10 ontology-grounded test cases for the following agent eval suite.
+
+Agent: ${agent.name}
+Agent Description: ${(agent as any).description || "N/A"}
+Suite: ${suite.name}
+
+Ontology concepts this agent must handle:
+${JSON.stringify(conceptContext, null, 2)}
+
+Each test case must:
+1. Exercise one or more ontology concepts in a realistic domain scenario
+2. Include both passing (correct usage) and edge-case (ambiguous or incorrect) variants
+3. Have clear, measurable pass criteria tied to the concept
+
+Return a JSON array where every element has exactly:
+{
+  "name": "<descriptive name>",
+  "inputData": { "prompt": "<realistic input>", "context": "<optional context>" },
+  "expectedOutput": "<description of correct output>",
+  "passCriteria": "<specific measurable pass criterion>",
+  "tags": ["<tag>"],
+  "weight": 1
+}`,
+        maxTokens: 4096,
+        jsonMode: true,
+      });
+
+      let cases: any[] = [];
+      try {
+        const parsed = JSON.parse(stripJsonFences(raw));
+        cases = Array.isArray(parsed) ? parsed : parsed.cases || [];
+      } catch {
+        return res.status(500).json({ message: "Failed to parse AI response" });
+      }
+
+      const { randomUUID } = await import("crypto");
+      const created = [];
+      for (const tc of cases.slice(0, 10)) {
+        try {
+          const testCase = await storage.createEvalTestCase({
+            suiteId,
+            name: String(tc.name || "Generated test case"),
+            inputData: tc.inputData ?? {},
+            expectedOutput: tc.expectedOutput ?? "",
+            weight: typeof tc.weight === "number" ? tc.weight : 1,
+            tags: Array.isArray(tc.tags) ? tc.tags : ["ontology-generated"],
+            status: "active",
+            origin: "ontology",
+          } as any);
+          created.push(testCase);
+        } catch (err: any) {
+          console.warn("[auto-generate-eval-suite] skipped case:", err.message);
+        }
+      }
+
+      res.json({ count: created.length, cases: created });
+    } catch (e: any) {
+      console.error("[POST /api/ai/auto-generate-eval-suite] error:", e);
+      res.status(500).json({ message: e.message || "Failed to auto-generate eval suite" });
     }
   });
 

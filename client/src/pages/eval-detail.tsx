@@ -176,6 +176,17 @@ export default function EvalDetail() {
   } | null>(null);
   const [schemaValidating, setSchemaValidating] = useState(false);
 
+  const [autoGenerateFired, setAutoGenerateFired] = useState(false);
+  useEffect(() => {
+    if (autoGenerateFired) return;
+    if (ontologyGenerateMutation.isPending) return;
+    const agentOntologyTags = (agent?.ontologyTags as Array<{ conceptId: string }>) || [];
+    if (testCases && testCases.length === 0 && agentOntologyTags.length > 0 && suite?.agentId) {
+      setAutoGenerateFired(true);
+      ontologyGenerateMutation.mutate();
+    }
+  }, [testCases, agent]);
+
   useEffect(() => {
     const combinedText = `${tcName} ${tcInputData} ${tcExpectedOutput}`.trim();
     if (combinedText.length < 5) {
@@ -364,6 +375,20 @@ export default function EvalDetail() {
     },
   });
 
+  const ontologyGenerateMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/ai/auto-generate-eval-suite", { suiteId: id });
+      return res.json();
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/evals", id, "test-cases"] });
+      toast({ title: "Ontology test cases generated", description: `${data.count} test cases created from agent ontology concepts.` });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to generate from ontology", description: error.message, variant: "destructive" });
+    },
+  });
+
   const setIndustryFrameworkMutation = useMutation({
     mutationFn: async (industryId: string) => {
       await apiRequest("PUT", `/api/evals/${id}`, { industry: industryId });
@@ -542,6 +567,22 @@ export default function EvalDetail() {
             })()}
           </div>
         </div>
+        {(() => {
+          const agentOntologyTags = (agent?.ontologyTags as Array<{ conceptId: string }>) || [];
+          if (!suite?.agentId || agentOntologyTags.length === 0) return null;
+          return (
+            <Button
+              size="sm"
+              variant="outline"
+              data-testid="button-regenerate-from-ontology"
+              onClick={() => ontologyGenerateMutation.mutate()}
+              disabled={ontologyGenerateMutation.isPending}
+            >
+              <Sparkles className="w-3.5 h-3.5 mr-1.5" />
+              {ontologyGenerateMutation.isPending ? "Generating..." : "Regenerate from Ontology"}
+            </Button>
+          );
+        })()}
         <Button
           size="sm"
           data-testid="button-run-now"
