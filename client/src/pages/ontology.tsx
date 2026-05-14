@@ -35,6 +35,8 @@ import {
   ArrowRight,
   History,
   Bot,
+  Upload,
+  Download,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -63,6 +65,17 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   Select,
   SelectContent,
@@ -231,6 +244,79 @@ function toConceptView(c: DbOntologyConcept): ConceptView {
   };
 }
 
+interface CsvImportRow {
+  label: string;
+  category: string;
+  description: string;
+  industryId: string;
+  tags: string;
+  synonyms: string;
+  linkedRegulations: string;
+  sensitivityLevel: string;
+  isDuplicate: boolean;
+}
+
+const CSV_HEADERS = ["label", "category", "description", "industryId", "tags", "synonyms", "linkedRegulations", "sensitivityLevel"];
+
+function parseCsvText(text: string): Omit<CsvImportRow, "isDuplicate">[] {
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+  if (lines.length < 2) return [];
+  const parseRow = (line: string): string[] => {
+    const fields: string[] = [];
+    let cur = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (ch === '"') {
+        if (inQuotes && line[i + 1] === '"') { cur += '"'; i++; }
+        else { inQuotes = !inQuotes; }
+      } else if (ch === "," && !inQuotes) {
+        fields.push(cur); cur = "";
+      } else {
+        cur += ch;
+      }
+    }
+    fields.push(cur);
+    return fields;
+  };
+  const headers = parseRow(lines[0]).map((h) => h.trim().toLowerCase());
+  const idx = (name: string) => headers.indexOf(name);
+  return lines.slice(1).map((line) => {
+    const f = parseRow(line);
+    const get = (name: string) => (f[idx(name)] ?? "").trim();
+    return {
+      label: get("label"),
+      category: get("category"),
+      description: get("description"),
+      industryId: get("industryid") || get("industryId") || get("industry_id"),
+      tags: get("tags"),
+      synonyms: get("synonyms"),
+      linkedRegulations: get("linkedregulations") || get("linkedRegulations") || get("linked_regulations"),
+      sensitivityLevel: get("sensitivitylevel") || get("sensitivityLevel") || get("sensitivity_level"),
+    };
+  }).filter((r) => r.label.length > 0 && r.category.length > 0);
+}
+
+function buildCsvExport(concepts: ConceptView[]): string {
+  const escape = (v: string) => `"${v.replace(/"/g, '""')}"`;
+  const header = CSV_HEADERS.join(",");
+  const rows = concepts.map((c) =>
+    [
+      escape(c.label),
+      escape(c.category),
+      escape(c.description),
+      escape(c.industryRelevance ?? c.source ?? ""),
+      escape(c.tags.join(";")),
+      escape(c.synonyms.join(";")),
+      escape(c.linkedRegulations.map((r) => r.name).join(";")),
+      escape(c.sensitivityClassification?.level ?? ""),
+    ].join(",")
+  );
+  return [header, ...rows].join("\n");
+}
+
+const CSV_TEMPLATE = `label,category,description,industryId,tags,synonyms,linkedRegulations,sensitivityLevel\n"Order to Cash","Financial Processes","End-to-end process from customer order to payment receipt","financial-services","ar;revenue;billing","O2C;OTC","","internal"`;
+
 type SourceFilter = "all" | "standard" | "custom";
 type ViewMode = "list" | "graph";
 
@@ -267,6 +353,12 @@ export default function OntologyExplorer() {
   const [kgImporting, setKgImporting] = useState(false);
   const [kgExpandedCategories, setKgExpandedCategories] = useState<Set<string>>(new Set());
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [csvImportOpen, setCsvImportOpen] = useState(false);
+  const [csvRows, setCsvRows] = useState<CsvImportRow[]>([]);
+  const [csvSelected, setCsvSelected] = useState<Set<number>>(new Set());
+  const [csvImporting, setCsvImporting] = useState(false);
+  const csvFileRef = useRef<HTMLInputElement>(null);
 
   const industryId = industry ? industry.id : null;
 
@@ -547,8 +639,9 @@ export default function OntologyExplorer() {
     },
     onSuccess: () => {
       setSelectedConceptId(null);
+      setDeleteConfirmOpen(false);
       queryClient.invalidateQueries({ queryKey: ["/api/ontology/concepts", industryId] });
-      toast({ title: "Concept deleted", description: "Custom concept has been removed." });
+      toast({ title: "Concept deleted", description: "The ontology concept has been removed." });
     },
     onError: (err: Error) => {
       toast({ title: "Failed to delete concept", description: err.message, variant: "destructive" });
@@ -801,6 +894,91 @@ export default function OntologyExplorer() {
 
   const isCustom = (concept: ConceptView) => concept.source === "custom-extension";
 
+  const handleCsvFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string;
+      const parsed = parseCsvText(text);
+      const existingLabels = new Set(concepts.map((c) => c.label.toLowerCase().trim()));
+      const rows: CsvImportRow[] = parsed.map((r) => ({
+        ...r,
+        isDuplicate: existingLabels.has(r.label.toLowerCase().trim()),
+      }));
+      setCsvRows(rows);
+      const defaultSelected = new Set(
+        rows.map((_, i) => i).filter((i) => !rows[i].isDuplicate)
+      );
+      setCsvSelected(defaultSelected);
+    };
+    reader.readAsText(file);
+  };
+
+  const handleCsvImport = async () => {
+    const selectedRows = csvRows.filter((_, i) => csvSelected.has(i));
+    if (selectedRows.length === 0) return;
+    setCsvImporting(true);
+    try {
+      const concepts = selectedRows.map((r) => ({
+        id: crypto.randomUUID(),
+        label: r.label,
+        category: r.category,
+        description: r.description || r.label,
+        industryId: r.industryId || industryId || "custom",
+        tags: r.tags ? r.tags.split(";").map((t) => t.trim()).filter(Boolean) : [],
+        synonyms: r.synonyms ? r.synonyms.split(";").map((s) => s.trim()).filter(Boolean) : [],
+        linkedRegulations: r.linkedRegulations
+          ? r.linkedRegulations.split(";").map((s) => ({ name: s.trim() })).filter((l) => l.name)
+          : [],
+        source: "custom-extension",
+        ontologyName: "Custom Import",
+      }));
+      const res = await apiRequest("POST", "/api/ontology/concepts/bulk", { concepts });
+      const data = await res.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/ontology/concepts", industryId] });
+      const skipped = csvRows.filter((r) => r.isDuplicate).length;
+      toast({
+        title: "Import complete",
+        description: `${data.count} imported${skipped > 0 ? `, ${skipped} skipped (already exist)` : ""}${data.errors?.length > 0 ? `, ${data.errors.length} had errors` : ""}.`,
+      });
+      setCsvImportOpen(false);
+      setCsvRows([]);
+      setCsvSelected(new Set());
+      if (csvFileRef.current) csvFileRef.current.value = "";
+    } catch (err: any) {
+      toast({ title: "Import failed", description: err.message, variant: "destructive" });
+    } finally {
+      setCsvImporting(false);
+    }
+  };
+
+  const handleExportCsv = () => {
+    const toExport = concepts.filter((c) => {
+      if (sourceFilter === "standard") return c.source !== "custom-extension";
+      if (sourceFilter === "custom") return c.source === "custom-extension";
+      return true;
+    });
+    const csv = buildCsvExport(toExport);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${industryId ?? "ontology"}-concepts.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleDownloadTemplate = () => {
+    const blob = new Blob([CSV_TEMPLATE], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "ontology-import-template.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const categoryColorMap = useMemo(() => {
     const map: Record<string, string> = {};
     const cats = Object.keys(categories);
@@ -1024,6 +1202,25 @@ export default function OntologyExplorer() {
               >
                 <Database className="w-4 h-4 mr-1" />
                 KG Builder
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => { setCsvImportOpen(true); setCsvRows([]); setCsvSelected(new Set()); }}
+                data-testid="button-import-csv"
+              >
+                <Upload className="w-4 h-4 mr-1" />
+                Import CSV
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleExportCsv}
+                disabled={concepts.length === 0}
+                data-testid="button-export-csv"
+              >
+                <Download className="w-4 h-4 mr-1" />
+                Export CSV
               </Button>
               <Button
                 size="sm"
@@ -1318,24 +1515,22 @@ export default function OntologyExplorer() {
                     </Badge>
                   )}
                 </div>
-                {isCustom(selectedConcept) && (
-                  <div className="pt-1">
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      onClick={() => deleteConceptMutation.mutate(selectedConcept.id)}
-                      disabled={deleteConceptMutation.isPending}
-                      data-testid="button-delete-concept"
-                    >
-                      {deleteConceptMutation.isPending ? (
-                        <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
-                      ) : (
-                        <Trash2 className="w-3.5 h-3.5 mr-1" />
-                      )}
-                      Delete Custom Concept
-                    </Button>
-                  </div>
-                )}
+                <div className="pt-1">
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    onClick={() => setDeleteConfirmOpen(true)}
+                    disabled={deleteConceptMutation.isPending}
+                    data-testid="button-delete-concept"
+                  >
+                    {deleteConceptMutation.isPending ? (
+                      <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-3.5 h-3.5 mr-1" />
+                    )}
+                    Delete Concept
+                  </Button>
+                </div>
               </div>
 
               {versionData && versionData.history.length > 0 && (
@@ -2627,6 +2822,153 @@ export default function OntologyExplorer() {
               )}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete concept confirmation */}
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent data-testid="dialog-delete-confirm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Concept</AlertDialogTitle>
+            <AlertDialogDescription>
+              {selectedConcept ? (
+                <>
+                  Are you sure you want to delete <strong>{selectedConcept.label}</strong>?
+                  {selectedConcept.usageCount > 0 && (
+                    <span className="block mt-2 text-amber-600 dark:text-amber-400 font-medium">
+                      This concept is referenced in {selectedConcept.usageCount} agent{selectedConcept.usageCount !== 1 ? "s" : ""} — deleting it will not remove those existing references.
+                    </span>
+                  )}
+                  {" "}This action cannot be undone.
+                </>
+              ) : (
+                "This action cannot be undone."
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="button-delete-cancel">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => selectedConcept && deleteConceptMutation.mutate(selectedConcept.id)}
+              disabled={deleteConceptMutation.isPending}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              data-testid="button-delete-confirm"
+            >
+              {deleteConceptMutation.isPending ? (
+                <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+              ) : (
+                <Trash2 className="w-3.5 h-3.5 mr-1" />
+              )}
+              Delete Concept
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* CSV Import dialog */}
+      <Dialog open={csvImportOpen} onOpenChange={(open) => { setCsvImportOpen(open); if (!open) { setCsvRows([]); setCsvSelected(new Set()); if (csvFileRef.current) csvFileRef.current.value = ""; } }}>
+        <DialogContent className="max-w-3xl" data-testid="dialog-csv-import">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Upload className="w-4 h-4" />
+              Import Concepts from CSV
+            </DialogTitle>
+            <DialogDescription>
+              Upload a CSV file to bulk-import ontology concepts. Concepts already in this workspace (matching by label) are shown as duplicates and unchecked by default.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex-1">
+                <input
+                  ref={csvFileRef}
+                  type="file"
+                  accept=".csv"
+                  onChange={handleCsvFileChange}
+                  className="block w-full text-sm text-muted-foreground file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border file:border-input file:text-sm file:font-medium file:bg-background file:text-foreground hover:file:bg-accent cursor-pointer"
+                  data-testid="input-csv-file"
+                />
+              </div>
+              <button
+                onClick={handleDownloadTemplate}
+                className="text-xs text-primary underline underline-offset-2 whitespace-nowrap"
+                data-testid="link-download-template"
+              >
+                Download template
+              </button>
+            </div>
+
+            {csvRows.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>{csvSelected.size} of {csvRows.length} selected{csvRows.filter((r) => r.isDuplicate).length > 0 ? ` · ${csvRows.filter((r) => r.isDuplicate).length} duplicate(s) unchecked` : ""}</span>
+                  <div className="flex gap-2">
+                    <button className="underline underline-offset-2" onClick={() => setCsvSelected(new Set(csvRows.map((_, i) => i)))}>Select all</button>
+                    <button className="underline underline-offset-2" onClick={() => setCsvSelected(new Set())}>Deselect all</button>
+                  </div>
+                </div>
+                <div className="border rounded-md overflow-auto max-h-64">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-8"></TableHead>
+                        <TableHead className="text-xs">Label</TableHead>
+                        <TableHead className="text-xs">Category</TableHead>
+                        <TableHead className="text-xs">Industry ID</TableHead>
+                        <TableHead className="text-xs">Tags</TableHead>
+                        <TableHead className="w-24 text-xs">Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {csvRows.map((row, i) => (
+                        <TableRow key={i} className={row.isDuplicate ? "opacity-50" : ""} data-testid={`row-csv-import-${i}`}>
+                          <TableCell>
+                            <Checkbox
+                              checked={csvSelected.has(i)}
+                              onCheckedChange={(checked) => {
+                                setCsvSelected((prev) => {
+                                  const next = new Set(prev);
+                                  if (checked) next.add(i); else next.delete(i);
+                                  return next;
+                                });
+                              }}
+                              data-testid={`checkbox-csv-row-${i}`}
+                            />
+                          </TableCell>
+                          <TableCell className="text-xs font-medium">{row.label}</TableCell>
+                          <TableCell className="text-xs">{row.category}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{row.industryId || <span className="italic">uses current</span>}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate">{row.tags}</TableCell>
+                          <TableCell>
+                            {row.isDuplicate ? (
+                              <Badge variant="outline" className="text-[10px] border-amber-500/50 text-amber-600 dark:text-amber-400">Exists</Badge>
+                            ) : (
+                              <Badge variant="outline" className="text-[10px] border-emerald-500/50 text-emerald-600 dark:text-emerald-400">New</Badge>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCsvImportOpen(false)} data-testid="button-csv-import-cancel">Cancel</Button>
+            <Button
+              onClick={handleCsvImport}
+              disabled={csvSelected.size === 0 || csvImporting}
+              data-testid="button-csv-import-confirm"
+            >
+              {csvImporting ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Upload className="w-4 h-4 mr-2" />
+              )}
+              Import {csvSelected.size > 0 ? csvSelected.size : ""} Concept{csvSelected.size !== 1 ? "s" : ""}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

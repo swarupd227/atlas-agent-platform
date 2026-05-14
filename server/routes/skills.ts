@@ -525,9 +525,6 @@ const router = Router();
     try {
       const concept = await storage.getOntologyConcept(req.params.id as string);
       if (!concept) return res.status(404).json({ message: "Concept not found" });
-      if (concept.source !== "custom-extension" && concept.source !== "ai-subdomain") {
-        return res.status(403).json({ message: "Only custom or AI-generated subdomain concepts can be deleted" });
-      }
       const deleted = await storage.deleteOntologyConcept(req.params.id as string);
       if (!deleted) return res.status(404).json({ message: "Concept not found" });
       res.json({ message: "Concept deleted" });
