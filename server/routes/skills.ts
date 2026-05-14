@@ -136,6 +136,7 @@ const router = Router();
           source: z.string().optional(),
           industryRelevance: z.string().nullable().optional(),
           linkedRegulations: z.array(z.any()).optional(),
+          sensitivityClassification: z.any().optional(),
         })).min(1).max(100),
       });
       const parseResult = bulkSchema.safeParse(req.body);
@@ -161,6 +162,7 @@ const router = Router();
             source: data.source || "ai-subdomain",
             linkedRegulations: data.linkedRegulations || [],
             industryRelevance: data.industryRelevance || null,
+            sensitivityClassification: data.sensitivityClassification ?? null,
           });
           created.push(concept);
         } catch (err: any) {

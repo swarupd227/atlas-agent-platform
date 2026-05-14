@@ -937,6 +937,9 @@ export default function OntologyExplorer() {
         linkedRegulations: r.linkedRegulations
           ? r.linkedRegulations.split(";").map((s) => ({ name: s.trim() })).filter((l) => l.name)
           : [],
+        sensitivityClassification: r.sensitivityLevel
+          ? { level: r.sensitivityLevel.toLowerCase(), dataTypes: [], redactionRequired: false, retentionDays: null }
+          : null,
         source: "custom-extension",
         ontologyName: "Custom Import",
       }));
@@ -2916,6 +2919,7 @@ export default function OntologyExplorer() {
                         <TableHead className="w-8"></TableHead>
                         <TableHead className="text-xs">Label</TableHead>
                         <TableHead className="text-xs">Category</TableHead>
+                        <TableHead className="text-xs max-w-[160px]">Description</TableHead>
                         <TableHead className="text-xs">Industry ID</TableHead>
                         <TableHead className="text-xs">Tags</TableHead>
                         <TableHead className="w-24 text-xs">Status</TableHead>
@@ -2939,6 +2943,7 @@ export default function OntologyExplorer() {
                           </TableCell>
                           <TableCell className="text-xs font-medium">{row.label}</TableCell>
                           <TableCell className="text-xs">{row.category}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground max-w-[160px] truncate" title={row.description}>{row.description || <span className="italic">—</span>}</TableCell>
                           <TableCell className="text-xs text-muted-foreground">{row.industryId || <span className="italic">uses current</span>}</TableCell>
                           <TableCell className="text-xs text-muted-foreground max-w-[120px] truncate">{row.tags}</TableCell>
                           <TableCell>
