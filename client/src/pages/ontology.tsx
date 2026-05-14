@@ -946,7 +946,7 @@ export default function OntologyExplorer() {
       const res = await apiRequest("POST", "/api/ontology/concepts/bulk", { concepts: conceptsToCreate });
       const data = await res.json();
       queryClient.invalidateQueries({ queryKey: ["/api/ontology/concepts", industryId] });
-      const skippedDups = csvRows.filter((r) => r.isDuplicate).length;
+      const skippedDups = selectedRows.filter((r) => r.isDuplicate).length;
       toast({
         title: "Import complete",
         description: `${data.count} imported${skippedDups > 0 ? `, ${skippedDups} skipped (already exist)` : ""}${data.errors?.length > 0 ? `, ${data.errors.length} had errors` : ""}.`,
