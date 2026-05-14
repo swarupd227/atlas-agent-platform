@@ -31,6 +31,7 @@ import {
   handleZodError,
   recomputeOutcomeKpis,
   computeConstraintGraph,
+  generateOntologyEvalCases,
 } from "./helpers";
 import * as nodeCrypto from "crypto";
 import {
@@ -3211,6 +3212,12 @@ Respond in JSON format:
       const data = insertEvalSuiteSchema.parse(req.body);
       const suite = await storage.createEvalSuite(data);
       res.status(201).json(suite);
+      // Fire-and-forget: auto-populate ontology-grounded test cases if the agent has concepts
+      if (suite.agentId) {
+        generateOntologyEvalCases(suite.id, getOrgId(req)).catch(err =>
+          console.warn("[POST /api/evals] Ontology auto-generation failed:", err.message)
+        );
+      }
     } catch (e) {
       handleZodError(res, e);
     }

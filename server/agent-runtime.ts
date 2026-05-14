@@ -4,7 +4,7 @@ import { EventEmitter } from "events";
 import OpenAI from "openai";
 import { createHash } from "crypto";
 import { sql } from "drizzle-orm";
-import { searchKnowledgeBaseChunks, generateEmbeddings } from "./embeddings";
+import { searchKnowledgeBaseChunks, generateEmbeddings, isPgvectorAvailable } from "./embeddings";
 import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
 import { outputContractEnforcer, StructuredOutputValidationError } from "./services/output-contract-enforcer";
 import { isRealMcpServer, mcpListTools, mcpCallTool as mcpSdkCallTool } from "./mcp-client";
@@ -814,14 +814,15 @@ async function callMcpTool(tool: AvailableTool, args: Record<string, any>): Prom
 
 export interface OntologyComplianceResult {
   score: number;
+  matched?: string[];
+  semanticScores?: Record<string, number>;
+  overallScore?: number;
+  semanticMode?: boolean;
   canonicalTermsUsed: string[];
   deprecatedTermsUsed: Array<{ term: string; shouldUse: string }>;
   totalDomainMentions: number;
   canonicalCount: number;
   deprecatedCount: number;
-  semanticScores?: Record<string, number>;
-  overallScore?: number;
-  semanticMode?: boolean;
 }
 
 function _cosineSimilarity(a: number[], b: number[]): number {
@@ -838,9 +839,9 @@ export async function checkOntologyCompliance(
   text: string,
   ontologyTags: Array<{ conceptId: string; conceptLabel: string }>
 ): Promise<OntologyComplianceResult> {
-  // Semantic mode: use embeddings when OpenAI key is available
+  // Semantic mode: use embeddings when pgvector and OpenAI are both available
   const hasOpenAI = !!process.env.OPENAI_API_KEY;
-  if (hasOpenAI && ontologyTags.length > 0) {
+  if (isPgvectorAvailable() && hasOpenAI && ontologyTags.length > 0) {
     try {
       const concepts = await Promise.all(
         ontologyTags.slice(0, 15).map(tag =>
@@ -876,14 +877,15 @@ export async function checkOntologyCompliance(
 
         return {
           score: overallScore,
+          matched: semanticMatched,
+          semanticScores,
+          overallScore,
+          semanticMode: true,
           canonicalTermsUsed: semanticMatched,
           deprecatedTermsUsed: [],
           totalDomainMentions: semanticMatched.length,
           canonicalCount: semanticMatched.length,
           deprecatedCount: 0,
-          semanticScores,
-          overallScore,
-          semanticMode: true,
         };
       }
     } catch (err: any) {

@@ -2,6 +2,7 @@ import { ZodError } from "zod";
 import { completeWithFallback } from "../llm-provider";
 import { storage } from "../storage";
 import { callClaude, stripJsonFences } from "../claude";
+import { insertEvalTestCaseSchema } from "@shared/schema";
 
 async function routeAIComplete(
   messages: Array<{ role: "system" | "user" | "assistant"; content: string }>,
@@ -1086,6 +1087,97 @@ export async function resolvePolicyBundle(agentId: string, orgId?: string) {
       toolAccessClass: agent.toolAccessClass,
     } : null,
   };
+}
+
+export async function generateOntologyEvalCases(
+  suiteId: string,
+  orgId?: string
+): Promise<{ count: number; cases: any[] }> {
+  const suite = await storage.getEvalSuite(suiteId);
+  if (!suite?.agentId) return { count: 0, cases: [] };
+
+  const agent = await storage.getAgent(suite.agentId, orgId);
+  if (!agent) return { count: 0, cases: [] };
+
+  const ontologyTags = (agent.ontologyTags as Array<{ conceptId: string; conceptLabel: string }>) || [];
+  if (ontologyTags.length === 0) return { count: 0, cases: [] };
+
+  const conceptIds = ontologyTags.map(t => t.conceptId);
+  const [enhancements, rawConcepts] = await Promise.all([
+    storage.getOntologyEnhancements(conceptIds),
+    Promise.all(conceptIds.map(id => storage.getOntologyConcept(id).catch(() => null))),
+  ]);
+  const validConcepts = rawConcepts.filter(Boolean) as any[];
+  if (validConcepts.length === 0) return { count: 0, cases: [] };
+
+  const conceptContext = validConcepts.map((c: any) => {
+    const enh = enhancements.find(e => e.conceptId === c.id);
+    return {
+      label: c.label,
+      category: c.category,
+      description: c.description || c.label,
+      agentUseCases: (enh?.agentUseCases as any[]) || [],
+      riskFactors: (enh?.riskFactors as any[]) || [],
+    };
+  });
+
+  const raw = await callClaude({
+    system: "You are an expert AI evaluation engineer. Return only a valid JSON array — no prose or markdown fences.",
+    user: `Generate 6–10 ontology-grounded test cases for this agent eval suite.
+
+Agent: ${agent.name}
+Agent Description: ${(agent as any).description || "N/A"}
+Suite: ${suite.name}
+
+Ontology concepts this agent must handle:
+${JSON.stringify(conceptContext, null, 2)}
+
+Each test case must:
+1. Exercise one or more ontology concepts in a realistic domain scenario
+2. Include both passing (correct usage) and edge-case (ambiguous/incorrect) variants
+3. Have clear, measurable pass criteria tied to the concept
+
+Return a JSON array where every element has exactly:
+{
+  "name": "<descriptive name>",
+  "inputData": { "prompt": "<realistic input>", "context": "<optional context>" },
+  "expectedOutput": "<description of correct output>",
+  "passCriteria": "<specific measurable criterion>",
+  "tags": ["<tag>"],
+  "weight": 1
+}`,
+    maxTokens: 4096,
+    jsonMode: true,
+  });
+
+  let rawCases: any[] = [];
+  try {
+    const parsed = JSON.parse(stripJsonFences(raw));
+    rawCases = Array.isArray(parsed) ? parsed : parsed.cases || [];
+  } catch {
+    return { count: 0, cases: [] };
+  }
+
+  const created: any[] = [];
+  for (const tc of rawCases.slice(0, 10)) {
+    try {
+      const data = insertEvalTestCaseSchema.parse({
+        suiteId,
+        name: String(tc.name || "Generated test case"),
+        inputData: tc.inputData ?? {},
+        expectedOutput: tc.expectedOutput ?? null,
+        weight: typeof tc.weight === "number" ? tc.weight : 1,
+        tags: Array.isArray(tc.tags) ? tc.tags : ["ontology-generated"],
+        status: "active",
+        origin: "ontology",
+      });
+      const testCase = await storage.createEvalTestCase(data);
+      created.push(testCase);
+    } catch (err: any) {
+      console.warn("[generateOntologyEvalCases] skipped case:", err.message);
+    }
+  }
+  return { count: created.length, cases: created };
 }
 
 export function extractResponseText(result: any): string {
