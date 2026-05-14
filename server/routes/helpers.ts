@@ -1091,8 +1091,15 @@ export async function resolvePolicyBundle(agentId: string, orgId?: string) {
 
 export async function generateOntologyEvalCases(
   suiteId: string,
-  orgId?: string
-): Promise<{ count: number; cases: any[] }> {
+  orgId?: string,
+  force = false
+): Promise<{ count: number; cases: any[]; skipped?: boolean }> {
+  // Idempotency guard: skip if cases already exist (unless force=true for manual regen)
+  if (!force) {
+    const existing = await storage.getEvalTestCases(suiteId);
+    if (existing.length > 0) return { count: 0, cases: [], skipped: true };
+  }
+
   const suite = await storage.getEvalSuite(suiteId);
   if (!suite?.agentId) return { count: 0, cases: [] };
 

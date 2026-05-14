@@ -376,8 +376,8 @@ export default function EvalDetail() {
   });
 
   const ontologyGenerateMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/ai/auto-generate-eval-suite", { suiteId: id });
+    mutationFn: async (opts?: { force?: boolean }) => {
+      const res = await apiRequest("POST", "/api/ai/auto-generate-eval-suite", { suiteId: id, force: opts?.force ?? false });
       return res.json();
     },
     onSuccess: (data: any) => {
@@ -575,7 +575,7 @@ export default function EvalDetail() {
               size="sm"
               variant="outline"
               data-testid="button-regenerate-from-ontology"
-              onClick={() => ontologyGenerateMutation.mutate()}
+              onClick={() => ontologyGenerateMutation.mutate({ force: true })}
               disabled={ontologyGenerateMutation.isPending}
             >
               <Sparkles className="w-3.5 h-3.5 mr-1.5" />

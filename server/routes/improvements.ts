@@ -3394,7 +3394,8 @@ Generate diverse test cases that:
         return res.status(400).json({ message: "Agent has no ontology tags to generate from" });
       }
 
-      const result = await generateOntologyEvalCases(suiteId, getOrgId(req));
+      const force = req.body.force !== false; // default true for explicit manual regeneration
+      const result = await generateOntologyEvalCases(suiteId, getOrgId(req), force);
       res.json(result);
     } catch (e: any) {
       console.error("[POST /api/ai/auto-generate-eval-suite] error:", e);

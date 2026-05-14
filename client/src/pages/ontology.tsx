@@ -1600,7 +1600,7 @@ export default function OntologyExplorer() {
                 </Card>
               )}
 
-              {linkedAgents && linkedAgents.length > 0 && (
+              {linkedAgents !== undefined && (
                 <Card data-testid="card-linked-agents">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-sm flex items-center gap-2">
@@ -1617,23 +1617,27 @@ export default function OntologyExplorer() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="space-y-2">
-                      {linkedAgents.map(a => (
-                        <Link key={a.id} href={`/agents/${a.id}`}>
-                          <div className="flex items-center justify-between gap-2 p-2 rounded-md border hover:bg-muted/50 cursor-pointer" data-testid={`linked-agent-${a.id}`}>
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs font-medium">{a.name}</span>
-                              <Badge variant="outline" className="text-[9px]">{a.status}</Badge>
+                    {linkedAgents.length === 0 ? (
+                      <p className="text-xs text-muted-foreground py-1">No agents tagged with this concept yet.</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {linkedAgents.map(a => (
+                          <Link key={a.id} href={`/agents/${a.id}`}>
+                            <div className="flex items-center justify-between gap-2 p-2 rounded-md border hover:bg-muted/50 cursor-pointer" data-testid={`linked-agent-${a.id}`}>
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs font-medium">{a.name}</span>
+                                <Badge variant="outline" className="text-[9px]">{a.status}</Badge>
+                              </div>
+                              {a.requiresRevalidation && (
+                                <Badge variant="outline" className="text-[9px] bg-amber-500/15 text-amber-600 border-amber-500/20">
+                                  Re-validation needed
+                                </Badge>
+                              )}
                             </div>
-                            {a.requiresRevalidation && (
-                              <Badge variant="outline" className="text-[9px] bg-amber-500/15 text-amber-600 border-amber-500/20">
-                                Re-validation needed
-                              </Badge>
-                            )}
-                          </div>
-                        </Link>
-                      ))}
-                    </div>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               )}
