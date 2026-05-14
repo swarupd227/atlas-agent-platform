@@ -392,19 +392,15 @@ const router = Router();
     try {
       const concept = await storage.getOntologyConcept(req.params.id as string);
       if (!concept) return res.status(404).json({ message: "Concept not found" });
-      const allAgents = await storage.getAgents(getOrgId(req));
-      const linked = allAgents.filter(a => {
-        const tags = Array.isArray(a.ontologyTags) ? (a.ontologyTags as Array<{ conceptId: string }>) : [];
-        return tags.some(t => t.conceptId === req.params.id as string);
-      }).map(a => ({
+      const linked = await storage.getAgentsByOntologyConcept(req.params.id as string, getOrgId(req));
+      res.json(linked.map(a => ({
         id: a.id,
         name: a.name,
         status: a.status,
         industry: a.department,
         requiresRevalidation: a.requiresRevalidation,
         revalidationReason: a.revalidationReason,
-      }));
-      res.json(linked);
+      })));
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }

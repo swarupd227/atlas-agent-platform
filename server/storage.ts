@@ -185,6 +185,7 @@ export interface IStorage {
 
   getAgents(orgId?: string): Promise<Agent[]>;
   getAgent(id: string, orgId?: string): Promise<Agent | undefined>;
+  getAgentsByOntologyConcept(conceptId: string, orgId?: string): Promise<Agent[]>;
   createAgent(agent: InsertAgent): Promise<Agent>;
 
   getOutcomes(orgId?: string): Promise<OutcomeContract[]>;
@@ -876,6 +877,14 @@ export class DatabaseStorage implements IStorage {
     const clause = orgId ? and(eq(agents.id, id), eq(agents.organizationId, orgId)) : eq(agents.id, id);
     const [agent] = await db.select().from(agents).where(clause);
     return agent;
+  }
+
+  async getAgentsByOntologyConcept(conceptId: string, orgId?: string) {
+    const containsClause = sql`${agents.ontologyTags} @> ${JSON.stringify([{ conceptId }])}::jsonb`;
+    const clause = orgId
+      ? and(eq(agents.organizationId, orgId), containsClause)
+      : containsClause;
+    return db.select().from(agents).where(clause).orderBy(desc(agents.updatedAt));
   }
 
   async createAgent(agent: InsertAgent) {
