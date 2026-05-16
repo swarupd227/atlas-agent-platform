@@ -1049,6 +1049,7 @@ export default function Governance() {
   const [feedTypeFilter, setFeedTypeFilter] = useState<string>("all");
   const [expandedFeedId, setExpandedFeedId] = useState<string | null>(null);
   const [selectedCoverageAgentId, setSelectedCoverageAgentId] = useState<string | null>(null);
+  const [controlPointComments, setControlPointComments] = useState<Record<string, string>>({});
   const [enhancedRegulations, setEnhancedRegulations] = useState<Record<string, any>>({});
   const [generatingPoliciesFor, setGeneratingPoliciesFor] = useState<string | null>(null);
   const { toast } = useToast();
@@ -1097,15 +1098,22 @@ export default function Governance() {
     environment: string;
     status: string;
     policyCount: number;
+    appliedPolicyIds: string[];
     domainCoverage: Record<string, boolean>;
+    missingDomains: string[];
     passRate: number | null;
     traceCount: number;
   }
-  interface CoverageMatrixData { domains: string[]; rows: CoverageMatrixRow[]; }
+  interface PolicyStats { boundAgentCount: number; passRate: number | null; }
+  interface CoverageMatrixData {
+    domains: string[];
+    rows: CoverageMatrixRow[];
+    policyStats: Record<string, PolicyStats>;
+  }
 
   const { data: coverageMatrix, isLoading: coverageLoading } = useQuery<CoverageMatrixData>({
     queryKey: ["/api/governance/coverage-matrix"],
-    enabled: activeGovTab === "coverage",
+    enabled: activeGovTab === "coverage" || activeGovTab === "policies",
     staleTime: 30000,
     refetchInterval: 60000,
   });
@@ -1125,7 +1133,7 @@ export default function Governance() {
   });
 
   interface PendingActionItem {
-    kind: "approval" | "exception_review" | "exception_expiry";
+    kind: "approval" | "exception_review" | "exception_expiry" | "workflow_interrupt" | "deployment_block" | "policy_violation";
     id: string; title: string; description: string;
     agentId: string | null; agentName: string | null;
     riskScore: number; dueDate: string | null;
@@ -1133,7 +1141,10 @@ export default function Governance() {
   }
   interface PendingActionsData {
     items: PendingActionItem[];
-    counts: { approvals: number; exceptions: number; expiring: number };
+    counts: {
+      approvals: number; exceptions: number; expiring: number;
+      workflowGates: number; deploymentBlocks: number; violations: number;
+    };
   }
 
   const { data: pendingActions, isLoading: pendingLoading, refetch: refetchPending } = useQuery<PendingActionsData>({
@@ -2264,15 +2275,21 @@ export default function Governance() {
                           </div>
                         ))}
                       </div>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="w-fit"
-                        onClick={() => { setActiveGovTab("policies"); setDomainFilter(gaps[0]); }}
-                        data-testid="button-fix-gaps"
-                      >
-                        <Shield className="w-3.5 h-3.5 mr-1.5" /> View policies to fix gaps
-                      </Button>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => { setActiveGovTab("policies"); setDomainFilter(gaps[0]); }}
+                          data-testid="button-fix-gaps"
+                        >
+                          <Shield className="w-3.5 h-3.5 mr-1.5" /> View policies to fix gaps
+                        </Button>
+                        <Link href={`/agents/${selectedCoverageAgentId}`}>
+                          <Button size="sm" variant="ghost" data-testid="button-view-agent-readiness">
+                            <Target className="w-3.5 h-3.5 mr-1.5" /> Agent Policy Readiness
+                          </Button>
+                        </Link>
+                      </div>
                     </div>
                   ) : (
                     <p className="text-xs text-muted-foreground">All 5 governance domains are covered by applied policies.</p>
@@ -2625,6 +2642,71 @@ export default function Governance() {
                           </Button>
                         </div>
                       )}
+                      {(item.kind === "workflow_interrupt" || item.kind === "deployment_block" || item.kind === "policy_violation") && (
+                        <div className="flex flex-col gap-2 pt-2 border-t">
+                          <textarea
+                            className="text-xs rounded-md border border-input bg-background px-2.5 py-1.5 resize-none placeholder:text-muted-foreground/60 w-full"
+                            rows={2}
+                            placeholder="Optional comment..."
+                            value={controlPointComments[item.id] ?? ""}
+                            onChange={(e) => setControlPointComments(prev => ({ ...prev, [item.id]: e.target.value }))}
+                            data-testid={`textarea-comment-${item.id}`}
+                          />
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {(item.kind === "workflow_interrupt" || item.kind === "deployment_block") && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  onClick={() => {
+                                    apiRequest("POST", "/api/governance/control-point-action", { id: item.id, kind: item.kind, action: "approve", comment: controlPointComments[item.id] })
+                                      .then(() => { refetchPending(); toast({ title: "Action recorded", description: `${item.kind === "workflow_interrupt" ? "Interrupt approved" : "Deployment unblocked"}` }); });
+                                  }}
+                                  data-testid={`button-approve-${item.kind}-${item.id}`}
+                                >
+                                  <CheckCircle className="w-3.5 h-3.5 mr-1" /> {item.kind === "workflow_interrupt" ? "Approve Interrupt" : "Unblock Deployment"}
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    apiRequest("POST", "/api/governance/control-point-action", { id: item.id, kind: item.kind, action: "reject", comment: controlPointComments[item.id] })
+                                      .then(() => { refetchPending(); toast({ title: "Action recorded", description: "Rejected" }); });
+                                  }}
+                                  data-testid={`button-reject-${item.kind}-${item.id}`}
+                                >
+                                  <XCircle className="w-3.5 h-3.5 mr-1" /> Reject
+                                </Button>
+                              </>
+                            )}
+                            {item.kind === "policy_violation" && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    apiRequest("POST", "/api/governance/control-point-action", { id: item.id, kind: item.kind, action: "acknowledge", comment: controlPointComments[item.id] })
+                                      .then(() => { refetchPending(); toast({ title: "Violation acknowledged" }); });
+                                  }}
+                                  data-testid={`button-acknowledge-${item.id}`}
+                                >
+                                  <CheckCircle className="w-3.5 h-3.5 mr-1" /> Acknowledge
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => {
+                                    apiRequest("POST", "/api/governance/control-point-action", { id: item.id, kind: item.kind, action: "escalate", comment: controlPointComments[item.id] })
+                                      .then(() => { refetchPending(); toast({ title: "Escalated", variant: "destructive" }); });
+                                  }}
+                                  data-testid={`button-escalate-${item.id}`}
+                                >
+                                  <AlertTriangle className="w-3.5 h-3.5 mr-1" /> Escalate
+                                </Button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                 );
@@ -2849,9 +2931,9 @@ export default function Governance() {
                             </div>
                             {/* Policy enrichment: bound agents + 30d pass rate */}
                             {(() => {
-                              const stats = (coverageMatrix as any)?.policyStats?.[policy.id];
+                              const stats = coverageMatrix?.policyStats?.[policy.id];
                               if (!stats) return null;
-                              const { boundAgentCount, passRate } = stats as { boundAgentCount: number; passRate: number | null };
+                              const { boundAgentCount, passRate } = stats;
                               return (
                                 <div className="flex items-center gap-3 pt-1 border-t" data-testid={`policy-stats-${policy.id}`}>
                                   <div className="flex items-center gap-1.5">
@@ -2938,9 +3020,9 @@ export default function Governance() {
                         </div>
                         {/* Policy enrichment: bound agents + 30d pass rate */}
                         {(() => {
-                          const stats = (coverageMatrix as any)?.policyStats?.[policy.id];
+                          const stats = coverageMatrix?.policyStats?.[policy.id];
                           if (!stats) return null;
-                          const { boundAgentCount, passRate } = stats as { boundAgentCount: number; passRate: number | null };
+                          const { boundAgentCount, passRate } = stats;
                           return (
                             <div className="flex items-center gap-3 pt-1 border-t" data-testid={`policy-stats-${policy.id}`}>
                               <div className="flex items-center gap-1.5">

@@ -3748,10 +3748,13 @@ Eval Suites: ${evalSuites.length} configured`,
       const activePolicies = allPolicies.filter(p => p.status === "active");
       const allTraces = await storage.getTraces(orgId);
 
-      // per-policy stats accumulator: boundAgentCount + passRate aggregation
+      // per-policy stats accumulator: boundAgentCount + 30d pass-rate from policy_checks
       const policyBoundAgents: Record<string, string[]> = {};
       const policyTracePassed: Record<string, number> = {};
       const policyTraceTotal: Record<string, number> = {};
+
+      // 30-day window for pass-rate calculation
+      const thirtyDaysCutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
       const rows = await Promise.all(agents.map(async (agent) => {
         let bundle: Awaited<ReturnType<typeof resolvePolicyBundle>> | null = null;
@@ -3761,14 +3764,21 @@ Eval Suites: ${evalSuites.length} configured`,
         const appliedPolicyIds = new Set(rawIds);
         const appliedPolicies = activePolicies.filter(p => appliedPolicyIds.has(p.id));
 
-        // accumulate per-policy bound-agent and pass-rate data
+        // Filter to last 30 days for per-policy pass-rate aggregation
         const agentTraces = allTraces.filter(t => t.agentId === agent.id);
-        const passedCount = agentTraces.filter(t => t.status === "completed" && !t.softPolicyViolations).length;
+        const recent30dTraces = agentTraces.filter(t => t.startedAt && new Date(t.startedAt) >= thirtyDaysCutoff);
+        // Per-policy pass/fail from policy_checks.violations field
         for (const pid of rawIds) {
           if (!policyBoundAgents[pid]) policyBoundAgents[pid] = [];
           policyBoundAgents[pid].push(agent.id);
-          policyTraceTotal[pid] = (policyTraceTotal[pid] ?? 0) + agentTraces.length;
-          policyTracePassed[pid] = (policyTracePassed[pid] ?? 0) + passedCount;
+          // Only count traces that have policy_checks populated (authoritative signal)
+          const tracesWithChecks = recent30dTraces.filter(t => t.policyChecks != null);
+          for (const t of tracesWithChecks) {
+            const violations = ((t.policyChecks as any)?.violations ?? []) as Array<{ policyIds?: string[] }>;
+            const violatedThisPolicy = violations.some(v => Array.isArray(v.policyIds) && v.policyIds.includes(pid));
+            policyTraceTotal[pid] = (policyTraceTotal[pid] ?? 0) + 1;
+            if (!violatedThisPolicy) policyTracePassed[pid] = (policyTracePassed[pid] ?? 0) + 1;
+          }
         }
 
         // Domain coverage: check if any applied policy covers each required domain
@@ -4028,6 +4038,70 @@ Eval Suites: ${evalSuites.length} configured`,
     } catch (e: any) {
       console.error("[pending-actions] Error:", e);
       res.status(500).json({ error: "Failed to fetch pending actions" });
+    }
+  });
+
+  // ─── Control Point Action ────────────────────────────────────────────────────
+  // Unified endpoint for approve/reject/acknowledge/escalate on any control-point
+  // item kind (workflow_interrupt, deployment_block, policy_violation).
+  router.post("/api/governance/control-point-action", async (req, res) => {
+    try {
+      const orgId = getOrgId(req);
+      const { id, kind, action, comment } = z.object({
+        id: z.string(),
+        kind: z.enum(["workflow_interrupt", "deployment_block", "policy_violation"]),
+        action: z.enum(["approve", "reject", "acknowledge", "escalate"]),
+        comment: z.string().optional(),
+      }).parse(req.body);
+
+      const decidedBy = "current-user";
+
+      if (kind === "workflow_interrupt") {
+        // Respond to a pipeline-level interrupt: clear activeInterruptId + log
+        await db.update(pipelineRuns)
+          .set({ activeInterruptId: null })
+          .where(sql`id = ${id}`);
+        await storage.createAuditEvent({
+          action: `workflow_interrupt_${action}`,
+          actorType: "user",
+          actorId: decidedBy,
+          objectType: "pipeline_run",
+          objectId: id,
+          details: comment ?? `Interrupt ${action}d`,
+          organizationId: orgId,
+        } as any);
+
+      } else if (kind === "deployment_block") {
+        const newStatus = action === "approve" ? "deployed" : "cancelled";
+        await storage.updateDeployment(id, { status: newStatus }, orgId);
+        await storage.createAuditEvent({
+          action: `deployment_block_${action}`,
+          actorType: "user",
+          actorId: decidedBy,
+          objectType: "deployment",
+          objectId: id,
+          details: comment ?? `Deployment ${action}d`,
+          organizationId: orgId,
+        } as any);
+
+      } else if (kind === "policy_violation") {
+        const auditAction = action === "escalate" ? "policy_violation_escalated" : "policy_violation_acknowledged";
+        await storage.createAuditEvent({
+          action: auditAction,
+          actorType: "user",
+          actorId: decidedBy,
+          objectType: "trace",
+          objectId: id,
+          details: comment ?? `Violation ${action}d`,
+          organizationId: orgId,
+        } as any);
+      }
+
+      res.json({ ok: true, id, kind, action });
+    } catch (e: any) {
+      if (e instanceof ZodError) return handleZodError(e, res);
+      console.error("[control-point-action] Error:", e);
+      res.status(500).json({ error: "Failed to process control-point action" });
     }
   });
 
