@@ -1065,6 +1065,9 @@ export async function resolvePolicyBundle(agentId: string, orgId?: string) {
   const monitorBlockedTools: string[] = [];
   const guardrails: string[] = [];
   const redactPatterns: string[] = [];
+  // blockedToolsToPolicyIds: maps each blocked tool (lowercase) to the specific policy IDs that
+  // declared it as blocked. Used for precise violation attribution in run traces and promotion checks.
+  const blockedToolsToPolicyIds: Record<string, string[]> = {};
 
   const allScoped = [...orgPolicies, ...outcomePolicies, ...agentPolicies, ...envPolicies];
   for (const p of allScoped) {
@@ -1076,7 +1079,12 @@ export async function resolvePolicyBundle(agentId: string, orgId?: string) {
     if (isHard && Array.isArray(pj.toolAllowlist)) toolAllowlist.push(...(pj.toolAllowlist as string[]));
     if (Array.isArray(pj.blockedTools)) {
       if (isHard) {
-        blockedTools.push(...(pj.blockedTools as string[]));
+        for (const tool of pj.blockedTools as string[]) {
+          blockedTools.push(tool);
+          const key = tool.toLowerCase();
+          if (!blockedToolsToPolicyIds[key]) blockedToolsToPolicyIds[key] = [];
+          blockedToolsToPolicyIds[key].push(p.id);
+        }
       } else {
         monitorBlockedTools.push(...(pj.blockedTools as string[]));
       }
@@ -1090,6 +1098,7 @@ export async function resolvePolicyBundle(agentId: string, orgId?: string) {
     toolAllowlist: Array.from(new Set(toolAllowlist)),
     blockedTools: Array.from(new Set(blockedTools)),
     monitorBlockedTools: Array.from(new Set(monitorBlockedTools.filter(t => !blockedTools.includes(t)))),
+    blockedToolsToPolicyIds,
     guardrails: Array.from(new Set(guardrails)),
     redactPatterns: Array.from(new Set(redactPatterns)),
     agentConfig: agent ? {

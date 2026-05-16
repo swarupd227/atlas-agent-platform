@@ -1634,15 +1634,18 @@ After receiving tool results, provide a structured analysis with key findings, s
               toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: null, error: `[POLICY-GATE] BLOCK: ${blockReason}` });
               emitProgress("tool_call_result", { tool: matchedTool.toolName, server: matchedTool.serverName, success: false, error: `[POLICY-GATE] BLOCK: ${blockReason}`, iteration: iterationsUsed });
               // Collect violation for trace-level policyChecks.violations persistence.
-              // Record only strict/block policy IDs — these are the ones that actually
-              // contributed the blocked tool or allowlist restriction. Monitor-mode policies
-              // cannot cause a hard block and must not be attributed here.
+              // Use blockedToolsToPolicyIds for precise causative-policy attribution:
+              // only the specific policies that declared this tool blocked are recorded,
+              // not all strict/block policies in the bundle.
+              const causativePolicyIds =
+                policyBundle.blockedToolsToPolicyIds?.[toolNameLower] ??
+                policyBundle.appliedPolicies
+                  .filter(p => p.enforcement === "strict" || p.enforcement === "block")
+                  .map(p => p.id);
               runtimeHardViolations.push({
                 toolName: matchedTool.toolName,
                 reason: blockReason,
-                policyIds: policyBundle.appliedPolicies
-                  .filter(p => p.enforcement === "strict" || p.enforcement === "block")
-                  .map(p => p.id),
+                policyIds: causativePolicyIds,
                 enforcementMode: "strict/block",
                 iteration: iterationsUsed,
                 blockedAt: new Date().toISOString(),
@@ -2295,14 +2298,10 @@ After receiving tool results, provide a structured analysis with key findings, s
         status: "active",
       }));
     } else {
-      const policies = await storage.getPolicies();
-      policySnapshot = policies.filter(p => p.status === "active").slice(0, 20).map(p => ({
-        policyId: p.id,
-        policyName: p.name,
-        domain: p.domain,
-        version: p.version ?? 1,
-        status: p.status,
-      }));
+      // When no policies are scoped to this agent, record an empty snapshot.
+      // Do NOT fall back to all active org policies — that would record policies
+      // that did not govern this run, violating exact policy-version auditability.
+      policySnapshot = [];
     }
   } catch {}
 

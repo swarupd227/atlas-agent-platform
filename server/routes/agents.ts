@@ -2629,32 +2629,63 @@ const router = Router();
             if (blockedEnvs.includes(nextEnv) || blockedEnvs.includes("*")) {
               policyFailingChecks.push({ check: "policy_promotion_blocked", reason: `Policy "${p.name}" (${p.domain}) blocks promotion to ${nextEnv}`, severity: "error" });
             }
-            // (b) Check strict/block enforcement: look at the most recent completed trace
-            // and filter violations by this specific policy's id — avoids duplicate/false failures
-            // across multiple strict policies sharing a single trace.
+            // (b) Check strict/block enforcement: inspect the most recent completed eval run
+            // for this agent. Eval runs are the authoritative compliance evidence for promotion —
+            // they are purpose-built regression suites, unlike ad-hoc runtime traces.
+            // Falls back to runtime traces only when no eval runs exist for the agent.
             const enforcement = pj.enforcement || "monitor";
             if (enforcement === "strict" || enforcement === "block") {
-              const recentTracesForPolicy = await storage.getTracesByAgent(source.agentId, getOrgId(req));
-              const completedTraces = recentTracesForPolicy
-                // Exclude dry-run traces (from /api/agents/:id/policy-check) — these are
-                // validation probes, not real execution runs, and must not influence promotion.
-                .filter(t => t.environment !== "dry-run" && (t.status === "completed" || t.status === "failed"))
-                .sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime());
-              const lastCompletedTrace = completedTraces[0];
-              if (lastCompletedTrace) {
-                const pChecks = lastCompletedTrace.policyChecks as any;
-                // Filter violations to only those caused by this specific policy
-                const policyViolations: any[] = Array.isArray(pChecks?.violations)
-                  ? pChecks.violations.filter((v: any) =>
-                      Array.isArray(v.policyIds) ? v.policyIds.includes(p.id) : true
-                    )
-                  : [];
-                if (policyViolations.length > 0) {
-                  policyFailingChecks.push({
-                    check: "unresolved_policy_violation",
-                    reason: `Policy "${p.name}" (${enforcement}) has ${policyViolations.length} unresolved hard violation(s) on last completed run`,
-                    severity: "error",
-                  });
+              // Primary source: latest completed eval run via evalSuites for this agent
+              const agentEvalSuites = await storage.getEvalsByAgent(source.agentId);
+              let evalRunViolations: any[] = [];
+              let evalRunFound = false;
+              for (const suite of agentEvalSuites) {
+                const runs = await storage.getEvalRuns(suite.id);
+                const completedRuns = runs
+                  .filter(r => r.status === "completed" || r.status === "failed")
+                  .sort((a, b) => new Date(b.completedAt || b.startedAt || 0).getTime() - new Date(a.completedAt || a.startedAt || 0).getTime());
+                if (completedRuns.length > 0) {
+                  evalRunFound = true;
+                  const latestRun = completedRuns[0];
+                  // Inspect resultsJson for policy violations attributed to this policy
+                  const results = latestRun.resultsJson as any;
+                  const runViolations: any[] = Array.isArray(results?.policyViolations)
+                    ? results.policyViolations.filter((v: any) =>
+                        Array.isArray(v.policyIds) ? v.policyIds.includes(p.id) : false
+                      )
+                    : [];
+                  evalRunViolations.push(...runViolations);
+                  break; // use only the latest suite's most recent run
+                }
+              }
+              if (evalRunFound && evalRunViolations.length > 0) {
+                policyFailingChecks.push({
+                  check: "unresolved_policy_violation",
+                  reason: `Policy "${p.name}" (${enforcement}) has ${evalRunViolations.length} policy violation(s) in latest eval run`,
+                  severity: "error",
+                });
+              } else if (!evalRunFound) {
+                // Fallback: no eval runs exist — check the most recent completed runtime trace.
+                // Dry-run policy-check probes are excluded (environment !== "dry-run").
+                const recentTracesForPolicy = await storage.getTracesByAgent(source.agentId, getOrgId(req));
+                const completedTraces = recentTracesForPolicy
+                  .filter(t => t.environment !== "dry-run" && (t.status === "completed" || t.status === "failed"))
+                  .sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime());
+                const lastCompletedTrace = completedTraces[0];
+                if (lastCompletedTrace) {
+                  const pChecks = lastCompletedTrace.policyChecks as any;
+                  const policyViolations: any[] = Array.isArray(pChecks?.violations)
+                    ? pChecks.violations.filter((v: any) =>
+                        Array.isArray(v.policyIds) ? v.policyIds.includes(p.id) : true
+                      )
+                    : [];
+                  if (policyViolations.length > 0) {
+                    policyFailingChecks.push({
+                      check: "unresolved_policy_violation",
+                      reason: `Policy "${p.name}" (${enforcement}) has ${policyViolations.length} unresolved hard violation(s) on last completed run (no eval runs found)`,
+                      severity: "error",
+                    });
+                  }
                 }
               }
             }
