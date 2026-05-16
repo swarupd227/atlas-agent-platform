@@ -2695,23 +2695,25 @@ const router = Router();
             }
           }
 
-          // (c) Unresolved hard violations from run trace policyChecks — explicit trace-level evidence.
-          // Uses the most recent completed non-dry-run trace; does NOT rely on a time-boxed audit event
-          // window, which would miss violations persisted only in traces or outside the 7-day window.
+          // (c) Unresolved hard violations aggregated across ALL completed non-dry-run traces.
+          // Checks every run (not just the latest) so older unresolved violations aren't silently
+          // cleared by a newer run that happens to have no violations.
           const agentTraces = await storage.getTracesByAgent(source.agentId, getOrgId(req));
-          const latestCompletedTrace = agentTraces
-            .filter(t => t.environment !== "dry-run" && (t.status === "completed" || t.status === "failed"))
-            .sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime())[0];
-          if (latestCompletedTrace) {
-            const traceChecks = latestCompletedTrace.policyChecks as any;
-            const unresolvedViolations: any[] = Array.isArray(traceChecks?.violations) ? traceChecks.violations : [];
-            if (unresolvedViolations.length > 0) {
-              policyFailingChecks.push({
-                check: "unresolved_hard_violations",
-                reason: `${unresolvedViolations.length} unresolved hard violation(s) in the latest completed run — blocks promotion to ${nextEnv}`,
-                severity: "error",
-              });
-            }
+          const allCompletedTraces = agentTraces.filter(
+            t => t.environment !== "dry-run" && (t.status === "completed" || t.status === "failed")
+          );
+          let totalUnresolvedViolations = 0;
+          for (const trace of allCompletedTraces) {
+            const traceChecks = trace.policyChecks as any;
+            const violations: any[] = Array.isArray(traceChecks?.violations) ? traceChecks.violations : [];
+            totalUnresolvedViolations += violations.length;
+          }
+          if (totalUnresolvedViolations > 0) {
+            policyFailingChecks.push({
+              check: "unresolved_hard_violations",
+              reason: `${totalUnresolvedViolations} unresolved hard violation(s) across ${allCompletedTraces.length} completed run(s) — blocks promotion to ${nextEnv}`,
+              severity: "error",
+            });
           }
 
           // (d) High/Critical risk + autonomous mode always requires manual approval for prod

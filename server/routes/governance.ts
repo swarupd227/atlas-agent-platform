@@ -900,6 +900,52 @@ Ontology: ${ontologyName || "industry standard"}`,
     res.json(updated);
   });
 
+  // Additive outcome binding: associates a policy with an outcome without destructively re-scoping it.
+  // If the policy is already outcome-scoped → update the scopeId in-place.
+  // If the policy is scoped to any other scope type (e.g. "org", "agent") → clone it with outcome
+  // scope so the original binding is preserved (no implicit unbind of the source scope).
+  router.post("/api/policies/:id/bind-outcome", checkPermission("create_modify_policies"), async (req, res) => {
+    try {
+      const policy = await storage.getPolicy(req.params.id as string, getOrgId(req));
+      if (!policy) return res.status(404).json({ error: "Policy not found" });
+      const { outcomeId } = req.body as { outcomeId?: string };
+      if (!outcomeId) return res.status(400).json({ error: "outcomeId is required" });
+
+      if (policy.scopeType === "outcome") {
+        // Same scope type — safe to update scopeId in-place
+        const updated = await storage.updatePolicy(policy.id, { scopeId: outcomeId }, getOrgId(req));
+        await storage.createAuditEvent({
+          actorType: "user", actorId: "system", action: "policy_bound",
+          objectType: "policy", objectId: policy.id,
+          details: `Policy "${policy.name}" re-bound to outcome ${outcomeId}`,
+        });
+        return res.json(updated);
+      }
+
+      // Policy is scoped elsewhere — clone with outcome scope to preserve original binding
+      const cloneData: any = {
+        name: `${policy.name} (Outcome: ${outcomeId})`,
+        description: policy.description,
+        domain: policy.domain,
+        status: policy.status,
+        policyJson: policy.policyJson,
+        scopeType: "outcome",
+        scopeId: outcomeId,
+        organizationId: policy.organizationId,
+        version: 1,
+      };
+      const clone = await storage.createPolicy(cloneData);
+      await storage.createAuditEvent({
+        actorType: "user", actorId: "system", action: "policy_bound",
+        objectType: "policy", objectId: clone.id,
+        details: `Policy "${policy.name}" cloned to outcome ${outcomeId} (original scope "${policy.scopeType}:${policy.scopeId}" preserved)`,
+      });
+      return res.status(201).json(clone);
+    } catch (e: any) {
+      return res.status(500).json({ error: e.message || "Failed to bind policy" });
+    }
+  });
+
   router.delete("/api/policies/:id", checkPermission("create_modify_policies"), async (req, res) => {
     try {
       const policy = await storage.getPolicy(req.params.id as string, getOrgId(req));

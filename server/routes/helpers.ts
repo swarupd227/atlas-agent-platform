@@ -1073,7 +1073,9 @@ export async function resolvePolicyBundle(agentId: string, orgId?: string) {
   for (const p of allScoped) {
     const pj = p.policyJson as Record<string, unknown> | null;
     if (!pj) continue;
-    const enforcement = (pj.enforcement as string) || "monitor";
+    // Normalize: accept both `enforcement` and legacy `enforcement_mode` field names.
+    // `enforcement` wins if both are present. Defaults to "monitor" (safe/log-only).
+    const enforcement = ((pj.enforcement || pj.enforcement_mode) as string) || "monitor";
     const isHard = enforcement === "strict" || enforcement === "block";
     // toolAllowlist is only enforced by hard policies (monitor policies cannot restrict LLM tool visibility)
     if (isHard && Array.isArray(pj.toolAllowlist)) toolAllowlist.push(...(pj.toolAllowlist as string[]));

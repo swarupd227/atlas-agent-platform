@@ -2913,7 +2913,10 @@ export default function OutcomeDetail() {
                             data-testid={`button-bind-policy-${p.id}`}
                             onClick={async () => {
                               try {
-                                await apiRequest("PATCH", `/api/policies/${p.id}`, { scopeType: "outcome", scopeId: outcomeId });
+                                // Use additive bind-outcome endpoint: preserves existing scope
+                                // bindings (e.g. org-level) by cloning the policy for this
+                                // outcome rather than destructively re-scoping the original.
+                                await apiRequest("POST", `/api/policies/${p.id}/bind-outcome`, { outcomeId });
                                 refetchPolicyCoverage();
                                 queryClient.invalidateQueries({ queryKey: ["/api/policies"] });
                               } catch {}
