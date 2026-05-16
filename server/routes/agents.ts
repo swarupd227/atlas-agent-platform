@@ -2629,29 +2629,45 @@ const router = Router();
             if (blockedEnvs.includes(nextEnv) || blockedEnvs.includes("*")) {
               policyFailingChecks.push({ check: "policy_promotion_blocked", reason: `Policy "${p.name}" (${p.domain}) blocks promotion to ${nextEnv}`, severity: "error" });
             }
-            // (b) Check strict/block enforcement: if policy has enforcement=strict|block, any active violation is a blocker
+            // (b) Check strict/block enforcement: look at the most recent completed trace
+            // and filter violations by this specific policy's id — avoids duplicate/false failures
+            // across multiple strict policies sharing a single trace.
             const enforcement = pj.enforcement || "monitor";
             if (enforcement === "strict" || enforcement === "block") {
               const recentTracesForPolicy = await storage.getTracesByAgent(source.agentId, getOrgId(req));
-              const lastTrace = recentTracesForPolicy.sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime())[0];
-              if (lastTrace) {
-                const pChecks = lastTrace.policyChecks as any;
-                if (pChecks?.violations?.length > 0) {
-                  policyFailingChecks.push({ check: "unresolved_policy_violation", reason: `Policy "${p.name}" (${enforcement}) has ${pChecks.violations.length} unresolved violation(s) on last run`, severity: "error" });
+              const completedTraces = recentTracesForPolicy
+                .filter(t => t.status === "completed" || t.status === "failed")
+                .sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime());
+              const lastCompletedTrace = completedTraces[0];
+              if (lastCompletedTrace) {
+                const pChecks = lastCompletedTrace.policyChecks as any;
+                // Filter violations to only those caused by this specific policy
+                const policyViolations: any[] = Array.isArray(pChecks?.violations)
+                  ? pChecks.violations.filter((v: any) =>
+                      Array.isArray(v.policyIds) ? v.policyIds.includes(p.id) : true
+                    )
+                  : [];
+                if (policyViolations.length > 0) {
+                  policyFailingChecks.push({
+                    check: "unresolved_policy_violation",
+                    reason: `Policy "${p.name}" (${enforcement}) has ${policyViolations.length} unresolved hard violation(s) on last completed run`,
+                    severity: "error",
+                  });
                 }
               }
             }
           }
 
-          // (c) Check for unresolved hard violations in recent audit events for this agent
+          // (c) Check for unresolved hard violations on run traces — blocks both staging AND prod.
+          // Cross-references audit events (authoritative log) for the last 7 days.
           const recentAuditEvents = await storage.getAuditEvents(getOrgId(req));
           const agentHardViolations = recentAuditEvents.filter(e =>
             e.action === "hard_violation" &&
             e.objectId === source.agentId &&
             new Date(e.createdAt || 0).getTime() > Date.now() - 7 * 24 * 60 * 60 * 1000
           );
-          if (agentHardViolations.length > 0 && nextEnv === "prod") {
-            policyFailingChecks.push({ check: "unresolved_hard_violations", reason: `${agentHardViolations.length} hard violation(s) recorded in the last 7 days`, severity: "error" });
+          if (agentHardViolations.length > 0) {
+            policyFailingChecks.push({ check: "unresolved_hard_violations", reason: `${agentHardViolations.length} hard violation(s) recorded in the last 7 days — blocks promotion to ${nextEnv}`, severity: "error" });
           }
 
           // (d) High/Critical risk + autonomous mode always requires manual approval for prod

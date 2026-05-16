@@ -1177,7 +1177,19 @@ export async function executePromptWithMcp(
       console.log(`[policy-gate] Agent ${agentId}: ${policyBundle.appliedPolicies.length} policies applied, ${policyBundle.blockedTools.length} tools blocked, allowlist size=${policyBundle.toolAllowlist.length}`);
     }
   } catch (pbErr: any) {
-    console.warn(`[policy-gate] Failed to resolve policy bundle for agent ${agentId}: ${pbErr.message}`);
+    // Fail-closed: policy bundle resolution failure must block the run entirely.
+    // Proceeding with an unresolved bundle would silently grant full tool access — never acceptable.
+    const errMsg = `[POLICY-GATE] Policy bundle resolution failed — run aborted: ${(pbErr as any).message}`;
+    console.error(errMsg);
+    steps[0].status = "failed";
+    steps[0].error = errMsg;
+    steps[0].completedAt = new Date().toISOString();
+    emitProgress("error", { message: errMsg, stage: "policy_gate" });
+    return {
+      steps,
+      success: false,
+      summary: { totalSteps: 1, passedSteps: 0, failedSteps: 1, error: errMsg },
+    };
   }
 
   if (availableTools.length === 0 && !hasKnowledgeBases) {
@@ -1345,6 +1357,17 @@ After receiving tool results, provide a structured analysis with key findings, s
     args: Record<string, any>;
     result: any;
     error?: string;
+  }> = [];
+
+  // Collect hard violations during this run so policyChecks.violations is never left empty
+  // when real blocks occurred. Written to the run trace at persistence time.
+  const runtimeHardViolations: Array<{
+    toolName: string;
+    reason: string;
+    policyIds: string[];
+    enforcementMode: string;
+    iteration: number;
+    blockedAt: string;
   }> = [];
 
   let totalPromptTokens = 0;
@@ -1606,6 +1629,15 @@ After receiving tool results, provide a structured analysis with key findings, s
               lastStep.completedAt = new Date().toISOString();
               toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: null, error: `[POLICY-GATE] BLOCK: ${blockReason}` });
               emitProgress("tool_call_result", { tool: matchedTool.toolName, server: matchedTool.serverName, success: false, error: `[POLICY-GATE] BLOCK: ${blockReason}`, iteration: iterationsUsed });
+              // Collect violation for trace-level policyChecks.violations persistence
+              runtimeHardViolations.push({
+                toolName: matchedTool.toolName,
+                reason: blockReason,
+                policyIds: policyBundle.appliedPolicies.map(p => p.id),
+                enforcementMode: "strict/block",
+                iteration: iterationsUsed,
+                blockedAt: new Date().toISOString(),
+              });
               // Log hard violation audit event for deterministic blocks
               storage.createAuditEvent({
                 actorType: "system",
@@ -3098,7 +3130,8 @@ async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: Runti
       retrievedDocs: (result as any).retrievedDocs || null,
       provenanceSnapshot: fullProvenanceSnapshot,
       provenanceHash: fullProvenanceHash,
-      // policyChecks: complete audit record of which policy version governed this run
+      // policyChecks: complete audit record of which policy version governed this run,
+      // including any hard violations encountered during dispatch (never left empty when blocks occurred)
       policyChecks: {
         policies: (fullProvenanceSnapshot.policySnapshot || []).map((p: any) => ({
           policyId: p.policyId,
@@ -3109,7 +3142,7 @@ async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: Runti
           enforcement: p.enforcement || "monitor",
         })),
         policyCount: (fullProvenanceSnapshot.policySnapshot || []).length,
-        violations: [],
+        violations: runtimeHardViolations,
         capturedAt: new Date().toISOString(),
       },
       ...(((result as any).softPolicyViolations as any[] | undefined)?.length
