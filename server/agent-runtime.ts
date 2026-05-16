@@ -1605,11 +1605,49 @@ After receiving tool results, provide a structured analysis with key findings, s
 
         if (!matchedTool) {
           const lastStep = steps[steps.length - 1];
-          lastStep.status = "failed";
-          lastStep.error = `Could not resolve tool: ${funcName}`;
-          lastStep.completedAt = new Date().toISOString();
-          toolCallResults.push({ toolName: funcName, serverName: "unknown", args, result: null, error: "Tool not found" });
-          emitProgress("tool_call_result", { tool: funcName, server: "unknown", success: false, error: "Tool not found", iteration: iterationsUsed });
+          // Check if the unresolved tool was filtered out by a policy (blocked/unallowlisted).
+          // Blocked tools are removed from availableTools before LLM context; if the LLM still
+          // requests one via hallucination or prompt injection, we must record a hard violation.
+          const funcNameLower = funcName.toLowerCase();
+          const isPolicyBlocked = policyBundle
+            ? policyBundle.blockedTools.some(b => b.toLowerCase() === funcNameLower) ||
+              (policyBundle.toolAllowlist.length > 0 && !policyBundle.toolAllowlist.some(a => a.toLowerCase() === funcNameLower))
+            : false;
+          if (isPolicyBlocked && policyBundle) {
+            const blockReason = policyBundle.blockedTools.some(b => b.toLowerCase() === funcNameLower)
+              ? `Tool "${funcName}" is blocked by a strict/block-enforcement policy (filtered from available tools)`
+              : `Tool "${funcName}" is not in the policy tool allowlist (filtered from available tools)`;
+            lastStep.status = "failed";
+            lastStep.error = `[POLICY-GATE] BLOCK: ${blockReason}`;
+            lastStep.completedAt = new Date().toISOString();
+            toolCallResults.push({ toolName: funcName, serverName: "unknown", args, result: null, error: `[POLICY-GATE] BLOCK: ${blockReason}` });
+            emitProgress("tool_call_result", { tool: funcName, server: "unknown", success: false, error: `[POLICY-GATE] BLOCK: ${blockReason}`, iteration: iterationsUsed });
+            const causativePolicyIds =
+              policyBundle.blockedToolsToPolicyIds?.[funcNameLower] ??
+              policyBundle.appliedPolicies.filter(p => p.enforcement === "strict" || p.enforcement === "block").map(p => p.id);
+            runtimeHardViolations.push({
+              toolName: funcName,
+              reason: blockReason,
+              policyIds: causativePolicyIds,
+              enforcementMode: "strict/block",
+              iteration: iterationsUsed,
+              blockedAt: new Date().toISOString(),
+            });
+            storage.createAuditEvent({
+              actorType: "system",
+              actorId: "policy-gate",
+              action: "hard_violation",
+              objectType: "agent",
+              objectId: agentId,
+              details: JSON.stringify({ blockReason, toolName: funcName, enforcementMode: "strict/block", policyIds: causativePolicyIds, filteredFromAvailableTools: true, iteration: iterationsUsed, deploymentId }),
+            }).catch(() => {});
+          } else {
+            lastStep.status = "failed";
+            lastStep.error = `Could not resolve tool: ${funcName}`;
+            lastStep.completedAt = new Date().toISOString();
+            toolCallResults.push({ toolName: funcName, serverName: "unknown", args, result: null, error: "Tool not found" });
+            emitProgress("tool_call_result", { tool: funcName, server: "unknown", success: false, error: "Tool not found", iteration: iterationsUsed });
+          }
           continue;
         }
 

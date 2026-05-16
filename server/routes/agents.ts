@@ -2635,54 +2635,58 @@ const router = Router();
             // Falls back to runtime traces only when no eval runs exist for the agent.
             const enforcement = pj.enforcement || "monitor";
             if (enforcement === "strict" || enforcement === "block") {
-              // Primary source: latest completed eval run via evalSuites for this agent
+              // Primary source: find the SINGLE latest completed eval run across ALL suites for
+              // this agent — sort globally by completedAt to avoid picking an older run from the
+              // first suite that happens to have results (deterministic, not suite-order-dependent).
               const agentEvalSuites = await storage.getEvalsByAgent(source.agentId);
-              let evalRunViolations: any[] = [];
-              let evalRunFound = false;
+              const allCompletedEvalRuns: Array<{ run: any; suiteId: string }> = [];
               for (const suite of agentEvalSuites) {
                 const runs = await storage.getEvalRuns(suite.id);
-                const completedRuns = runs
-                  .filter(r => r.status === "completed" || r.status === "failed")
-                  .sort((a, b) => new Date(b.completedAt || b.startedAt || 0).getTime() - new Date(a.completedAt || a.startedAt || 0).getTime());
-                if (completedRuns.length > 0) {
-                  evalRunFound = true;
-                  const latestRun = completedRuns[0];
-                  // Inspect resultsJson for policy violations attributed to this policy
-                  const results = latestRun.resultsJson as any;
-                  const runViolations: any[] = Array.isArray(results?.policyViolations)
-                    ? results.policyViolations.filter((v: any) =>
-                        Array.isArray(v.policyIds) ? v.policyIds.includes(p.id) : false
-                      )
-                    : [];
-                  evalRunViolations.push(...runViolations);
-                  break; // use only the latest suite's most recent run
+                for (const r of runs) {
+                  if (r.status === "completed" || r.status === "failed") {
+                    allCompletedEvalRuns.push({ run: r, suiteId: suite.id });
+                  }
                 }
               }
-              if (evalRunFound && evalRunViolations.length > 0) {
-                policyFailingChecks.push({
-                  check: "unresolved_policy_violation",
-                  reason: `Policy "${p.name}" (${enforcement}) has ${evalRunViolations.length} policy violation(s) in latest eval run`,
-                  severity: "error",
-                });
-              } else if (!evalRunFound) {
-                // Fallback: no eval runs exist — check the most recent completed runtime trace.
-                // Dry-run policy-check probes are excluded (environment !== "dry-run").
+              allCompletedEvalRuns.sort(
+                (a, b) =>
+                  new Date(b.run.completedAt || b.run.startedAt || 0).getTime() -
+                  new Date(a.run.completedAt || a.run.startedAt || 0).getTime()
+              );
+              const latestEvalEntry = allCompletedEvalRuns[0];
+              if (latestEvalEntry) {
+                // Inspect resultsJson for policy violations attributed to this specific policy
+                const results = latestEvalEntry.run.resultsJson as any;
+                const evalViolations: any[] = Array.isArray(results?.policyViolations)
+                  ? results.policyViolations.filter((v: any) =>
+                      Array.isArray(v.policyIds) ? v.policyIds.includes(p.id) : false
+                    )
+                  : [];
+                if (evalViolations.length > 0) {
+                  policyFailingChecks.push({
+                    check: "unresolved_policy_violation",
+                    reason: `Policy "${p.name}" (${enforcement}) has ${evalViolations.length} violation(s) in latest eval run`,
+                    severity: "error",
+                  });
+                }
+              } else {
+                // Fallback: no eval runs exist — check latest completed non-dry-run runtime trace.
                 const recentTracesForPolicy = await storage.getTracesByAgent(source.agentId, getOrgId(req));
                 const completedTraces = recentTracesForPolicy
                   .filter(t => t.environment !== "dry-run" && (t.status === "completed" || t.status === "failed"))
                   .sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime());
-                const lastCompletedTrace = completedTraces[0];
-                if (lastCompletedTrace) {
-                  const pChecks = lastCompletedTrace.policyChecks as any;
-                  const policyViolations: any[] = Array.isArray(pChecks?.violations)
+                const lastTrace = completedTraces[0];
+                if (lastTrace) {
+                  const pChecks = lastTrace.policyChecks as any;
+                  const traceViolations: any[] = Array.isArray(pChecks?.violations)
                     ? pChecks.violations.filter((v: any) =>
                         Array.isArray(v.policyIds) ? v.policyIds.includes(p.id) : true
                       )
                     : [];
-                  if (policyViolations.length > 0) {
+                  if (traceViolations.length > 0) {
                     policyFailingChecks.push({
                       check: "unresolved_policy_violation",
-                      reason: `Policy "${p.name}" (${enforcement}) has ${policyViolations.length} unresolved hard violation(s) on last completed run (no eval runs found)`,
+                      reason: `Policy "${p.name}" (${enforcement}) has ${traceViolations.length} unresolved violation(s) on last runtime trace (no eval runs found)`,
                       severity: "error",
                     });
                   }
@@ -2691,16 +2695,23 @@ const router = Router();
             }
           }
 
-          // (c) Check for unresolved hard violations on run traces — blocks both staging AND prod.
-          // Cross-references audit events (authoritative log) for the last 7 days.
-          const recentAuditEvents = await storage.getAuditEvents(getOrgId(req));
-          const agentHardViolations = recentAuditEvents.filter(e =>
-            e.action === "hard_violation" &&
-            e.objectId === source.agentId &&
-            new Date(e.createdAt || 0).getTime() > Date.now() - 7 * 24 * 60 * 60 * 1000
-          );
-          if (agentHardViolations.length > 0) {
-            policyFailingChecks.push({ check: "unresolved_hard_violations", reason: `${agentHardViolations.length} hard violation(s) recorded in the last 7 days — blocks promotion to ${nextEnv}`, severity: "error" });
+          // (c) Unresolved hard violations from run trace policyChecks — explicit trace-level evidence.
+          // Uses the most recent completed non-dry-run trace; does NOT rely on a time-boxed audit event
+          // window, which would miss violations persisted only in traces or outside the 7-day window.
+          const agentTraces = await storage.getTracesByAgent(source.agentId, getOrgId(req));
+          const latestCompletedTrace = agentTraces
+            .filter(t => t.environment !== "dry-run" && (t.status === "completed" || t.status === "failed"))
+            .sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime())[0];
+          if (latestCompletedTrace) {
+            const traceChecks = latestCompletedTrace.policyChecks as any;
+            const unresolvedViolations: any[] = Array.isArray(traceChecks?.violations) ? traceChecks.violations : [];
+            if (unresolvedViolations.length > 0) {
+              policyFailingChecks.push({
+                check: "unresolved_hard_violations",
+                reason: `${unresolvedViolations.length} unresolved hard violation(s) in the latest completed run — blocks promotion to ${nextEnv}`,
+                severity: "error",
+              });
+            }
           }
 
           // (d) High/Critical risk + autonomous mode always requires manual approval for prod
