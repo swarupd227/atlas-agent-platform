@@ -103,6 +103,7 @@ export interface RuntimeAgent {
   modelProvider?: string;
   modelName?: string;
   maxToolIterations?: number;
+  orgId?: string | null;
 }
 
 export interface ContextSectionMetric {
@@ -1138,6 +1139,7 @@ export async function executePromptWithMcp(
   agentSystemPrompt?: string,
   options?: { conversational?: boolean; ontologyLabels?: string[]; runtimeConfig?: Record<string, any>; modelProvider?: string; modelName?: string; maxToolIterations?: number },
   onProgress?: (event: RuntimeProgressEvent) => void,
+  orgId?: string | null,
 ): Promise<{ steps: any[]; success: boolean; summary: any; promptInputs?: any; provenanceSnapshot?: any; provenanceHash?: string; retrievedDocs?: any; conversationalResponse?: string; contextSectionMetrics?: ContextSectionMetric[]; softPolicyViolations?: SoftPolicyComplianceResult[]; hardViolations?: Array<{ toolName: string; reason: string; policyIds: string[]; enforcementMode: string; iteration: number; blockedAt: string }> }> {
   const startTime = Date.now();
   const steps: any[] = [];
@@ -1164,7 +1166,7 @@ export async function executePromptWithMcp(
 
   let policyBundle: Awaited<ReturnType<typeof resolvePolicyBundle>> | null = null;
   try {
-    policyBundle = await resolvePolicyBundle(agentId);
+    policyBundle = await resolvePolicyBundle(agentId, orgId ?? undefined);
     if (policyBundle.blockedTools.length > 0) {
       const blockedSet = new Set(policyBundle.blockedTools.map(t => t.toLowerCase()));
       availableTools = availableTools.filter(t => !blockedSet.has(t.toolName.toLowerCase()));
@@ -2558,6 +2560,7 @@ export async function executeWorkerAgent(
     agentType: "single",
     runtimeConfig: workerRtConfig,
     memoryGovernanceRules: (workerAgent.memoryGovernanceRules as Array<{ rule: string; regulation: string; type: string }>) || undefined,
+    orgId: (workerAgent as any).organizationId ?? teamAgent.orgId ?? null,
   };
 
   const workerContextResult = await buildRuntimeContext(workerRuntimeAgent);
@@ -2573,6 +2576,8 @@ export async function executeWorkerAgent(
       teamAgent.industry,
       workerContext || workerAgent.systemPrompt || undefined,
       { runtimeConfig: workerRtConfig },
+      undefined,
+      workerRuntimeAgent.orgId ?? undefined,
     );
 
     const endTime = Date.now();
@@ -3013,6 +3018,7 @@ async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: Runti
           enrichedContext || agent.agentSystemPrompt,
           { ontologyLabels: (agent.ontologyTags || []).map(t => t.conceptLabel), runtimeConfig: agent.runtimeConfig || {}, modelProvider: agent.modelProvider, modelName: agent.modelName, maxToolIterations: agent.maxToolIterations },
           onProgress,
+          agent.orgId ?? undefined,
         );
 
     await storage.updateAgentRuntimeRun(runtimeRun.id, {
@@ -3497,6 +3503,7 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
     modelProvider: (agent as any).modelProvider || "openai",
     modelName: (agent as any).modelName || "gpt-4.1",
     maxToolIterations: agent.maxToolIterations ?? 5,
+    orgId: agent.organizationId ?? null,
   };
 
   activeAgents.set(deploymentId, { agent: runtimeAgent });
@@ -3582,6 +3589,7 @@ export async function runAgentOnce(deploymentId: string, promptOverride?: string
     modelProvider: (agent as any).modelProvider || "openai",
     modelName: (agent as any).modelName || "gpt-4.1",
     maxToolIterations: maxIterationsOverride ?? (agent.maxToolIterations ?? 5),
+    orgId: agent.organizationId ?? null,
   };
 
   try {
