@@ -1616,6 +1616,49 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         }
       }
 
+      // Policy conflict annotation: flag proposed agents that clash with existing org/outcome policies
+      try {
+        const existingPolicies = await storage.getPolicies(getOrgId(req));
+        const activePolicies = existingPolicies.filter(p => p.status === "active");
+        const orgLevelPolicies = activePolicies.filter(p => p.scopeType === "org" || p.scopeType === "outcome");
+
+        const allProposedAgents = [
+          ...(result.orchestrator ? [result.orchestrator] : []),
+          ...(Array.isArray(result.agents) ? result.agents : []),
+        ];
+
+        const tierOrder: Record<string, number> = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
+        for (const agent of allProposedAgents) {
+          const conflicts: Array<{ policyId: string; policyName: string; reason: string }> = [];
+          for (const orgPolicy of orgLevelPolicies) {
+            const pj = orgPolicy.policyJson as Record<string, any> | null;
+            if (!pj) continue;
+            if (Array.isArray(pj.blockedAutonomyModes) && pj.blockedAutonomyModes.includes(agent.autonomyMode)) {
+              conflicts.push({ policyId: orgPolicy.id, policyName: orgPolicy.name, reason: `Autonomy mode "${agent.autonomyMode}" is blocked by this policy` });
+            }
+            if (pj.maxRiskTier) {
+              const agentTierVal = tierOrder[agent.riskTier] || 2;
+              const maxTierVal = tierOrder[pj.maxRiskTier] || 4;
+              if (agentTierVal > maxTierVal) {
+                conflicts.push({ policyId: orgPolicy.id, policyName: orgPolicy.name, reason: `Risk tier "${agent.riskTier}" exceeds policy max "${pj.maxRiskTier}"` });
+              }
+            }
+            if (Array.isArray(pj.blockedTools) && Array.isArray(agent.tools)) {
+              const agentToolsLower = agent.tools.map((t: string) => t.toLowerCase());
+              const blockedMatches = (pj.blockedTools as string[]).filter((bt: string) =>
+                agentToolsLower.some((at: string) => at.includes(bt.toLowerCase()) || bt.toLowerCase().includes(at))
+              );
+              if (blockedMatches.length > 0) {
+                conflicts.push({ policyId: orgPolicy.id, policyName: orgPolicy.name, reason: `Tools [${blockedMatches.join(", ")}] are blocked by this policy` });
+              }
+            }
+          }
+          agent.policyConflicts = conflicts;
+        }
+      } catch (pcErr: any) {
+        console.warn("[propose-agents] Policy conflict annotation failed (non-fatal):", pcErr.message);
+      }
+
       const ROLE_PATTERN_MAP: Record<string, string> = {
         orchestrator: "orchestrator",
         router: "orchestrator",

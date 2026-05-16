@@ -32,6 +32,7 @@ import {
   recomputeOutcomeKpis,
   computeConstraintGraph,
   generateOntologyEvalCases,
+  resolvePolicyBundle,
 } from "./helpers";
 import * as nodeCrypto from "crypto";
 import {
@@ -1295,6 +1296,61 @@ const router = Router();
     }
   });
 
+  router.get("/api/agents/:id/policy-readiness", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      const bundle = await resolvePolicyBundle(req.params.id, getOrgId(req));
+
+      const orgPolicies = bundle.appliedPolicies.filter((p: any) => p.scope === "org");
+      const outcomePolicies = bundle.appliedPolicies.filter((p: any) => p.scope === "outcome");
+      const agentScopedPolicies = bundle.appliedPolicies.filter((p: any) => p.scope === "agent");
+      const envPolicies = bundle.appliedPolicies.filter((p: any) => p.scope === "env");
+
+      const policyScore = (() => {
+        let score = 100;
+        if (bundle.appliedPolicies.length === 0) score -= 30;
+        if (orgPolicies.length === 0) score -= 20;
+        const hasMissingDomains: string[] = [];
+        const coveredDomains = new Set(bundle.appliedPolicies.map((p: any) => p.domain).filter(Boolean));
+        const expectedDomains = ["data_handling", "model_governance", "deployment"];
+        for (const d of expectedDomains) {
+          if (!coveredDomains.has(d)) { hasMissingDomains.push(d); score -= 10; }
+        }
+        return { score: Math.max(0, score), missingDomains: hasMissingDomains, coveredDomains: Array.from(coveredDomains) };
+      })();
+
+      const redactPatternSample = bundle.redactPatterns.slice(0, 5);
+      const guardrailSample = bundle.guardrails.slice(0, 5);
+
+      res.json({
+        agentId: agent.id,
+        agentName: agent.name,
+        readinessScore: policyScore.score,
+        appliedPolicies: bundle.appliedPolicies,
+        policyCountByScope: {
+          org: orgPolicies.length,
+          outcome: outcomePolicies.length,
+          agent: agentScopedPolicies.length,
+          env: envPolicies.length,
+        },
+        blockedTools: bundle.blockedTools,
+        toolAllowlist: bundle.toolAllowlist,
+        guardrails: guardrailSample,
+        guardrailCount: bundle.guardrails.length,
+        redactPatterns: redactPatternSample,
+        redactPatternCount: bundle.redactPatterns.length,
+        missingDomains: policyScore.missingDomains,
+        coveredDomains: policyScore.coveredDomains,
+        agentConfig: bundle.agentConfig,
+      });
+    } catch (e: any) {
+      console.error("[policy-readiness] Error:", e);
+      res.status(500).json({ error: "Failed to compute policy readiness" });
+    }
+  });
+
   router.get("/api/eval-suites", async (_req, res) => {
     const suites = await storage.getEvalSuites();
     res.json(suites);
@@ -2443,6 +2499,54 @@ const router = Router();
               ontologyTags: resolveOntologyTags("deployment", "ontology_alignment_bypass"),
             });
           }
+        }
+      }
+
+      // Policy gate: block promotion if any scoped policy declares this environment as restricted
+      const bypassPolicyGate = req.body.bypassPolicyGate === true;
+      if (nextEnv === "prod" && !bypassPolicyGate) {
+        try {
+          const pBundle = await resolvePolicyBundle(source.agentId, getOrgId(req));
+          const allPoliciesForGate = await storage.getPolicies(getOrgId(req));
+          const appliedIds = new Set(pBundle.appliedPolicies.map((p: any) => p.id));
+          const applicablePolicies = allPoliciesForGate.filter(p => appliedIds.has(p.id));
+          const promotionBlocking = applicablePolicies.filter(p => {
+            const pj = p.policyJson as Record<string, any> | null;
+            if (!pj) return false;
+            const blockedEnvs: string[] = Array.isArray(pj.promotionBlockedEnvs) ? pj.promotionBlockedEnvs : [];
+            return blockedEnvs.includes(nextEnv) || blockedEnvs.includes("*");
+          });
+          if (promotionBlocking.length > 0) {
+            const auditEventsForPolicy = await storage.getAuditEvents(getOrgId(req));
+            const maxSeqPol = auditEventsForPolicy.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
+            const lastHashPol = auditEventsForPolicy.length > 0 ? auditEventsForPolicy[auditEventsForPolicy.length - 1].eventHash || "" : "";
+            const evtDataPol = `${maxSeqPol + 1}:policy_gate_blocked:${source.id}:${Date.now()}`;
+            const evtHashPol = `sha256:${nodeCrypto.createHash("sha256").update(evtDataPol + lastHashPol).digest("hex")}`;
+            await storage.createAuditEvent({
+              actorType: "system",
+              actorId: "policy-gate",
+              action: "policy_gate_blocked",
+              objectType: "deployment",
+              objectId: source.id,
+              details: JSON.stringify({
+                targetEnv: nextEnv,
+                blockingPolicies: promotionBlocking.map(p => ({ id: p.id, name: p.name, domain: p.domain })),
+                agentName: source.agentName,
+                version: source.version,
+              }),
+              sequenceNum: maxSeqPol + 1,
+              previousHash: lastHashPol,
+              eventHash: evtHashPol,
+            });
+            return res.status(400).json({
+              blocked: true,
+              reason: "policy_gate",
+              message: `Promotion to ${nextEnv} blocked by ${promotionBlocking.length} active policy rule(s)`,
+              blockingPolicies: promotionBlocking.map(p => ({ id: p.id, name: p.name, domain: p.domain })),
+            });
+          }
+        } catch (pgErr: any) {
+          console.warn("[policy-gate] Promotion policy check failed (non-fatal):", pgErr.message);
         }
       }
 

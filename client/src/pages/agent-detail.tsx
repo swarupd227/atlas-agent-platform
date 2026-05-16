@@ -1013,6 +1013,26 @@ function AgentDetailInner() {
     enabled: !!agentId,
   });
 
+  const { data: policyReadiness } = useQuery<{
+    agentId: string;
+    agentName: string;
+    readinessScore: number;
+    appliedPolicies: Array<{ id: string; name: string; scope: string; domain: string }>;
+    policyCountByScope: { org: number; outcome: number; agent: number; env: number };
+    blockedTools: string[];
+    toolAllowlist: string[];
+    guardrails: string[];
+    guardrailCount: number;
+    redactPatterns: string[];
+    redactPatternCount: number;
+    missingDomains: string[];
+    coveredDomains: string[];
+    agentConfig: any;
+  }>({
+    queryKey: ["/api/agents", agentId, "policy-readiness"],
+    enabled: !!agentId,
+  });
+
   const { data: outcomeSlaReviewEvents } = useQuery<Array<{ id: string; action: string; objectId: string | null; details: any; createdAt?: string }>>({
     queryKey: ["/api/agents", agentId, "sla-review-events"],
     queryFn: async () => {
@@ -3049,6 +3069,7 @@ function AgentDetailInner() {
             <BlueprintToolsPermissions tools={agent.toolsConfig as any} permissions={agent.permissionsConfig as any} />
             <BlueprintMemoryRag config={agent.memoryRagConfig as any} />
             <BlueprintPolicyBindings bindings={agent.policyBindings as any} />
+            <PolicyReadinessWidget data={policyReadiness} />
             <BlueprintEvalBindings bindings={agent.evalBindings as any} />
             <BlueprintRollbackPlan plan={agent.rollbackPlan as any} />
           </div>
@@ -7071,6 +7092,104 @@ function BlueprintPolicyBindings({ bindings }: { bindings: any }) {
           </div>
         ) : (
           <p className="text-sm text-muted-foreground text-center py-4">No policies bound</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function PolicyReadinessWidget({ data }: { data: any }) {
+  if (!data) return null;
+  const score: number = data.readinessScore ?? 100;
+  const scoreColor = score >= 80 ? "text-green-600 dark:text-green-400" : score >= 50 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
+  const scoreBg = score >= 80 ? "bg-green-500/10 border-green-500/20" : score >= 50 ? "bg-amber-500/10 border-amber-500/20" : "bg-red-500/10 border-red-500/20";
+
+  return (
+    <Card data-testid="section-policy-readiness">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
+              <ShieldCheck className="w-3.5 h-3.5 text-primary" />
+            </div>
+            <CardTitle className="text-sm font-medium">Policy Readiness</CardTitle>
+          </div>
+          <Badge variant="outline" className={`text-[10px] font-semibold ${scoreBg} ${scoreColor}`} data-testid="badge-policy-readiness-score">
+            {score}%
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div>
+          <Progress value={score} className="h-1.5" />
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          {Object.entries(data.policyCountByScope || {}).map(([scope, count]) => (
+            <div key={scope} className="flex items-center justify-between p-2 rounded-md bg-muted/30 text-xs" data-testid={`policy-scope-${scope}`}>
+              <span className="text-muted-foreground capitalize">{scope}-level</span>
+              <Badge variant="outline" className="text-[10px]">{count as number}</Badge>
+            </div>
+          ))}
+        </div>
+
+        {data.blockedTools?.length > 0 && (
+          <div className="space-y-1">
+            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Blocked Tools</p>
+            <div className="flex flex-wrap gap-1">
+              {data.blockedTools.slice(0, 6).map((t: string) => (
+                <Badge key={t} variant="outline" className="text-[10px] bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20" data-testid={`blocked-tool-${t}`}>
+                  <Lock className="w-2.5 h-2.5 mr-1" />{t}
+                </Badge>
+              ))}
+              {data.blockedTools.length > 6 && <Badge variant="outline" className="text-[10px]">+{data.blockedTools.length - 6} more</Badge>}
+            </div>
+          </div>
+        )}
+
+        {data.toolAllowlist?.length > 0 && (
+          <div className="space-y-1">
+            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Tool Allowlist ({data.toolAllowlist.length})</p>
+            <div className="flex flex-wrap gap-1">
+              {data.toolAllowlist.slice(0, 5).map((t: string) => (
+                <Badge key={t} variant="outline" className="text-[10px] bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/20" data-testid={`allowlist-tool-${t}`}>
+                  {t}
+                </Badge>
+              ))}
+              {data.toolAllowlist.length > 5 && <Badge variant="outline" className="text-[10px]">+{data.toolAllowlist.length - 5} more</Badge>}
+            </div>
+          </div>
+        )}
+
+        {data.guardrailCount > 0 && (
+          <div className="flex items-center justify-between text-xs p-2 rounded-md bg-muted/30">
+            <span className="text-muted-foreground">Guardrails</span>
+            <Badge variant="outline" className="text-[10px]">{data.guardrailCount}</Badge>
+          </div>
+        )}
+
+        {data.redactPatternCount > 0 && (
+          <div className="flex items-center justify-between text-xs p-2 rounded-md bg-muted/30">
+            <span className="text-muted-foreground">Redact Patterns</span>
+            <Badge variant="outline" className="text-[10px]">{data.redactPatternCount}</Badge>
+          </div>
+        )}
+
+        {data.missingDomains?.length > 0 && (
+          <div className="space-y-1">
+            <p className="text-[10px] font-medium text-amber-600 dark:text-amber-400 uppercase tracking-wide">Coverage Gaps</p>
+            <div className="flex flex-wrap gap-1">
+              {data.missingDomains.map((d: string) => (
+                <Badge key={d} variant="outline" className="text-[10px] bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20" data-testid={`gap-domain-${d}`}>
+                  <AlertTriangle className="w-2.5 h-2.5 mr-1" />{d.replace(/_/g, " ")}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {data.appliedPolicies?.length === 0 && (
+          <p className="text-xs text-muted-foreground text-center py-2">No policies are currently applied to this agent.</p>
         )}
       </CardContent>
     </Card>

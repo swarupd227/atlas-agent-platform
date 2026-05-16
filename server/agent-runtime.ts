@@ -8,6 +8,7 @@ import { searchKnowledgeBaseChunks, generateEmbeddings, isPgvectorAvailable } fr
 import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
 import { outputContractEnforcer, StructuredOutputValidationError } from "./services/output-contract-enforcer";
 import { isRealMcpServer, mcpListTools, mcpCallTool as mcpSdkCallTool } from "./mcp-client";
+import { resolvePolicyBundle } from "./routes/helpers";
 
 export function canonicalJsonStringify(obj: any): string {
   if (obj === null || obj === undefined) return JSON.stringify(obj);
@@ -1156,10 +1157,28 @@ export async function executePromptWithMcp(
     startedAt: new Date().toISOString(),
   });
 
-  const availableTools = await gatherAvailableTools(mcpServerIds);
+  let availableTools = await gatherAvailableTools(mcpServerIds);
 
   const linkedKbs = await storage.getAgentKnowledgeBases(agentId);
   const hasKnowledgeBases = linkedKbs.length > 0;
+
+  let policyBundle: Awaited<ReturnType<typeof resolvePolicyBundle>> | null = null;
+  try {
+    policyBundle = await resolvePolicyBundle(agentId);
+    if (policyBundle.blockedTools.length > 0) {
+      const blockedSet = new Set(policyBundle.blockedTools.map(t => t.toLowerCase()));
+      availableTools = availableTools.filter(t => !blockedSet.has(t.toolName.toLowerCase()));
+    }
+    if (policyBundle.toolAllowlist.length > 0) {
+      const allowSet = new Set(policyBundle.toolAllowlist.map(t => t.toLowerCase()));
+      availableTools = availableTools.filter(t => allowSet.has(t.toolName.toLowerCase()));
+    }
+    if (policyBundle.appliedPolicies.length > 0) {
+      console.log(`[policy-gate] Agent ${agentId}: ${policyBundle.appliedPolicies.length} policies applied, ${policyBundle.blockedTools.length} tools blocked, allowlist size=${policyBundle.toolAllowlist.length}`);
+    }
+  } catch (pbErr: any) {
+    console.warn(`[policy-gate] Failed to resolve policy bundle for agent ${agentId}: ${pbErr.message}`);
+  }
 
   if (availableTools.length === 0 && !hasKnowledgeBases) {
     const errorMsg = mcpServerIds.length === 0
@@ -1568,6 +1587,26 @@ After receiving tool results, provide a structured analysis with key findings, s
         }
 
         try {
+          // Policy bundle gate: blocklist / allowlist from resolvePolicyBundle
+          if (policyBundle) {
+            const toolNameLower = matchedTool.toolName.toLowerCase();
+            const isBlocked = policyBundle.blockedTools.some(b => b.toLowerCase() === toolNameLower);
+            const allowlistActive = policyBundle.toolAllowlist.length > 0;
+            const isAllowed = !allowlistActive || policyBundle.toolAllowlist.some(a => a.toLowerCase() === toolNameLower);
+            if (isBlocked || !isAllowed) {
+              const blockReason = isBlocked
+                ? `Tool "${matchedTool.toolName}" is blocked by an active policy`
+                : `Tool "${matchedTool.toolName}" is not in the policy tool allowlist`;
+              const lastStep = steps[steps.length - 1];
+              lastStep.status = "failed";
+              lastStep.error = `[POLICY-GATE] BLOCK: ${blockReason}`;
+              lastStep.completedAt = new Date().toISOString();
+              toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: null, error: `[POLICY-GATE] BLOCK: ${blockReason}` });
+              emitProgress("tool_call_result", { tool: matchedTool.toolName, server: matchedTool.serverName, success: false, error: `[POLICY-GATE] BLOCK: ${blockReason}`, iteration: iterationsUsed });
+              continue;
+            }
+          }
+
           // AAR policy gate
           const policyResult = await evaluateActionPolicy(agentId, matchedTool.toolName, matchedTool.serverId);
           if (policyResult.decision === "BLOCK") {
@@ -2159,15 +2198,25 @@ After receiving tool results, provide a structured analysis with key findings, s
     }
   } catch {}
 
-  let policySnapshot: Array<{ policyId: string; policyName: string; domain: string; status: string }> = [];
+  let policySnapshot: Array<{ policyId: string; policyName: string; domain: string; scope?: string; status?: string }> = [];
   try {
-    const policies = await storage.getPolicies();
-    policySnapshot = policies.filter(p => p.status === "active").slice(0, 20).map(p => ({
-      policyId: p.id,
-      policyName: p.name,
-      domain: p.domain,
-      status: p.status,
-    }));
+    if (policyBundle && policyBundle.appliedPolicies.length > 0) {
+      policySnapshot = policyBundle.appliedPolicies.map(p => ({
+        policyId: p.id,
+        policyName: p.name,
+        domain: p.domain || "general",
+        scope: p.scope,
+        status: "active",
+      }));
+    } else {
+      const policies = await storage.getPolicies();
+      policySnapshot = policies.filter(p => p.status === "active").slice(0, 20).map(p => ({
+        policyId: p.id,
+        policyName: p.name,
+        domain: p.domain,
+        status: p.status,
+      }));
+    }
   } catch {}
 
   let autonomyLevel: string | null = null;

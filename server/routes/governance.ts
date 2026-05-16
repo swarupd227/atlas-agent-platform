@@ -22,7 +22,7 @@ import {
   getRedactionLevel,
   redactPayload,
 } from "../permissions";
-import { resolveOntologyTags, handleZodError, checkPatchSafety, generateKpiAlignedEvalSuite } from "./helpers";
+import { resolveOntologyTags, handleZodError, checkPatchSafety, generateKpiAlignedEvalSuite, resolvePolicyBundle } from "./helpers";
 import billingRouter from "./billing";
 import { callClaude, stripJsonFences } from "../claude";
 
@@ -3610,6 +3610,77 @@ Eval Suites: ${evalSuites.length} configured`,
       res.json(rows);
     } catch (e: any) {
       res.status(500).json({ message: e.message || "Failed to fetch monitor series" });
+    }
+  });
+
+  router.get("/api/outcomes/:id/policy-coverage", async (req, res) => {
+    try {
+      const outcome = await storage.getOutcome(req.params.id, getOrgId(req));
+      if (!outcome) return res.status(404).json({ error: "Outcome not found" });
+
+      const agents = await storage.getAgents(getOrgId(req));
+      const outcomeAgents = agents.filter(a => (a as any).outcomeId === req.params.id);
+
+      const coverageByAgent = await Promise.all(
+        outcomeAgents.map(async (agent) => {
+          try {
+            const bundle = await resolvePolicyBundle(agent.id, getOrgId(req));
+            return {
+              agentId: agent.id,
+              agentName: agent.name,
+              riskTier: agent.riskTier,
+              appliedPolicies: bundle.appliedPolicies,
+              blockedTools: bundle.blockedTools,
+              toolAllowlist: bundle.toolAllowlist,
+              guardrails: bundle.guardrails,
+              policyCount: bundle.appliedPolicies.length,
+            };
+          } catch {
+            return {
+              agentId: agent.id,
+              agentName: agent.name,
+              riskTier: agent.riskTier,
+              appliedPolicies: [],
+              blockedTools: [],
+              toolAllowlist: [],
+              guardrails: [],
+              policyCount: 0,
+            };
+          }
+        })
+      );
+
+      const allAppliedPolicies = new Map<string, any>();
+      for (const entry of coverageByAgent) {
+        for (const p of entry.appliedPolicies) {
+          allAppliedPolicies.set(p.id, p);
+        }
+      }
+
+      const coveredCount = coverageByAgent.filter(e => e.policyCount > 0).length;
+      const coverageScore = outcomeAgents.length > 0
+        ? Math.round((coveredCount / outcomeAgents.length) * 100)
+        : 100;
+
+      const domainMap = new Map<string, number>();
+      for (const [, p] of allAppliedPolicies) {
+        if (p.domain) domainMap.set(p.domain, (domainMap.get(p.domain) || 0) + 1);
+      }
+
+      res.json({
+        outcomeId: req.params.id,
+        outcomeName: (outcome as any).name || req.params.id,
+        agentCount: outcomeAgents.length,
+        coveredAgentCount: coveredCount,
+        uniquePolicyCount: allAppliedPolicies.size,
+        coverageScore,
+        policies: Array.from(allAppliedPolicies.values()),
+        domainBreakdown: Object.fromEntries(domainMap),
+        agentCoverage: coverageByAgent,
+      });
+    } catch (e: any) {
+      console.error("[policy-coverage] Error:", e);
+      res.status(500).json({ error: "Failed to compute policy coverage" });
     }
   });
 
