@@ -2636,7 +2636,9 @@ const router = Router();
             if (enforcement === "strict" || enforcement === "block") {
               const recentTracesForPolicy = await storage.getTracesByAgent(source.agentId, getOrgId(req));
               const completedTraces = recentTracesForPolicy
-                .filter(t => t.status === "completed" || t.status === "failed")
+                // Exclude dry-run traces (from /api/agents/:id/policy-check) — these are
+                // validation probes, not real execution runs, and must not influence promotion.
+                .filter(t => t.environment !== "dry-run" && (t.status === "completed" || t.status === "failed"))
                 .sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime());
               const lastCompletedTrace = completedTraces[0];
               if (lastCompletedTrace) {

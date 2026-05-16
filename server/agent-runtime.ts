@@ -1138,7 +1138,7 @@ export async function executePromptWithMcp(
   agentSystemPrompt?: string,
   options?: { conversational?: boolean; ontologyLabels?: string[]; runtimeConfig?: Record<string, any>; modelProvider?: string; modelName?: string; maxToolIterations?: number },
   onProgress?: (event: RuntimeProgressEvent) => void,
-): Promise<{ steps: any[]; success: boolean; summary: any; promptInputs?: any; provenanceSnapshot?: any; provenanceHash?: string; retrievedDocs?: any; conversationalResponse?: string; contextSectionMetrics?: ContextSectionMetric[]; softPolicyViolations?: SoftPolicyComplianceResult[] }> {
+): Promise<{ steps: any[]; success: boolean; summary: any; promptInputs?: any; provenanceSnapshot?: any; provenanceHash?: string; retrievedDocs?: any; conversationalResponse?: string; contextSectionMetrics?: ContextSectionMetric[]; softPolicyViolations?: SoftPolicyComplianceResult[]; hardViolations?: Array<{ toolName: string; reason: string; policyIds: string[]; enforcementMode: string; iteration: number; blockedAt: string }> }> {
   const startTime = Date.now();
   const steps: any[] = [];
   const promptSectionMetrics: ContextSectionMetric[] = [];
@@ -1189,6 +1189,7 @@ export async function executePromptWithMcp(
       steps,
       success: false,
       summary: { totalSteps: 1, passedSteps: 0, failedSteps: 1, error: errMsg },
+      hardViolations: [],
     };
   }
 
@@ -1204,6 +1205,7 @@ export async function executePromptWithMcp(
       steps,
       success: false,
       summary: { totalSteps: 1, passedSteps: 0, failedSteps: 1, error: errorMsg },
+      hardViolations: [],
     };
   }
 
@@ -1629,11 +1631,16 @@ After receiving tool results, provide a structured analysis with key findings, s
               lastStep.completedAt = new Date().toISOString();
               toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: null, error: `[POLICY-GATE] BLOCK: ${blockReason}` });
               emitProgress("tool_call_result", { tool: matchedTool.toolName, server: matchedTool.serverName, success: false, error: `[POLICY-GATE] BLOCK: ${blockReason}`, iteration: iterationsUsed });
-              // Collect violation for trace-level policyChecks.violations persistence
+              // Collect violation for trace-level policyChecks.violations persistence.
+              // Record only strict/block policy IDs — these are the ones that actually
+              // contributed the blocked tool or allowlist restriction. Monitor-mode policies
+              // cannot cause a hard block and must not be attributed here.
               runtimeHardViolations.push({
                 toolName: matchedTool.toolName,
                 reason: blockReason,
-                policyIds: policyBundle.appliedPolicies.map(p => p.id),
+                policyIds: policyBundle.appliedPolicies
+                  .filter(p => p.enforcement === "strict" || p.enforcement === "block")
+                  .map(p => p.id),
                 enforcementMode: "strict/block",
                 iteration: iterationsUsed,
                 blockedAt: new Date().toISOString(),
@@ -2050,6 +2057,7 @@ After receiving tool results, provide a structured analysis with key findings, s
       steps,
       success: false,
       summary: { totalSteps: steps.length, passedSteps: steps.filter(s => s.status === "completed").length, failedSteps: steps.filter(s => s.status === "failed").length, error: anyErr.message },
+      hardViolations: runtimeHardViolations,
     };
   }
 
@@ -2379,6 +2387,7 @@ After receiving tool results, provide a structured analysis with key findings, s
     provenanceHash,
     retrievedDocs: kbRetrievals,
     contextSectionMetrics: promptSectionMetrics,
+    hardViolations: runtimeHardViolations,
     ...(conversationalResponse ? { conversationalResponse } : {}),
     ...(softPolicyViolations.length > 0 ? { softPolicyViolations } : {}),
     // GAP5: First-class contract enforcement result fields
@@ -3142,7 +3151,8 @@ async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: Runti
           enforcement: p.enforcement || "monitor",
         })),
         policyCount: (fullProvenanceSnapshot.policySnapshot || []).length,
-        violations: runtimeHardViolations,
+        // Consume hard violations from the result object (scoped inside executePromptWithMcp)
+        violations: (result as any).hardViolations || [],
         capturedAt: new Date().toISOString(),
       },
       ...(((result as any).softPolicyViolations as any[] | undefined)?.length
