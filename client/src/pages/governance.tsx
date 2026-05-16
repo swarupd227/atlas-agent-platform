@@ -1045,6 +1045,10 @@ export default function Governance() {
   const [selectedRegulationId, setSelectedRegulationId] = useState<string | null>(null);
   const [activeGovTab, setActiveGovTab] = useState("coverage");
   const [deptFilter, setDeptFilter] = useState<string | null>(null);
+  const [feedSeverityFilter, setFeedSeverityFilter] = useState<"all" | "high" | "medium" | "low">("all");
+  const [feedTypeFilter, setFeedTypeFilter] = useState<string>("all");
+  const [expandedFeedId, setExpandedFeedId] = useState<string | null>(null);
+  const [selectedCoverageAgentId, setSelectedCoverageAgentId] = useState<string | null>(null);
   const [enhancedRegulations, setEnhancedRegulations] = useState<Record<string, any>>({});
   const [generatingPoliciesFor, setGeneratingPoliciesFor] = useState<string | null>(null);
   const { toast } = useToast();
@@ -2074,7 +2078,7 @@ export default function Governance() {
       </div>
 
       <Tabs value={activeGovTab} onValueChange={setActiveGovTab} className="flex flex-col gap-4">
-        <TabsList className="w-fit flex-wrap h-auto">
+        <TabsList className="w-fit flex-wrap h-auto gap-0">
           <TabsTrigger value="coverage" data-testid="tab-coverage">
             <Target className="w-3.5 h-3.5 mr-1" />
             Coverage
@@ -2103,21 +2107,25 @@ export default function Governance() {
           </TabsTrigger>
           <TabsTrigger value="policies" data-testid="tab-policies">Policy Rules</TabsTrigger>
           <TabsTrigger value="audit" data-testid="tab-audit">Audit Log</TabsTrigger>
-          <TabsTrigger value="compliance-matrix" data-testid="tab-compliance-matrix">Compliance Matrix</TabsTrigger>
-          <TabsTrigger value="enforcement" data-testid="tab-enforcement">Enforcement</TabsTrigger>
-          <TabsTrigger value="compliance" data-testid="tab-compliance">Reports</TabsTrigger>
-          <TabsTrigger value="tool-access" data-testid="tab-tool-access">Tool Access</TabsTrigger>
-          <TabsTrigger value="tool-risk" data-testid="tab-tool-risk">Tool Risk</TabsTrigger>
-          <TabsTrigger value="ethics" data-testid="tab-ethics">Ethics</TabsTrigger>
-          <TabsTrigger value="policy-packs" data-testid="tab-policy-packs">Policy Packs</TabsTrigger>
-          <TabsTrigger value="what-if" data-testid="tab-what-if">What-If</TabsTrigger>
-          <TabsTrigger value="regulatory" data-testid="tab-regulatory">Regulatory</TabsTrigger>
-          <TabsTrigger value="impact-network" data-testid="tab-impact-network">
-            <Network className="w-3.5 h-3.5 mr-1" />
+          {/* ── Advanced separator ──────────────────────────────────── */}
+          <span className="h-5 w-px bg-border/60 mx-1 self-center shrink-0" aria-hidden="true" />
+          <span className="self-center px-1 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground/50 pointer-events-none select-none">Advanced</span>
+          <span className="h-5 w-px bg-border/60 mx-1 self-center shrink-0" aria-hidden="true" />
+          <TabsTrigger value="compliance-matrix" data-testid="tab-compliance-matrix" className="text-muted-foreground/70 text-[11px]">Compliance Matrix</TabsTrigger>
+          <TabsTrigger value="enforcement" data-testid="tab-enforcement" className="text-muted-foreground/70 text-[11px]">Enforcement</TabsTrigger>
+          <TabsTrigger value="compliance" data-testid="tab-compliance" className="text-muted-foreground/70 text-[11px]">Reports</TabsTrigger>
+          <TabsTrigger value="tool-access" data-testid="tab-tool-access" className="text-muted-foreground/70 text-[11px]">Tool Access</TabsTrigger>
+          <TabsTrigger value="tool-risk" data-testid="tab-tool-risk" className="text-muted-foreground/70 text-[11px]">Tool Risk</TabsTrigger>
+          <TabsTrigger value="ethics" data-testid="tab-ethics" className="text-muted-foreground/70 text-[11px]">Ethics</TabsTrigger>
+          <TabsTrigger value="policy-packs" data-testid="tab-policy-packs" className="text-muted-foreground/70 text-[11px]">Policy Packs</TabsTrigger>
+          <TabsTrigger value="what-if" data-testid="tab-what-if" className="text-muted-foreground/70 text-[11px]">What-If</TabsTrigger>
+          <TabsTrigger value="regulatory" data-testid="tab-regulatory" className="text-muted-foreground/70 text-[11px]">Regulatory</TabsTrigger>
+          <TabsTrigger value="impact-network" data-testid="tab-impact-network" className="text-muted-foreground/70 text-[11px]">
+            <Network className="w-3 h-3 mr-1" />
             Impact Network
           </TabsTrigger>
-          <TabsTrigger value="compliance-posture" data-testid="tab-compliance-posture">
-            <ShieldCheck className="w-3.5 h-3.5 mr-1" />
+          <TabsTrigger value="compliance-posture" data-testid="tab-compliance-posture" className="text-muted-foreground/70 text-[11px]">
+            <ShieldCheck className="w-3 h-3 mr-1" />
             Compliance Posture
           </TabsTrigger>
         </TabsList>
@@ -2156,8 +2164,14 @@ export default function Governance() {
                   <tbody>
                     {coverageMatrix.rows.map((row, i) => {
                       const gapCount = Object.values(row.domainCoverage).filter(v => !v).length;
+                      const isSelected = selectedCoverageAgentId === row.agentId;
                       return (
-                        <tr key={row.agentId} className={`border-b last:border-0 hover:bg-muted/20 transition-colors ${i % 2 === 0 ? "" : "bg-muted/5"}`} data-testid={`row-coverage-${row.agentId}`}>
+                        <tr
+                          key={row.agentId}
+                          className={`border-b last:border-0 transition-colors cursor-pointer ${isSelected ? "bg-primary/5 ring-1 ring-primary/20" : `hover:bg-muted/20 ${i % 2 === 0 ? "" : "bg-muted/5"}`}`}
+                          data-testid={`row-coverage-${row.agentId}`}
+                          onClick={() => setSelectedCoverageAgentId(isSelected ? null : row.agentId)}
+                        >
                           <td className="px-4 py-3">
                             <div className="flex flex-col min-w-0">
                               <span className="text-xs font-medium truncate">{row.agentName}</span>
@@ -2221,6 +2235,53 @@ export default function Governance() {
             </Card>
           )}
 
+          {/* ── Coverage gap detail panel (appears when a row is selected) ─── */}
+          {selectedCoverageAgentId && coverageMatrix && (() => {
+            const row = coverageMatrix.rows.find(r => r.agentId === selectedCoverageAgentId);
+            if (!row) return null;
+            const gaps = (row.missingDomains as string[] | undefined) ?? Object.entries(row.domainCoverage).filter(([, v]) => !v).map(([k]) => k);
+            return (
+              <Card className="border-primary/20 bg-primary/3" data-testid="card-coverage-gap-detail">
+                <CardContent className="p-4 flex flex-col gap-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Target className="w-4 h-4 text-primary" />
+                      <span className="text-sm font-semibold">{row.agentName} — Gap Analysis</span>
+                      {gaps.length === 0 && <Badge className="text-[9px] bg-green-500/15 text-green-600 border-green-500/20">Fully covered</Badge>}
+                    </div>
+                    <Button variant="ghost" size="sm" onClick={() => setSelectedCoverageAgentId(null)} data-testid="button-close-gap-detail">
+                      <XCircle className="w-3.5 h-3.5" />
+                    </Button>
+                  </div>
+                  {gaps.length > 0 ? (
+                    <div className="flex flex-col gap-2">
+                      <p className="text-xs text-muted-foreground">{gaps.length} domain gap{gaps.length > 1 ? "s" : ""} detected — bind a policy covering each domain to remediate.</p>
+                      <div className="flex flex-wrap gap-2">
+                        {gaps.map(domain => (
+                          <div key={domain} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-md bg-amber-500/10 border border-amber-500/20">
+                            <AlertTriangle className="w-3 h-3 text-amber-600" />
+                            <span className="text-xs font-medium capitalize">{domain.replace(/_/g, " ")}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-fit"
+                        onClick={() => { setActiveGovTab("policies"); setDomainFilter(gaps[0]); }}
+                        data-testid="button-fix-gaps"
+                      >
+                        <Shield className="w-3.5 h-3.5 mr-1.5" /> View policies to fix gaps
+                      </Button>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">All 5 governance domains are covered by applied policies.</p>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })()}
+
           {coverageMatrix && coverageMatrix.rows.length > 0 && (() => {
             const totalCells = coverageMatrix.rows.length * coverageMatrix.domains.length;
             const coveredCells = coverageMatrix.rows.reduce((sum, r) => sum + Object.values(r.domainCoverage).filter(Boolean).length, 0);
@@ -2266,59 +2327,154 @@ export default function Governance() {
                 <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse inline-block" />
                 Live
               </Badge>
+              {complianceFeed && <span className="text-[10px] text-muted-foreground">{complianceFeed.length} events</span>}
             </div>
             <Button variant="outline" size="sm" onClick={() => refetchFeed()} data-testid="button-refresh-feed">
               <Activity className="w-3.5 h-3.5 mr-1.5" /> Refresh
             </Button>
           </div>
 
+          {/* Filter chips */}
+          <div className="flex items-center gap-2 flex-wrap" data-testid="feed-filter-chips">
+            <span className="text-[10px] text-muted-foreground font-medium">Severity:</span>
+            {(["all", "high", "medium", "low"] as const).map(s => (
+              <button
+                key={s}
+                onClick={() => setFeedSeverityFilter(s)}
+                className={`px-2 py-0.5 rounded-full text-[10px] font-medium border transition-colors ${feedSeverityFilter === s
+                  ? s === "high" ? "bg-red-500/20 border-red-500/40 text-red-600 dark:text-red-400"
+                    : s === "medium" ? "bg-amber-500/20 border-amber-500/40 text-amber-600 dark:text-amber-400"
+                    : s === "low" ? "bg-blue-500/20 border-blue-500/40 text-blue-600 dark:text-blue-400"
+                    : "bg-primary/10 border-primary/30 text-primary"
+                  : "bg-transparent border-border text-muted-foreground hover:border-foreground/30"}`}
+                data-testid={`chip-severity-${s}`}
+              >
+                {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
+              </button>
+            ))}
+            <span className="h-3.5 w-px bg-border/60 mx-1" aria-hidden="true" />
+            <span className="text-[10px] text-muted-foreground font-medium">Type:</span>
+            {["all", "policy", "agent", "approval"].map(t => (
+              <button
+                key={t}
+                onClick={() => setFeedTypeFilter(t)}
+                className={`px-2 py-0.5 rounded-full text-[10px] font-medium border transition-colors ${feedTypeFilter === t
+                  ? "bg-primary/10 border-primary/30 text-primary"
+                  : "bg-transparent border-border text-muted-foreground hover:border-foreground/30"}`}
+                data-testid={`chip-type-${t}`}
+              >
+                {t === "all" ? "All types" : t.charAt(0).toUpperCase() + t.slice(1)}
+              </button>
+            ))}
+          </div>
+
           {feedLoading ? (
             <div className="flex flex-col gap-2">
               {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
             </div>
-          ) : complianceFeed && complianceFeed.length > 0 ? (
-            <div className="flex flex-col gap-2" data-testid="list-compliance-feed">
-              {complianceFeed.map((item) => {
-                const severityColor = item.severity === "high"
-                  ? "border-l-red-500 bg-red-500/5"
-                  : item.severity === "medium"
-                  ? "border-l-amber-500 bg-amber-500/5"
-                  : "border-l-muted bg-transparent";
-                const severityBadge = item.severity === "high"
-                  ? "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
-                  : item.severity === "medium"
-                  ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"
-                  : "text-muted-foreground";
-                return (
-                  <Card key={item.id} className={`border-l-2 ${severityColor} hover-elevate`} data-testid={`feed-item-${item.id}`}>
-                    <CardContent className="p-3 flex items-start gap-3">
-                      <div className="flex flex-col flex-1 min-w-0 gap-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs font-semibold capitalize">{item.action.replace(/_/g, " ")}</span>
-                          <Badge variant="outline" className={`text-[9px] ${severityBadge}`}>{item.severity}</Badge>
-                          <Badge variant="outline" className="text-[9px] text-muted-foreground">{item.objectType}</Badge>
+          ) : complianceFeed && complianceFeed.length > 0 ? (() => {
+            const filtered = complianceFeed.filter(item => {
+              if (feedSeverityFilter !== "all" && item.severity !== feedSeverityFilter) return false;
+              if (feedTypeFilter !== "all" && item.objectType !== feedTypeFilter) return false;
+              return true;
+            });
+            return filtered.length > 0 ? (
+              <div className="flex flex-col gap-1.5" data-testid="list-compliance-feed">
+                {filtered.map((item) => {
+                  const isExpanded = expandedFeedId === item.id;
+                  const severityColor = item.severity === "high"
+                    ? "border-l-red-500 bg-red-500/5"
+                    : item.severity === "medium"
+                    ? "border-l-amber-500 bg-amber-500/5"
+                    : "border-l-muted bg-transparent";
+                  const severityBadge = item.severity === "high"
+                    ? "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
+                    : item.severity === "medium"
+                    ? "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"
+                    : "text-muted-foreground";
+                  return (
+                    <Card
+                      key={item.id}
+                      className={`border-l-2 ${severityColor} cursor-pointer hover-elevate transition-all`}
+                      data-testid={`feed-item-${item.id}`}
+                      onClick={() => setExpandedFeedId(isExpanded ? null : item.id)}
+                    >
+                      <CardContent className="p-3 flex flex-col gap-2">
+                        <div className="flex items-start gap-3">
+                          <div className="flex flex-col flex-1 min-w-0 gap-1">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs font-semibold capitalize">{item.action.replace(/_/g, " ")}</span>
+                              <Badge variant="outline" className={`text-[9px] ${severityBadge}`}>{item.severity}</Badge>
+                              <Badge variant="outline" className="text-[9px] text-muted-foreground">{item.objectType}</Badge>
+                            </div>
+                            <div className="flex items-center gap-2 flex-wrap">
+                              {item.agentName && (
+                                <span className="text-[11px] text-muted-foreground">Agent: <span className="font-medium text-foreground">{item.agentName}</span></span>
+                              )}
+                              {item.policyName && (
+                                <span className="text-[11px] text-muted-foreground">Policy: <span className="font-medium text-foreground">{item.policyName}</span></span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <span className="text-[10px] text-muted-foreground mt-0.5">
+                              {item.createdAt ? new Date(item.createdAt).toLocaleString() : "—"}
+                            </span>
+                            <span className={`text-muted-foreground transition-transform ${isExpanded ? "rotate-180" : ""}`}>
+                              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                            </span>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2 flex-wrap">
-                          {item.agentName && (
-                            <span className="text-[11px] text-muted-foreground">Agent: <span className="font-medium text-foreground">{item.agentName}</span></span>
-                          )}
-                          {item.policyName && (
-                            <span className="text-[11px] text-muted-foreground">Policy: <span className="font-medium text-foreground">{item.policyName}</span></span>
-                          )}
-                          {item.details && (
-                            <span className="text-[11px] text-muted-foreground truncate max-w-[300px]">{item.details}</span>
-                          )}
-                        </div>
-                      </div>
-                      <span className="text-[10px] text-muted-foreground shrink-0 mt-0.5">
-                        {item.createdAt ? new Date(item.createdAt).toLocaleString() : "—"}
-                      </span>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          ) : (
+                        {/* Expanded detail row */}
+                        {isExpanded && (
+                          <div className="pt-2 border-t flex flex-col gap-2" data-testid={`feed-detail-${item.id}`}>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
+                              <div><span className="text-muted-foreground">Event ID: </span><span className="font-mono font-medium">{item.id.slice(0, 8)}</span></div>
+                              <div><span className="text-muted-foreground">Object: </span><span className="font-medium">{item.objectId?.slice(0, 8) ?? "—"}</span></div>
+                              <div><span className="text-muted-foreground">Actor: </span><span className="font-medium">{item.actorId?.slice(0, 8) ?? "—"}</span></div>
+                            </div>
+                            {item.details && (
+                              <p className="text-[11px] text-muted-foreground bg-muted/30 rounded px-2 py-1.5 font-mono break-all">{item.details}</p>
+                            )}
+                            <div className="flex items-center gap-2">
+                              {item.objectType === "trace" && item.objectId && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-6 text-[10px] px-2"
+                                  onClick={(e) => { e.stopPropagation(); setTraceViewId(item.objectId!); }}
+                                  data-testid={`button-view-trace-${item.id}`}
+                                >
+                                  View Run Trace
+                                </Button>
+                              )}
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-6 text-[10px] px-2"
+                                onClick={(e) => { e.stopPropagation(); setActiveGovTab("audit"); }}
+                                data-testid={`button-view-audit-${item.id}`}
+                              >
+                                Full Audit Entry
+                              </Button>
+                            </div>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+            ) : (
+              <Card>
+                <CardContent className="p-8 flex flex-col items-center gap-2">
+                  <Activity className="w-8 h-8 text-muted-foreground/40" />
+                  <p className="text-sm text-muted-foreground">No events match the current filters.</p>
+                  <Button variant="ghost" size="sm" onClick={() => { setFeedSeverityFilter("all"); setFeedTypeFilter("all"); }}>Clear filters</Button>
+                </CardContent>
+              </Card>
+            );
+          })() : (
             <Card>
               <CardContent className="p-12 flex flex-col items-center gap-3">
                 <Activity className="w-10 h-10 text-muted-foreground/40" />
@@ -2332,10 +2488,13 @@ export default function Governance() {
         {/* ─── Human Control Points ──────────────────────────────────── */}
         <TabsContent value="control-points" className="mt-0 flex flex-col gap-4" data-testid="content-control-points">
           {pendingActions && (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
               <StatCard title="Pending Approvals" value={pendingActions.counts.approvals} icon={Clock} variant={pendingActions.counts.approvals > 0 ? "warning" : "default"} testId="stat-pending-approvals" />
               <StatCard title="Exception Reviews" value={pendingActions.counts.exceptions} icon={FileCode} variant={pendingActions.counts.exceptions > 0 ? "warning" : "default"} testId="stat-exception-reviews" />
               <StatCard title="Expiring Soon" value={pendingActions.counts.expiring} icon={AlertTriangle} variant={pendingActions.counts.expiring > 0 ? "danger" : "default"} testId="stat-expiring-soon" />
+              <StatCard title="Workflow Gates" value={(pendingActions.counts as any).workflowGates ?? 0} icon={GitBranch} variant={(pendingActions.counts as any).workflowGates > 0 ? "warning" : "default"} testId="stat-workflow-gates" />
+              <StatCard title="Deploy Blocks" value={(pendingActions.counts as any).deploymentBlocks ?? 0} icon={AlertTriangle} variant={(pendingActions.counts as any).deploymentBlocks > 0 ? "danger" : "default"} testId="stat-deploy-blocks" />
+              <StatCard title="Hard Violations" value={(pendingActions.counts as any).violations ?? 0} icon={ShieldAlert} variant={(pendingActions.counts as any).violations > 0 ? "danger" : "default"} testId="stat-violations-queue" />
             </div>
           )}
 
@@ -2688,6 +2847,36 @@ export default function Governance() {
                                 })()}
                               </span>
                             </div>
+                            {/* Policy enrichment: bound agents + 30d pass rate */}
+                            {(() => {
+                              const stats = (coverageMatrix as any)?.policyStats?.[policy.id];
+                              if (!stats) return null;
+                              const { boundAgentCount, passRate } = stats as { boundAgentCount: number; passRate: number | null };
+                              return (
+                                <div className="flex items-center gap-3 pt-1 border-t" data-testid={`policy-stats-${policy.id}`}>
+                                  <div className="flex items-center gap-1.5">
+                                    <Users className="w-3 h-3 text-muted-foreground" />
+                                    <span className="text-[10px] text-muted-foreground">{boundAgentCount} agent{boundAgentCount !== 1 ? "s" : ""}</span>
+                                  </div>
+                                  {passRate !== null ? (
+                                    <div className="flex items-center gap-1.5 ml-auto">
+                                      <span className="text-[10px] text-muted-foreground">30d pass rate</span>
+                                      <div className="w-16 h-1.5 rounded-full bg-muted">
+                                        <div
+                                          className={`h-1.5 rounded-full ${passRate >= 90 ? "bg-green-500" : passRate >= 70 ? "bg-amber-500" : "bg-red-500"}`}
+                                          style={{ width: `${passRate}%` }}
+                                        />
+                                      </div>
+                                      <span className={`text-[10px] font-semibold ${passRate >= 90 ? "text-green-600 dark:text-green-400" : passRate >= 70 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}>
+                                        {passRate}%
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <span className="text-[10px] text-muted-foreground ml-auto">No traces yet</span>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </CardContent>
                         </Card>
                       );
@@ -2747,6 +2936,36 @@ export default function Governance() {
                             );
                           })}
                         </div>
+                        {/* Policy enrichment: bound agents + 30d pass rate */}
+                        {(() => {
+                          const stats = (coverageMatrix as any)?.policyStats?.[policy.id];
+                          if (!stats) return null;
+                          const { boundAgentCount, passRate } = stats as { boundAgentCount: number; passRate: number | null };
+                          return (
+                            <div className="flex items-center gap-3 pt-1 border-t" data-testid={`policy-stats-${policy.id}`}>
+                              <div className="flex items-center gap-1.5">
+                                <Users className="w-3 h-3 text-muted-foreground" />
+                                <span className="text-[10px] text-muted-foreground">{boundAgentCount} agent{boundAgentCount !== 1 ? "s" : ""}</span>
+                              </div>
+                              {passRate !== null ? (
+                                <div className="flex items-center gap-1.5 ml-auto">
+                                  <span className="text-[10px] text-muted-foreground">30d pass rate</span>
+                                  <div className="w-16 h-1.5 rounded-full bg-muted">
+                                    <div
+                                      className={`h-1.5 rounded-full ${passRate >= 90 ? "bg-green-500" : passRate >= 70 ? "bg-amber-500" : "bg-red-500"}`}
+                                      style={{ width: `${passRate}%` }}
+                                    />
+                                  </div>
+                                  <span className={`text-[10px] font-semibold ${passRate >= 90 ? "text-green-600 dark:text-green-400" : passRate >= 70 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`}>
+                                    {passRate}%
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="text-[10px] text-muted-foreground ml-auto">No traces yet</span>
+                              )}
+                            </div>
+                          );
+                        })()}
                       </CardContent>
                     </Card>
                   );

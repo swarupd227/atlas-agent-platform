@@ -12,6 +12,7 @@ import {
   insertPolicyExceptionSchema,
   insertComplianceReportSchema,
   insertIncidentSchema,
+  pipelineRuns,
 } from "@shared/schema";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import {
@@ -3747,26 +3748,43 @@ Eval Suites: ${evalSuites.length} configured`,
       const activePolicies = allPolicies.filter(p => p.status === "active");
       const allTraces = await storage.getTraces(orgId);
 
+      // per-policy stats accumulator: boundAgentCount + passRate aggregation
+      const policyBoundAgents: Record<string, string[]> = {};
+      const policyTracePassed: Record<string, number> = {};
+      const policyTraceTotal: Record<string, number> = {};
+
       const rows = await Promise.all(agents.map(async (agent) => {
         let bundle: Awaited<ReturnType<typeof resolvePolicyBundle>> | null = null;
         try { bundle = await resolvePolicyBundle(agent.id, orgId); } catch { /* skip */ }
 
-        const appliedPolicyIds = new Set((bundle?.appliedPolicies ?? []).map((p: any) => p.id));
+        const rawIds: string[] = (bundle?.appliedPolicies ?? []).map((p: any) => p.id);
+        const appliedPolicyIds = new Set(rawIds);
         const appliedPolicies = activePolicies.filter(p => appliedPolicyIds.has(p.id));
+
+        // accumulate per-policy bound-agent and pass-rate data
+        const agentTraces = allTraces.filter(t => t.agentId === agent.id);
+        const passedCount = agentTraces.filter(t => t.status === "completed" && !t.softPolicyViolations).length;
+        for (const pid of rawIds) {
+          if (!policyBoundAgents[pid]) policyBoundAgents[pid] = [];
+          policyBoundAgents[pid].push(agent.id);
+          policyTraceTotal[pid] = (policyTraceTotal[pid] ?? 0) + agentTraces.length;
+          policyTracePassed[pid] = (policyTracePassed[pid] ?? 0) + passedCount;
+        }
 
         // Domain coverage: check if any applied policy covers each required domain
         const domainCoverage: Record<string, boolean> = {};
+        const missingDomains: string[] = [];
         for (const domain of COVERAGE_DOMAINS) {
-          // audit_compliance maps to "logging" domain in DB
           const dbDomain = domain === "audit_compliance" ? "logging"
             : domain === "model_governance" ? "allowed_actions"
             : domain === "deployment_safety" ? "content_boundaries"
             : domain;
-          domainCoverage[domain] = appliedPolicies.some(p => p.domain === dbDomain || p.domain === domain);
+          const covered = appliedPolicies.some(p => p.domain === dbDomain || p.domain === domain);
+          domainCoverage[domain] = covered;
+          if (!covered) missingDomains.push(domain);
         }
 
         // Pass rate: recent traces for this agent
-        const agentTraces = allTraces.filter(t => t.agentId === agent.id);
         const totalTraces = agentTraces.length;
         const passedTraces = agentTraces.filter(t => t.status === "completed" && !t.softPolicyViolations).length;
         const passRate = totalTraces > 0 ? Math.round((passedTraces / totalTraces) * 100) : null;
@@ -3777,13 +3795,26 @@ Eval Suites: ${evalSuites.length} configured`,
           environment: agent.environment ?? "prod",
           status: agent.status,
           policyCount: appliedPolicies.length,
+          appliedPolicyIds: rawIds,
           domainCoverage,
+          missingDomains,
           passRate,
           traceCount: totalTraces,
         };
       }));
 
-      res.json({ domains: COVERAGE_DOMAINS, rows });
+      // Build per-policy stats map
+      const policyStats: Record<string, { boundAgentCount: number; passRate: number | null }> = {};
+      for (const p of activePolicies) {
+        const total = policyTraceTotal[p.id] ?? 0;
+        const passed = policyTracePassed[p.id] ?? 0;
+        policyStats[p.id] = {
+          boundAgentCount: (policyBoundAgents[p.id] ?? []).length,
+          passRate: total > 0 ? Math.round((passed / total) * 100) : null,
+        };
+      }
+
+      res.json({ domains: COVERAGE_DOMAINS, rows, policyStats });
     } catch (e: any) {
       console.error("[coverage-matrix] Error:", e);
       res.status(500).json({ error: "Failed to compute coverage matrix" });
@@ -3839,18 +3870,29 @@ Eval Suites: ${evalSuites.length} configured`,
   router.get("/api/governance/pending-actions", async (req, res) => {
     try {
       const orgId = getOrgId(req);
-      const [approvalsList, exceptions, agents, policies] = await Promise.all([
+      const [approvalsList, allExceptions, agents, policies, deploymentsList, allTraces] = await Promise.all([
         storage.getApprovals(orgId),
         storage.getPolicyExceptions(),
         storage.getAgents(orgId),
         storage.getPolicies(orgId),
+        storage.getDeployments(orgId),
+        storage.getTraces(orgId),
       ]);
 
+      // Build lookup maps
       const agentMap: Record<string, string> = {};
       for (const a of agents) agentMap[a.id] = a.name;
       const policyMap: Record<string, string> = {};
       for (const p of policies) policyMap[p.id] = p.name;
 
+      // Org-scope exceptions: filter by org's policyIds or agentIds
+      const orgPolicyIds = new Set(policies.map(p => p.id));
+      const orgAgentIds = new Set(agents.map(a => a.id));
+      const exceptions = allExceptions.filter(e =>
+        orgPolicyIds.has(e.policyId) || (e.agentId ? orgAgentIds.has(e.agentId) : false)
+      );
+
+      // 1. Pending approvals
       const pendingApprovals = approvalsList
         .filter(a => a.status === "pending")
         .map(a => ({
@@ -3867,13 +3909,12 @@ Eval Suites: ${evalSuites.length} configured`,
           createdAt: a.createdAt,
         }));
 
-      // Expiring-soon exceptions (approved, expiring within 7 days)
+      // 2. Expiring-soon exceptions (approved, expiring within 7 days)
       const now = Date.now();
       const sevenDays = 7 * 24 * 60 * 60 * 1000;
       const expiringExceptions = exceptions
         .filter(e => {
-          if (e.status !== "approved") return false;
-          if (!e.expiresAt) return false;
+          if (e.status !== "approved" || !e.expiresAt) return false;
           const diff = new Date(e.expiresAt).getTime() - now;
           return diff > 0 && diff <= sevenDays;
         })
@@ -3891,6 +3932,7 @@ Eval Suites: ${evalSuites.length} configured`,
           createdAt: e.createdAt,
         }));
 
+      // 3. Pending exception reviews
       const pendingExceptionReviews = exceptions
         .filter(e => e.status === "pending")
         .map(e => ({
@@ -3907,10 +3949,82 @@ Eval Suites: ${evalSuites.length} configured`,
           createdAt: e.createdAt,
         }));
 
-      const all = [...pendingApprovals, ...expiringExceptions, ...pendingExceptionReviews]
-        .sort((a, b) => (b.riskScore ?? 0) - (a.riskScore ?? 0));
+      // 4. Workflow checkpoint human gates — pipeline runs with an active interrupt awaiting response
+      let workflowGates: any[] = [];
+      try {
+        // Direct query: pipeline_runs with activeInterruptId set (pending human gate)
+        // We filter to recent (last 30 days) to avoid surfacing stale gates
+        const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        const allRuns = await db.select().from(pipelineRuns)
+          .where(sql`active_interrupt_id IS NOT NULL AND created_at > ${cutoff.toISOString()}`);
+        workflowGates = allRuns.map(run => ({
+          kind: "workflow_interrupt" as const,
+          id: run.id,
+          title: `Pipeline interrupt — ${run.status}`,
+          description: `Active interrupt: ${run.activeInterruptId}`,
+          agentId: null,
+          agentName: null,
+          riskScore: 0.6,
+          dueDate: null,
+          escalationLevel: 0,
+          changeType: "workflow_interrupt",
+          createdAt: run.createdAt,
+        }));
+      } catch { /* non-blocking */ }
 
-      res.json({ items: all, counts: { approvals: pendingApprovals.length, exceptions: pendingExceptionReviews.length, expiring: expiringExceptions.length } });
+      // 5. Blocked deployments — deployments where status indicates policy gate block
+      const blockedDeployments = deploymentsList
+        .filter(d => ["blocked", "policy_gate", "pending_review", "promotion_blocked"].some(s => (d.status ?? "").toLowerCase().includes(s)))
+        .slice(0, 10)
+        .map(d => ({
+          kind: "deployment_block" as const,
+          id: d.id,
+          title: `Blocked deployment — ${agentMap[d.agentId] ?? d.agentId}`,
+          description: `Deployment to ${d.environment ?? "unknown"} is blocked`,
+          agentId: d.agentId,
+          agentName: agentMap[d.agentId] ?? null,
+          riskScore: 0.7,
+          dueDate: null,
+          escalationLevel: 0,
+          changeType: "deployment_block",
+          createdAt: d.createdAt,
+        }));
+
+      // 6. Unresolved hard-violation traces (failed with policy violations)
+      const hardViolationTraces = allTraces
+        .filter(t => t.status === "failed" && t.policyChecks != null)
+        .sort((a, b) => new Date(b.startedAt!).getTime() - new Date(a.startedAt!).getTime())
+        .slice(0, 5)
+        .map(t => ({
+          kind: "policy_violation" as const,
+          id: t.id,
+          title: `Policy violation — ${agentMap[t.agentId] ?? t.agentId}`,
+          description: "Run trace failed with policy check violations",
+          agentId: t.agentId,
+          agentName: agentMap[t.agentId] ?? null,
+          riskScore: 0.8,
+          dueDate: null,
+          escalationLevel: 0,
+          changeType: "policy_violation",
+          createdAt: t.startedAt,
+        }));
+
+      const all = [
+        ...pendingApprovals, ...expiringExceptions, ...pendingExceptionReviews,
+        ...workflowGates, ...blockedDeployments, ...hardViolationTraces,
+      ].sort((a, b) => (b.riskScore ?? 0) - (a.riskScore ?? 0));
+
+      res.json({
+        items: all,
+        counts: {
+          approvals: pendingApprovals.length,
+          exceptions: pendingExceptionReviews.length,
+          expiring: expiringExceptions.length,
+          workflowGates: workflowGates.length,
+          deploymentBlocks: blockedDeployments.length,
+          violations: hardViolationTraces.length,
+        },
+      });
     } catch (e: any) {
       console.error("[pending-actions] Error:", e);
       res.status(500).json({ error: "Failed to fetch pending actions" });
