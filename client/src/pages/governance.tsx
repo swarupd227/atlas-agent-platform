@@ -1047,6 +1047,8 @@ export default function Governance() {
   const [deptFilter, setDeptFilter] = useState<string | null>(null);
   const [feedSeverityFilter, setFeedSeverityFilter] = useState<"all" | "high" | "medium" | "low">("all");
   const [feedTypeFilter, setFeedTypeFilter] = useState<string>("all");
+  const [feedAgentFilter, setFeedAgentFilter] = useState<string>("all");
+  const [feedPolicyFilter, setFeedPolicyFilter] = useState<string>("all");
   const [expandedFeedId, setExpandedFeedId] = useState<string | null>(null);
   const [selectedCoverageAgentId, setSelectedCoverageAgentId] = useState<string | null>(null);
   const [controlPointComments, setControlPointComments] = useState<Record<string, string>>({});
@@ -2352,37 +2354,85 @@ export default function Governance() {
           </div>
 
           {/* Filter chips */}
-          <div className="flex items-center gap-2 flex-wrap" data-testid="feed-filter-chips">
-            <span className="text-[10px] text-muted-foreground font-medium">Severity:</span>
-            {(["all", "high", "medium", "low"] as const).map(s => (
-              <button
-                key={s}
-                onClick={() => setFeedSeverityFilter(s)}
-                className={`px-2 py-0.5 rounded-full text-[10px] font-medium border transition-colors ${feedSeverityFilter === s
-                  ? s === "high" ? "bg-red-500/20 border-red-500/40 text-red-600 dark:text-red-400"
-                    : s === "medium" ? "bg-amber-500/20 border-amber-500/40 text-amber-600 dark:text-amber-400"
-                    : s === "low" ? "bg-blue-500/20 border-blue-500/40 text-blue-600 dark:text-blue-400"
-                    : "bg-primary/10 border-primary/30 text-primary"
-                  : "bg-transparent border-border text-muted-foreground hover:border-foreground/30"}`}
-                data-testid={`chip-severity-${s}`}
-              >
-                {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
-              </button>
-            ))}
-            <span className="h-3.5 w-px bg-border/60 mx-1" aria-hidden="true" />
-            <span className="text-[10px] text-muted-foreground font-medium">Type:</span>
-            {["all", "policy", "agent", "approval"].map(t => (
-              <button
-                key={t}
-                onClick={() => setFeedTypeFilter(t)}
-                className={`px-2 py-0.5 rounded-full text-[10px] font-medium border transition-colors ${feedTypeFilter === t
-                  ? "bg-primary/10 border-primary/30 text-primary"
-                  : "bg-transparent border-border text-muted-foreground hover:border-foreground/30"}`}
-                data-testid={`chip-type-${t}`}
-              >
-                {t === "all" ? "All types" : t.charAt(0).toUpperCase() + t.slice(1)}
-              </button>
-            ))}
+          <div className="flex flex-col gap-2" data-testid="feed-filter-chips">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[10px] text-muted-foreground font-medium">Severity:</span>
+              {(["all", "high", "medium", "low"] as const).map(s => (
+                <button
+                  key={s}
+                  onClick={() => setFeedSeverityFilter(s)}
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-medium border transition-colors ${feedSeverityFilter === s
+                    ? s === "high" ? "bg-red-500/20 border-red-500/40 text-red-600 dark:text-red-400"
+                      : s === "medium" ? "bg-amber-500/20 border-amber-500/40 text-amber-600 dark:text-amber-400"
+                      : s === "low" ? "bg-blue-500/20 border-blue-500/40 text-blue-600 dark:text-blue-400"
+                      : "bg-primary/10 border-primary/30 text-primary"
+                    : "bg-transparent border-border text-muted-foreground hover:border-foreground/30"}`}
+                  data-testid={`chip-severity-${s}`}
+                >
+                  {s === "all" ? "All" : s.charAt(0).toUpperCase() + s.slice(1)}
+                </button>
+              ))}
+              <span className="h-3.5 w-px bg-border/60 mx-1" aria-hidden="true" />
+              <span className="text-[10px] text-muted-foreground font-medium">Type:</span>
+              {["all", "policy", "agent", "approval"].map(t => (
+                <button
+                  key={t}
+                  onClick={() => setFeedTypeFilter(t)}
+                  className={`px-2 py-0.5 rounded-full text-[10px] font-medium border transition-colors ${feedTypeFilter === t
+                    ? "bg-primary/10 border-primary/30 text-primary"
+                    : "bg-transparent border-border text-muted-foreground hover:border-foreground/30"}`}
+                  data-testid={`chip-type-${t}`}
+                >
+                  {t === "all" ? "All types" : t.charAt(0).toUpperCase() + t.slice(1)}
+                </button>
+              ))}
+            </div>
+            {/* Agent filter row */}
+            {complianceFeed && complianceFeed.length > 0 && (() => {
+              const agentNames = Array.from(new Set(complianceFeed.map(i => i.agentName).filter(Boolean))) as string[];
+              if (agentNames.length === 0) return null;
+              return (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] text-muted-foreground font-medium">Agent:</span>
+                  <button
+                    onClick={() => setFeedAgentFilter("all")}
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-medium border transition-colors ${feedAgentFilter === "all" ? "bg-primary/10 border-primary/30 text-primary" : "bg-transparent border-border text-muted-foreground hover:border-foreground/30"}`}
+                    data-testid="chip-agent-all"
+                  >All agents</button>
+                  {agentNames.slice(0, 8).map(name => (
+                    <button
+                      key={name}
+                      onClick={() => setFeedAgentFilter(feedAgentFilter === name ? "all" : name)}
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-medium border transition-colors ${feedAgentFilter === name ? "bg-primary/10 border-primary/30 text-primary" : "bg-transparent border-border text-muted-foreground hover:border-foreground/30"}`}
+                      data-testid={`chip-agent-${name.replace(/\s+/g, "-").toLowerCase()}`}
+                    >{name.length > 24 ? name.slice(0, 22) + "…" : name}</button>
+                  ))}
+                </div>
+              );
+            })()}
+            {/* Policy filter row */}
+            {complianceFeed && complianceFeed.length > 0 && (() => {
+              const policyNames = Array.from(new Set(complianceFeed.map(i => i.policyName).filter(Boolean))) as string[];
+              if (policyNames.length === 0) return null;
+              return (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[10px] text-muted-foreground font-medium">Policy:</span>
+                  <button
+                    onClick={() => setFeedPolicyFilter("all")}
+                    className={`px-2 py-0.5 rounded-full text-[10px] font-medium border transition-colors ${feedPolicyFilter === "all" ? "bg-primary/10 border-primary/30 text-primary" : "bg-transparent border-border text-muted-foreground hover:border-foreground/30"}`}
+                    data-testid="chip-policy-all"
+                  >All policies</button>
+                  {policyNames.slice(0, 6).map(name => (
+                    <button
+                      key={name}
+                      onClick={() => setFeedPolicyFilter(feedPolicyFilter === name ? "all" : name)}
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-medium border transition-colors ${feedPolicyFilter === name ? "bg-primary/10 border-primary/30 text-primary" : "bg-transparent border-border text-muted-foreground hover:border-foreground/30"}`}
+                      data-testid={`chip-policy-${name.replace(/\s+/g, "-").toLowerCase()}`}
+                    >{name.length > 28 ? name.slice(0, 26) + "…" : name}</button>
+                  ))}
+                </div>
+              );
+            })()}
           </div>
 
           {feedLoading ? (
@@ -2393,6 +2443,8 @@ export default function Governance() {
             const filtered = complianceFeed.filter(item => {
               if (feedSeverityFilter !== "all" && item.severity !== feedSeverityFilter) return false;
               if (feedTypeFilter !== "all" && item.objectType !== feedTypeFilter) return false;
+              if (feedAgentFilter !== "all" && item.agentName !== feedAgentFilter) return false;
+              if (feedPolicyFilter !== "all" && item.policyName !== feedPolicyFilter) return false;
               return true;
             });
             return filtered.length > 0 ? (

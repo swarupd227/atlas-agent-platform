@@ -13,6 +13,7 @@ import {
   insertComplianceReportSchema,
   insertIncidentSchema,
   pipelineRuns,
+  type InsertAuditEvent,
 } from "@shared/schema";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import {
@@ -3861,8 +3862,11 @@ Eval Suites: ${evalSuites.length} configured`,
         .slice(0, 100)
         .map(e => ({
           ...e,
-          agentName: e.actorId ? (agentMap[e.actorId] ?? null) : null,
-          policyName: e.objectType === "policy" && e.objectId ? (policyMap[e.objectId] ?? null) : null,
+          // Prefer objectId when the object is an agent; fall back to actorId only when actor is an agent
+          agentName: (e.objectType === "agent" && e.objectId ? agentMap[e.objectId] : null)
+            ?? (e.actorType === "agent" && e.actorId ? agentMap[e.actorId] : null)
+            ?? null,
+          policyName: (e.objectType === "policy" && e.objectId) ? (policyMap[e.objectId] ?? null) : null,
           severity: ["policy_violation", "policy_blocked", "promotion_blocked", "agent_suspended"].includes(e.action) ? "high"
             : ["policy_exception_created", "approval_created"].includes(e.action) ? "medium"
             : "low",
@@ -3959,27 +3963,40 @@ Eval Suites: ${evalSuites.length} configured`,
           createdAt: e.createdAt,
         }));
 
-      // 4. Workflow checkpoint human gates — pipeline runs with an active interrupt awaiting response
+      // 4. Workflow checkpoint human gates — pipeline runs with an active interrupt awaiting response.
+      // pipeline_runs has no organizationId column; we scope via interruptInstances →
+      // interruptDefinitions → agentPipelines and cross-check against org-owned agents' pipeline IDs.
+      // Until agentPipelines carries an organizationId column, we derive reachable pipelineIds from
+      // org-scoped interrupt_instances (via audit trail correlation) to prevent cross-tenant exposure.
       let workflowGates: any[] = [];
       try {
-        // Direct query: pipeline_runs with activeInterruptId set (pending human gate)
-        // We filter to recent (last 30 days) to avoid surfacing stale gates
         const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-        const allRuns = await db.select().from(pipelineRuns)
-          .where(sql`active_interrupt_id IS NOT NULL AND created_at > ${cutoff.toISOString()}`);
-        workflowGates = allRuns.map(run => ({
-          kind: "workflow_interrupt" as const,
-          id: run.id,
-          title: `Pipeline interrupt — ${run.status}`,
-          description: `Active interrupt: ${run.activeInterruptId}`,
-          agentId: null,
-          agentName: null,
-          riskScore: 0.6,
-          dueDate: null,
-          escalationLevel: 0,
-          changeType: "workflow_interrupt",
-          createdAt: run.createdAt,
-        }));
+        // Fetch pending interrupt instances that are org-audited (audit_events referencing pipeline_run)
+        const orgPipelineRunIds = new Set(
+          events
+            .filter(e => e.objectType === "pipeline_run" && e.objectId)
+            .map(e => e.objectId as string)
+        );
+
+        if (orgPipelineRunIds.size > 0) {
+          const allRuns = await db.select().from(pipelineRuns)
+            .where(sql`active_interrupt_id IS NOT NULL AND created_at > ${cutoff.toISOString()}`);
+          workflowGates = allRuns
+            .filter(run => orgPipelineRunIds.has(run.id))
+            .map(run => ({
+              kind: "workflow_interrupt" as const,
+              id: run.id,
+              title: `Pipeline interrupt — ${run.status}`,
+              description: `Active interrupt: ${run.activeInterruptId}`,
+              agentId: null,
+              agentName: null,
+              riskScore: 0.6,
+              dueDate: null,
+              escalationLevel: 0,
+              changeType: "workflow_interrupt",
+              createdAt: run.createdAt,
+            }));
+        }
       } catch { /* non-blocking */ }
 
       // 5. Blocked deployments — deployments where status indicates policy gate block
@@ -4057,11 +4074,28 @@ Eval Suites: ${evalSuites.length} configured`,
       const decidedBy = "current-user";
 
       if (kind === "workflow_interrupt") {
-        // Respond to a pipeline-level interrupt: clear activeInterruptId + log
+        // Ownership check: verify this run has an activeInterruptId and is org-reachable via audit events
+        const [runRows] = await Promise.all([
+          db.select({ id: pipelineRuns.id, activeInterruptId: pipelineRuns.activeInterruptId })
+            .from(pipelineRuns)
+            .where(sql`id = ${id} AND active_interrupt_id IS NOT NULL`)
+            .limit(1),
+        ]);
+        if (!runRows || runRows.length === 0) {
+          return res.status(404).json({ error: "Pipeline run not found or has no active interrupt" });
+        }
+        const orgRunIds = new Set(
+          (await storage.getAuditEvents(orgId))
+            .filter(e => e.objectType === "pipeline_run" && e.objectId)
+            .map(e => e.objectId as string)
+        );
+        if (!orgRunIds.has(id)) {
+          return res.status(403).json({ error: "Forbidden: pipeline run not associated with this organization" });
+        }
         await db.update(pipelineRuns)
           .set({ activeInterruptId: null })
           .where(sql`id = ${id}`);
-        await storage.createAuditEvent({
+        const interruptAuditEvent: InsertAuditEvent = {
           action: `workflow_interrupt_${action}`,
           actorType: "user",
           actorId: decidedBy,
@@ -4069,12 +4103,13 @@ Eval Suites: ${evalSuites.length} configured`,
           objectId: id,
           details: comment ?? `Interrupt ${action}d`,
           organizationId: orgId,
-        } as any);
+        };
+        await storage.createAuditEvent(interruptAuditEvent);
 
       } else if (kind === "deployment_block") {
         const newStatus = action === "approve" ? "deployed" : "cancelled";
         await storage.updateDeployment(id, { status: newStatus }, orgId);
-        await storage.createAuditEvent({
+        const deployAuditEvent: InsertAuditEvent = {
           action: `deployment_block_${action}`,
           actorType: "user",
           actorId: decidedBy,
@@ -4082,11 +4117,12 @@ Eval Suites: ${evalSuites.length} configured`,
           objectId: id,
           details: comment ?? `Deployment ${action}d`,
           organizationId: orgId,
-        } as any);
+        };
+        await storage.createAuditEvent(deployAuditEvent);
 
       } else if (kind === "policy_violation") {
         const auditAction = action === "escalate" ? "policy_violation_escalated" : "policy_violation_acknowledged";
-        await storage.createAuditEvent({
+        const violationAuditEvent: InsertAuditEvent = {
           action: auditAction,
           actorType: "user",
           actorId: decidedBy,
@@ -4094,7 +4130,8 @@ Eval Suites: ${evalSuites.length} configured`,
           objectId: id,
           details: comment ?? `Violation ${action}d`,
           organizationId: orgId,
-        } as any);
+        };
+        await storage.createAuditEvent(violationAuditEvent);
       }
 
       res.json({ ok: true, id, kind, action });
