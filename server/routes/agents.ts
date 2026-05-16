@@ -2607,10 +2607,10 @@ const router = Router();
         }
       }
 
-      // Policy gate: fail-closed enforcement for prod promotion
+      // Policy gate: fail-closed enforcement for staging/prod promotion
       // Any unhandled error in this block BLOCKS promotion (not allows it).
-      const bypassPolicyGate = req.body.bypassPolicyGate === true;
-      if ((nextEnv === "prod" || nextEnv === "pilot") && !bypassPolicyGate) {
+      // No bypass flag — this gate is mandatory per policy enforcement requirements.
+      if (nextEnv === "staging" || nextEnv === "prod") {
         const policyFailingChecks: Array<{ check: string; reason: string; severity: "error" | "warn" }> = [];
         let policyGateError: string | null = null;
 
@@ -2657,7 +2657,7 @@ const router = Router();
           // (d) High/Critical risk + autonomous mode always requires manual approval for prod
           const riskTier = agentForGate?.riskTier || "MEDIUM";
           const autonomyMode = agentForGate?.autonomyMode || "assisted";
-          if (nextEnv === "prod" && (riskTier === "HIGH" || riskTier === "CRITICAL") && autonomyMode === "fully_autonomous") {
+          if (nextEnv === "prod" && (riskTier === "HIGH" || riskTier === "CRITICAL") && autonomyMode === "autonomous") {
             const approvals = await storage.getApprovals(getOrgId(req));
             const hasPromoApproval = approvals.some(a =>
               a.objectId === source.agentId &&

@@ -1587,16 +1587,19 @@ After receiving tool results, provide a structured analysis with key findings, s
         }
 
         try {
-          // Policy bundle gate: blocklist / allowlist from resolvePolicyBundle
+          // Policy bundle gate: enforcement-mode-aware blocklist / allowlist from resolvePolicyBundle
+          // strict/block enforcement → hard block (dispatch prevented, hard_violation audit event logged)
+          // monitor enforcement → log-only (dispatch proceeds, soft violation recorded)
           if (policyBundle) {
             const toolNameLower = matchedTool.toolName.toLowerCase();
-            const isBlocked = policyBundle.blockedTools.some(b => b.toLowerCase() === toolNameLower);
+            // Hard block: strict/block-mode policies only
+            const isHardBlocked = policyBundle.blockedTools.some(b => b.toLowerCase() === toolNameLower);
             const allowlistActive = policyBundle.toolAllowlist.length > 0;
             const isAllowed = !allowlistActive || policyBundle.toolAllowlist.some(a => a.toLowerCase() === toolNameLower);
-            if (isBlocked || !isAllowed) {
-              const blockReason = isBlocked
-                ? `Tool "${matchedTool.toolName}" is blocked by an active policy`
-                : `Tool "${matchedTool.toolName}" is not in the policy tool allowlist`;
+            if (isHardBlocked || (!isAllowed && allowlistActive)) {
+              const blockReason = isHardBlocked
+                ? `Tool "${matchedTool.toolName}" is blocked by a strict/block-enforcement policy`
+                : `Tool "${matchedTool.toolName}" is not in the policy tool allowlist (strict enforcement)`;
               const lastStep = steps[steps.length - 1];
               lastStep.status = "failed";
               lastStep.error = `[POLICY-GATE] BLOCK: ${blockReason}`;
@@ -1614,13 +1617,35 @@ After receiving tool results, provide a structured analysis with key findings, s
                   blockReason,
                   toolName: matchedTool.toolName,
                   serverName: matchedTool.serverName,
+                  enforcementMode: "strict/block",
                   policyCount: policyBundle.appliedPolicies.length,
-                  appliedPolicies: policyBundle.appliedPolicies.map(p => ({ id: p.id, name: p.name, version: p.version })),
+                  appliedPolicies: policyBundle.appliedPolicies.map(p => ({ id: p.id, name: p.name, version: p.version, enforcement: p.enforcement })),
                   iteration: iterationsUsed,
                   deploymentId,
                 }),
               }).catch(() => {});
               continue;
+            }
+            // Monitor block: log violation but allow dispatch to proceed
+            const isMonitorBlocked = policyBundle.monitorBlockedTools?.some(b => b.toLowerCase() === toolNameLower);
+            if (isMonitorBlocked) {
+              const monitorReason = `Tool "${matchedTool.toolName}" is flagged by a monitor-mode policy (dispatch allowed)`;
+              storage.createAuditEvent({
+                actorType: "system",
+                actorId: "policy-gate",
+                action: "policy_violation",
+                objectType: "agent",
+                objectId: agentId,
+                details: JSON.stringify({
+                  blockReason: monitorReason,
+                  toolName: matchedTool.toolName,
+                  serverName: matchedTool.serverName,
+                  enforcementMode: "monitor",
+                  iteration: iterationsUsed,
+                  deploymentId,
+                }),
+              }).catch(() => {});
+              // Dispatch still proceeds — fall through
             }
           }
 

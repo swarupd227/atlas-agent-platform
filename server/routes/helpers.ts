@@ -1059,7 +1059,10 @@ export async function resolvePolicyBundle(agentId: string, orgId?: string) {
     : [];
 
   const toolAllowlist: string[] = [];
+  // blockedTools: only from strict/block-enforcement policies — these produce hard blocks at dispatch
   const blockedTools: string[] = [];
+  // monitorBlockedTools: from monitor-enforcement policies — violations are logged but dispatch still proceeds
+  const monitorBlockedTools: string[] = [];
   const guardrails: string[] = [];
   const redactPatterns: string[] = [];
 
@@ -1067,8 +1070,17 @@ export async function resolvePolicyBundle(agentId: string, orgId?: string) {
   for (const p of allScoped) {
     const pj = p.policyJson as Record<string, unknown> | null;
     if (!pj) continue;
-    if (Array.isArray(pj.toolAllowlist)) toolAllowlist.push(...(pj.toolAllowlist as string[]));
-    if (Array.isArray(pj.blockedTools)) blockedTools.push(...(pj.blockedTools as string[]));
+    const enforcement = (pj.enforcement as string) || "monitor";
+    const isHard = enforcement === "strict" || enforcement === "block";
+    // toolAllowlist is only enforced by hard policies (monitor policies cannot restrict LLM tool visibility)
+    if (isHard && Array.isArray(pj.toolAllowlist)) toolAllowlist.push(...(pj.toolAllowlist as string[]));
+    if (Array.isArray(pj.blockedTools)) {
+      if (isHard) {
+        blockedTools.push(...(pj.blockedTools as string[]));
+      } else {
+        monitorBlockedTools.push(...(pj.blockedTools as string[]));
+      }
+    }
     if (Array.isArray(pj.guardrails)) guardrails.push(...(pj.guardrails as string[]));
     if (Array.isArray(pj.redactPatterns)) redactPatterns.push(...(pj.redactPatterns as string[]));
   }
@@ -1077,6 +1089,7 @@ export async function resolvePolicyBundle(agentId: string, orgId?: string) {
     appliedPolicies: allScoped.map(p => ({ id: p.id, name: p.name, scope: p.scopeType, domain: p.domain, version: p.version ?? 1, enforcement: (p.policyJson as any)?.enforcement || "monitor" })),
     toolAllowlist: Array.from(new Set(toolAllowlist)),
     blockedTools: Array.from(new Set(blockedTools)),
+    monitorBlockedTools: Array.from(new Set(monitorBlockedTools.filter(t => !blockedTools.includes(t)))),
     guardrails: Array.from(new Set(guardrails)),
     redactPatterns: Array.from(new Set(redactPatterns)),
     agentConfig: agent ? {

@@ -558,6 +558,22 @@ export default function OutcomeDetail() {
     queryKey: ["/api/policies"],
   });
 
+  const { data: policyCoverage, refetch: refetchPolicyCoverage } = useQuery<{
+    outcomeName: string;
+    outcomeDomain: string | null;
+    autoBound: Array<{ id: string; name: string; domain: string; scopeType: string; version: number }>;
+    matchingNotBound: Array<{ id: string; name: string; domain: string; scopeType: string; version: number }>;
+    criticalGaps: Array<{ domain: string; reason: string; suggestedAction: string }>;
+    autoBoundCount: number;
+    matchingNotBoundCount: number;
+    criticalGapCount: number;
+    agentCount: number;
+    agentCoverage: Array<{ agentId: string; agentName: string; policyCount: number }>;
+  }>({
+    queryKey: ["/api/outcomes", outcomeId, "policy-coverage"],
+    enabled: !!outcomeId && activeTab === "governance",
+  });
+
   const { data: invoices } = useQuery<Array<{id: string; status: string; totalAmount: number; periodStart: string; periodEnd: string; lineItems: any[]}>>({
     queryKey: ["/api/billing/invoices"],
   });
@@ -2849,6 +2865,87 @@ export default function OutcomeDetail() {
 
         {/* Tab 3: Governance */}
         <TabsContent value="governance" className="space-y-6" data-testid="tabcontent-governance">
+          {/* Policy Coverage Panel — shows auto-bound, matching-not-bound, and critical gaps */}
+          {policyCoverage && (
+            <Card data-testid="section-policy-coverage">
+              <CardHeader className="pb-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
+                      <ShieldCheck className="w-3.5 h-3.5 text-primary" />
+                    </div>
+                    <CardTitle className="text-sm font-medium">Policy Coverage</CardTitle>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Badge variant="outline" className="text-[10px] bg-green-500/10 text-green-700 dark:text-green-400 border-green-500/20">{policyCoverage.autoBoundCount} auto-bound</Badge>
+                    {policyCoverage.matchingNotBoundCount > 0 && <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20">{policyCoverage.matchingNotBoundCount} unbound match</Badge>}
+                    {policyCoverage.criticalGapCount > 0 && <Badge variant="outline" className="text-[10px] bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20">{policyCoverage.criticalGapCount} gaps</Badge>}
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {policyCoverage.autoBound.length > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Auto-Bound Policies</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {policyCoverage.autoBound.map(p => (
+                        <Badge key={p.id} variant="outline" className="text-[10px] bg-green-500/5 border-green-500/20" data-testid={`auto-bound-policy-${p.id}`}>
+                          {p.name} <span className="ml-1 text-muted-foreground">v{p.version}</span>
+                        </Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {policyCoverage.matchingNotBound.length > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-medium text-amber-600 dark:text-amber-400 uppercase tracking-wide">Matching — Not Yet Bound</p>
+                    <div className="flex flex-col gap-1.5">
+                      {policyCoverage.matchingNotBound.map(p => (
+                        <div key={p.id} className="flex items-center justify-between gap-2 p-1.5 rounded-md bg-amber-500/5 border border-amber-500/20" data-testid={`unbound-policy-${p.id}`}>
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <Badge variant="outline" className="text-[10px] shrink-0">{p.domain.replace(/_/g, " ")}</Badge>
+                            <span className="text-xs truncate">{p.name}</span>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-6 text-[10px] px-2 shrink-0 border-amber-500/40"
+                            data-testid={`button-bind-policy-${p.id}`}
+                            onClick={async () => {
+                              try {
+                                await apiRequest("PATCH", `/api/policies/${p.id}`, { scopeType: "outcome", scopeId: outcomeId });
+                                refetchPolicyCoverage();
+                                queryClient.invalidateQueries({ queryKey: ["/api/policies"] });
+                              } catch {}
+                            }}
+                          >
+                            Bind
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {policyCoverage.criticalGaps.length > 0 && (
+                  <div className="space-y-1.5">
+                    <p className="text-[10px] font-medium text-red-600 dark:text-red-400 uppercase tracking-wide">Critical Coverage Gaps</p>
+                    <div className="flex flex-col gap-1">
+                      {policyCoverage.criticalGaps.map(g => (
+                        <div key={g.domain} className="flex items-start gap-2 p-1.5 rounded-md bg-red-500/5 border border-red-500/20" data-testid={`gap-${g.domain}`}>
+                          <AlertTriangle className="w-3 h-3 text-red-500 dark:text-red-400 mt-0.5 shrink-0" />
+                          <span className="text-[10px] text-red-700 dark:text-red-400">{g.reason}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {policyCoverage.autoBound.length === 0 && policyCoverage.matchingNotBound.length === 0 && policyCoverage.criticalGaps.length === 0 && (
+                  <p className="text-xs text-muted-foreground text-center py-2">No active policies found for this outcome's scope.</p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           <div className="flex items-center justify-between gap-4 flex-wrap">
             <div>
               <h2 className="text-lg font-semibold">Governance Policies</h2>
