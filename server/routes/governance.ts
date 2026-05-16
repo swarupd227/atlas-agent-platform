@@ -3782,17 +3782,28 @@ Eval Suites: ${evalSuites.length} configured`,
           }
         }
 
-        // Domain coverage: check if any applied policy covers each required domain
-        const domainCoverage: Record<string, boolean> = {};
+        // Domain coverage: check if any applied policy covers each required domain.
+        // Values: "covered" (policy applied + pass rate ≥ 80% or no traces),
+        //         "partial" (policy applied but pass rate < 80%),
+        //         "missing" (no applied policy for domain).
+        const domainCoverage: Record<string, "covered" | "partial" | "missing"> = {};
         const missingDomains: string[] = [];
         for (const domain of COVERAGE_DOMAINS) {
           const dbDomain = domain === "audit_compliance" ? "logging"
             : domain === "model_governance" ? "allowed_actions"
             : domain === "deployment_safety" ? "content_boundaries"
             : domain;
-          const covered = appliedPolicies.some(p => p.domain === dbDomain || p.domain === domain);
-          domainCoverage[domain] = covered;
-          if (!covered) missingDomains.push(domain);
+          const matchingPolicy = appliedPolicies.find(p => p.domain === dbDomain || p.domain === domain);
+          if (!matchingPolicy) {
+            domainCoverage[domain] = "missing";
+            missingDomains.push(domain);
+          } else {
+            // Check 30d pass rate for this policy
+            const total = policyTraceTotal[matchingPolicy.id] ?? 0;
+            const passed = policyTracePassed[matchingPolicy.id] ?? 0;
+            const pr = total > 0 ? (passed / total) : 1;
+            domainCoverage[domain] = pr >= 0.8 ? "covered" : "partial";
+          }
         }
 
         // Pass rate: recent traces for this agent
@@ -3884,13 +3895,14 @@ Eval Suites: ${evalSuites.length} configured`,
   router.get("/api/governance/pending-actions", async (req, res) => {
     try {
       const orgId = getOrgId(req);
-      const [approvalsList, allExceptions, agents, policies, deploymentsList, allTraces] = await Promise.all([
+      const [approvalsList, allExceptions, agents, policies, deploymentsList, allTraces, orgAuditEvents] = await Promise.all([
         storage.getApprovals(orgId),
         storage.getPolicyExceptions(),
         storage.getAgents(orgId),
         storage.getPolicies(orgId),
         storage.getDeployments(orgId),
         storage.getTraces(orgId),
+        storage.getAuditEvents(orgId),
       ]);
 
       // Build lookup maps
@@ -3973,7 +3985,7 @@ Eval Suites: ${evalSuites.length} configured`,
         const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
         // Fetch pending interrupt instances that are org-audited (audit_events referencing pipeline_run)
         const orgPipelineRunIds = new Set(
-          events
+          orgAuditEvents
             .filter(e => e.objectType === "pipeline_run" && e.objectId)
             .map(e => e.objectId as string)
         );
@@ -3982,7 +3994,7 @@ Eval Suites: ${evalSuites.length} configured`,
           const allRuns = await db.select().from(pipelineRuns)
             .where(sql`active_interrupt_id IS NOT NULL AND created_at > ${cutoff.toISOString()}`);
           workflowGates = allRuns
-            .filter(run => orgPipelineRunIds.has(run.id))
+            .filter((run: { id: string }) => orgPipelineRunIds.has(run.id))
             .map(run => ({
               kind: "workflow_interrupt" as const,
               id: run.id,

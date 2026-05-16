@@ -1101,7 +1101,7 @@ export default function Governance() {
     status: string;
     policyCount: number;
     appliedPolicyIds: string[];
-    domainCoverage: Record<string, boolean>;
+    domainCoverage: Record<string, "covered" | "partial" | "missing">;
     missingDomains: string[];
     passRate: number | null;
     traceCount: number;
@@ -2095,7 +2095,7 @@ export default function Governance() {
           <TabsTrigger value="coverage" data-testid="tab-coverage">
             <Target className="w-3.5 h-3.5 mr-1" />
             Coverage
-            {coverageMatrix && coverageMatrix.rows.some(r => Object.values(r.domainCoverage).includes(false)) && (
+            {coverageMatrix && coverageMatrix.rows.some(r => Object.values(r.domainCoverage).includes("missing")) && (
               <span className="ml-1 w-1.5 h-1.5 rounded-full bg-amber-500 inline-block" />
             )}
           </TabsTrigger>
@@ -2176,7 +2176,7 @@ export default function Governance() {
                   </thead>
                   <tbody>
                     {coverageMatrix.rows.map((row, i) => {
-                      const gapCount = Object.values(row.domainCoverage).filter(v => !v).length;
+                      const gapCount = Object.values(row.domainCoverage).filter(v => v === "missing").length;
                       const isSelected = selectedCoverageAgentId === row.agentId;
                       return (
                         <tr
@@ -2197,16 +2197,20 @@ export default function Governance() {
                             </div>
                           </td>
                           {coverageMatrix.domains.map(d => {
-                            const covered = row.domainCoverage[d];
+                            const cellStatus = row.domainCoverage[d] ?? "missing";
                             return (
                               <td key={d} className="px-3 py-3 text-center">
-                                {covered ? (
-                                  <div className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-green-500/15" title="Covered">
+                                {cellStatus === "covered" ? (
+                                  <div className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-green-500/15" title="Covered — policy applied, pass rate ≥ 80%">
                                     <CheckCircle className="w-3.5 h-3.5 text-green-600 dark:text-green-400" />
                                   </div>
+                                ) : cellStatus === "partial" ? (
+                                  <div className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-orange-500/15" title="Partial — policy applied but pass rate below 80%">
+                                    <AlertTriangle className="w-3.5 h-3.5 text-orange-500 dark:text-orange-400" />
+                                  </div>
                                 ) : (
-                                  <div className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-500/15" title="Gap — no policy covers this domain">
-                                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                                  <div className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-500/15" title="Missing — no policy covers this domain">
+                                    <XCircle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
                                   </div>
                                 )}
                               </td>
@@ -2252,7 +2256,7 @@ export default function Governance() {
           {selectedCoverageAgentId && coverageMatrix && (() => {
             const row = coverageMatrix.rows.find(r => r.agentId === selectedCoverageAgentId);
             if (!row) return null;
-            const gaps = (row.missingDomains as string[] | undefined) ?? Object.entries(row.domainCoverage).filter(([, v]) => !v).map(([k]) => k);
+            const gaps = row.missingDomains.length > 0 ? row.missingDomains : Object.entries(row.domainCoverage).filter(([, v]) => v === "missing").map(([k]) => k);
             return (
               <Card className="border-primary/20 bg-primary/3" data-testid="card-coverage-gap-detail">
                 <CardContent className="p-4 flex flex-col gap-3">
@@ -2303,9 +2307,9 @@ export default function Governance() {
 
           {coverageMatrix && coverageMatrix.rows.length > 0 && (() => {
             const totalCells = coverageMatrix.rows.length * coverageMatrix.domains.length;
-            const coveredCells = coverageMatrix.rows.reduce((sum, r) => sum + Object.values(r.domainCoverage).filter(Boolean).length, 0);
+            const coveredCells = coverageMatrix.rows.reduce((sum, r) => sum + Object.values(r.domainCoverage).filter(v => v === "covered").length, 0);
             const pct = totalCells > 0 ? Math.round((coveredCells / totalCells) * 100) : 0;
-            const gaps = coverageMatrix.rows.filter(r => Object.values(r.domainCoverage).includes(false));
+            const gaps = coverageMatrix.rows.filter(r => Object.values(r.domainCoverage).includes("missing"));
             return (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <Card><CardContent className="p-4 flex flex-col gap-1">
@@ -2561,9 +2565,9 @@ export default function Governance() {
               <StatCard title="Pending Approvals" value={pendingActions.counts.approvals} icon={Clock} variant={pendingActions.counts.approvals > 0 ? "warning" : "default"} testId="stat-pending-approvals" />
               <StatCard title="Exception Reviews" value={pendingActions.counts.exceptions} icon={FileCode} variant={pendingActions.counts.exceptions > 0 ? "warning" : "default"} testId="stat-exception-reviews" />
               <StatCard title="Expiring Soon" value={pendingActions.counts.expiring} icon={AlertTriangle} variant={pendingActions.counts.expiring > 0 ? "danger" : "default"} testId="stat-expiring-soon" />
-              <StatCard title="Workflow Gates" value={(pendingActions.counts as any).workflowGates ?? 0} icon={GitBranch} variant={(pendingActions.counts as any).workflowGates > 0 ? "warning" : "default"} testId="stat-workflow-gates" />
-              <StatCard title="Deploy Blocks" value={(pendingActions.counts as any).deploymentBlocks ?? 0} icon={AlertTriangle} variant={(pendingActions.counts as any).deploymentBlocks > 0 ? "danger" : "default"} testId="stat-deploy-blocks" />
-              <StatCard title="Hard Violations" value={(pendingActions.counts as any).violations ?? 0} icon={ShieldAlert} variant={(pendingActions.counts as any).violations > 0 ? "danger" : "default"} testId="stat-violations-queue" />
+              <StatCard title="Workflow Gates" value={pendingActions.counts.workflowGates} icon={GitBranch} variant={pendingActions.counts.workflowGates > 0 ? "warning" : "default"} testId="stat-workflow-gates" />
+              <StatCard title="Deploy Blocks" value={pendingActions.counts.deploymentBlocks} icon={AlertTriangle} variant={pendingActions.counts.deploymentBlocks > 0 ? "danger" : "default"} testId="stat-deploy-blocks" />
+              <StatCard title="Hard Violations" value={pendingActions.counts.violations} icon={ShieldAlert} variant={pendingActions.counts.violations > 0 ? "danger" : "default"} testId="stat-violations-queue" />
             </div>
           )}
 
