@@ -3734,4 +3734,187 @@ Eval Suites: ${evalSuites.length} configured`,
     }
   });
 
+
+  // ─── Coverage Matrix ────────────────────────────────────────────────────────
+  // Returns a per-agent × per-domain heatmap, plus pass rate from run_traces.
+  const COVERAGE_DOMAINS = ["data_handling", "tool_permissions", "audit_compliance", "model_governance", "deployment_safety"] as const;
+
+  router.get("/api/governance/coverage-matrix", async (req, res) => {
+    try {
+      const orgId = getOrgId(req);
+      const agents = await storage.getAgents(orgId);
+      const allPolicies = await storage.getPolicies(orgId);
+      const activePolicies = allPolicies.filter(p => p.status === "active");
+      const allTraces = await storage.getTraces(orgId);
+
+      const rows = await Promise.all(agents.map(async (agent) => {
+        let bundle: Awaited<ReturnType<typeof resolvePolicyBundle>> | null = null;
+        try { bundle = await resolvePolicyBundle(agent.id, orgId); } catch { /* skip */ }
+
+        const appliedPolicyIds = new Set((bundle?.appliedPolicies ?? []).map((p: any) => p.id));
+        const appliedPolicies = activePolicies.filter(p => appliedPolicyIds.has(p.id));
+
+        // Domain coverage: check if any applied policy covers each required domain
+        const domainCoverage: Record<string, boolean> = {};
+        for (const domain of COVERAGE_DOMAINS) {
+          // audit_compliance maps to "logging" domain in DB
+          const dbDomain = domain === "audit_compliance" ? "logging"
+            : domain === "model_governance" ? "allowed_actions"
+            : domain === "deployment_safety" ? "content_boundaries"
+            : domain;
+          domainCoverage[domain] = appliedPolicies.some(p => p.domain === dbDomain || p.domain === domain);
+        }
+
+        // Pass rate: recent traces for this agent
+        const agentTraces = allTraces.filter(t => t.agentId === agent.id);
+        const totalTraces = agentTraces.length;
+        const passedTraces = agentTraces.filter(t => t.status === "completed" && !t.softPolicyViolations).length;
+        const passRate = totalTraces > 0 ? Math.round((passedTraces / totalTraces) * 100) : null;
+
+        return {
+          agentId: agent.id,
+          agentName: agent.name,
+          environment: agent.environment ?? "prod",
+          status: agent.status,
+          policyCount: appliedPolicies.length,
+          domainCoverage,
+          passRate,
+          traceCount: totalTraces,
+        };
+      }));
+
+      res.json({ domains: COVERAGE_DOMAINS, rows });
+    } catch (e: any) {
+      console.error("[coverage-matrix] Error:", e);
+      res.status(500).json({ error: "Failed to compute coverage matrix" });
+    }
+  });
+
+  // ─── Compliance Feed ────────────────────────────────────────────────────────
+  // Recent policy-related audit events enriched with agent/policy names.
+  router.get("/api/governance/compliance-feed", async (req, res) => {
+    try {
+      const orgId = getOrgId(req);
+      const [events, agents, policies] = await Promise.all([
+        storage.getAuditEvents(orgId),
+        storage.getAgents(orgId),
+        storage.getPolicies(orgId),
+      ]);
+
+      const agentMap: Record<string, string> = {};
+      for (const a of agents) agentMap[a.id] = a.name;
+      const policyMap: Record<string, string> = {};
+      for (const p of policies) policyMap[p.id] = p.name;
+
+      // Focus on compliance-signal events; sorted newest-first, capped at 100
+      const COMPLIANCE_ACTIONS = new Set([
+        "policy_violation", "policy_pass", "policy_blocked", "policy_exception_created",
+        "policy_exception_approved", "policy_exception_rejected", "promotion_blocked",
+        "promotion_approved", "approval_created", "approval_decided", "agent_deployed",
+        "agent_created", "agent_suspended", "eval_run_completed", "trace_flagged",
+      ]);
+
+      const relevant = events
+        .filter(e => COMPLIANCE_ACTIONS.has(e.action) || e.objectType === "policy" || e.objectType === "agent")
+        .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime())
+        .slice(0, 100)
+        .map(e => ({
+          ...e,
+          agentName: e.actorId ? (agentMap[e.actorId] ?? null) : null,
+          policyName: e.objectType === "policy" && e.objectId ? (policyMap[e.objectId] ?? null) : null,
+          severity: ["policy_violation", "policy_blocked", "promotion_blocked", "agent_suspended"].includes(e.action) ? "high"
+            : ["policy_exception_created", "approval_created"].includes(e.action) ? "medium"
+            : "low",
+        }));
+
+      res.json(relevant);
+    } catch (e: any) {
+      console.error("[compliance-feed] Error:", e);
+      res.status(500).json({ error: "Failed to fetch compliance feed" });
+    }
+  });
+
+  // ─── Pending Actions / Human Control Points ─────────────────────────────────
+  // Aggregated queue of items awaiting human decision.
+  router.get("/api/governance/pending-actions", async (req, res) => {
+    try {
+      const orgId = getOrgId(req);
+      const [approvalsList, exceptions, agents, policies] = await Promise.all([
+        storage.getApprovals(orgId),
+        storage.getPolicyExceptions(),
+        storage.getAgents(orgId),
+        storage.getPolicies(orgId),
+      ]);
+
+      const agentMap: Record<string, string> = {};
+      for (const a of agents) agentMap[a.id] = a.name;
+      const policyMap: Record<string, string> = {};
+      for (const p of policies) policyMap[p.id] = p.name;
+
+      const pendingApprovals = approvalsList
+        .filter(a => a.status === "pending")
+        .map(a => ({
+          kind: "approval" as const,
+          id: a.id,
+          title: a.objectName ?? a.type,
+          description: a.description ?? a.diffSummary ?? "",
+          agentId: a.agentId ?? null,
+          agentName: a.agentId ? (agentMap[a.agentId] ?? null) : null,
+          riskScore: a.riskScore ?? 0,
+          dueDate: a.dueDate,
+          escalationLevel: a.escalationLevel ?? 0,
+          changeType: a.changeType ?? a.type,
+          createdAt: a.createdAt,
+        }));
+
+      // Expiring-soon exceptions (approved, expiring within 7 days)
+      const now = Date.now();
+      const sevenDays = 7 * 24 * 60 * 60 * 1000;
+      const expiringExceptions = exceptions
+        .filter(e => {
+          if (e.status !== "approved") return false;
+          if (!e.expiresAt) return false;
+          const diff = new Date(e.expiresAt).getTime() - now;
+          return diff > 0 && diff <= sevenDays;
+        })
+        .map(e => ({
+          kind: "exception_expiry" as const,
+          id: e.id,
+          title: policyMap[e.policyId] ?? e.policyId,
+          description: `Exception expiring — ${e.reason}`,
+          agentId: e.agentId ?? null,
+          agentName: e.agentId ? (agentMap[e.agentId] ?? null) : null,
+          riskScore: 0.5,
+          dueDate: e.expiresAt,
+          escalationLevel: 0,
+          changeType: "exception_expiry",
+          createdAt: e.createdAt,
+        }));
+
+      const pendingExceptionReviews = exceptions
+        .filter(e => e.status === "pending")
+        .map(e => ({
+          kind: "exception_review" as const,
+          id: e.id,
+          title: policyMap[e.policyId] ?? e.policyId,
+          description: e.reason,
+          agentId: e.agentId ?? null,
+          agentName: e.agentId ? (agentMap[e.agentId] ?? null) : null,
+          riskScore: 0.3,
+          dueDate: null,
+          escalationLevel: 0,
+          changeType: "exception_review",
+          createdAt: e.createdAt,
+        }));
+
+      const all = [...pendingApprovals, ...expiringExceptions, ...pendingExceptionReviews]
+        .sort((a, b) => (b.riskScore ?? 0) - (a.riskScore ?? 0));
+
+      res.json({ items: all, counts: { approvals: pendingApprovals.length, exceptions: pendingExceptionReviews.length, expiring: expiringExceptions.length } });
+    } catch (e: any) {
+      console.error("[pending-actions] Error:", e);
+      res.status(500).json({ error: "Failed to fetch pending actions" });
+    }
+  });
+
 export default router;
