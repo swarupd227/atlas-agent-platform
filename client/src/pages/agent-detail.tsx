@@ -1013,11 +1013,11 @@ function AgentDetailInner() {
     enabled: !!agentId,
   });
 
-  const { data: policyReadiness } = useQuery<{
+  const { data: policyReadiness, refetch: refetchPolicyReadiness } = useQuery<{
     agentId: string;
     agentName: string;
     readinessScore: number;
-    appliedPolicies: Array<{ id: string; name: string; scope: string; domain: string }>;
+    appliedPolicies: Array<{ id: string; name: string; scope: string; domain: string; version: number }>;
     policyCountByScope: { org: number; outcome: number; agent: number; env: number };
     blockedTools: string[];
     toolAllowlist: string[];
@@ -1028,6 +1028,8 @@ function AgentDetailInner() {
     missingDomains: string[];
     coveredDomains: string[];
     agentConfig: any;
+    lastHardViolation: { action: string; details: any; createdAt: any } | null;
+    lastComplianceCheck: { passedCount: number; violationCount: number; timestamp: string; policyCount: number } | null;
   }>({
     queryKey: ["/api/agents", agentId, "policy-readiness"],
     enabled: !!agentId,
@@ -3069,7 +3071,7 @@ function AgentDetailInner() {
             <BlueprintToolsPermissions tools={agent.toolsConfig as any} permissions={agent.permissionsConfig as any} />
             <BlueprintMemoryRag config={agent.memoryRagConfig as any} />
             <BlueprintPolicyBindings bindings={agent.policyBindings as any} />
-            <PolicyReadinessWidget data={policyReadiness} />
+            <PolicyReadinessWidget data={policyReadiness} agentId={agentId} onCheckComplete={() => refetchPolicyReadiness()} />
             <BlueprintEvalBindings bindings={agent.evalBindings as any} />
             <BlueprintRollbackPlan plan={agent.rollbackPlan as any} />
           </div>
@@ -7098,11 +7100,30 @@ function BlueprintPolicyBindings({ bindings }: { bindings: any }) {
   );
 }
 
-function PolicyReadinessWidget({ data }: { data: any }) {
+function PolicyReadinessWidget({ data, agentId, onCheckComplete }: { data: any; agentId: string; onCheckComplete?: () => void }) {
+  const [checkResult, setCheckResult] = useState<{ status: string; errorCount: number; warnCount: number; policyCount: number; violations: any[]; checkedAt: string } | null>(null);
+  const [isChecking, setIsChecking] = useState(false);
+
+  const handleRunCheck = async () => {
+    setIsChecking(true);
+    try {
+      const res = await apiRequest("POST", `/api/agents/${agentId}/policy-check`, {});
+      const result = await res.json();
+      setCheckResult(result);
+      onCheckComplete?.();
+    } catch {}
+    setIsChecking(false);
+  };
+
   if (!data) return null;
   const score: number = data.readinessScore ?? 100;
   const scoreColor = score >= 80 ? "text-green-600 dark:text-green-400" : score >= 50 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400";
   const scoreBg = score >= 80 ? "bg-green-500/10 border-green-500/20" : score >= 50 ? "bg-amber-500/10 border-amber-500/20" : "bg-red-500/10 border-red-500/20";
+
+  const lc = checkResult ?? data.lastComplianceCheck;
+  const lcStatus = checkResult?.status ?? (lc?.violationCount > 0 ? "warn" : lc ? "passed" : null);
+  const lcStatusColor = lcStatus === "passed" ? "text-green-600 dark:text-green-400" : lcStatus === "warn" || lcStatus === "failed" ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground";
+  const lcStatusBg = lcStatus === "passed" ? "bg-green-500/10 border-green-500/20" : lcStatus === "warn" || lcStatus === "failed" ? "bg-amber-500/10 border-amber-500/20" : "bg-muted/30";
 
   return (
     <Card data-testid="section-policy-readiness">
@@ -7114,15 +7135,75 @@ function PolicyReadinessWidget({ data }: { data: any }) {
             </div>
             <CardTitle className="text-sm font-medium">Policy Readiness</CardTitle>
           </div>
-          <Badge variant="outline" className={`text-[10px] font-semibold ${scoreBg} ${scoreColor}`} data-testid="badge-policy-readiness-score">
-            {score}%
-          </Badge>
+          <div className="flex items-center gap-1.5">
+            <Badge variant="outline" className={`text-[10px] font-semibold ${scoreBg} ${scoreColor}`} data-testid="badge-policy-readiness-score">
+              {score}%
+            </Badge>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-6 text-[10px] px-2"
+              onClick={handleRunCheck}
+              disabled={isChecking}
+              data-testid="button-run-policy-check"
+            >
+              {isChecking ? "Checking…" : "Run Check"}
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
         <div>
           <Progress value={score} className="h-1.5" />
         </div>
+
+        {/* Last compliance check result */}
+        {lc && (
+          <div className={`flex items-center justify-between p-2 rounded-md border text-xs ${lcStatusBg}`} data-testid="section-last-compliance-check">
+            <div className="flex items-center gap-1.5">
+              {lcStatus === "passed" ? <CheckCircle2 className="w-3 h-3 text-green-600 dark:text-green-400" /> : <AlertTriangle className={`w-3 h-3 ${lcStatusColor}`} />}
+              <span className={`font-medium ${lcStatusColor}`}>
+                {checkResult ? "Dry-run" : "Last check"}: {lcStatus === "passed" ? "Passed" : lcStatus === "warn" ? "Warnings" : "Issues found"}
+              </span>
+            </div>
+            <div className="flex items-center gap-1.5 text-muted-foreground">
+              {lc.policyCount > 0 && <span>{lc.policyCount} policies</span>}
+              {(lc.violationCount ?? checkResult?.errorCount ?? 0) > 0 && (
+                <Badge variant="outline" className="text-[10px] bg-red-500/10 text-red-600 border-red-500/20">
+                  {lc.violationCount ?? checkResult?.errorCount} error(s)
+                </Badge>
+              )}
+              {(checkResult?.warnCount ?? 0) > 0 && (
+                <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-700 border-amber-500/20">
+                  {checkResult.warnCount} warn(s)
+                </Badge>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Dry-run violations detail */}
+        {checkResult?.violations?.length > 0 && (
+          <div className="space-y-1">
+            <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">Check Findings</p>
+            {checkResult.violations.slice(0, 4).map((v: any, i: number) => (
+              <div key={i} className={`text-[10px] p-1.5 rounded border ${v.severity === "error" ? "bg-red-500/5 border-red-500/20 text-red-700 dark:text-red-400" : "bg-amber-500/5 border-amber-500/20 text-amber-700 dark:text-amber-400"}`} data-testid={`check-finding-${i}`}>
+                {v.message}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Last hard violation */}
+        {data.lastHardViolation && (
+          <div className="flex items-start gap-2 p-2 rounded-md bg-red-500/5 border border-red-500/20" data-testid="section-last-hard-violation">
+            <AlertTriangle className="w-3 h-3 text-red-600 dark:text-red-400 mt-0.5 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-[10px] font-medium text-red-700 dark:text-red-400">Hard violation recorded</p>
+              <p className="text-[10px] text-muted-foreground truncate">{data.lastHardViolation.details?.blockReason || data.lastHardViolation.action}</p>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-2">
           {Object.entries(data.policyCountByScope || {}).map(([scope, count]) => (

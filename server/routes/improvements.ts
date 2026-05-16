@@ -1629,18 +1629,18 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
 
         const tierOrder: Record<string, number> = { LOW: 1, MEDIUM: 2, HIGH: 3, CRITICAL: 4 };
         for (const agent of allProposedAgents) {
-          const conflicts: Array<{ policyId: string; policyName: string; reason: string }> = [];
+          const policyFlags: Array<{ severity: "warn" | "error"; message: string; policyId?: string; policyName?: string }> = [];
           for (const orgPolicy of orgLevelPolicies) {
             const pj = orgPolicy.policyJson as Record<string, any> | null;
             if (!pj) continue;
             if (Array.isArray(pj.blockedAutonomyModes) && pj.blockedAutonomyModes.includes(agent.autonomyMode)) {
-              conflicts.push({ policyId: orgPolicy.id, policyName: orgPolicy.name, reason: `Autonomy mode "${agent.autonomyMode}" is blocked by this policy` });
+              policyFlags.push({ severity: "error", message: `Proposed autonomy="${agent.autonomyMode}" is blocked by policy "${orgPolicy.name}"`, policyId: orgPolicy.id, policyName: orgPolicy.name });
             }
             if (pj.maxRiskTier) {
               const agentTierVal = tierOrder[agent.riskTier] || 2;
               const maxTierVal = tierOrder[pj.maxRiskTier] || 4;
               if (agentTierVal > maxTierVal) {
-                conflicts.push({ policyId: orgPolicy.id, policyName: orgPolicy.name, reason: `Risk tier "${agent.riskTier}" exceeds policy max "${pj.maxRiskTier}"` });
+                policyFlags.push({ severity: "error", message: `Proposed riskTier="${agent.riskTier}" exceeds policy "${orgPolicy.name}" max="${pj.maxRiskTier}"`, policyId: orgPolicy.id, policyName: orgPolicy.name });
               }
             }
             if (Array.isArray(pj.blockedTools) && Array.isArray(agent.tools)) {
@@ -1649,11 +1649,21 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
                 agentToolsLower.some((at: string) => at.includes(bt.toLowerCase()) || bt.toLowerCase().includes(at))
               );
               if (blockedMatches.length > 0) {
-                conflicts.push({ policyId: orgPolicy.id, policyName: orgPolicy.name, reason: `Tools [${blockedMatches.join(", ")}] are blocked by this policy` });
+                policyFlags.push({ severity: "error", message: `Tools [${blockedMatches.join(", ")}] are blocked by policy "${orgPolicy.name}"`, policyId: orgPolicy.id, policyName: orgPolicy.name });
               }
             }
+            // toolAccessClass conflict check
+            if (pj.blockedToolAccessClasses && agent.toolAccessClass) {
+              const blocked: string[] = Array.isArray(pj.blockedToolAccessClasses) ? pj.blockedToolAccessClasses : [];
+              if (blocked.includes(agent.toolAccessClass)) {
+                policyFlags.push({ severity: "error", message: `Proposed toolAccessClass="${agent.toolAccessClass}" is blocked by policy "${orgPolicy.name}"`, policyId: orgPolicy.id, policyName: orgPolicy.name });
+              }
+            }
+            if (pj.requiresToolAccessClass && agent.toolAccessClass && pj.requiresToolAccessClass !== agent.toolAccessClass) {
+              policyFlags.push({ severity: "warn", message: `Policy "${orgPolicy.name}" recommends toolAccessClass="${pj.requiresToolAccessClass}" but proposed="${agent.toolAccessClass}"`, policyId: orgPolicy.id, policyName: orgPolicy.name });
+            }
           }
-          agent.policyConflicts = conflicts;
+          agent.policyFlags = policyFlags;
         }
       } catch (pcErr: any) {
         console.warn("[propose-agents] Policy conflict annotation failed (non-fatal):", pcErr.message);

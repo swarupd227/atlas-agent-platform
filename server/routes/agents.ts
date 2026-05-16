@@ -1296,6 +1296,79 @@ const router = Router();
     }
   });
 
+  router.post("/api/agents/:id/policy-check", async (req, res) => {
+    try {
+      const agent = await storage.getAgent(req.params.id, getOrgId(req));
+      if (!agent) return res.status(404).json({ error: "Agent not found" });
+
+      const bundle = await resolvePolicyBundle(req.params.id, getOrgId(req));
+
+      // Dry-run compliance check: scan system prompt against guardrails
+      const systemPrompt = (agent as any).agentSystemPrompt || (agent as any).systemPrompt || (agent as any).prompt || "";
+      const violations: Array<{ type: string; message: string; severity: "warn" | "error" }> = [];
+
+      for (const guardrail of bundle.guardrails) {
+        const guardrailLower = guardrail.toLowerCase();
+        const systemPromptLower = systemPrompt.toLowerCase();
+        // Simple pattern: if a guardrail keyword looks like a prohibited instruction, flag it
+        if (guardrailLower.startsWith("no ") || guardrailLower.startsWith("never ") || guardrailLower.startsWith("do not ")) {
+          // These are prohibitions — check if the system prompt is instructing the agent to do the forbidden thing
+          const prohibited = guardrailLower.replace(/^(no |never |do not )/, "");
+          if (systemPromptLower.includes(prohibited)) {
+            violations.push({ type: "guardrail_conflict", message: `System prompt may conflict with guardrail: "${guardrail}"`, severity: "warn" });
+          }
+        }
+      }
+
+      // Check if any blocked tools appear to be referenced in the system prompt
+      for (const blockedTool of bundle.blockedTools) {
+        if (systemPrompt.toLowerCase().includes(blockedTool.toLowerCase())) {
+          violations.push({ type: "blocked_tool_reference", message: `System prompt references blocked tool: "${blockedTool}"`, severity: "error" });
+        }
+      }
+
+      const passed = violations.filter(v => v.severity !== "error").length;
+      const failed = violations.filter(v => v.severity === "error").length;
+      const warned = violations.filter(v => v.severity === "warn").length;
+      const now = new Date().toISOString();
+
+      // Persist as a lightweight trace record so lastComplianceCheck is populated
+      try {
+        await storage.createTrace({
+          agentId: agent.id,
+          organizationId: getOrgId(req),
+          environment: "dry-run",
+          status: failed > 0 ? "failed" : "completed",
+          latencyMs: 0,
+          costUsd: 0,
+          inputSummary: "Policy dry-run check",
+          outputSummary: `${bundle.appliedPolicies.length} policies checked; ${failed} error(s), ${warned} warning(s)`,
+          policyChecks: {
+            policies: bundle.appliedPolicies.map(p => ({ policyId: p.id, policyName: p.name, domain: p.domain, scope: p.scope, version: p.version, enforcement: p.enforcement })),
+            policyCount: bundle.appliedPolicies.length,
+            violations: violations.map(v => ({ ...v, policyIds: [] })),
+            passed,
+            capturedAt: now,
+          },
+        });
+      } catch {}
+
+      res.json({
+        agentId: agent.id,
+        checkedAt: now,
+        policyCount: bundle.appliedPolicies.length,
+        violations,
+        passedCount: passed,
+        warnCount: warned,
+        errorCount: failed,
+        status: failed > 0 ? "failed" : warned > 0 ? "warn" : "passed",
+      });
+    } catch (e: any) {
+      console.error("[policy-check] Error:", e);
+      res.status(500).json({ error: "Policy check failed" });
+    }
+  });
+
   router.get("/api/agents/:id/policy-readiness", async (req, res) => {
     try {
       const agent = await storage.getAgent(req.params.id, getOrgId(req));
@@ -1324,6 +1397,36 @@ const router = Router();
       const redactPatternSample = bundle.redactPatterns.slice(0, 5);
       const guardrailSample = bundle.guardrails.slice(0, 5);
 
+      // Fetch last hard violation and last compliance check from traces + audit events
+      let lastHardViolation: { action: string; details: any; createdAt: any } | null = null;
+      let lastComplianceCheck: { passedCount: number; violationCount: number; timestamp: string; policyCount: number } | null = null;
+      try {
+        const auditEventsForAgent = await storage.getAuditEvents(getOrgId(req));
+        const agentViolations = auditEventsForAgent
+          .filter(e => (e.action === "hard_violation" || e.action === "policy_violation") && e.objectId === agent.id)
+          .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+        if (agentViolations.length > 0) {
+          const v = agentViolations[0];
+          let details: any = {};
+          try { details = JSON.parse(v.details || "{}"); } catch {}
+          lastHardViolation = { action: v.action, details, createdAt: v.createdAt };
+        }
+
+        const traces = await storage.getTracesByAgent(agent.id, getOrgId(req));
+        const tracesWithChecks = traces
+          .filter(t => t.policyChecks)
+          .sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime());
+        if (tracesWithChecks.length > 0) {
+          const checks = tracesWithChecks[0].policyChecks as any;
+          lastComplianceCheck = {
+            passedCount: checks?.passed ?? (Array.isArray(checks?.policies) ? checks.policies.length : 0),
+            violationCount: Array.isArray(checks?.violations) ? checks.violations.length : 0,
+            policyCount: Array.isArray(checks?.policies) ? checks.policies.length : (checks?.policyCount ?? 0),
+            timestamp: tracesWithChecks[0].startedAt?.toString() || new Date().toISOString(),
+          };
+        }
+      } catch {}
+
       res.json({
         agentId: agent.id,
         agentName: agent.name,
@@ -1344,6 +1447,8 @@ const router = Router();
         missingDomains: policyScore.missingDomains,
         coveredDomains: policyScore.coveredDomains,
         agentConfig: bundle.agentConfig,
+        lastHardViolation,
+        lastComplianceCheck,
       });
     } catch (e: any) {
       console.error("[policy-readiness] Error:", e);
@@ -2502,51 +2607,96 @@ const router = Router();
         }
       }
 
-      // Policy gate: block promotion if any scoped policy declares this environment as restricted
+      // Policy gate: fail-closed enforcement for prod promotion
+      // Any unhandled error in this block BLOCKS promotion (not allows it).
       const bypassPolicyGate = req.body.bypassPolicyGate === true;
-      if (nextEnv === "prod" && !bypassPolicyGate) {
+      if ((nextEnv === "prod" || nextEnv === "pilot") && !bypassPolicyGate) {
+        const policyFailingChecks: Array<{ check: string; reason: string; severity: "error" | "warn" }> = [];
+        let policyGateError: string | null = null;
+
         try {
           const pBundle = await resolvePolicyBundle(source.agentId, getOrgId(req));
+          const agentForGate = promoteAgent;
+
+          // (a) Check policyJson.promotionBlockedEnvs on applied policies
           const allPoliciesForGate = await storage.getPolicies(getOrgId(req));
           const appliedIds = new Set(pBundle.appliedPolicies.map((p: any) => p.id));
           const applicablePolicies = allPoliciesForGate.filter(p => appliedIds.has(p.id));
-          const promotionBlocking = applicablePolicies.filter(p => {
+          for (const p of applicablePolicies) {
             const pj = p.policyJson as Record<string, any> | null;
-            if (!pj) return false;
+            if (!pj) continue;
             const blockedEnvs: string[] = Array.isArray(pj.promotionBlockedEnvs) ? pj.promotionBlockedEnvs : [];
-            return blockedEnvs.includes(nextEnv) || blockedEnvs.includes("*");
-          });
-          if (promotionBlocking.length > 0) {
-            const auditEventsForPolicy = await storage.getAuditEvents(getOrgId(req));
-            const maxSeqPol = auditEventsForPolicy.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
-            const lastHashPol = auditEventsForPolicy.length > 0 ? auditEventsForPolicy[auditEventsForPolicy.length - 1].eventHash || "" : "";
-            const evtDataPol = `${maxSeqPol + 1}:policy_gate_blocked:${source.id}:${Date.now()}`;
-            const evtHashPol = `sha256:${nodeCrypto.createHash("sha256").update(evtDataPol + lastHashPol).digest("hex")}`;
-            await storage.createAuditEvent({
-              actorType: "system",
-              actorId: "policy-gate",
-              action: "policy_gate_blocked",
-              objectType: "deployment",
-              objectId: source.id,
-              details: JSON.stringify({
-                targetEnv: nextEnv,
-                blockingPolicies: promotionBlocking.map(p => ({ id: p.id, name: p.name, domain: p.domain })),
-                agentName: source.agentName,
-                version: source.version,
-              }),
-              sequenceNum: maxSeqPol + 1,
-              previousHash: lastHashPol,
-              eventHash: evtHashPol,
-            });
-            return res.status(400).json({
-              blocked: true,
-              reason: "policy_gate",
-              message: `Promotion to ${nextEnv} blocked by ${promotionBlocking.length} active policy rule(s)`,
-              blockingPolicies: promotionBlocking.map(p => ({ id: p.id, name: p.name, domain: p.domain })),
-            });
+            if (blockedEnvs.includes(nextEnv) || blockedEnvs.includes("*")) {
+              policyFailingChecks.push({ check: "policy_promotion_blocked", reason: `Policy "${p.name}" (${p.domain}) blocks promotion to ${nextEnv}`, severity: "error" });
+            }
+            // (b) Check strict/block enforcement: if policy has enforcement=strict|block, any active violation is a blocker
+            const enforcement = pj.enforcement || "monitor";
+            if (enforcement === "strict" || enforcement === "block") {
+              const recentTracesForPolicy = await storage.getTracesByAgent(source.agentId, getOrgId(req));
+              const lastTrace = recentTracesForPolicy.sort((a, b) => new Date(b.startedAt || 0).getTime() - new Date(a.startedAt || 0).getTime())[0];
+              if (lastTrace) {
+                const pChecks = lastTrace.policyChecks as any;
+                if (pChecks?.violations?.length > 0) {
+                  policyFailingChecks.push({ check: "unresolved_policy_violation", reason: `Policy "${p.name}" (${enforcement}) has ${pChecks.violations.length} unresolved violation(s) on last run`, severity: "error" });
+                }
+              }
+            }
+          }
+
+          // (c) Check for unresolved hard violations in recent audit events for this agent
+          const recentAuditEvents = await storage.getAuditEvents(getOrgId(req));
+          const agentHardViolations = recentAuditEvents.filter(e =>
+            e.action === "hard_violation" &&
+            e.objectId === source.agentId &&
+            new Date(e.createdAt || 0).getTime() > Date.now() - 7 * 24 * 60 * 60 * 1000
+          );
+          if (agentHardViolations.length > 0 && nextEnv === "prod") {
+            policyFailingChecks.push({ check: "unresolved_hard_violations", reason: `${agentHardViolations.length} hard violation(s) recorded in the last 7 days`, severity: "error" });
+          }
+
+          // (d) High/Critical risk + autonomous mode always requires manual approval for prod
+          const riskTier = agentForGate?.riskTier || "MEDIUM";
+          const autonomyMode = agentForGate?.autonomyMode || "assisted";
+          if (nextEnv === "prod" && (riskTier === "HIGH" || riskTier === "CRITICAL") && autonomyMode === "fully_autonomous") {
+            const approvals = await storage.getApprovals(getOrgId(req));
+            const hasPromoApproval = approvals.some(a =>
+              a.objectId === source.agentId &&
+              a.status === "approved" &&
+              (a.type === "deployment_approval" || a.type === "production_promotion") &&
+              new Date(a.updatedAt || a.createdAt || 0).getTime() > Date.now() - 30 * 24 * 60 * 60 * 1000
+            );
+            if (!hasPromoApproval) {
+              policyFailingChecks.push({ check: "manual_approval_required", reason: `Agent is ${riskTier} risk with fully autonomous mode — manual promotion approval required`, severity: "error" });
+            }
           }
         } catch (pgErr: any) {
-          console.warn("[policy-gate] Promotion policy check failed (non-fatal):", pgErr.message);
+          policyGateError = pgErr.message;
+        }
+
+        const hasErrors = policyFailingChecks.some(c => c.severity === "error") || policyGateError !== null;
+        if (hasErrors) {
+          await storage.createAuditEvent({
+            actorType: "system",
+            actorId: "policy-gate",
+            action: "policy_gate_blocked",
+            objectType: "deployment",
+            objectId: source.id,
+            details: JSON.stringify({
+              targetEnv: nextEnv,
+              failingChecks: policyFailingChecks,
+              gateError: policyGateError,
+              agentName: source.agentName,
+              version: source.version,
+            }),
+          }).catch(() => {});
+          return res.status(409).json({
+            blocked: true,
+            reason: "policy_gate",
+            message: policyGateError
+              ? `Promotion policy gate failed unexpectedly — blocked for safety: ${policyGateError}`
+              : `Promotion to ${nextEnv} blocked: ${policyFailingChecks.filter(c => c.severity === "error").length} policy check(s) failed`,
+            failingChecks: policyFailingChecks,
+          });
         }
       }
 

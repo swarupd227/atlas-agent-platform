@@ -3618,65 +3618,69 @@ Eval Suites: ${evalSuites.length} configured`,
       const outcome = await storage.getOutcome(req.params.id, getOrgId(req));
       if (!outcome) return res.status(404).json({ error: "Outcome not found" });
 
+      const allPolicies = await storage.getPolicies(getOrgId(req));
+      const activePolicies = allPolicies.filter(p => p.status === "active");
+
+      // Auto-bound: policies already scoped at org level or explicitly to this outcome
+      const autoBound = activePolicies.filter(p =>
+        p.scopeType === "org" || (p.scopeType === "outcome" && p.scopeId === req.params.id)
+      );
+
+      // Outcome metadata for domain/industry matching
+      const outcomeDomain = (outcome as any).domain || (outcome as any).industry || null;
+      const outcomeTags: string[] = Array.isArray((outcome as any).tags) ? (outcome as any).tags : [];
+
+      // Matching-not-bound: active policies that match the outcome's domain/industry but are NOT yet auto-bound
+      const autoBoundIds = new Set(autoBound.map(p => p.id));
+      const matchingNotBound = activePolicies.filter(p => {
+        if (autoBoundIds.has(p.id)) return false;
+        if (outcomeDomain && p.domain === outcomeDomain) return true;
+        const pj = p.policyJson as Record<string, any> | null;
+        if (pj?.industry && outcomeDomain && pj.industry.toLowerCase() === outcomeDomain.toLowerCase()) return true;
+        if (pj?.tags && Array.isArray(pj.tags) && outcomeTags.some((t: string) => (pj.tags as string[]).includes(t))) return true;
+        return false;
+      });
+
+      // Critical gaps: domains that enterprise agents typically need but have zero coverage
+      const CRITICAL_DOMAINS = ["data_handling", "model_governance", "deployment", "access_control"];
+      const coveredDomains = new Set(autoBound.map(p => p.domain).filter(Boolean));
+      const criticalGaps = CRITICAL_DOMAINS
+        .filter(d => !coveredDomains.has(d))
+        .map(d => ({
+          domain: d,
+          reason: `No active policy covers the "${d}" domain for this outcome`,
+          suggestedAction: "bind_policy",
+        }));
+
+      // Per-agent coverage (lightweight — just counts)
       const agents = await storage.getAgents(getOrgId(req));
       const outcomeAgents = agents.filter(a => (a as any).outcomeId === req.params.id);
-
-      const coverageByAgent = await Promise.all(
+      const agentCoverage = await Promise.all(
         outcomeAgents.map(async (agent) => {
           try {
             const bundle = await resolvePolicyBundle(agent.id, getOrgId(req));
-            return {
-              agentId: agent.id,
-              agentName: agent.name,
-              riskTier: agent.riskTier,
-              appliedPolicies: bundle.appliedPolicies,
-              blockedTools: bundle.blockedTools,
-              toolAllowlist: bundle.toolAllowlist,
-              guardrails: bundle.guardrails,
-              policyCount: bundle.appliedPolicies.length,
-            };
+            return { agentId: agent.id, agentName: agent.name, policyCount: bundle.appliedPolicies.length };
           } catch {
-            return {
-              agentId: agent.id,
-              agentName: agent.name,
-              riskTier: agent.riskTier,
-              appliedPolicies: [],
-              blockedTools: [],
-              toolAllowlist: [],
-              guardrails: [],
-              policyCount: 0,
-            };
+            return { agentId: agent.id, agentName: agent.name, policyCount: 0 };
           }
         })
       );
 
-      const allAppliedPolicies = new Map<string, any>();
-      for (const entry of coverageByAgent) {
-        for (const p of entry.appliedPolicies) {
-          allAppliedPolicies.set(p.id, p);
-        }
-      }
-
-      const coveredCount = coverageByAgent.filter(e => e.policyCount > 0).length;
-      const coverageScore = outcomeAgents.length > 0
-        ? Math.round((coveredCount / outcomeAgents.length) * 100)
-        : 100;
-
-      const domainMap = new Map<string, number>();
-      for (const [, p] of allAppliedPolicies) {
-        if (p.domain) domainMap.set(p.domain, (domainMap.get(p.domain) || 0) + 1);
-      }
-
       res.json({
         outcomeId: req.params.id,
         outcomeName: (outcome as any).name || req.params.id,
+        outcomeDomain,
+        // Core coverage model
+        autoBound: autoBound.map(p => ({ id: p.id, name: p.name, domain: p.domain, scopeType: p.scopeType, version: p.version })),
+        matchingNotBound: matchingNotBound.map(p => ({ id: p.id, name: p.name, domain: p.domain, scopeType: p.scopeType, version: p.version })),
+        criticalGaps,
+        // Summary counts
+        autoBoundCount: autoBound.length,
+        matchingNotBoundCount: matchingNotBound.length,
+        criticalGapCount: criticalGaps.length,
+        // Agent breakdown
         agentCount: outcomeAgents.length,
-        coveredAgentCount: coveredCount,
-        uniquePolicyCount: allAppliedPolicies.size,
-        coverageScore,
-        policies: Array.from(allAppliedPolicies.values()),
-        domainBreakdown: Object.fromEntries(domainMap),
-        agentCoverage: coverageByAgent,
+        agentCoverage,
       });
     } catch (e: any) {
       console.error("[policy-coverage] Error:", e);

@@ -1074,7 +1074,7 @@ export async function resolvePolicyBundle(agentId: string, orgId?: string) {
   }
 
   return {
-    appliedPolicies: allScoped.map(p => ({ id: p.id, name: p.name, scope: p.scopeType, domain: p.domain })),
+    appliedPolicies: allScoped.map(p => ({ id: p.id, name: p.name, scope: p.scopeType, domain: p.domain, version: p.version ?? 1, enforcement: (p.policyJson as any)?.enforcement || "monitor" })),
     toolAllowlist: Array.from(new Set(toolAllowlist)),
     blockedTools: Array.from(new Set(blockedTools)),
     guardrails: Array.from(new Set(guardrails)),

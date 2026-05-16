@@ -1603,6 +1603,23 @@ After receiving tool results, provide a structured analysis with key findings, s
               lastStep.completedAt = new Date().toISOString();
               toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: null, error: `[POLICY-GATE] BLOCK: ${blockReason}` });
               emitProgress("tool_call_result", { tool: matchedTool.toolName, server: matchedTool.serverName, success: false, error: `[POLICY-GATE] BLOCK: ${blockReason}`, iteration: iterationsUsed });
+              // Log hard violation audit event for deterministic blocks
+              storage.createAuditEvent({
+                actorType: "system",
+                actorId: "policy-gate",
+                action: "hard_violation",
+                objectType: "agent",
+                objectId: agentId,
+                details: JSON.stringify({
+                  blockReason,
+                  toolName: matchedTool.toolName,
+                  serverName: matchedTool.serverName,
+                  policyCount: policyBundle.appliedPolicies.length,
+                  appliedPolicies: policyBundle.appliedPolicies.map(p => ({ id: p.id, name: p.name, version: p.version })),
+                  iteration: iterationsUsed,
+                  deploymentId,
+                }),
+              }).catch(() => {});
               continue;
             }
           }
@@ -2198,7 +2215,7 @@ After receiving tool results, provide a structured analysis with key findings, s
     }
   } catch {}
 
-  let policySnapshot: Array<{ policyId: string; policyName: string; domain: string; scope?: string; status?: string }> = [];
+  let policySnapshot: Array<{ policyId: string; policyName: string; domain: string; scope?: string; version?: number; enforcement?: string; status?: string }> = [];
   try {
     if (policyBundle && policyBundle.appliedPolicies.length > 0) {
       policySnapshot = policyBundle.appliedPolicies.map(p => ({
@@ -2206,6 +2223,8 @@ After receiving tool results, provide a structured analysis with key findings, s
         policyName: p.name,
         domain: p.domain || "general",
         scope: p.scope,
+        version: p.version ?? 1,
+        enforcement: p.enforcement || "monitor",
         status: "active",
       }));
     } else {
@@ -2214,6 +2233,7 @@ After receiving tool results, provide a structured analysis with key findings, s
         policyId: p.id,
         policyName: p.name,
         domain: p.domain,
+        version: p.version ?? 1,
         status: p.status,
       }));
     }
@@ -3053,6 +3073,20 @@ async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: Runti
       retrievedDocs: (result as any).retrievedDocs || null,
       provenanceSnapshot: fullProvenanceSnapshot,
       provenanceHash: fullProvenanceHash,
+      // policyChecks: complete audit record of which policy version governed this run
+      policyChecks: {
+        policies: (fullProvenanceSnapshot.policySnapshot || []).map((p: any) => ({
+          policyId: p.policyId,
+          policyName: p.policyName,
+          domain: p.domain,
+          scope: p.scope,
+          version: p.version ?? 1,
+          enforcement: p.enforcement || "monitor",
+        })),
+        policyCount: (fullProvenanceSnapshot.policySnapshot || []).length,
+        violations: [],
+        capturedAt: new Date().toISOString(),
+      },
       ...(((result as any).softPolicyViolations as any[] | undefined)?.length
         ? { softPolicyViolations: (result as any).softPolicyViolations }
         : {}),
