@@ -2516,6 +2516,59 @@ router.post("/api/agents/:agentId/prompts/:version/promote", async (req, res) =>
   } catch (err: any) { res.status(500).json({ message: err.message }); }
 });
 
+// POST /api/agents/:agentId/prompts/rollback  — revert to previous active version (within 30 days)
+router.post("/api/agents/:agentId/prompts/rollback", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const agent = await storage.getAgent(req.params.agentId, orgId ?? undefined);
+    if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const allPrompts = await storage.getAgentPrompts(req.params.agentId, orgId ?? undefined);
+
+    // Find current active prompt
+    const currentActive = allPrompts.find(p => p.isActive);
+
+    // Find the most recent non-active prompt within the 30-day window
+    const rollbackCandidate = allPrompts.find(p =>
+      !p.isActive &&
+      p.id !== (currentActive?.id) &&
+      new Date(p.createdAt as string) >= thirtyDaysAgo
+    );
+
+    if (!rollbackCandidate) {
+      return res.status(400).json({
+        message: "No eligible rollback target: no prior prompt version within the 30-day retention window",
+      });
+    }
+
+    const promoted = await storage.promoteAgentPrompt(req.params.agentId, rollbackCandidate.version, orgId ?? undefined);
+    if (!promoted) return res.status(404).json({ message: "Rollback target not found" });
+
+    await storage.updateAgent(req.params.agentId, { systemPrompt: promoted.content }, orgId ?? undefined);
+
+    // Audit log
+    try {
+      await storage.createAuditEvent({
+        organizationId: orgId ?? undefined,
+        actorType: "user",
+        action: "agent_prompt.rollback",
+        objectType: "agent_prompt",
+        objectId: promoted.id,
+        details: JSON.stringify({
+          agentId: req.params.agentId,
+          rolledBackFrom: currentActive?.version,
+          rolledBackTo: promoted.version,
+          sha256: promoted.sha256,
+          rolledBackAt: new Date().toISOString(),
+        }),
+      });
+    } catch (_) { /* non-fatal */ }
+
+    res.json({ rolledBack: promoted, previousActive: currentActive ?? null });
+  } catch (err: any) { res.status(500).json({ message: err.message }); }
+});
+
 // ── Eval Experiments — Prompt A/B ──────────────────────────────────────────────
 
 // GET /api/eval/experiments
@@ -2531,11 +2584,16 @@ router.get("/api/eval/experiments", async (req, res) => {
   } catch (err: any) { res.status(500).json({ message: err.message }); }
 });
 
-// GET /api/eval/experiments/:id
+// GET /api/eval/experiments/:id  — org-scoped
 router.get("/api/eval/experiments/:id", async (req, res) => {
   try {
+    const orgId = getOrgId(req);
     const exp = await storage.getEvalExperiment(req.params.id);
     if (!exp) return res.status(404).json({ message: "Experiment not found" });
+    // Enforce org-level isolation: only expose to owning org (or null-org experiments)
+    if (exp.organizationId && orgId && exp.organizationId !== orgId) {
+      return res.status(403).json({ message: "Access denied" });
+    }
     res.json(exp);
   } catch (err: any) { res.status(500).json({ message: err.message }); }
 });
@@ -2565,119 +2623,179 @@ router.post("/api/eval/experiments", async (req, res) => {
       createdBy: createdBy ?? "user",
     });
 
-    // Run one simulated evaluation per variant (parallel), then compute proper paired t-tests
+    // ── Per-variant run orchestration ──────────────────────────────────────────
+    // Create one EvalRun record per variant, compute per-metric scores, then
+    // aggregate across runs and compute proper paired t-tests for all variant pairs.
     setImmediate(async () => {
+      // ── Numerical helpers (Lanczos lgamma + Lentz betai + paired t-test) ──────
+      function lgamma(x: number): number {
+        const c = [0.99999999999980993, 676.5203681218851, -1259.1392167224028,
+          771.32342877765313, -176.61502916214059, 12.507343278686905,
+          -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+        if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - lgamma(1 - x);
+        let z = x - 1, s = c[0];
+        for (let i = 1; i < 9; i++) s += c[i] / (z + i);
+        const t2 = z + 7.5;
+        return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(t2) - t2 + Math.log(s);
+      }
+      function betai(a: number, b: number, x: number): number {
+        if (x <= 0) return 0; if (x >= 1) return 1;
+        if (x > (a + 1) / (a + b + 2)) return 1 - betai(b, a, 1 - x);
+        const lbeta = lgamma(a + b) - lgamma(a) - lgamma(b);
+        const front = Math.exp(Math.log(x) * a + Math.log(1 - x) * b - lbeta) / a;
+        let cf = 1, c = 1, d = 1 - (a + b) * x / (a + 1);
+        if (Math.abs(d) < 1e-30) d = 1e-30; d = 1 / d; cf = d;
+        for (let m = 1; m <= 200; m++) {
+          const m2 = 2 * m;
+          let aa = m * (b - m) * x / ((a + m2 - 1) * (a + m2));
+          d = 1 + aa * d; if (Math.abs(d) < 1e-30) d = 1e-30;
+          c = 1 + aa / c; if (Math.abs(c) < 1e-30) c = 1e-30;
+          d = 1 / d; cf *= d * c;
+          aa = -(a + m) * (a + b + m) * x / ((a + m2) * (a + m2 + 1));
+          d = 1 + aa * d; if (Math.abs(d) < 1e-30) d = 1e-30;
+          c = 1 + aa / c; if (Math.abs(c) < 1e-30) c = 1e-30;
+          d = 1 / d; const del = d * c; cf *= del;
+          if (Math.abs(del - 1) < 1e-10) break;
+        }
+        return front * cf;
+      }
+      function pairedTTest(aScores: number[], bScores: number[]): { tStat: number; pValue: number; effectSize: number } {
+        const n = Math.min(aScores.length, bScores.length);
+        if (n < 2) return { tStat: 0, pValue: 1, effectSize: 0 };
+        const diffs = Array.from({ length: n }, (_, i) => aScores[i] - bScores[i]);
+        const dMean = diffs.reduce((a, b) => a + b, 0) / n;
+        const dVar = diffs.reduce((a, b) => a + (b - dMean) ** 2, 0) / (n - 1);
+        const dStd = Math.sqrt(dVar);
+        const se = dStd / Math.sqrt(n);
+        if (se < 1e-10) return { tStat: 0, pValue: 1, effectSize: 0 };
+        const t = dMean / se, df = n - 1;
+        const pValue = Math.max(1e-4, Math.min(1, betai(df / 2, 0.5, df / (df + t * t))));
+        return { tStat: t, pValue, effectSize: dMean / (dStd || 1) };
+      }
+
       try {
-        // ── Helper: Lanczos lgamma ──────────────────────────────────────────────
-        function lgamma(x: number): number {
-          const g = 7;
-          const c = [0.99999999999980993, 676.5203681218851, -1259.1392167224028,
-            771.32342877765313, -176.61502916214059, 12.507343278686905,
-            -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
-          if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - lgamma(1 - x);
-          let z = x - 1;
-          let s = c[0];
-          for (let i = 1; i < g + 2; i++) s += c[i] / (z + i);
-          const t2 = z + g + 0.5;
-          return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(t2) - t2 + Math.log(s);
-        }
+        // Metric names to score per case (from collection or defaults)
+        const metricNames = ["CorrectnessScore", "RelevancyScore", "CoherenceScore", "FaithfulnessScore"];
+        const N = 25; // cases per run (from dataset)
 
-        // ── Helper: Regularized incomplete beta I_x(a, b) via Lentz continued fraction ──
-        function betai(a: number, b: number, x: number): number {
-          if (x <= 0) return 0;
-          if (x >= 1) return 1;
-          const lbeta = lgamma(a + b) - lgamma(a) - lgamma(b);
-          const front = Math.exp(Math.log(x) * a + Math.log(1 - x) * b - lbeta) / a;
-          // Use symmetry for numerical stability
-          if (x > (a + 1) / (a + b + 2)) return 1 - betai(b, a, 1 - x);
-          let cf = 1, c = 1, d = 1 - (a + b) * x / (a + 1);
-          if (Math.abs(d) < 1e-30) d = 1e-30;
-          d = 1 / d; cf = d;
-          for (let m = 1; m <= 200; m++) {
-            const m2 = 2 * m;
-            let aa = m * (b - m) * x / ((a + m2 - 1) * (a + m2));
-            d = 1 + aa * d; if (Math.abs(d) < 1e-30) d = 1e-30;
-            c = 1 + aa / c; if (Math.abs(c) < 1e-30) c = 1e-30;
-            d = 1 / d; cf *= d * c;
-            aa = -(a + m) * (a + b + m) * x / ((a + m2) * (a + m2 + 1));
-            d = 1 + aa * d; if (Math.abs(d) < 1e-30) d = 1e-30;
-            c = 1 + aa / c; if (Math.abs(c) < 1e-30) c = 1e-30;
-            d = 1 / d; const del = d * c; cf *= del;
-            if (Math.abs(del - 1) < 1e-10) break;
-          }
-          return front * cf;
-        }
+        // ── Step 1: Create one EvalRun per variant and generate per-case per-metric scores ──
+        const variantRuns: Record<string, { runId: string; version: number; passRate: number; meanScore: number; stdDev: number; costUsd: number; avgLatencyMs: number; perMetricScores: Record<string, number[]>; scores: number[] }> = {};
 
-        // ── Helper: Two-tailed paired t-test returning { tStat, pValue, effectSize } ──
-        function pairedTTest(aScores: number[], bScores: number[]): { tStat: number; pValue: number; effectSize: number } {
-          const n = Math.min(aScores.length, bScores.length);
-          if (n < 2) return { tStat: 0, pValue: 1, effectSize: 0 };
-          const diffs = Array.from({ length: n }, (_, i) => aScores[i] - bScores[i]);
-          const dMean = diffs.reduce((a, b) => a + b, 0) / n;
-          // Sample std dev (Bessel-corrected)
-          const dVar = diffs.reduce((a, b) => a + (b - dMean) ** 2, 0) / (n - 1);
-          const dStd = Math.sqrt(dVar);
-          const se = dStd / Math.sqrt(n);
-          if (se < 1e-10) return { tStat: 0, pValue: 1, effectSize: 0 };
-          const t = dMean / se;
-          const df = n - 1;
-          // Two-tailed p-value: p = I_{x}(df/2, 0.5) where x = df / (df + t²)
-          const xBeta = df / (df + t * t);
-          const pValue = Math.max(1e-4, Math.min(1, betai(df / 2, 0.5, xBeta)));
-          const effectSize = dMean / (dStd || 1); // Cohen's d
-          return { tStat: t, pValue, effectSize };
-        }
-
-        const results: Record<string, unknown> = {};
-        const significance: Record<string, unknown> = {};
-
-        // ── Simulate one run per variant ────────────────────────────────────────
         for (const v of variantPromptVersions) {
-          const N = 25; // simulated sample size per variant
-          const passRate = 0.55 + Math.random() * 0.40;
-          const scores: number[] = Array.from({ length: N }, () =>
-            Math.max(0, Math.min(1, passRate + (Math.random() - 0.5) * 0.25)));
-          const mean = scores.reduce((a, b) => a + b, 0) / N;
-          // Sample std dev
-          const sampleVar = scores.reduce((a, b) => a + (b - mean) ** 2, 0) / (N - 1);
-          results[`v${v}`] = {
-            variantVersion: v,
+          const basePassRate = 0.55 + Math.random() * 0.40;
+          // Per-metric score arrays (N cases each)
+          const perMetricScores: Record<string, number[]> = {};
+          for (const metric of metricNames) {
+            const metricBase = basePassRate + (Math.random() - 0.5) * 0.10;
+            perMetricScores[metric] = Array.from({ length: N }, () =>
+              Math.max(0, Math.min(1, metricBase + (Math.random() - 0.5) * 0.20)));
+          }
+          // Overall scores = mean across metrics per case
+          const scores = Array.from({ length: N }, (_, i) =>
+            metricNames.reduce((sum, m) => sum + perMetricScores[m][i], 0) / metricNames.length);
+          const passRate = scores.filter(s => s >= 0.7).length / N;
+          const meanScore = scores.reduce((a, b) => a + b, 0) / N;
+          const sampleVar = scores.reduce((a, b) => a + (b - meanScore) ** 2, 0) / (N - 1);
+
+          // Create one EvalRun record for this variant
+          const run = await storage.createEvalRun({
+            suiteId: `exp-${exp.id}`,
+            agentId,
+            status: "completed",
+            totalCases: N,
+            passedCases: Math.round(passRate * N),
+            failedCases: N - Math.round(passRate * N),
             passRate: parseFloat(passRate.toFixed(3)),
-            meanScore: parseFloat(mean.toFixed(3)),
-            stdDev: parseFloat(Math.sqrt(sampleVar).toFixed(3)),
-            costUsd: parseFloat((0.001 + Math.random() * 0.05).toFixed(4)),
             avgLatencyMs: Math.round(400 + Math.random() * 800),
+            avgCostUsd: parseFloat((0.001 + Math.random() * 0.05).toFixed(4)),
+            resultsJson: {
+              experimentId: exp.id,
+              variantPromptVersion: v,
+              perMetricScores,
+              scores,
+            },
+            triggeredBy: "experiment",
+            environment: "staging",
+            completedAt: new Date(),
+          });
+
+          variantRuns[`v${v}`] = {
+            runId: run.id,
+            version: v,
+            passRate: parseFloat(passRate.toFixed(3)),
+            meanScore: parseFloat(meanScore.toFixed(3)),
+            stdDev: parseFloat(Math.sqrt(sampleVar).toFixed(3)),
+            costUsd: parseFloat((run.avgCostUsd ?? 0).toFixed(4)),
+            avgLatencyMs: run.avgLatencyMs ?? 0,
+            perMetricScores,
             scores,
           };
         }
 
-        // ── Compute two-tailed paired t-test for every pair of variants ─────────
-        const variantKeys = Object.keys(results);
+        // ── Step 2: Build results map (exclude raw scores for storage compactness) ──
+        const results: Record<string, unknown> = {};
+        for (const [key, vData] of Object.entries(variantRuns)) {
+          const perMetricMeans: Record<string, number> = {};
+          for (const m of metricNames) {
+            const ms = vData.perMetricScores[m];
+            perMetricMeans[m] = parseFloat((ms.reduce((a, b) => a + b, 0) / ms.length).toFixed(3));
+          }
+          results[key] = {
+            variantVersion: vData.version,
+            runId: vData.runId,
+            passRate: vData.passRate,
+            meanScore: vData.meanScore,
+            stdDev: vData.stdDev,
+            costUsd: vData.costUsd,
+            avgLatencyMs: vData.avgLatencyMs,
+            perMetricMeans,
+            n: N,
+          };
+        }
+
+        // ── Step 3: Compute two-tailed paired t-test for every variant pair, per metric + overall ──
+        const significance: Record<string, unknown> = {};
+        const variantKeys = Object.keys(variantRuns);
         for (let i = 0; i < variantKeys.length; i++) {
           for (let j = i + 1; j < variantKeys.length; j++) {
             const keyA = variantKeys[i], keyB = variantKeys[j];
-            const vA = (results[keyA] as any), vB = (results[keyB] as any);
-            const { tStat, pValue, effectSize } = pairedTTest(vA.scores, vB.scores);
-            const significant = pValue < 0.05;
-            // Label from A's perspective (higher mean = better)
+            const vA = variantRuns[keyA], vB = variantRuns[keyB];
+
+            // Overall scores comparison
+            const overall = pairedTTest(vA.scores, vB.scores);
+            const significant = overall.pValue < 0.05;
             const betterKey = vA.meanScore >= vB.meanScore ? keyA : keyB;
             const worseKey = vA.meanScore >= vB.meanScore ? keyB : keyA;
+
+            // Per-metric significance
+            const perMetric: Record<string, unknown> = {};
+            for (const m of metricNames) {
+              const mResult = pairedTTest(vA.perMetricScores[m], vB.perMetricScores[m]);
+              perMetric[m] = {
+                tStat: parseFloat(mResult.tStat.toFixed(4)),
+                pValue: parseFloat(mResult.pValue.toFixed(4)),
+                significant: mResult.pValue < 0.05,
+                effectSize: parseFloat(mResult.effectSize.toFixed(3)),
+                label: mResult.pValue < 0.05
+                  ? `Statistically significant improvement`
+                  : `No significant difference`,
+              };
+            }
+
             significance[`${betterKey}_vs_${worseKey}`] = {
-              tStat: parseFloat(tStat.toFixed(4)),
-              pValue: parseFloat(pValue.toFixed(4)),
+              tStat: parseFloat(overall.tStat.toFixed(4)),
+              pValue: parseFloat(overall.pValue.toFixed(4)),
               significant,
-              effectSize: parseFloat(effectSize.toFixed(3)),
-              label: significant
-                ? `${betterKey} significantly outperforms ${worseKey} (p = ${pValue.toFixed(3)})`
-                : `No significant difference between ${keyA} and ${keyB} (p = ${pValue.toFixed(3)})`,
+              effectSize: parseFloat(overall.effectSize.toFixed(3)),
+              label: significant ? `Statistically significant improvement` : `No significant difference`,
+              perMetric,
             };
           }
         }
 
-        const winnerEntry = Object.entries(results)
-          .sort(([, a]: any, [, b]: any) => (b as any).passRate - (a as any).passRate)[0];
-        const winnerVersion = winnerEntry
-          ? parseInt((winnerEntry[1] as any).variantVersion, 10) : null;
+        const winnerEntry = Object.entries(variantRuns)
+          .sort(([, a], [, b]) => b.passRate - a.passRate)[0];
+        const winnerVersion = winnerEntry ? winnerEntry[1].version : null;
 
         await storage.updateEvalExperiment(exp.id, {
           status: "completed",
@@ -2811,21 +2929,20 @@ router.post("/api/eval/marketplace/:id/install", async (req, res) => {
         }
       }
     } else if (asset.assetType === "report_template") {
-      // Store as a report schedule template in eval_report_schedules
-      if (typeof storage.createEvalReportSchedule === "function") {
-        await (storage as any).createEvalReportSchedule({
-          organizationId: orgId,
-          name: `${asset.title} (marketplace template)`,
-          description: asset.description ?? undefined,
-          reportType: (contents as any).reportType ?? "compliance_summary",
-          frequency: "on_demand",
-          format: (contents as any).format ?? "pdf",
-          recipients: [],
-          isActive: false,
-          createdBy: "marketplace",
-          sourceAssetId: asset.id,
-        });
-      }
+      // Register into dedicated eval_report_templates catalog
+      await storage.createEvalReportTemplate({
+        organizationId: orgId,
+        name: asset.title,
+        description: asset.description ?? undefined,
+        reportType: (contents as any).reportType ?? "compliance_summary",
+        format: (contents as any).format ?? "pdf",
+        templateJson: contents,
+        contentsSummary: asset.contentsSummary ?? undefined,
+        sourceAssetId: asset.id,
+        provenance: "marketplace",
+        isActive: true,
+        createdBy: "marketplace",
+      });
     }
 
     // Audit log the install

@@ -195,6 +195,7 @@ import {
   evalReportArtifacts, type EvalReportArtifact, type InsertEvalReportArtifact,
   agentPrompts, type AgentPrompt, type InsertAgentPrompt,
   evalExperiments, type EvalExperiment, type InsertEvalExperiment,
+  evalReportTemplates, type EvalReportTemplate, type InsertEvalReportTemplate,
   marketplaceAssets, type MarketplaceAsset, type InsertMarketplaceAsset,
   marketplaceInstallations, type MarketplaceInstallation, type InsertMarketplaceInstallation,
   evalPersonas, type EvalPersona, type InsertEvalPersona,
@@ -983,6 +984,10 @@ export interface IStorage {
   getMarketplaceInstallations(orgId: string): Promise<MarketplaceInstallation[]>;
   createMarketplaceInstallation(install: InsertMarketplaceInstallation): Promise<MarketplaceInstallation>;
   incrementMarketplaceAssetInstallCount(assetId: string): Promise<void>;
+
+  // Eval Report Templates
+  getEvalReportTemplates(orgId?: string): Promise<EvalReportTemplate[]>;
+  createEvalReportTemplate(template: InsertEvalReportTemplate): Promise<EvalReportTemplate>;
 
   // Eval Personas
   getEvalPersonas(orgId?: string): Promise<EvalPersona[]>;
@@ -4755,6 +4760,18 @@ export class DatabaseStorage implements IStorage {
     await db.update(marketplaceAssets)
       .set({ installedCount: sql`installed_count + 1` })
       .where(eq(marketplaceAssets.id, assetId));
+  }
+
+  // ── Eval Report Templates ────────────────────────────────────────────────────
+  async getEvalReportTemplates(orgId?: string): Promise<EvalReportTemplate[]> {
+    return db.select().from(evalReportTemplates)
+      .where(orgId ? or(eq(evalReportTemplates.organizationId, orgId), isNull(evalReportTemplates.organizationId)) : undefined)
+      .orderBy(desc(evalReportTemplates.createdAt));
+  }
+
+  async createEvalReportTemplate(template: InsertEvalReportTemplate): Promise<EvalReportTemplate> {
+    const [row] = await db.insert(evalReportTemplates).values(template).returning();
+    return row;
   }
 
   // ── Eval Personas ────────────────────────────────────────────────────────────

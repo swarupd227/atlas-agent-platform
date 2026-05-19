@@ -167,6 +167,17 @@ export default function EvalPrompts() {
     onError: (e: any) => toast({ title: "Error", description: e.message, variant: "destructive" }),
   });
 
+  const rollbackPrompt = useMutation({
+    mutationFn: async (): Promise<{ rolledBack: { version: number }; previousActive: unknown }> => {
+      return apiRequest("POST", `/api/agents/${selectedAgentId}/prompts/rollback`, {});
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/agents", selectedAgentId, "prompts"] });
+      toast({ title: `Rolled back to v${data?.rolledBack?.version}`, description: "Previous version is now active" });
+    },
+    onError: (e: any) => toast({ title: "Rollback failed", description: e.message, variant: "destructive" }),
+  });
+
   const createExperiment = useMutation({
     mutationFn: async () => {
       return apiRequest("POST", "/api/eval/experiments", {
@@ -273,6 +284,13 @@ export default function EvalPrompts() {
                 </p>
               </div>
               <div className="flex items-center gap-2">
+                {activePrompt && sortedPrompts.length > 1 && (
+                  <Button variant="outline" size="sm" data-testid="button-rollback" onClick={() => rollbackPrompt.mutate()} disabled={rollbackPrompt.isPending}
+                    title="Revert to previous active prompt version (within 30-day window)">
+                    <ArrowRight className="w-3.5 h-3.5 mr-1.5 rotate-180" />
+                    {rollbackPrompt.isPending ? "Rolling back…" : "Rollback"}
+                  </Button>
+                )}
                 <Button variant="outline" size="sm" data-testid="button-run-experiment" onClick={() => setShowExperimentDialog(true)} disabled={sortedPrompts.length < 2}>
                   <FlaskConical className="w-3.5 h-3.5 mr-1.5" />
                   Run A/B Experiment
@@ -589,18 +607,32 @@ export default function EvalPrompts() {
 
                   {/* Significance results */}
                   {selectedExperiment.significanceResults && Object.entries(selectedExperiment.significanceResults as any).length > 0 && (
-                    <div className="space-y-2">
-                      <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Statistical Significance</h4>
+                    <div className="space-y-3">
+                      <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Statistical Significance (Two-tailed Paired t-test)</h4>
                       {Object.entries(selectedExperiment.significanceResults as Record<string, any>).map(([pair, sig]) => (
-                        <div key={pair} className={`flex items-center gap-3 px-3 py-2.5 rounded-md border text-sm ${sig.significant ? "bg-emerald-500/5 border-emerald-500/20" : "bg-muted/30"}`}>
-                          {sig.significant ? <Check className="w-4 h-4 text-emerald-500 shrink-0" /> : <X className="w-4 h-4 text-muted-foreground shrink-0" />}
-                          <div className="flex-1">
-                            <span className={`font-medium ${sig.significant ? "text-emerald-700 dark:text-emerald-400" : "text-muted-foreground"}`}>{sig.label}</span>
-                            <span className="text-xs text-muted-foreground ml-2">({pair.replace(/_vs_/g, " vs ")})</span>
+                        <div key={pair} className={`rounded-md border overflow-hidden ${sig.significant ? "border-emerald-500/20" : "border-border"}`}>
+                          {/* Overall row */}
+                          <div className={`flex items-center gap-3 px-3 py-2.5 text-sm ${sig.significant ? "bg-emerald-500/5" : "bg-muted/30"}`}>
+                            {sig.significant ? <Check className="w-4 h-4 text-emerald-500 shrink-0" /> : <X className="w-4 h-4 text-muted-foreground shrink-0" />}
+                            <div className="flex-1">
+                              <span className={`font-medium ${sig.significant ? "text-emerald-700 dark:text-emerald-400" : "text-muted-foreground"}`}>{sig.label}</span>
+                              <span className="text-xs text-muted-foreground ml-2">({pair.replace(/_vs_/g, " vs ")})</span>
+                            </div>
+                            <div className="text-xs text-muted-foreground font-mono">p={sig.pValue} · d={sig.effectSize}</div>
                           </div>
-                          <div className="text-xs text-muted-foreground font-mono">
-                            p={sig.pValue} · d={sig.effectSize}
-                          </div>
+                          {/* Per-metric breakdown */}
+                          {sig.perMetric && (
+                            <div className="divide-y">
+                              {Object.entries(sig.perMetric as Record<string, any>).map(([metric, ms]) => (
+                                <div key={metric} className={`flex items-center gap-3 px-4 py-1.5 text-xs ${ms.significant ? "bg-emerald-500/3" : "bg-muted/10"}`}>
+                                  {ms.significant ? <Check className="w-3 h-3 text-emerald-500 shrink-0" /> : <X className="w-3 h-3 text-muted-foreground shrink-0" />}
+                                  <span className="font-medium w-40 truncate">{metric}</span>
+                                  <span className={`flex-1 ${ms.significant ? "text-emerald-700 dark:text-emerald-400" : "text-muted-foreground"}`}>{ms.label}</span>
+                                  <span className="font-mono text-muted-foreground">p={ms.pValue} · d={ms.effectSize}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>

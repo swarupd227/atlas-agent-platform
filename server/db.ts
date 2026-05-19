@@ -1022,6 +1022,23 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_eval_experiments_status ON eval_experiments(status);
 
       -- Marketplace Assets
+      CREATE TABLE IF NOT EXISTS eval_report_templates (
+        id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id VARCHAR,
+        name TEXT NOT NULL,
+        description TEXT,
+        report_type TEXT NOT NULL DEFAULT 'compliance_summary',
+        format TEXT NOT NULL DEFAULT 'pdf',
+        template_json JSONB,
+        contents_summary TEXT,
+        source_asset_id VARCHAR,
+        provenance TEXT NOT NULL DEFAULT 'builtin',
+        is_active BOOLEAN DEFAULT TRUE,
+        created_by TEXT,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_eval_report_templates_org ON eval_report_templates(organization_id);
+
       CREATE TABLE IF NOT EXISTS marketplace_assets (
         id                  VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         title               TEXT NOT NULL,

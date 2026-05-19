@@ -3134,6 +3134,28 @@ export const insertEvalExperimentSchema = createInsertSchema(evalExperiments).om
 export type InsertEvalExperiment = z.infer<typeof insertEvalExperimentSchema>;
 export type EvalExperiment = typeof evalExperiments.$inferSelect;
 
+// ── Eval Report Templates ─────────────────────────────────────────────────────
+export const evalReportTemplates = pgTable("eval_report_templates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  name: text("name").notNull(),
+  description: text("description"),
+  reportType: text("report_type").notNull().default("compliance_summary"),
+  format: text("format").notNull().default("pdf"),
+  templateJson: jsonb("template_json"),
+  contentsSummary: text("contents_summary"),
+  sourceAssetId: varchar("source_asset_id"),
+  provenance: text("provenance").notNull().default("builtin"),
+  isActive: boolean("is_active").default(true),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_eval_report_templates_org").on(table.organizationId),
+]);
+export const insertEvalReportTemplateSchema = createInsertSchema(evalReportTemplates).omit({ id: true, createdAt: true }).extend({ organizationId: z.string().optional() });
+export type InsertEvalReportTemplate = z.infer<typeof insertEvalReportTemplateSchema>;
+export type EvalReportTemplate = typeof evalReportTemplates.$inferSelect;
+
 // ── Marketplace Assets ────────────────────────────────────────────────────────
 export const marketplaceAssets = pgTable("marketplace_assets", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

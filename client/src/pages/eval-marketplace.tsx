@@ -47,6 +47,7 @@ const INDUSTRY_OPTIONS = [
   { value: "retail", label: "Retail", icon: ShoppingCart },
   { value: "legal", label: "Legal", icon: Scale },
   { value: "manufacturing", label: "Manufacturing", icon: Factory },
+  { value: "public_sector", label: "Public Sector", icon: Landmark },
   { value: "cross_industry", label: "General / Cross-Industry", icon: Globe },
 ];
 
