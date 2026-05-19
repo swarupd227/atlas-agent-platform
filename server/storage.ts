@@ -966,7 +966,7 @@ export interface IStorage {
 
   // Agent Prompts
   getAgentPrompts(agentId: string, orgId?: string): Promise<AgentPrompt[]>;
-  getAgentPrompt(agentId: string, version: number): Promise<AgentPrompt | undefined>;
+  getAgentPrompt(agentId: string, version: number, orgId?: string): Promise<AgentPrompt | undefined>;
   createAgentPrompt(prompt: InsertAgentPrompt): Promise<AgentPrompt>;
   promoteAgentPrompt(agentId: string, version: number, orgId?: string): Promise<AgentPrompt | undefined>;
 
@@ -4683,15 +4683,19 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(agentPrompts).where(and(...conditions)).orderBy(desc(agentPrompts.version));
   }
 
-  async getAgentPrompt(agentId: string, version: number): Promise<AgentPrompt | undefined> {
-    const [row] = await db.select().from(agentPrompts)
-      .where(and(eq(agentPrompts.agentId, agentId), eq(agentPrompts.version, version)));
+  async getAgentPrompt(agentId: string, version: number, orgId?: string): Promise<AgentPrompt | undefined> {
+    const conditions = [eq(agentPrompts.agentId, agentId), eq(agentPrompts.version, version)];
+    if (orgId) conditions.push(eq(agentPrompts.organizationId, orgId));
+    const [row] = await db.select().from(agentPrompts).where(and(...conditions));
     return row;
   }
 
   async createAgentPrompt(prompt: InsertAgentPrompt): Promise<AgentPrompt> {
+    // Scope version numbering to (agentId, organizationId) to prevent cross-tenant collisions
+    const conditions = [eq(agentPrompts.agentId, prompt.agentId)];
+    if (prompt.organizationId) conditions.push(eq(agentPrompts.organizationId, prompt.organizationId));
     const existing = await db.select().from(agentPrompts)
-      .where(eq(agentPrompts.agentId, prompt.agentId))
+      .where(and(...conditions))
       .orderBy(desc(agentPrompts.version)).limit(1);
     const nextVersion = existing.length > 0 ? (existing[0].version + 1) : 1;
     const [row] = await db.insert(agentPrompts).values({ ...prompt, version: nextVersion }).returning();
@@ -4699,10 +4703,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async promoteAgentPrompt(agentId: string, version: number, orgId?: string): Promise<AgentPrompt | undefined> {
-    await db.update(agentPrompts).set({ isActive: false }).where(eq(agentPrompts.agentId, agentId));
+    // Deactivate all prompts scoped to this agent+org to avoid cross-tenant side effects
+    const deactivateConditions = [eq(agentPrompts.agentId, agentId)];
+    if (orgId) deactivateConditions.push(eq(agentPrompts.organizationId, orgId));
+    await db.update(agentPrompts).set({ isActive: false }).where(and(...deactivateConditions));
+    const activateConditions = [eq(agentPrompts.agentId, agentId), eq(agentPrompts.version, version)];
+    if (orgId) activateConditions.push(eq(agentPrompts.organizationId, orgId));
     const [row] = await db.update(agentPrompts)
       .set({ isActive: true })
-      .where(and(eq(agentPrompts.agentId, agentId), eq(agentPrompts.version, version)))
+      .where(and(...activateConditions))
       .returning();
     return row;
   }
