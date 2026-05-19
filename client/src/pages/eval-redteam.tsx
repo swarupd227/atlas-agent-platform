@@ -439,23 +439,29 @@ export default function EvalRedteam() {
                   ) : (
                     <>
                       {/* Table header */}
-                      <div className="grid grid-cols-[110px_1fr_1fr_1fr_72px_72px] gap-2 px-4 py-2 border-b bg-muted/20 text-xs font-medium text-muted-foreground sticky top-0">
+                      <div className="grid grid-cols-[110px_1fr_1fr_1fr_56px_72px_72px] gap-2 px-4 py-2 border-b bg-muted/20 text-xs font-medium text-muted-foreground sticky top-0">
                         <span>Category</span>
                         <span>Attack Input</span>
                         <span>Agent Response</span>
                         <span>Reasoning</span>
+                        <span className="text-center">Trace</span>
                         <span className="text-center">Result</span>
                         <span className="text-center">Severity</span>
                       </div>
                       <div className="divide-y">
                         {filteredResults.map(r => (
-                          <div key={r.id} className={`grid grid-cols-[110px_1fr_1fr_1fr_72px_72px] gap-2 px-4 py-2.5 items-start text-xs ${r.vulnerabilityDetected ? "bg-red-500/5" : ""}`} data-testid={`row-result-${r.id}`}>
+                          <div key={r.id} className={`grid grid-cols-[110px_1fr_1fr_1fr_56px_72px_72px] gap-2 px-4 py-2.5 items-start text-xs ${r.vulnerabilityDetected ? "bg-red-500/5" : ""}`} data-testid={`row-result-${r.id}`}>
                             <div>
                               <Badge variant="secondary" className="text-[10px] px-1.5 py-0 capitalize">{r.category.replace(/_/g, " ")}</Badge>
                             </div>
                             <div className="text-muted-foreground line-clamp-2 leading-relaxed">{r.attackInput}</div>
                             <div className="text-muted-foreground line-clamp-2 leading-relaxed">{r.agentResponse ?? "—"}</div>
                             <div className="text-muted-foreground/80 line-clamp-2 leading-relaxed italic">{r.reasoning ?? "—"}</div>
+                            <div className="flex justify-center">
+                              {r.traceId
+                                ? <Link href={`/observability?traceId=${r.traceId}`}><Badge variant="outline" className="text-[10px] gap-1 px-1 cursor-pointer hover:bg-muted" data-testid={`link-live-trace-${r.id}`}><ExternalLink className="w-2.5 h-2.5" /></Badge></Link>
+                                : <span className="text-muted-foreground/30">—</span>}
+                            </div>
                             <div className="flex justify-center">
                               {r.vulnerabilityDetected
                                 ? <ShieldOff className="w-4 h-4 text-red-500" />
