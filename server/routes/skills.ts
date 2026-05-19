@@ -1916,43 +1916,108 @@ Simulate how the agent would handle the scenario. Return JSON:
   });
 
   // AI: Generate a complete golden dataset with test cases
+  // Suggest use cases for a given industry using the Atlas ontology layer
+  router.post("/api/ai/suggest-golden-use-cases", async (req, res) => {
+    try {
+      const { industry } = req.body;
+      if (!industry) return res.status(400).json({ error: "industry is required" });
+
+      let conceptContext = "";
+      try {
+        const concepts = await storage.getOntologyConcepts(industry);
+        if (concepts.length > 0) {
+          const terms = concepts.slice(0, 15).map((c: any) => c.term || c.label || c.name).filter(Boolean).join(", ");
+          if (terms) conceptContext = `\nDomain ontology concepts: ${terms}`;
+        }
+      } catch {}
+
+      const raw = await callClaude({
+        system: `You are an expert in AI agent evaluation for the ${industry.replace(/_/g, " ")} industry. Return JSON: { "useCases": string[] } — 8 specific, actionable evaluation use cases for AI agents in this domain. Each should be a concise noun phrase (5–8 words).`,
+        user: `Suggest 8 evaluation use cases for AI agent golden datasets in the ${industry.replace(/_/g, " ")} industry.${conceptContext}`,
+        model: "claude-haiku-4-5",
+        jsonMode: true,
+        maxTokens: 512,
+      });
+      let result;
+      try { result = JSON.parse(stripJsonFences(raw)); } catch { result = { useCases: [] }; }
+      res.json({ useCases: result.useCases || [] });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message });
+    }
+  });
+
   router.post("/api/ai/generate-golden-dataset", async (req, res) => {
     try {
-      const { industry, useCase, count = 5 } = req.body;
+      const {
+        industry, useCase, count = 5,
+        agentId, scenarioMix, difficultyMix,
+        preview = false,
+      } = req.body;
       if (!industry || !useCase) {
         return res.status(400).json({ error: "industry and useCase are required" });
       }
 
-      const dataset = await storage.createGoldenDataset({
-        name: `${useCase} Evaluation Suite`,
-        description: `AI-generated evaluation dataset for ${useCase} in ${industry.replace(/_/g, " ")} industry.`,
-        industry,
-        useCase,
-        version: "1.0.0",
-        status: "active",
-        testCaseCount: 0,
-        qualityCoverage: 0,
-        benchmarkAvg: 0,
-        aiGenerated: true,
-        tags: [industry.replace(/_/g, "-"), useCase.toLowerCase().replace(/\s+/g, "-")],
-      } as any);
+      // Enrich system prompt with industry ontology
+      let ontologyContext = "";
+      try {
+        const concepts = await storage.getOntologyConcepts(industry);
+        if (concepts.length > 0) {
+          const terms = concepts.slice(0, 20).map((c: any) => c.term || c.label || c.name).filter(Boolean).join(", ");
+          if (terms) ontologyContext = `\nIndustry ontology concepts to ground scenarios in: ${terms}`;
+        }
+      } catch {}
 
+      // Enrich system prompt with bound agent context
+      let agentContext = "";
+      if (agentId && agentId !== "none") {
+        try {
+          const agent = await storage.getAgent(agentId);
+          if (agent) {
+            agentContext = `\nTarget agent: "${agent.name}" — ${(agent as any).purpose || (agent as any).description || ""}. Scenarios must reflect what this agent actually processes.`;
+          }
+        } catch {}
+      }
+
+      // Build distribution instructions from explicit mix controls
+      const sm = scenarioMix || {};
+      const dm = difficultyMix || {};
+      const distributionInstructions = scenarioMix
+        ? `EXACT scenario distribution required: ${sm.happyPath ?? 25}% happy_path, ${sm.edgeCase ?? 25}% edge_case, ${sm.adversarial ?? 25}% adversarial, ${sm.complianceCritical ?? 25}% compliance_critical. Difficulty distribution: ${dm.routine ?? 40}% routine, ${dm.complex ?? 30}% complex, ${dm.edgeCase ?? 20}% edge_case, ${dm.adversarial ?? 10}% adversarial.`
+        : `Mix difficulties and scenario categories evenly across test cases.`;
+
+      const totalCount = Math.min(count, 50);
       const goldenRaw = await callClaude({
-        system: `You are an expert at creating golden evaluation test cases for AI agents in the ${industry.replace(/_/g, " ")} industry. Generate ${Math.min(count, 50)} diverse test cases for the "${useCase}" use case. Each test case should have varied difficulty tiers and scenario categories.
+        system: `You are an expert at creating golden evaluation test cases for AI agents in the ${industry.replace(/_/g, " ")} industry.${ontologyContext}${agentContext}
 
-Return JSON: { "testCases": [{ "name": string, "inputScenario": string (detailed scenario description), "expectedBehavior": string (what the agent should do), "evaluationCriteria": [{ "dimension": string, "weight": number, "description": string }], "rubricScoring": { "dimensions": [{ "name": string, "maxScore": number, "criteria": string }], "passingScore": number }, "difficultyTier": "routine"|"complex"|"edge_case"|"adversarial", "scenarioCategory": "happy_path"|"edge_case"|"adversarial"|"compliance_critical", "tags": string[] }] }
+Generate ${totalCount} diverse test cases for the "${useCase}" use case. ${distributionInstructions}
 
-Mix difficulties evenly across the test cases.`,
-        user: `Generate ${Math.min(count, 50)} golden evaluation test cases for "${useCase}" in ${industry.replace(/_/g, " ")}.`,
+Return JSON: { "testCases": [{ "name": string, "inputScenario": string (detailed scenario), "expectedBehavior": string (what the agent should do), "evaluationCriteria": [{ "dimension": string, "weight": number, "description": string }], "rubricScoring": { "dimensions": [{ "name": string, "maxScore": number, "criteria": string }], "passingScore": number }, "difficultyTier": "routine"|"complex"|"edge_case"|"adversarial", "scenarioCategory": "happy_path"|"edge_case"|"adversarial"|"compliance_critical", "tags": string[] }] }`,
+        user: `Generate ${totalCount} golden evaluation test cases for "${useCase}" in ${industry.replace(/_/g, " ")}.`,
         model: "claude-haiku-4-5",
         jsonMode: true,
         maxTokens: 4096,
       });
       let result;
       try { result = JSON.parse(stripJsonFences(goldenRaw)); } catch { result = { testCases: [] }; }
+      const testCasesRaw = (result.testCases || []).slice(0, 50);
+
+      // Preview mode: return generated cases without persisting anything
+      if (preview) {
+        return res.json({ testCases: testCasesRaw });
+      }
+
+      // Save mode (backward-compatible with old callers)
+      const dataset = await storage.createGoldenDataset({
+        name: `${useCase} Evaluation Suite`,
+        description: `AI-generated evaluation dataset for ${useCase} in ${industry.replace(/_/g, " ")} industry.`,
+        industry, useCase, version: "1.0.0", status: "active",
+        testCaseCount: 0, qualityCoverage: 0, benchmarkAvg: 0,
+        aiGenerated: true,
+        tags: [industry.replace(/_/g, "-"), useCase.toLowerCase().replace(/\s+/g, "-")],
+      } as any);
 
       const created = [];
-      for (const tc of (result.testCases || []).slice(0, 50)) {
+      for (const tc of testCasesRaw) {
         const saved = await storage.createGoldenTestCase({
           datasetId: dataset.id,
           name: tc.name || "Untitled Test Case",
@@ -1968,12 +2033,52 @@ Mix difficulties evenly across the test cases.`,
         });
         created.push(saved);
       }
-
       await storage.updateGoldenDataset(dataset.id, { testCaseCount: created.length });
-
       res.json({ dataset, testCases: created });
     } catch (e: any) {
       console.error("AI generate golden dataset error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // Commit a curated (wizard-reviewed) set of test cases to a new dataset
+  router.post("/api/ai/commit-golden-dataset", async (req, res) => {
+    try {
+      const { industry, useCase, agentId, testCases, name, version = "1.0.0" } = req.body;
+      if (!industry || !useCase || !Array.isArray(testCases)) {
+        return res.status(400).json({ error: "industry, useCase, and testCases are required" });
+      }
+
+      const dataset = await storage.createGoldenDataset({
+        name: name || `${useCase} Evaluation Suite`,
+        description: `AI-generated evaluation dataset for ${useCase} in ${industry.replace(/_/g, " ")} industry.`,
+        industry, useCase, version, status: "active",
+        testCaseCount: 0, qualityCoverage: 0, benchmarkAvg: 0,
+        aiGenerated: true,
+        tags: [industry.replace(/_/g, "-"), useCase.toLowerCase().replace(/\s+/g, "-")],
+      } as any);
+
+      const created = [];
+      for (const tc of testCases.slice(0, 50)) {
+        const saved = await storage.createGoldenTestCase({
+          datasetId: dataset.id,
+          name: tc.name || "Untitled Test Case",
+          inputScenario: tc.inputScenario || "",
+          expectedBehavior: tc.expectedBehavior || "",
+          evaluationCriteria: tc.evaluationCriteria || [],
+          rubricScoring: tc.rubricScoring || { dimensions: [], passingScore: 0.8 },
+          difficultyTier: tc.difficultyTier || "routine",
+          scenarioCategory: tc.scenarioCategory || "happy_path",
+          tags: tc.tags || [],
+          aiGenerated: true,
+          status: "active",
+        });
+        created.push(saved);
+      }
+      await storage.updateGoldenDataset(dataset.id, { testCaseCount: created.length });
+      res.json({ dataset, testCases: created });
+    } catch (e: any) {
+      console.error("AI commit golden dataset error:", e);
       res.status(500).json({ error: e.message });
     }
   });
