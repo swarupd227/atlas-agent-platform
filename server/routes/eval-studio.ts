@@ -4,9 +4,42 @@ import multer from "multer";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { randomUUID } from "crypto";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
 import { runLlmJudge, runAgentOnInput, buildAgentContext } from "../eval-judge";
+
+// ── Secure upload registry ────────────────────────────────────────────────────
+// Maps a server-issued UUID token → {filePath, orgId, extractedText, ext}.
+// The token is returned to the client as `fileRef`; the actual disk path never
+// leaves the server, preventing path-injection via the /run endpoint.
+interface UploadRecord {
+  filePath: string;
+  orgId: string | undefined;
+  extractedText: string;
+  ext: string;
+}
+const uploadRegistry = new Map<string, UploadRecord>();
+
+async function extractFileText(filePath: string, ext: string): Promise<string> {
+  if (ext === ".txt" || ext === ".md") {
+    return fs.readFileSync(filePath, "utf-8");
+  }
+  if (ext === ".pdf") {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const pdfParse = require("pdf-parse") as (buf: Buffer) => Promise<{ text: string }>;
+    const buf = fs.readFileSync(filePath);
+    const result = await pdfParse(buf);
+    return result.text;
+  }
+  if (ext === ".docx") {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const mammoth = require("mammoth") as { extractRawText: (opts: { path: string }) => Promise<{ value: string }> };
+    const result = await mammoth.extractRawText({ path: filePath });
+    return result.value;
+  }
+  return "";
+}
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -917,24 +950,41 @@ router.post("/api/eval/synthesizer/estimate", async (req, res) => {
 });
 
 // ── File upload for synthesizer source (multipart) ───────────────────────────
+// Returns a server-issued UUID token as `fileRef`; the actual disk path is
+// kept in uploadRegistry and never sent to the client (prevents path injection).
 router.post("/api/eval/synthesizer/upload", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ message: "No file uploaded or unsupported type" });
     const orgId = getOrgId(req);
     const { path: filePath, originalname, mimetype, size } = req.file;
-
-    // For text-based files, read and return text immediately so it flows into sourceText
-    let extractedText = "";
     const ext = path.extname(originalname).toLowerCase();
-    if ([".txt", ".md"].includes(ext)) {
-      extractedText = fs.readFileSync(filePath, "utf-8");
-    } else {
-      // PDF / DOCX: store file ref; worker reads raw bytes and extracts text server-side
+
+    // Extract text from all supported formats immediately on upload
+    let extractedText = "";
+    try {
+      extractedText = await extractFileText(filePath, ext);
+    } catch (extractErr: any) {
+      // Non-fatal: extraction failure is surfaced in the response so the client
+      // can fall back to manual text entry rather than silently breaking synthesis.
       extractedText = "";
+      console.warn("[synthesizer upload] text extraction failed:", extractErr.message);
     }
 
+    // Mint a server-issued token and register the upload
+    const token = randomUUID();
+    uploadRegistry.set(token, { filePath, orgId, extractedText: extractedText.slice(0, 200_000), ext });
+
+    // Auto-expire token after 2 hours to avoid unbounded memory/disk usage
+    setTimeout(() => {
+      const rec = uploadRegistry.get(token);
+      if (rec) {
+        uploadRegistry.delete(token);
+        try { fs.unlinkSync(rec.filePath); } catch { /* already gone */ }
+      }
+    }, 2 * 60 * 60 * 1000);
+
     res.json({
-      fileRef: filePath,
+      fileRef: token,          // UUID token — safe to pass to client
       originalName: originalname,
       mimeType: mimetype,
       size,
@@ -950,13 +1000,24 @@ router.post("/api/eval/synthesizer/run", async (req, res) => {
     const orgId = getOrgId(req);
     const body = synthRunSchema.parse(req.body);
 
-    // If sourceType=file and fileRef provided, read the file server-side into sourceText
+    // If sourceType=file, resolve the UUID token to extracted text via the server-side
+    // upload registry.  We NEVER trust the client to supply a file path directly.
     let sourceText = body.sourceText || "";
-    if (body.sourceType === "file" && body.fileRef) {
-      try {
-        sourceText = fs.readFileSync(body.fileRef, "utf-8").slice(0, 200_000);
-      } catch {
-        // File may have been deleted; fall through with empty text
+    if (body.sourceType === "file") {
+      if (!body.fileRef) {
+        return res.status(400).json({ message: "fileRef is required when sourceType is 'file'" });
+      }
+      const record = uploadRegistry.get(body.fileRef);
+      if (!record) {
+        return res.status(400).json({ message: "Upload token not found or expired. Please re-upload the file." });
+      }
+      // Validate the upload belongs to the same org (undefined orgId is demo-mode, allowed)
+      if (record.orgId && orgId && record.orgId !== orgId) {
+        return res.status(403).json({ message: "Upload token does not belong to this organisation." });
+      }
+      sourceText = record.extractedText;
+      if (!sourceText.trim()) {
+        return res.status(400).json({ message: "No text could be extracted from the uploaded file. Please paste the text directly instead." });
       }
     }
 

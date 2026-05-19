@@ -392,7 +392,17 @@ export default function EvalSynthesizer() {
         expectedOutput: g.expectedOutput,
         retrievalContext: g.retrievalContext,
         tags: [g.type, style, g.evolved ? "evolved" : "base"],
-        provenance: withProvenance ? { sourceType, style, model: synModel, type: g.type, qualityScore: g.qualityScore, synthesizedAt: new Date().toISOString() } : undefined,
+        provenance: withProvenance ? {
+          sourceType,
+          style,
+          model: synModel,
+          type: g.type,
+          qualityScore: g.qualityScore,
+          versionLabel,
+          sourceRef: sourceType === "file" ? uploadedFileName : undefined,
+          synthesisPrompt: `style=${style}, evolution=${Object.entries(evolution).filter(([, v]) => v).map(([k]) => k).join(",")}`,
+          synthesizedAt: new Date().toISOString(),
+        } : undefined,
       }));
 
       await apiRequest("POST", `/api/eval/datasets/${targetDatasetId}/goldens/bulk`, { goldens: toSave });
@@ -415,7 +425,7 @@ export default function EvalSynthesizer() {
   };
 
   const handleNext = () => {
-    if (step === 3 && jobStatus === "idle") {
+    if (step === 3 && (jobStatus === "idle" || jobStatus === "failed")) {
       startSynthesis();
       return;
     }
