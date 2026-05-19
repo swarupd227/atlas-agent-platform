@@ -599,10 +599,14 @@ router.get("/api/eval/summary", async (req, res) => {
       storage.getEvalMetrics({ organizationId: orgId, limit: 1000 }),
     ]);
 
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const completedRuns = runs.filter(r => r.status === "completed");
-    const avgPassRate = completedRuns.length > 0
-      ? completedRuns.reduce((s, r) => s + (r.passRate || 0), 0) / completedRuns.length
-      : 0;
+    const recentCompletedRuns = completedRuns.filter(r => r.startedAt && new Date(r.startedAt) >= sevenDaysAgo);
+    const avgPassRate = recentCompletedRuns.length > 0
+      ? recentCompletedRuns.reduce((s, r) => s + (r.passRate || 0), 0) / recentCompletedRuns.length
+      : completedRuns.length > 0
+        ? completedRuns.reduce((s, r) => s + (r.passRate || 0), 0) / completedRuns.length
+        : 0;
     const totalCostUsd = completedRuns.reduce((s, r) => s + (r.costUsd || 0), 0);
     const agentsUnderEval = new Set(runs.map(r => r.agentId)).size;
     const openRegressions = runs.filter(r => r.status === "completed" && (r.passRate || 0) < 0.7).length;

@@ -417,9 +417,9 @@ export default function Evals() {
                       <div className="shrink-0">
                         <Sparkline data={sparkData} color={passRate >= 0.75 ? "amber" : "red"} />
                       </div>
-                      <Link href={`/agents/${run.agentId}`}>
+                      <Link href={`/evals/runs?agentId=${run.agentId}`}>
                         <Button variant="ghost" size="sm" className="text-xs h-7 px-2 shrink-0" data-testid={`link-view-runs-${run.agentId}`}>
-                          View
+                          Runs
                           <ArrowRight className="w-3 h-3 ml-1" />
                         </Button>
                       </Link>
