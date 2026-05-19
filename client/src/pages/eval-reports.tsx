@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
@@ -44,6 +44,8 @@ interface Template {
   icon: React.ReactNode;
   color: string;
   badge: string;
+  /** Short sample excerpt shown on the card to preview report content */
+  samplePreview: string;
 }
 
 const TEMPLATES: Template[] = [
@@ -54,6 +56,7 @@ const TEMPLATES: Template[] = [
     icon: <Shield className="h-5 w-5" />,
     color: "bg-indigo-100 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400",
     badge: "AIUC-1",
+    samplePreview: "Transparency ✓ · Accountability ✓ · Privacy 87% · Safety 94% · Fairness ✓",
   },
   {
     id: "hipaa",
@@ -62,6 +65,7 @@ const TEMPLATES: Template[] = [
     icon: <Heart className="h-5 w-5" />,
     color: "bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400",
     badge: "HIPAA",
+    samplePreview: "PHI Leakage 0% · Tool-Call Audit ✓ · Data Access 92% pass rate",
   },
   {
     id: "gdpr",
@@ -70,6 +74,7 @@ const TEMPLATES: Template[] = [
     icon: <Lock className="h-5 w-5" />,
     color: "bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400",
     badge: "GDPR",
+    samplePreview: "Automated Decisions 89% · Data Minimization ✓ · Profiling: 0 violations",
   },
   {
     id: "naic",
@@ -78,6 +83,7 @@ const TEMPLATES: Template[] = [
     icon: <Landmark className="h-5 w-5" />,
     color: "bg-orange-100 text-orange-600 dark:bg-orange-900/30 dark:text-orange-400",
     badge: "NAIC",
+    samplePreview: "Fairness 91% · Explainability ✓ · Accountability 88% · Transparency ✓",
   },
   {
     id: "soc2",
@@ -86,6 +92,7 @@ const TEMPLATES: Template[] = [
     icon: <BarChart3 className="h-5 w-5" />,
     color: "bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400",
     badge: "SOC 2",
+    samplePreview: "Security CC6 95% · Availability A1 ✓ · Processing Integrity PI1 97%",
   },
   {
     id: "fair_lending",
@@ -94,6 +101,7 @@ const TEMPLATES: Template[] = [
     icon: <Scale className="h-5 w-5" />,
     color: "bg-purple-100 text-purple-600 dark:bg-purple-900/30 dark:text-purple-400",
     badge: "ECOA",
+    samplePreview: "Disparate Impact 0 violations · Protected Class Testing: 48 probes · AANs ✓",
   },
 ];
 
@@ -644,6 +652,8 @@ export default function EvalReports() {
   const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
   const [selectedFormat, setSelectedFormat] = useState("json");
   const [generatedReport, setGeneratedReport] = useState<GeneratedReport | null>(null);
+  // Track the last requested format so onSuccess can trigger PDF dialog
+  const pendingFormatRef = useRef("json");
 
   const { data: agents = [] } = useQuery<any[]>({
     queryKey: ["/api/agents"],
@@ -652,9 +662,25 @@ export default function EvalReports() {
   const [selectedAgentIds, setSelectedAgentIds] = useState<string[]>([]);
 
   const generateReport = useMutation({
-    mutationFn: (data: any) => apiRequest("POST", "/api/eval/reports", data).then(r => r.json()),
+    mutationFn: (data: any) => {
+      pendingFormatRef.current = data.format ?? "json";
+      return apiRequest("POST", "/api/eval/reports", data).then(r => r.json());
+    },
     onSuccess: (report: GeneratedReport) => {
       setGeneratedReport(report);
+      if (pendingFormatRef.current === "pdf") {
+        // Auto-open print dialog for PDF format
+        setTimeout(() => {
+          const html = buildReportHtml(report);
+          const win = window.open("", "_blank");
+          if (win) {
+            win.document.write(html);
+            win.document.close();
+            win.focus();
+            setTimeout(() => { win.print(); }, 400);
+          }
+        }, 100);
+      }
       toast({ title: "Report generated successfully" });
     },
     onError: () => toast({ title: "Failed to generate report", variant: "destructive" }),
@@ -707,14 +733,13 @@ export default function EvalReports() {
                     <Card
                       key={tmpl.id}
                       data-testid={`template-card-${tmpl.id}`}
-                      className={`cursor-pointer transition-all hover:shadow-md ${
+                      className={`flex flex-col transition-all hover:shadow-md ${
                         selectedTemplate === tmpl.id
                           ? "ring-2 ring-primary border-primary"
                           : "hover:border-primary/40"
                       }`}
-                      onClick={() => setSelectedTemplate(tmpl.id === selectedTemplate ? null : tmpl.id)}
                     >
-                      <CardContent className="pt-5">
+                      <CardContent className="pt-5 flex-1">
                         <div className="flex items-start gap-3">
                           <div className={`p-2.5 rounded-lg ${tmpl.color} shrink-0`}>{tmpl.icon}</div>
                           <div className="min-w-0">
@@ -725,15 +750,37 @@ export default function EvalReports() {
                             <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed">{tmpl.description}</p>
                           </div>
                         </div>
-                        {selectedTemplate === tmpl.id && (
-                          <div className="mt-3 pt-3 border-t">
-                            <div className="flex items-center justify-between text-xs text-primary font-medium">
-                              <span>Selected — configure on the right</span>
-                              <ChevronRight className="h-3.5 w-3.5" />
-                            </div>
-                          </div>
-                        )}
+                        {/* Sample output preview */}
+                        <div className="mt-3 rounded bg-muted/40 border px-2.5 py-2">
+                          <p className="text-[10px] text-muted-foreground uppercase tracking-wide font-medium mb-1">Sample output</p>
+                          <p className="text-xs font-mono text-foreground/70 leading-relaxed">{tmpl.samplePreview}</p>
+                        </div>
                       </CardContent>
+                      {/* Per-card Generate CTA */}
+                      <div className="px-5 pb-4 pt-2 border-t">
+                        <Button
+                          size="sm"
+                          data-testid={`generate-btn-card-${tmpl.id}`}
+                          className="w-full"
+                          disabled={generateReport.isPending && selectedTemplate === tmpl.id}
+                          onClick={() => {
+                            setSelectedTemplate(tmpl.id);
+                            const payload: Record<string, any> = {
+                              templateType: tmpl.id,
+                              agentIds: selectedAgentIds,
+                              format: selectedFormat,
+                              timeWindowDays: parseInt(timeWindowDays),
+                            };
+                            generateReport.mutate(payload);
+                          }}
+                        >
+                          {generateReport.isPending && selectedTemplate === tmpl.id ? (
+                            <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Generating…</>
+                          ) : (
+                            <><Play className="h-3.5 w-3.5 mr-1.5" /> Generate</>
+                          )}
+                        </Button>
+                      </div>
                     </Card>
                   ))}
                 </div>
@@ -875,11 +922,15 @@ export default function EvalReports() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="json">JSON</SelectItem>
-                        <SelectItem value="markdown">Markdown</SelectItem>
-                        <SelectItem value="csv">CSV (evidence table)</SelectItem>
+                        <SelectItem value="json">JSON (machine-readable)</SelectItem>
+                        <SelectItem value="pdf">PDF (print/download)</SelectItem>
                       </SelectContent>
                     </Select>
+                    {selectedFormat === "pdf" && (
+                      <p className="text-[10px] text-muted-foreground mt-1.5 leading-relaxed">
+                        PDF is rendered via browser print dialog after generation.
+                      </p>
+                    )}
                   </div>
 
                   <Separator />

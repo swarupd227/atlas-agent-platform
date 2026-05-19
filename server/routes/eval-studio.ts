@@ -2095,10 +2095,12 @@ router.get("/api/eval/annotation-queue", async (req, res) => {
       const scoreVals = scores ? Object.values(scores).map((s: any) => typeof s?.score === "number" ? s.score : null).filter(v => v !== null) as number[] : [];
       const autoJudgeScore = scoreVals.length > 0 ? scoreVals.reduce((a, b) => a + b, 0) / scoreVals.length : null;
 
-      // Priority assignment (spec order: auto-judge disagreement > low confidence > sampled)
-      // "Auto-judge disagreement" = automated metric result contradicts the pass/fail label,
-      //   or metric scores have high variance (conflicting signals across metrics).
-      let priority: "disagreement" | "failing" | "low_confidence" | "sampled";
+      // Priority assignment: disagreement → low_confidence → sampled
+      // "disagreement" = auto-judge metric result contradicts the pass/fail label,
+      //   OR metric scores have high variance (conflicting signals across metrics).
+      // "low_confidence" = borderline auto-judge score, or no verdict at all.
+      // "sampled" = everything else (clear, confident passing traces).
+      let priority: "disagreement" | "low_confidence" | "sampled";
       const autoDisagreement = autoJudgeScore !== null && trace.passFail !== null && trace.passFail !== undefined &&
         ((autoJudgeScore > 0.5 && trace.passFail === false) || (autoJudgeScore <= 0.5 && trace.passFail === true));
       const scoreVariance = scoreVals.length >= 2
@@ -2108,12 +2110,12 @@ router.get("/api/eval/annotation-queue", async (req, res) => {
 
       if (autoDisagreement || highVariance) {
         priority = "disagreement";
-      } else if (autoJudgeScore !== null && autoJudgeScore >= 0.35 && autoJudgeScore <= 0.65) {
-        priority = "low_confidence";   // borderline auto-judge score
-      } else if (trace.passFail === null || trace.passFail === undefined || autoJudgeScore === null) {
-        priority = "low_confidence";   // no judge verdict — also needs human review
-      } else if (trace.passFail === false) {
-        priority = "failing";
+      } else if (
+        autoJudgeScore === null ||
+        trace.passFail === null || trace.passFail === undefined ||
+        (autoJudgeScore >= 0.35 && autoJudgeScore <= 0.65)
+      ) {
+        priority = "low_confidence";   // borderline score or no verdict — needs human review
       } else {
         priority = "sampled";
       }
@@ -2147,8 +2149,8 @@ router.get("/api/eval/annotation-queue", async (req, res) => {
       };
     }));
 
-    // Sort by priority: disagreement > failing > low_confidence > sampled
-    const priorityOrder = { disagreement: 0, failing: 1, low_confidence: 2, sampled: 3 };
+    // Sort by priority: disagreement > low_confidence > sampled
+    const priorityOrder = { disagreement: 0, low_confidence: 1, sampled: 2 };
     const sorted = enriched
       .sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority])
       .slice(0, limit);

@@ -11,6 +11,45 @@ import { db } from "./db";
 import { eq, and, isNull } from "drizzle-orm";
 import { ensureOtcFulfillmentAgents, runOtcFulfillmentPipeline } from "./otc-fulfillment-live-run";
 import { OTC_AGT_005_NAME, OTC_AGT_007_NAME, OTC_AGT_012_NAME, OTC_EVAL_SUITE_NAME } from "./otc-fulfillment-shared-defs";
+import nodemailer from "nodemailer";
+
+// ── Email helper ──────────────────────────────────────────────────────────────
+
+/**
+ * Send a report notification email via SMTP.
+ * Requires the following env vars:
+ *   SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM
+ * When SMTP is not configured the function logs the notification and returns.
+ */
+async function sendReportEmail(opts: {
+  to: string[];
+  subject: string;
+  html: string;
+}): Promise<void> {
+  const { SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM } = process.env;
+  if (!SMTP_HOST || !SMTP_USER || !SMTP_PASS) {
+    // SMTP not configured — log structured notification for operator review
+    console.log(
+      `[worker] [email] SMTP not configured. Notification queued:\n` +
+      `  To: ${opts.to.join(", ")}\n  Subject: ${opts.subject}\n` +
+      `  (set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_FROM to enable delivery)`
+    );
+    return;
+  }
+  const transporter = nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: parseInt(SMTP_PORT ?? "587"),
+    secure: parseInt(SMTP_PORT ?? "587") === 465,
+    auth: { user: SMTP_USER, pass: SMTP_PASS },
+  });
+  await transporter.sendMail({
+    from: SMTP_FROM ?? SMTP_USER,
+    to: opts.to.join(", "),
+    subject: opts.subject,
+    html: opts.html,
+  });
+  console.log(`[worker] [email] Sent "${opts.subject}" to ${opts.to.length} recipient(s)`);
+}
 
 export const jobEvents = new EventEmitter();
 jobEvents.setMaxListeners(50);
@@ -596,17 +635,39 @@ async function processReportScheduleRun(job: Job): Promise<Record<string, unknow
           status: "ready",
         });
 
-        // Notify recipients (stub — replace with transactional email service in production)
+        // Notify recipients via SMTP (configured via env vars; see sendReportEmail above)
         const recipients: string[] = (schedule.recipients as string[]) ?? [];
         if (recipients.length > 0) {
           const overallScore = typeof report.overallScore === "number" ? `${report.overallScore}%` : "N/A";
-          console.log(
-            `[worker] [email-stub] Report schedule ${schedule.id} — would send to ${recipients.join(", ")}:` +
-            ` "${report.templateName ?? schedule.templateType}" | overall=${overallScore}` +
-            ` | ${(report as any).stats?.totalRuns ?? 0} eval runs | generated ${new Date().toISOString()}`
-          );
-          // TODO: integrate a transactional email provider (e.g. SendGrid, Resend)
-          // and call something like: await sendEmail({ to: recipients, subject, html });
+          const totalRuns = (report as any).stats?.totalRuns ?? 0;
+          const reportName = (report.templateName as string) ?? schedule.templateType;
+          const generatedAt = new Date().toLocaleString();
+          const html = `
+<html><body style="font-family:system-ui,sans-serif;max-width:600px;margin:0 auto;padding:24px;">
+  <h2 style="color:#111827;margin-bottom:4px;">Compliance Report Ready</h2>
+  <p style="color:#6b7280;font-size:14px;margin-bottom:20px;">Generated ${generatedAt}</p>
+  <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
+    <tr><td style="padding:8px 0;border-bottom:1px solid #e5e7eb;color:#6b7280;font-size:13px;">Report</td>
+        <td style="padding:8px 0;border-bottom:1px solid #e5e7eb;font-weight:600;font-size:13px;">${reportName}</td></tr>
+    <tr><td style="padding:8px 0;border-bottom:1px solid #e5e7eb;color:#6b7280;font-size:13px;">Overall Score</td>
+        <td style="padding:8px 0;border-bottom:1px solid #e5e7eb;font-weight:600;font-size:13px;color:${typeof report.overallScore === "number" && (report.overallScore as number) >= 90 ? "#16a34a" : "#ca8a04"};">${overallScore}</td></tr>
+    <tr><td style="padding:8px 0;border-bottom:1px solid #e5e7eb;color:#6b7280;font-size:13px;">Eval Runs</td>
+        <td style="padding:8px 0;border-bottom:1px solid #e5e7eb;font-size:13px;">${totalRuns}</td></tr>
+    <tr><td style="padding:8px 0;color:#6b7280;font-size:13px;">Window</td>
+        <td style="padding:8px 0;font-size:13px;">${schedule.timeWindowDays ?? 30} days</td></tr>
+  </table>
+  <p style="color:#374151;font-size:13px;">${(report as any).executiveSummary ?? ""}</p>
+  <p style="color:#9ca3af;font-size:11px;margin-top:32px;">Nous Atlas · Compliance Report Scheduler</p>
+</body></html>`;
+          try {
+            await sendReportEmail({
+              to: recipients,
+              subject: `[Nous Atlas] ${reportName} — Score: ${overallScore}`,
+              html,
+            });
+          } catch (emailErr: any) {
+            console.error(`[worker] [email] Failed to send report notification:`, emailErr.message);
+          }
         }
 
         // Advance nextRunAt based on cadence
