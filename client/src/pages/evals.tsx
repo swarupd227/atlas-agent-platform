@@ -354,6 +354,8 @@ export default function Evals() {
     const base = [
       { label: "Browse Metrics", icon: ListChecks, href: "/evals/metrics", variant: "outline" as const },
       { label: "Eval Datasets", icon: Database, href: "/golden-datasets", variant: "outline" as const },
+      { label: "Prod Monitor", icon: Activity, href: "/evals/monitor", variant: "outline" as const },
+      { label: "Red Team", icon: ShieldAlert, href: "/evals/redteam", variant: "outline" as const },
     ];
     if (role.id === "compliance_security") {
       return [

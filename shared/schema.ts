@@ -2935,3 +2935,114 @@ export const evalGates = pgTable("eval_gates", {
 export const insertEvalGateSchema = createInsertSchema(evalGates).omit({ id: true, createdAt: true, updatedAt: true }).extend({ organizationId: z.string().optional() });
 export type InsertEvalGate = z.infer<typeof insertEvalGateSchema>;
 export type EvalGate = typeof evalGates.$inferSelect;
+
+// ── Eval Monitoring Configs ───────────────────────────────────────────────────
+export const evalMonitoringConfigs = pgTable("eval_monitoring_configs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  agentId: varchar("agent_id").notNull().unique(),
+  metricCollectionId: varchar("metric_collection_id"),
+  samplingRate: real("sampling_rate").notNull().default(0.1),
+  alertThresholds: jsonb("alert_thresholds").default(sql`'{}'::jsonb`),
+  enabled: boolean("enabled").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_eval_mon_cfg_agent").on(table.agentId),
+  index("idx_eval_mon_cfg_org").on(table.organizationId),
+]);
+export const insertEvalMonitoringConfigSchema = createInsertSchema(evalMonitoringConfigs).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertEvalMonitoringConfig = z.infer<typeof insertEvalMonitoringConfigSchema>;
+export type EvalMonitoringConfig = typeof evalMonitoringConfigs.$inferSelect;
+
+// ── Eval Alerts ───────────────────────────────────────────────────────────────
+export const evalAlerts = pgTable("eval_alerts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  agentId: varchar("agent_id").notNull(),
+  metricName: text("metric_name").notNull().default("pass_rate"),
+  severity: text("severity").notNull().default("P2"),
+  currentValue: real("current_value"),
+  thresholdValue: real("threshold_value"),
+  baselineValue: real("baseline_value"),
+  windowHours: integer("window_hours").default(24),
+  resolved: boolean("resolved").default(false),
+  resolvedAt: timestamp("resolved_at"),
+  acknowledgedAt: timestamp("acknowledged_at"),
+  acknowledgedBy: text("acknowledged_by"),
+  triggeredAt: timestamp("triggered_at").defaultNow(),
+}, (table) => [
+  index("idx_eval_alerts_agent").on(table.agentId),
+  index("idx_eval_alerts_org").on(table.organizationId),
+  index("idx_eval_alerts_resolved").on(table.resolved),
+]);
+export const insertEvalAlertSchema = createInsertSchema(evalAlerts).omit({ id: true, triggeredAt: true });
+export type InsertEvalAlert = z.infer<typeof insertEvalAlertSchema>;
+export type EvalAlert = typeof evalAlerts.$inferSelect;
+
+// ── Eval Attack Templates ─────────────────────────────────────────────────────
+export const evalAttackTemplates = pgTable("eval_attack_templates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  category: text("category").notNull(),
+  industryTags: text("industry_tags").array().default(sql`'{}'::text[]`),
+  severityHint: text("severity_hint").notNull().default("medium"),
+  name: text("name").notNull(),
+  description: text("description"),
+  promptTemplate: text("prompt_template").notNull(),
+  isBuiltin: boolean("is_builtin").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_eval_atk_tmpl_cat").on(table.category),
+]);
+export const insertEvalAttackTemplateSchema = createInsertSchema(evalAttackTemplates).omit({ id: true, createdAt: true });
+export type InsertEvalAttackTemplate = z.infer<typeof insertEvalAttackTemplateSchema>;
+export type EvalAttackTemplate = typeof evalAttackTemplates.$inferSelect;
+
+// ── Eval Redteam Runs ─────────────────────────────────────────────────────────
+export const evalRedteamRuns = pgTable("eval_redteam_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  agentId: varchar("agent_id").notNull(),
+  status: text("status").notNull().default("pending"),
+  categories: text("categories").array().default(sql`'{}'::text[]`),
+  probesPerCategory: integer("probes_per_category").default(5),
+  severityThreshold: text("severity_threshold").default("medium"),
+  attackModel: text("attack_model").default("claude-sonnet-4-5"),
+  totalProbes: integer("total_probes").default(0),
+  completedProbes: integer("completed_probes").default(0),
+  vulnerabilitiesFound: integer("vulnerabilities_found").default(0),
+  postureScore: integer("posture_score"),
+  startedAt: timestamp("started_at").defaultNow(),
+  completedAt: timestamp("completed_at"),
+}, (table) => [
+  index("idx_eval_rt_runs_agent").on(table.agentId),
+  index("idx_eval_rt_runs_org").on(table.organizationId),
+  index("idx_eval_rt_runs_status").on(table.status),
+]);
+export const insertEvalRedteamRunSchema = createInsertSchema(evalRedteamRuns).omit({ id: true, startedAt: true });
+export type InsertEvalRedteamRun = z.infer<typeof insertEvalRedteamRunSchema>;
+export type EvalRedteamRun = typeof evalRedteamRuns.$inferSelect;
+
+// ── Eval Redteam Results ──────────────────────────────────────────────────────
+export const evalRedteamResults = pgTable("eval_redteam_results", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  runId: varchar("run_id").notNull(),
+  agentId: varchar("agent_id").notNull(),
+  templateId: varchar("template_id"),
+  category: text("category").notNull(),
+  attackInput: text("attack_input").notNull(),
+  agentResponse: text("agent_response"),
+  vulnerabilityDetected: boolean("vulnerability_detected").default(false),
+  severity: text("severity"),
+  reasoning: text("reasoning"),
+  traceId: varchar("trace_id"),
+  latencyMs: integer("latency_ms"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_eval_rt_results_run").on(table.runId),
+  index("idx_eval_rt_results_agent").on(table.agentId),
+]);
+export const insertEvalRedteamResultSchema = createInsertSchema(evalRedteamResults).omit({ id: true, createdAt: true });
+export type InsertEvalRedteamResult = z.infer<typeof insertEvalRedteamResultSchema>;
+export type EvalRedteamResult = typeof evalRedteamResults.$inferSelect;

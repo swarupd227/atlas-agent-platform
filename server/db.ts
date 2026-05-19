@@ -681,6 +681,94 @@ export async function runStartupMigrations() {
         created_by       TEXT
       );
       CREATE INDEX IF NOT EXISTS idx_emv_metric_id ON eval_metric_versions(metric_id);
+
+      -- P2: Production Eval Monitor tables
+      CREATE TABLE IF NOT EXISTS eval_monitoring_configs (
+        id                  VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id     VARCHAR,
+        agent_id            VARCHAR NOT NULL UNIQUE,
+        metric_collection_id VARCHAR,
+        sampling_rate       REAL NOT NULL DEFAULT 0.1,
+        alert_thresholds    JSONB DEFAULT '{}'::jsonb,
+        enabled             BOOLEAN DEFAULT TRUE,
+        created_at          TIMESTAMP DEFAULT NOW(),
+        updated_at          TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_eval_mon_cfg_agent ON eval_monitoring_configs(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_eval_mon_cfg_org   ON eval_monitoring_configs(organization_id);
+
+      CREATE TABLE IF NOT EXISTS eval_alerts (
+        id                  VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id     VARCHAR,
+        agent_id            VARCHAR NOT NULL,
+        metric_name         TEXT NOT NULL DEFAULT 'pass_rate',
+        severity            TEXT NOT NULL DEFAULT 'P2',
+        current_value       REAL,
+        threshold_value     REAL,
+        baseline_value      REAL,
+        window_hours        INTEGER DEFAULT 24,
+        resolved            BOOLEAN DEFAULT FALSE,
+        resolved_at         TIMESTAMP,
+        acknowledged_at     TIMESTAMP,
+        acknowledged_by     TEXT,
+        triggered_at        TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_eval_alerts_agent    ON eval_alerts(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_eval_alerts_org      ON eval_alerts(organization_id);
+      CREATE INDEX IF NOT EXISTS idx_eval_alerts_resolved ON eval_alerts(resolved);
+
+      -- P2: Red Team Console tables
+      CREATE TABLE IF NOT EXISTS eval_attack_templates (
+        id                VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        category          TEXT NOT NULL,
+        industry_tags     TEXT[] DEFAULT '{}',
+        severity_hint     TEXT NOT NULL DEFAULT 'medium',
+        name              TEXT NOT NULL,
+        description       TEXT,
+        prompt_template   TEXT NOT NULL,
+        is_builtin        BOOLEAN DEFAULT TRUE,
+        created_at        TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_eval_atk_tmpl_cat ON eval_attack_templates(category);
+
+      CREATE TABLE IF NOT EXISTS eval_redteam_runs (
+        id                    VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id       VARCHAR,
+        agent_id              VARCHAR NOT NULL,
+        status                TEXT NOT NULL DEFAULT 'pending',
+        categories            TEXT[] DEFAULT '{}',
+        probes_per_category   INTEGER DEFAULT 5,
+        severity_threshold    TEXT DEFAULT 'medium',
+        attack_model          TEXT DEFAULT 'claude-sonnet-4-5',
+        total_probes          INTEGER DEFAULT 0,
+        completed_probes      INTEGER DEFAULT 0,
+        vulnerabilities_found INTEGER DEFAULT 0,
+        posture_score         INTEGER,
+        started_at            TIMESTAMP DEFAULT NOW(),
+        completed_at          TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_eval_rt_runs_agent  ON eval_redteam_runs(agent_id);
+      CREATE INDEX IF NOT EXISTS idx_eval_rt_runs_org    ON eval_redteam_runs(organization_id);
+      CREATE INDEX IF NOT EXISTS idx_eval_rt_runs_status ON eval_redteam_runs(status);
+
+      CREATE TABLE IF NOT EXISTS eval_redteam_results (
+        id                      VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id         VARCHAR,
+        run_id                  VARCHAR NOT NULL,
+        agent_id                VARCHAR NOT NULL,
+        template_id             VARCHAR,
+        category                TEXT NOT NULL,
+        attack_input            TEXT NOT NULL,
+        agent_response          TEXT,
+        vulnerability_detected  BOOLEAN DEFAULT FALSE,
+        severity                TEXT,
+        reasoning               TEXT,
+        trace_id                VARCHAR,
+        latency_ms              INTEGER,
+        created_at              TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_eval_rt_results_run   ON eval_redteam_results(run_id);
+      CREATE INDEX IF NOT EXISTS idx_eval_rt_results_agent ON eval_redteam_results(agent_id);
     `);
 
     // Remove operational metrics that were re-sourced from atlas-native → deepeval

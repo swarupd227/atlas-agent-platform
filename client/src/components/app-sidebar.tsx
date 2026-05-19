@@ -42,6 +42,8 @@ import {
   MonitorCheck,
   Home,
   ListChecks,
+  Radio,
+  ShieldAlert,
 } from "lucide-react";
 import {
   Sidebar,
@@ -140,6 +142,8 @@ function FullAppSidebar() {
         { title: "Metric Library", url: "/evals/metrics", icon: ListChecks },
         { title: "Datasets", url: "/evals/datasets", icon: Database },
         { title: "Runs", url: "/evals/runs", icon: PlayCircle },
+        { title: "Prod Monitor", url: "/evals/monitor", icon: Radio },
+        { title: "Red Team", url: "/evals/redteam", icon: ShieldAlert },
       ],
     },
     {
