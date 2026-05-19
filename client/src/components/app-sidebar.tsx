@@ -41,6 +41,7 @@ import {
   PlayCircle,
   MonitorCheck,
   Home,
+  ListChecks,
 } from "lucide-react";
 import {
   Sidebar,
@@ -135,8 +136,9 @@ function FullAppSidebar() {
       label: "Evaluate",
       icon: FlaskConical,
       items: [
-        { title: "Evaluations", url: "/evals", icon: FlaskConical },
-        { title: "Eval Datasets", url: "/golden-datasets", icon: Database },
+        { title: "Eval Studio", url: "/evals", icon: FlaskConical },
+        { title: "Metric Library", url: "/evals/metrics", icon: ListChecks },
+        { title: "Datasets", url: "/golden-datasets", icon: Database },
       ],
     },
     {

@@ -46,6 +46,7 @@ import TraceDetail from "@/pages/trace-detail";
 import AgentWizard from "@/pages/agent-wizard";
 import EvalDetail from "@/pages/eval-detail";
 import Evals from "@/pages/evals";
+import EvalMetrics from "@/pages/eval-metrics";
 import Templates from "@/pages/templates";
 import TemplateDetail from "@/pages/template-detail";
 import Improvements from "@/pages/improvements";
@@ -270,6 +271,7 @@ function DashboardRouter() {
       <Route path="/blueprints" component={Blueprints} />
       <Route path="/blueprints/:id" component={BlueprintDetail} />
       <Route path="/evals" component={Evals} />
+      <Route path="/evals/metrics" component={EvalMetrics} />
       <Route path="/evals/replay" component={ShadowReplay} />
       <Route path="/evals/:id" component={EvalDetail} />
       <Route path="/golden-datasets/:id" component={GoldenDatasetDetail} />
