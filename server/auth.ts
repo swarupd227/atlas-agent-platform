@@ -123,8 +123,7 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   // Accepts: Authorization: Bearer <api-key> on /eval/* paths only.
   // Key is hashed with SHA-256 and looked up in agent_api_keys table.
   // The key must have "invoke" or "eval" scope (least-privilege enforcement).
-  const BEARER_ALLOWED_PREFIXES = ["/eval/", "/eval"];
-  const pathAllowsBearer = BEARER_ALLOWED_PREFIXES.some(p => req.path === p || req.path.startsWith("/eval/"));
+  const pathAllowsBearer = req.path === "/eval" || req.path.startsWith("/eval/");
   const authHeader = req.headers["authorization"];
   if (pathAllowsBearer && typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
     const rawKey = authHeader.slice(7).trim();

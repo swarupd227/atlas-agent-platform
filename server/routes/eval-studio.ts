@@ -1281,8 +1281,11 @@ async function agentGateUpsert(
   try {
     const orgId = getOrgId(req);
     const { agentId } = req.params;
+
+    // Validate agent existence and org ownership
     const agent = await storage.getAgent(agentId);
-    if (agent) assertOrgOwnership(agent.organizationId, orgId);
+    if (!agent) { res.status(404).json({ message: "Agent not found" }); return; }
+    assertOrgOwnership(agent.organizationId, orgId);
 
     const body = req.body as {
       datasetId?: string;
@@ -1291,6 +1294,24 @@ async function agentGateUpsert(
       regressionWindowPct?: number;
       isActive?: boolean;
     };
+
+    // Validate dataset ownership when provided
+    if (body.datasetId) {
+      const dataset = await storage.getEvalDataset(body.datasetId);
+      if (!dataset) { res.status(404).json({ message: "Dataset not found" }); return; }
+      if (orgId && dataset.organizationId && dataset.organizationId !== orgId) {
+        res.status(403).json({ message: "Dataset does not belong to your organization" }); return;
+      }
+    }
+
+    // Validate metric collection ownership when provided
+    if (body.metricCollectionId) {
+      const mc = await storage.getEvalMetricCollection(body.metricCollectionId);
+      if (!mc) { res.status(404).json({ message: "Metric collection not found" }); return; }
+      if (orgId && mc.organizationId && mc.organizationId !== orgId) {
+        res.status(403).json({ message: "Metric collection does not belong to your organization" }); return;
+      }
+    }
 
     const gate = await storage.upsertEvalGate({
       agentId,
@@ -1452,6 +1473,11 @@ router.post("/api/eval/gates/:agentId/promote", async (req, res) => {
       return res.status(400).json({ message: "environment must be 'staging' or 'production'" });
     }
 
+    // ── Validate agent existence and org ownership before any further work ────
+    const agent = await storage.getAgent(agentId);
+    if (!agent) return res.status(404).json({ message: "Agent not found" });
+    assertOrgOwnership(agent.organizationId, orgId);
+
     // ── Gate status computed server-side — never trust client ────────────────
     const gate = await storage.getEvalGate(agentId);
     const recentRuns = await storage.getEvalTestRuns({ agentId });
@@ -1490,9 +1516,6 @@ router.post("/api/eval/gates/:agentId/promote", async (req, res) => {
         });
       }
     }
-
-    const agent = await storage.getAgent(agentId);
-    if (agent) assertOrgOwnership(agent.organizationId, orgId);
 
     // Audit-log the promote action
     await storage.createAuditEvent({
