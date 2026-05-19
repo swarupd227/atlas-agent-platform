@@ -47,6 +47,7 @@ import AgentWizard from "@/pages/agent-wizard";
 import EvalDetail from "@/pages/eval-detail";
 import Evals from "@/pages/evals";
 import EvalMetrics from "@/pages/eval-metrics";
+import EvalMetricBuilder from "@/pages/eval-metric-builder";
 import EvalRuns from "@/pages/eval-runs";
 import EvalRunDetail from "@/pages/eval-run-detail";
 import EvalDatasets from "@/pages/eval-datasets";
@@ -275,6 +276,8 @@ function DashboardRouter() {
       <Route path="/blueprints" component={Blueprints} />
       <Route path="/blueprints/:id" component={BlueprintDetail} />
       <Route path="/evals" component={Evals} />
+      <Route path="/evals/metrics/new" component={EvalMetricBuilder} />
+      <Route path="/evals/metrics/:id/edit" component={EvalMetricBuilder} />
       <Route path="/evals/metrics" component={EvalMetrics} />
       <Route path="/evals/datasets" component={EvalDatasets} />
       <Route path="/evals/runs" component={EvalRuns} />

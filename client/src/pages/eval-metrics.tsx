@@ -55,6 +55,7 @@ import {
   Loader2,
   BarChart3,
   Cpu,
+  Plus,
 } from "lucide-react";
 
 const CATEGORIES = [
@@ -377,10 +378,12 @@ function MetricDetailPanel({
             Clone
           </Button>
           {metric.source === "tenant-private" && (
-            <Button variant="outline" className="flex-1" data-testid="button-edit-metric">
-              <Settings className="w-4 h-4 mr-2" />
-              Edit
-            </Button>
+            <Link href={`/evals/metrics/${metric.id}/edit`}>
+              <Button variant="outline" className="flex-1" data-testid="button-edit-metric">
+                <Settings className="w-4 h-4 mr-2" />
+                Edit
+              </Button>
+            </Link>
           )}
         </div>
       </div>
@@ -661,20 +664,28 @@ export default function EvalMetrics() {
               {total} metric{total !== 1 ? "s" : ""}{categoryFilter !== "all" ? ` in ${categoryFilter}` : ""}{sourceFilter !== "all" ? ` · ${sourceFilter}` : ""}
             </p>
           </div>
-          <div className="relative max-w-72 w-full">
-            <Search className="absolute left-2.5 top-2.5 w-4 h-4 text-muted-foreground pointer-events-none" />
-            <Input
-              placeholder="Search metrics…"
-              value={searchQuery}
-              onChange={(e) => handleSearchChange(e.target.value)}
-              className="pl-8 h-9 text-sm"
-              data-testid="input-metric-search"
-            />
-            {searchQuery && (
-              <button onClick={() => handleSearchChange("")} className="absolute right-2.5 top-2.5">
-                <X className="w-4 h-4 text-muted-foreground hover:text-foreground" />
-              </button>
-            )}
+          <div className="flex items-center gap-2">
+            <div className="relative max-w-64 w-full">
+              <Search className="absolute left-2.5 top-2.5 w-4 h-4 text-muted-foreground pointer-events-none" />
+              <Input
+                placeholder="Search metrics…"
+                value={searchQuery}
+                onChange={(e) => handleSearchChange(e.target.value)}
+                className="pl-8 h-9 text-sm"
+                data-testid="input-metric-search"
+              />
+              {searchQuery && (
+                <button onClick={() => handleSearchChange("")} className="absolute right-2.5 top-2.5">
+                  <X className="w-4 h-4 text-muted-foreground hover:text-foreground" />
+                </button>
+              )}
+            </div>
+            <Link href="/evals/metrics/new">
+              <Button size="sm" className="h-9 gap-1.5 shrink-0" data-testid="button-new-metric">
+                <Plus className="w-4 h-4" />
+                New Metric
+              </Button>
+            </Link>
           </div>
         </div>
 

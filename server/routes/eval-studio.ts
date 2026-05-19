@@ -13,7 +13,7 @@ const createMetricSchema = z.object({
   category: z.enum(["agent", "rag", "conversational", "safety", "summarization", "general", "compliance", "operational"]).default("general"),
   metricType: z.string().default("g-eval"),
   description: z.string().optional(),
-  criteria: z.string().min(1),
+  criteria: z.string().default(""),
   evaluationParams: z.array(z.string()).default(["input", "actual_output"]),
   judgeModel: z.string().optional(),
   threshold: z.number().min(0).max(1).default(0.5),
@@ -75,10 +75,15 @@ const previewMetricSchema = z.object({
   metricConfig: z.object({
     name: z.string().optional(),
     criteria: z.string().optional(),
+    metricType: z.string().optional(),
   }).optional(),
   sampleInput: z.string().min(1),
   sampleActualOutput: z.string().optional(),
   sampleExpectedOutput: z.string().optional(),
+});
+
+const validateCodeSchema = z.object({
+  code: z.string().min(1).max(20_000),
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -281,20 +286,48 @@ router.post("/api/eval/metrics/preview", async (req, res) => {
   try {
     const body = previewMetricSchema.parse(req.body);
     const startMs = Date.now();
+    const criteria = body.metricConfig?.criteria || "Evaluate the response quality";
     const judgeResult = await runLlmJudge(
       body.metricConfig?.name || "Preview",
       { input: body.sampleInput },
       body.sampleExpectedOutput ? { expected: body.sampleExpectedOutput } : null,
-      `Metric criteria: ${body.metricConfig?.criteria || "Evaluate the response quality"}`,
+      `Metric criteria:\n${criteria}`,
       body.sampleActualOutput || null,
     );
+    const score = judgeResult.isPassed
+      ? Math.max(judgeResult.confidence, 0.5)
+      : Math.min(1 - judgeResult.confidence, 0.49);
     res.json({
-      score: judgeResult.isPassed ? judgeResult.confidence : 1 - judgeResult.confidence,
+      score: Math.max(0, Math.min(1, score)),
       pass: judgeResult.isPassed,
       reasoning: judgeResult.reason,
       latencyMs: Date.now() - startMs,
-      estimatedCostUsd: 0.002,
+      estimatedCostUsd: 0.002 + (criteria.length / 10_000) * 0.01,
     });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: err.errors });
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.post("/api/eval/metrics/validate-code", async (req, res) => {
+  try {
+    const { code } = validateCodeSchema.parse(req.body);
+    const issues: string[] = [];
+
+    if (!code.includes("BaseMetric")) issues.push("Class must extend BaseMetric");
+    if (!code.includes("def measure")) issues.push("Missing required method: measure(self, test_case)");
+    if (!code.includes("is_successful")) issues.push("Missing required method: is_successful(self)");
+    if (!code.includes("self.threshold")) issues.push("Consider defining self.threshold for pass/fail evaluation");
+    if (!code.includes("self.score")) issues.push("measure() should set self.score before returning");
+    if (code.length < 80) issues.push("Implementation appears incomplete");
+
+    // Warn on common mistakes
+    if (code.includes("import os") || code.includes("import subprocess")) {
+      issues.push("Security: avoid os/subprocess imports in metric code");
+    }
+
+    res.json({ valid: issues.length === 0, issues });
   } catch (err: any) {
     if (err instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: err.errors });
     res.status(500).json({ message: err.message });
