@@ -3,6 +3,7 @@ import { useParams, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { marked } from "marked";
+import DOMPurify from "dompurify";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useRole } from "@/components/role-provider";
@@ -48,7 +49,8 @@ import { formatDate } from "@/components/shared-utils";
 marked.setOptions({ breaks: true });
 
 function renderMarkdown(text: string): string {
-  return marked.parse(text) as string;
+  const raw = marked.parse(text) as string;
+  return DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
 }
 
 // ── Types ─────────────────────────────────────────────────────────────────────

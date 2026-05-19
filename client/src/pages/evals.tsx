@@ -492,9 +492,9 @@ export default function Evals() {
                         <Sparkline data={sparkData} color={passRate >= 0.75 ? "amber" : "red"} />
                       </div>
                       <div className="flex items-center gap-1 shrink-0">
-                        <Link href={`/evals/runs/${run.id}`}>
+                        <Link href={`/evals/runs/${run.id}?passFail=fail`}>
                           <Button variant="ghost" size="sm" className="text-xs h-7 px-2" data-testid={`link-inspect-run-${run.id}`}>
-                            Inspect
+                            Traces
                             <ArrowRight className="w-3 h-3 ml-1" />
                           </Button>
                         </Link>
