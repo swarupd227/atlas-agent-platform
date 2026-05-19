@@ -398,8 +398,8 @@ export default function EvalAnnotate() {
                 )}
               </div>
 
-              {/* ── IAA panel ── */}
-              {existingAnnotations.length > 0 && (
+              {/* ── IAA panel — shown only when 2+ annotators have reviewed ── */}
+              {existingAnnotations.length >= 2 && (
                 <Card className="border-blue-200 dark:border-blue-800/50 bg-blue-50/30 dark:bg-blue-950/10">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm flex items-center gap-2">

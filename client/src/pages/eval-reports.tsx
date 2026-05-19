@@ -756,28 +756,23 @@ export default function EvalReports() {
                           <p className="text-xs font-mono text-foreground/70 leading-relaxed">{tmpl.samplePreview}</p>
                         </div>
                       </CardContent>
-                      {/* Per-card Generate CTA */}
+                      {/* Per-card Generate CTA — selects template and opens config panel */}
                       <div className="px-5 pb-4 pt-2 border-t">
                         <Button
                           size="sm"
-                          data-testid={`generate-btn-card-${tmpl.id}`}
+                          variant={selectedTemplate === tmpl.id ? "default" : "outline"}
+                          data-testid={`select-btn-card-${tmpl.id}`}
                           className="w-full"
-                          disabled={generateReport.isPending && selectedTemplate === tmpl.id}
                           onClick={() => {
                             setSelectedTemplate(tmpl.id);
-                            const payload: Record<string, any> = {
-                              templateType: tmpl.id,
-                              agentIds: selectedAgentIds,
-                              format: selectedFormat,
-                              timeWindowDays: parseInt(timeWindowDays),
-                            };
-                            generateReport.mutate(payload);
+                            // Scroll config panel into view on narrow screens
+                            document.getElementById("report-config-panel")?.scrollIntoView({ behavior: "smooth" });
                           }}
                         >
-                          {generateReport.isPending && selectedTemplate === tmpl.id ? (
-                            <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Generating…</>
+                          {selectedTemplate === tmpl.id ? (
+                            <><ChevronRight className="h-3.5 w-3.5 mr-1.5" /> Configure &amp; Generate</>
                           ) : (
-                            <><Play className="h-3.5 w-3.5 mr-1.5" /> Generate</>
+                            <><Play className="h-3.5 w-3.5 mr-1.5" /> Select Template</>
                           )}
                         </Button>
                       </div>
@@ -802,7 +797,7 @@ export default function EvalReports() {
 
       {/* ── Right: generation panel ── */}
       {activeView === "templates" && (
-        <div className="w-80 border-l flex flex-col shrink-0">
+        <div id="report-config-panel" className="w-80 border-l flex flex-col shrink-0">
           <div className="p-4 border-b">
             <h3 className="font-semibold text-sm">Generate Report</h3>
             <p className="text-xs text-muted-foreground mt-0.5">

@@ -2222,7 +2222,9 @@ router.post("/api/eval/annotations", async (req, res) => {
     const orgId = getOrgId(req);
     // Identity comes from auth session; body annotatorId is ignored in production
     const annotatorId = getAnnotatorId(req);
-    const { traceId, ratings, comment, promoteToGolden, isEdgeCase, datasetId } = req.body;
+    const { traceId, ratings, comment, promoteToGolden, isEdgeCase } = req.body;
+    // Note: body `datasetId` is intentionally ignored — promotion always targets the
+    // trace's associated dataset to prevent cross-dataset write escalation.
     if (!traceId) return res.status(400).json({ message: "traceId is required" });
 
     // Org-scope guard: verify the trace belongs to this org before annotating (IDOR protection)
@@ -2234,14 +2236,15 @@ router.post("/api/eval/annotations", async (req, res) => {
 
     let promotedToGoldenId: string | null = null;
 
-    // Promote to golden if requested — use the golden's own datasetId by default
+    // Promote to golden if requested — always uses the golden's own datasetId (not client-supplied)
     if (promoteToGolden) {
       const trace = targetTrace;
       if (trace) {
         const golden = await storage.getEvalGolden(trace.goldenId).catch(() => null);
         if (golden) {
-          // Target dataset: explicit override from body, or golden's own dataset
-          const targetDatasetId = datasetId ?? golden.datasetId;
+          // Enforce dataset ownership: only promote into the golden's own dataset
+          // Verify dataset belongs to same org before writing
+          const targetDatasetId = golden.datasetId;
           const ratingMap = (ratings as Record<string, any>) ?? {};
 
           // Fallback priority: 1) annotator's corrected output, 2) trace actual output (from root span), 3) golden expected
