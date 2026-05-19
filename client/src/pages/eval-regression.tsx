@@ -1536,11 +1536,14 @@ export default function EvalRegression() {
               CI/CD Integration
             </SheetTitle>
             <SheetDescription>
-              These snippets use the gate trigger endpoint — only the agent ID is
-              needed. Dataset and metrics are resolved from the gate definition
-              automatically. The script exits{" "}
-              <code className="font-mono">0</code> when the gate passes,{" "}
+              These snippets call the gate trigger endpoint and poll for completion.
+              They exit <code className="font-mono">0</code> when the gate passes,{" "}
               <code className="font-mono">1</code> when it fails.
+              <br />
+              <strong>API key:</strong> create one via the agent's{" "}
+              <em>API Keys</em> panel and store it as{" "}
+              <code className="font-mono">ATLAS_API_KEY</code> in your CI secrets.
+              Bearer key auth is supported for all eval endpoints.
             </SheetDescription>
           </SheetHeader>
 

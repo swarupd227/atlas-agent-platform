@@ -2,8 +2,8 @@ import type { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import { db } from "./db";
-import { users } from "@shared/schema";
-import { eq } from "drizzle-orm";
+import { users, agentApiKeys, agents } from "@shared/schema";
+import { eq, and } from "drizzle-orm";
 
 export type SecurityMode = "demo" | "production";
 
@@ -110,7 +110,7 @@ const AUTH_EXEMPT_PATHS = [
   "/api/auth/mode",
 ];
 
-export function authMiddleware(req: Request, res: Response, next: NextFunction) {
+export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
   if (getSecurityMode() === "demo") {
     return next();
   }
@@ -119,6 +119,53 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
     return next();
   }
 
+  // ── Bearer API key auth (for CI runners and programmatic access) ────────────
+  // Accepts: Authorization: Bearer <api-key>
+  // Key is hashed with SHA-256 and looked up in agent_api_keys table.
+  const authHeader = req.headers["authorization"];
+  if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
+    const rawKey = authHeader.slice(7).trim();
+    if (rawKey) {
+      try {
+        const keyHash = crypto.createHash("sha256").update(rawKey).digest("hex");
+        const [apiKey] = await db
+          .select()
+          .from(agentApiKeys)
+          .where(and(eq(agentApiKeys.keyHash, keyHash), eq(agentApiKeys.isActive, true)));
+
+        if (apiKey) {
+          const isExpired = apiKey.expiresAt && apiKey.expiresAt <= new Date();
+          if (!isExpired) {
+            // Resolve org from the owning agent
+            const [agent] = await db
+              .select()
+              .from(agents)
+              .where(eq(agents.id, apiKey.agentId));
+
+            req.authUser = {
+              userId: `apikey:${apiKey.id}`,
+              username: `api-key:${apiKey.name}`,
+              role: "api",
+              email: null,
+              organizationId: agent?.organizationId ?? undefined,
+            };
+
+            // Update lastUsedAt non-blocking
+            db.update(agentApiKeys)
+              .set({ lastUsedAt: new Date() })
+              .where(eq(agentApiKeys.id, apiKey.id))
+              .catch(() => {});
+
+            return next();
+          }
+        }
+      } catch {
+        // Fall through to cookie-based auth
+      }
+    }
+  }
+
+  // ── Cookie / JWT auth (for browser sessions) ────────────────────────────────
   const token = req.cookies?.[COOKIE_NAME];
   if (!token) {
     return res.status(401).json({ message: "Authentication required" });
