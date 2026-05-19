@@ -2494,8 +2494,24 @@ router.post("/api/agents/:agentId/prompts/:version/promote", async (req, res) =>
     if (isNaN(version)) return res.status(400).json({ message: "version must be a number" });
     const prompt = await storage.promoteAgentPrompt(req.params.agentId, version, orgId ?? undefined);
     if (!prompt) return res.status(404).json({ message: "Prompt version not found" });
-    // Also sync the agent's systemPrompt field
+    // Sync the agent's systemPrompt field
     await storage.updateAgent(req.params.agentId, { systemPrompt: prompt.content }, orgId ?? undefined);
+    // Audit log for governance trail
+    try {
+      await storage.createAuditEvent({
+        organizationId: orgId ?? undefined,
+        actorType: "user",
+        action: "agent_prompt.promote",
+        objectType: "agent_prompt",
+        objectId: prompt.id,
+        details: JSON.stringify({
+          agentId: req.params.agentId,
+          version: prompt.version,
+          sha256: prompt.sha256,
+          promotedAt: new Date().toISOString(),
+        }),
+      });
+    } catch (_) { /* non-fatal */ }
     res.json(prompt);
   } catch (err: any) { res.status(500).json({ message: err.message }); }
 });
@@ -2549,52 +2565,119 @@ router.post("/api/eval/experiments", async (req, res) => {
       createdBy: createdBy ?? "user",
     });
 
-    // Simulate parallel execution asynchronously (compute mock results per variant)
+    // Run one simulated evaluation per variant (parallel), then compute proper paired t-tests
     setImmediate(async () => {
       try {
+        // ── Helper: Lanczos lgamma ──────────────────────────────────────────────
+        function lgamma(x: number): number {
+          const g = 7;
+          const c = [0.99999999999980993, 676.5203681218851, -1259.1392167224028,
+            771.32342877765313, -176.61502916214059, 12.507343278686905,
+            -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+          if (x < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * x)) - lgamma(1 - x);
+          let z = x - 1;
+          let s = c[0];
+          for (let i = 1; i < g + 2; i++) s += c[i] / (z + i);
+          const t2 = z + g + 0.5;
+          return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(t2) - t2 + Math.log(s);
+        }
+
+        // ── Helper: Regularized incomplete beta I_x(a, b) via Lentz continued fraction ──
+        function betai(a: number, b: number, x: number): number {
+          if (x <= 0) return 0;
+          if (x >= 1) return 1;
+          const lbeta = lgamma(a + b) - lgamma(a) - lgamma(b);
+          const front = Math.exp(Math.log(x) * a + Math.log(1 - x) * b - lbeta) / a;
+          // Use symmetry for numerical stability
+          if (x > (a + 1) / (a + b + 2)) return 1 - betai(b, a, 1 - x);
+          let cf = 1, c = 1, d = 1 - (a + b) * x / (a + 1);
+          if (Math.abs(d) < 1e-30) d = 1e-30;
+          d = 1 / d; cf = d;
+          for (let m = 1; m <= 200; m++) {
+            const m2 = 2 * m;
+            let aa = m * (b - m) * x / ((a + m2 - 1) * (a + m2));
+            d = 1 + aa * d; if (Math.abs(d) < 1e-30) d = 1e-30;
+            c = 1 + aa / c; if (Math.abs(c) < 1e-30) c = 1e-30;
+            d = 1 / d; cf *= d * c;
+            aa = -(a + m) * (a + b + m) * x / ((a + m2) * (a + m2 + 1));
+            d = 1 + aa * d; if (Math.abs(d) < 1e-30) d = 1e-30;
+            c = 1 + aa / c; if (Math.abs(c) < 1e-30) c = 1e-30;
+            d = 1 / d; const del = d * c; cf *= del;
+            if (Math.abs(del - 1) < 1e-10) break;
+          }
+          return front * cf;
+        }
+
+        // ── Helper: Two-tailed paired t-test returning { tStat, pValue, effectSize } ──
+        function pairedTTest(aScores: number[], bScores: number[]): { tStat: number; pValue: number; effectSize: number } {
+          const n = Math.min(aScores.length, bScores.length);
+          if (n < 2) return { tStat: 0, pValue: 1, effectSize: 0 };
+          const diffs = Array.from({ length: n }, (_, i) => aScores[i] - bScores[i]);
+          const dMean = diffs.reduce((a, b) => a + b, 0) / n;
+          // Sample std dev (Bessel-corrected)
+          const dVar = diffs.reduce((a, b) => a + (b - dMean) ** 2, 0) / (n - 1);
+          const dStd = Math.sqrt(dVar);
+          const se = dStd / Math.sqrt(n);
+          if (se < 1e-10) return { tStat: 0, pValue: 1, effectSize: 0 };
+          const t = dMean / se;
+          const df = n - 1;
+          // Two-tailed p-value: p = I_{x}(df/2, 0.5) where x = df / (df + t²)
+          const xBeta = df / (df + t * t);
+          const pValue = Math.max(1e-4, Math.min(1, betai(df / 2, 0.5, xBeta)));
+          const effectSize = dMean / (dStd || 1); // Cohen's d
+          return { tStat: t, pValue, effectSize };
+        }
+
         const results: Record<string, unknown> = {};
         const significance: Record<string, unknown> = {};
 
+        // ── Simulate one run per variant ────────────────────────────────────────
         for (const v of variantPromptVersions) {
+          const N = 25; // simulated sample size per variant
           const passRate = 0.55 + Math.random() * 0.40;
-          const scores: number[] = Array.from({ length: 20 }, () => Math.max(0, Math.min(1, passRate + (Math.random() - 0.5) * 0.2)));
-          const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
-          const std = Math.sqrt(scores.reduce((a, b) => a + (b - mean) ** 2, 0) / scores.length);
+          const scores: number[] = Array.from({ length: N }, () =>
+            Math.max(0, Math.min(1, passRate + (Math.random() - 0.5) * 0.25)));
+          const mean = scores.reduce((a, b) => a + b, 0) / N;
+          // Sample std dev
+          const sampleVar = scores.reduce((a, b) => a + (b - mean) ** 2, 0) / (N - 1);
           results[`v${v}`] = {
             variantVersion: v,
             passRate: parseFloat(passRate.toFixed(3)),
             meanScore: parseFloat(mean.toFixed(3)),
-            stdDev: parseFloat(std.toFixed(3)),
+            stdDev: parseFloat(Math.sqrt(sampleVar).toFixed(3)),
             costUsd: parseFloat((0.001 + Math.random() * 0.05).toFixed(4)),
             avgLatencyMs: Math.round(400 + Math.random() * 800),
             scores,
           };
         }
 
-        // Compute significance (two-tailed paired t-test approximation for top-2 variants)
-        const sortedVariants = Object.entries(results).sort(([, a]: any, [, b]: any) => (b as any).meanScore - (a as any).meanScore);
-        if (sortedVariants.length >= 2) {
-          const [vA, vB] = sortedVariants;
-          const aScores = (vA[1] as any).scores as number[];
-          const bScores = (vB[1] as any).scores as number[];
-          const n = Math.min(aScores.length, bScores.length);
-          const diffs = aScores.slice(0, n).map((s: number, i: number) => s - bScores[i]);
-          const dMean = diffs.reduce((a: number, b: number) => a + b, 0) / n;
-          const dStd = Math.sqrt(diffs.reduce((a: number, b: number) => a + b ** 2, 0) / n - dMean ** 2);
-          const t = dStd === 0 ? 0 : (dMean / (dStd / Math.sqrt(n)));
-          const pValue = parseFloat((2 * (1 - Math.min(0.9999, Math.abs(t) * 0.1))).toFixed(4));
-          const significant = pValue < 0.05;
-          significance[`${vA[0]}_vs_${vB[0]}`] = {
-            tStat: parseFloat(t.toFixed(4)),
-            pValue,
-            significant,
-            effectSize: parseFloat((dMean / (dStd || 1)).toFixed(3)),
-            label: significant ? "Statistically significant improvement" : "No significant difference",
-          };
+        // ── Compute two-tailed paired t-test for every pair of variants ─────────
+        const variantKeys = Object.keys(results);
+        for (let i = 0; i < variantKeys.length; i++) {
+          for (let j = i + 1; j < variantKeys.length; j++) {
+            const keyA = variantKeys[i], keyB = variantKeys[j];
+            const vA = (results[keyA] as any), vB = (results[keyB] as any);
+            const { tStat, pValue, effectSize } = pairedTTest(vA.scores, vB.scores);
+            const significant = pValue < 0.05;
+            // Label from A's perspective (higher mean = better)
+            const betterKey = vA.meanScore >= vB.meanScore ? keyA : keyB;
+            const worseKey = vA.meanScore >= vB.meanScore ? keyB : keyA;
+            significance[`${betterKey}_vs_${worseKey}`] = {
+              tStat: parseFloat(tStat.toFixed(4)),
+              pValue: parseFloat(pValue.toFixed(4)),
+              significant,
+              effectSize: parseFloat(effectSize.toFixed(3)),
+              label: significant
+                ? `${betterKey} significantly outperforms ${worseKey} (p = ${pValue.toFixed(3)})`
+                : `No significant difference between ${keyA} and ${keyB} (p = ${pValue.toFixed(3)})`,
+            };
+          }
         }
 
-        const winnerEntry = Object.entries(results).sort(([, a]: any, [, b]: any) => (b as any).passRate - (a as any).passRate)[0];
-        const winnerVersion = winnerEntry ? parseInt((winnerEntry[1] as any).variantVersion, 10) : null;
+        const winnerEntry = Object.entries(results)
+          .sort(([, a]: any, [, b]: any) => (b as any).passRate - (a as any).passRate)[0];
+        const winnerVersion = winnerEntry
+          ? parseInt((winnerEntry[1] as any).variantVersion, 10) : null;
 
         await storage.updateEvalExperiment(exp.id, {
           status: "completed",
@@ -2639,7 +2722,8 @@ router.get("/api/eval/marketplace/:id", async (req, res) => {
 // GET /api/eval/marketplace-installations  — list installations for this org
 router.get("/api/eval/marketplace-installations", async (req, res) => {
   try {
-    const orgId = getOrgId(req) ?? "default";
+    const orgId = getOrgId(req);
+    if (!orgId) return res.status(400).json({ message: "Organization context required" });
     const installations = await storage.getMarketplaceInstallations(orgId);
     res.json(installations);
   } catch (err: any) { res.status(500).json({ message: err.message }); }
@@ -2648,11 +2732,13 @@ router.get("/api/eval/marketplace-installations", async (req, res) => {
 // POST /api/eval/marketplace/:id/install  — install an asset into tenant catalog
 router.post("/api/eval/marketplace/:id/install", async (req, res) => {
   try {
-    const orgId = getOrgId(req) ?? "default";
+    const orgId = getOrgId(req);
+    if (!orgId) return res.status(400).json({ message: "Organization context required" });
+
     const asset = await storage.getMarketplaceAsset(req.params.id);
     if (!asset) return res.status(404).json({ message: "Asset not found" });
 
-    // Check if already installed
+    // Check if already installed for this tenant
     const existing = await storage.getMarketplaceInstallations(orgId);
     if (existing.some(i => i.assetId === asset.id)) {
       return res.status(409).json({ message: "Already installed" });
@@ -2665,8 +2751,9 @@ router.post("/api/eval/marketplace/:id/install", async (req, res) => {
     });
     await storage.incrementMarketplaceAssetInstallCount(asset.id);
 
-    // Unpack asset contents into tenant catalog
+    // Unpack asset contents into tenant catalog based on asset type
     const contents = (asset.contentsJson ?? {}) as Record<string, unknown>;
+
     if (asset.assetType === "metric_pack" && Array.isArray((contents as any).metrics)) {
       for (const m of (contents as any).metrics) {
         await storage.createEvalMetric({
@@ -2695,7 +2782,63 @@ router.post("/api/eval/marketplace/:id/install", async (req, res) => {
           sourceAssetId: asset.id,
         });
       }
+    } else if (asset.assetType === "dataset_template" && Array.isArray((contents as any).goldens)) {
+      // Create a new eval dataset pre-populated from the template goldens
+      const ds = await storage.createEvalDataset({
+        organizationId: orgId,
+        name: `${asset.title} (imported)`,
+        description: asset.description ?? undefined,
+        version: 1,
+        goldenCount: (contents as any).goldens.length,
+        tags: (asset.industryTags ?? []),
+        isBaseline: false,
+        createdBy: "marketplace",
+      });
+      // Seed goldens if createEvalGolden is available
+      if (typeof storage.createEvalGolden === "function") {
+        for (const g of (contents as any).goldens) {
+          try {
+            await (storage as any).createEvalGolden({
+              organizationId: orgId,
+              datasetId: ds.id,
+              input: g.input ?? "",
+              expectedOutput: g.expectedOutput ?? null,
+              context: g.context ?? null,
+              tags: g.tags ?? [],
+              source: "marketplace",
+            });
+          } catch (_) { /* skip individual golden failures */ }
+        }
+      }
+    } else if (asset.assetType === "report_template") {
+      // Store as a report schedule template in eval_report_schedules
+      if (typeof storage.createEvalReportSchedule === "function") {
+        await (storage as any).createEvalReportSchedule({
+          organizationId: orgId,
+          name: `${asset.title} (marketplace template)`,
+          description: asset.description ?? undefined,
+          reportType: (contents as any).reportType ?? "compliance_summary",
+          frequency: "on_demand",
+          format: (contents as any).format ?? "pdf",
+          recipients: [],
+          isActive: false,
+          createdBy: "marketplace",
+          sourceAssetId: asset.id,
+        });
+      }
     }
+
+    // Audit log the install
+    try {
+      await storage.createAuditEvent({
+        organizationId: orgId,
+        actorType: "user",
+        action: "marketplace_asset.install",
+        objectType: "marketplace_asset",
+        objectId: asset.id,
+        details: JSON.stringify({ assetTitle: asset.title, assetType: asset.assetType, version: asset.version }),
+      });
+    } catch (_) { /* non-fatal */ }
 
     res.status(201).json({ installation, asset });
   } catch (err: any) { res.status(500).json({ message: err.message }); }

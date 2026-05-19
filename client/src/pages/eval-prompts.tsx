@@ -119,8 +119,15 @@ export default function EvalPrompts() {
   const { data: agents, isLoading: agentsLoading } = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
   const { data: datasets } = useQuery<EvalDataset[]>({ queryKey: ["/api/eval/datasets"] });
   const { data: collections } = useQuery<EvalMetricCollection[]>({ queryKey: ["/api/eval/metric-collections"] });
-  const { data: experiments } = useQuery<EvalExperiment[]>({
+  const { data: experiments, refetch: refetchExperiments } = useQuery<EvalExperiment[]>({
     queryKey: ["/api/eval/experiments", selectedAgentId],
+    queryFn: async () => {
+      const res = await fetch(`/api/eval/experiments?agentId=${selectedAgentId}`, {
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    },
     enabled: !!selectedAgentId,
   });
 
