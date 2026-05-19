@@ -471,6 +471,54 @@ router.delete("/api/eval/goldens/:id", async (req, res) => {
   }
 });
 
+// ── Dataset Versioning ────────────────────────────────────────────────────────
+
+router.post("/api/eval/datasets/:id/versions", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const dataset = await storage.getEvalDataset(req.params.id);
+    if (!dataset) return res.status(404).json({ message: "Dataset not found" });
+    assertOrgOwnership(dataset.organizationId, orgId);
+
+    const nextVersion = (dataset.version ?? 1) + 1;
+    const newDataset = await storage.createEvalDataset({
+      organizationId: orgId,
+      agentId: dataset.agentId ?? undefined,
+      name: dataset.name,
+      description: dataset.description ?? undefined,
+      version: nextVersion,
+      goldenCount: 0,
+      tags: (dataset.tags ?? []) as string[],
+      isBaseline: false,
+      createdBy: dataset.createdBy ?? undefined,
+    });
+
+    // Copy all goldens from the source dataset
+    const sourceGoldens = await storage.getEvalGoldens({ datasetId: dataset.id, limit: 1000 });
+    if (sourceGoldens.length > 0) {
+      const copies = sourceGoldens.map((g) => ({
+        organizationId: orgId,
+        datasetId: newDataset.id,
+        input: g.input,
+        expectedOutput: g.expectedOutput ?? undefined,
+        retrievalContext: (g.retrievalContext ?? []) as string[],
+        expectedTools: g.expectedTools ?? undefined,
+        tags: (g.tags ?? []) as string[],
+        provenance: g.provenance ?? undefined,
+        author: g.author ?? undefined,
+      }));
+      const created = await storage.bulkCreateEvalGoldens(copies);
+      await storage.updateEvalDataset(newDataset.id, { goldenCount: created.length });
+      res.status(201).json({ ...newDataset, goldenCount: created.length });
+    } else {
+      res.status(201).json(newDataset);
+    }
+  } catch (err: any) {
+    if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
+    res.status(500).json({ message: err.message });
+  }
+});
+
 // ── Test Runs ────────────────────────────────────────────────────────────────
 
 router.get("/api/eval/runs", async (req, res) => {

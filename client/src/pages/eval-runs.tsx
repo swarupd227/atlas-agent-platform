@@ -1,11 +1,24 @@
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Link, useSearch } from "wouter";
-import type { Agent, EvalTestRun } from "@shared/schema";
+import { useState, useMemo } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Link, useSearch, useLocation } from "wouter";
+import type { Agent, EvalTestRun, EvalDataset, EvalMetric } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   FlaskConical,
   Play,
@@ -17,8 +30,15 @@ import {
   ArrowLeft,
   ChevronRight,
   Filter,
+  Database,
+  ChevronDown,
+  ChevronUp,
+  Zap,
+  ListChecks,
 } from "lucide-react";
 import { formatDate } from "@/components/shared-utils";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 function statusBadge(status: string, passRate: number | null) {
   if (status === "completed") {
@@ -28,12 +48,14 @@ function statusBadge(status: string, passRate: number | null) {
     return { label: "Failed", cls: "bg-red-500/10 text-red-600 border-red-500/20" };
   }
   if (status === "running") return { label: "Running", cls: "bg-blue-500/10 text-blue-600 border-blue-500/20" };
+  if (status === "pending") return { label: "Pending", cls: "bg-yellow-500/10 text-yellow-600 border-yellow-500/20" };
   if (status === "failed") return { label: "Error", cls: "bg-red-500/10 text-red-600 border-red-500/20" };
   return { label: status, cls: "bg-muted/50 text-muted-foreground" };
 }
 
 function statusIcon(status: string, passRate: number | null) {
   if (status === "running") return <Activity className="w-4 h-4 text-blue-500" />;
+  if (status === "pending") return <Clock className="w-4 h-4 text-yellow-500" />;
   if (status === "failed") return <AlertTriangle className="w-4 h-4 text-red-500" />;
   if (status === "completed") {
     const pct = passRate != null ? Math.round(passRate * 100) : 0;
@@ -47,6 +69,15 @@ export default function EvalRuns() {
   const search = useSearch();
   const params = new URLSearchParams(search);
   const filterAgentId = params.get("agentId");
+  const [, navigate] = useLocation();
+  const { toast } = useToast();
+  const qc = useQueryClient();
+
+  const [configOpen, setConfigOpen] = useState(false);
+  const [runAgentId, setRunAgentId] = useState<string>("");
+  const [runDatasetId, setRunDatasetId] = useState<string>("");
+  const [selectedMetricIds, setSelectedMetricIds] = useState<string[]>([]);
+  const [judgeModel, setJudgeModel] = useState<string>("__default__");
 
   const { data: runs, isLoading: runsLoading } = useQuery<EvalTestRun[]>({
     queryKey: ["/api/eval/runs"],
@@ -54,6 +85,14 @@ export default function EvalRuns() {
 
   const { data: agents } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
+  });
+
+  const { data: datasets } = useQuery<EvalDataset[]>({
+    queryKey: ["/api/eval/datasets"],
+  });
+
+  const { data: metrics } = useQuery<EvalMetric[]>({
+    queryKey: ["/api/eval/metrics"],
   });
 
   const agentMap = useMemo(() => {
@@ -69,6 +108,38 @@ export default function EvalRuns() {
     const filtered = filterAgentId ? all.filter(r => r.agentId === filterAgentId) : all;
     return [...filtered].sort((a, b) => new Date(b.startedAt!).getTime() - new Date(a.startedAt!).getTime());
   }, [runs, filterAgentId]);
+
+  const startRunMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/eval/runs", {
+        agentId: runAgentId,
+        datasetId: runDatasetId,
+        metricIds: selectedMetricIds,
+        judgeModelOverride: judgeModel === "__default__" ? undefined : judgeModel,
+        triggeredBy: "user",
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message ?? "Failed to start run");
+      }
+      return res.json();
+    },
+    onSuccess: (data: EvalTestRun) => {
+      qc.invalidateQueries({ queryKey: ["/api/eval/runs"] });
+      toast({ title: "Run started", description: `Run ${data.id.slice(0, 8)} is now queued.` });
+      setConfigOpen(false);
+      navigate(`/evals/runs/${data.id}`);
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  const canStartRun = !!runAgentId && !!runDatasetId;
+
+  const toggleMetric = (id: string) => {
+    setSelectedMetricIds((prev) =>
+      prev.includes(id) ? prev.filter((m) => m !== id) : [...prev, id]
+    );
+  };
 
   return (
     <div className="flex flex-col gap-6 p-6 max-w-[1200px] mx-auto">
@@ -111,14 +182,146 @@ export default function EvalRuns() {
               </Button>
             </Link>
           )}
-          <Link href="/evals">
-            <Button variant="outline" size="sm" data-testid="button-back-to-eval-studio">
-              <FlaskConical className="w-4 h-4 mr-1.5" />
-              Eval Studio
+          <Link href="/evals/datasets">
+            <Button variant="outline" size="sm" data-testid="button-nav-datasets">
+              <Database className="w-4 h-4 mr-1.5" />
+              Datasets
             </Button>
           </Link>
+          <Button
+            size="sm"
+            onClick={() => setConfigOpen((o) => !o)}
+            data-testid="button-new-run"
+          >
+            <Play className="w-4 h-4 mr-1.5" />
+            New Run
+          </Button>
         </div>
       </div>
+
+      {/* New Run config card */}
+      <Collapsible open={configOpen} onOpenChange={setConfigOpen}>
+        <CollapsibleContent>
+          <Card className="border-primary/30 bg-primary/5" data-testid="card-run-config">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm font-medium flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <Zap className="w-4 h-4 text-primary" />
+                  Configure New Eval Run
+                </span>
+                <button
+                  onClick={() => setConfigOpen(false)}
+                  className="text-muted-foreground hover:text-foreground"
+                  data-testid="button-close-config"
+                >
+                  <ChevronUp className="w-4 h-4" />
+                </button>
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {/* Agent */}
+                <div>
+                  <Label className="text-xs mb-1.5 block font-medium">
+                    <Bot className="w-3 h-3 inline mr-1" />
+                    Agent *
+                  </Label>
+                  <Select value={runAgentId} onValueChange={setRunAgentId}>
+                    <SelectTrigger className="h-8 text-xs" data-testid="select-run-agent">
+                      <SelectValue placeholder="Select agent..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(agents ?? []).map((a) => (
+                        <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Dataset */}
+                <div>
+                  <Label className="text-xs mb-1.5 block font-medium">
+                    <Database className="w-3 h-3 inline mr-1" />
+                    Dataset *
+                  </Label>
+                  <Select value={runDatasetId} onValueChange={setRunDatasetId}>
+                    <SelectTrigger className="h-8 text-xs" data-testid="select-run-dataset">
+                      <SelectValue placeholder="Select dataset..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(datasets ?? []).map((d) => (
+                        <SelectItem key={d.id} value={d.id}>
+                          {d.name} <span className="text-muted-foreground">· v{d.version ?? 1} · {d.goldenCount ?? 0} goldens</span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Judge model */}
+                <div>
+                  <Label className="text-xs mb-1.5 block font-medium">Judge Model</Label>
+                  <Select value={judgeModel} onValueChange={setJudgeModel}>
+                    <SelectTrigger className="h-8 text-xs" data-testid="select-judge-model">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__default__">Default (auto)</SelectItem>
+                      <SelectItem value="gpt-4o">GPT-4o</SelectItem>
+                      <SelectItem value="gpt-4o-mini">GPT-4o Mini</SelectItem>
+                      <SelectItem value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</SelectItem>
+                      <SelectItem value="claude-3-haiku-20240307">Claude 3 Haiku</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Start button */}
+                <div className="flex items-end">
+                  <Button
+                    className="w-full h-8"
+                    disabled={!canStartRun || startRunMutation.isPending}
+                    onClick={() => startRunMutation.mutate()}
+                    data-testid="button-start-run"
+                  >
+                    <Play className="w-3.5 h-3.5 mr-1.5" />
+                    {startRunMutation.isPending ? "Starting..." : "Start Run"}
+                  </Button>
+                </div>
+              </div>
+
+              {/* Metric multi-select */}
+              {(metrics ?? []).length > 0 && (
+                <div className="mt-4">
+                  <Label className="text-xs mb-2 block font-medium">
+                    <ListChecks className="w-3 h-3 inline mr-1" />
+                    Metrics ({selectedMetricIds.length} selected)
+                  </Label>
+                  <div className="flex flex-wrap gap-2">
+                    {(metrics ?? []).slice(0, 20).map((m) => {
+                      const active = selectedMetricIds.includes(m.id);
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => toggleMetric(m.id)}
+                          className={`px-2.5 py-1 rounded-full border text-xs transition-colors ${
+                            active
+                              ? "bg-primary text-primary-foreground border-primary"
+                              : "bg-background text-muted-foreground border-border hover:border-primary/50"
+                          }`}
+                          data-testid={`toggle-metric-${m.id}`}
+                        >
+                          {m.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </CollapsibleContent>
+      </Collapsible>
 
       {/* Runs table */}
       <Card data-testid="card-eval-runs">
@@ -147,15 +350,19 @@ export default function EvalRuns() {
               <p className="text-sm text-muted-foreground font-medium">No runs yet</p>
               <p className="text-xs text-muted-foreground/70 max-w-xs">
                 {filterAgentId
-                  ? "This agent has no eval runs. Configure metrics and trigger a run from the Eval Studio."
-                  : "No eval runs have been recorded. Configure eval metrics on your agents to get started."}
+                  ? "This agent has no eval runs. Configure metrics and trigger a run."
+                  : "No eval runs have been recorded. Select an agent and dataset above to start."}
               </p>
-              <Link href="/evals">
-                <Button variant="outline" size="sm" className="mt-1" data-testid="button-go-eval-studio">
-                  <FlaskConical className="w-4 h-4 mr-1.5" />
-                  Go to Eval Studio
-                </Button>
-              </Link>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-1"
+                onClick={() => setConfigOpen(true)}
+                data-testid="button-empty-new-run"
+              >
+                <Play className="w-4 h-4 mr-1.5" />
+                Start First Run
+              </Button>
             </div>
           ) : (
             <div className="divide-y">
@@ -185,12 +392,22 @@ export default function EvalRuns() {
                             {pct}% pass
                           </span>
                         )}
+                        {(run.status === "running" || run.status === "pending") && run.totalGoldens != null && (
+                          <span className="text-xs text-muted-foreground">
+                            {(run.passedCount ?? 0) + (run.failedCount ?? 0)}/{run.totalGoldens} evaluated
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <Bot className="w-3 h-3 text-muted-foreground shrink-0" />
                         <span className="text-xs text-muted-foreground truncate">{agentName}</span>
                         {run.agentVersion && (
                           <span className="text-[10px] text-muted-foreground/60">· v{run.agentVersion}</span>
+                        )}
+                        {run.datasetId && (
+                          <span className="text-[10px] text-muted-foreground/60">
+                            · dataset {run.datasetId.slice(0, 8)}
+                          </span>
                         )}
                       </div>
                     </div>

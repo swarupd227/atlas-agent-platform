@@ -49,6 +49,7 @@ import Evals from "@/pages/evals";
 import EvalMetrics from "@/pages/eval-metrics";
 import EvalRuns from "@/pages/eval-runs";
 import EvalRunDetail from "@/pages/eval-run-detail";
+import EvalDatasets from "@/pages/eval-datasets";
 import Templates from "@/pages/templates";
 import TemplateDetail from "@/pages/template-detail";
 import Improvements from "@/pages/improvements";
@@ -274,6 +275,7 @@ function DashboardRouter() {
       <Route path="/blueprints/:id" component={BlueprintDetail} />
       <Route path="/evals" component={Evals} />
       <Route path="/evals/metrics" component={EvalMetrics} />
+      <Route path="/evals/datasets" component={EvalDatasets} />
       <Route path="/evals/runs" component={EvalRuns} />
       <Route path="/evals/runs/:id" component={EvalRunDetail} />
       <Route path="/evals/replay" component={ShadowReplay} />
