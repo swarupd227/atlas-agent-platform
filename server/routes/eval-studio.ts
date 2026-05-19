@@ -2492,11 +2492,16 @@ router.post("/api/agents/:agentId/prompts/:version/promote", async (req, res) =>
     if (!agent) return res.status(404).json({ message: "Agent not found" });
     const version = parseInt(req.params.version, 10);
     if (isNaN(version)) return res.status(400).json({ message: "version must be a number" });
+
+    // Capture the currently active version BEFORE promoting, so rollback can find it later
+    const allBefore = await storage.getAgentPrompts(req.params.agentId, orgId ?? undefined);
+    const previousActive = allBefore.find(p => p.isActive);
+
     const prompt = await storage.promoteAgentPrompt(req.params.agentId, version, orgId ?? undefined);
     if (!prompt) return res.status(404).json({ message: "Prompt version not found" });
     // Sync the agent's systemPrompt field
     await storage.updateAgent(req.params.agentId, { systemPrompt: prompt.content }, orgId ?? undefined);
-    // Audit log for governance trail
+    // Audit log — store displaced version so rollback can deterministically restore it
     try {
       await storage.createAuditEvent({
         organizationId: orgId ?? undefined,
@@ -2508,6 +2513,8 @@ router.post("/api/agents/:agentId/prompts/:version/promote", async (req, res) =>
           agentId: req.params.agentId,
           version: prompt.version,
           sha256: prompt.sha256,
+          previousActiveVersion: previousActive?.version ?? null,
+          previousActiveId: previousActive?.id ?? null,
           promotedAt: new Date().toISOString(),
         }),
       });
@@ -2516,7 +2523,7 @@ router.post("/api/agents/:agentId/prompts/:version/promote", async (req, res) =>
   } catch (err: any) { res.status(500).json({ message: err.message }); }
 });
 
-// POST /api/agents/:agentId/prompts/rollback  — revert to previous active version (within 30 days)
+// POST /api/agents/:agentId/prompts/rollback  — revert to PREVIOUSLY ACTIVE version (within 30 days)
 router.post("/api/agents/:agentId/prompts/rollback", async (req, res) => {
   try {
     const orgId = getOrgId(req);
@@ -2525,29 +2532,62 @@ router.post("/api/agents/:agentId/prompts/rollback", async (req, res) => {
 
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const allPrompts = await storage.getAgentPrompts(req.params.agentId, orgId ?? undefined);
-
-    // Find current active prompt
     const currentActive = allPrompts.find(p => p.isActive);
 
-    // Find the most recent non-active prompt within the 30-day window
-    const rollbackCandidate = allPrompts.find(p =>
-      !p.isActive &&
-      p.id !== (currentActive?.id) &&
-      new Date(p.createdAt as string) >= thirtyDaysAgo
-    );
+    // ── Strategy: use audit log to find the version that WAS active before the current one ──
+    // The most recent agent_prompt.promote event for this agent carries a `previousActiveVersion`
+    // field set by the promote endpoint. Using the audit trail avoids rollback to a version
+    // that was created but never actually active.
+    let rollbackTargetVersion: number | null = null;
+    try {
+      // getAuditEvents accepts an orgId string; filter by action/agent in-memory after fetch
+      const recentAudit = await storage.getAuditEvents(orgId ?? undefined);
+      const promoteEvents = recentAudit.filter((e: any) => {
+        if (e.action !== "agent_prompt.promote") return false;
+        try {
+          const d = JSON.parse(e.details ?? "{}");
+          return d.agentId === req.params.agentId;
+        } catch { return false; }
+      });
+      if (promoteEvents.length > 0) {
+        const lastPromote = promoteEvents[0]; // most recent (list is DESC by time)
+        const d = JSON.parse(lastPromote.details ?? "{}");
+        if (typeof d.previousActiveVersion === "number") {
+          rollbackTargetVersion = d.previousActiveVersion;
+        }
+      }
+    } catch (_) { /* audit unavailable — fall back to version heuristic */ }
 
-    if (!rollbackCandidate) {
+    // ── Fallback heuristic: highest-versioned non-active prompt within 30 days ──
+    // (This handles the case where no promote audit event exists yet, e.g. during dev)
+    if (rollbackTargetVersion === null) {
+      const candidate = allPrompts.find(p =>
+        !p.isActive &&
+        p.id !== (currentActive?.id) &&
+        new Date(p.createdAt as string) >= thirtyDaysAgo
+      );
+      rollbackTargetVersion = candidate?.version ?? null;
+    }
+
+    if (rollbackTargetVersion === null) {
       return res.status(400).json({
-        message: "No eligible rollback target: no prior prompt version within the 30-day retention window",
+        message: "No eligible rollback target: no prior active prompt within the 30-day retention window",
       });
     }
 
-    const promoted = await storage.promoteAgentPrompt(req.params.agentId, rollbackCandidate.version, orgId ?? undefined);
+    // Confirm the target is within the 30-day retention window
+    const targetPrompt = allPrompts.find(p => p.version === rollbackTargetVersion);
+    if (!targetPrompt || new Date(targetPrompt.createdAt as string) < thirtyDaysAgo) {
+      return res.status(400).json({
+        message: `Rollback target v${rollbackTargetVersion} is outside the 30-day retention window`,
+      });
+    }
+
+    const promoted = await storage.promoteAgentPrompt(req.params.agentId, rollbackTargetVersion, orgId ?? undefined);
     if (!promoted) return res.status(404).json({ message: "Rollback target not found" });
 
     await storage.updateAgent(req.params.agentId, { systemPrompt: promoted.content }, orgId ?? undefined);
 
-    // Audit log
     try {
       await storage.createAuditEvent({
         organizationId: orgId ?? undefined,
@@ -2679,31 +2719,59 @@ router.post("/api/eval/experiments", async (req, res) => {
       }
 
       try {
-        // ── Step 0: Resolve actual dataset goldens and metric collection ──────────
+        // ── Step 0: Resolve actual dataset goldens, metric objects, and variant prompt contents ──
         const [datasetGoldens, metricCollection] = await Promise.all([
           storage.getEvalGoldens({ datasetId, limit: 500 }),
           metricCollectionId ? storage.getEvalMetricCollection(metricCollectionId) : Promise.resolve(undefined),
         ]);
 
-        // Use real goldens as test cases; fall back to 10 synthetic stubs if dataset is empty
-        const goldens = datasetGoldens.length > 0
+        // Fetch each variant's actual prompt content so we can run it against the LLM
+        const variantPromptContents = await Promise.all(
+          variantPromptVersions.map(async (v: number) => {
+            const p = await storage.getAgentPrompt(agentId, v, orgId ?? undefined);
+            return { version: v, content: p?.content ?? null };
+          })
+        );
+
+        // Use real goldens as test cases; fall back to 10 stubs if dataset is empty
+        // Cap at 10 cases for A/B experiments (real LLM calls — keep latency reasonable)
+        const rawGoldens = datasetGoldens.length > 0
           ? datasetGoldens
           : Array.from({ length: 10 }, (_, i) => ({
               id: `stub-${i}`,
-              input: `Test input case ${i + 1}`,
-              expectedOutput: `Expected output ${i + 1}`,
+              input: `Test input case ${i + 1}: Evaluate the quality of an AI assistant response.`,
+              expectedOutput: `A clear, accurate, and helpful response that addresses the input directly.`,
             }));
+        const goldens = rawGoldens.slice(0, 10); // cap at 10 for experiment runs
         const N = goldens.length;
 
-        // Metric names from collection; fall back to standard set
-        const collectionMetrics = (metricCollection?.metricIds ?? []);
-        const metricNames: string[] = collectionMetrics.length > 0
-          ? collectionMetrics.slice(0, 6).map((id: string) => id)  // use collection metric IDs as display names
-          : ["CorrectnessScore", "RelevancyScore", "CoherenceScore", "FaithfulnessScore"];
+        // Resolve actual metric objects from the collection for judge scoring
+        const collectionMetricIds: string[] = metricCollection?.metricIds ?? [];
+        let judgeMetrics: Array<{ id: string; name: string; criteria: string; threshold: number; evalParams: string[] }> = [];
+        if (collectionMetricIds.length > 0) {
+          const fetched = await Promise.all(collectionMetricIds.slice(0, 4).map(id => storage.getEvalMetric(id)));
+          judgeMetrics = fetched.filter(Boolean).map(m => ({
+            id: m!.id,
+            name: m!.name,
+            criteria: m!.criteria || "Evaluate overall quality and accuracy",
+            threshold: m!.threshold || 0.5,
+            evalParams: (m!.evaluationParams as string[]) || ["input", "actual_output"],
+          }));
+        }
+        if (judgeMetrics.length === 0) {
+          // Standard G-Eval metrics when no collection is specified
+          judgeMetrics = [
+            { id: "correctness", name: "CorrectnessScore", criteria: "Is the output factually correct and does it accurately address the input question?", threshold: 0.5, evalParams: ["input", "actual_output", "expected_output"] },
+            { id: "coherence",   name: "CoherenceScore",   criteria: "Is the output coherent, well-structured, and logically consistent?", threshold: 0.5, evalParams: ["input", "actual_output"] },
+            { id: "relevancy",   name: "RelevancyScore",   criteria: "Is the output relevant and directly responsive to what was asked?", threshold: 0.5, evalParams: ["input", "actual_output"] },
+          ];
+        }
+        const metricNames = judgeMetrics.map(m => m.name);
 
-        // ── Step 1: Create all variant EvalRuns in PARALLEL ──────────────────────
-        // Each variant scores every golden case on every metric (deterministic per-case seed
-        // ensures paired scoring — same case index, same noise seed across variants)
+        // ── Step 1: Run each variant against all goldens with real LLM calls ─────
+        // Variants run concurrently; within each variant, cases run sequentially to
+        // avoid saturating the LLM gateway. Scores are case-paired across variants,
+        // enabling valid paired t-test significance testing.
         type VariantRunData = {
           runId: string; version: number; passRate: number; meanScore: number;
           stdDev: number; costUsd: number; avgLatencyMs: number;
@@ -2711,32 +2779,63 @@ router.post("/api/eval/experiments", async (req, res) => {
         };
 
         const variantRunEntries = await Promise.all(
-          variantPromptVersions.map(async (v: number) => {
-            // Each variant has its own base quality level (simulates different prompt quality)
-            const variantSeed = v * 0.07; // deterministic offset per variant
-            const basePassRate = 0.55 + (variantSeed % 0.40);
-            const latencyMs = Math.round(400 + (v * 157) % 800);
-            const costUsd = parseFloat((0.001 + (v * 0.0137) % 0.05).toFixed(4));
-
-            // Per-metric per-case scoring: score is derived from golden index + metric offset
-            // so the same golden case is "tested" by each variant at the same position
+          variantPromptContents.map(async ({ version: v, content: promptContent }) => {
             const perMetricScores: Record<string, number[]> = {};
-            for (const metric of metricNames) {
-              const metricOffset = metric.length * 0.003; // tiny deterministic metric spread
-              perMetricScores[metric] = goldens.map((_, caseIdx) => {
-                const caseNoise = Math.sin(caseIdx * 2.3 + v * 1.7) * 0.12;
-                return Math.max(0, Math.min(1, basePassRate + metricOffset + caseNoise));
+            for (const m of judgeMetrics) perMetricScores[m.name] = [];
+
+            let totalLatencyMs = 0;
+            let totalCostUsd = 0;
+
+            // Process each golden case sequentially within a variant (rate-limit friendly)
+            for (const golden of goldens) {
+              const t0 = Date.now();
+
+              // 1. Run the agent with this variant's system prompt to get an actual output
+              const agentResult = await runAgentOnInput(promptContent, {
+                input: typeof (golden as any).input === "string"
+                  ? (golden as any).input
+                  : JSON.stringify((golden as any).input),
               });
+              const actualOutput = agentResult.output || "";
+
+              // 2. Score the output with each metric via LLM judge (G-Eval pattern)
+              for (const metric of judgeMetrics) {
+                const judgeInput: Record<string, unknown> = {};
+                if (metric.evalParams.includes("input")) judgeInput.input = (golden as any).input;
+                if (metric.evalParams.includes("actual_output")) judgeInput.actual_output = actualOutput;
+                if (metric.evalParams.includes("expected_output") && (golden as any).expectedOutput) {
+                  judgeInput.expected_output = (golden as any).expectedOutput;
+                }
+
+                const judgeResult = await runLlmJudge(
+                  metric.name,
+                  judgeInput,
+                  (golden as any).expectedOutput ? { expected: (golden as any).expectedOutput } : null,
+                  `Evaluation metric: ${metric.name}\nCriteria: ${metric.criteria}`,
+                  actualOutput,
+                );
+                // Map pass/fail + confidence → [0,1] score consistent with worker.ts
+                const rawScore = judgeResult.isPassed
+                  ? judgeResult.confidence
+                  : (1 - judgeResult.confidence) * metric.threshold;
+                perMetricScores[metric.name].push(Math.round(rawScore * 1000) / 1000);
+              }
+
+              totalLatencyMs += Date.now() - t0;
+              totalCostUsd += 0.002; // ~$0.002/case (agent + judge LLM calls)
             }
 
-            // Overall scores = mean across metrics for each case
+            const avgLatencyMs = Math.round(totalLatencyMs / N);
+            const costUsd = parseFloat(totalCostUsd.toFixed(4));
+
+            // Aggregate: per-case mean across metrics, then overall stats
             const scores = goldens.map((_, i) =>
-              metricNames.reduce((sum, m) => sum + perMetricScores[m][i], 0) / metricNames.length);
-            const passRate = scores.filter(s => s >= 0.7).length / N;
+              judgeMetrics.reduce((sum, m) => sum + perMetricScores[m.name][i], 0) / judgeMetrics.length
+            );
+            const passRate = scores.filter(s => s >= 0.5).length / N;
             const meanScore = scores.reduce((a, b) => a + b, 0) / N;
             const sampleVar = N > 1 ? scores.reduce((a, b) => a + (b - meanScore) ** 2, 0) / (N - 1) : 0;
 
-            // Create the EvalRun record for this variant
             const run = await storage.createEvalRun({
               suiteId: `exp-${exp.id}`,
               agentId,
@@ -2745,7 +2844,7 @@ router.post("/api/eval/experiments", async (req, res) => {
               passedCases: Math.round(passRate * N),
               failedCases: N - Math.round(passRate * N),
               passRate: parseFloat(passRate.toFixed(3)),
-              avgLatencyMs: latencyMs,
+              avgLatencyMs,
               avgCostUsd: costUsd,
               resultsJson: {
                 experimentId: exp.id,
@@ -2765,8 +2864,9 @@ router.post("/api/eval/experiments", async (req, res) => {
               meanScore: parseFloat(meanScore.toFixed(3)),
               stdDev: parseFloat(Math.sqrt(sampleVar).toFixed(3)),
               costUsd,
-              avgLatencyMs: latencyMs,
-              perMetricScores, scores,
+              avgLatencyMs,
+              perMetricScores,
+              scores,
             }] as [string, VariantRunData];
           })
         );
