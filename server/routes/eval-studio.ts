@@ -153,6 +153,35 @@ router.get("/api/eval/metrics/:id/agents", async (req, res) => {
   }
 });
 
+router.post("/api/eval/metrics/:id/clone", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const original = await storage.getEvalMetric(req.params.id);
+    if (!original) return res.status(404).json({ message: "Metric not found" });
+    const customName: string | undefined = req.body?.name;
+    const cloned = await storage.createEvalMetric({
+      name: customName || `${original.name} (Clone)`,
+      category: original.category,
+      metricType: original.metricType,
+      source: "tenant-private",
+      description: original.description ?? undefined,
+      criteria: original.criteria ?? undefined,
+      evaluationParams: original.evaluationParams ?? [],
+      judgeModel: original.judgeModel ?? undefined,
+      threshold: original.threshold,
+      strictMode: original.strictMode ?? false,
+      asyncMode: original.asyncMode ?? true,
+      version: 1,
+      usageCount: 0,
+      isActive: true,
+      organizationId: orgId ?? undefined,
+    });
+    res.status(201).json(cloned);
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 router.post("/api/eval/metrics", async (req, res) => {
   try {
     const orgId = getOrgId(req);

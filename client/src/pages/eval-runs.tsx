@@ -204,7 +204,7 @@ export default function EvalRuns() {
                         </div>
                       )}
                     </div>
-                    <Link href={`/evals/${run.id}`}>
+                    <Link href={`/evals/runs/${run.id}`}>
                       <Button variant="ghost" size="sm" className="text-xs h-7 px-2 shrink-0" data-testid={`link-run-detail-${run.id}`}>
                         Detail
                         <ChevronRight className="w-3 h-3 ml-1" />

@@ -292,7 +292,7 @@ export default function Evals() {
       ];
     }
     return [
-      { label: "New Test Run", icon: Play, href: "/evals/runs/new", variant: "default" as const },
+      { label: "New Test Run", icon: Play, href: "/evals/runs", variant: "default" as const },
       ...base,
     ];
   }, [role]);

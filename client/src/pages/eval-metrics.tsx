@@ -184,11 +184,14 @@ function MetricDetailPanel({
   metric,
   onClose,
   onAttach,
+  onCloned,
 }: {
   metric: EvalMetric;
   onClose: () => void;
   onAttach: () => void;
+  onCloned?: (clone: EvalMetric) => void;
 }) {
+  const { toast } = useToast();
   const catKey = (metric.category || "general").toLowerCase();
   const srcKey = (metric.source || "deepeval").toLowerCase();
   const CatIcon = CATEGORY_ICONS[catKey] ?? FlaskConical;
@@ -203,6 +206,20 @@ function MetricDetailPanel({
       const res = await fetch(`/api/eval/metrics/${metric.id}/agents`);
       if (!res.ok) return [];
       return res.json();
+    },
+  });
+
+  const cloneMutation = useMutation({
+    mutationFn: async () => {
+      return apiRequest<EvalMetric>("POST", `/api/eval/metrics/${metric.id}/clone`);
+    },
+    onSuccess: (cloned) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/eval/metrics"] });
+      toast({ title: "Metric cloned", description: `"${cloned.name}" created as a private metric.` });
+      onCloned?.(cloned);
+    },
+    onError: () => {
+      toast({ title: "Clone failed", description: "Could not clone the metric. Please try again.", variant: "destructive" });
     },
   });
 
@@ -344,8 +361,18 @@ function MetricDetailPanel({
           Attach to Agent
         </Button>
         <div className="flex gap-2">
-          <Button variant="outline" className="flex-1" data-testid="button-clone-metric">
-            <Copy className="w-4 h-4 mr-2" />
+          <Button
+            variant="outline"
+            className="flex-1"
+            data-testid="button-clone-metric"
+            onClick={() => cloneMutation.mutate()}
+            disabled={cloneMutation.isPending}
+          >
+            {cloneMutation.isPending ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Copy className="w-4 h-4 mr-2" />
+            )}
             Clone
           </Button>
           {metric.source === "tenant-private" && (
