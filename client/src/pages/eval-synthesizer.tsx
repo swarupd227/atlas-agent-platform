@@ -402,23 +402,35 @@ export default function EvalSynthesizer() {
         return;
       }
 
-      const toSave = generatedGoldens.filter(g => goldenStatuses[g.id] !== "rejected").map(g => ({
-        input: g.input,
-        expectedOutput: g.expectedOutput,
-        retrievalContext: g.retrievalContext,
-        tags: [g.type, style, g.evolved ? "evolved" : "base"],
-        provenance: withProvenance ? {
-          sourceType,
-          style,
-          model: synModel,
-          type: g.type,
-          qualityScore: g.qualityScore,
-          versionLabel,
-          sourceRef: uploadedFileName ?? undefined,
-          synthesisPrompt: `style=${style}, evolution=${Object.entries(evolution).filter(([, v]) => v).map(([k]) => k).join(",")}`,
-          synthesizedAt: new Date().toISOString(),
-        } : undefined,
-      }));
+      // Only save goldens the user has explicitly accepted or edited — never pending/unreviewed rows
+      const readyStatuses: GoldenStatus[] = ["accepted", "edited"];
+      const toSave = generatedGoldens
+        .filter(g => readyStatuses.includes(goldenStatuses[g.id] ?? "pending"))
+        // Guard: skip any item with empty input or output (e.g. low-fidelity placeholders not edited)
+        .filter(g => g.input.trim() !== "" && g.expectedOutput.trim() !== "")
+        .map(g => ({
+          input: g.input,
+          expectedOutput: g.expectedOutput,
+          retrievalContext: g.retrievalContext,
+          tags: [g.type, style, g.evolved ? "evolved" : "base"],
+          provenance: withProvenance ? {
+            sourceType,
+            style,
+            model: synModel,
+            type: g.type,
+            qualityScore: g.qualityScore,
+            versionLabel,
+            sourceRef: uploadedFileName ?? undefined,
+            synthesisPrompt: `style=${style}, evolution=${Object.entries(evolution).filter(([, v]) => v).map(([k]) => k).join(",")}`,
+            synthesizedAt: new Date().toISOString(),
+          } : undefined,
+        }));
+
+      if (toSave.length === 0) {
+        toast({ title: "Nothing to save", description: "Accept or edit at least one golden before saving.", variant: "destructive" });
+        setIsSaving(false);
+        return;
+      }
 
       await apiRequest("POST", `/api/eval/datasets/${targetDatasetId}/goldens/bulk`, { goldens: toSave });
       queryClient.invalidateQueries({ queryKey: ["/api/eval/datasets"] });
@@ -943,15 +955,28 @@ export default function EvalSynthesizer() {
                 <div className="rounded-lg border p-4 space-y-2 text-sm">
                   <p className="font-medium">Summary</p>
                   <div className="grid grid-cols-2 gap-2 text-xs">
-                    <span className="text-muted-foreground">Goldens to save:</span><span className="font-medium">{accepted}</span>
+                    <span className="text-muted-foreground">Accepted/Edited:</span><span className="font-medium">{accepted}</span>
                     <span className="text-muted-foreground">Rejected:</span><span className="font-medium text-red-600">{rejected}</span>
+                    <span className="text-muted-foreground">Pending review:</span>
+                    <span className={`font-medium ${pending > 0 ? "text-amber-600" : "text-muted-foreground"}`}>{pending}</span>
                     <span className="text-muted-foreground">With provenance:</span><span className="font-medium">{withProvenance ? "Yes" : "No"}</span>
                   </div>
+                  {pending > 0 && (
+                    <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-500/10 rounded px-3 py-2 border border-amber-500/20">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                      {pending} item{pending !== 1 ? "s" : ""} still pending — accept, edit, or reject before saving.
+                    </div>
+                  )}
                 </div>
 
-                <Button className="w-full" onClick={handleSave} disabled={isSaving} data-testid="button-save-goldens">
+                <Button
+                  className="w-full"
+                  onClick={handleSave}
+                  disabled={isSaving || pending > 0 || accepted === 0}
+                  data-testid="button-save-goldens"
+                >
                   {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
-                  {isSaving ? "Saving..." : `Save ${accepted} Goldens`}
+                  {isSaving ? "Saving..." : `Save ${accepted} Golden${accepted !== 1 ? "s" : ""}`}
                 </Button>
               </div>
             )}
