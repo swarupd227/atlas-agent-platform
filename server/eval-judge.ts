@@ -75,6 +75,7 @@ export async function runLlmJudge(
   agentContext: string,
   actualOutput: string | null,
   industryDimensions?: Array<{ id: string; name: string; scoringCriteria: string[] }>,
+  judgeModel?: string,
 ): Promise<LlmJudgeResult> {
   const start = Date.now();
 
@@ -135,6 +136,7 @@ ${agentContext || "(no additional context)"}${criteriaBlock}`;
         responseFormat: "json",
         temperature: 0,
         maxTokens: hasDimensions ? 1200 : 500,
+        ...(judgeModel ? { model: judgeModel } : {}),
       },
     );
 

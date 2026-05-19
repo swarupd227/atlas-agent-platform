@@ -2,7 +2,7 @@ import { storage } from "./storage";
 import type { Job, AuditChainTrigger } from "@shared/schema";
 import { agentAlerts } from "@shared/schema";
 import { EventEmitter } from "events";
-import { checkOntologyCompliance, executeScheduledAgentCycle } from "./agent-runtime";
+import { checkOntologyCompliance, executeScheduledAgentCycle, runAgentOnce } from "./agent-runtime";
 import { industryEvalFrameworks } from "./routes";
 import { runLlmJudge, runAgentOnInput, buildAgentContext } from "./eval-judge";
 import { getDefaultProvider, getProvider, completeWithFallback } from "./llm-provider";
@@ -854,6 +854,16 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
   const run = await storage.getEvalTestRun(runId);
   if (!run) throw new Error(`Eval test run ${runId} not found`);
 
+  // Defense-in-depth org check — worker validates agent org before executing
+  const orgIdFromPayload = (payload.organizationId as string | undefined) || undefined;
+  if (orgIdFromPayload) {
+    const agentForOrgCheck = await storage.getAgent(agentId);
+    if (agentForOrgCheck?.organizationId && agentForOrgCheck.organizationId !== orgIdFromPayload) {
+      throw new Error(`FORBIDDEN: agent ${agentId} does not belong to organization ${orgIdFromPayload}`);
+    }
+  }
+  const judgeModelOverride = (payload.judgeModelOverride as string | null) || undefined;
+
   await storage.updateEvalTestRun(runId, { status: "running" });
   await storage.updateJob(job.id, { progress: 5 });
   jobEvents.emit("progress", { jobId: job.id, agentId, progress: 5, step: "loading_goldens" });
@@ -908,13 +918,32 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
     let agentFailureReason: string | undefined;
 
     try {
-      const agentResult = await runAgentOnInput(agent.systemPrompt, { input: golden.input });
-      if (!agentResult.output || agentResult.output.trim() === "") {
-        agentFailed = true;
-        agentFailureReason = "Agent produced empty output";
-        actualOutput = "";
+      // Prefer the full AAR runtime path (runAgentOnce) for fidelity — it exercises tools,
+      // MCP bindings, and all runtime middleware that would run in production.
+      // Fall back to direct LLM call only when the agent has no active deployment.
+      const agentDeployments = await storage.getDeploymentsByAgentId(agentId, "active");
+      if (agentDeployments.length > 0) {
+        const deployment = agentDeployments[0];
+        const aarResult = await runAgentOnce(deployment.id, golden.input, undefined);
+        if (!aarResult.success || !aarResult.message || aarResult.message.trim() === "") {
+          agentFailed = true;
+          agentFailureReason = aarResult.success
+            ? "Agent produced empty output via AAR"
+            : `AAR run failed: ${aarResult.message}`;
+          actualOutput = "";
+        } else {
+          actualOutput = aarResult.message;
+        }
       } else {
-        actualOutput = agentResult.output;
+        // Fallback: agent has no active deployment — use direct LLM call for eval
+        const agentResult = await runAgentOnInput(agent.systemPrompt, { input: golden.input });
+        if (!agentResult.output || agentResult.output.trim() === "") {
+          agentFailed = true;
+          agentFailureReason = "Agent produced empty output (direct LLM fallback)";
+          actualOutput = "";
+        } else {
+          actualOutput = agentResult.output;
+        }
       }
     } catch (err: any) {
       agentFailed = true;
@@ -940,12 +969,22 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
         for (const metric of activeMetrics) {
           if (!metric) continue;
           const metricT0 = Date.now();
+          // Build judge input according to the metric's evaluation_params contract
+          const evalParams: string[] = (metric.evaluationParams as string[]) || ["input", "actual_output"];
+          const judgeInputData: Record<string, unknown> = {};
+          if (evalParams.includes("input")) judgeInputData.input = golden.input;
+          if (evalParams.includes("actual_output")) judgeInputData.actual_output = actualOutput;
+          if (evalParams.includes("expected_output") && golden.expectedOutput) judgeInputData.expected_output = golden.expectedOutput;
+          if (evalParams.includes("retrieval_context") && golden.retrievalContext?.length) judgeInputData.retrieval_context = golden.retrievalContext;
+          if (evalParams.includes("context") && golden.context?.length) judgeInputData.context = golden.context;
           const metricResult = await runLlmJudge(
             metric.name,
-            { input: golden.input },
+            judgeInputData,
             golden.expectedOutput ? { expected: golden.expectedOutput } : null,
             `${agentCtx}\n\nEvaluation metric: ${metric.name}\nCriteria: ${metric.criteria || "Evaluate quality"}`,
             actualOutput,
+            undefined,
+            judgeModelOverride,
           );
           const metricDurationMs = Date.now() - metricT0;
           metricDurations.set(metric.name, metricDurationMs);

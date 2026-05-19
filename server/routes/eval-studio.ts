@@ -438,6 +438,10 @@ router.post("/api/eval/runs", async (req, res) => {
     if (!dataset) return res.status(404).json({ message: "Dataset not found" });
     assertOrgOwnership(dataset.organizationId, orgId);
 
+    // Validate that the target agent belongs to the caller's org — prevents cross-tenant eval execution
+    const targetAgent = await storage.getAgent(body.agentId);
+    if (targetAgent) assertOrgOwnership(targetAgent.organizationId, orgId);
+
     const run = await storage.createEvalTestRun({
       organizationId: orgId,
       agentId: body.agentId,
