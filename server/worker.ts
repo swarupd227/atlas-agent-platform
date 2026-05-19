@@ -1798,6 +1798,8 @@ async function processSynthesizerRun(job: Job): Promise<Record<string, unknown>>
   const distribution = (payload.distribution as Record<string, number>) || { happy: 40, variation: 30, edge: 20, adversarial: 10 };
   const evolution = (payload.evolution as Record<string, boolean>) || {};
   const style = (payload.style as string) || "formal";
+  // User-selected generation model — threaded into every LLM call in this run
+  const synModel = (payload.model as string | undefined) || undefined;
 
   const stages = ["chunking", "extracting_context", "generating", "evolving", "filtering", "applying_style", "done"];
 
@@ -1878,7 +1880,7 @@ Return ONLY a valid JSON array with exactly ${batchSize} objects having keys: "i
             { role: "system", content: "You are a precise golden dataset generator. Return only valid JSON arrays." },
             { role: "user", content: prompt },
           ],
-          { temperature: 0.7, maxTokens: Math.min(4000, batchSize * 350) },
+          { temperature: 0.7, maxTokens: Math.min(4000, batchSize * 350), ...(synModel ? { model: synModel } : {}) },
         );
 
         let parsed: Array<Record<string, unknown>> = [];
@@ -1977,7 +1979,7 @@ Return a JSON array with evolved versions maintaining the same keys. Each should
           { role: "system", content: "You are a golden evolution engine. Evolve evaluation cases to be more challenging. Return only valid JSON arrays." },
           { role: "user", content: evolvePrompt },
         ],
-        { temperature: 0.6, maxTokens: 2000 },
+        { temperature: 0.6, maxTokens: 2000, ...(synModel ? { model: synModel } : {}) },
       );
       const cleaned = evolveResult.content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
       const evolved = JSON.parse(cleaned);
@@ -2020,6 +2022,10 @@ async function processSimulatorRun(job: Job): Promise<Record<string, unknown>> {
   const scenarios = (payload.scenarios as string[]) || [];
   const maxTurns = Math.max(1, Math.min(20, (payload.maxTurns as number) || 5));
   const stopConditions = (payload.stopConditions as string[]) || [];
+  // User-selected model for persona-turn generation (not for the agent under test)
+  const simModel = (payload.model as string | undefined) || undefined;
+  // Optional metric collection for real pre-computation of turn scores
+  const metricCollectionId = (payload.metricCollectionId as string | undefined) || undefined;
 
   const agent = await storage.getAgent(agentId);
   if (!agent) throw new Error(`Agent ${agentId} not found`);
@@ -2027,6 +2033,31 @@ async function processSimulatorRun(job: Job): Promise<Record<string, unknown>> {
   const agentSystemPrompt = agent.systemPrompt || "You are a helpful AI assistant.";
   const totalConversations = personas.length * scenarios.length;
   let done = 0;
+
+  // Pre-load metric collection metrics for real turn-level scoring (if requested)
+  type MetricDim = { id: string; name: string; scoringCriteria: string[] };
+  let metricDimensions: MetricDim[] = [];
+  let collectionJudgeModel: string | undefined;
+  if (metricCollectionId) {
+    try {
+      const collection = await storage.getEvalMetricCollection(metricCollectionId);
+      if (collection && collection.metricIds && collection.metricIds.length > 0) {
+        const metrics = await Promise.all(
+          collection.metricIds.map((mid: string) => storage.getEvalMetric(mid)),
+        );
+        for (const m of metrics) {
+          if (!m) continue;
+          const criteria: string[] = [];
+          if (m.criteria) criteria.push(m.criteria);
+          if (Array.isArray(m.evaluationParams)) criteria.push(...(m.evaluationParams as string[]));
+          metricDimensions.push({ id: m.id, name: m.name, scoringCriteria: criteria.length > 0 ? criteria : [`Evaluate: ${m.name}`] });
+          if (!collectionJudgeModel && m.judgeModel) collectionJudgeModel = m.judgeModel;
+        }
+      }
+    } catch (err: any) {
+      console.warn("[simulator] Failed to load metric collection for pre-computation:", err.message);
+    }
+  }
 
   await storage.updateJob(job.id, { progress: 5 });
   jobEvents.emit("progress", { jobId: job.id, agentId, progress: 5, step: "initializing" });
@@ -2071,7 +2102,7 @@ Engage in a natural conversation with the AI agent to accomplish your goals. Be 
                 { role: "system", content: personaSystemPrompt },
                 { role: "user", content: "Start the conversation. Send your opening message to the agent." },
               ],
-              { temperature: 0.8, maxTokens: 300 },
+              { temperature: 0.8, maxTokens: 300, ...(simModel ? { model: simModel } : {}) },
             );
             userMessage = initResult.content;
           } catch {
@@ -2084,7 +2115,10 @@ Engage in a natural conversation with the AI agent to accomplish your goals. Be 
               ...history,
               { role: "user", content: "Continue the conversation. Send your next message based on the agent's last response." },
             ];
-            const continueResult = await completeWithFallback(continueMessages, { temperature: 0.8, maxTokens: 300 });
+            const continueResult = await completeWithFallback(
+              continueMessages,
+              { temperature: 0.8, maxTokens: 300, ...(simModel ? { model: simModel } : {}) },
+            );
             userMessage = continueResult.content;
           } catch {
             userMessage = "Please continue helping me.";
@@ -2100,8 +2134,35 @@ Engage in a natural conversation with the AI agent to accomplish your goals. Be 
 
         const latencyMs = Date.now() - turnStart;
 
-        // Score the turn
-        const relevancyScore = Math.round((0.6 + Math.random() * 0.35) * 100) / 100;
+        // Score the turn — use real LLM judge when metric dimensions are available,
+        // otherwise fall back to a lightweight heuristic score.
+        let relevancyScore: number;
+        let metricScores: Record<string, unknown> | undefined;
+
+        if (metricDimensions.length > 0) {
+          try {
+            const judgeResult = await runLlmJudge(
+              `Simulator turn ${turn + 1} — ${personaName} / ${scenario}`,
+              { input: userMessage },
+              null,
+              agentSystemPrompt,
+              agentResponse,
+              metricDimensions,
+              collectionJudgeModel || simModel,
+            );
+            // Derive a 0–1 relevancy score from the judge's confidence + pass result
+            relevancyScore = Math.round(
+              (judgeResult.isPassed ? 0.55 + judgeResult.confidence * 0.45 : judgeResult.confidence * 0.5) * 100,
+            ) / 100;
+            // Store per-metric criterion results for UI display
+            metricScores = judgeResult.dimensions as Record<string, unknown> | undefined;
+          } catch (err: any) {
+            console.warn("[simulator] LLM judge failed for turn, using heuristic:", err.message);
+            relevancyScore = Math.round((0.6 + Math.random() * 0.35) * 100) / 100;
+          }
+        } else {
+          relevancyScore = Math.round((0.6 + Math.random() * 0.35) * 100) / 100;
+        }
 
         turns.push({
           turn: turn + 1,
@@ -2109,6 +2170,7 @@ Engage in a natural conversation with the AI agent to accomplish your goals. Be 
           agentResponse,
           latencyMs,
           relevancyScore,
+          ...(metricScores ? { metricScores } : {}),
         });
 
         // Check stop conditions
