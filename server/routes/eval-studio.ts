@@ -76,6 +76,8 @@ const previewMetricSchema = z.object({
     name: z.string().optional(),
     criteria: z.string().optional(),
     metricType: z.string().optional(),
+    threshold: z.number().min(0).max(1).optional(),
+    strictMode: z.boolean().optional(),
   }).optional(),
   sampleInput: z.string().min(1),
   sampleActualOutput: z.string().optional(),
@@ -315,6 +317,8 @@ router.post("/api/eval/metrics/preview", async (req, res) => {
     const body = previewMetricSchema.parse(req.body);
     const startMs = Date.now();
     const criteria = body.metricConfig?.criteria || "Evaluate the response quality";
+    const threshold = body.metricConfig?.threshold ?? 0.5;
+    const strictMode = body.metricConfig?.strictMode ?? false;
     const judgeResult = await runLlmJudge(
       body.metricConfig?.name || "Preview",
       { input: body.sampleInput },
@@ -322,12 +326,16 @@ router.post("/api/eval/metrics/preview", async (req, res) => {
       `Metric criteria:\n${criteria}`,
       body.sampleActualOutput || null,
     );
-    const score = judgeResult.isPassed
-      ? Math.max(judgeResult.confidence, 0.5)
-      : Math.min(1 - judgeResult.confidence, 0.49);
+    // Map judge confidence onto [0,1] score anchored around the configured threshold
+    const rawScore = judgeResult.isPassed
+      ? threshold + judgeResult.confidence * (1 - threshold)
+      : threshold * (1 - judgeResult.confidence);
+    const score = Math.max(0, Math.min(1, rawScore));
+    // In strict mode the score must be exactly 1.0 to pass; otherwise use threshold
+    const pass = strictMode ? score === 1 : score >= threshold;
     res.json({
-      score: Math.max(0, Math.min(1, score)),
-      pass: judgeResult.isPassed,
+      score,
+      pass,
       reasoning: judgeResult.reason,
       latencyMs: Date.now() - startMs,
       estimatedCostUsd: 0.002 + (criteria.length / 10_000) * 0.01,

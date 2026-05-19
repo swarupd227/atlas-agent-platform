@@ -663,6 +663,24 @@ export async function runStartupMigrations() {
           FOREIGN KEY (trace_id) REFERENCES eval_traces(id) ON DELETE CASCADE;
       EXCEPTION WHEN duplicate_object THEN NULL;
       END $$;
+
+      -- Immutable metric version snapshots (created before each PUT update)
+      CREATE TABLE IF NOT EXISTS eval_metric_versions (
+        id               VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        metric_id        VARCHAR NOT NULL REFERENCES eval_metrics(id) ON DELETE CASCADE,
+        version          INTEGER NOT NULL,
+        criteria         TEXT,
+        dag_config       JSONB,
+        judge_model      TEXT,
+        threshold        REAL,
+        strict_mode      BOOLEAN,
+        async_mode       BOOLEAN,
+        evaluation_params TEXT[],
+        metric_type      TEXT,
+        created_at       TIMESTAMP DEFAULT NOW(),
+        created_by       TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_emv_metric_id ON eval_metric_versions(metric_id);
     `);
 
     // Remove operational metrics that were re-sourced from atlas-native → deepeval

@@ -868,7 +868,7 @@ function PreviewPane({
   getPreviewConfig,
   defaultDatasetSize,
 }: {
-  getPreviewConfig: () => { name: string; criteria: string; metricType: string };
+  getPreviewConfig: () => { name: string; criteria: string; metricType: string; threshold: number; strictMode: boolean };
   defaultDatasetSize: number;
 }) {
   const { toast } = useToast();
@@ -887,7 +887,13 @@ function PreviewPane({
     mutationFn: async () => {
       const config = getPreviewConfig();
       const res = await apiRequest("POST", "/api/eval/metrics/preview", {
-        metricConfig: { name: config.name, criteria: config.criteria },
+        metricConfig: {
+          name: config.name,
+          criteria: config.criteria,
+          metricType: config.metricType,
+          threshold: config.threshold,
+          strictMode: config.strictMode,
+        },
         sampleInput,
         sampleActualOutput: sampleActual || undefined,
         sampleExpectedOutput: sampleExpected || undefined,
@@ -1219,9 +1225,9 @@ export default function EvalMetricBuilder() {
     },
   });
 
-  const getPreviewConfig = useCallback((): { name: string; criteria: string; metricType: string } => {
+  const getPreviewConfig = useCallback((): { name: string; criteria: string; metricType: string; threshold: number; strictMode: boolean } => {
     const payload = buildPayload();
-    return { name: payload.name, criteria: payload.criteria, metricType: payload.metricType };
+    return { name: payload.name, criteria: payload.criteria, metricType: payload.metricType, threshold: payload.threshold, strictMode: payload.strictMode };
   }, [buildPayload]);
 
   if (isEdit && loadingMetric) {
