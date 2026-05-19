@@ -398,32 +398,41 @@ function SideBySideCompareDialog({
   const [leftSel, setLeftSel] = useState<string | null>(null);
   const [rightSel, setRightSel] = useState<string | null>(null);
 
-  const currentNames = useMemo(
-    () => new Set((currentTrace.spans ?? []).map((s) => s.name)),
+  function buildSpanKeys(spans: EvalSpan[]): string[] {
+    const typeCounts: Record<string, number> = {};
+    return spans.map((s) => {
+      const key = s.spanType || "custom";
+      typeCounts[key] = (typeCounts[key] ?? 0) + 1;
+      return `${key}:${typeCounts[key]}`;
+    });
+  }
+
+  const currentKeys = useMemo(
+    () => new Set(buildSpanKeys(currentTrace.spans ?? [])),
     [currentTrace],
   );
-  const baselineNames = useMemo(
-    () => new Set((baselineTrace.spans ?? []).map((s) => s.name)),
+  const baselineKeys = useMemo(
+    () => new Set(buildSpanKeys(baselineTrace.spans ?? [])),
     [baselineTrace],
   );
 
-  const newSpanIds = useMemo(
-    () => new Set(
+  const newSpanIds = useMemo(() => {
+    const curKeys = buildSpanKeys(currentTrace.spans ?? []);
+    return new Set(
       (currentTrace.spans ?? [])
-        .filter((s) => !baselineNames.has(s.name))
+        .filter((_, i) => !baselineKeys.has(curKeys[i]))
         .map((s) => s.id),
-    ),
-    [currentTrace, baselineNames],
-  );
+    );
+  }, [currentTrace, baselineKeys]);
 
-  const removedSpanIds = useMemo(
-    () => new Set(
+  const removedSpanIds = useMemo(() => {
+    const basKeys = buildSpanKeys(baselineTrace.spans ?? []);
+    return new Set(
       (baselineTrace.spans ?? [])
-        .filter((s) => !currentNames.has(s.name))
+        .filter((_, i) => !currentKeys.has(basKeys[i]))
         .map((s) => s.id),
-    ),
-    [baselineTrace, currentNames],
-  );
+    );
+  }, [baselineTrace, currentKeys]);
 
   const currentScores = parseScores(currentTrace.scores);
   const baselineScores = parseScores(baselineTrace.scores);

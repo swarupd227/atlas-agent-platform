@@ -731,9 +731,11 @@ router.patch("/api/eval/traces/:id", async (req, res) => {
     assertOrgOwnership(trace.organizationId, orgId);
     const patchSchema = z.object({
       isPinned: z.boolean().optional(),
+      pinned: z.boolean().optional(),
       pinnedBy: z.string().optional(),
     });
-    const patchBody = patchSchema.parse(req.body);
+    const raw = patchSchema.parse(req.body);
+    const patchBody = { ...raw, isPinned: raw.isPinned ?? raw.pinned };
     if (patchBody.isPinned === true) {
       const userRole =
         (req.authUser?.role) ??

@@ -1,6 +1,6 @@
 import { useState, useMemo, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "wouter";
+import { Link, useParams, useSearch } from "wouter";
 import type { Agent, EvalTestRun, EvalTrace, EvalGolden } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -209,7 +209,12 @@ function ProgressBar({ run }: ProgressBarProps) {
 
 export default function EvalRunDetail() {
   const { id } = useParams<{ id: string }>();
-  const [tracesFilter, setTracesFilter] = useState<"all" | "pass" | "fail">("all");
+  const search = useSearch();
+  const initialFilter = useMemo<"all" | "pass" | "fail">(() => {
+    const pf = new URLSearchParams(search).get("passFail");
+    return pf === "fail" ? "fail" : pf === "pass" ? "pass" : "all";
+  }, []);
+  const [tracesFilter, setTracesFilter] = useState<"all" | "pass" | "fail">(initialFilter);
   const [compareDialogOpen, setCompareDialogOpen] = useState(false);
   const [compareRunId, setCompareRunId] = useState<string | null>(null);
 
