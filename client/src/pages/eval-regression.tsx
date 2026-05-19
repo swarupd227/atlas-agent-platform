@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
@@ -39,7 +39,6 @@ import {
   CheckCircle,
   XCircle,
   AlertTriangle,
-  ChevronRight,
   Settings2,
   Rocket,
   Code2,
@@ -51,8 +50,6 @@ import {
   ShieldCheck,
   ShieldAlert,
   Lock,
-  Unlock,
-  Play,
   ArrowUpRight,
 } from "lucide-react";
 import { formatDate } from "@/components/shared-utils";
@@ -61,13 +58,8 @@ import { formatDate } from "@/components/shared-utils";
 
 type GateStatus = "pass" | "warn" | "fail" | "unknown";
 
-function computeGateStatus(run: EvalTestRun, gate: EvalGate | undefined): GateStatus {
+function computeGateStatus(run: EvalTestRun, threshold: number): GateStatus {
   if (run.status !== "completed" || run.passRate == null) return "unknown";
-  const threshold = (() => {
-    if (!gate?.thresholdOverrides) return 0.85;
-    const vals = Object.values(gate.thresholdOverrides as Record<string, number>).filter(v => typeof v === "number");
-    return vals.length > 0 ? Math.min(...vals) : 0.85;
-  })();
   if (run.passRate >= threshold) return "pass";
   if (run.passRate >= 0.7) return "warn";
   return "fail";
@@ -81,13 +73,21 @@ function gateStatusFromTags(run: EvalTestRun): GateStatus {
   return "unknown";
 }
 
+function gateThresholdFromGate(gate: EvalGate | undefined): number {
+  if (!gate?.thresholdOverrides) return 0.85;
+  const vals = Object.values(gate.thresholdOverrides as Record<string, number>).filter(
+    (v) => typeof v === "number"
+  );
+  return vals.length > 0 ? Math.min(...vals) : 0.85;
+}
+
 function effectiveGateStatus(run: EvalTestRun, gate: EvalGate | undefined): GateStatus {
   const fromTags = gateStatusFromTags(run);
   if (fromTags !== "unknown") return fromTags;
-  return computeGateStatus(run, gate);
+  return computeGateStatus(run, gateThresholdFromGate(gate));
 }
 
-// ── Gate-status dot/badge utils ───────────────────────────────────────────────
+// ── Gate-status visual utils ──────────────────────────────────────────────────
 
 const STATUS_DOT: Record<GateStatus, string> = {
   pass: "bg-emerald-500",
@@ -126,12 +126,29 @@ function StatusIcon({ status, size = 4 }: { status: GateStatus; size?: number })
 }
 
 // ── CI/CD Snippet Generator ───────────────────────────────────────────────────
+// Uses the dedicated /trigger endpoint — no dataset/metric parameters needed in CI.
+// The server reads them from the agent's gate definition.
 
-function ciSnippet(provider: string, agentId: string): string {
-  const baseUrl = window.location.origin;
-  switch (provider) {
-    case "github":
-      return `name: Atlas Eval Gate
+function buildCiSnippet(provider: string, agentId: string): string {
+  const origin = window.location.origin;
+  const triggerUrl = `${origin}/api/eval/gates/${agentId}/trigger`;
+  const pollBase = `${origin}/api/eval/runs`;
+
+  const pollLoop = (apiKeyExpr: string) => `
+          for i in $(seq 1 60); do
+            STATUS=$(curl -sf "${pollBase}/$RUN_ID" \\
+              -H "Authorization: Bearer ${apiKeyExpr}" | jq -r '.status')
+            [ "$STATUS" = "completed" ] && break
+            [ "$STATUS" = "failed" ] && { echo "Eval run failed"; exit 1; }
+            sleep 10
+          done
+          TAGS=$(curl -sf "${pollBase}/$RUN_ID" \\
+            -H "Authorization: Bearer ${apiKeyExpr}" | jq -r '.tags[]' 2>/dev/null || echo "")
+          echo "Gate tags: $TAGS"
+          echo "$TAGS" | grep -q "gate:pass" || { echo "Eval gate did not pass"; exit 1; }`;
+
+  if (provider === "github") {
+    return `name: Atlas Eval Gate
 on: [push, pull_request]
 
 jobs:
@@ -142,126 +159,97 @@ jobs:
         env:
           ATLAS_API_KEY: \${{ secrets.ATLAS_API_KEY }}
         run: |
-          RUN=$(curl -sf -X POST "${baseUrl}/api/eval/runs" \\
+          RUN=$(curl -sf -X POST "${triggerUrl}" \\
             -H "Authorization: Bearer $ATLAS_API_KEY" \\
             -H "Content-Type: application/json" \\
-            -d '{"agentId":"${agentId}","triggeredBy":"ci"}')
+            -d '{}')
           RUN_ID=$(echo $RUN | jq -r '.id')
-          echo "Eval run started: $RUN_ID"
-          for i in \$(seq 1 60); do
-            STATUS=$(curl -sf "${baseUrl}/api/eval/runs/$RUN_ID" \\
-              -H "Authorization: Bearer $ATLAS_API_KEY" | jq -r '.status')
-            [ "$STATUS" = "completed" ] && break
-            [ "$STATUS" = "failed" ] && { echo "Eval run failed"; exit 1; }
-            sleep 10
-          done
-          GATE=$(curl -sf "${baseUrl}/api/eval/runs/$RUN_ID" \\
-            -H "Authorization: Bearer $ATLAS_API_KEY")
-          PASS_RATE=$(echo $GATE | jq -r '.passRate')
-          echo "Pass rate: $PASS_RATE"
-          python3 -c "import sys; rate=float('$PASS_RATE'); sys.exit(0 if rate >= 0.85 else 1)"`;
+          echo "Eval run started: $RUN_ID"${pollLoop("$ATLAS_API_KEY")}`;
+  }
 
-    case "gitlab":
-      return `atlas-eval-gate:
+  if (provider === "gitlab") {
+    return `atlas-eval-gate:
   stage: test
   image: python:3.11-alpine
   before_script:
     - apk add --no-cache curl jq
   script:
     - |
-      RUN=$(curl -sf -X POST "${baseUrl}/api/eval/runs" \\
+      RUN=$(curl -sf -X POST "${triggerUrl}" \\
         -H "Authorization: Bearer $ATLAS_API_KEY" \\
         -H "Content-Type: application/json" \\
-        -d '{"agentId":"${agentId}","triggeredBy":"ci"}')
+        -d '{}')
       RUN_ID=$(echo $RUN | jq -r '.id')
-      echo "Eval run started: $RUN_ID"
-      for i in $(seq 1 60); do
-        STATUS=$(curl -sf "${baseUrl}/api/eval/runs/$RUN_ID" \\
-          -H "Authorization: Bearer $ATLAS_API_KEY" | jq -r '.status')
-        [ "$STATUS" = "completed" ] && break
-        [ "$STATUS" = "failed" ] && { echo "Eval run failed"; exit 1; }
-        sleep 10
-      done
-      PASS_RATE=$(curl -sf "${baseUrl}/api/eval/runs/$RUN_ID" \\
-        -H "Authorization: Bearer $ATLAS_API_KEY" | jq -r '.passRate')
-      echo "Pass rate: $PASS_RATE"
-      python3 -c "import sys; rate=float('$PASS_RATE'); sys.exit(0 if rate >= 0.85 else 1)"
+      echo "Eval run started: $RUN_ID"${pollLoop("$ATLAS_API_KEY")}
   rules:
     - if: $CI_PIPELINE_SOURCE == "push"`;
+  }
 
-    case "jenkins":
-      return `pipeline {
+  if (provider === "jenkins") {
+    return `pipeline {
   agent any
   environment {
     ATLAS_API_KEY = credentials('atlas-api-key')
-    BASE_URL = '${baseUrl}'
-    AGENT_ID = '${agentId}'
+    TRIGGER_URL   = '${triggerUrl}'
+    POLL_BASE     = '${pollBase}'
   }
   stages {
     stage('Atlas Eval Gate') {
       steps {
         script {
           def run = sh(returnStdout: true, script: """
-            curl -sf -X POST $BASE_URL/api/eval/runs \\
+            curl -sf -X POST $TRIGGER_URL \\
               -H 'Authorization: Bearer '\$ATLAS_API_KEY \\
-              -H 'Content-Type: application/json' \\
-              -d '{"agentId":"'\$AGENT_ID'","triggeredBy":"ci"}'
+              -H 'Content-Type: application/json' -d '{}'
           """).trim()
           def runId = sh(returnStdout: true, script: "echo '\${run}' | jq -r '.id'").trim()
           echo "Run ID: \${runId}"
           timeout(time: 10, unit: 'MINUTES') {
             waitUntil {
               def status = sh(returnStdout: true, script: """
-                curl -sf $BASE_URL/api/eval/runs/\${runId} \\
+                curl -sf $POLL_BASE/\${runId} \\
                   -H 'Authorization: Bearer '\$ATLAS_API_KEY | jq -r '.status'
               """).trim()
               return status == 'completed' || status == 'failed'
             }
           }
-          def passRate = sh(returnStdout: true, script: """
-            curl -sf $BASE_URL/api/eval/runs/\${runId} \\
-              -H 'Authorization: Bearer '\$ATLAS_API_KEY | jq -r '.passRate'
-          """).trim().toFloat()
-          if (passRate < 0.85) { error "Eval gate failed: pass rate \${passRate}" }
+          def tags = sh(returnStdout: true, script: """
+            curl -sf $POLL_BASE/\${runId} \\
+              -H 'Authorization: Bearer '\$ATLAS_API_KEY | jq -r '.tags[]' 2>/dev/null || echo ''
+          """).trim()
+          if (!tags.contains('gate:pass')) { error "Eval gate did not pass. Tags: \${tags}" }
         }
       }
     }
   }
 }`;
+  }
 
-    case "circleci":
-      return `version: 2.1
+  if (provider === "circleci") {
+    return `version: 2.1
 jobs:
   atlas-eval-gate:
     docker:
-      - image: cimg/python:3.11
+      - image: cimg/base:stable
     steps:
       - run:
           name: Run Atlas Eval Gate
           command: |
-            RUN=$(curl -sf -X POST "${baseUrl}/api/eval/runs" \\
+            RUN=$(curl -sf -X POST "${triggerUrl}" \\
               -H "Authorization: Bearer $ATLAS_API_KEY" \\
               -H "Content-Type: application/json" \\
-              -d '{"agentId":"${agentId}","triggeredBy":"ci"}')
+              -d '{}')
             RUN_ID=$(echo $RUN | jq -r '.id')
-            echo "Eval run: $RUN_ID"
-            for i in $(seq 1 60); do
-              STATUS=$(curl -sf "${baseUrl}/api/eval/runs/$RUN_ID" \\
-                -H "Authorization: Bearer $ATLAS_API_KEY" | jq -r '.status')
-              [ "$STATUS" = "completed" ] && break
-              sleep 10
-            done
-            PASS_RATE=$(curl -sf "${baseUrl}/api/eval/runs/$RUN_ID" \\
-              -H "Authorization: Bearer $ATLAS_API_KEY" | jq -r '.passRate')
-            python3 -c "import sys; rate=float('$PASS_RATE'); sys.exit(0 if rate >= 0.85 else 1)"
+            echo "Eval run: $RUN_ID"${pollLoop("$ATLAS_API_KEY")}
 
 workflows:
   eval-gate:
     jobs:
       - atlas-eval-gate`;
+  }
 
-    case "azure":
-      return `trigger:
+  if (provider === "azure") {
+    return `trigger:
   - main
   - develop
 
@@ -274,27 +262,17 @@ steps:
     inputs:
       targetType: inline
       script: |
-        RUN=$(curl -sf -X POST "${baseUrl}/api/eval/runs" \\
+        RUN=$(curl -sf -X POST "${triggerUrl}" \\
           -H "Authorization: Bearer $(ATLAS_API_KEY)" \\
           -H "Content-Type: application/json" \\
-          -d '{"agentId":"${agentId}","triggeredBy":"ci"}')
+          -d '{}')
         RUN_ID=$(echo $RUN | jq -r '.id')
-        echo "Eval run: $RUN_ID"
-        for i in $(seq 1 60); do
-          STATUS=$(curl -sf "${baseUrl}/api/eval/runs/$RUN_ID" \\
-            -H "Authorization: Bearer $(ATLAS_API_KEY)" | jq -r '.status')
-          [ "$STATUS" = "completed" ] && break
-          sleep 10
-        done
-        PASS_RATE=$(curl -sf "${baseUrl}/api/eval/runs/$RUN_ID" \\
-          -H "Authorization: Bearer $(ATLAS_API_KEY)" | jq -r '.passRate')
-        python3 -c "import sys; rate=float('$PASS_RATE'); sys.exit(0 if rate >= 0.85 else 1)"
+        echo "Eval run: $RUN_ID"${pollLoop("$(ATLAS_API_KEY)")}
     env:
       ATLAS_API_KEY: $(ATLAS_API_KEY)`;
-
-    default:
-      return "";
   }
+
+  return "";
 }
 
 // ── CopyButton ────────────────────────────────────────────────────────────────
@@ -308,7 +286,13 @@ function CopyButton({ text }: { text: string }) {
     });
   };
   return (
-    <Button variant="ghost" size="sm" onClick={copy} className="h-7 px-2" data-testid="button-copy-snippet">
+    <Button
+      variant="ghost"
+      size="sm"
+      onClick={copy}
+      className="h-7 px-2"
+      data-testid="button-copy-snippet"
+    >
       {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
       {copied ? "Copied" : "Copy"}
     </Button>
@@ -328,8 +312,6 @@ export default function EvalRegression() {
   const [promoteDialogOpen, setPromoteDialogOpen] = useState(false);
   const [promoteEnv, setPromoteEnv] = useState<"staging" | "production">("staging");
   const [overrideComment, setOverrideComment] = useState("");
-  const [showOverrideForm, setShowOverrideForm] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Gate definition form state ─────────────────────────────────────────────
   const [gateForm, setGateForm] = useState<{
@@ -366,10 +348,9 @@ export default function EvalRegression() {
     return m;
   }, [agents]);
 
-  // Agents that have at least one run
   const agentsWithRuns = useMemo(() => {
-    const agentIds = new Set(allRuns.map(r => r.agentId));
-    return agents.filter(a => agentIds.has(a.id));
+    const agentIds = new Set(allRuns.map((r) => r.agentId));
+    return agents.filter((a) => agentIds.has(a.id));
   }, [agents, allRuns]);
 
   const runsByAgent = useMemo(() => {
@@ -379,20 +360,22 @@ export default function EvalRegression() {
       list.push(run);
       m.set(run.agentId, list);
     }
-    // Sort each list ascending by startedAt
     for (const [id, list] of m.entries()) {
-      m.set(id, [...list].sort((a, b) =>
-        new Date(a.startedAt!).getTime() - new Date(b.startedAt!).getTime()
-      ));
+      m.set(
+        id,
+        [...list].sort(
+          (a, b) =>
+            new Date(a.startedAt!).getTime() - new Date(b.startedAt!).getTime()
+        )
+      );
     }
     return m;
   }, [allRuns]);
 
-  // Latest gate status per agent
   const agentLatestStatus = useMemo((): Map<string, GateStatus> => {
     const m = new Map<string, GateStatus>();
     for (const [agentId, runs] of runsByAgent.entries()) {
-      const completed = runs.filter(r => r.status === "completed");
+      const completed = runs.filter((r) => r.status === "completed");
       if (completed.length === 0) { m.set(agentId, "unknown"); continue; }
       const latest = completed[completed.length - 1];
       m.set(agentId, effectiveGateStatus(latest, gateMap.get(agentId)));
@@ -400,31 +383,31 @@ export default function EvalRegression() {
     return m;
   }, [runsByAgent, gateMap]);
 
-  const selectedAgentRuns = useMemo(() =>
-    selectedAgentId ? (runsByAgent.get(selectedAgentId) ?? []) : [],
+  const selectedAgentRuns = useMemo(
+    () => (selectedAgentId ? (runsByAgent.get(selectedAgentId) ?? []) : []),
     [runsByAgent, selectedAgentId]
   );
 
-  const selectedRun = useMemo(() =>
-    selectedRunId ? allRuns.find(r => r.id === selectedRunId) ?? null : null,
+  const selectedRun = useMemo(
+    () => (selectedRunId ? allRuns.find((r) => r.id === selectedRunId) ?? null : null),
     [allRuns, selectedRunId]
   );
 
-  const selectedGate = useMemo(() =>
-    selectedAgentId ? gateMap.get(selectedAgentId) : undefined,
+  const selectedGate = useMemo(
+    () => (selectedAgentId ? gateMap.get(selectedAgentId) : undefined),
     [gateMap, selectedAgentId]
   );
 
-  // Current gate status (latest completed run of selected agent)
+  const gateThreshold = useMemo(() => gateThresholdFromGate(selectedGate), [selectedGate]);
+
   const currentGateStatus = useMemo((): GateStatus => {
     if (!selectedAgentId) return "unknown";
     return agentLatestStatus.get(selectedAgentId) ?? "unknown";
   }, [selectedAgentId, agentLatestStatus]);
 
-  // Last passing run date
   const lastPassingRun = useMemo(() => {
-    const runs = selectedAgentRuns.filter(r =>
-      r.status === "completed" && effectiveGateStatus(r, selectedGate) === "pass"
+    const runs = selectedAgentRuns.filter(
+      (r) => r.status === "completed" && effectiveGateStatus(r, selectedGate) === "pass"
     );
     return runs.length > 0 ? runs[runs.length - 1] : null;
   }, [selectedAgentRuns, selectedGate]);
@@ -436,11 +419,11 @@ export default function EvalRegression() {
     }
   }, [agentsWithRuns, selectedAgentId]);
 
-  // Populate gate form when agent changes
+  // Populate gate form when selected agent changes
   useEffect(() => {
     if (!selectedGate) return;
     const overrides = selectedGate.thresholdOverrides as Record<string, number> | null;
-    const vals = overrides ? Object.values(overrides).filter(v => typeof v === "number") : [];
+    const vals = overrides ? Object.values(overrides).filter((v) => typeof v === "number") : [];
     const threshold = vals.length > 0 ? Math.min(...vals) : 0.85;
     setGateForm({
       datasetId: selectedGate.datasetId ?? "",
@@ -450,8 +433,8 @@ export default function EvalRegression() {
     });
   }, [selectedGate]);
 
-  // ── Mutations ─────────────────────────────────────────────────────────────
-  const saveSateMutation = useMutation({
+  // ── Mutations ──────────────────────────────────────────────────────────────
+  const saveGateMutation = useMutation({
     mutationFn: async (agentId: string) => {
       const pct = parseFloat(gateForm.passThreshold) / 100;
       const body: Record<string, unknown> = {
@@ -468,41 +451,34 @@ export default function EvalRegression() {
       queryClient.invalidateQueries({ queryKey: ["/api/eval/gates"] });
       toast({ title: "Gate definition saved" });
     },
-    onError: (err: any) => toast({ title: "Save failed", description: err.message, variant: "destructive" }),
+    onError: (err: any) =>
+      toast({ title: "Save failed", description: err.message, variant: "destructive" }),
   });
 
+  // promote mutation — does NOT send gateStatus from client; server computes it
   const promoteMutation = useMutation({
     mutationFn: async ({ env, comment }: { env: "staging" | "production"; comment?: string }) => {
       const res = await apiRequest("POST", `/api/eval/gates/${selectedAgentId}/promote`, {
         environment: env,
-        gateStatus: currentGateStatus,
         overrideComment: comment,
       });
       if (!res.ok) {
         const body = await res.json();
-        if (body.requiresOverride) {
-          setShowOverrideForm(true);
-          throw new Error(body.message);
-        }
-        throw new Error(body.message);
+        throw new Error(body.message ?? "Promotion failed");
       }
       return res.json();
     },
     onSuccess: (_, { env }) => {
       setPromoteDialogOpen(false);
       setOverrideComment("");
-      setShowOverrideForm(false);
       toast({ title: `Promoted to ${env}`, description: "Audit event recorded." });
       queryClient.invalidateQueries({ queryKey: ["/api/audit-events"] });
     },
-    onError: (err: any) => {
-      if (!showOverrideForm) {
-        toast({ title: "Promotion failed", description: err.message, variant: "destructive" });
-      }
-    },
+    onError: (err: any) =>
+      toast({ title: "Promotion failed", description: err.message, variant: "destructive" }),
   });
 
-  // ── Regression detail: traces for selected run ────────────────────────────
+  // ── Regression detail ──────────────────────────────────────────────────────
   const { data: failingTraces = [] } = useQuery({
     queryKey: ["/api/eval/runs", selectedRunId, "traces", "fail"],
     queryFn: async () => {
@@ -513,9 +489,43 @@ export default function EvalRegression() {
     enabled: !!selectedRunId,
   });
 
+  const selectedRunStatus = selectedRun
+    ? effectiveGateStatus(selectedRun, selectedGate)
+    : "unknown";
+
+  const prevRun = useMemo(() => {
+    if (!selectedRunId) return null;
+    const idx = selectedAgentRuns.findIndex((r) => r.id === selectedRunId);
+    return idx > 0 ? selectedAgentRuns[idx - 1] : null;
+  }, [selectedRunId, selectedAgentRuns]);
+
+  const passRateDelta = useMemo(() => {
+    if (selectedRun?.passRate == null || prevRun?.passRate == null) return null;
+    return selectedRun.passRate - prevRun.passRate;
+  }, [selectedRun, prevRun]);
+
+  // Per-metric threshold overrides from gate definition
+  const metricThresholdRows = useMemo(() => {
+    if (!selectedGate?.thresholdOverrides) return [];
+    return Object.entries(selectedGate.thresholdOverrides as Record<string, number>).map(
+      ([key, threshold]) => ({
+        key,
+        label: key.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+        threshold,
+        currentValue:
+          key === "passRate" || key === "pass_rate"
+            ? selectedRun?.passRate ?? null
+            : null,
+        baselineValue:
+          key === "passRate" || key === "pass_rate"
+            ? prevRun?.passRate ?? null
+            : null,
+      })
+    );
+  }, [selectedGate, selectedRun, prevRun]);
+
   const handlePromote = (env: "staging" | "production") => {
     setPromoteEnv(env);
-    setShowOverrideForm(false);
     setOverrideComment("");
     setPromoteDialogOpen(true);
   };
@@ -527,26 +537,9 @@ export default function EvalRegression() {
     });
   };
 
-  // ── Regression detail ─────────────────────────────────────────────────────
-  const selectedRunStatus = selectedRun ? effectiveGateStatus(selectedRun, selectedGate) : "unknown";
-  const prevRun = useMemo(() => {
-    if (!selectedRunId) return null;
-    const idx = selectedAgentRuns.findIndex(r => r.id === selectedRunId);
-    return idx > 0 ? selectedAgentRuns[idx - 1] : null;
-  }, [selectedRunId, selectedAgentRuns]);
+  const isProductionGateRed = currentGateStatus === "fail";
 
-  const passRateDelta = useMemo(() => {
-    if (!selectedRun?.passRate || !prevRun?.passRate) return null;
-    return selectedRun.passRate - prevRun.passRate;
-  }, [selectedRun, prevRun]);
-
-  const gateThreshold = useMemo(() => {
-    if (!selectedGate?.thresholdOverrides) return 0.85;
-    const vals = Object.values(selectedGate.thresholdOverrides as Record<string, number>).filter(v => typeof v === "number");
-    return vals.length > 0 ? Math.min(...vals) : 0.85;
-  }, [selectedGate]);
-
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Render ─────────────────────────────────────────────────────────────────
   return (
     <div className="flex h-[calc(100vh-64px)] overflow-hidden">
       {/* ── Left Agent Rail ── */}
@@ -561,32 +554,48 @@ export default function EvalRegression() {
 
         {runsLoading || gatesLoading ? (
           <div className="p-3 space-y-2">
-            {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
+            {Array.from({ length: 5 }).map((_, i) => (
+              <Skeleton key={i} className="h-12 w-full" />
+            ))}
           </div>
         ) : agentsWithRuns.length === 0 ? (
           <div className="flex flex-col items-center justify-center flex-1 p-4 text-center gap-2">
             <Bot className="w-8 h-8 text-muted-foreground/40" />
-            <p className="text-xs text-muted-foreground">No eval runs found.<br />Run an eval to see gate status here.</p>
+            <p className="text-xs text-muted-foreground">
+              No eval runs found.
+              <br />
+              Run an eval to see gate status here.
+            </p>
           </div>
         ) : (
           <div className="flex-1">
-            {agentsWithRuns.map(agent => {
+            {agentsWithRuns.map((agent) => {
               const status = agentLatestStatus.get(agent.id) ?? "unknown";
               const runs = runsByAgent.get(agent.id) ?? [];
-              const completedRuns = runs.filter(r => r.status === "completed");
+              const completedRuns = runs.filter((r) => r.status === "completed");
               const isSelected = selectedAgentId === agent.id;
               return (
                 <button
                   key={agent.id}
-                  className={`w-full text-left px-4 py-3 border-b transition-colors flex items-start gap-3 ${isSelected ? "bg-primary/5 border-l-2 border-l-primary" : "hover:bg-muted/30"}`}
-                  onClick={() => { setSelectedAgentId(agent.id); setSelectedRunId(null); }}
+                  className={`w-full text-left px-4 py-3 border-b transition-colors flex items-start gap-3 ${
+                    isSelected
+                      ? "bg-primary/5 border-l-2 border-l-primary"
+                      : "hover:bg-muted/30"
+                  }`}
+                  onClick={() => {
+                    setSelectedAgentId(agent.id);
+                    setSelectedRunId(null);
+                  }}
                   data-testid={`rail-agent-${agent.id}`}
                 >
-                  <div className={`mt-0.5 w-2.5 h-2.5 rounded-full shrink-0 ${STATUS_DOT[status]}`} />
+                  <div
+                    className={`mt-0.5 w-2.5 h-2.5 rounded-full shrink-0 ${STATUS_DOT[status]}`}
+                  />
                   <div className="min-w-0">
                     <p className="text-xs font-medium truncate">{agent.name}</p>
                     <p className="text-[10px] text-muted-foreground mt-0.5">
-                      {completedRuns.length} run{completedRuns.length !== 1 ? "s" : ""} · {STATUS_LABEL[status]}
+                      {completedRuns.length} run{completedRuns.length !== 1 ? "s" : ""} ·{" "}
+                      {STATUS_LABEL[status]}
                     </p>
                   </div>
                 </button>
@@ -601,7 +610,9 @@ export default function EvalRegression() {
         {!selectedAgentId ? (
           <div className="flex flex-col items-center justify-center h-full gap-3 text-center p-8">
             <GitBranch className="w-12 h-12 text-muted-foreground/30" />
-            <p className="text-sm text-muted-foreground">Select an agent from the left rail to view its regression timeline</p>
+            <p className="text-sm text-muted-foreground">
+              Select an agent from the left rail to view its regression timeline
+            </p>
           </div>
         ) : (
           <div className="p-6 space-y-5 max-w-5xl">
@@ -615,8 +626,8 @@ export default function EvalRegression() {
                   </h2>
                   <p className={`text-xs ${STATUS_TEXT[currentGateStatus]}`}>
                     {STATUS_LABEL[currentGateStatus]}
-                    {selectedAgentRuns.filter(r => r.status === "completed").length > 0 &&
-                      ` · ${selectedAgentRuns.filter(r => r.status === "completed").length} runs`}
+                    {selectedAgentRuns.filter((r) => r.status === "completed").length > 0 &&
+                      ` · ${selectedAgentRuns.filter((r) => r.status === "completed").length} runs`}
                   </p>
                 </div>
               </div>
@@ -643,10 +654,25 @@ export default function EvalRegression() {
             </div>
 
             {/* ── Tabs: Timeline / Gate Definition ── */}
-            <Tabs value={activePanel} onValueChange={(v) => setActivePanel(v as "timeline" | "gate")}>
+            <Tabs
+              value={activePanel}
+              onValueChange={(v) => setActivePanel(v as "timeline" | "gate")}
+            >
               <TabsList className="h-8">
-                <TabsTrigger value="timeline" className="text-xs" data-testid="tab-timeline">Timeline</TabsTrigger>
-                <TabsTrigger value="gate" className="text-xs" data-testid="tab-gate-definition">Gate Definition</TabsTrigger>
+                <TabsTrigger
+                  value="timeline"
+                  className="text-xs"
+                  data-testid="tab-timeline"
+                >
+                  Timeline
+                </TabsTrigger>
+                <TabsTrigger
+                  value="gate"
+                  className="text-xs"
+                  data-testid="tab-gate-definition"
+                >
+                  Gate Definition
+                </TabsTrigger>
               </TabsList>
 
               {/* ── Timeline Tab ── */}
@@ -656,7 +682,9 @@ export default function EvalRegression() {
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm font-medium flex items-center gap-2">
                       Gate-Status Timeline
-                      <Badge variant="outline" className="text-[10px]">{selectedAgentRuns.length} runs</Badge>
+                      <Badge variant="outline" className="text-[10px]">
+                        {selectedAgentRuns.length} runs
+                      </Badge>
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
@@ -670,22 +698,41 @@ export default function EvalRegression() {
                           {selectedAgentRuns.map((run, idx) => {
                             const status = effectiveGateStatus(run, selectedGate);
                             const isSelected = selectedRunId === run.id;
-                            const pct = run.passRate != null ? Math.round(run.passRate * 100) : null;
+                            const pct =
+                              run.passRate != null
+                                ? Math.round(run.passRate * 100)
+                                : null;
                             return (
-                              <div key={run.id} className="flex flex-col items-center gap-1.5 group" data-testid={`timeline-dot-${run.id}`}>
-                                {/* Run date */}
+                              <div
+                                key={run.id}
+                                className="flex flex-col items-center gap-1.5 group"
+                                data-testid={`timeline-dot-${run.id}`}
+                              >
                                 <span className="text-[9px] text-muted-foreground/60 rotate-[-45deg] origin-bottom-left w-10 truncate">
-                                  {run.startedAt ? new Date(run.startedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : `Run ${idx + 1}`}
+                                  {run.startedAt
+                                    ? new Date(run.startedAt).toLocaleDateString("en-US", {
+                                        month: "short",
+                                        day: "numeric",
+                                      })
+                                    : `Run ${idx + 1}`}
                                 </span>
-                                {/* Dot */}
                                 <button
-                                  className={`w-4 h-4 rounded-full transition-all ${STATUS_DOT[status]} ${isSelected ? `ring-2 ring-offset-1 ${STATUS_RING[status]}` : "opacity-80 hover:opacity-100 hover:scale-110"} ${run.status === "running" ? "animate-pulse" : ""}`}
-                                  onClick={() => setSelectedRunId(isSelected ? null : run.id)}
+                                  className={`w-4 h-4 rounded-full transition-all ${STATUS_DOT[status]} ${
+                                    isSelected
+                                      ? `ring-2 ring-offset-1 ${STATUS_RING[status]}`
+                                      : "opacity-80 hover:opacity-100 hover:scale-110"
+                                  } ${run.status === "running" ? "animate-pulse" : ""}`}
+                                  onClick={() =>
+                                    setSelectedRunId(isSelected ? null : run.id)
+                                  }
                                   title={`${STATUS_LABEL[status]}${pct != null ? ` — ${pct}% pass rate` : ""}`}
                                 />
-                                {/* Pass rate */}
                                 {pct != null && (
-                                  <span className={`text-[9px] font-medium ${STATUS_TEXT[status]}`}>{pct}%</span>
+                                  <span
+                                    className={`text-[9px] font-medium ${STATUS_TEXT[status]}`}
+                                  >
+                                    {pct}%
+                                  </span>
                                 )}
                                 {run.status === "running" && (
                                   <span className="text-[9px] text-blue-500">running</span>
@@ -694,12 +741,13 @@ export default function EvalRegression() {
                             );
                           })}
                         </div>
-                        {/* Legend */}
                         <div className="flex items-center gap-4 px-2 pt-1 border-t">
-                          {(["pass", "warn", "fail", "unknown"] as GateStatus[]).map(s => (
+                          {(["pass", "warn", "fail", "unknown"] as GateStatus[]).map((s) => (
                             <div key={s} className="flex items-center gap-1.5">
                               <div className={`w-2.5 h-2.5 rounded-full ${STATUS_DOT[s]}`} />
-                              <span className="text-[10px] text-muted-foreground capitalize">{STATUS_LABEL[s]}</span>
+                              <span className="text-[10px] text-muted-foreground">
+                                {STATUS_LABEL[s]}
+                              </span>
                             </div>
                           ))}
                         </div>
@@ -708,23 +756,39 @@ export default function EvalRegression() {
                   </CardContent>
                 </Card>
 
-                {/* ── Regression Detail Card (shown when a dot is clicked) ── */}
+                {/* ── Regression Detail Card ── */}
                 {selectedRun && (
-                  <Card className={`border-2 ${selectedRunStatus === "fail" ? "border-red-500/30" : selectedRunStatus === "warn" ? "border-amber-500/30" : "border-emerald-500/30"}`} data-testid="card-regression-detail">
+                  <Card
+                    className={`border-2 ${
+                      selectedRunStatus === "fail"
+                        ? "border-red-500/30"
+                        : selectedRunStatus === "warn"
+                        ? "border-amber-500/30"
+                        : "border-emerald-500/30"
+                    }`}
+                    data-testid="card-regression-detail"
+                  >
                     <CardHeader className="pb-3">
                       <div className="flex items-center justify-between">
                         <CardTitle className="text-sm font-medium flex items-center gap-2">
                           <StatusIcon status={selectedRunStatus} size={4} />
                           Run Detail
-                          <Badge variant="outline" className="text-[10px] font-mono">{selectedRun.id.slice(0, 8)}</Badge>
+                          <Badge variant="outline" className="text-[10px] font-mono">
+                            {selectedRun.id.slice(0, 8)}
+                          </Badge>
                         </CardTitle>
-                        <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px]" onClick={() => setSelectedRunId(null)}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 px-2 text-[11px]"
+                          onClick={() => setSelectedRunId(null)}
+                        >
                           Dismiss
                         </Button>
                       </div>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                      {/* Metric comparison table */}
+                      {/* Per-metric comparison table */}
                       <div className="rounded-md border overflow-hidden">
                         <div className="grid grid-cols-4 bg-muted/50 px-3 py-2 text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
                           <span>Metric</span>
@@ -733,32 +797,92 @@ export default function EvalRegression() {
                           <span className="text-center">Threshold</span>
                         </div>
                         <div className="divide-y">
-                          {/* Pass rate row */}
-                          <div className="grid grid-cols-4 px-3 py-2.5 items-center" data-testid="metric-row-pass-rate">
-                            <span className="text-xs font-medium">Pass Rate</span>
-                            <span className={`text-xs text-center font-semibold ${STATUS_TEXT[selectedRunStatus]}`}>
-                              {selectedRun.passRate != null ? `${Math.round(selectedRun.passRate * 100)}%` : "—"}
-                            </span>
-                            <span className="text-xs text-center text-muted-foreground">
-                              {prevRun?.passRate != null ? `${Math.round(prevRun.passRate * 100)}%` : "—"}
-                            </span>
-                            <span className="text-xs text-center text-muted-foreground">
-                              {Math.round(gateThreshold * 100)}%
-                            </span>
-                          </div>
-                          {/* Delta row */}
+                          {/* Synthetic rows from gate.thresholdOverrides */}
+                          {metricThresholdRows.length > 0 ? (
+                            metricThresholdRows.map((row) => {
+                              const rowStatus: GateStatus =
+                                row.currentValue != null
+                                  ? row.currentValue >= row.threshold
+                                    ? "pass"
+                                    : row.currentValue >= 0.7
+                                    ? "warn"
+                                    : "fail"
+                                  : "unknown";
+                              return (
+                                <div
+                                  key={row.key}
+                                  className="grid grid-cols-4 px-3 py-2.5 items-center"
+                                  data-testid={`metric-row-${row.key}`}
+                                >
+                                  <span className="text-xs font-medium">{row.label}</span>
+                                  <span
+                                    className={`text-xs text-center font-semibold ${STATUS_TEXT[rowStatus]}`}
+                                  >
+                                    {row.currentValue != null
+                                      ? `${Math.round(row.currentValue * 100)}%`
+                                      : "—"}
+                                  </span>
+                                  <span className="text-xs text-center text-muted-foreground">
+                                    {row.baselineValue != null
+                                      ? `${Math.round(row.baselineValue * 100)}%`
+                                      : "—"}
+                                  </span>
+                                  <span className="text-xs text-center text-muted-foreground">
+                                    {Math.round(row.threshold * 100)}%
+                                  </span>
+                                </div>
+                              );
+                            })
+                          ) : (
+                            // Fallback rows when no gate thresholds are configured
+                            <div
+                              className="grid grid-cols-4 px-3 py-2.5 items-center"
+                              data-testid="metric-row-pass-rate"
+                            >
+                              <span className="text-xs font-medium">Pass Rate</span>
+                              <span
+                                className={`text-xs text-center font-semibold ${STATUS_TEXT[selectedRunStatus]}`}
+                              >
+                                {selectedRun.passRate != null
+                                  ? `${Math.round(selectedRun.passRate * 100)}%`
+                                  : "—"}
+                              </span>
+                              <span className="text-xs text-center text-muted-foreground">
+                                {prevRun?.passRate != null
+                                  ? `${Math.round(prevRun.passRate * 100)}%`
+                                  : "—"}
+                              </span>
+                              <span className="text-xs text-center text-muted-foreground">
+                                {Math.round(gateThreshold * 100)}%
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Δ vs previous run */}
                           {passRateDelta != null && (
-                            <div className="grid grid-cols-4 px-3 py-2.5 items-center bg-muted/20" data-testid="metric-row-delta">
+                            <div
+                              className="grid grid-cols-4 px-3 py-2.5 items-center bg-muted/20"
+                              data-testid="metric-row-delta"
+                            >
                               <span className="text-xs font-medium">Δ vs Previous</span>
-                              <span className={`text-xs text-center font-semibold col-span-3 ${passRateDelta >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                                {passRateDelta >= 0 ? "+" : ""}{Math.round(passRateDelta * 100)}pp
-                                {passRateDelta < -(selectedGate?.regressionWindowPct ?? 5) / 100 && (
-                                  <span className="ml-2 text-[10px] bg-red-100 dark:bg-red-900/30 text-red-600 px-1.5 py-0.5 rounded">regression</span>
+                              <span
+                                className={`text-xs text-center font-semibold col-span-3 ${
+                                  passRateDelta >= 0 ? "text-emerald-600" : "text-red-600"
+                                }`}
+                              >
+                                {passRateDelta >= 0 ? "+" : ""}
+                                {Math.round(passRateDelta * 100)}pp
+                                {passRateDelta <
+                                  -((selectedGate?.regressionWindowPct ?? 5) / 100) && (
+                                  <span className="ml-2 text-[10px] bg-red-100 dark:bg-red-900/30 text-red-600 px-1.5 py-0.5 rounded">
+                                    regression
+                                  </span>
                                 )}
                               </span>
                             </div>
                           )}
-                          {/* Goldens row */}
+
+                          {/* Failed goldens */}
                           <div className="grid grid-cols-4 px-3 py-2.5 items-center">
                             <span className="text-xs font-medium">Failed Goldens</span>
                             <span className="text-xs text-center font-semibold text-red-600">
@@ -767,9 +891,12 @@ export default function EvalRegression() {
                             <span className="text-xs text-center text-muted-foreground">
                               {prevRun?.failedCount ?? "—"}
                             </span>
-                            <span className="text-xs text-center text-muted-foreground">0 target</span>
+                            <span className="text-xs text-center text-muted-foreground">
+                              0 target
+                            </span>
                           </div>
-                          {/* Cost row */}
+
+                          {/* Cost */}
                           {selectedRun.costUsd != null && (
                             <div className="grid grid-cols-4 px-3 py-2.5 items-center">
                               <span className="text-xs font-medium">Cost</span>
@@ -777,9 +904,13 @@ export default function EvalRegression() {
                                 ${selectedRun.costUsd.toFixed(4)}
                               </span>
                               <span className="text-xs text-center text-muted-foreground">
-                                {prevRun?.costUsd != null ? `$${prevRun.costUsd.toFixed(4)}` : "—"}
+                                {prevRun?.costUsd != null
+                                  ? `$${prevRun.costUsd.toFixed(4)}`
+                                  : "—"}
                               </span>
-                              <span className="text-xs text-center text-muted-foreground">—</span>
+                              <span className="text-xs text-center text-muted-foreground">
+                                —
+                              </span>
                             </div>
                           )}
                         </div>
@@ -790,28 +921,49 @@ export default function EvalRegression() {
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
                             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                              Failing Traces {failingTraces.length > 0 && `(${failingTraces.length})`}
+                              Failing Traces{" "}
+                              {failingTraces.length > 0 && `(${failingTraces.length})`}
                             </p>
                             <Link href={`/evals/runs/${selectedRun.id}`}>
-                              <Button variant="ghost" size="sm" className="h-6 px-2 text-[11px]" data-testid="button-view-run">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 px-2 text-[11px]"
+                                data-testid="button-view-run"
+                              >
                                 Full Run <ExternalLink className="w-3 h-3 ml-1" />
                               </Button>
                             </Link>
                           </div>
                           {failingTraces.length === 0 ? (
-                            <p className="text-xs text-muted-foreground italic">No trace data yet.</p>
+                            <p className="text-xs text-muted-foreground italic">
+                              No trace data yet.
+                            </p>
                           ) : (
                             <div className="divide-y border rounded-md overflow-hidden">
                               {failingTraces.slice(0, 5).map((trace: any) => (
-                                <div key={trace.id} className="flex items-center justify-between px-3 py-2 hover:bg-muted/20" data-testid={`trace-row-${trace.id}`}>
+                                <div
+                                  key={trace.id}
+                                  className="flex items-center justify-between px-3 py-2 hover:bg-muted/20"
+                                  data-testid={`trace-row-${trace.id}`}
+                                >
                                   <div className="min-w-0">
-                                    <p className="text-xs truncate">{trace.input ? String(trace.input).slice(0, 60) + "…" : `Trace ${trace.id.slice(0, 8)}`}</p>
+                                    <p className="text-xs truncate">
+                                      {trace.input
+                                        ? String(trace.input).slice(0, 60) + "…"
+                                        : `Trace ${trace.id.slice(0, 8)}`}
+                                    </p>
                                     <p className="text-[10px] text-muted-foreground mt-0.5">
                                       {trace.latencyMs ? `${trace.latencyMs}ms` : ""}
                                     </p>
                                   </div>
                                   <Link href={`/evals/traces/${trace.id}`}>
-                                    <Button variant="ghost" size="sm" className="h-6 px-2 shrink-0" data-testid={`button-trace-${trace.id}`}>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-6 px-2 shrink-0"
+                                      data-testid={`button-trace-${trace.id}`}
+                                    >
                                       <ArrowUpRight className="w-3 h-3" />
                                     </Button>
                                   </Link>
@@ -824,9 +976,20 @@ export default function EvalRegression() {
 
                       {/* Timestamps */}
                       <div className="flex items-center gap-4 text-[10px] text-muted-foreground">
-                        <span>Started: {selectedRun.startedAt ? formatDate(selectedRun.startedAt as string) : "—"}</span>
-                        {selectedRun.completedAt && <span>Completed: {formatDate(selectedRun.completedAt as string)}</span>}
-                        {selectedRun.triggeredBy && <span>Triggered by: {selectedRun.triggeredBy}</span>}
+                        <span>
+                          Started:{" "}
+                          {selectedRun.startedAt
+                            ? formatDate(selectedRun.startedAt as string)
+                            : "—"}
+                        </span>
+                        {selectedRun.completedAt && (
+                          <span>
+                            Completed: {formatDate(selectedRun.completedAt as string)}
+                          </span>
+                        )}
+                        {selectedRun.triggeredBy && (
+                          <span>Triggered by: {selectedRun.triggeredBy}</span>
+                        )}
                       </div>
                     </CardContent>
                   </Card>
@@ -842,30 +1005,43 @@ export default function EvalRegression() {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     {/* Gate status widget */}
-                    <div className={`flex items-center gap-3 rounded-lg p-3 border ${
-                      currentGateStatus === "pass" ? "bg-emerald-500/5 border-emerald-500/20" :
-                      currentGateStatus === "warn" ? "bg-amber-500/5 border-amber-500/20" :
-                      currentGateStatus === "fail" ? "bg-red-500/5 border-red-500/20" :
-                      "bg-muted/30 border-border"
-                    }`} data-testid="gate-status-widget">
+                    <div
+                      className={`flex items-center gap-3 rounded-lg p-3 border ${
+                        currentGateStatus === "pass"
+                          ? "bg-emerald-500/5 border-emerald-500/20"
+                          : currentGateStatus === "warn"
+                          ? "bg-amber-500/5 border-amber-500/20"
+                          : currentGateStatus === "fail"
+                          ? "bg-red-500/5 border-red-500/20"
+                          : "bg-muted/30 border-border"
+                      }`}
+                      data-testid="gate-status-widget"
+                    >
                       <StatusIcon status={currentGateStatus} size={6} />
                       <div className="flex-1">
-                        <p className={`text-sm font-semibold ${STATUS_TEXT[currentGateStatus]}`}>
-                          {currentGateStatus === "pass" ? "Gate Green — Ready to promote" :
-                           currentGateStatus === "warn" ? "Gate Amber — Review recommended" :
-                           currentGateStatus === "fail" ? "Gate Red — Promotion blocked" :
-                           "No gate data yet"}
+                        <p
+                          className={`text-sm font-semibold ${STATUS_TEXT[currentGateStatus]}`}
+                        >
+                          {currentGateStatus === "pass"
+                            ? "Gate Green — Ready to promote"
+                            : currentGateStatus === "warn"
+                            ? "Gate Amber — Review recommended"
+                            : currentGateStatus === "fail"
+                            ? "Gate Red — Production promotion locked"
+                            : "No gate data yet"}
                         </p>
                         {lastPassingRun && (
                           <p className="text-[11px] text-muted-foreground mt-0.5">
-                            Last passing run: {formatDate(lastPassingRun.startedAt as string)}
+                            Last passing run:{" "}
+                            {formatDate(lastPassingRun.startedAt as string)}
                           </p>
                         )}
                       </div>
                     </div>
 
                     {/* Promote buttons */}
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-start gap-3 flex-wrap">
+                      {/* Staging — always available */}
                       <Button
                         variant="outline"
                         size="sm"
@@ -876,25 +1052,47 @@ export default function EvalRegression() {
                         <ShieldCheck className="w-4 h-4 mr-1.5" />
                         Promote to Staging
                       </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => handlePromote("production")}
-                        disabled={promoteMutation.isPending}
-                        className={currentGateStatus === "fail" ? "bg-red-600 hover:bg-red-700" : ""}
-                        data-testid="button-promote-production"
-                      >
-                        {currentGateStatus === "fail" ? (
-                          <Lock className="w-4 h-4 mr-1.5" />
-                        ) : (
+
+                      {/* Production — disabled when gate is red */}
+                      {isProductionGateRed ? (
+                        <div className="flex flex-col gap-1.5">
+                          <Button
+                            size="sm"
+                            disabled
+                            className="opacity-40 cursor-not-allowed"
+                            data-testid="button-promote-production-locked"
+                          >
+                            <Lock className="w-4 h-4 mr-1.5" />
+                            Promote to Production
+                          </Button>
+                          <button
+                            className="text-[11px] text-red-600 hover:underline flex items-center gap-1 ml-0.5"
+                            onClick={() => handlePromote("production")}
+                            disabled={promoteMutation.isPending}
+                            data-testid="button-override-production"
+                          >
+                            <ShieldAlert className="w-3 h-3" />
+                            Override with justification (audit-logged)
+                          </button>
+                        </div>
+                      ) : (
+                        <Button
+                          size="sm"
+                          onClick={() => handlePromote("production")}
+                          disabled={promoteMutation.isPending}
+                          data-testid="button-promote-production"
+                        >
                           <Rocket className="w-4 h-4 mr-1.5" />
-                        )}
-                        Promote to Production
-                      </Button>
+                          Promote to Production
+                        </Button>
+                      )}
                     </div>
-                    {currentGateStatus === "fail" && (
+
+                    {isProductionGateRed && (
                       <p className="text-[11px] text-red-600 flex items-center gap-1.5">
                         <ShieldAlert className="w-3.5 h-3.5 shrink-0" />
-                        Production promotion requires gate to be green or a mandatory override comment.
+                        Gate is red. Production promotion is locked until the gate passes or
+                        an override justification is provided.
                       </p>
                     )}
                   </CardContent>
@@ -908,41 +1106,70 @@ export default function EvalRegression() {
                     <CardTitle className="text-sm font-medium flex items-center gap-2">
                       <Settings2 className="w-4 h-4" />
                       Gate Definition
-                      {selectedGate && <Badge variant="outline" className="text-[10px]">configured</Badge>}
+                      {selectedGate && (
+                        <Badge variant="outline" className="text-[10px]">
+                          configured
+                        </Badge>
+                      )}
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-5">
                     <p className="text-xs text-muted-foreground">
-                      Define which dataset, metrics, and thresholds constitute a passing release for this agent.
+                      Define which dataset, metrics, and thresholds constitute a passing
+                      release for this agent. These settings are also used by the CI/CD
+                      trigger endpoint.
                     </p>
                     <div className="grid grid-cols-2 gap-4">
-                      {/* Dataset */}
                       <div className="space-y-1.5">
                         <Label className="text-xs">Dataset</Label>
-                        <Select value={gateForm.datasetId} onValueChange={v => setGateForm(p => ({ ...p, datasetId: v }))}>
-                          <SelectTrigger className="h-8 text-xs" data-testid="select-gate-dataset">
+                        <Select
+                          value={gateForm.datasetId}
+                          onValueChange={(v) =>
+                            setGateForm((p) => ({ ...p, datasetId: v }))
+                          }
+                        >
+                          <SelectTrigger
+                            className="h-8 text-xs"
+                            data-testid="select-gate-dataset"
+                          >
                             <SelectValue placeholder="Select dataset…" />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="">Any dataset</SelectItem>
-                            {datasets.map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
+                            {datasets.map((d) => (
+                              <SelectItem key={d.id} value={d.id}>
+                                {d.name}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
-                      {/* Metric collection */}
+
                       <div className="space-y-1.5">
                         <Label className="text-xs">Metric Collection</Label>
-                        <Select value={gateForm.metricCollectionId} onValueChange={v => setGateForm(p => ({ ...p, metricCollectionId: v }))}>
-                          <SelectTrigger className="h-8 text-xs" data-testid="select-gate-metrics">
+                        <Select
+                          value={gateForm.metricCollectionId}
+                          onValueChange={(v) =>
+                            setGateForm((p) => ({ ...p, metricCollectionId: v }))
+                          }
+                        >
+                          <SelectTrigger
+                            className="h-8 text-xs"
+                            data-testid="select-gate-metrics"
+                          >
                             <SelectValue placeholder="Select collection…" />
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="">Any collection</SelectItem>
-                            {(metricCollections as any[]).map((mc: any) => <SelectItem key={mc.id} value={mc.id}>{mc.name}</SelectItem>)}
+                            {(metricCollections as any[]).map((mc: any) => (
+                              <SelectItem key={mc.id} value={mc.id}>
+                                {mc.name}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
-                      {/* Pass threshold */}
+
                       <div className="space-y-1.5">
                         <Label className="text-xs">Pass Rate Threshold (%)</Label>
                         <Input
@@ -950,13 +1177,17 @@ export default function EvalRegression() {
                           min={0}
                           max={100}
                           value={gateForm.passThreshold}
-                          onChange={e => setGateForm(p => ({ ...p, passThreshold: e.target.value }))}
+                          onChange={(e) =>
+                            setGateForm((p) => ({ ...p, passThreshold: e.target.value }))
+                          }
                           className="h-8 text-xs"
                           data-testid="input-gate-threshold"
                         />
-                        <p className="text-[10px] text-muted-foreground">Run must achieve ≥ this pass rate to be gate-green.</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          Run must achieve ≥ this pass rate to be gate-green.
+                        </p>
                       </div>
-                      {/* Regression window */}
+
                       <div className="space-y-1.5">
                         <Label className="text-xs">Regression Window (%)</Label>
                         <Input
@@ -964,22 +1195,33 @@ export default function EvalRegression() {
                           min={0}
                           max={50}
                           value={gateForm.regressionWindowPct}
-                          onChange={e => setGateForm(p => ({ ...p, regressionWindowPct: e.target.value }))}
+                          onChange={(e) =>
+                            setGateForm((p) => ({
+                              ...p,
+                              regressionWindowPct: e.target.value,
+                            }))
+                          }
                           className="h-8 text-xs"
                           data-testid="input-gate-regression-window"
                         />
-                        <p className="text-[10px] text-muted-foreground">Flag regression if pass rate drops more than this % from baseline.</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          Flag regression if pass rate drops more than this % from baseline.
+                        </p>
                       </div>
                     </div>
 
                     <div className="flex items-center gap-3 pt-1">
                       <Button
                         size="sm"
-                        onClick={() => selectedAgentId && saveSateMutation.mutate(selectedAgentId)}
-                        disabled={saveSateMutation.isPending || !selectedAgentId}
+                        onClick={() => selectedAgentId && saveGateMutation.mutate(selectedAgentId)}
+                        disabled={saveGateMutation.isPending || !selectedAgentId}
                         data-testid="button-save-gate"
                       >
-                        {saveSateMutation.isPending ? <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Check className="w-3.5 h-3.5 mr-1.5" />}
+                        {saveGateMutation.isPending ? (
+                          <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                        ) : (
+                          <Check className="w-3.5 h-3.5 mr-1.5" />
+                        )}
                         Save Gate Definition
                       </Button>
                       {selectedGate && (
@@ -998,28 +1240,40 @@ export default function EvalRegression() {
 
       {/* ── CI/CD Snippets Drawer ── */}
       <Sheet open={cicdOpen} onOpenChange={setCicdOpen}>
-        <SheetContent side="right" className="w-[560px] max-w-[90vw] overflow-y-auto">
+        <SheetContent side="right" className="w-[580px] max-w-[90vw] overflow-y-auto">
           <SheetHeader className="mb-4">
             <SheetTitle className="flex items-center gap-2">
               <Code2 className="w-4 h-4" />
               CI/CD Integration
             </SheetTitle>
             <SheetDescription>
-              Copy a YAML snippet to your CI pipeline. The script runs an eval and exits 0 (pass) or 1 (fail) based on the gate.
+              These snippets call the gate trigger endpoint — they only need your agent
+              ID. Dataset and metrics are read from the gate definition. The script exits{" "}
+              <code>0</code> if the gate passes, <code>1</code> if it fails.
             </SheetDescription>
           </SheetHeader>
 
           <Tabs defaultValue="github">
             <TabsList className="grid grid-cols-5 h-8 text-[10px]">
-              <TabsTrigger value="github" className="text-[10px]" data-testid="tab-cicd-github">GitHub</TabsTrigger>
-              <TabsTrigger value="gitlab" className="text-[10px]" data-testid="tab-cicd-gitlab">GitLab</TabsTrigger>
-              <TabsTrigger value="jenkins" className="text-[10px]" data-testid="tab-cicd-jenkins">Jenkins</TabsTrigger>
-              <TabsTrigger value="circleci" className="text-[10px]" data-testid="tab-cicd-circleci">CircleCI</TabsTrigger>
-              <TabsTrigger value="azure" className="text-[10px]" data-testid="tab-cicd-azure">Azure</TabsTrigger>
+              <TabsTrigger value="github" className="text-[10px]" data-testid="tab-cicd-github">
+                GitHub
+              </TabsTrigger>
+              <TabsTrigger value="gitlab" className="text-[10px]" data-testid="tab-cicd-gitlab">
+                GitLab
+              </TabsTrigger>
+              <TabsTrigger value="jenkins" className="text-[10px]" data-testid="tab-cicd-jenkins">
+                Jenkins
+              </TabsTrigger>
+              <TabsTrigger value="circleci" className="text-[10px]" data-testid="tab-cicd-circleci">
+                CircleCI
+              </TabsTrigger>
+              <TabsTrigger value="azure" className="text-[10px]" data-testid="tab-cicd-azure">
+                Azure
+              </TabsTrigger>
             </TabsList>
 
-            {(["github", "gitlab", "jenkins", "circleci", "azure"] as const).map(provider => {
-              const snippet = ciSnippet(provider, selectedAgentId ?? "AGENT_ID");
+            {(["github", "gitlab", "jenkins", "circleci", "azure"] as const).map((provider) => {
+              const snippet = buildCiSnippet(provider, selectedAgentId ?? "AGENT_ID");
               const labels: Record<string, string> = {
                 github: "GitHub Actions",
                 gitlab: "GitLab CI",
@@ -1028,7 +1282,12 @@ export default function EvalRegression() {
                 azure: "Azure Pipelines",
               };
               return (
-                <TabsContent key={provider} value={provider} className="mt-3 space-y-3" data-testid={`panel-cicd-${provider}`}>
+                <TabsContent
+                  key={provider}
+                  value={provider}
+                  className="mt-3 space-y-3"
+                  data-testid={`panel-cicd-${provider}`}
+                >
                   <div className="flex items-center justify-between">
                     <p className="text-xs font-medium">{labels[provider]}</p>
                     <CopyButton text={snippet} />
@@ -1037,8 +1296,9 @@ export default function EvalRegression() {
                     {snippet}
                   </pre>
                   <div className="rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-[11px] text-amber-600 dark:text-amber-400">
-                    Add your Atlas API key as a CI secret named <code className="font-mono">ATLAS_API_KEY</code>.
-                    Replace <code className="font-mono">0.85</code> with your configured threshold ({gateForm.passThreshold}%).
+                    Add your Atlas API key as a CI secret named{" "}
+                    <code className="font-mono">ATLAS_API_KEY</code>. Configure the gate
+                    dataset in the Gate Definition tab before running this snippet.
                   </div>
                 </TabsContent>
               );
@@ -1048,50 +1308,69 @@ export default function EvalRegression() {
       </Sheet>
 
       {/* ── Promote Dialog ── */}
-      <Dialog open={promoteDialogOpen} onOpenChange={open => { setPromoteDialogOpen(open); if (!open) { setShowOverrideForm(false); setOverrideComment(""); }}}>
+      <Dialog
+        open={promoteDialogOpen}
+        onOpenChange={(open) => {
+          setPromoteDialogOpen(open);
+          if (!open) setOverrideComment("");
+        }}
+      >
         <DialogContent data-testid="dialog-promote">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              {currentGateStatus === "fail" ? <ShieldAlert className="w-4 h-4 text-red-500" /> : <Rocket className="w-4 h-4" />}
+              {isProductionGateRed && promoteEnv === "production" ? (
+                <ShieldAlert className="w-4 h-4 text-red-500" />
+              ) : (
+                <Rocket className="w-4 h-4" />
+              )}
               Promote to {promoteEnv === "staging" ? "Staging" : "Production"}
             </DialogTitle>
             <DialogDescription>
-              {promoteEnv === "production" && currentGateStatus === "fail"
-                ? "The gate is currently red. An override comment is required to proceed. This action will be audit-logged."
+              {promoteEnv === "production" && isProductionGateRed
+                ? "The gate is currently failing. An override justification is required to proceed with production promotion. This action will be audit-logged."
                 : `Confirm promotion of ${agentMap.get(selectedAgentId ?? "")?.name ?? "this agent"} to ${promoteEnv}.`}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
             {/* Gate status summary */}
-            <div className={`flex items-center gap-3 rounded-lg p-3 border text-sm ${
-              currentGateStatus === "pass" ? "bg-emerald-500/5 border-emerald-500/20 text-emerald-700" :
-              currentGateStatus === "warn" ? "bg-amber-500/5 border-amber-500/20 text-amber-700" :
-              "bg-red-500/5 border-red-500/20 text-red-700"
-            }`}>
+            <div
+              className={`flex items-center gap-3 rounded-lg p-3 border text-sm ${
+                currentGateStatus === "pass"
+                  ? "bg-emerald-500/5 border-emerald-500/20 text-emerald-700"
+                  : currentGateStatus === "warn"
+                  ? "bg-amber-500/5 border-amber-500/20 text-amber-700"
+                  : "bg-red-500/5 border-red-500/20 text-red-700"
+              }`}
+            >
               <StatusIcon status={currentGateStatus} size={4} />
               <span className="font-medium">{STATUS_LABEL[currentGateStatus]}</span>
             </div>
 
-            {/* Override form — required when gate is red and env is production */}
-            {(promoteEnv === "production" && currentGateStatus === "fail") || showOverrideForm ? (
+            {/* Override comment — required when gate is red and env is production */}
+            {promoteEnv === "production" && isProductionGateRed && (
               <div className="space-y-1.5">
                 <Label className="text-xs flex items-center gap-1.5">
-                  <Unlock className="w-3 h-3" />
-                  Override reason (required)
+                  <ShieldAlert className="w-3 h-3" />
+                  Override justification (required)
                 </Label>
                 <Textarea
-                  placeholder="Describe why this override is justified…"
+                  placeholder="Explain why this override is justified — e.g. known test environment issue, hotfix path, rollback…"
                   value={overrideComment}
-                  onChange={e => setOverrideComment(e.target.value)}
+                  onChange={(e) => setOverrideComment(e.target.value)}
                   className="text-xs min-h-[80px]"
                   data-testid="textarea-override-comment"
                 />
               </div>
-            ) : null}
+            )}
 
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setPromoteDialogOpen(false)} data-testid="button-cancel-promote">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setPromoteDialogOpen(false)}
+                data-testid="button-cancel-promote"
+              >
                 Cancel
               </Button>
               <Button
@@ -1099,17 +1378,29 @@ export default function EvalRegression() {
                 onClick={confirmPromote}
                 disabled={
                   promoteMutation.isPending ||
-                  (promoteEnv === "production" && currentGateStatus === "fail" && !overrideComment.trim())
+                  (promoteEnv === "production" &&
+                    isProductionGateRed &&
+                    !overrideComment.trim())
                 }
-                className={currentGateStatus === "fail" ? "bg-red-600 hover:bg-red-700" : ""}
+                className={
+                  promoteEnv === "production" && isProductionGateRed
+                    ? "bg-red-600 hover:bg-red-700"
+                    : ""
+                }
                 data-testid="button-confirm-promote"
               >
+                {promoteMutation.isPending ? (
+                  <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                ) : promoteEnv === "production" && isProductionGateRed ? (
+                  <ShieldAlert className="w-3.5 h-3.5 mr-1.5" />
+                ) : (
+                  <Rocket className="w-3.5 h-3.5 mr-1.5" />
+                )}
                 {promoteMutation.isPending
-                  ? <RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />
-                  : currentGateStatus === "fail"
-                    ? <ShieldAlert className="w-3.5 h-3.5 mr-1.5" />
-                    : <Rocket className="w-3.5 h-3.5 mr-1.5" />}
-                {promoteMutation.isPending ? "Promoting…" : currentGateStatus === "fail" ? "Override & Promote" : `Promote to ${promoteEnv}`}
+                  ? "Promoting…"
+                  : promoteEnv === "production" && isProductionGateRed
+                  ? "Override & Promote"
+                  : `Promote to ${promoteEnv}`}
               </Button>
             </div>
           </div>

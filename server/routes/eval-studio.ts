@@ -1255,22 +1255,117 @@ router.put("/api/eval/gates/:agentId", async (req, res) => {
   }
 });
 
+// ── Regression Hub: Gate-triggered CI run ─────────────────────────────────────
+// Accepts only agentId so CI pipelines don't need to know the dataset/metrics.
+// The gate definition supplies all required parameters.
+router.post("/api/eval/gates/:agentId/trigger", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const { agentId } = req.params;
+
+    const gate = await storage.getEvalGate(agentId);
+    if (!gate?.datasetId) {
+      return res.status(400).json({
+        message: "Gate has no dataset configured. Open the Regression Hub → Gate Definition panel and set a dataset first.",
+      });
+    }
+
+    const dataset = await storage.getEvalDataset(gate.datasetId);
+    if (!dataset) return res.status(404).json({ message: "Dataset not found" });
+    assertOrgOwnership(dataset.organizationId, orgId);
+
+    const targetAgent = await storage.getAgent(agentId);
+    if (targetAgent) assertOrgOwnership(targetAgent.organizationId, orgId);
+
+    const metricIds = (gate.attachedMetricIds as string[] | null) ?? [];
+
+    const run = await storage.createEvalTestRun({
+      organizationId: orgId,
+      agentId,
+      agentVersion: "latest",
+      datasetId: gate.datasetId,
+      datasetVersion: dataset.version,
+      metricCollectionId: gate.metricCollectionId ?? null,
+      metricIds,
+      judgeModelOverride: null,
+      parallelism: 5,
+      cacheEnabled: true,
+      tags: ["triggered_by:ci"],
+      status: "pending",
+      totalGoldens: dataset.goldenCount || 0,
+      pendingCount: dataset.goldenCount || 0,
+      runningCount: 0,
+      passedCount: 0,
+      failedCount: 0,
+      triggeredBy: "ci",
+    });
+
+    await storage.createJob({
+      type: "eval_test_run",
+      status: "queued",
+      agentId,
+      payload: {
+        runId: run.id,
+        agentId,
+        datasetId: gate.datasetId,
+        metricIds,
+        parallelism: 5,
+        organizationId: orgId,
+      },
+    });
+
+    res.status(201).json(run);
+  } catch (err: any) {
+    if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
+    res.status(500).json({ message: err.message });
+  }
+});
+
 // ── Regression Hub: Promote to Staging / Production ───────────────────────────
 router.post("/api/eval/gates/:agentId/promote", async (req, res) => {
   try {
     const orgId = getOrgId(req);
     const { agentId } = req.params;
-    const { environment, overrideComment, gateStatus } = req.body as {
+    const { environment, overrideComment } = req.body as {
       environment: "staging" | "production";
       overrideComment?: string;
-      gateStatus?: string; // "pass" | "warn" | "fail" — sent by client
     };
 
     if (!environment || !["staging", "production"].includes(environment)) {
       return res.status(400).json({ message: "environment must be 'staging' or 'production'" });
     }
 
-    const isGateRed = gateStatus === "fail";
+    // ── Gate status computed server-side — never trust client ────────────────
+    const gate = await storage.getEvalGate(agentId);
+    const recentRuns = await storage.getEvalTestRuns({ agentId });
+    const completedRuns = recentRuns
+      .filter(r => r.status === "completed")
+      .sort((a, b) =>
+        new Date(b.completedAt ?? b.startedAt ?? 0).getTime() -
+        new Date(a.completedAt ?? a.startedAt ?? 0).getTime()
+      );
+    const latestRun = completedRuns[0] ?? null;
+
+    const gateThreshold = (() => {
+      if (!gate?.thresholdOverrides) return 0.85;
+      const vals = Object.values(gate.thresholdOverrides as Record<string, number>).filter(v => typeof v === "number");
+      return vals.length > 0 ? Math.min(...vals) : 0.85;
+    })();
+
+    let serverGateStatus: "pass" | "warn" | "fail" | "unknown" = "unknown";
+    if (latestRun) {
+      const tags = (latestRun.tags as string[] | null) ?? [];
+      if (tags.includes("gate:pass")) serverGateStatus = "pass";
+      else if (tags.includes("gate:warn")) serverGateStatus = "warn";
+      else if (tags.includes("gate:fail")) serverGateStatus = "fail";
+      else if (latestRun.passRate != null) {
+        if (latestRun.passRate >= gateThreshold) serverGateStatus = "pass";
+        else if (latestRun.passRate >= 0.7) serverGateStatus = "warn";
+        else serverGateStatus = "fail";
+      }
+    }
+
+    const isGateRed = serverGateStatus === "fail";
 
     // Production promotion is blocked when gate is red unless override comment provided
     if (environment === "production" && isGateRed) {
@@ -1296,9 +1391,11 @@ router.post("/api/eval/gates/:agentId/promote", async (req, res) => {
       organizationId: orgId ?? undefined,
       details: {
         environment,
-        gateStatus: gateStatus ?? "unknown",
+        serverGateStatus,
         overrideComment: overrideComment?.trim() || null,
         agentName: agent?.name ?? agentId,
+        latestRunId: latestRun?.id ?? null,
+        latestRunPassRate: latestRun?.passRate ?? null,
         promotedAt: new Date().toISOString(),
       },
     });
@@ -1306,6 +1403,7 @@ router.post("/api/eval/gates/:agentId/promote", async (req, res) => {
     res.json({
       success: true,
       environment,
+      serverGateStatus,
       overridden: isGateRed && !!overrideComment,
       promotedAt: new Date().toISOString(),
     });
