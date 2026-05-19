@@ -734,6 +734,11 @@ router.patch("/api/eval/traces/:id", async (req, res) => {
       pinnedBy: z.string().optional(),
     });
     const body = patchSchema.parse(req.body);
+    if (body.isPinned === true) {
+      if (!body.pinnedBy || body.pinnedBy !== "compliance_security") {
+        return res.status(403).json({ message: "Only Compliance role may pin traces as evidence" });
+      }
+    }
     const updated = await storage.updateEvalTrace(req.params.id, {
       ...body,
       pinnedAt: body.isPinned ? new Date() : undefined,
