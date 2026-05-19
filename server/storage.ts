@@ -176,6 +176,15 @@ import {
   interruptInstances, type InterruptInstance, type InsertInterruptInstance,
   outputContracts, type OutputContract, type InsertOutputContract,
   generationMetadataRecords, type GenerationMetadataRecord, type InsertGenerationMetadataRecord,
+  evalMetrics, type EvalMetric, type InsertEvalMetric,
+  evalMetricCollections, type EvalMetricCollection, type InsertEvalMetricCollection,
+  evalDatasets, type EvalDataset, type InsertEvalDataset,
+  evalGoldens, type EvalGolden, type InsertEvalGolden,
+  evalTestRuns, type EvalTestRun, type InsertEvalTestRun,
+  evalTraces, type EvalTrace, type InsertEvalTrace,
+  evalSpans, type EvalSpan, type InsertEvalSpan,
+  evalAnnotations, type EvalAnnotation, type InsertEvalAnnotation,
+  evalGates, type EvalGate, type InsertEvalGate,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -840,6 +849,59 @@ export interface IStorage {
   getGenerationMetadataRecord(id: string): Promise<GenerationMetadataRecord | undefined>;
   getGenerationMetadataRecords(filters: { pipelineRunId?: string; agentId?: string; promptId?: string; promptSha256?: string; limit?: number }): Promise<GenerationMetadataRecord[]>;
   getGenerationMetadataStats(agentId: string): Promise<{ totalRecords: number; passRate: number; avgQualityScore: number; avgRepairAttempts: number }>;
+
+  // Atlas Eval Studio — Metrics
+  getEvalMetrics(filters: { organizationId?: string; category?: string; source?: string; search?: string; page?: number; limit?: number }): Promise<{ items: EvalMetric[]; total: number }>;
+  getEvalMetric(id: string): Promise<EvalMetric | undefined>;
+  createEvalMetric(metric: InsertEvalMetric): Promise<EvalMetric>;
+  updateEvalMetric(id: string, data: Partial<InsertEvalMetric>): Promise<EvalMetric | undefined>;
+
+  // Atlas Eval Studio — Metric Collections
+  getEvalMetricCollections(organizationId?: string): Promise<EvalMetricCollection[]>;
+  getEvalMetricCollection(id: string): Promise<EvalMetricCollection | undefined>;
+  createEvalMetricCollection(collection: InsertEvalMetricCollection): Promise<EvalMetricCollection>;
+  updateEvalMetricCollection(id: string, data: Partial<InsertEvalMetricCollection>): Promise<EvalMetricCollection | undefined>;
+
+  // Atlas Eval Studio — Datasets
+  getEvalDatasets(filters: { organizationId?: string; agentId?: string }): Promise<EvalDataset[]>;
+  getEvalDataset(id: string): Promise<EvalDataset | undefined>;
+  createEvalDataset(dataset: InsertEvalDataset): Promise<EvalDataset>;
+  updateEvalDataset(id: string, data: Partial<InsertEvalDataset>): Promise<EvalDataset | undefined>;
+  incrementEvalDatasetGoldenCount(id: string): Promise<void>;
+  decrementEvalDatasetGoldenCount(id: string): Promise<void>;
+
+  // Atlas Eval Studio — Goldens
+  getEvalGoldens(filters: { datasetId: string; page?: number; limit?: number; search?: string }): Promise<EvalGolden[]>;
+  getEvalGolden(id: string): Promise<EvalGolden | undefined>;
+  createEvalGolden(golden: InsertEvalGolden): Promise<EvalGolden>;
+  bulkCreateEvalGoldens(goldens: InsertEvalGolden[]): Promise<EvalGolden[]>;
+  updateEvalGolden(id: string, data: Partial<InsertEvalGolden>): Promise<EvalGolden | undefined>;
+  deleteEvalGolden(id: string): Promise<boolean>;
+
+  // Atlas Eval Studio — Test Runs
+  getEvalTestRuns(filters: { organizationId?: string; agentId?: string; datasetId?: string }): Promise<EvalTestRun[]>;
+  getEvalTestRun(id: string): Promise<EvalTestRun | undefined>;
+  createEvalTestRun(run: InsertEvalTestRun): Promise<EvalTestRun>;
+  updateEvalTestRun(id: string, data: Partial<InsertEvalTestRun>): Promise<EvalTestRun | undefined>;
+
+  // Atlas Eval Studio — Traces
+  getEvalTraces(filters: { runId: string; page?: number; limit?: number; passFail?: boolean }): Promise<EvalTrace[]>;
+  getEvalTrace(id: string): Promise<EvalTrace | undefined>;
+  createEvalTrace(trace: InsertEvalTrace): Promise<EvalTrace>;
+  updateEvalTrace(id: string, data: Partial<InsertEvalTrace>): Promise<EvalTrace | undefined>;
+
+  // Atlas Eval Studio — Spans
+  getEvalSpans(traceId: string): Promise<EvalSpan[]>;
+  createEvalSpan(span: InsertEvalSpan): Promise<EvalSpan>;
+  bulkCreateEvalSpans(spans: InsertEvalSpan[]): Promise<EvalSpan[]>;
+
+  // Atlas Eval Studio — Annotations
+  getEvalAnnotations(traceId: string): Promise<EvalAnnotation[]>;
+  createEvalAnnotation(annotation: InsertEvalAnnotation): Promise<EvalAnnotation>;
+
+  // Atlas Eval Studio — Gates
+  getEvalGate(agentId: string): Promise<EvalGate | undefined>;
+  upsertEvalGate(gate: InsertEvalGate): Promise<EvalGate>;
 }
 
 function resolveOrgId(providedOrgId: string | null | undefined): string {
@@ -3893,6 +3955,264 @@ export class DatabaseStorage implements IStorage {
       avgQualityScore,
       avgRepairAttempts,
     };
+  }
+
+  // ── Atlas Eval Studio — Metrics ─────────────────────────────────────────────
+
+  async getEvalMetrics(filters: { organizationId?: string; category?: string; source?: string; search?: string; page?: number; limit?: number }): Promise<{ items: EvalMetric[]; total: number }> {
+    const conditions: any[] = [];
+    if (filters.organizationId) {
+      conditions.push(
+        sql`(${evalMetrics.organizationId} IS NULL OR ${evalMetrics.organizationId} = ${filters.organizationId})`
+      );
+    } else {
+      conditions.push(sql`${evalMetrics.organizationId} IS NULL`);
+    }
+    if (filters.category) conditions.push(eq(evalMetrics.category, filters.category));
+    if (filters.source) conditions.push(eq(evalMetrics.source, filters.source));
+    if (filters.search) conditions.push(sql`${evalMetrics.name} ILIKE ${'%' + filters.search + '%'}`);
+    conditions.push(eq(evalMetrics.isActive, true));
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    const limit = filters.limit ?? 50;
+    const offset = ((filters.page ?? 1) - 1) * limit;
+
+    const items = await db.select().from(evalMetrics)
+      .where(whereClause)
+      .orderBy(evalMetrics.category, evalMetrics.name)
+      .limit(limit)
+      .offset(offset);
+
+    const countResult = await db.select({ count: sql<number>`count(*)::int` }).from(evalMetrics).where(whereClause);
+    return { items, total: countResult[0]?.count ?? 0 };
+  }
+
+  async getEvalMetric(id: string): Promise<EvalMetric | undefined> {
+    const [row] = await db.select().from(evalMetrics).where(eq(evalMetrics.id, id));
+    return row;
+  }
+
+  async createEvalMetric(metric: InsertEvalMetric): Promise<EvalMetric> {
+    const [row] = await db.insert(evalMetrics).values(metric).returning();
+    return row;
+  }
+
+  async updateEvalMetric(id: string, data: Partial<InsertEvalMetric>): Promise<EvalMetric | undefined> {
+    const [row] = await db.update(evalMetrics)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(evalMetrics.id, id))
+      .returning();
+    return row;
+  }
+
+  // ── Atlas Eval Studio — Metric Collections ───────────────────────────────────
+
+  async getEvalMetricCollections(organizationId?: string): Promise<EvalMetricCollection[]> {
+    if (organizationId) {
+      return db.select().from(evalMetricCollections)
+        .where(sql`(${evalMetricCollections.organizationId} IS NULL OR ${evalMetricCollections.organizationId} = ${organizationId})`)
+        .orderBy(evalMetricCollections.name);
+    }
+    return db.select().from(evalMetricCollections).orderBy(evalMetricCollections.name);
+  }
+
+  async getEvalMetricCollection(id: string): Promise<EvalMetricCollection | undefined> {
+    const [row] = await db.select().from(evalMetricCollections).where(eq(evalMetricCollections.id, id));
+    return row;
+  }
+
+  async createEvalMetricCollection(collection: InsertEvalMetricCollection): Promise<EvalMetricCollection> {
+    const [row] = await db.insert(evalMetricCollections).values(collection).returning();
+    return row;
+  }
+
+  async updateEvalMetricCollection(id: string, data: Partial<InsertEvalMetricCollection>): Promise<EvalMetricCollection | undefined> {
+    const [row] = await db.update(evalMetricCollections).set(data).where(eq(evalMetricCollections.id, id)).returning();
+    return row;
+  }
+
+  // ── Atlas Eval Studio — Datasets ─────────────────────────────────────────────
+
+  async getEvalDatasets(filters: { organizationId?: string; agentId?: string }): Promise<EvalDataset[]> {
+    const conditions: any[] = [];
+    if (filters.organizationId) conditions.push(eq(evalDatasets.organizationId, filters.organizationId));
+    if (filters.agentId) conditions.push(eq(evalDatasets.agentId, filters.agentId));
+    return db.select().from(evalDatasets)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(evalDatasets.createdAt));
+  }
+
+  async getEvalDataset(id: string): Promise<EvalDataset | undefined> {
+    const [row] = await db.select().from(evalDatasets).where(eq(evalDatasets.id, id));
+    return row;
+  }
+
+  async createEvalDataset(dataset: InsertEvalDataset): Promise<EvalDataset> {
+    const [row] = await db.insert(evalDatasets).values(dataset).returning();
+    return row;
+  }
+
+  async updateEvalDataset(id: string, data: Partial<InsertEvalDataset>): Promise<EvalDataset | undefined> {
+    const [row] = await db.update(evalDatasets)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(evalDatasets.id, id))
+      .returning();
+    return row;
+  }
+
+  async incrementEvalDatasetGoldenCount(id: string): Promise<void> {
+    await db.update(evalDatasets)
+      .set({ goldenCount: sql`${evalDatasets.goldenCount} + 1`, updatedAt: new Date() })
+      .where(eq(evalDatasets.id, id));
+  }
+
+  async decrementEvalDatasetGoldenCount(id: string): Promise<void> {
+    await db.update(evalDatasets)
+      .set({ goldenCount: sql`GREATEST(0, ${evalDatasets.goldenCount} - 1)`, updatedAt: new Date() })
+      .where(eq(evalDatasets.id, id));
+  }
+
+  // ── Atlas Eval Studio — Goldens ──────────────────────────────────────────────
+
+  async getEvalGoldens(filters: { datasetId: string; page?: number; limit?: number; search?: string }): Promise<EvalGolden[]> {
+    const conditions: any[] = [eq(evalGoldens.datasetId, filters.datasetId)];
+    if (filters.search) conditions.push(sql`${evalGoldens.input} ILIKE ${'%' + filters.search + '%'}`);
+    const limit = filters.limit ?? 50;
+    const offset = ((filters.page ?? 1) - 1) * limit;
+    return db.select().from(evalGoldens)
+      .where(and(...conditions))
+      .orderBy(desc(evalGoldens.createdAt))
+      .limit(limit)
+      .offset(offset);
+  }
+
+  async getEvalGolden(id: string): Promise<EvalGolden | undefined> {
+    const [row] = await db.select().from(evalGoldens).where(eq(evalGoldens.id, id));
+    return row;
+  }
+
+  async createEvalGolden(golden: InsertEvalGolden): Promise<EvalGolden> {
+    const [row] = await db.insert(evalGoldens).values(golden).returning();
+    return row;
+  }
+
+  async bulkCreateEvalGoldens(goldens: InsertEvalGolden[]): Promise<EvalGolden[]> {
+    if (goldens.length === 0) return [];
+    return db.insert(evalGoldens).values(goldens).returning();
+  }
+
+  async updateEvalGolden(id: string, data: Partial<InsertEvalGolden>): Promise<EvalGolden | undefined> {
+    const [row] = await db.update(evalGoldens)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(evalGoldens.id, id))
+      .returning();
+    return row;
+  }
+
+  async deleteEvalGolden(id: string): Promise<boolean> {
+    const result = await db.delete(evalGoldens).where(eq(evalGoldens.id, id)).returning();
+    return result.length > 0;
+  }
+
+  // ── Atlas Eval Studio — Test Runs ────────────────────────────────────────────
+
+  async getEvalTestRuns(filters: { organizationId?: string; agentId?: string; datasetId?: string }): Promise<EvalTestRun[]> {
+    const conditions: any[] = [];
+    if (filters.organizationId) conditions.push(eq(evalTestRuns.organizationId, filters.organizationId));
+    if (filters.agentId) conditions.push(eq(evalTestRuns.agentId, filters.agentId));
+    if (filters.datasetId) conditions.push(eq(evalTestRuns.datasetId, filters.datasetId));
+    return db.select().from(evalTestRuns)
+      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .orderBy(desc(evalTestRuns.startedAt));
+  }
+
+  async getEvalTestRun(id: string): Promise<EvalTestRun | undefined> {
+    const [row] = await db.select().from(evalTestRuns).where(eq(evalTestRuns.id, id));
+    return row;
+  }
+
+  async createEvalTestRun(run: InsertEvalTestRun): Promise<EvalTestRun> {
+    const [row] = await db.insert(evalTestRuns).values(run).returning();
+    return row;
+  }
+
+  async updateEvalTestRun(id: string, data: Partial<InsertEvalTestRun>): Promise<EvalTestRun | undefined> {
+    const [row] = await db.update(evalTestRuns).set(data).where(eq(evalTestRuns.id, id)).returning();
+    return row;
+  }
+
+  // ── Atlas Eval Studio — Traces ───────────────────────────────────────────────
+
+  async getEvalTraces(filters: { runId: string; page?: number; limit?: number; passFail?: boolean }): Promise<EvalTrace[]> {
+    const conditions: any[] = [eq(evalTraces.runId, filters.runId)];
+    if (filters.passFail !== undefined) conditions.push(eq(evalTraces.passFail, filters.passFail));
+    const limit = filters.limit ?? 50;
+    const offset = ((filters.page ?? 1) - 1) * limit;
+    return db.select().from(evalTraces)
+      .where(and(...conditions))
+      .orderBy(desc(evalTraces.createdAt))
+      .limit(limit)
+      .offset(offset);
+  }
+
+  async getEvalTrace(id: string): Promise<EvalTrace | undefined> {
+    const [row] = await db.select().from(evalTraces).where(eq(evalTraces.id, id));
+    return row;
+  }
+
+  async createEvalTrace(trace: InsertEvalTrace): Promise<EvalTrace> {
+    const [row] = await db.insert(evalTraces).values(trace).returning();
+    return row;
+  }
+
+  async updateEvalTrace(id: string, data: Partial<InsertEvalTrace>): Promise<EvalTrace | undefined> {
+    const [row] = await db.update(evalTraces).set(data).where(eq(evalTraces.id, id)).returning();
+    return row;
+  }
+
+  // ── Atlas Eval Studio — Spans ─────────────────────────────────────────────────
+
+  async getEvalSpans(traceId: string): Promise<EvalSpan[]> {
+    return db.select().from(evalSpans)
+      .where(eq(evalSpans.traceId, traceId))
+      .orderBy(evalSpans.startedAt);
+  }
+
+  async createEvalSpan(span: InsertEvalSpan): Promise<EvalSpan> {
+    const [row] = await db.insert(evalSpans).values(span).returning();
+    return row;
+  }
+
+  async bulkCreateEvalSpans(spans: InsertEvalSpan[]): Promise<EvalSpan[]> {
+    if (spans.length === 0) return [];
+    return db.insert(evalSpans).values(spans).returning();
+  }
+
+  // ── Atlas Eval Studio — Annotations ─────────────────────────────────────────
+
+  async getEvalAnnotations(traceId: string): Promise<EvalAnnotation[]> {
+    return db.select().from(evalAnnotations)
+      .where(eq(evalAnnotations.traceId, traceId))
+      .orderBy(desc(evalAnnotations.createdAt));
+  }
+
+  async createEvalAnnotation(annotation: InsertEvalAnnotation): Promise<EvalAnnotation> {
+    const [row] = await db.insert(evalAnnotations).values(annotation).returning();
+    return row;
+  }
+
+  // ── Atlas Eval Studio — Gates ─────────────────────────────────────────────────
+
+  async getEvalGate(agentId: string): Promise<EvalGate | undefined> {
+    const [row] = await db.select().from(evalGates).where(eq(evalGates.agentId, agentId));
+    return row;
+  }
+
+  async upsertEvalGate(gate: InsertEvalGate): Promise<EvalGate> {
+    const [row] = await db.insert(evalGates).values(gate)
+      .onConflictDoUpdate({ target: evalGates.agentId, set: { ...gate, updatedAt: new Date() } })
+      .returning();
+    return row;
   }
 }
 

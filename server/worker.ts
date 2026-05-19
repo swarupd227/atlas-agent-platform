@@ -841,6 +841,162 @@ export async function enqueueOtcSmokeTestNow(): Promise<{ jobId: string }> {
   return { jobId: job.id };
 }
 
+async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
+  const payload = job.payload as Record<string, unknown>;
+  const runId = payload.runId as string;
+  const agentId = payload.agentId as string;
+  const datasetId = payload.datasetId as string;
+  const metricIds = (payload.metricIds as string[]) || [];
+  const parallelism = (payload.parallelism as number) || 5;
+
+  console.log(`[eval-test-run] Starting run ${runId} for agent ${agentId} on dataset ${datasetId}`);
+
+  const run = await storage.getEvalTestRun(runId);
+  if (!run) throw new Error(`Eval test run ${runId} not found`);
+
+  await storage.updateEvalTestRun(runId, { status: "running" });
+  await storage.updateJob(job.id, { progress: 5 });
+  jobEvents.emit("progress", { jobId: job.id, agentId, progress: 5, step: "loading_goldens" });
+
+  const goldens = await storage.getEvalGoldens({ datasetId, page: 1, limit: 500 });
+  if (goldens.length === 0) {
+    await storage.updateEvalTestRun(runId, {
+      status: "completed",
+      totalGoldens: 0,
+      passedCount: 0,
+      failedCount: 0,
+      passRate: null,
+      completedAt: new Date(),
+    });
+    return { runId, total: 0, passed: 0, failed: 0, message: "No goldens in dataset" };
+  }
+
+  const agent = await storage.getAgent(agentId);
+  if (!agent) throw new Error(`Agent ${agentId} not found`);
+  const agentCtx = buildAgentContext(agent);
+
+  const metrics = metricIds.length > 0
+    ? await Promise.all(metricIds.map(id => storage.getEvalMetric(id)))
+    : [];
+
+  let passedCount = 0;
+  let failedCount = 0;
+  let totalLatencyMs = 0;
+  let totalCostUsd = 0;
+  let totalTokens = 0;
+
+  const CONCURRENCY = Math.min(parallelism, 10);
+  let cursor = 0;
+
+  const processGolden = async (golden: typeof goldens[0]) => {
+    const t0 = Date.now();
+
+    let actualOutput = "";
+    try {
+      const agentResult = await runAgentOnInput(agent.systemPrompt, { input: golden.input });
+      actualOutput = agentResult.output;
+    } catch {
+      actualOutput = "";
+    }
+
+    const judgeResult = await runLlmJudge(
+      `Golden ${golden.id.slice(0, 8)}`,
+      { input: golden.input },
+      golden.expectedOutput ? { expected: golden.expectedOutput } : null,
+      agentCtx,
+      actualOutput,
+    );
+
+    const latencyMs = Date.now() - t0;
+    totalLatencyMs += latencyMs;
+    const estimatedCostUsd = 0.003;
+    totalCostUsd += estimatedCostUsd;
+    totalTokens += 300;
+
+    const scores: Record<string, number> = {
+      overall: judgeResult.isPassed ? judgeResult.confidence : 1 - judgeResult.confidence,
+    };
+
+    const trace = await storage.createEvalTrace({
+      runId,
+      goldenId: golden.id,
+      scores,
+      passFail: judgeResult.isPassed,
+      costUsd: estimatedCostUsd,
+      totalTokens: 300,
+      latencyMs,
+    });
+
+    await storage.createEvalSpan({
+      traceId: trace.id,
+      spanType: "llm",
+      name: "agent_completion",
+      inputs: { input: golden.input },
+      outputs: { output: actualOutput },
+      attributes: { model: agent.modelId || "default", reason: judgeResult.reason },
+      durationMs: latencyMs,
+      endedAt: new Date(),
+    });
+
+    await storage.updateEvalGolden(golden.id, {
+      lastScore: scores.overall,
+      lastRunAt: new Date(),
+    });
+
+    if (judgeResult.isPassed) passedCount++; else failedCount++;
+  };
+
+  const progressIncrement = Math.floor(90 / goldens.length);
+
+  while (cursor < goldens.length) {
+    const batch = goldens.slice(cursor, cursor + CONCURRENCY);
+    await Promise.allSettled(batch.map(processGolden));
+    cursor += CONCURRENCY;
+
+    const pct = Math.min(95, 5 + Math.floor((cursor / goldens.length) * 90));
+    await storage.updateJob(job.id, { progress: pct });
+    await storage.updateEvalTestRun(runId, {
+      passedCount,
+      failedCount,
+      runningCount: Math.max(0, goldens.length - cursor),
+      pendingCount: Math.max(0, goldens.length - cursor),
+    });
+    jobEvents.emit("progress", { jobId: job.id, agentId, progress: pct, step: `processed_${cursor}_of_${goldens.length}` });
+  }
+
+  const passRate = goldens.length > 0 ? passedCount / goldens.length : null;
+  const avgLatencyMs = goldens.length > 0 ? Math.round(totalLatencyMs / goldens.length) : null;
+
+  await storage.updateEvalTestRun(runId, {
+    status: "completed",
+    totalGoldens: goldens.length,
+    passedCount,
+    failedCount,
+    passRate,
+    pendingCount: 0,
+    runningCount: 0,
+    costUsd: Math.round(totalCostUsd * 10000) / 10000,
+    totalTokens,
+    avgLatencyMs,
+    completedAt: new Date(),
+  });
+
+  await storage.updateJob(job.id, { progress: 100 });
+  jobEvents.emit("progress", { jobId: job.id, agentId, progress: 100, step: "complete" });
+
+  console.log(`[eval-test-run] Run ${runId} complete: ${passedCount}/${goldens.length} passed (${Math.round((passRate || 0) * 100)}%)`);
+
+  return {
+    runId,
+    total: goldens.length,
+    passed: passedCount,
+    failed: failedCount,
+    passRate: passRate !== null ? Math.round((passRate) * 100) : null,
+    avgLatencyMs,
+    costUsd: totalCostUsd,
+  };
+}
+
 export function startWorker(intervalMs = 2000) {
   if (workerRunning) return;
   workerRunning = true;
@@ -869,6 +1025,8 @@ export function startWorker(intervalMs = 2000) {
           let result: Record<string, unknown>;
           if (job.type === "eval_baseline") {
             result = await processEvalBaseline(job);
+          } else if (job.type === "eval_test_run") {
+            result = await processEvalTestRun(job);
           } else if (job.type === "shadow_replay") {
             result = await processShadowReplay(job);
           } else if (job.type === "agent_scheduled_run") {

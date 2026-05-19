@@ -95,6 +95,7 @@ import feedbackRouter from "./routes/feedback";
 import myActionsRouter from "./routes/my-actions";
 import outputContractsRouter from "./routes/output-contracts";
 import generationMetadataRouter from "./routes/generation-metadata";
+import evalStudioRouter from "./routes/eval-studio";
 
 export { computeConstraintGraph, recomputeOutcomeKpis };
 export type { KpiReEvalResult };
@@ -330,6 +331,7 @@ export async function registerRoutes(
   app.use(myActionsRouter);
   app.use(outputContractsRouter);
   app.use(generationMetadataRouter);
+  app.use(evalStudioRouter);
 
   // Run idempotent startup SQL migrations (CREATE TABLE IF NOT EXISTS).
   // Awaited before starting the worker so tables are guaranteed to exist before

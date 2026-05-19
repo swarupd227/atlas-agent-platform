@@ -2688,3 +2688,218 @@ export const generationMetadataRecords = pgTable("generation_metadata_records", 
 export const insertGenerationMetadataRecordSchema = createInsertSchema(generationMetadataRecords).omit({ id: true, createdAt: true });
 export type InsertGenerationMetadataRecord = z.infer<typeof insertGenerationMetadataRecordSchema>;
 export type GenerationMetadataRecord = typeof generationMetadataRecords.$inferSelect;
+
+// ── Atlas Eval Studio — DeepEval Integration Data Model ──────────────────────
+
+export const evalMetrics = pgTable("eval_metrics", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  name: text("name").notNull(),
+  category: text("category").notNull().default("general"),
+  metricType: text("metric_type").notNull().default("g-eval"),
+  source: text("source").notNull().default("deepeval"),
+  description: text("description"),
+  criteria: text("criteria"),
+  evaluationParams: text("evaluation_params").array().default(sql`'{}'::text[]`),
+  judgeModel: text("judge_model").default("claude-sonnet-4-5"),
+  threshold: real("threshold").notNull().default(0.5),
+  strictMode: boolean("strict_mode").default(false),
+  asyncMode: boolean("async_mode").default(true),
+  dagConfig: jsonb("dag_config"),
+  version: integer("version").notNull().default(1),
+  usageCount: integer("usage_count").default(0),
+  isActive: boolean("is_active").default(true),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_eval_metrics_org").on(table.organizationId),
+  index("idx_eval_metrics_category").on(table.category),
+  index("idx_eval_metrics_source").on(table.source),
+]);
+
+export const insertEvalMetricSchema = createInsertSchema(evalMetrics).omit({ id: true, createdAt: true, updatedAt: true }).extend({ organizationId: z.string().optional() });
+export type InsertEvalMetric = z.infer<typeof insertEvalMetricSchema>;
+export type EvalMetric = typeof evalMetrics.$inferSelect;
+
+export const evalMetricCollections = pgTable("eval_metric_collections", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  name: text("name").notNull(),
+  description: text("description"),
+  scope: text("scope").notNull().default("end-to-end"),
+  metricIds: text("metric_ids").array().default(sql`'{}'::text[]`),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_eval_metric_collections_org").on(table.organizationId),
+]);
+
+export const insertEvalMetricCollectionSchema = createInsertSchema(evalMetricCollections).omit({ id: true, createdAt: true }).extend({ organizationId: z.string().optional() });
+export type InsertEvalMetricCollection = z.infer<typeof insertEvalMetricCollectionSchema>;
+export type EvalMetricCollection = typeof evalMetricCollections.$inferSelect;
+
+export const evalDatasets = pgTable("eval_datasets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  agentId: varchar("agent_id"),
+  name: text("name").notNull(),
+  description: text("description"),
+  version: integer("version").notNull().default(1),
+  goldenCount: integer("golden_count").default(0),
+  tags: text("tags").array().default(sql`'{}'::text[]`),
+  isBaseline: boolean("is_baseline").default(false),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_eval_datasets_org").on(table.organizationId),
+  index("idx_eval_datasets_agent").on(table.agentId),
+]);
+
+export const insertEvalDatasetSchema = createInsertSchema(evalDatasets).omit({ id: true, createdAt: true, updatedAt: true }).extend({ organizationId: z.string().optional() });
+export type InsertEvalDataset = z.infer<typeof insertEvalDatasetSchema>;
+export type EvalDataset = typeof evalDatasets.$inferSelect;
+
+export const evalGoldens = pgTable("eval_goldens", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  datasetId: varchar("dataset_id").notNull(),
+  input: text("input").notNull(),
+  expectedOutput: text("expected_output"),
+  retrievalContext: text("retrieval_context").array().default(sql`'{}'::text[]`),
+  expectedTools: jsonb("expected_tools"),
+  tags: text("tags").array().default(sql`'{}'::text[]`),
+  provenance: jsonb("provenance"),
+  lastScore: real("last_score"),
+  lastRunAt: timestamp("last_run_at"),
+  author: text("author"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_eval_goldens_dataset").on(table.datasetId),
+]);
+
+export const insertEvalGoldenSchema = createInsertSchema(evalGoldens).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertEvalGolden = z.infer<typeof insertEvalGoldenSchema>;
+export type EvalGolden = typeof evalGoldens.$inferSelect;
+
+export const evalTestRuns = pgTable("eval_test_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  agentId: varchar("agent_id").notNull(),
+  agentVersion: text("agent_version"),
+  datasetId: varchar("dataset_id").notNull(),
+  datasetVersion: integer("dataset_version").default(1),
+  metricCollectionId: varchar("metric_collection_id"),
+  metricIds: text("metric_ids").array().default(sql`'{}'::text[]`),
+  judgeModelOverride: text("judge_model_override"),
+  parallelism: integer("parallelism").default(5),
+  cacheEnabled: boolean("cache_enabled").default(true),
+  tags: text("tags").array().default(sql`'{}'::text[]`),
+  status: text("status").notNull().default("pending"),
+  totalGoldens: integer("total_goldens").default(0),
+  pendingCount: integer("pending_count").default(0),
+  runningCount: integer("running_count").default(0),
+  passedCount: integer("passed_count").default(0),
+  failedCount: integer("failed_count").default(0),
+  passRate: real("pass_rate"),
+  costUsd: real("cost_usd").default(0),
+  totalTokens: integer("total_tokens").default(0),
+  avgLatencyMs: integer("avg_latency_ms"),
+  isBaseline: boolean("is_baseline").default(false),
+  triggeredBy: text("triggered_by"),
+  startedAt: timestamp("started_at").defaultNow(),
+  completedAt: timestamp("completed_at"),
+}, (table) => [
+  index("idx_eval_test_runs_org").on(table.organizationId),
+  index("idx_eval_test_runs_agent").on(table.agentId),
+  index("idx_eval_test_runs_dataset").on(table.datasetId),
+  index("idx_eval_test_runs_status").on(table.status),
+]);
+
+export const insertEvalTestRunSchema = createInsertSchema(evalTestRuns).omit({ id: true, startedAt: true }).extend({ organizationId: z.string().optional() });
+export type InsertEvalTestRun = z.infer<typeof insertEvalTestRunSchema>;
+export type EvalTestRun = typeof evalTestRuns.$inferSelect;
+
+export const evalTraces = pgTable("eval_traces", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  runId: varchar("run_id").notNull(),
+  goldenId: varchar("golden_id").notNull(),
+  agentInvocationId: varchar("agent_invocation_id"),
+  rootSpanId: varchar("root_span_id"),
+  scores: jsonb("scores"),
+  passFail: boolean("pass_fail"),
+  costUsd: real("cost_usd").default(0),
+  totalTokens: integer("total_tokens").default(0),
+  latencyMs: integer("latency_ms"),
+  isPinned: boolean("is_pinned").default(false),
+  pinnedBy: text("pinned_by"),
+  pinnedAt: timestamp("pinned_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_eval_traces_run").on(table.runId),
+  index("idx_eval_traces_golden").on(table.goldenId),
+]);
+
+export const insertEvalTraceSchema = createInsertSchema(evalTraces).omit({ id: true, createdAt: true });
+export type InsertEvalTrace = z.infer<typeof insertEvalTraceSchema>;
+export type EvalTrace = typeof evalTraces.$inferSelect;
+
+export const evalSpans = pgTable("eval_spans", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  traceId: varchar("trace_id").notNull(),
+  parentSpanId: varchar("parent_span_id"),
+  spanType: text("span_type").notNull().default("agent"),
+  name: text("name").notNull(),
+  inputs: jsonb("inputs"),
+  outputs: jsonb("outputs"),
+  attributes: jsonb("attributes"),
+  scores: jsonb("scores"),
+  durationMs: integer("duration_ms"),
+  startedAt: timestamp("started_at").defaultNow(),
+  endedAt: timestamp("ended_at"),
+}, (table) => [
+  index("idx_eval_spans_trace").on(table.traceId),
+  index("idx_eval_spans_parent").on(table.parentSpanId),
+]);
+
+export const insertEvalSpanSchema = createInsertSchema(evalSpans).omit({ id: true, startedAt: true });
+export type InsertEvalSpan = z.infer<typeof insertEvalSpanSchema>;
+export type EvalSpan = typeof evalSpans.$inferSelect;
+
+export const evalAnnotations = pgTable("eval_annotations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  traceId: varchar("trace_id").notNull(),
+  annotatorId: text("annotator_id").notNull(),
+  ratings: jsonb("ratings"),
+  comment: text("comment"),
+  promotedToGoldenId: varchar("promoted_to_golden_id"),
+  isEdgeCase: boolean("is_edge_case").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_eval_annotations_trace").on(table.traceId),
+  index("idx_eval_annotations_annotator").on(table.annotatorId),
+]);
+
+export const insertEvalAnnotationSchema = createInsertSchema(evalAnnotations).omit({ id: true, createdAt: true });
+export type InsertEvalAnnotation = z.infer<typeof insertEvalAnnotationSchema>;
+export type EvalAnnotation = typeof evalAnnotations.$inferSelect;
+
+export const evalGates = pgTable("eval_gates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  agentId: varchar("agent_id").notNull().unique(),
+  datasetId: varchar("dataset_id"),
+  metricCollectionId: varchar("metric_collection_id"),
+  thresholdOverrides: jsonb("threshold_overrides"),
+  regressionWindowPct: real("regression_window_pct").default(5),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_eval_gates_agent").on(table.agentId),
+]);
+
+export const insertEvalGateSchema = createInsertSchema(evalGates).omit({ id: true, createdAt: true, updatedAt: true }).extend({ organizationId: z.string().optional() });
+export type InsertEvalGate = z.infer<typeof insertEvalGateSchema>;
+export type EvalGate = typeof evalGates.$inferSelect;
