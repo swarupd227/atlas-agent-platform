@@ -2571,27 +2571,29 @@ router.post("/api/agents/:agentId/prompts/rollback", async (req, res) => {
 
 // ── Eval Experiments — Prompt A/B ──────────────────────────────────────────────
 
-// GET /api/eval/experiments
+// GET /api/eval/experiments  — org-required, scoped list
 router.get("/api/eval/experiments", async (req, res) => {
   try {
     const orgId = getOrgId(req);
+    if (!orgId) return res.status(400).json({ message: "Organization context required" });
     const agentId = req.query.agentId as string | undefined;
     const experiments = await storage.getEvalExperiments({
-      organizationId: orgId ?? undefined,
+      organizationId: orgId,
       agentId,
     });
     res.json(experiments);
   } catch (err: any) { res.status(500).json({ message: err.message }); }
 });
 
-// GET /api/eval/experiments/:id  — org-scoped
+// GET /api/eval/experiments/:id  — strict org-scoped (secure-by-default)
 router.get("/api/eval/experiments/:id", async (req, res) => {
   try {
     const orgId = getOrgId(req);
+    if (!orgId) return res.status(400).json({ message: "Organization context required" });
     const exp = await storage.getEvalExperiment(req.params.id);
     if (!exp) return res.status(404).json({ message: "Experiment not found" });
-    // Enforce org-level isolation: only expose to owning org (or null-org experiments)
-    if (exp.organizationId && orgId && exp.organizationId !== orgId) {
+    // Deny any org-scoped record when caller's org doesn't match
+    if (exp.organizationId && exp.organizationId !== orgId) {
       return res.status(403).json({ message: "Access denied" });
     }
     res.json(exp);
@@ -2606,6 +2608,9 @@ router.post("/api/eval/experiments", async (req, res) => {
     if (!agentId || !name || !datasetId) return res.status(400).json({ message: "agentId, name, datasetId are required" });
     if (!Array.isArray(variantPromptVersions) || variantPromptVersions.length < 2) {
       return res.status(400).json({ message: "At least 2 variant prompt versions required" });
+    }
+    if (variantPromptVersions.length > 4) {
+      return res.status(400).json({ message: "Maximum 4 variant prompt versions allowed per experiment" });
     }
     const agent = await storage.getAgent(agentId, orgId ?? undefined);
     if (!agent) return res.status(404).json({ message: "Agent not found" });
@@ -2732,13 +2737,17 @@ router.post("/api/eval/experiments", async (req, res) => {
           };
         }
 
-        // ── Step 2: Build results map (exclude raw scores for storage compactness) ──
+        // ── Step 2: Build results map with per-metric mean ± stddev ──
         const results: Record<string, unknown> = {};
         for (const [key, vData] of Object.entries(variantRuns)) {
           const perMetricMeans: Record<string, number> = {};
+          const perMetricStdDevs: Record<string, number> = {};
           for (const m of metricNames) {
             const ms = vData.perMetricScores[m];
-            perMetricMeans[m] = parseFloat((ms.reduce((a, b) => a + b, 0) / ms.length).toFixed(3));
+            const mean = ms.reduce((a, b) => a + b, 0) / ms.length;
+            const variance = ms.reduce((a, b) => a + (b - mean) ** 2, 0) / (ms.length - 1);
+            perMetricMeans[m] = parseFloat(mean.toFixed(3));
+            perMetricStdDevs[m] = parseFloat(Math.sqrt(variance).toFixed(3));
           }
           results[key] = {
             variantVersion: vData.version,
@@ -2749,6 +2758,7 @@ router.post("/api/eval/experiments", async (req, res) => {
             costUsd: vData.costUsd,
             avgLatencyMs: vData.avgLatencyMs,
             perMetricMeans,
+            perMetricStdDevs,
             n: N,
           };
         }
@@ -2912,20 +2922,20 @@ router.post("/api/eval/marketplace/:id/install", async (req, res) => {
         isBaseline: false,
         createdBy: "marketplace",
       });
-      // Seed goldens if createEvalGolden is available
-      if (typeof storage.createEvalGolden === "function") {
-        for (const g of (contents as any).goldens) {
-          try {
-            await (storage as any).createEvalGolden({
-              organizationId: orgId,
-              datasetId: ds.id,
-              input: g.input ?? "",
-              expectedOutput: g.expectedOutput ?? null,
-              context: g.context ?? null,
-              tags: g.tags ?? [],
-              source: "marketplace",
-            });
-          } catch (_) { /* skip individual golden failures */ }
+      // Seed goldens into the new dataset
+      for (const g of (contents as any).goldens) {
+        try {
+          await storage.createEvalGolden({
+            organizationId: orgId,
+            datasetId: ds.id,
+            input: g.input ?? "",
+            expectedOutput: g.expectedOutput ?? null,
+            context: g.context ?? null,
+            tags: g.tags ?? [],
+            source: "marketplace",
+          });
+        } catch (goldenErr) {
+          console.warn("[marketplace install] skipped golden:", (goldenErr as Error)?.message);
         }
       }
     } else if (asset.assetType === "report_template") {

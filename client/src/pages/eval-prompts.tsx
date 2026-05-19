@@ -530,6 +530,18 @@ export default function EvalPrompts() {
               <Label>Judge Model Override (optional)</Label>
               <Input value={experimentForm.judgeModel} onChange={e => setExperimentForm(f => ({ ...f, judgeModel: e.target.value }))} className="mt-1" placeholder="claude-sonnet-4-5 (default)" />
             </div>
+            {/* Pre-run estimated cost display */}
+            {experimentForm.variants.length >= 2 && (
+              <div className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-2.5 text-xs">
+                <span className="text-muted-foreground">Estimated run cost</span>
+                <span className="font-mono font-semibold text-foreground">
+                  ~${(experimentForm.variants.length * 25 * 0.002).toFixed(3)}
+                  <span className="font-normal text-muted-foreground ml-1">
+                    ({experimentForm.variants.length} variants × 25 cases × $0.002/case)
+                  </span>
+                </span>
+              </div>
+            )}
             <div className="text-xs text-muted-foreground bg-muted/40 rounded-md p-3">
               Each variant will run on the selected dataset and metrics in parallel. Statistical significance (p &lt; 0.05, two-tailed paired t-test) is computed after completion.
             </div>
@@ -581,26 +593,58 @@ export default function EvalPrompts() {
                         </tr>
                       </thead>
                       <tbody className="divide-y">
+                        {/* Aggregate summary rows */}
                         {[
-                          { label: "Pass Rate", key: "passRate", fmt: (v: number) => `${(v * 100).toFixed(1)}%` },
-                          { label: "Mean Score", key: "meanScore", fmt: (v: number) => v.toFixed(3) },
-                          { label: "Std Dev", key: "stdDev", fmt: (v: number) => `±${v.toFixed(3)}` },
-                          { label: "Cost (USD)", key: "costUsd", fmt: (v: number) => `$${v.toFixed(4)}` },
-                          { label: "Avg Latency", key: "avgLatencyMs", fmt: (v: number) => `${v}ms` },
+                          { label: "Pass Rate", key: "passRate", fmt: (v: number) => `${(v * 100).toFixed(1)}%`, highlight: true },
+                          { label: "Mean Score", key: "meanScore", fmt: (v: number) => v.toFixed(3), highlight: false },
+                          { label: "Std Dev", key: "stdDev", fmt: (v: number) => `±${v.toFixed(3)}`, highlight: false },
+                          { label: "Cost (USD)", key: "costUsd", fmt: (v: number) => `$${v.toFixed(4)}`, highlight: false },
+                          { label: "Avg Latency", key: "avgLatencyMs", fmt: (v: number) => `${v}ms`, highlight: false },
                         ].map(row => (
                           <tr key={row.label} className="hover:bg-muted/30 transition-colors">
                             <td className="px-3 py-2 text-xs text-muted-foreground font-medium">{row.label}</td>
                             {resultEntries.map(([key, v]: any, i: number) => {
                               const val = v[row.key];
-                              const isWinner = i === 0;
+                              const best = resultEntries.reduce((mx: any, [, rv]: any) => rv[row.key] > mx ? rv[row.key] : mx, -Infinity);
+                              const isBest = row.highlight && val === best;
                               return (
-                                <td key={key} className={`px-3 py-2 text-center text-xs font-mono ${isWinner && row.key === "passRate" ? "text-emerald-600 dark:text-emerald-400 font-semibold" : ""}`}>
+                                <td key={key} className={`px-3 py-2 text-center text-xs font-mono ${isBest ? "text-emerald-600 dark:text-emerald-400 font-semibold" : ""}`}>
                                   {val != null ? row.fmt(val) : "—"}
                                 </td>
                               );
                             })}
                           </tr>
                         ))}
+                        {/* Per-metric mean ± stddev rows */}
+                        {resultEntries.length > 0 && (resultEntries[0][1] as any).perMetricMeans && (
+                          <>
+                            <tr className="bg-muted/20">
+                              <td colSpan={resultEntries.length + 1} className="px-3 py-1 text-[10px] font-semibold text-muted-foreground uppercase tracking-wider">Per-Metric Scores (mean ± std dev)</td>
+                            </tr>
+                            {Object.keys((resultEntries[0][1] as any).perMetricMeans).map((metric) => {
+                              const bestMean = resultEntries.reduce((mx: number, [, v]: any) => {
+                                const m = v.perMetricMeans?.[metric] ?? 0;
+                                return m > mx ? m : mx;
+                              }, -Infinity);
+                              return (
+                                <tr key={metric} className="hover:bg-muted/30 transition-colors">
+                                  <td className="px-3 py-2 text-xs text-muted-foreground font-medium pl-5">{metric}</td>
+                                  {resultEntries.map(([key, v]: any) => {
+                                    const mean = v.perMetricMeans?.[metric];
+                                    const std = v.perMetricStdDevs?.[metric];
+                                    const isBest = mean === bestMean;
+                                    return (
+                                      <td key={key} className={`px-3 py-2 text-center text-xs font-mono ${isBest ? "text-emerald-600 dark:text-emerald-400 font-semibold" : ""}`}>
+                                        {mean != null ? `${mean.toFixed(3)}` : "—"}
+                                        {std != null && <span className="text-muted-foreground"> ±{std.toFixed(3)}</span>}
+                                      </td>
+                                    );
+                                  })}
+                                </tr>
+                              );
+                            })}
+                          </>
+                        )}
                       </tbody>
                     </table>
                   </div>

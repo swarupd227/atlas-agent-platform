@@ -498,6 +498,30 @@ export default function EvalMarketplace() {
                   </div>
                 )}
 
+                {/* Version history */}
+                <div>
+                  <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Version History</h4>
+                  <div className="space-y-2">
+                    <div className="flex items-start gap-3 px-3 py-2 rounded-md bg-primary/5 border border-primary/20">
+                      <span className="text-xs font-mono font-semibold text-primary w-8 shrink-0">v{selectedAsset.version}</span>
+                      <div className="flex-1 min-w-0">
+                        <span className="text-xs font-medium">Current release</span>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">Latest curated version with updated metric thresholds and industry alignment.</p>
+                      </div>
+                      <Badge className="text-[10px] py-0 px-1 bg-primary/10 text-primary shrink-0">latest</Badge>
+                    </div>
+                    {selectedAsset.version > 1 && (
+                      <div className="flex items-start gap-3 px-3 py-2 rounded-md bg-muted/30 border">
+                        <span className="text-xs font-mono font-semibold text-muted-foreground w-8 shrink-0">v{selectedAsset.version - 1}</span>
+                        <div className="flex-1 min-w-0">
+                          <span className="text-xs font-medium text-muted-foreground">Previous release</span>
+                          <p className="text-[11px] text-muted-foreground mt-0.5">Initial published version. Superseded by current release.</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
                 <div className="pt-2 border-t">
                   <div className="text-xs text-muted-foreground bg-muted/30 rounded-md p-3 mb-3">
                     {selectedAsset.assetType === "metric_pack" && "Metrics will be imported into your Metric Library with a \"marketplace\" provenance badge."}
