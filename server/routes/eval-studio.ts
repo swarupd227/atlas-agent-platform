@@ -2643,18 +2643,20 @@ router.get("/api/eval/experiments/:id", async (req, res) => {
     if (!orgId) return res.status(400).json({ message: "Organization context required" });
     const exp = await storage.getEvalExperiment(req.params.id);
     if (!exp) return res.status(404).json({ message: "Experiment not found" });
-    // Deny any org-scoped record when caller's org doesn't match
-    if (exp.organizationId && exp.organizationId !== orgId) {
+    // Deny access if the experiment has no org (null-org records are system-internal only)
+    // or if the experiment belongs to a different org — either way is a tenant isolation violation.
+    if (!exp.organizationId || exp.organizationId !== orgId) {
       return res.status(403).json({ message: "Access denied" });
     }
     res.json(exp);
   } catch (err: any) { res.status(500).json({ message: err.message }); }
 });
 
-// POST /api/eval/experiments  — create + immediately simulate execution
+// POST /api/eval/experiments  — create + immediately execute with real LLM judge
 router.post("/api/eval/experiments", async (req, res) => {
   try {
     const orgId = getOrgId(req);
+    if (!orgId) return res.status(400).json({ message: "Organization context required" });
     const { agentId, name, description, datasetId, metricCollectionId, judgeModelOverride, variantPromptVersions, createdBy } = req.body;
     if (!agentId || !name || !datasetId) return res.status(400).json({ message: "agentId, name, datasetId are required" });
     if (!Array.isArray(variantPromptVersions) || variantPromptVersions.length < 2) {
