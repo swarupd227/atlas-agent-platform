@@ -169,7 +169,8 @@ export default function EvalPrompts() {
 
   const rollbackPrompt = useMutation({
     mutationFn: async (): Promise<{ rolledBack: { version: number }; previousActive: unknown }> => {
-      return apiRequest("POST", `/api/agents/${selectedAgentId}/prompts/rollback`, {});
+      const res = await apiRequest("POST", `/api/agents/${selectedAgentId}/prompts/rollback`, {});
+      return res.json();
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/agents", selectedAgentId, "prompts"] });

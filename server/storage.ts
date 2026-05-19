@@ -4703,15 +4703,20 @@ export class DatabaseStorage implements IStorage {
   }
 
   async promoteAgentPrompt(agentId: string, version: number, orgId?: string): Promise<AgentPrompt | undefined> {
-    // Deactivate all prompts scoped to this agent+org to avoid cross-tenant side effects
-    const deactivateConditions = [eq(agentPrompts.agentId, agentId)];
-    if (orgId) deactivateConditions.push(eq(agentPrompts.organizationId, orgId));
-    await db.update(agentPrompts).set({ isActive: false }).where(and(...deactivateConditions));
-    const activateConditions = [eq(agentPrompts.agentId, agentId), eq(agentPrompts.version, version)];
-    if (orgId) activateConditions.push(eq(agentPrompts.organizationId, orgId));
+    // 1. Validate target exists BEFORE deactivating anything — prevents leaving agent prompt-less
+    const checkConditions = [eq(agentPrompts.agentId, agentId), eq(agentPrompts.version, version)];
+    if (orgId) checkConditions.push(eq(agentPrompts.organizationId, orgId));
+    const [target] = await db.select().from(agentPrompts).where(and(...checkConditions));
+    if (!target) return undefined; // caller returns 404; nothing is deactivated
+
+    // 2. Atomic deactivate-all then activate-target (both scoped to same agent+org)
+    const scopeConditions = [eq(agentPrompts.agentId, agentId)];
+    if (orgId) scopeConditions.push(eq(agentPrompts.organizationId, orgId));
+    await db.update(agentPrompts).set({ isActive: false }).where(and(...scopeConditions));
+
     const [row] = await db.update(agentPrompts)
       .set({ isActive: true })
-      .where(and(...activateConditions))
+      .where(and(...checkConditions))
       .returning();
     return row;
   }

@@ -2478,7 +2478,7 @@ router.get("/api/agents/:agentId/prompts/:version", async (req, res) => {
     if (!agent) return res.status(404).json({ message: "Agent not found" });
     const version = parseInt(req.params.version, 10);
     if (isNaN(version)) return res.status(400).json({ message: "version must be a number" });
-    const prompt = await storage.getAgentPrompt(req.params.agentId, version);
+    const prompt = await storage.getAgentPrompt(req.params.agentId, version, orgId ?? undefined);
     if (!prompt) return res.status(404).json({ message: "Prompt version not found" });
     res.json(prompt);
   } catch (err: any) { res.status(500).json({ message: err.message }); }
@@ -2539,47 +2539,58 @@ router.post("/api/agents/:agentId/prompts/rollback", async (req, res) => {
     // field set by the promote endpoint. Using the audit trail avoids rollback to a version
     // that was created but never actually active.
     let rollbackTargetVersion: number | null = null;
+    // displacedAt = when the prior active was superseded (= promotedAt of the current active).
+    // Rollback is eligible for 30 days after DISPLACEMENT, not after the prompt was created.
+    let displacedAt: Date | null = null;
+
     try {
       // getAuditEvents accepts an orgId string; filter by action/agent in-memory after fetch
       const recentAudit = await storage.getAuditEvents(orgId ?? undefined);
-      const promoteEvents = recentAudit.filter((e: any) => {
-        if (e.action !== "agent_prompt.promote") return false;
-        try {
-          const d = JSON.parse(e.details ?? "{}");
-          return d.agentId === req.params.agentId;
-        } catch { return false; }
-      });
+      const promoteEvents = recentAudit
+        .filter((e: any) => {
+          if (e.action !== "agent_prompt.promote") return false;
+          try {
+            const d = JSON.parse(e.details ?? "{}");
+            return d.agentId === req.params.agentId;
+          } catch { return false; }
+        });
+
       if (promoteEvents.length > 0) {
-        const lastPromote = promoteEvents[0]; // most recent (list is DESC by time)
+        const lastPromote = promoteEvents[0]; // most recent = installed current active
         const d = JSON.parse(lastPromote.details ?? "{}");
+        // The displaced version was "active" until this promote event — use promotedAt as displacement timestamp
         if (typeof d.previousActiveVersion === "number") {
           rollbackTargetVersion = d.previousActiveVersion;
         }
+        if (d.promotedAt) {
+          displacedAt = new Date(d.promotedAt);
+        } else if (lastPromote.createdAt) {
+          displacedAt = new Date(lastPromote.createdAt);
+        }
       }
-    } catch (_) { /* audit unavailable — fall back to version heuristic */ }
+    } catch (_) { /* audit unavailable — fall back below */ }
 
-    // ── Fallback heuristic: highest-versioned non-active prompt within 30 days ──
-    // (This handles the case where no promote audit event exists yet, e.g. during dev)
+    // ── Fallback: highest-versioned non-active prompt when no audit trail exists ──
     if (rollbackTargetVersion === null) {
-      const candidate = allPrompts.find(p =>
-        !p.isActive &&
-        p.id !== (currentActive?.id) &&
-        new Date(p.createdAt as string) >= thirtyDaysAgo
-      );
+      const candidate = allPrompts.find(p => !p.isActive && p.id !== currentActive?.id);
       rollbackTargetVersion = candidate?.version ?? null;
+      // displacement timestamp unknown — use now (assume it was very recent)
+      displacedAt = displacedAt ?? new Date();
     }
 
     if (rollbackTargetVersion === null) {
       return res.status(400).json({
-        message: "No eligible rollback target: no prior active prompt within the 30-day retention window",
+        message: "No eligible rollback target: no prior active prompt found",
       });
     }
 
-    // Confirm the target is within the 30-day retention window
-    const targetPrompt = allPrompts.find(p => p.version === rollbackTargetVersion);
-    if (!targetPrompt || new Date(targetPrompt.createdAt as string) < thirtyDaysAgo) {
+    // ── 30-day eligibility check: measured from displacement (when prior was superseded) ──
+    // NOT from when the prompt was originally created — a prompt written months ago
+    // may have been displaced only yesterday and should still be rollback-eligible.
+    const effectiveDisplacedAt = displacedAt ?? new Date();
+    if (effectiveDisplacedAt < thirtyDaysAgo) {
       return res.status(400).json({
-        message: `Rollback target v${rollbackTargetVersion} is outside the 30-day retention window`,
+        message: `Rollback window expired: prior active version was displaced more than 30 days ago`,
       });
     }
 
