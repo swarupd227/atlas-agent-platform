@@ -3046,3 +3046,23 @@ export const evalRedteamResults = pgTable("eval_redteam_results", {
 export const insertEvalRedteamResultSchema = createInsertSchema(evalRedteamResults).omit({ id: true, createdAt: true });
 export type InsertEvalRedteamResult = z.infer<typeof insertEvalRedteamResultSchema>;
 export type EvalRedteamResult = typeof evalRedteamResults.$inferSelect;
+
+// ── Eval Report Schedules ─────────────────────────────────────────────────────
+export const evalReportSchedules = pgTable("eval_report_schedules", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  templateType: text("template_type").notNull(),
+  agentIds: text("agent_ids").array().default(sql`'{}'::text[]`),
+  cadence: text("cadence").notNull().default("monthly"),
+  recipients: text("recipients").array().default(sql`'{}'::text[]`),
+  timeWindowDays: integer("time_window_days").default(30),
+  enabled: boolean("enabled").default(true),
+  lastRunAt: timestamp("last_run_at"),
+  nextRunAt: timestamp("next_run_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_eval_report_schedules_org").on(table.organizationId),
+]);
+export const insertEvalReportScheduleSchema = createInsertSchema(evalReportSchedules).omit({ id: true, createdAt: true });
+export type InsertEvalReportSchedule = z.infer<typeof insertEvalReportScheduleSchema>;
+export type EvalReportSchedule = typeof evalReportSchedules.$inferSelect;

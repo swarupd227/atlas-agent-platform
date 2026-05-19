@@ -191,6 +191,7 @@ import {
   evalAttackTemplates, type EvalAttackTemplate, type InsertEvalAttackTemplate,
   evalRedteamRuns, type EvalRedteamRun, type InsertEvalRedteamRun,
   evalRedteamResults, type EvalRedteamResult, type InsertEvalRedteamResult,
+  evalReportSchedules, type EvalReportSchedule, type InsertEvalReportSchedule,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -905,7 +906,14 @@ export interface IStorage {
 
   // Atlas Eval Studio — Annotations
   getEvalAnnotations(traceId: string): Promise<EvalAnnotation[]>;
+  getEvalAnnotationsByAnnotator(annotatorId: string, orgId?: string): Promise<EvalAnnotation[]>;
+  getEvalAnnotationsByOrg(orgId?: string): Promise<EvalAnnotation[]>;
   createEvalAnnotation(annotation: InsertEvalAnnotation): Promise<EvalAnnotation>;
+
+  // Atlas Eval Studio — Report Schedules
+  getEvalReportSchedules(orgId?: string): Promise<EvalReportSchedule[]>;
+  createEvalReportSchedule(schedule: InsertEvalReportSchedule): Promise<EvalReportSchedule>;
+  updateEvalReportSchedule(id: string, data: Partial<InsertEvalReportSchedule>): Promise<EvalReportSchedule | undefined>;
 
   // Atlas Eval Studio — Metric Attachments (via eval_gates)
   getAgentEvalMetricAttachments(agentId: string, organizationId?: string): Promise<{ agentId: string; metricIds: string[]; updatedAt: Date | null }>;
@@ -4263,6 +4271,38 @@ export class DatabaseStorage implements IStorage {
 
   async createEvalAnnotation(annotation: InsertEvalAnnotation): Promise<EvalAnnotation> {
     const [row] = await db.insert(evalAnnotations).values(annotation).returning();
+    return row;
+  }
+
+  async getEvalAnnotationsByAnnotator(annotatorId: string, orgId?: string): Promise<EvalAnnotation[]> {
+    const conditions: any[] = [eq(evalAnnotations.annotatorId, annotatorId)];
+    if (orgId) conditions.push(eq(evalAnnotations.organizationId, orgId));
+    return db.select().from(evalAnnotations).where(and(...conditions)).orderBy(desc(evalAnnotations.createdAt));
+  }
+
+  async getEvalAnnotationsByOrg(orgId?: string): Promise<EvalAnnotation[]> {
+    if (orgId) {
+      return db.select().from(evalAnnotations).where(eq(evalAnnotations.organizationId, orgId)).orderBy(desc(evalAnnotations.createdAt));
+    }
+    return db.select().from(evalAnnotations).where(sql`${evalAnnotations.organizationId} IS NULL`).orderBy(desc(evalAnnotations.createdAt));
+  }
+
+  // ── Eval Report Schedules ────────────────────────────────────────────────────
+
+  async getEvalReportSchedules(orgId?: string): Promise<EvalReportSchedule[]> {
+    if (orgId) {
+      return db.select().from(evalReportSchedules).where(eq(evalReportSchedules.organizationId, orgId)).orderBy(desc(evalReportSchedules.createdAt));
+    }
+    return db.select().from(evalReportSchedules).where(sql`${evalReportSchedules.organizationId} IS NULL`).orderBy(desc(evalReportSchedules.createdAt));
+  }
+
+  async createEvalReportSchedule(schedule: InsertEvalReportSchedule): Promise<EvalReportSchedule> {
+    const [row] = await db.insert(evalReportSchedules).values(schedule).returning();
+    return row;
+  }
+
+  async updateEvalReportSchedule(id: string, data: Partial<InsertEvalReportSchedule>): Promise<EvalReportSchedule | undefined> {
+    const [row] = await db.update(evalReportSchedules).set(data).where(eq(evalReportSchedules.id, id)).returning();
     return row;
   }
 

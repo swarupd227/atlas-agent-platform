@@ -44,6 +44,8 @@ import {
   ListChecks,
   Radio,
   ShieldAlert,
+  PenLine,
+  ClipboardList,
 } from "lucide-react";
 import {
   Sidebar,
@@ -144,6 +146,8 @@ function FullAppSidebar() {
         { title: "Runs", url: "/evals/runs", icon: PlayCircle },
         { title: "Prod Monitor", url: "/evals/monitor", icon: Radio },
         { title: "Red Team", url: "/evals/redteam", icon: ShieldAlert },
+        { title: "Annotate", url: "/evals/annotate", icon: PenLine },
+        { title: "Reports", url: "/evals/reports", icon: ClipboardList },
       ],
     },
     {
