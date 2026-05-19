@@ -505,7 +505,14 @@ router.post("/api/eval/datasets/:id/versions", async (req, res) => {
     if (!dataset) return res.status(404).json({ message: "Dataset not found" });
     assertOrgOwnership(dataset.organizationId, orgId);
 
-    const nextVersion = (dataset.version ?? 1) + 1;
+    // Compute nextVersion from the highest existing sibling version (same name + agentId)
+    // so forking an older version never creates a duplicate or regression.
+    const siblings = await storage.getEvalDatasets({ organizationId: orgId, agentId: dataset.agentId ?? undefined });
+    const maxSiblingVersion = siblings
+      .filter((d) => d.name === dataset.name && d.agentId === dataset.agentId)
+      .reduce((max, d) => Math.max(max, d.version ?? 1), 0);
+    const nextVersion = maxSiblingVersion + 1;
+
     const newDataset = await storage.createEvalDataset({
       organizationId: orgId,
       agentId: dataset.agentId ?? undefined,
@@ -518,10 +525,19 @@ router.post("/api/eval/datasets/:id/versions", async (req, res) => {
       createdBy: dataset.createdBy ?? undefined,
     });
 
-    // Copy all goldens from the source dataset
-    const sourceGoldens = await storage.getEvalGoldens({ datasetId: dataset.id, limit: 1000 });
-    if (sourceGoldens.length > 0) {
-      const copies = sourceGoldens.map((g) => ({
+    // Paginate through ALL source goldens — avoids silent data loss for datasets > 1 000 rows
+    const PAGE = 500;
+    let page = 1;
+    const allGoldens: Awaited<ReturnType<typeof storage.getEvalGoldens>> = [];
+    while (true) {
+      const batch = await storage.getEvalGoldens({ datasetId: dataset.id, page, limit: PAGE });
+      allGoldens.push(...batch);
+      if (batch.length < PAGE) break;
+      page++;
+    }
+
+    if (allGoldens.length > 0) {
+      const copies = allGoldens.map((g) => ({
         organizationId: orgId,
         datasetId: newDataset.id,
         input: g.input,
