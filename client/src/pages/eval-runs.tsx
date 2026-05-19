@@ -97,9 +97,10 @@ export default function EvalRuns() {
     queryKey: ["/api/eval/datasets"],
   });
 
-  const { data: metrics } = useQuery<EvalMetric[]>({
+  const { data: metricsData } = useQuery<{ items: EvalMetric[]; total: number }>({
     queryKey: ["/api/eval/metrics"],
   });
+  const metrics = metricsData?.items ?? [];
 
   const { data: metricCollections } = useQuery<EvalMetricCollection[]>({
     queryKey: ["/api/eval/metric-collections"],
@@ -341,14 +342,14 @@ export default function EvalRuns() {
               </div>
 
               {/* Metric multi-select */}
-              {(metrics ?? []).length > 0 && (
+              {metrics.length > 0 && (
                 <div className="mt-4">
                   <Label className="text-xs mb-2 block font-medium">
                     <ListChecks className="w-3 h-3 inline mr-1" />
-                    Metrics ({selectedMetricIds.length} selected)
+                    Individual Metrics ({selectedMetricIds.length} selected)
                   </Label>
                   <div className="flex flex-wrap gap-2">
-                    {(metrics ?? []).slice(0, 20).map((m) => {
+                    {metrics.slice(0, 30).map((m) => {
                       const active = selectedMetricIds.includes(m.id);
                       return (
                         <button

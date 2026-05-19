@@ -1090,6 +1090,26 @@ export default function EvalDatasets() {
     return [...ds].sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
   }, [datasets, agentFilter, dsSearch]);
 
+  // Grouped by agentId for the left rail when no agent filter is active
+  const groupedDatasets = useMemo(() => {
+    if (agentFilter !== "__all__") return null; // flat when filtered
+    const groups = new Map<string, EvalDataset[]>();
+    for (const ds of filteredDatasets) {
+      const key = ds.agentId ?? "__none__";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(ds);
+    }
+    // Sort groups: agents first (by name), then unassigned last
+    const entries = [...groups.entries()].sort(([a], [b]) => {
+      if (a === "__none__") return 1;
+      if (b === "__none__") return -1;
+      const na = agentMap.get(a)?.name ?? a;
+      const nb = agentMap.get(b)?.name ?? b;
+      return na.localeCompare(nb);
+    });
+    return entries;
+  }, [filteredDatasets, agentFilter, agentMap]);
+
   const selectedDataset = useMemo(
     () => (selectedDatasetId ? (datasets ?? []).find((d) => d.id === selectedDatasetId) ?? null : null),
     [selectedDatasetId, datasets],
@@ -1227,9 +1247,65 @@ export default function EvalDatasets() {
                   <Plus className="w-3 h-3 mr-1" /> New Dataset
                 </Button>
               </div>
+            ) : groupedDatasets ? (
+              /* Grouped by agent */
+              groupedDatasets.map(([agentId, groupDs]) => {
+                const agentName = agentId === "__none__"
+                  ? "Unassigned"
+                  : (agentMap.get(agentId)?.name ?? agentId.slice(0, 12));
+                return (
+                  <div key={agentId} className="mb-1">
+                    {/* Group header */}
+                    <div
+                      className="flex items-center gap-1.5 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70 select-none"
+                      data-testid={`group-header-${agentId}`}
+                    >
+                      {agentId === "__none__" ? (
+                        <Database className="w-3 h-3" />
+                      ) : (
+                        <Bot className="w-3 h-3" />
+                      )}
+                      <span className="truncate">{agentName}</span>
+                      <span className="ml-auto text-[9px] text-muted-foreground/50">{groupDs.length}</span>
+                    </div>
+                    {/* Datasets in this group */}
+                    <div className="flex flex-col gap-0.5 pl-2">
+                      {groupDs.map((ds) => {
+                        const isSelected = selectedDatasetId === ds.id;
+                        return (
+                          <button
+                            key={ds.id}
+                            onClick={() => { setSelectedDatasetId(ds.id); setGoldenPage(1); setGoldenSearch(""); }}
+                            className={`w-full text-left rounded-md border px-3 py-2 transition-colors text-xs hover:bg-muted/40 ${isSelected ? "border-primary/50 bg-primary/5" : "border-border"}`}
+                            data-testid={`button-dataset-${ds.id}`}
+                          >
+                            <div className="flex items-center justify-between gap-1 mb-0.5">
+                              <span className="font-medium truncate">{ds.name}</span>
+                              <Badge variant="outline" className="text-[9px] shrink-0">v{ds.version ?? 1}</Badge>
+                            </div>
+                            <div className="flex items-center gap-1.5 text-muted-foreground">
+                              <span>{ds.goldenCount ?? 0} goldens</span>
+                              {ds.isBaseline && (
+                                <Badge variant="outline" className="text-[9px] bg-primary/10 text-primary border-primary/20">baseline</Badge>
+                              )}
+                            </div>
+                            {(ds.tags ?? []).length > 0 && (
+                              <div className="flex gap-1 flex-wrap mt-1">
+                                {(ds.tags ?? []).slice(0, 3).map((t) => (
+                                  <span key={t} className="bg-muted rounded px-1 py-0.5 text-[9px] text-muted-foreground">{t}</span>
+                                ))}
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })
             ) : (
+              /* Flat list when a specific agent is filtered */
               filteredDatasets.map((ds) => {
-                const agent = ds.agentId ? agentMap.get(ds.agentId) : null;
                 const isSelected = selectedDatasetId === ds.id;
                 return (
                   <button
@@ -1246,13 +1322,6 @@ export default function EvalDatasets() {
                       <span>{ds.goldenCount ?? 0} goldens</span>
                       {ds.isBaseline && (
                         <Badge variant="outline" className="text-[9px] bg-primary/10 text-primary border-primary/20">baseline</Badge>
-                      )}
-                      {agent && (
-                        <>
-                          <span>·</span>
-                          <Bot className="w-2.5 h-2.5" />
-                          <span className="truncate max-w-[80px]">{agent.name}</span>
-                        </>
                       )}
                     </div>
                     {(ds.tags ?? []).length > 0 && (

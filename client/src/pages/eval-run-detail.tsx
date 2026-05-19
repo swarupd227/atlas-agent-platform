@@ -23,6 +23,9 @@ import {
 import {
   Play,
   CheckCircle,
+  CheckCircle2,
+  XCircle,
+  Loader2,
   AlertTriangle,
   Clock,
   Activity,
@@ -248,7 +251,7 @@ export default function EvalRunDetail() {
       return res.json();
     },
     enabled: !!id && !!run,
-    refetchInterval: run?.status === "pending" || run?.status === "running" ? 5000 : false,
+    refetchInterval: run?.status === "pending" || run?.status === "running" ? 3000 : false,
   });
 
   // Comparison run traces
@@ -598,9 +601,17 @@ export default function EvalRunDetail() {
                             </td>
                             <td className="px-4 py-2.5">
                               {t.passFail === true ? (
-                                <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 border-emerald-500/20">Pass</Badge>
+                                <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-600 border-emerald-500/20">
+                                  <CheckCircle2 className="w-2.5 h-2.5 mr-1" />Pass
+                                </Badge>
                               ) : t.passFail === false ? (
-                                <Badge variant="outline" className="text-[10px] bg-red-500/10 text-red-600 border-red-500/20">Fail</Badge>
+                                <Badge variant="outline" className="text-[10px] bg-red-500/10 text-red-600 border-red-500/20">
+                                  <XCircle className="w-2.5 h-2.5 mr-1" />Fail
+                                </Badge>
+                              ) : (run?.status === "running" || run?.status === "pending") ? (
+                                <Badge variant="outline" className="text-[10px] bg-blue-500/10 text-blue-600 border-blue-500/20 animate-pulse">
+                                  <Loader2 className="w-2.5 h-2.5 mr-1 animate-spin" />Evaluating
+                                </Badge>
                               ) : (
                                 <Badge variant="outline" className="text-[10px]">—</Badge>
                               )}
