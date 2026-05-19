@@ -139,6 +139,7 @@ function FullAppSidebar() {
         { title: "Eval Studio", url: "/evals", icon: FlaskConical },
         { title: "Metric Library", url: "/evals/metrics", icon: ListChecks },
         { title: "Datasets", url: "/golden-datasets", icon: Database },
+        { title: "Runs", url: "/evals/runs", icon: PlayCircle },
       ],
     },
     {

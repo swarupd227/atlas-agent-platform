@@ -142,6 +142,17 @@ router.get("/api/eval/metrics/:id", async (req, res) => {
   }
 });
 
+router.get("/api/eval/metrics/:id/agents", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const agentIds = await storage.getAgentsUsingMetric(req.params.id, orgId);
+    const agents = await Promise.all(agentIds.map(id => storage.getAgent(id, orgId)));
+    res.json(agents.filter(Boolean).map(a => ({ id: a!.id, name: a!.name, status: a!.status })));
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 router.post("/api/eval/metrics", async (req, res) => {
   try {
     const orgId = getOrgId(req);

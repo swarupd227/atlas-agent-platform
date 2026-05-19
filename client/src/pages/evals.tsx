@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { useRole } from "@/components/role-provider";
-import type { Agent, EvalTestRun } from "@shared/schema";
+import type { Agent, EvalTestRun, EvalDataset } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,7 @@ import {
   Plus,
   Activity,
   Database,
+  PlusCircle,
 } from "lucide-react";
 import { formatDate } from "@/components/shared-utils";
 
@@ -139,33 +140,94 @@ export default function Evals() {
     queryKey: ["/api/agents"],
   });
 
+  const { data: datasets } = useQuery<EvalDataset[]>({
+    queryKey: ["/api/eval/datasets"],
+  });
+
   const agentMap = useMemo(() => {
     const m = new Map<string, Agent>();
     for (const a of (agents || [])) m.set(a.id, a);
     return m;
   }, [agents]);
 
+  const RISK_THRESHOLD = 0.85;
+
   const agentsAtRisk = useMemo(() => {
     if (!runs) return [];
-    const latestByAgent = new Map<string, EvalTestRun>();
+    const runsByAgent = new Map<string, EvalTestRun[]>();
     for (const run of runs) {
-      const existing = latestByAgent.get(run.agentId);
-      if (!existing || new Date(run.startedAt!).getTime() > new Date(existing.startedAt!).getTime()) {
-        latestByAgent.set(run.agentId, run);
-      }
+      const list = runsByAgent.get(run.agentId) ?? [];
+      list.push(run);
+      runsByAgent.set(run.agentId, list);
     }
-    return Array.from(latestByAgent.values())
-      .filter(r => r.passRate != null && r.passRate < 0.85)
-      .sort((a, b) => (a.passRate ?? 1) - (b.passRate ?? 1))
+    const results: Array<{ run: EvalTestRun; prevRun: EvalTestRun | null; reason: "below_threshold" | "trending_down" }> = [];
+    for (const [, agentRuns] of runsByAgent.entries()) {
+      const sorted = [...agentRuns].sort((a, b) => new Date(b.startedAt!).getTime() - new Date(a.startedAt!).getTime());
+      const latest = sorted[0];
+      const prev = sorted[1] ?? null;
+      const isBelowThreshold = latest.passRate != null && latest.passRate < RISK_THRESHOLD;
+      const isTrendingDown = prev?.passRate != null && latest.passRate != null && latest.passRate < prev.passRate - 0.03;
+      if (isBelowThreshold) results.push({ run: latest, prevRun: prev, reason: "below_threshold" });
+      else if (isTrendingDown) results.push({ run: latest, prevRun: prev, reason: "trending_down" });
+    }
+    return results
+      .sort((a, b) => (a.run.passRate ?? 1) - (b.run.passRate ?? 1))
       .slice(0, 8);
   }, [runs]);
 
-  const recentActivity = useMemo(() => {
-    if (!runs) return [];
-    return [...runs]
-      .sort((a, b) => new Date(b.startedAt!).getTime() - new Date(a.startedAt!).getTime())
-      .slice(0, 12);
-  }, [runs]);
+  interface ActivityItem {
+    id: string;
+    type: "run_completed" | "run_regressed" | "run_started" | "run_failed" | "dataset_created" | "golden_added";
+    label: string;
+    sublabel: string;
+    timestamp: string;
+  }
+
+  const recentActivity = useMemo((): ActivityItem[] => {
+    const items: ActivityItem[] = [];
+    for (const run of (runs ?? [])) {
+      const agentName = agentMap.get(run.agentId)?.name ?? `Agent ${run.agentId.slice(0, 8)}`;
+      const ts = (run.completedAt ?? run.startedAt) as string;
+      if (run.status === "completed") {
+        const pct = run.passRate != null ? Math.round(run.passRate * 100) : 0;
+        const regressed = pct < 70;
+        items.push({
+          id: `run-${run.id}`,
+          type: regressed ? "run_regressed" : "run_completed",
+          label: regressed ? "Regression detected" : "Eval run passed",
+          sublabel: `${agentName} · ${pct}% pass rate`,
+          timestamp: ts,
+        });
+      } else if (run.status === "running") {
+        items.push({ id: `run-${run.id}`, type: "run_started", label: "Eval run started", sublabel: agentName, timestamp: ts });
+      } else if (run.status === "failed") {
+        items.push({ id: `run-${run.id}`, type: "run_failed", label: "Eval run failed", sublabel: agentName, timestamp: ts });
+      } else {
+        items.push({ id: `run-${run.id}`, type: "run_started", label: "Eval run queued", sublabel: agentName, timestamp: ts });
+      }
+    }
+    for (const ds of (datasets ?? [])) {
+      if (ds.goldenCount && ds.goldenCount > 0) {
+        items.push({
+          id: `ds-golden-${ds.id}`,
+          type: "golden_added",
+          label: `${ds.goldenCount} golden${ds.goldenCount !== 1 ? "s" : ""} in dataset`,
+          sublabel: ds.name,
+          timestamp: (ds.updatedAt ?? ds.createdAt) as string,
+        });
+      }
+      items.push({
+        id: `ds-${ds.id}`,
+        type: "dataset_created",
+        label: "Dataset created",
+        sublabel: ds.name,
+        timestamp: ds.createdAt as string,
+      });
+    }
+    return items
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+      .slice(0, 14);
+  }, [runs, datasets, agentMap]);
 
   const costSparkline = useMemo(() => {
     const cost = summary?.evalCostUsd ?? 0;
@@ -217,13 +279,13 @@ export default function Evals() {
       { label: "Browse Metrics", icon: ListChecks, href: "/evals/metrics", variant: "outline" as const },
       { label: "Eval Datasets", icon: Database, href: "/golden-datasets", variant: "outline" as const },
     ];
-    if (role.id === "compliance_officer") {
+    if (role.id === "compliance_security") {
       return [
         { label: "Generate Report", icon: BarChart3, href: "/governance", variant: "default" as const },
         ...base,
       ];
     }
-    if (role === "ops_sre") {
+    if (role.id === "ops_sre") {
       return [
         { label: "Monitor Fleet", icon: Activity, href: "/monitor", variant: "default" as const },
         ...base,
@@ -235,26 +297,16 @@ export default function Evals() {
     ];
   }, [role]);
 
-  const activityIcon = (run: EvalTestRun) => {
-    if (run.status === "completed") {
-      if ((run.passRate ?? 1) < 0.7) return { icon: AlertTriangle, color: "text-amber-500" };
-      return { icon: CheckCircle, color: "text-emerald-500" };
+  const activityIconConfig = (type: string) => {
+    switch (type) {
+      case "run_completed": return { icon: CheckCircle, color: "text-emerald-500" };
+      case "run_regressed": return { icon: AlertTriangle, color: "text-amber-500" };
+      case "run_started": return { icon: Activity, color: "text-blue-500" };
+      case "run_failed": return { icon: AlertTriangle, color: "text-red-500" };
+      case "dataset_created": return { icon: Database, color: "text-violet-500" };
+      case "golden_added": return { icon: PlusCircle, color: "text-emerald-500" };
+      default: return { icon: Clock, color: "text-muted-foreground" };
     }
-    if (run.status === "running") return { icon: Activity, color: "text-blue-500" };
-    if (run.status === "failed") return { icon: AlertTriangle, color: "text-red-500" };
-    return { icon: Clock, color: "text-muted-foreground" };
-  };
-
-  const activityLabel = (run: EvalTestRun) => {
-    const agentName = agentMap.get(run.agentId)?.name ?? `Agent ${run.agentId.slice(0, 8)}`;
-    if (run.status === "completed") {
-      const pct = run.passRate != null ? Math.round(run.passRate * 100) : 0;
-      const verdict = pct >= 70 ? "passed" : "regressed";
-      return { primary: `Run ${verdict}`, secondary: `${agentName} · ${pct}% pass rate` };
-    }
-    if (run.status === "running") return { primary: "Run in progress", secondary: agentName };
-    if (run.status === "failed") return { primary: "Run failed", secondary: agentName };
-    return { primary: "Run queued", secondary: agentName };
   };
 
   return (
@@ -335,14 +387,15 @@ export default function Evals() {
               </div>
             ) : (
               <div className="divide-y">
-                {agentsAtRisk.map((run) => {
+                {agentsAtRisk.map(({ run, prevRun, reason }) => {
                   const agent = agentMap.get(run.agentId);
                   const name = agent?.name ?? `Agent ${run.agentId.slice(0, 8)}`;
                   const passRate = run.passRate ?? 0;
+                  const prevRate = prevRun?.passRate;
+                  const trendDelta = prevRate != null ? passRate - prevRate : 0;
+                  const TrendIcon = trendDelta > 0.01 ? TrendingUp : trendDelta < -0.01 ? TrendingDown : Minus;
+                  const trendColor = trendDelta > 0.01 ? "text-emerald-500" : trendDelta < -0.01 ? "text-red-500" : "text-muted-foreground";
                   const sparkData = generateAgentSparkline(passRate, run.agentId);
-                  const trend = sparkData.length >= 2 ? sparkData[sparkData.length - 1] - sparkData[0] : 0;
-                  const TrendIcon = trend > 0.01 ? TrendingUp : trend < -0.01 ? TrendingDown : Minus;
-                  const trendColor = trend > 0.01 ? "text-emerald-500" : trend < -0.01 ? "text-red-500" : "text-muted-foreground";
                   return (
                     <div key={run.id} className="flex items-center gap-3 px-4 py-3 hover:bg-muted/30 transition-colors" data-testid={`row-agent-risk-${run.agentId}`}>
                       <div className="flex-1 min-w-0">
@@ -354,7 +407,11 @@ export default function Evals() {
                           <span className={`text-xs font-semibold ${passRateColor(passRate)}`}>
                             {Math.round(passRate * 100)}%
                           </span>
+                          <span className="text-[10px] text-muted-foreground">/ {Math.round(RISK_THRESHOLD * 100)}%</span>
                           <TrendIcon className={`w-3 h-3 ${trendColor}`} />
+                          {reason === "trending_down" && passRate >= RISK_THRESHOLD && (
+                            <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 border-amber-500/20 h-4">trend ↓</Badge>
+                          )}
                         </div>
                       </div>
                       <div className="shrink-0">
@@ -397,20 +454,19 @@ export default function Evals() {
               </div>
             ) : (
               <div className="divide-y">
-                {recentActivity.map((run) => {
-                  const { icon: Icon, color } = activityIcon(run);
-                  const { primary, secondary } = activityLabel(run);
+                {recentActivity.map((item) => {
+                  const { icon: Icon, color } = activityIconConfig(item.type);
                   return (
-                    <div key={run.id} className="flex items-start gap-3 px-4 py-3 hover:bg-muted/30 transition-colors" data-testid={`row-activity-${run.id}`}>
+                    <div key={item.id} className="flex items-start gap-3 px-4 py-3 hover:bg-muted/30 transition-colors" data-testid={`row-activity-${item.id}`}>
                       <div className={`mt-0.5 shrink-0 ${color}`}>
                         <Icon className="w-4 h-4" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{primary}</p>
-                        <p className="text-xs text-muted-foreground truncate">{secondary}</p>
+                        <p className="text-sm font-medium truncate">{item.label}</p>
+                        <p className="text-xs text-muted-foreground truncate">{item.sublabel}</p>
                       </div>
                       <div className="text-[10px] text-muted-foreground/60 whitespace-nowrap shrink-0 mt-0.5">
-                        {formatDate(run.startedAt as string)}
+                        {formatDate(item.timestamp)}
                       </div>
                     </div>
                   );

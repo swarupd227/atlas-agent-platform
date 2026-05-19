@@ -903,6 +903,7 @@ export interface IStorage {
   getAgentEvalMetricAttachments(agentId: string, organizationId?: string): Promise<{ agentId: string; metricIds: string[]; updatedAt: Date | null }>;
   attachMetricToAgent(agentId: string, metricId: string, organizationId?: string): Promise<{ agentId: string; metricIds: string[]; updatedAt: Date | null }>;
   detachMetricFromAgent(agentId: string, metricId: string, organizationId?: string): Promise<{ agentId: string; metricIds: string[] }>;
+  getAgentsUsingMetric(metricId: string, organizationId?: string): Promise<string[]>;
 
   // Atlas Eval Studio — Gates
   getEvalGate(agentId: string): Promise<EvalGate | undefined>;
@@ -4270,6 +4271,13 @@ export class DatabaseStorage implements IStorage {
       .set({ attachedMetricIds: metricIds, updatedAt: new Date() })
       .where(and(...conditions));
     return { agentId, metricIds };
+  }
+
+  async getAgentsUsingMetric(metricId: string, organizationId?: string): Promise<string[]> {
+    const conditions = [sql`${metricId} = ANY(${evalGates.attachedMetricIds})`];
+    if (organizationId) conditions.push(eq(evalGates.organizationId, organizationId));
+    const rows = await db.select({ agentId: evalGates.agentId }).from(evalGates).where(and(...conditions));
+    return rows.map(r => r.agentId);
   }
 }
 

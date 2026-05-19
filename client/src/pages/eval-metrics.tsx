@@ -54,6 +54,7 @@ import {
   X,
   Loader2,
   BarChart3,
+  Cpu,
 } from "lucide-react";
 
 const CATEGORIES = [
@@ -161,6 +162,12 @@ function MetricCard({
               {metric.threshold}
             </Badge>
           )}
+          {metric.judgeModel && (
+            <Badge variant="outline" className="text-[10px] bg-muted/50 text-muted-foreground font-mono">
+              <Cpu className="w-2.5 h-2.5 mr-1" />
+              {metric.judgeModel}
+            </Badge>
+          )}
           {(metric.usageCount ?? 0) > 0 && (
             <Badge variant="outline" className="text-[10px] bg-muted/50 text-muted-foreground">
               <Link2 className="w-2.5 h-2.5 mr-1" />
@@ -189,6 +196,15 @@ function MetricDetailPanel({
   const srcColor = SOURCE_COLORS[srcKey] ?? SOURCE_COLORS.deepeval;
 
   const evalParamsArray = Array.isArray(metric.evaluationParams) ? metric.evaluationParams : [];
+
+  const { data: attachedAgents, isLoading: agentsLoading } = useQuery<{ id: string; name: string; status: string }[]>({
+    queryKey: ["/api/eval/metrics", metric.id, "agents"],
+    queryFn: async () => {
+      const res = await fetch(`/api/eval/metrics/${metric.id}/agents`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+  });
 
   return (
     <div className="flex flex-col h-full">
@@ -257,6 +273,37 @@ function MetricDetailPanel({
                 <div className="text-sm font-semibold">{metric.usageCount ?? 0} agent{metric.usageCount !== 1 ? "s" : ""}</div>
               </div>
             </div>
+          </div>
+
+          {/* Attached Agents */}
+          <div>
+            <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Attached Agents</h4>
+            {agentsLoading ? (
+              <div className="flex flex-col gap-1.5">
+                <Skeleton className="h-8 w-full" />
+                <Skeleton className="h-8 w-full" />
+              </div>
+            ) : !attachedAgents || attachedAgents.length === 0 ? (
+              <div className="rounded-md border border-dashed p-3 text-center">
+                <p className="text-xs text-muted-foreground">No agents attached yet</p>
+                <p className="text-[10px] text-muted-foreground/60 mt-0.5">Use "Attach to Agent" below to link this metric</p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-1">
+                {attachedAgents.map(agent => (
+                  <div key={agent.id} className="flex items-center gap-2 rounded-md border px-3 py-2 hover:bg-muted/30 transition-colors" data-testid={`row-attached-agent-${agent.id}`}>
+                    <Bot className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                    <span className="text-sm flex-1 truncate">{agent.name}</span>
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] shrink-0 ${agent.status === "active" ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" : "bg-muted/50 text-muted-foreground"}`}
+                    >
+                      {agent.status}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Evaluation Params */}
