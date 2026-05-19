@@ -733,15 +733,22 @@ router.patch("/api/eval/traces/:id", async (req, res) => {
       isPinned: z.boolean().optional(),
       pinnedBy: z.string().optional(),
     });
-    const body = patchSchema.parse(req.body);
-    if (body.isPinned === true) {
-      if (!body.pinnedBy || body.pinnedBy !== "compliance_security") {
-        return res.status(403).json({ message: "Only Compliance role may pin traces as evidence" });
+    const patchBody = patchSchema.parse(req.body);
+    if (patchBody.isPinned === true) {
+      const userRole =
+        (req.authUser?.role) ??
+        (req.headers["x-role"] as string | undefined) ??
+        "";
+      if (userRole !== "compliance_security") {
+        return res.status(403).json({ message: "Only the Compliance role may pin traces as evidence" });
       }
     }
     const updated = await storage.updateEvalTrace(req.params.id, {
-      ...body,
-      pinnedAt: body.isPinned ? new Date() : undefined,
+      isPinned: patchBody.isPinned,
+      pinnedBy: patchBody.isPinned
+        ? (req.authUser?.role ?? (req.headers["x-role"] as string) ?? "compliance_security")
+        : patchBody.pinnedBy,
+      pinnedAt: patchBody.isPinned ? new Date() : undefined,
     });
     res.json(updated);
   } catch (err: any) {

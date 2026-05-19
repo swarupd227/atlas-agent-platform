@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useParams, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
@@ -714,8 +714,11 @@ export default function EvalTraceInspector() {
       return res.json();
     },
     enabled: !!compareTraceId,
-    onSuccess: () => setCompareViewOpen(true),
-  } as any);
+  });
+
+  useEffect(() => {
+    if (compareTrace) setCompareViewOpen(true);
+  }, [compareTrace]);
 
   const { data: run } = useQuery<EvalTestRun>({
     queryKey: ["/api/eval/runs", trace?.runId],
@@ -1038,28 +1041,35 @@ export default function EvalTraceInspector() {
                 )}
 
                 {/* LLM stats row */}
-                {selectedSpan.spanType === "llm" && (
-                  <div className="flex flex-wrap gap-2 mb-4">
-                    {(selectedSpan.attributes as any)?.inputTokens && (
-                      <div className="text-xs bg-muted/40 rounded-md px-3 py-1.5">
-                        <span className="text-muted-foreground">Input tokens: </span>
-                        <span className="font-medium">{(selectedSpan.attributes as any).inputTokens}</span>
-                      </div>
-                    )}
-                    {(selectedSpan.attributes as any)?.outputTokens && (
-                      <div className="text-xs bg-muted/40 rounded-md px-3 py-1.5">
-                        <span className="text-muted-foreground">Output tokens: </span>
-                        <span className="font-medium">{(selectedSpan.attributes as any).outputTokens}</span>
-                      </div>
-                    )}
-                    {(selectedSpan.attributes as any)?.model && (
-                      <div className="text-xs bg-muted/40 rounded-md px-3 py-1.5">
-                        <span className="text-muted-foreground">Model: </span>
-                        <span className="font-medium">{(selectedSpan.attributes as any).model}</span>
-                      </div>
-                    )}
-                  </div>
-                )}
+                {selectedSpan.spanType === "llm" && (() => {
+                  const attrs = (selectedSpan.attributes ?? {}) as Record<string, unknown>;
+                  const inputTokens = typeof attrs.inputTokens === "number" || typeof attrs.inputTokens === "string" ? attrs.inputTokens : null;
+                  const outputTokens = typeof attrs.outputTokens === "number" || typeof attrs.outputTokens === "string" ? attrs.outputTokens : null;
+                  const model = typeof attrs.model === "string" ? attrs.model : null;
+                  if (!inputTokens && !outputTokens && !model) return null;
+                  return (
+                    <div className="flex flex-wrap gap-2 mb-4">
+                      {inputTokens != null && (
+                        <div className="text-xs bg-muted/40 rounded-md px-3 py-1.5">
+                          <span className="text-muted-foreground">Input tokens: </span>
+                          <span className="font-medium">{String(inputTokens)}</span>
+                        </div>
+                      )}
+                      {outputTokens != null && (
+                        <div className="text-xs bg-muted/40 rounded-md px-3 py-1.5">
+                          <span className="text-muted-foreground">Output tokens: </span>
+                          <span className="font-medium">{String(outputTokens)}</span>
+                        </div>
+                      )}
+                      {model && (
+                        <div className="text-xs bg-muted/40 rounded-md px-3 py-1.5">
+                          <span className="text-muted-foreground">Model: </span>
+                          <span className="font-medium">{model}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Inputs / Outputs */}
                 <JsonBlock data={selectedSpan.inputs} label="Inputs" />
