@@ -2000,8 +2000,10 @@ Return a JSON array with evolved versions maintaining the same keys. Each should
           }
         });
       }
-    } catch {
-      // evolution failed silently, keep original goldens
+    } catch (evolveErr: any) {
+      const warnMsg = `Evolution stage failed (${evolveStrategies.join(", ")}): ${evolveErr?.message ?? "unknown error"}. Original goldens retained.`;
+      synthWarnings.push(warnMsg);
+      console.warn(`[synthesizer] ${warnMsg}`);
     }
   }
 
