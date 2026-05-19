@@ -900,9 +900,9 @@ export interface IStorage {
   createEvalAnnotation(annotation: InsertEvalAnnotation): Promise<EvalAnnotation>;
 
   // Atlas Eval Studio — Metric Attachments (via eval_gates)
-  getAgentEvalMetricAttachments(agentId: string): Promise<{ agentId: string; metricIds: string[]; updatedAt: Date | null }>;
+  getAgentEvalMetricAttachments(agentId: string, organizationId?: string): Promise<{ agentId: string; metricIds: string[]; updatedAt: Date | null }>;
   attachMetricToAgent(agentId: string, metricId: string, organizationId?: string): Promise<{ agentId: string; metricIds: string[]; updatedAt: Date | null }>;
-  detachMetricFromAgent(agentId: string, metricId: string): Promise<{ agentId: string; metricIds: string[] }>;
+  detachMetricFromAgent(agentId: string, metricId: string, organizationId?: string): Promise<{ agentId: string; metricIds: string[] }>;
 
   // Atlas Eval Studio — Gates
   getEvalGate(agentId: string): Promise<EvalGate | undefined>;
@@ -4235,30 +4235,40 @@ export class DatabaseStorage implements IStorage {
 
   // ── Atlas Eval Studio — Metric Attachments ─────────────────────────────────
 
-  async getAgentEvalMetricAttachments(agentId: string): Promise<{ agentId: string; metricIds: string[]; updatedAt: Date | null }> {
-    const [gate] = await db.select().from(evalGates).where(eq(evalGates.agentId, agentId));
+  async getAgentEvalMetricAttachments(agentId: string, organizationId?: string): Promise<{ agentId: string; metricIds: string[]; updatedAt: Date | null }> {
+    const conditions = [eq(evalGates.agentId, agentId)];
+    if (organizationId) conditions.push(eq(evalGates.organizationId, organizationId));
+    const [gate] = await db.select().from(evalGates).where(and(...conditions));
     return { agentId, metricIds: gate?.attachedMetricIds ?? [], updatedAt: gate?.updatedAt ?? null };
   }
 
   async attachMetricToAgent(agentId: string, metricId: string, organizationId?: string): Promise<{ agentId: string; metricIds: string[]; updatedAt: Date | null }> {
-    const existing = await this.getAgentEvalMetricAttachments(agentId);
+    // Read existing gate respecting org boundary — no org leakage
+    const existing = await this.getAgentEvalMetricAttachments(agentId, organizationId);
     const metricIds = Array.from(new Set([...existing.metricIds, metricId]));
+    // On conflict: only update the row when organizationId matches (or was null/unscoped)
     const [row] = await db.insert(evalGates)
       .values({ agentId, organizationId: organizationId ?? null, attachedMetricIds: metricIds })
       .onConflictDoUpdate({
         target: evalGates.agentId,
         set: { attachedMetricIds: metricIds, updatedAt: new Date() },
+        // Enforce that we don't stomp on a different org's gate row
+        setWhere: organizationId
+          ? sql`eval_gates.organization_id = ${organizationId} OR eval_gates.organization_id IS NULL`
+          : sql`eval_gates.organization_id IS NULL`,
       })
       .returning();
     return { agentId, metricIds: row.attachedMetricIds ?? [], updatedAt: row.updatedAt };
   }
 
-  async detachMetricFromAgent(agentId: string, metricId: string): Promise<{ agentId: string; metricIds: string[] }> {
-    const existing = await this.getAgentEvalMetricAttachments(agentId);
+  async detachMetricFromAgent(agentId: string, metricId: string, organizationId?: string): Promise<{ agentId: string; metricIds: string[] }> {
+    const existing = await this.getAgentEvalMetricAttachments(agentId, organizationId);
     const metricIds = existing.metricIds.filter(id => id !== metricId);
+    const conditions = [eq(evalGates.agentId, agentId)];
+    if (organizationId) conditions.push(eq(evalGates.organizationId, organizationId));
     await db.update(evalGates)
       .set({ attachedMetricIds: metricIds, updatedAt: new Date() })
-      .where(eq(evalGates.agentId, agentId));
+      .where(and(...conditions));
     return { agentId, metricIds };
   }
 }

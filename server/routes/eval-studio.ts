@@ -114,6 +114,21 @@ router.get("/api/eval/metrics", async (req, res) => {
   }
 });
 
+// Static sub-paths must be declared BEFORE /:id to avoid Express shadowing them
+router.get("/api/eval/metrics/attached/:agentId", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    // Validate caller belongs to the same org as the agent
+    const agent = await storage.getAgent(req.params.agentId);
+    if (agent) assertOrgOwnership(agent.organizationId, orgId);
+    const attachment = await storage.getAgentEvalMetricAttachments(req.params.agentId, orgId);
+    res.json(attachment);
+  } catch (err: any) {
+    if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
+    res.status(500).json({ message: err.message });
+  }
+});
+
 router.get("/api/eval/metrics/:id", async (req, res) => {
   try {
     const orgId = getOrgId(req);
@@ -170,9 +185,15 @@ router.post("/api/eval/metrics/:id/attach", async (req, res) => {
     const orgId = getOrgId(req);
     const attachSchema = z.object({ agentId: z.string().min(1), scope: z.string().default("end-to-end") });
     const { agentId, scope } = attachSchema.parse(req.body);
+
+    // Validate metric ownership
     const metric = await storage.getEvalMetric(req.params.id);
     if (!metric) return res.status(404).json({ message: "Metric not found" });
     assertOrgOwnership(metric.organizationId, orgId);
+
+    // Validate agent belongs to the caller's org before writing eval_gates
+    const agent = await storage.getAgent(agentId);
+    if (agent) assertOrgOwnership(agent.organizationId, orgId);
 
     // Persist real metric-to-agent attachment mapping in eval_gates
     const attachment = await storage.attachMetricToAgent(agentId, req.params.id, orgId);
@@ -193,15 +214,6 @@ router.post("/api/eval/metrics/:id/attach", async (req, res) => {
   } catch (err: any) {
     if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
     if (err instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: err.errors });
-    res.status(500).json({ message: err.message });
-  }
-});
-
-router.get("/api/eval/metrics/attached/:agentId", async (req, res) => {
-  try {
-    const attachment = await storage.getAgentEvalMetricAttachments(req.params.agentId);
-    res.json(attachment);
-  } catch (err: any) {
     res.status(500).json({ message: err.message });
   }
 });
