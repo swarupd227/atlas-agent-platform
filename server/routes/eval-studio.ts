@@ -1570,7 +1570,9 @@ setTimeout(() => {
 
       for (const cfg of enabledConfigs) {
         // Honor per-agent configurable thresholds
-        const thresholds = (cfg.alertThresholds as any) ?? {};
+        interface AlertThresholds { passRate?: number; latency?: number; }
+        const thresholds: AlertThresholds = typeof cfg.alertThresholds === "object" && cfg.alertThresholds !== null
+          ? cfg.alertThresholds as AlertThresholds : {};
         const passRateThreshold: number = thresholds.passRate ?? 0.85;
 
         const recentRuns = await storage.getEvalTestRuns({ agentId: cfg.agentId, organizationId: cfg.organizationId ?? undefined });
@@ -1829,8 +1831,8 @@ router.get("/api/eval/redteam/runs/:id", async (req, res) => {
     const orgId = getOrgId(req);
     const run = await storage.getEvalRedteamRun(req.params.id);
     if (!run) return res.status(404).json({ message: "Run not found" });
-    // Org ownership check — deny cross-tenant access
-    if (orgId && run.organizationId && run.organizationId !== orgId) {
+    // Org ownership check — deny-by-default when caller has an org context
+    if (orgId && run.organizationId !== orgId) {
       return res.status(403).json({ message: "Forbidden" });
     }
     const results = await storage.getEvalRedteamResults(run.id);
@@ -1859,12 +1861,16 @@ router.get("/api/eval/redteam/posture", async (req, res) => {
     }));
 
     // Aggregate weekly open/closed/regressed buckets with per-category breakdown
+    // Sort posture oldest→newest so "regressed" comparison is chronologically stable
+    const sortedPosture = [...posture].sort((a, b) =>
+      new Date(a.startedAt ?? 0).getTime() - new Date(b.startedAt ?? 0).getTime()
+    );
     // "open" = vuln probes, "closed" = safe probes, "regressed" = categories new to this week vs prior
     // "byCat" = per-category open vulnerability counts accumulated across all runs in that week
     const weekBuckets: Record<string, { week: string; open: number; closed: number; regressed: number; byCat: Record<string, number> }> = {};
     let prevWeekCats = new Set<string>();
-    for (const p of posture) {
-      const d = new Date(p.startedAt as any);
+    for (const p of sortedPosture) {
+      const d = new Date(p.startedAt ?? 0);
       const weekStart = new Date(d);
       weekStart.setDate(d.getDate() - d.getDay());
       const weekKey = weekStart.toISOString().slice(0, 10);
@@ -1897,9 +1903,12 @@ function resolveAttackProvider(modelId: string): LLMProvider {
   return getProvider(name);
 }
 
+interface BlueprintStep { type?: string; content?: string; instruction?: string; text?: string; }
+interface BlueprintJson { steps?: BlueprintStep[]; description?: string; }
+
 async function processRedteamRun(
   runId: string,
-  agent: any,
+  agent: { id: string; name: string; description?: string | null; organizationId?: string | null },
   categories: string[],
   probesPerCategory: number,
   orgId: string | undefined,
@@ -1922,11 +1931,11 @@ async function processRedteamRun(
       const blueprints = await storage.getBlueprintsByAgent(agent.id);
       const bp = blueprints[0];
       if (bp) {
-        const bpJson = bp.blueprintJson as any;
-        const steps: any[] = Array.isArray(bpJson?.steps) ? bpJson.steps : [];
+        const bpJson = bp.blueprintJson as BlueprintJson | null;
+        const steps: BlueprintStep[] = Array.isArray(bpJson?.steps) ? bpJson.steps! : [];
         const stepContext = steps
-          .filter((s: any) => s.type === "instruction" || s.type === "context" || s.type === "system")
-          .map((s: any) => s.content ?? s.instruction ?? s.text ?? "")
+          .filter((s) => s.type === "instruction" || s.type === "context" || s.type === "system")
+          .map((s) => s.content ?? s.instruction ?? s.text ?? "")
           .filter(Boolean)
           .join("\n\n");
         if (stepContext) {
