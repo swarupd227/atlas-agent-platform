@@ -223,14 +223,14 @@ export default function EvalSynthesizer() {
       const data = await res.json();
       setUploadProgress(100);
       setUploadedFileRef(data.fileRef);
-      setSourceType("file");
+      // Keep sourceType as "text" so the dropzone tab stays visible.
+      // The file mode is driven solely by uploadedFileRef presence.
 
-      // For text-based files the server returns extractedText; use it as sourceText for preview
+      // Populate the text preview with extracted content so the user can see what was parsed.
       if (data.extractedText) {
         setSourceText(data.extractedText);
       } else {
-        // Binary file (PDF/DOCX) — note that server will extract on synthesis
-        setSourceText(`[Server will extract text from: ${file.name}]`);
+        setSourceText(`[Extracted text unavailable — server will synthesize from uploaded file]`);
       }
     } catch (err: any) {
       toast({ title: "Upload failed", description: err.message, variant: "destructive" });
@@ -273,10 +273,13 @@ export default function EvalSynthesizer() {
   const startSynthesis = async () => {
     try {
       const res = await apiRequest("POST", "/api/eval/synthesizer/run", {
-        sourceType,
-        sourceText: sourceType === "text" ? sourceText : "",
+        // Derive API sourceType: if a file has been uploaded (fileRef present) and we're
+        // on the "text" tab, use "file" mode in the API call. sourceType state only ever
+        // holds "text" | "seeds" to keep the dropzone tab visible after upload.
+        sourceType: uploadedFileRef && sourceType === "text" ? "file" : sourceType,
+        sourceText: sourceType === "text" && !uploadedFileRef ? sourceText : "",
         seedGoldens: sourceType === "seeds" ? seedGoldens : "",
-        fileRef: sourceType === "file" ? uploadedFileRef : undefined,
+        fileRef: uploadedFileRef && sourceType === "text" ? uploadedFileRef : undefined,
         count: goldenCount,
         model: synModel,
         distribution,
@@ -399,7 +402,7 @@ export default function EvalSynthesizer() {
           type: g.type,
           qualityScore: g.qualityScore,
           versionLabel,
-          sourceRef: sourceType === "file" ? uploadedFileName : undefined,
+          sourceRef: uploadedFileName ?? undefined,
           synthesisPrompt: `style=${style}, evolution=${Object.entries(evolution).filter(([, v]) => v).map(([k]) => k).join(",")}`,
           synthesizedAt: new Date().toISOString(),
         } : undefined,
@@ -419,7 +422,14 @@ export default function EvalSynthesizer() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   const canProceedFromStep = (): boolean => {
-    if (step === 0) return !!(sourceText.trim() || seedGoldens.trim() || uploadedFileRef) && !isUploading;
+    if (step === 0) {
+      // Allow proceeding if we have pasted text, seed goldens, or an uploaded file token.
+      // Block while upload is still in progress.
+      const hasContent = sourceType === "seeds"
+        ? seedGoldens.trim().length > 0
+        : sourceText.trim().length > 0 || !!uploadedFileRef;
+      return hasContent && !isUploading;
+    }
     if (step === 3) return jobStatus === "idle" || jobStatus === "failed";
     return true;
   };

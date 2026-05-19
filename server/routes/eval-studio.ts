@@ -1045,14 +1045,17 @@ router.get("/api/eval/synthesizer/:jobId/status", async (req, res) => {
     const jobOrgId = (job.payload as Record<string, unknown>)?.orgId as string | undefined;
     assertOrgOwnership(jobOrgId, orgId);
 
-    const result = job.status === "completed" ? (job.result as Record<string, unknown>) : null;
+    const jobResult = job.result as Record<string, unknown> | null | undefined;
+    const result = job.status === "completed" ? jobResult : null;
     res.json({
       jobId: job.id,
       status: job.status,
       progress: job.progress ?? 0,
       goldens: result?.goldens ?? [],
-      currentStep: result?.currentStep ?? null,
-      error: job.status === "failed" ? (job.result as any)?.error : null,
+      // currentStep is persisted on every emitStage call (including during running),
+      // so we always read it from job.result regardless of completion status.
+      currentStep: (jobResult?.currentStep as string | null | undefined) ?? null,
+      error: job.status === "failed" ? jobResult?.error : null,
     });
   } catch (err: any) {
     if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });

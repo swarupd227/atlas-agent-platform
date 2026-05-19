@@ -1804,7 +1804,9 @@ async function processSynthesizerRun(job: Job): Promise<Record<string, unknown>>
   const stages = ["chunking", "extracting_context", "generating", "evolving", "filtering", "applying_style", "done"];
 
   const emitStage = async (stage: string, progress: number) => {
-    await storage.updateJob(job.id, { progress });
+    // Persist currentStep in the job's result so polling /status can read it
+    // during `running` state (not just when completed).
+    await storage.updateJob(job.id, { progress, result: { currentStep: stage } as any });
     jobEvents.emit("progress", { jobId: job.id, progress, step: stage, currentStep: stage });
     await delay(300);
   };
@@ -2110,13 +2112,13 @@ Engage in a natural conversation with the AI agent to accomplish your goals. Be 
           }
         } else {
           try {
-            const continueMessages: Array<{ role: "user" | "assistant"; content: string }> = [
+            const continueMessages: Array<{ role: "user" | "assistant" | "system"; content: string }> = [
               { role: "system", content: personaSystemPrompt },
               ...history,
               { role: "user", content: "Continue the conversation. Send your next message based on the agent's last response." },
             ];
             const continueResult = await completeWithFallback(
-              continueMessages,
+              continueMessages as Parameters<typeof completeWithFallback>[0],
               { temperature: 0.8, maxTokens: 300, ...(simModel ? { model: simModel } : {}) },
             );
             userMessage = continueResult.content;
