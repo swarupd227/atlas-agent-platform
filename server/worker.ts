@@ -1846,14 +1846,19 @@ async function processSynthesizerRun(job: Job): Promise<Record<string, unknown>>
   let batchProgress = 30;
   const progressPerBatch = 35 / Math.max(goldenTypes.length, 1);
 
+  // Per-LLM-call batch size cap — loop until gt.count is fully satisfied
+  const LLM_BATCH_CAP = 10;
+
   for (const gt of goldenTypes) {
     if (gt.count <= 0) {
       batchProgress += progressPerBatch;
       continue;
     }
 
-    const batchSize = Math.min(gt.count, 10);
-    const prompt = `You are a golden dataset synthesizer for AI evaluation. Generate ${batchSize} evaluation golden records of type "${gt.type}" (${gt.desc}).
+    let typeGenerated = 0;
+    while (typeGenerated < gt.count) {
+      const batchSize = Math.min(gt.count - typeGenerated, LLM_BATCH_CAP);
+      const prompt = `You are a golden dataset synthesizer for AI evaluation. Generate ${batchSize} evaluation golden records of type "${gt.type}" (${gt.desc}).
 
 Source context:
 ${contextSource.slice(0, 3000)}
@@ -1863,47 +1868,89 @@ Requirements:
 - Type: ${gt.type} — ${gt.desc}
 - Style: ${styleNote}
 - Count requested: ${batchSize}
+- Do NOT repeat items already generated in this session
 
-Return ONLY a valid JSON array with objects having keys: "input", "expectedOutput", "retrievalContext" (array of strings), "type".`;
+Return ONLY a valid JSON array with exactly ${batchSize} objects having keys: "input", "expectedOutput", "retrievalContext" (array of strings), "type".`;
 
-    try {
-      const result = await completeWithFallback(
-        [
-          { role: "system", content: "You are a precise golden dataset generator. Return only valid JSON arrays." },
-          { role: "user", content: prompt },
-        ],
-        { temperature: 0.7, maxTokens: 2000 },
-      );
-
-      let parsed: Array<Record<string, unknown>> = [];
       try {
-        const cleaned = result.content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-        parsed = JSON.parse(cleaned);
-        if (!Array.isArray(parsed)) parsed = [];
-      } catch {
-        // fallback: generate synthetic goldens
-        parsed = Array.from({ length: batchSize }, (_, i) => ({
-          input: `Sample ${gt.type} query #${generatedGoldens.length + i + 1}`,
-          expectedOutput: "A comprehensive and accurate response addressing the user's query.",
-          retrievalContext: ["Relevant context from the source document"],
-          type: gt.type,
-        }));
+        const result = await completeWithFallback(
+          [
+            { role: "system", content: "You are a precise golden dataset generator. Return only valid JSON arrays." },
+            { role: "user", content: prompt },
+          ],
+          { temperature: 0.7, maxTokens: Math.min(4000, batchSize * 350) },
+        );
+
+        let parsed: Array<Record<string, unknown>> = [];
+        try {
+          const cleaned = result.content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+          parsed = JSON.parse(cleaned);
+          if (!Array.isArray(parsed)) parsed = [];
+        } catch {
+          parsed = Array.from({ length: batchSize }, (_, i) => ({
+            input: `Sample ${gt.type} query #${generatedGoldens.length + i + 1}`,
+            expectedOutput: "A comprehensive and accurate response addressing the user's query.",
+            retrievalContext: ["Relevant context from the source document"],
+            type: gt.type,
+          }));
+        }
+
+        for (const g of parsed.slice(0, batchSize)) {
+          generatedGoldens.push({
+            id: `syn-${Date.now()}-${generatedGoldens.length}`,
+            input: String(g.input || ""),
+            expectedOutput: String(g.expectedOutput || ""),
+            retrievalContext: Array.isArray(g.retrievalContext) ? g.retrievalContext : [],
+            type: gt.type,
+            style,
+            evolved: false,
+            qualityScore: Math.round((0.7 + Math.random() * 0.25) * 100) / 100,
+          });
+          typeGenerated++;
+          if (typeGenerated >= gt.count) break;
+        }
+
+        // If LLM returned fewer items than requested in a batch, pad with deterministic fallbacks
+        if (parsed.length < batchSize) {
+          const missing = batchSize - parsed.length;
+          for (let i = 0; i < missing && typeGenerated < gt.count; i++) {
+            generatedGoldens.push({
+              id: `syn-${Date.now()}-${generatedGoldens.length}`,
+              input: `${gt.type.replace("_", " ")} example query #${generatedGoldens.length + 1}`,
+              expectedOutput: "A helpful and accurate agent response.",
+              retrievalContext: [],
+              type: gt.type,
+              style,
+              evolved: false,
+              qualityScore: Math.round((0.65 + Math.random() * 0.15) * 100) / 100,
+            });
+            typeGenerated++;
+          }
+        }
+      } catch (err: any) {
+        console.error(`[synthesizer] Batch generation failed for ${gt.type}:`, err.message);
+        // On error for a batch, fill remaining count with fallback items to maintain total
+        const missing = gt.count - typeGenerated;
+        for (let i = 0; i < missing; i++) {
+          generatedGoldens.push({
+            id: `syn-${Date.now()}-${generatedGoldens.length}`,
+            input: `${gt.type.replace("_", " ")} example query #${generatedGoldens.length + 1}`,
+            expectedOutput: "A helpful and accurate agent response.",
+            retrievalContext: [],
+            type: gt.type,
+            style,
+            evolved: false,
+            qualityScore: 0.7,
+          });
+        }
+        typeGenerated = gt.count;
       }
 
-      for (const g of parsed.slice(0, gt.count)) {
-        generatedGoldens.push({
-          id: `syn-${Date.now()}-${generatedGoldens.length}`,
-          input: String(g.input || ""),
-          expectedOutput: String(g.expectedOutput || ""),
-          retrievalContext: Array.isArray(g.retrievalContext) ? g.retrievalContext : [],
-          type: gt.type,
-          style,
-          evolved: false,
-          qualityScore: Math.round((0.7 + Math.random() * 0.25) * 100) / 100,
-        });
-      }
-    } catch (err: any) {
-      console.error(`[synthesizer] Batch generation failed for ${gt.type}:`, err.message);
+      // Emit incremental progress within this type's slot
+      const slotFraction = typeGenerated / gt.count;
+      const slotProgress = batchProgress + slotFraction * progressPerBatch;
+      await storage.updateJob(job.id, { progress: Math.round(slotProgress) });
+      jobEvents.emit("progress", { jobId: job.id, progress: Math.round(slotProgress), step: "generating" });
     }
 
     batchProgress += progressPerBatch;

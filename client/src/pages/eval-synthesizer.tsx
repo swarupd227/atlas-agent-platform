@@ -138,11 +138,14 @@ export default function EvalSynthesizer() {
 
   // Wizard state
   const [step, setStep] = useState(0);
-  const [sourceType, setSourceType] = useState<"text" | "seeds">("text");
+  const [sourceType, setSourceType] = useState<"text" | "seeds" | "file">("text");
   const [sourceText, setSourceText] = useState("");
   const [seedGoldens, setSeedGoldens] = useState("");
   const [isDragging, setIsDragging] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [uploadedFileRef, setUploadedFileRef] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Generation settings
@@ -193,15 +196,48 @@ export default function EvalSynthesizer() {
     readFile(file);
   }, []);
 
-  const readFile = (file: File) => {
+  const readFile = async (file: File) => {
     if (file.size > 50 * 1024 * 1024) {
       toast({ title: "File too large", description: "Max 50 MB", variant: "destructive" });
       return;
     }
     setUploadedFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = (ev) => setSourceText((ev.target?.result as string) || "");
-    reader.readAsText(file);
+    setIsUploading(true);
+    setUploadProgress(0);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      // Simulate progress ticks during upload
+      const ticker = setInterval(() => setUploadProgress(p => Math.min(p + 15, 85)), 200);
+
+      const res = await fetch("/api/eval/synthesizer/upload", { method: "POST", body: formData });
+      clearInterval(ticker);
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Upload failed" }));
+        throw new Error(err.message);
+      }
+
+      const data = await res.json();
+      setUploadProgress(100);
+      setUploadedFileRef(data.fileRef);
+      setSourceType("file");
+
+      // For text-based files the server returns extractedText; use it as sourceText for preview
+      if (data.extractedText) {
+        setSourceText(data.extractedText);
+      } else {
+        // Binary file (PDF/DOCX) — note that server will extract on synthesis
+        setSourceText(`[Server will extract text from: ${file.name}]`);
+      }
+    } catch (err: any) {
+      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+      setUploadedFileName(null);
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   // ── Distribution helpers ───────────────────────────────────────────────────
@@ -240,6 +276,7 @@ export default function EvalSynthesizer() {
         sourceType,
         sourceText: sourceType === "text" ? sourceText : "",
         seedGoldens: sourceType === "seeds" ? seedGoldens : "",
+        fileRef: sourceType === "file" ? uploadedFileRef : undefined,
         count: goldenCount,
         model: synModel,
         distribution,
@@ -372,7 +409,7 @@ export default function EvalSynthesizer() {
   // ── Render ─────────────────────────────────────────────────────────────────
 
   const canProceedFromStep = (): boolean => {
-    if (step === 0) return !!(sourceText.trim() || seedGoldens.trim());
+    if (step === 0) return !!(sourceText.trim() || seedGoldens.trim() || uploadedFileRef) && !isUploading;
     if (step === 3) return jobStatus === "idle" || jobStatus === "failed";
     return true;
   };
@@ -450,19 +487,31 @@ export default function EvalSynthesizer() {
                   <div className="space-y-3">
                     {/* Drag-and-drop zone */}
                     <div
-                      onDragOver={e => { e.preventDefault(); setIsDragging(true); }}
+                      onDragOver={e => { e.preventDefault(); if (!isUploading) setIsDragging(true); }}
                       onDragLeave={() => setIsDragging(false)}
                       onDrop={handleFileDrop}
-                      onClick={() => fileRef.current?.click()}
-                      className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${isDragging ? "border-primary bg-primary/5" : "border-muted-foreground/20 hover:border-primary/40"}`}
+                      onClick={() => !isUploading && fileRef.current?.click()}
+                      className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors ${isDragging ? "border-primary bg-primary/5" : isUploading ? "border-primary/40 bg-primary/5 cursor-not-allowed" : "border-muted-foreground/20 hover:border-primary/40"}`}
                       data-testid="dropzone-file"
                     >
                       <input ref={fileRef} type="file" accept=".pdf,.txt,.docx,.md" className="hidden" onChange={e => e.target.files?.[0] && readFile(e.target.files[0])} />
-                      <Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
-                      {uploadedFileName ? (
-                        <p className="text-sm font-medium text-primary">{uploadedFileName}</p>
+                      {isUploading ? (
+                        <>
+                          <Loader2 className="w-8 h-8 mx-auto mb-2 text-primary animate-spin" />
+                          <p className="text-sm font-medium text-primary">Uploading {uploadedFileName}...</p>
+                          <div className="mt-3 max-w-[200px] mx-auto">
+                            <Progress value={uploadProgress} className="h-1.5" />
+                          </div>
+                        </>
+                      ) : uploadedFileName && uploadedFileRef ? (
+                        <div className="space-y-1">
+                          <CheckCircle className="w-8 h-8 mx-auto text-emerald-500" />
+                          <p className="text-sm font-medium text-emerald-600">{uploadedFileName}</p>
+                          <p className="text-xs text-muted-foreground">File uploaded to server — click to replace</p>
+                        </div>
                       ) : (
                         <>
+                          <Upload className="w-8 h-8 mx-auto mb-2 text-muted-foreground" />
                           <p className="text-sm font-medium">Drop PDF, TXT, DOCX here</p>
                           <p className="text-xs text-muted-foreground mt-1">or click to browse — up to 50 MB</p>
                         </>

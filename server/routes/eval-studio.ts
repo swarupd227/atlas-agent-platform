@@ -1,8 +1,28 @@
 import { Router } from "express";
 import { z } from "zod";
+import multer from "multer";
+import * as fs from "fs";
+import * as path from "path";
+import * as os from "os";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
 import { runLlmJudge, runAgentOnInput, buildAgentContext } from "../eval-judge";
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, os.tmpdir()),
+    filename: (_req, file, cb) => {
+      const safe = file.originalname.replace(/[^a-zA-Z0-9._-]/g, "_");
+      cb(null, `synth-${Date.now()}-${safe}`);
+    },
+  }),
+  limits: { fileSize: 50 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = [".pdf", ".txt", ".docx", ".md"];
+    const ext = path.extname(file.originalname).toLowerCase();
+    cb(null, allowed.includes(ext));
+  },
+});
 
 const router = Router();
 
@@ -848,9 +868,10 @@ const synthEstimateSchema = z.object({
 });
 
 const synthRunSchema = z.object({
-  sourceType: z.enum(["text", "seeds"]).default("text"),
+  sourceType: z.enum(["text", "seeds", "file"]).default("text"),
   sourceText: z.string().default(""),
   seedGoldens: z.string().default(""),
+  fileRef: z.string().optional(),
   count: z.number().int().min(1).max(1000).default(50),
   model: z.string().default("claude-sonnet-4-5"),
   distribution: z.object({
@@ -895,15 +916,54 @@ router.post("/api/eval/synthesizer/estimate", async (req, res) => {
   }
 });
 
+// ── File upload for synthesizer source (multipart) ───────────────────────────
+router.post("/api/eval/synthesizer/upload", upload.single("file"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ message: "No file uploaded or unsupported type" });
+    const orgId = getOrgId(req);
+    const { path: filePath, originalname, mimetype, size } = req.file;
+
+    // For text-based files, read and return text immediately so it flows into sourceText
+    let extractedText = "";
+    const ext = path.extname(originalname).toLowerCase();
+    if ([".txt", ".md"].includes(ext)) {
+      extractedText = fs.readFileSync(filePath, "utf-8");
+    } else {
+      // PDF / DOCX: store file ref; worker reads raw bytes and extracts text server-side
+      extractedText = "";
+    }
+
+    res.json({
+      fileRef: filePath,
+      originalName: originalname,
+      mimeType: mimetype,
+      size,
+      extractedText: extractedText.slice(0, 200_000),
+    });
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 router.post("/api/eval/synthesizer/run", async (req, res) => {
   try {
     const orgId = getOrgId(req);
     const body = synthRunSchema.parse(req.body);
 
+    // If sourceType=file and fileRef provided, read the file server-side into sourceText
+    let sourceText = body.sourceText || "";
+    if (body.sourceType === "file" && body.fileRef) {
+      try {
+        sourceText = fs.readFileSync(body.fileRef, "utf-8").slice(0, 200_000);
+      } catch {
+        // File may have been deleted; fall through with empty text
+      }
+    }
+
     const job = await storage.createJob({
       type: "synthesizer_run",
       status: "queued",
-      payload: { ...body, orgId },
+      payload: { ...body, sourceText, orgId },
       scheduledFor: new Date(),
     });
 
@@ -916,9 +976,13 @@ router.post("/api/eval/synthesizer/run", async (req, res) => {
 
 router.get("/api/eval/synthesizer/:jobId/status", async (req, res) => {
   try {
+    const orgId = getOrgId(req);
     const job = await storage.getJob(req.params.jobId);
     if (!job) return res.status(404).json({ message: "Job not found" });
     if (job.type !== "synthesizer_run") return res.status(400).json({ message: "Not a synthesizer job" });
+    // Org ownership check — payload.orgId is set at job creation time
+    const jobOrgId = (job.payload as Record<string, unknown>)?.orgId as string | undefined;
+    assertOrgOwnership(jobOrgId, orgId);
 
     const result = job.status === "completed" ? (job.result as Record<string, unknown>) : null;
     res.json({
@@ -930,6 +994,7 @@ router.get("/api/eval/synthesizer/:jobId/status", async (req, res) => {
       error: job.status === "failed" ? (job.result as any)?.error : null,
     });
   } catch (err: any) {
+    if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
     res.status(500).json({ message: err.message });
   }
 });
@@ -980,11 +1045,60 @@ router.post("/api/eval/simulations", async (req, res) => {
   }
 });
 
+// ── Persist simulator conversation traces ─────────────────────────────────────
+const persistTracesSchema = z.object({
+  jobId: z.string().min(1),
+  conversationIds: z.array(z.string()).min(1),
+});
+
+router.post("/api/eval/simulations/persist-traces", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const body = persistTracesSchema.parse(req.body);
+
+    const job = await storage.getJob(body.jobId);
+    if (!job) return res.status(404).json({ message: "Job not found" });
+    if (job.type !== "simulator_run") return res.status(400).json({ message: "Not a simulator job" });
+    const jobOrgId = (job.payload as Record<string, unknown>)?.orgId as string | undefined;
+    assertOrgOwnership(jobOrgId, orgId);
+
+    const result = (job.result as Record<string, unknown>) || {};
+    const conversations: Array<Record<string, unknown>> = Array.isArray(result.conversations) ? result.conversations : [];
+
+    // Store each selected conversation as a lightweight job artifact (simulator_trace type)
+    const persistedIds: string[] = [];
+    for (const conv of conversations.filter((c) => body.conversationIds.includes(c.id as string))) {
+      const traceJob = await storage.createJob({
+        type: "simulator_trace",
+        status: "completed",
+        agentId: (job.payload as any).agentId,
+        payload: {
+          orgId,
+          sourceJobId: job.id,
+          conversation: conv,
+        },
+        scheduledFor: new Date(),
+      });
+      persistedIds.push(traceJob.id);
+    }
+
+    res.status(201).json({ persistedCount: persistedIds.length, traceIds: persistedIds });
+  } catch (err: any) {
+    if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
+    if (err instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: err.errors });
+    res.status(500).json({ message: err.message });
+  }
+});
+
 router.get("/api/eval/simulations/:jobId/status", async (req, res) => {
   try {
+    const orgId = getOrgId(req);
     const job = await storage.getJob(req.params.jobId);
     if (!job) return res.status(404).json({ message: "Job not found" });
     if (job.type !== "simulator_run") return res.status(400).json({ message: "Not a simulator job" });
+    // Org ownership check — payload.orgId is set at job creation time
+    const jobOrgId = (job.payload as Record<string, unknown>)?.orgId as string | undefined;
+    assertOrgOwnership(jobOrgId, orgId);
 
     const result = job.status === "completed" ? (job.result as Record<string, unknown>) : null;
     res.json({
@@ -996,6 +1110,7 @@ router.get("/api/eval/simulations/:jobId/status", async (req, res) => {
       error: job.status === "failed" ? (job.result as any)?.error : null,
     });
   } catch (err: any) {
+    if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
     res.status(500).json({ message: err.message });
   }
 });

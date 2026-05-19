@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Agent, EvalDataset } from "@shared/schema";
+import type { Agent, EvalDataset, EvalMetricCollection } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -48,6 +48,8 @@ import {
   AlertCircle,
   Star,
   Sparkles,
+  Database,
+  FileCheck,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -257,6 +259,7 @@ export default function EvalSimulator() {
   const [simModel, setSimModel] = useState("claude-sonnet-4-5");
   const [stopConditions, setStopConditions] = useState<string[]>([]);
   const [customStop, setCustomStop] = useState("");
+  const [metricCollectionId, setMetricCollectionId] = useState("");
 
   // Step 4: Review (results)
   const [jobId, setJobId] = useState<string | null>(null);
@@ -271,11 +274,14 @@ export default function EvalSimulator() {
   const [saveMode, setSaveMode] = useState<"existing" | "new">("existing");
   const [isSaving, setIsSaving] = useState(false);
   const [selectedConvIds, setSelectedConvIds] = useState<Set<string>>(new Set());
+  const [persistTraces, setPersistTraces] = useState(true);
+  const [promoteToDataset, setPromoteToDataset] = useState(true);
 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { data: agents } = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
   const { data: datasets } = useQuery<EvalDataset[]>({ queryKey: ["/api/eval/datasets"] });
+  const { data: metricCollections } = useQuery<EvalMetricCollection[]>({ queryKey: ["/api/eval/metric-collections"] });
 
   const allPersonas = [...BUILT_IN_PERSONAS, ...customPersonas];
   const selectedAgent = agents?.find(a => a.id === selectedAgentId);
@@ -342,6 +348,7 @@ export default function EvalSimulator() {
         maxTurns,
         stopConditions,
         model: simModel,
+        metricCollectionId: metricCollectionId || undefined,
       });
       const data = await res.json();
       setJobId(data.jobId);
@@ -381,43 +388,68 @@ export default function EvalSimulator() {
   // ── Save conversations ─────────────────────────────────────────────────────
 
   const handleSave = async () => {
+    if (!persistTraces && !promoteToDataset) return;
     setIsSaving(true);
+    const selectedIds = Array.from(selectedConvIds);
+
     try {
-      let targetId = saveDatasetId;
-      if (saveMode === "new") {
-        if (!saveNewName.trim()) {
-          toast({ title: "Dataset name required", variant: "destructive" });
+      // 1. Persist conversation traces (always first if enabled)
+      if (persistTraces && jobId && selectedIds.length > 0) {
+        await apiRequest("POST", "/api/eval/simulations/persist-traces", {
+          jobId,
+          conversationIds: selectedIds,
+        });
+      }
+
+      // 2. Optionally promote turns to a golden dataset
+      if (promoteToDataset) {
+        let targetId = saveDatasetId;
+        if (saveMode === "new") {
+          if (!saveNewName.trim()) {
+            toast({ title: "Dataset name required", variant: "destructive" });
+            setIsSaving(false);
+            return;
+          }
+          const res = await apiRequest("POST", "/api/eval/datasets", {
+            name: saveNewName,
+            description: `Simulator conversations — ${selectedAgentId}`,
+            tags: ["simulated", "conversations"],
+          });
+          const ds = await res.json();
+          targetId = ds.id;
+        }
+        if (!targetId) {
+          toast({ title: "Select a dataset to promote turns", variant: "destructive" });
           setIsSaving(false);
           return;
         }
-        const res = await apiRequest("POST", "/api/eval/datasets", {
-          name: saveNewName,
-          description: `Simulator conversations — ${selectedAgentId}`,
-          tags: ["simulated", "conversations"],
-        });
-        const ds = await res.json();
-        targetId = ds.id;
-      }
-      if (!targetId) {
-        toast({ title: "Select a dataset", variant: "destructive" });
-        setIsSaving(false);
-        return;
+
+        const toSave = conversations
+          .filter(c => selectedConvIds.has(c.id))
+          .flatMap(c => c.turns.map((t, i) => ({
+            input: t.userMessage,
+            expectedOutput: t.agentResponse,
+            retrievalContext: [],
+            tags: ["simulated", c.personaName.toLowerCase().replace(/\s+/g, "-"), `turn-${i + 1}`],
+            provenance: {
+              conversationId: c.id,
+              persona: c.personaName,
+              scenario: c.scenario,
+              turn: t.turn,
+              overallScore: c.overallScore,
+              simulatedAt: new Date().toISOString(),
+            },
+          })));
+
+        await apiRequest("POST", `/api/eval/datasets/${targetId}/goldens/bulk`, { goldens: toSave });
+        queryClient.invalidateQueries({ queryKey: ["/api/eval/datasets"] });
       }
 
-      const toSave = conversations
-        .filter(c => selectedConvIds.has(c.id))
-        .flatMap(c => c.turns.map((t, i) => ({
-          input: t.userMessage,
-          expectedOutput: t.agentResponse,
-          retrievalContext: [],
-          tags: ["simulated", c.personaName.toLowerCase().replace(/\s+/g, "-"), `turn-${i + 1}`],
-          provenance: { conversationId: c.id, persona: c.personaName, scenario: c.scenario, turn: t.turn, overallScore: c.overallScore, simulatedAt: new Date().toISOString() },
-        })));
-
-      await apiRequest("POST", `/api/eval/datasets/${targetId}/goldens/bulk`, { goldens: toSave });
-      queryClient.invalidateQueries({ queryKey: ["/api/eval/datasets"] });
-      toast({ title: "Conversations saved", description: `${toSave.length} turns written as goldens` });
-      navigate("/evals/datasets");
+      const parts: string[] = [];
+      if (persistTraces) parts.push(`${selectedIds.length} trace${selectedIds.length !== 1 ? "s" : ""} persisted`);
+      if (promoteToDataset) parts.push(`${conversations.filter(c => selectedConvIds.has(c.id)).reduce((s, c) => s + c.totalTurns, 0)} goldens written`);
+      toast({ title: "Conversations saved", description: parts.join(" · ") });
+      navigate(promoteToDataset ? "/evals/datasets" : "/evals");
     } catch (err: any) {
       toast({ title: "Save failed", description: err.message, variant: "destructive" });
     } finally {
@@ -649,7 +681,7 @@ export default function EvalSimulator() {
                       <div className="grid grid-cols-3 gap-3">
                         <div className="space-y-1">
                           <Label className="text-xs">Knowledge Level</Label>
-                          <Select value={customDraft.knowledgeLevel} onValueChange={v => setCustomDraft(p => ({ ...p, knowledgeLevel: v as any }))}>
+                          <Select value={customDraft.knowledgeLevel} onValueChange={v => setCustomDraft(p => ({ ...p, knowledgeLevel: v as "low" | "medium" | "high" }))}>
                             <SelectTrigger><SelectValue /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="low">Low</SelectItem>
@@ -770,6 +802,21 @@ export default function EvalSimulator() {
                       {SIM_MODELS.map(m => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
                     </SelectContent>
                   </Select>
+                </div>
+
+                {/* Metric collection selector */}
+                <div className="space-y-2">
+                  <Label>Pre-compute metrics (optional)</Label>
+                  <Select value={metricCollectionId} onValueChange={setMetricCollectionId}>
+                    <SelectTrigger data-testid="select-metric-collection"><SelectValue placeholder="No metric collection" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">None</SelectItem>
+                      {(metricCollections || []).map(mc => (
+                        <SelectItem key={mc.id} value={mc.id}>{mc.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">Score each turn inline using a saved metric collection.</p>
                 </div>
 
                 <div className="space-y-3">
@@ -907,11 +954,12 @@ export default function EvalSimulator() {
               <div className="space-y-6">
                 <div>
                   <h2 className="text-base font-semibold mb-1">Save Conversations</h2>
-                  <p className="text-sm text-muted-foreground">Promote conversations to a golden dataset as evaluation traces.</p>
+                  <p className="text-sm text-muted-foreground">Persist conversation traces and optionally promote turns to a golden dataset.</p>
                 </div>
 
+                {/* Conversation selection */}
                 <div className="space-y-2">
-                  <Label>Select conversations to save</Label>
+                  <Label>Select conversations</Label>
                   <div className="space-y-2">
                     {conversations.map(c => (
                       <div key={c.id} className="flex items-center gap-3 p-2 border rounded-md">
@@ -924,43 +972,83 @@ export default function EvalSimulator() {
                           <p className="text-sm font-medium">{c.personaName}</p>
                           <p className="text-xs text-muted-foreground truncate">{c.scenario}</p>
                         </div>
-                        <Badge variant="outline" className="text-[10px]">{c.totalTurns} turns → {c.totalTurns} goldens</Badge>
+                        <div className="flex items-center gap-1.5">
+                          <Badge variant="outline" className="text-[10px]">{c.totalTurns} turns</Badge>
+                          <Badge variant="outline" className={`text-[10px] ${c.overallScore >= 0.8 ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" : "bg-amber-500/10 text-amber-600 border-amber-500/20"}`}>
+                            {(c.overallScore * 100).toFixed(0)}%
+                          </Badge>
+                        </div>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                <div className="flex gap-2">
-                  <Button variant={saveMode === "existing" ? "default" : "outline"} size="sm" onClick={() => setSaveMode("existing")} data-testid="tab-save-existing">Existing dataset</Button>
-                  <Button variant={saveMode === "new" ? "default" : "outline"} size="sm" onClick={() => setSaveMode("new")} data-testid="tab-save-new">New dataset</Button>
-                </div>
+                <Separator />
 
-                {saveMode === "existing" ? (
-                  <div className="space-y-2">
-                    <Label>Dataset</Label>
-                    <Select value={saveDatasetId} onValueChange={setSaveDatasetId}>
-                      <SelectTrigger data-testid="select-save-dataset"><SelectValue placeholder="Choose..." /></SelectTrigger>
-                      <SelectContent>
-                        {(datasets || []).map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    <Label>New dataset name</Label>
-                    <Input value={saveNewName} onChange={e => setSaveNewName(e.target.value)} placeholder="e.g., Simulator Conversations v1" data-testid="input-new-dataset-name" />
-                  </div>
+                {/* Persist as traces */}
+                <Card className={persistTraces ? "border-primary/30 bg-primary/5" : ""}>
+                  <CardContent className="flex items-start gap-4 p-4">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <FileCheck className="w-4 h-4 text-primary" />
+                        <p className="text-sm font-medium">Persist as conversation traces</p>
+                      </div>
+                      <p className="text-xs text-muted-foreground">Store full multi-turn conversations as referenceable trace records. Required for regression comparison.</p>
+                    </div>
+                    <Switch checked={persistTraces} onCheckedChange={setPersistTraces} data-testid="switch-persist-traces" />
+                  </CardContent>
+                </Card>
+
+                {/* Promote to dataset */}
+                <Card className={promoteToDataset ? "border-primary/30 bg-primary/5" : ""}>
+                  <CardContent className="flex items-start gap-4 p-4">
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <Database className="w-4 h-4 text-primary" />
+                        <p className="text-sm font-medium">Promote turns to golden dataset</p>
+                      </div>
+                      <p className="text-xs text-muted-foreground">Write each conversation turn as a golden record to an evaluation dataset for future test runs.</p>
+                    </div>
+                    <Switch checked={promoteToDataset} onCheckedChange={setPromoteToDataset} data-testid="switch-promote-dataset" />
+                  </CardContent>
+                </Card>
+
+                {promoteToDataset && (
+                  <>
+                    <div className="flex gap-2">
+                      <Button variant={saveMode === "existing" ? "default" : "outline"} size="sm" onClick={() => setSaveMode("existing")} data-testid="tab-save-existing">Existing dataset</Button>
+                      <Button variant={saveMode === "new" ? "default" : "outline"} size="sm" onClick={() => setSaveMode("new")} data-testid="tab-save-new">New dataset</Button>
+                    </div>
+
+                    {saveMode === "existing" ? (
+                      <div className="space-y-2">
+                        <Label>Dataset</Label>
+                        <Select value={saveDatasetId} onValueChange={setSaveDatasetId}>
+                          <SelectTrigger data-testid="select-save-dataset"><SelectValue placeholder="Choose..." /></SelectTrigger>
+                          <SelectContent>
+                            {(datasets || []).map(d => <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <Label>New dataset name</Label>
+                        <Input value={saveNewName} onChange={e => setSaveNewName(e.target.value)} placeholder="e.g., Simulator Conversations v1" data-testid="input-new-dataset-name" />
+                      </div>
+                    )}
+                  </>
                 )}
 
                 <div className="rounded-md border p-3 text-xs space-y-1">
                   <p className="font-medium">Summary</p>
                   <div className="grid grid-cols-2 gap-1">
                     <span className="text-muted-foreground">Selected conversations:</span><span className="font-medium">{selectedConvIds.size}</span>
-                    <span className="text-muted-foreground">Total turns (goldens):</span><span className="font-medium">{conversations.filter(c => selectedConvIds.has(c.id)).reduce((s, c) => s + c.totalTurns, 0)}</span>
+                    <span className="text-muted-foreground">Persist as traces:</span><span className="font-medium">{persistTraces ? "Yes" : "No"}</span>
+                    <span className="text-muted-foreground">Promote to dataset:</span><span className="font-medium">{promoteToDataset ? `Yes — ${conversations.filter(c => selectedConvIds.has(c.id)).reduce((s, c) => s + c.totalTurns, 0)} goldens` : "No"}</span>
                   </div>
                 </div>
 
-                <Button className="w-full" onClick={handleSave} disabled={isSaving} data-testid="button-save-conversations">
+                <Button className="w-full" onClick={handleSave} disabled={isSaving || (!persistTraces && !promoteToDataset)} data-testid="button-save-conversations">
                   {isSaving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
                   {isSaving ? "Saving..." : `Save ${selectedConvIds.size} Conversations`}
                 </Button>
