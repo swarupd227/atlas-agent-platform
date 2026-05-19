@@ -55,6 +55,7 @@ interface RedteamResult {
   severity: string | null;
   reasoning: string | null;
   latencyMs: number | null;
+  traceId: string | null;
 }
 
 interface Agent { id: string; name: string; }
@@ -95,6 +96,8 @@ export default function EvalRedteam() {
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [tab, setTab] = useState("config");
   const [catFilter, setCatFilter] = useState<string>("all");
+  const [reportCatFilter, setReportCatFilter] = useState<string>("all");
+  const [reportSortBy, setReportSortBy] = useState<"severity" | "category" | "latency">("severity");
 
   const { data: agents = [] } = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
   const { data: catalog } = useQuery<{ templates: AttackTemplate[]; grouped: Record<string, AttackTemplate[]> }>({
@@ -152,6 +155,22 @@ export default function EvalRedteam() {
 
   const filteredResults = catFilter === "all" ? results : results.filter(r => r.category === catFilter);
   const vulnResults = results.filter(r => r.vulnerabilityDetected);
+
+  // Report tab: filtered + sorted vulnerability list, pre-computed to avoid IIFE inside JSX
+  const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+  const reportFilteredVulns = vulnResults
+    .filter(r => reportCatFilter === "all" || r.category === reportCatFilter)
+    .sort((a, b) => {
+      if (reportSortBy === "severity") return (SEVERITY_ORDER[a.severity ?? "low"] ?? 3) - (SEVERITY_ORDER[b.severity ?? "low"] ?? 3);
+      if (reportSortBy === "category") return (a.category ?? "").localeCompare(b.category ?? "");
+      return (a.latencyMs ?? 0) - (b.latencyMs ?? 0);
+    });
+  const reportGroups: Array<{ label: string; items: RedteamResult[] }> =
+    reportSortBy === "severity"
+      ? ["critical", "high", "medium", "low"]
+          .map(sev => ({ label: sev, items: reportFilteredVulns.filter(r => r.severity === sev) }))
+          .filter(g => g.items.length > 0)
+      : [{ label: "", items: reportFilteredVulns }];
 
   return (
     <div className="flex h-[calc(100vh-56px)] overflow-hidden" data-testid="page-eval-redteam">
@@ -420,21 +439,23 @@ export default function EvalRedteam() {
                   ) : (
                     <>
                       {/* Table header */}
-                      <div className="grid grid-cols-[120px_1fr_1fr_80px_80px] gap-3 px-4 py-2 border-b bg-muted/20 text-xs font-medium text-muted-foreground sticky top-0">
+                      <div className="grid grid-cols-[110px_1fr_1fr_1fr_72px_72px] gap-2 px-4 py-2 border-b bg-muted/20 text-xs font-medium text-muted-foreground sticky top-0">
                         <span>Category</span>
                         <span>Attack Input</span>
                         <span>Agent Response</span>
-                        <span className="text-center">Vulnerable</span>
+                        <span>Reasoning</span>
+                        <span className="text-center">Result</span>
                         <span className="text-center">Severity</span>
                       </div>
                       <div className="divide-y">
                         {filteredResults.map(r => (
-                          <div key={r.id} className={`grid grid-cols-[120px_1fr_1fr_80px_80px] gap-3 px-4 py-2.5 items-start text-xs ${r.vulnerabilityDetected ? "bg-red-500/5" : ""}`} data-testid={`row-result-${r.id}`}>
+                          <div key={r.id} className={`grid grid-cols-[110px_1fr_1fr_1fr_72px_72px] gap-2 px-4 py-2.5 items-start text-xs ${r.vulnerabilityDetected ? "bg-red-500/5" : ""}`} data-testid={`row-result-${r.id}`}>
                             <div>
                               <Badge variant="secondary" className="text-[10px] px-1.5 py-0 capitalize">{r.category.replace(/_/g, " ")}</Badge>
                             </div>
                             <div className="text-muted-foreground line-clamp-2 leading-relaxed">{r.attackInput}</div>
                             <div className="text-muted-foreground line-clamp-2 leading-relaxed">{r.agentResponse ?? "—"}</div>
+                            <div className="text-muted-foreground/80 line-clamp-2 leading-relaxed italic">{r.reasoning ?? "—"}</div>
                             <div className="flex justify-center">
                               {r.vulnerabilityDetected
                                 ? <ShieldOff className="w-4 h-4 text-red-500" />
@@ -465,29 +486,49 @@ export default function EvalRedteam() {
               </div>
             ) : (
               <div className="flex flex-col gap-4">
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-3 flex-wrap">
                   <h3 className="text-sm font-semibold">{vulnResults.length} Vulnerabilities Detected</h3>
                   {activeRun?.postureScore != null && (
                     <span className={`text-sm font-bold ${postureScoreColor(activeRun.postureScore)}`}>Posture Score: {activeRun.postureScore}/100</span>
                   )}
+                  <div className="ml-auto flex items-center gap-2">
+                    <Filter className="w-3.5 h-3.5 text-muted-foreground" />
+                    <Select value={reportCatFilter} onValueChange={setReportCatFilter} data-testid="select-report-cat-filter">
+                      <SelectTrigger className="h-7 w-40 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All categories</SelectItem>
+                        {Object.entries(CATEGORY_META).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <Select value={reportSortBy} onValueChange={v => setReportSortBy(v as typeof reportSortBy)} data-testid="select-report-sort">
+                      <SelectTrigger className="h-7 w-36 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="severity">Sort: Severity</SelectItem>
+                        <SelectItem value="category">Sort: Category</SelectItem>
+                        <SelectItem value="latency">Sort: Latency</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
-                {["critical", "high", "medium", "low"].map(sev => {
-                  const sevVulns = vulnResults.filter(r => r.severity === sev);
-                  if (sevVulns.length === 0) return null;
-                  return (
-                    <div key={sev} data-testid={`section-vuln-${sev}`}>
+                {reportFilteredVulns.length === 0 && (
+                  <p className="text-xs text-muted-foreground">No vulnerabilities match the current filter.</p>
+                )}
+                {reportGroups.map(({ label, items }) => (
+                  <div key={label || "flat"} data-testid={label ? `section-vuln-${label}` : "section-vuln-all"}>
+                    {label && (
                       <div className="flex items-center gap-2 mb-2">
-                        <Badge variant="outline" className={`${severityColor(sev)} text-xs capitalize`}>{sev}</Badge>
-                        <span className="text-xs text-muted-foreground">{sevVulns.length} finding{sevVulns.length !== 1 ? "s" : ""}</span>
+                        <Badge variant="outline" className={`${severityColor(label)} text-xs capitalize`}>{label}</Badge>
+                        <span className="text-xs text-muted-foreground">{items.length} finding{items.length !== 1 ? "s" : ""}</span>
                       </div>
-                      <div className="flex flex-col gap-2">
-                        {sevVulns.map(r => (
+                    )}
+                    <div className="flex flex-col gap-2">
+                      {items.map(r => (
                           <div key={r.id} className="rounded-lg border p-4 bg-muted/10" data-testid={`vuln-${r.id}`}>
                             <div className="flex items-start justify-between gap-3 mb-2">
                               <div className="flex items-center gap-2">
                                 <Badge variant="secondary" className="text-[10px] capitalize">{r.category.replace(/_/g, " ")}</Badge>
-                                {(r as any).traceId && (
-                                  <Link href={`/observability?traceId=${(r as any).traceId}`}>
+                                {r.traceId && (
+                                  <Link href={`/observability?traceId=${r.traceId}`}>
                                     <Badge variant="outline" className="text-[10px] gap-1 cursor-pointer hover:bg-muted" data-testid={`link-trace-${r.id}`}>
                                       <ExternalLink className="w-2.5 h-2.5" /> View Trace
                                     </Badge>
@@ -513,11 +554,10 @@ export default function EvalRedteam() {
                               </div>
                             )}
                           </div>
-                        ))}
-                      </div>
+                      ))}
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
             )}
           </TabsContent>
