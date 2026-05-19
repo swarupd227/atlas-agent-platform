@@ -2722,6 +2722,27 @@ export const insertEvalMetricSchema = createInsertSchema(evalMetrics).omit({ id:
 export type InsertEvalMetric = z.infer<typeof insertEvalMetricSchema>;
 export type EvalMetric = typeof evalMetrics.$inferSelect;
 
+// Immutable version snapshots written before each PUT
+export const evalMetricVersions = pgTable("eval_metric_versions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  metricId: varchar("metric_id").notNull(),
+  version: integer("version").notNull(),
+  criteria: text("criteria"),
+  dagConfig: jsonb("dag_config"),
+  judgeModel: text("judge_model"),
+  threshold: real("threshold"),
+  strictMode: boolean("strict_mode"),
+  asyncMode: boolean("async_mode"),
+  evaluationParams: text("evaluation_params").array(),
+  metricType: text("metric_type"),
+  createdAt: timestamp("created_at").defaultNow(),
+  createdBy: text("created_by"),
+}, (table) => [
+  index("idx_emv_metric_id").on(table.metricId),
+]);
+
+export type EvalMetricVersion = typeof evalMetricVersions.$inferSelect;
+
 export const evalMetricCollections = pgTable("eval_metric_collections", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   organizationId: varchar("organization_id"),

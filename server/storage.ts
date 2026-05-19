@@ -177,6 +177,7 @@ import {
   outputContracts, type OutputContract, type InsertOutputContract,
   generationMetadataRecords, type GenerationMetadataRecord, type InsertGenerationMetadataRecord,
   evalMetrics, type EvalMetric, type InsertEvalMetric,
+  evalMetricVersions, type EvalMetricVersion,
   evalMetricCollections, type EvalMetricCollection, type InsertEvalMetricCollection,
   evalDatasets, type EvalDataset, type InsertEvalDataset,
   evalGoldens, type EvalGolden, type InsertEvalGolden,
@@ -855,6 +856,8 @@ export interface IStorage {
   getEvalMetric(id: string): Promise<EvalMetric | undefined>;
   createEvalMetric(metric: InsertEvalMetric): Promise<EvalMetric>;
   updateEvalMetric(id: string, data: Partial<InsertEvalMetric>): Promise<EvalMetric | undefined>;
+  createEvalMetricVersion(snapshot: Pick<EvalMetricVersion, "metricId" | "version" | "criteria" | "dagConfig" | "judgeModel" | "threshold" | "strictMode" | "asyncMode" | "evaluationParams" | "metricType" | "createdBy">): Promise<void>;
+  getEvalMetricVersions(metricId: string): Promise<EvalMetricVersion[]>;
 
   // Atlas Eval Studio — Metric Collections
   getEvalMetricCollections(organizationId?: string): Promise<EvalMetricCollection[]>;
@@ -4010,6 +4013,16 @@ export class DatabaseStorage implements IStorage {
       .where(eq(evalMetrics.id, id))
       .returning();
     return row;
+  }
+
+  async createEvalMetricVersion(snapshot: Pick<EvalMetricVersion, "metricId" | "version" | "criteria" | "dagConfig" | "judgeModel" | "threshold" | "strictMode" | "asyncMode" | "evaluationParams" | "metricType" | "createdBy">): Promise<void> {
+    await db.insert(evalMetricVersions).values(snapshot);
+  }
+
+  async getEvalMetricVersions(metricId: string): Promise<EvalMetricVersion[]> {
+    return db.select().from(evalMetricVersions)
+      .where(eq(evalMetricVersions.metricId, metricId))
+      .orderBy(sql`${evalMetricVersions.version} DESC`);
   }
 
   // ── Atlas Eval Studio — Metric Collections ───────────────────────────────────

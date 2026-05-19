@@ -4,7 +4,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import Editor from "@monaco-editor/react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { EvalMetric, EvalDataset } from "@shared/schema";
+import type { EvalMetric, EvalDataset, EvalMetricVersion } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,6 +28,17 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   ArrowLeft,
   FlaskConical,
@@ -1046,6 +1057,22 @@ export default function EvalMetricBuilder() {
   const [activeTab, setActiveTab] = useState<TabKey>("g-eval");
   const [currentVersion, setCurrentVersion] = useState(1);
 
+  // Version history state
+  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
+  const [selectedSnapshot, setSelectedSnapshot] = useState<EvalMetricVersion | null>(null);
+
+  // Version history query (edit mode only)
+  const { data: versionHistory = [] } = useQuery<EvalMetricVersion[]>({
+    queryKey: ["/api/eval/metrics", params.id, "versions"],
+    queryFn: async () => {
+      const res = await fetch(`/api/eval/metrics/${params.id}/versions`);
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: isEdit && Boolean(params.id),
+    staleTime: 30_000,
+  });
+
   // G-Eval state
   const [criteria, setCriteria] = useState("");
   const [evalParams, setEvalParams] = useState<string[]>(["input", "actual_output"]);
@@ -1177,6 +1204,9 @@ export default function EvalMetricBuilder() {
     },
     onSuccess: (metric) => {
       queryClient.invalidateQueries({ queryKey: ["/api/eval/metrics"] });
+      if (isEdit && params.id) {
+        queryClient.invalidateQueries({ queryKey: ["/api/eval/metrics", params.id, "versions"] });
+      }
       setCurrentVersion(metric.version ?? 1);
       toast({
         title: isEdit ? "Metric updated" : "Metric created",
@@ -1237,12 +1267,115 @@ export default function EvalMetricBuilder() {
           </Select>
         </div>
 
-        {/* Version badge */}
-        <div className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
-          <History className="w-3.5 h-3.5" />
-          v{isEdit ? currentVersion + 1 : 1}
-          {isEdit && <span className="text-[10px] text-amber-600">(next)</span>}
-        </div>
+        {/* Version history */}
+        {isEdit ? (
+          <Popover open={versionHistoryOpen} onOpenChange={setVersionHistoryOpen}>
+            <PopoverTrigger asChild>
+              <button
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0 border border-border rounded px-2 py-1"
+                data-testid="button-version-history"
+              >
+                <History className="w-3.5 h-3.5" />
+                v{currentVersion + 1}
+                <span className="text-[10px] text-amber-600">(next)</span>
+                {versionHistory.length > 0 && (
+                  <span className="ml-0.5 text-[10px] bg-muted rounded px-1">{versionHistory.length} saved</span>
+                )}
+              </button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-72 p-0">
+              <div className="px-3 py-2 border-b">
+                <p className="text-xs font-medium text-foreground">Version History</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Prior saved versions (read-only)</p>
+              </div>
+              {versionHistory.length === 0 ? (
+                <div className="px-3 py-4 text-center text-xs text-muted-foreground">
+                  No prior versions yet. Save an update to create one.
+                </div>
+              ) : (
+                <ScrollArea className="max-h-64">
+                  {versionHistory.map((v) => (
+                    <button
+                      key={v.id}
+                      onClick={() => { setSelectedSnapshot(v); setVersionHistoryOpen(false); }}
+                      className="w-full flex items-center justify-between px-3 py-2 hover:bg-muted/50 transition-colors text-left"
+                      data-testid={`version-history-item-${v.version}`}
+                    >
+                      <div>
+                        <span className="text-xs font-medium text-foreground">v{v.version}</span>
+                        <span className="ml-2 text-[10px] text-muted-foreground capitalize">{v.metricType ?? "g-eval"}</span>
+                      </div>
+                      <span className="text-[10px] text-muted-foreground">
+                        {v.createdAt ? new Date(v.createdAt).toLocaleDateString() : "—"}
+                      </span>
+                    </button>
+                  ))}
+                </ScrollArea>
+              )}
+            </PopoverContent>
+          </Popover>
+        ) : (
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground shrink-0">
+            <History className="w-3.5 h-3.5" />
+            v1
+          </div>
+        )}
+
+        {/* Version snapshot dialog */}
+        <Dialog open={Boolean(selectedSnapshot)} onOpenChange={(open) => { if (!open) setSelectedSnapshot(null); }}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <History className="w-4 h-4" />
+                Snapshot — v{selectedSnapshot?.version}
+                <Badge variant="outline" className="text-[10px] ml-1 capitalize">{selectedSnapshot?.metricType ?? "g-eval"}</Badge>
+              </DialogTitle>
+            </DialogHeader>
+            {selectedSnapshot && (
+              <div className="space-y-3 text-sm">
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  <div>
+                    <p className="text-muted-foreground mb-1">Judge Model</p>
+                    <p className="font-mono bg-muted rounded px-2 py-1">{selectedSnapshot.judgeModel ?? "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground mb-1">Threshold</p>
+                    <p className="font-mono bg-muted rounded px-2 py-1">{selectedSnapshot.threshold ?? "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground mb-1">Strict Mode</p>
+                    <p className="font-mono bg-muted rounded px-2 py-1">{selectedSnapshot.strictMode ? "On" : "Off"}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground mb-1">Async Mode</p>
+                    <p className="font-mono bg-muted rounded px-2 py-1">{selectedSnapshot.asyncMode ? "On" : "Off"}</p>
+                  </div>
+                </div>
+                {selectedSnapshot.evaluationParams && selectedSnapshot.evaluationParams.length > 0 && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">Eval Params</p>
+                    <div className="flex flex-wrap gap-1">
+                      {selectedSnapshot.evaluationParams.map((p) => (
+                        <Badge key={p} variant="secondary" className="text-[10px]">{p.toUpperCase()}</Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {selectedSnapshot.criteria && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">Criteria / Code</p>
+                    <ScrollArea className="h-32 rounded border">
+                      <pre className="p-2 text-[11px] font-mono whitespace-pre-wrap">{selectedSnapshot.criteria}</pre>
+                    </ScrollArea>
+                  </div>
+                )}
+                <p className="text-[10px] text-muted-foreground text-right">
+                  Saved {selectedSnapshot.createdAt ? new Date(selectedSnapshot.createdAt).toLocaleString() : "—"}
+                </p>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
 
         <Button
           size="sm"

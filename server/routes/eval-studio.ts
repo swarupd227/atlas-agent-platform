@@ -214,6 +214,20 @@ router.put("/api/eval/metrics/:id", async (req, res) => {
     }
     assertOrgOwnership(metric.organizationId, orgId);
     const body = updateMetricSchema.parse(req.body);
+    // Snapshot current state before overwriting (immutable history)
+    await storage.createEvalMetricVersion({
+      metricId: metric.id,
+      version: metric.version ?? 1,
+      criteria: metric.criteria,
+      dagConfig: metric.dagConfig,
+      judgeModel: metric.judgeModel,
+      threshold: metric.threshold,
+      strictMode: metric.strictMode,
+      asyncMode: metric.asyncMode,
+      evaluationParams: metric.evaluationParams,
+      metricType: metric.metricType,
+      createdBy: metric.createdBy,
+    });
     const updated = await storage.updateEvalMetric(req.params.id, {
       ...body,
       version: (metric.version || 1) + 1,
@@ -223,6 +237,20 @@ router.put("/api/eval/metrics/:id", async (req, res) => {
     if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
     if (err instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: err.errors });
     res.status(400).json({ message: err.message });
+  }
+});
+
+router.get("/api/eval/metrics/:id/versions", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const metric = await storage.getEvalMetric(req.params.id);
+    if (!metric) return res.status(404).json({ message: "Metric not found" });
+    assertOrgOwnership(metric.organizationId, orgId);
+    const versions = await storage.getEvalMetricVersions(req.params.id);
+    res.json(versions);
+  } catch (err: any) {
+    if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
+    res.status(500).json({ message: err.message });
   }
 });
 
