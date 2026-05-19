@@ -466,12 +466,19 @@ router.post("/api/eval/datasets/:id/goldens/bulk-tag", async (req, res) => {
       tags: z.array(z.string()),
       mode: z.enum(["add", "replace"]),
     }).parse(req.body);
-    const goldens = await storage.getEvalGoldens({ datasetId: req.params.id, limit: 10000 });
+    // Paginate through all goldens so bulk-tag applies to datasets larger than any single-fetch limit
+    const PAGE = 500;
+    let page = 1;
     let updated = 0;
-    for (const g of goldens) {
-      const newTags = mode === "replace" ? tags : Array.from(new Set([...(g.tags ?? []), ...tags]));
-      await storage.updateEvalGolden(g.id, { tags: newTags });
-      updated++;
+    while (true) {
+      const batch = await storage.getEvalGoldens({ datasetId: req.params.id, page, limit: PAGE });
+      for (const g of batch) {
+        const newTags = mode === "replace" ? tags : Array.from(new Set([...(g.tags ?? []), ...tags]));
+        await storage.updateEvalGolden(g.id, { tags: newTags });
+        updated++;
+      }
+      if (batch.length < PAGE) break;
+      page++;
     }
     res.json({ updated });
   } catch (err: any) {

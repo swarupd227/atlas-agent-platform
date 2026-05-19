@@ -238,7 +238,9 @@ export default function EvalRunDetail() {
 
   const comparableRuns = useMemo(() => {
     if (!agentRuns || !run) return [];
-    return agentRuns.filter((r) => r.id !== run.id && r.status === "completed" && r.agentId === run.agentId);
+    return agentRuns.filter(
+      (r) => r.id !== run.id && r.status === "completed" && r.agentId === run.agentId && r.datasetId === run.datasetId,
+    );
   }, [agentRuns, run]);
 
   const tracesQueryKey = ["/api/eval/runs", id, "traces", tracesFilter];
