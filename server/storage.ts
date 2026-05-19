@@ -885,7 +885,7 @@ export interface IStorage {
   updateEvalTestRun(id: string, data: Partial<InsertEvalTestRun>): Promise<EvalTestRun | undefined>;
 
   // Atlas Eval Studio — Traces
-  getEvalTraces(filters: { runId: string; page?: number; limit?: number; passFail?: boolean }): Promise<EvalTrace[]>;
+  getEvalTraces(filters: { runId: string; page?: number; limit?: number; passFail?: boolean; goldenId?: string }): Promise<EvalTrace[]>;
   getEvalTrace(id: string): Promise<EvalTrace | undefined>;
   createEvalTrace(trace: InsertEvalTrace): Promise<EvalTrace>;
   updateEvalTrace(id: string, data: Partial<InsertEvalTrace>): Promise<EvalTrace | undefined>;
@@ -4163,9 +4163,10 @@ export class DatabaseStorage implements IStorage {
 
   // ── Atlas Eval Studio — Traces ───────────────────────────────────────────────
 
-  async getEvalTraces(filters: { runId: string; page?: number; limit?: number; passFail?: boolean }): Promise<EvalTrace[]> {
+  async getEvalTraces(filters: { runId: string; page?: number; limit?: number; passFail?: boolean; goldenId?: string }): Promise<EvalTrace[]> {
     const conditions: any[] = [eq(evalTraces.runId, filters.runId)];
     if (filters.passFail !== undefined) conditions.push(eq(evalTraces.passFail, filters.passFail));
+    if (filters.goldenId) conditions.push(eq(evalTraces.goldenId, filters.goldenId));
     const limit = filters.limit ?? 50;
     const offset = ((filters.page ?? 1) - 1) * limit;
     return db.select().from(evalTraces)

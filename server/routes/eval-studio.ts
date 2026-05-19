@@ -660,14 +660,28 @@ router.get("/api/eval/runs/:id/traces", async (req, res) => {
     const run = await storage.getEvalTestRun(req.params.id);
     if (!run) return res.status(404).json({ message: "Run not found" });
     assertOrgOwnership(run.organizationId, orgId);
-    const { page = "1", limit = "50", passFail } = req.query as Record<string, string>;
+    const { page = "1", limit = "50", passFail, goldenId } = req.query as Record<string, string>;
     const traces = await storage.getEvalTraces({
       runId: req.params.id,
       page: parseInt(page) || 1,
       limit: Math.min(parseInt(limit) || 50, 200),
       passFail: passFail === "pass" ? true : passFail === "fail" ? false : undefined,
+      goldenId: goldenId || undefined,
     });
     res.json(traces);
+  } catch (err: any) {
+    if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.get("/api/eval/goldens/:id", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const golden = await storage.getEvalGolden(req.params.id);
+    if (!golden) return res.status(404).json({ message: "Golden not found" });
+    assertOrgOwnership(golden.organizationId, orgId);
+    res.json(golden);
   } catch (err: any) {
     if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
     res.status(500).json({ message: err.message });
