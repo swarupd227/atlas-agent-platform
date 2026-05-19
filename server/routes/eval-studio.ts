@@ -1052,10 +1052,13 @@ router.get("/api/eval/synthesizer/:jobId/status", async (req, res) => {
       status: job.status,
       progress: job.progress ?? 0,
       goldens: result?.goldens ?? [],
-      // currentStep is persisted on every emitStage call (including during running),
-      // so we always read it from job.result regardless of completion status.
+      // currentStep is persisted on every emitStage call (including during running)
       currentStep: (jobResult?.currentStep as string | null | undefined) ?? null,
       error: job.status === "failed" ? jobResult?.error : null,
+      // Generation quality signals — present when there were degraded batches
+      warnings: (result?.warnings as string[] | undefined) ?? [],
+      lowFidelityCount: (result?.lowFidelityCount as number | undefined) ?? 0,
+      degraded: (result?.degraded as boolean | undefined) ?? false,
     });
   } catch (err: any) {
     if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });

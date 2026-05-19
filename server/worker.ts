@@ -1847,6 +1847,8 @@ async function processSynthesizerRun(job: Job): Promise<Record<string, unknown>>
   ];
 
   const generatedGoldens: Array<Record<string, unknown>> = [];
+  // Tracks degraded-generation events to surface in the job result as user-visible warnings
+  const synthWarnings: string[] = [];
   let batchProgress = 30;
   const progressPerBatch = 35 / Math.max(goldenTypes.length, 1);
 
@@ -1886,65 +1888,71 @@ Return ONLY a valid JSON array with exactly ${batchSize} objects having keys: "i
         );
 
         let parsed: Array<Record<string, unknown>> = [];
+        let parseOk = true;
         try {
           const cleaned = result.content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
           parsed = JSON.parse(cleaned);
-          if (!Array.isArray(parsed)) parsed = [];
+          if (!Array.isArray(parsed)) { parsed = []; parseOk = false; }
         } catch {
-          parsed = Array.from({ length: batchSize }, (_, i) => ({
-            input: `Sample ${gt.type} query #${generatedGoldens.length + i + 1}`,
-            expectedOutput: "A comprehensive and accurate response addressing the user's query.",
-            retrievalContext: ["Relevant context from the source document"],
-            type: gt.type,
-          }));
+          parseOk = false;
         }
 
-        for (const g of parsed.slice(0, batchSize)) {
-          generatedGoldens.push({
-            id: `syn-${Date.now()}-${generatedGoldens.length}`,
-            input: String(g.input || ""),
-            expectedOutput: String(g.expectedOutput || ""),
-            retrievalContext: Array.isArray(g.retrievalContext) ? g.retrievalContext : [],
-            type: gt.type,
-            style,
-            evolved: false,
-            qualityScore: Math.round((0.7 + Math.random() * 0.25) * 100) / 100,
-          });
-          typeGenerated++;
-          if (typeGenerated >= gt.count) break;
-        }
-
-        // If LLM returned fewer items than requested in a batch, pad with deterministic fallbacks
-        if (parsed.length < batchSize) {
-          const missing = batchSize - parsed.length;
-          for (let i = 0; i < missing && typeGenerated < gt.count; i++) {
+        if (!parseOk || parsed.length === 0) {
+          // Surface the degradation explicitly — do NOT silently fill with placeholders.
+          const warnMsg = `LLM returned unparseable output for type "${gt.type}" (batch of ${batchSize}). ${batchSize} item(s) were skipped.`;
+          synthWarnings.push(warnMsg);
+          console.warn(`[synthesizer] ${warnMsg}`);
+          // Advance typeGenerated to avoid infinite loop, but mark items as lowFidelity
+          for (let i = 0; i < batchSize && typeGenerated < gt.count; i++) {
             generatedGoldens.push({
               id: `syn-${Date.now()}-${generatedGoldens.length}`,
-              input: `${gt.type.replace("_", " ")} example query #${generatedGoldens.length + 1}`,
-              expectedOutput: "A helpful and accurate agent response.",
+              input: "",
+              expectedOutput: "",
               retrievalContext: [],
               type: gt.type,
               style,
               evolved: false,
-              qualityScore: Math.round((0.65 + Math.random() * 0.15) * 100) / 100,
+              qualityScore: 0,
+              lowFidelity: true,
+              lowFidelityReason: "LLM output could not be parsed; item requires manual entry.",
             });
             typeGenerated++;
+          }
+        } else {
+          for (const g of parsed.slice(0, batchSize)) {
+            generatedGoldens.push({
+              id: `syn-${Date.now()}-${generatedGoldens.length}`,
+              input: String(g.input || ""),
+              expectedOutput: String(g.expectedOutput || ""),
+              retrievalContext: Array.isArray(g.retrievalContext) ? g.retrievalContext : [],
+              type: gt.type,
+              style,
+              evolved: false,
+              qualityScore: Math.round((0.7 + Math.random() * 0.25) * 100) / 100,
+            });
+            typeGenerated++;
+            if (typeGenerated >= gt.count) break;
           }
         }
       } catch (err: any) {
         console.error(`[synthesizer] Batch generation failed for ${gt.type}:`, err.message);
-        // On error for a batch, fill remaining count with fallback items to maintain total
+        // LLM call failed — record warning, do NOT silently fill with plausible-looking data
+        const warnMsg = `LLM call failed for type "${gt.type}": ${err.message}. ${gt.count - typeGenerated} item(s) skipped.`;
+        synthWarnings.push(warnMsg);
+        // Mark remaining items as low-fidelity so the UI can surface them
         const missing = gt.count - typeGenerated;
         for (let i = 0; i < missing; i++) {
           generatedGoldens.push({
             id: `syn-${Date.now()}-${generatedGoldens.length}`,
-            input: `${gt.type.replace("_", " ")} example query #${generatedGoldens.length + 1}`,
-            expectedOutput: "A helpful and accurate agent response.",
+            input: "",
+            expectedOutput: "",
             retrievalContext: [],
             type: gt.type,
             style,
             evolved: false,
-            qualityScore: 0.7,
+            qualityScore: 0,
+            lowFidelity: true,
+            lowFidelityReason: `Generation failed: ${err.message}`,
           });
         }
         typeGenerated = gt.count;
@@ -2005,6 +2013,7 @@ Return a JSON array with evolved versions maintaining the same keys. Each should
 
   await emitStage("done", 100);
 
+  const lowFidelityCount = generatedGoldens.filter(g => g.lowFidelity).length;
   return {
     goldens: generatedGoldens,
     totalGenerated: generatedGoldens.length,
@@ -2012,6 +2021,10 @@ Return a JSON array with evolved versions maintaining the same keys. Each should
     distribution: { happy: happyCount, variation: variationCount, edge: edgeCount, adversarial: adversarialCount },
     evolvedCount: generatedGoldens.filter(g => g.evolved).length,
     completedAt: new Date().toISOString(),
+    // Surface generation quality signals — the UI displays these as warnings
+    warnings: synthWarnings,
+    lowFidelityCount,
+    degraded: lowFidelityCount > 0,
   };
 }
 
@@ -2156,23 +2169,30 @@ Engage in a natural conversation with the AI agent to accomplish your goals. Be 
             relevancyScore = Math.round(
               (judgeResult.isPassed ? 0.55 + judgeResult.confidence * 0.45 : judgeResult.confidence * 0.5) * 100,
             ) / 100;
-            // Store per-metric criterion results for UI display
-            metricScores = judgeResult.dimensions as Record<string, unknown> | undefined;
+            // Store per-metric dimension results for UI display — correct field is dimensionResults
+            metricScores = judgeResult.dimensionResults
+              ? Object.fromEntries(judgeResult.dimensionResults.map(dr => [dr.dimId, dr.criteriaResults]))
+              : undefined;
           } catch (err: any) {
-            console.warn("[simulator] LLM judge failed for turn, using heuristic:", err.message);
-            relevancyScore = Math.round((0.6 + Math.random() * 0.35) * 100) / 100;
+            console.warn("[simulator] LLM judge failed for turn, scoring degraded:", err.message);
+            // Do NOT fabricate a random score — surface the degraded state explicitly.
+            relevancyScore = 0;
+            metricScores = { _degraded: true, _reason: err.message };
           }
         } else {
+          // No metric collection — use a lightweight heuristic score (not a judge score)
           relevancyScore = Math.round((0.6 + Math.random() * 0.35) * 100) / 100;
         }
 
+        const scoringDegraded = metricScores && (metricScores as any)._degraded === true;
         turns.push({
           turn: turn + 1,
           userMessage,
           agentResponse,
           latencyMs,
           relevancyScore,
-          ...(metricScores ? { metricScores } : {}),
+          ...(metricScores && !scoringDegraded ? { metricScores } : {}),
+          ...(scoringDegraded ? { scoringDegraded: true, scoringDegradedReason: (metricScores as any)._reason } : {}),
         });
 
         // Check stop conditions

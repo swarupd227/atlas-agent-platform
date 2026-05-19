@@ -159,6 +159,10 @@ export default function EvalSynthesizer() {
   // Style
   const [style, setStyle] = useState("formal");
 
+  // Synthesis warnings / degraded mode
+  const [synthWarnings, setSynthWarnings] = useState<string[]>([]);
+  const [synthDegraded, setSynthDegraded] = useState(false);
+
   // Synthesis progress
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobStatus, setJobStatus] = useState<"idle" | "running" | "completed" | "failed">("idle");
@@ -322,8 +326,16 @@ export default function EvalSynthesizer() {
           const goldens: GeneratedGolden[] = data.goldens || [];
           setGeneratedGoldens(goldens);
           const initStatuses: Record<string, GoldenStatus> = {};
-          goldens.forEach(g => { initStatuses[g.id] = "accepted"; });
+          // Pre-mark low-fidelity items as "pending" so the user must explicitly review them
+          goldens.forEach(g => {
+            initStatuses[g.id] = (g as any).lowFidelity ? "pending" : "accepted";
+          });
           setGoldenStatuses(initStatuses);
+          // Surface generation warnings if any
+          if (data.warnings?.length > 0) {
+            setSynthWarnings(data.warnings as string[]);
+            setSynthDegraded(true);
+          }
           if (pollRef.current) clearInterval(pollRef.current);
           setStep(4);
         } else if (data.status === "failed") {
@@ -758,6 +770,22 @@ export default function EvalSynthesizer() {
                   <p className="text-sm text-muted-foreground">Accept, edit, or reject each generated golden before saving.</p>
                 </div>
 
+                {/* Degraded-synthesis warning banner */}
+                {synthDegraded && synthWarnings.length > 0 && (
+                  <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 space-y-1">
+                    <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400 text-sm font-medium">
+                      <AlertCircle className="w-4 h-4 shrink-0" />
+                      Some goldens could not be generated — manual review required
+                    </div>
+                    <ul className="ml-6 list-disc space-y-0.5">
+                      {synthWarnings.map((w, i) => (
+                        <li key={i} className="text-xs text-amber-600 dark:text-amber-500">{w}</li>
+                      ))}
+                    </ul>
+                    <p className="text-xs text-muted-foreground ml-6">Low-fidelity items are marked and start as "Pending" — edit or reject them before saving.</p>
+                  </div>
+                )}
+
                 {/* Summary banner */}
                 <div className="grid grid-cols-4 gap-3">
                   {[
@@ -790,7 +818,12 @@ export default function EvalSynthesizer() {
                             <div className="flex items-center gap-2 flex-wrap">
                               <Badge variant="outline" className={`text-[10px] ${TYPE_BADGE[g.type] || ""}`}>{g.type.replace("_", " ")}</Badge>
                               {g.evolved && <Badge variant="outline" className="text-[10px] bg-purple-500/10 text-purple-600 border-purple-500/20">evolved</Badge>}
-                              <span className="text-[10px] text-muted-foreground">Q: {g.qualityScore.toFixed(2)}</span>
+                              {(g as any).lowFidelity && (
+                                <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 border-amber-500/20">
+                                  ⚠ low-fidelity
+                                </Badge>
+                              )}
+                              {!(g as any).lowFidelity && <span className="text-[10px] text-muted-foreground">Q: {g.qualityScore.toFixed(2)}</span>}
                               {status === "edited" && <Badge variant="outline" className="text-[10px] bg-blue-500/10 text-blue-600 border-blue-500/20">edited</Badge>}
                             </div>
                             <div className="space-y-1">
