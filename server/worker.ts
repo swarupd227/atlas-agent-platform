@@ -858,7 +858,18 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
   await storage.updateJob(job.id, { progress: 5 });
   jobEvents.emit("progress", { jobId: job.id, agentId, progress: 5, step: "loading_goldens" });
 
-  const goldens = await storage.getEvalGoldens({ datasetId, page: 1, limit: 500 });
+  // Paginate through all goldens — never silently ignore goldens beyond a single-page limit
+  const allGoldens: Awaited<ReturnType<typeof storage.getEvalGoldens>> = [];
+  let gPage = 1;
+  while (true) {
+    const batch = await storage.getEvalGoldens({ datasetId, page: gPage, limit: 500 });
+    if (batch.length === 0) break;
+    allGoldens.push(...batch);
+    if (batch.length < 500) break;
+    gPage++;
+  }
+  const goldens = allGoldens;
+
   if (goldens.length === 0) {
     await storage.updateEvalTestRun(runId, {
       status: "completed",
@@ -913,7 +924,10 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
     }
 
     const scores: Record<string, number> = {};
+    // Per-metric reasoning keyed by metric name — persisted in child span JSONB
+    const metricReasonings: Record<string, { score: number; pass: boolean; reason: string; threshold: number }> = {};
     let overallPass = false;
+    const invocationStartedAt = new Date();
 
     if (agentFailed) {
       scores["overall"] = 0;
@@ -923,6 +937,7 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
       if (activeMetrics.length > 0) {
         for (const metric of activeMetrics) {
           if (!metric) continue;
+          const metricT0 = Date.now();
           const metricResult = await runLlmJudge(
             metric.name,
             { input: golden.input },
@@ -930,14 +945,24 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
             `${agentCtx}\n\nEvaluation metric: ${metric.name}\nCriteria: ${metric.criteria || "Evaluate quality"}`,
             actualOutput,
           );
-          const score = metricResult.isPassed ? metricResult.confidence : (1 - metricResult.confidence) * (metric.threshold || 0.5);
-          scores[metric.name] = Math.round(score * 1000) / 1000;
+          const metricDurationMs = Date.now() - metricT0;
+          const score = metricResult.isPassed
+            ? metricResult.confidence
+            : (1 - metricResult.confidence) * (metric.threshold || 0.5);
+          const roundedScore = Math.round(score * 1000) / 1000;
+          scores[metric.name] = roundedScore;
+          metricReasonings[metric.name] = {
+            score: roundedScore,
+            pass: metricResult.isPassed,
+            reason: metricResult.reason || "",
+            threshold: metric.threshold || 0.5,
+          };
+          // Store per-metric duration for span creation below
+          (metric as any)._durationMs = metricDurationMs;
         }
-        overallPass = Object.values(scores).every((s, _i) => {
-          const metric = activeMetrics[_i];
-          return s >= (metric?.threshold || 0.5);
-        });
-        scores["overall"] = Object.values(scores).reduce((a, b) => a + b, 0) / Object.values(scores).length;
+        const scoreValues = Object.values(scores);
+        overallPass = activeMetrics.every(m => m && scores[m.name] >= (m.threshold || 0.5));
+        scores["overall"] = Math.round((scoreValues.reduce((a, b) => a + b, 0) / scoreValues.length) * 1000) / 1000;
       } else {
         const judgeResult = await runLlmJudge(
           `Golden ${golden.id.slice(0, 8)}`,
@@ -948,14 +973,21 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
         );
         overallPass = judgeResult.isPassed;
         scores["overall"] = judgeResult.isPassed ? judgeResult.confidence : 1 - judgeResult.confidence;
+        metricReasonings["overall"] = {
+          score: scores["overall"],
+          pass: overallPass,
+          reason: judgeResult.reason || "",
+          threshold: 0.5,
+        };
       }
     }
 
     const latencyMs = Date.now() - t0;
     totalLatencyMs += latencyMs;
-    const estimatedCostUsd = 0.003 * Math.max(1, metrics.filter(Boolean).length);
+    const activeMetricCount = Math.max(1, metrics.filter(Boolean).length);
+    const estimatedCostUsd = 0.003 * activeMetricCount;
     totalCostUsd += estimatedCostUsd;
-    const tokenEstimate = 300 * Math.max(1, metrics.filter(Boolean).length);
+    const tokenEstimate = 300 * activeMetricCount;
     totalTokens += tokenEstimate;
 
     const trace = await storage.createEvalTrace({
@@ -971,17 +1003,79 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
       latencyMs,
     });
 
-    await storage.createEvalSpan({
+    // ── Span tree: root agent_invocation span + per-metric child spans ──────
+    const rootSpan = await storage.createEvalSpan({
       traceId: trace.id,
       organizationId: orgId,
-      spanType: "llm",
-      name: "agent_completion",
+      spanType: "agent",
+      name: "agent_invocation",
       inputs: { input: golden.input },
       outputs: agentFailed ? { error: agentFailureReason } : { output: actualOutput },
-      attributes: { model: agent.modelId || "default", agentFailed, scores },
+      attributes: {
+        model: agent.modelId || "default",
+        agentFailed,
+        agentId: agent.id,
+      },
+      scores: agentFailed ? { overall: 0 } : {},
       durationMs: latencyMs,
+      startedAt: invocationStartedAt,
       endedAt: new Date(),
     });
+
+    // One child span per evaluated metric, with full reasoning in attributes
+    const activeMetrics = metrics.filter(Boolean);
+    if (!agentFailed && activeMetrics.length > 0) {
+      for (const metric of activeMetrics) {
+        if (!metric) continue;
+        const reasoning = metricReasonings[metric.name];
+        if (!reasoning) continue;
+        await storage.createEvalSpan({
+          traceId: trace.id,
+          organizationId: orgId,
+          parentSpanId: rootSpan.id,
+          spanType: "llm",
+          name: `metric:${metric.name}`,
+          inputs: {
+            input: golden.input,
+            expectedOutput: golden.expectedOutput || null,
+            criteria: metric.criteria,
+          },
+          outputs: { score: reasoning.score, pass: reasoning.pass },
+          attributes: {
+            metricName: metric.name,
+            metricType: metric.metricType,
+            threshold: reasoning.threshold,
+            reason: reasoning.reason,
+            pass: reasoning.pass,
+          },
+          scores: { [metric.name]: reasoning.score },
+          durationMs: (metric as any)._durationMs || 0,
+          endedAt: new Date(),
+        });
+      }
+    } else if (!agentFailed && metricReasonings["overall"]) {
+      // Default overall-only child span
+      const reasoning = metricReasonings["overall"];
+      await storage.createEvalSpan({
+        traceId: trace.id,
+        organizationId: orgId,
+        parentSpanId: rootSpan.id,
+        spanType: "llm",
+        name: "metric:overall",
+        inputs: { input: golden.input, expectedOutput: golden.expectedOutput || null },
+        outputs: { score: reasoning.score, pass: reasoning.pass },
+        attributes: {
+          metricName: "overall",
+          metricType: "g-eval",
+          threshold: reasoning.threshold,
+          reason: reasoning.reason,
+          pass: reasoning.pass,
+        },
+        scores: { overall: reasoning.score },
+        durationMs: latencyMs,
+        endedAt: new Date(),
+      });
+    }
 
     await storage.updateEvalGolden(golden.id, {
       lastScore: scores["overall"] ?? 0,
@@ -991,11 +1085,19 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
     if (!agentFailed && overallPass) passedCount++; else failedCount++;
   };
 
-  const progressIncrement = Math.floor(90 / goldens.length);
-
   while (cursor < goldens.length) {
     const batch = goldens.slice(cursor, cursor + CONCURRENCY);
-    await Promise.allSettled(batch.map(processGolden));
+    const results = await Promise.allSettled(batch.map(processGolden));
+
+    // Explicitly account for any goroutine-level failures (e.g. storage errors)
+    // that weren't caught inside processGolden
+    for (const result of results) {
+      if (result.status === "rejected") {
+        console.error(`[eval-test-run] Unhandled golden processing error: ${result.reason}`);
+        failedCount++;
+      }
+    }
+
     cursor += CONCURRENCY;
 
     const pct = Math.min(95, 5 + Math.floor((cursor / goldens.length) * 90));

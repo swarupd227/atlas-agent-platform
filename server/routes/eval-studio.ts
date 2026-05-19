@@ -116,10 +116,13 @@ router.get("/api/eval/metrics", async (req, res) => {
 
 router.get("/api/eval/metrics/:id", async (req, res) => {
   try {
+    const orgId = getOrgId(req);
     const metric = await storage.getEvalMetric(req.params.id);
     if (!metric) return res.status(404).json({ message: "Metric not found" });
+    assertOrgOwnership(metric.organizationId, orgId);
     res.json(metric);
   } catch (err: any) {
+    if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
     res.status(500).json({ message: err.message });
   }
 });
@@ -164,15 +167,18 @@ router.put("/api/eval/metrics/:id", async (req, res) => {
 
 router.post("/api/eval/metrics/:id/attach", async (req, res) => {
   try {
+    const orgId = getOrgId(req);
     const attachSchema = z.object({ agentId: z.string().min(1), scope: z.string().default("end-to-end") });
     const { agentId, scope } = attachSchema.parse(req.body);
     const metric = await storage.getEvalMetric(req.params.id);
     if (!metric) return res.status(404).json({ message: "Metric not found" });
+    assertOrgOwnership(metric.organizationId, orgId);
     await storage.updateEvalMetric(req.params.id, {
       usageCount: (metric.usageCount || 0) + 1,
     });
     res.json({ success: true, metricId: req.params.id, agentId, scope });
   } catch (err: any) {
+    if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
     if (err instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: err.errors });
     res.status(500).json({ message: err.message });
   }
@@ -483,8 +489,27 @@ router.get("/api/eval/traces/:id", async (req, res) => {
     const trace = await storage.getEvalTrace(req.params.id);
     if (!trace) return res.status(404).json({ message: "Trace not found" });
     assertOrgOwnership(trace.organizationId, orgId);
-    const spans = await storage.getEvalSpans(req.params.id);
-    res.json({ ...trace, spans });
+    const flatSpans = await storage.getEvalSpans(req.params.id);
+
+    // Build root→child span tree
+    const spanMap = new Map(flatSpans.map(s => [s.id, { ...s, children: [] as any[] }]));
+    const roots: any[] = [];
+    for (const span of spanMap.values()) {
+      if (span.parentSpanId && spanMap.has(span.parentSpanId)) {
+        spanMap.get(span.parentSpanId)!.children.push(span);
+      } else {
+        roots.push(span);
+      }
+    }
+    // Sort children by startedAt within each node
+    const sortChildren = (node: any) => {
+      node.children.sort((a: any, b: any) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
+      node.children.forEach(sortChildren);
+    };
+    roots.sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
+    roots.forEach(sortChildren);
+
+    res.json({ ...trace, spans: flatSpans, spanTree: roots });
   } catch (err: any) {
     if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
     res.status(500).json({ message: err.message });
