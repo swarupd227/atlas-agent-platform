@@ -261,21 +261,41 @@ export default function EvalRunDetail() {
     enabled: !!compareRunId,
   });
 
-  // Build comparison map: goldenId → { current: passFail, baseline: passFail }
+  // Helper: compute average of numeric values in a scores object
+  const avgScore = (scores: unknown): number | null => {
+    if (!scores || typeof scores !== "object") return null;
+    const vals = Object.values(scores as Record<string, unknown>).filter((v) => typeof v === "number") as number[];
+    if (!vals.length) return null;
+    return vals.reduce((a, b) => a + b, 0) / vals.length;
+  };
+
+  // Build comparison map: goldenId → comparison data
   const comparisonMap = useMemo(() => {
     if (!traces || !compareTraces) return null;
-    const baseMap = new Map<string, boolean | null>();
-    for (const t of compareTraces) baseMap.set(t.goldenId, t.passFail ?? null);
-    const result = new Map<string, { current: boolean | null; baseline: boolean | null; status: "regressed" | "improved" | "unchanged" | "new" }>();
+    const baseMap = new Map<string, { passFail: boolean | null; avg: number | null }>();
+    for (const t of compareTraces) baseMap.set(t.goldenId, { passFail: t.passFail ?? null, avg: avgScore(t.scores) });
+    const result = new Map<string, { current: boolean | null; baseline: boolean | null; status: "regressed" | "improved" | "unchanged" | "new"; scoreDelta: number | null }>();
     for (const t of traces) {
-      const baseline = baseMap.has(t.goldenId) ? baseMap.get(t.goldenId)! : null;
-      const current = t.passFail ?? null;
+      const base = baseMap.get(t.goldenId);
+      const currentPf = t.passFail ?? null;
+      const baselinePf = base?.passFail ?? null;
+      const currentAvg = avgScore(t.scores);
+      const baselineAvg = base?.avg ?? null;
+      const scoreDelta = (currentAvg != null && baselineAvg != null) ? currentAvg - baselineAvg : null;
+
       let status: "regressed" | "improved" | "unchanged" | "new";
-      if (baseline === null) status = "new";
-      else if (baseline === true && current === false) status = "regressed";
-      else if (baseline === false && current === true) status = "improved";
-      else status = "unchanged";
-      result.set(t.goldenId, { current, baseline, status });
+      if (!base) {
+        status = "new";
+      } else if (scoreDelta != null) {
+        if (scoreDelta < -0.05) status = "regressed";
+        else if (scoreDelta > 0.05) status = "improved";
+        else status = "unchanged";
+      } else {
+        if (baselinePf === true && currentPf === false) status = "regressed";
+        else if (baselinePf === false && currentPf === true) status = "improved";
+        else status = "unchanged";
+      }
+      result.set(t.goldenId, { current: currentPf, baseline: baselinePf, status, scoreDelta });
     }
     return result;
   }, [traces, compareTraces]);
@@ -591,11 +611,15 @@ export default function EvalRunDetail() {
                             {comparisonMap && (() => {
                               const cmp = comparisonMap.get(t.goldenId);
                               if (!cmp) return <td className="px-4 py-2.5 text-muted-foreground text-[10px]">—</td>;
+                              const deltaStr = cmp.scoreDelta != null
+                                ? `${cmp.scoreDelta > 0 ? "+" : ""}${(cmp.scoreDelta * 100).toFixed(1)}%`
+                                : null;
                               if (cmp.status === "regressed") return (
                                 <td className="px-4 py-2.5">
                                   <span className="flex items-center gap-1 text-[10px] text-red-600 font-medium">
                                     <TrendingDown className="w-3 h-3" /> Regressed
                                   </span>
+                                  {deltaStr && <span className="text-[9px] text-red-400 mt-0.5 block">{deltaStr}</span>}
                                 </td>
                               );
                               if (cmp.status === "improved") return (
@@ -603,6 +627,7 @@ export default function EvalRunDetail() {
                                   <span className="flex items-center gap-1 text-[10px] text-emerald-600 font-medium">
                                     <TrendingUp className="w-3 h-3" /> Improved
                                   </span>
+                                  {deltaStr && <span className="text-[9px] text-emerald-400 mt-0.5 block">{deltaStr}</span>}
                                 </td>
                               );
                               if (cmp.status === "new") return (
@@ -615,6 +640,7 @@ export default function EvalRunDetail() {
                                   <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                                     <Minus className="w-3 h-3" /> Same
                                   </span>
+                                  {deltaStr && <span className="text-[9px] text-muted-foreground/60 mt-0.5 block">{deltaStr}</span>}
                                 </td>
                               );
                             })()}

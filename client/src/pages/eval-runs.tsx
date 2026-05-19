@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link, useSearch, useLocation } from "wouter";
-import type { Agent, EvalTestRun, EvalDataset, EvalMetric } from "@shared/schema";
+import type { Agent, EvalTestRun, EvalDataset, EvalMetric, EvalMetricCollection } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { Input } from "@/components/ui/input";
 import {
   FlaskConical,
   Play,
@@ -35,6 +36,9 @@ import {
   ChevronUp,
   Zap,
   ListChecks,
+  Hash,
+  DollarSign,
+  User,
 } from "lucide-react";
 import { formatDate } from "@/components/shared-utils";
 import { apiRequest } from "@/lib/queryClient";
@@ -75,8 +79,10 @@ export default function EvalRuns() {
 
   const [configOpen, setConfigOpen] = useState(false);
   const [runAgentId, setRunAgentId] = useState<string>("");
+  const [runAgentVersion, setRunAgentVersion] = useState<string>("");
   const [runDatasetId, setRunDatasetId] = useState<string>("");
   const [selectedMetricIds, setSelectedMetricIds] = useState<string[]>([]);
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string>("__none__");
   const [judgeModel, setJudgeModel] = useState<string>("__default__");
 
   const { data: runs, isLoading: runsLoading } = useQuery<EvalTestRun[]>({
@@ -95,26 +101,40 @@ export default function EvalRuns() {
     queryKey: ["/api/eval/metrics"],
   });
 
+  const { data: metricCollections } = useQuery<EvalMetricCollection[]>({
+    queryKey: ["/api/eval/metric-collections"],
+  });
+
   const agentMap = useMemo(() => {
     const m = new Map<string, Agent>();
     for (const a of (agents ?? [])) m.set(a.id, a);
     return m;
   }, [agents]);
 
+  const datasetMap = useMemo(() => {
+    const m = new Map<string, EvalDataset>();
+    for (const d of (datasets ?? [])) m.set(d.id, d);
+    return m;
+  }, [datasets]);
+
   const filterAgent = filterAgentId ? agentMap.get(filterAgentId) : null;
 
   const displayRuns = useMemo(() => {
     const all = runs ?? [];
-    const filtered = filterAgentId ? all.filter(r => r.agentId === filterAgentId) : all;
+    let filtered = filterAgentId ? all.filter(r => r.agentId === filterAgentId) : all;
+    if (runAgentId) filtered = filtered.filter(r => r.agentId === runAgentId);
+    if (runDatasetId) filtered = filtered.filter(r => r.datasetId === runDatasetId);
     return [...filtered].sort((a, b) => new Date(b.startedAt!).getTime() - new Date(a.startedAt!).getTime());
-  }, [runs, filterAgentId]);
+  }, [runs, filterAgentId, runAgentId, runDatasetId]);
 
   const startRunMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", "/api/eval/runs", {
         agentId: runAgentId,
+        agentVersion: runAgentVersion.trim() || undefined,
         datasetId: runDatasetId,
         metricIds: selectedMetricIds,
+        metricCollectionId: selectedCollectionId === "__none__" ? undefined : selectedCollectionId,
         judgeModelOverride: judgeModel === "__default__" ? undefined : judgeModel,
         triggeredBy: "user",
       });
@@ -219,7 +239,7 @@ export default function EvalRuns() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {/* Agent */}
                 <div>
                   <Label className="text-xs mb-1.5 block font-medium">
@@ -238,6 +258,18 @@ export default function EvalRuns() {
                   </Select>
                 </div>
 
+                {/* Agent version */}
+                <div>
+                  <Label className="text-xs mb-1.5 block font-medium">Agent Version</Label>
+                  <Input
+                    value={runAgentVersion}
+                    onChange={(e) => setRunAgentVersion(e.target.value)}
+                    placeholder="e.g. v2.1 (optional)"
+                    className="h-8 text-xs"
+                    data-testid="input-run-agent-version"
+                  />
+                </div>
+
                 {/* Dataset */}
                 <div>
                   <Label className="text-xs mb-1.5 block font-medium">
@@ -251,8 +283,27 @@ export default function EvalRuns() {
                     <SelectContent>
                       {(datasets ?? []).map((d) => (
                         <SelectItem key={d.id} value={d.id}>
-                          {d.name} <span className="text-muted-foreground">· v{d.version ?? 1} · {d.goldenCount ?? 0} goldens</span>
+                          {d.name} · v{d.version ?? 1} · {d.goldenCount ?? 0} goldens
                         </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Metric Collection */}
+                <div>
+                  <Label className="text-xs mb-1.5 block font-medium">
+                    <Hash className="w-3 h-3 inline mr-1" />
+                    Metric Collection
+                  </Label>
+                  <Select value={selectedCollectionId} onValueChange={setSelectedCollectionId}>
+                    <SelectTrigger className="h-8 text-xs" data-testid="select-metric-collection">
+                      <SelectValue placeholder="None (use individual metrics)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">None (use individual metrics)</SelectItem>
+                      {(metricCollections ?? []).map((c) => (
+                        <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -411,13 +462,36 @@ export default function EvalRuns() {
                         )}
                       </div>
                     </div>
-                    <div className="shrink-0 text-right">
+                    <div className="shrink-0 text-right flex flex-col gap-0.5">
                       <div className="text-xs text-muted-foreground">
                         {formatDate(run.completedAt ?? run.startedAt)}
                       </div>
                       {run.totalGoldens != null && (
-                        <div className="text-[10px] text-muted-foreground/60 mt-0.5">
+                        <div className="text-[10px] text-muted-foreground/60 flex items-center gap-1 justify-end">
+                          <Hash className="w-2.5 h-2.5" />
                           {run.totalGoldens} cases
+                        </div>
+                      )}
+                      {(() => {
+                        const s = run.startedAt ? new Date(run.startedAt as unknown as string).getTime() : null;
+                        const e = run.completedAt ? new Date(run.completedAt as unknown as string).getTime() : null;
+                        const durSec = s && e ? Math.round((e - s) / 1000) : null;
+                        return durSec != null ? (
+                          <div className="text-[10px] text-muted-foreground/60">
+                            {durSec < 60 ? `${durSec}s` : `${Math.floor(durSec / 60)}m ${durSec % 60}s`}
+                          </div>
+                        ) : null;
+                      })()}
+                      {run.costUsd != null && run.costUsd > 0 && (
+                        <div className="text-[10px] text-muted-foreground/60 flex items-center gap-1 justify-end">
+                          <DollarSign className="w-2.5 h-2.5" />
+                          {run.costUsd.toFixed(3)}
+                        </div>
+                      )}
+                      {run.triggeredBy && (
+                        <div className="text-[10px] text-muted-foreground/60 flex items-center gap-1 justify-end">
+                          <User className="w-2.5 h-2.5" />
+                          {run.triggeredBy}
                         </div>
                       )}
                     </div>

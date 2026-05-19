@@ -85,9 +85,31 @@ function detectPii(text: string): string[] {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-function parseJsonlCsv(content: string, isJson: boolean): Array<{ input: string; expectedOutput?: string; tags?: string[] }> {
+type ParseFormat = "json" | "jsonl" | "csv";
+
+function parseCsvRow(row: string): string[] {
+  const result: string[] = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < row.length; i++) {
+    const ch = row[i];
+    if (ch === '"') {
+      if (inQuotes && row[i + 1] === '"') { current += '"'; i++; }
+      else inQuotes = !inQuotes;
+    } else if (ch === ',' && !inQuotes) {
+      result.push(current.trim());
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  result.push(current.trim());
+  return result;
+}
+
+function parseImportFile(content: string, format: ParseFormat): Array<{ input: string; expectedOutput?: string; tags?: string[] }> {
   try {
-    if (isJson) {
+    if (format === "json") {
       const raw = JSON.parse(content);
       const arr = Array.isArray(raw) ? raw : [raw];
       return arr.map((r: Record<string, string>) => ({
@@ -95,14 +117,11 @@ function parseJsonlCsv(content: string, isJson: boolean): Array<{ input: string;
         expectedOutput: r.expectedOutput ?? r.expected_output ?? r.answer ?? "",
         tags: [],
       })).filter((r) => r.input);
-    } else {
+    }
+    if (format === "jsonl") {
       return content
-        .split("\n")
-        .map((l) => l.trim())
-        .filter(Boolean)
-        .map((line) => {
-          try { return JSON.parse(line); } catch { return null; }
-        })
+        .split("\n").map((l) => l.trim()).filter(Boolean)
+        .map((line) => { try { return JSON.parse(line); } catch { return null; } })
         .filter(Boolean)
         .map((r: Record<string, string>) => ({
           input: r.input ?? r.prompt ?? "",
@@ -111,6 +130,30 @@ function parseJsonlCsv(content: string, isJson: boolean): Array<{ input: string;
         }))
         .filter((r) => r.input);
     }
+    if (format === "csv") {
+      const lines = content.split("\n").filter((l) => l.trim());
+      if (lines.length < 2) return [];
+      const headers = parseCsvRow(lines[0]).map((h) => h.toLowerCase().replace(/[^a-z_]/g, ""));
+      const findCol = (candidates: string[]) => {
+        for (const c of candidates) {
+          const idx = headers.findIndex((h) => h.includes(c));
+          if (idx !== -1) return idx;
+        }
+        return -1;
+      };
+      const inputIdx = findCol(["input", "prompt", "question"]);
+      const outputIdx = findCol(["expectedoutput", "expected_output", "output", "answer"]);
+      if (inputIdx === -1) return [];
+      return lines.slice(1).map((line) => {
+        const fields = parseCsvRow(line);
+        return {
+          input: fields[inputIdx] ?? "",
+          expectedOutput: outputIdx !== -1 ? (fields[outputIdx] ?? "") : undefined,
+          tags: [],
+        };
+      }).filter((r) => r.input);
+    }
+    return [];
   } catch {
     return [];
   }
@@ -251,6 +294,7 @@ function GoldenSheet({ open, onClose, golden, datasetId, onSaved }: GoldenSheetP
   const [newCtx, setNewCtx] = useState("");
   const [tagsStr, setTagsStr] = useState((golden?.tags ?? []).join(", "));
   const [author, setAuthor] = useState(golden?.author ?? "");
+  const [piiAcknowledged, setPiiAcknowledged] = useState(false);
   const qc = useQueryClient();
   const { toast } = useToast();
 
@@ -262,6 +306,7 @@ function GoldenSheet({ open, onClose, golden, datasetId, onSaved }: GoldenSheetP
     setTagsStr((golden?.tags ?? []).join(", "));
     setAuthor(golden?.author ?? "");
     setNewCtx("");
+    setPiiAcknowledged(false);
   }, [golden?.id]);
 
   const piiFields = useMemo(() => {
@@ -314,14 +359,26 @@ function GoldenSheet({ open, onClose, golden, datasetId, onSaved }: GoldenSheetP
         </SheetHeader>
 
         {piiFields.length > 0 && (
-          <div className="mb-4 p-3 rounded-md border border-amber-500/30 bg-amber-500/10 flex items-start gap-2">
-            <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
-            <div>
-              <p className="text-xs font-semibold text-amber-600">Possible PII detected</p>
-              <p className="text-xs text-amber-600/80 mt-0.5">
-                {piiFields.join(" · ")} — review before saving.
-              </p>
+          <div className="mb-4 p-3 rounded-md border border-amber-500/30 bg-amber-500/10 flex flex-col gap-2">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+              <div>
+                <p className="text-xs font-semibold text-amber-600">Possible PII detected</p>
+                <p className="text-xs text-amber-600/80 mt-0.5">
+                  {piiFields.join(" · ")} — review before saving.
+                </p>
+              </div>
             </div>
+            <label className="flex items-center gap-2 cursor-pointer ml-6">
+              <input
+                type="checkbox"
+                className="rounded"
+                checked={piiAcknowledged}
+                onChange={(e) => setPiiAcknowledged(e.target.checked)}
+                data-testid="checkbox-pii-acknowledge"
+              />
+              <span className="text-xs text-amber-600 font-medium">I acknowledge this data may contain PII</span>
+            </label>
           </div>
         )}
 
@@ -421,9 +478,10 @@ function GoldenSheet({ open, onClose, golden, datasetId, onSaved }: GoldenSheetP
           <Button variant="ghost" size="sm" onClick={onClose} data-testid="button-cancel-golden">Cancel</Button>
           <Button
             size="sm"
-            disabled={!input.trim() || mutation.isPending}
+            disabled={!input.trim() || mutation.isPending || (piiFields.length > 0 && !piiAcknowledged)}
             onClick={() => mutation.mutate()}
             data-testid="button-save-golden"
+            title={piiFields.length > 0 && !piiAcknowledged ? "Acknowledge PII detection above before saving" : undefined}
           >
             {mutation.isPending ? "Saving..." : isEdit ? "Save Changes" : "Create Golden"}
           </Button>
@@ -454,11 +512,11 @@ function ImportDialog({ open, onClose, datasetId, onImported }: ImportDialogProp
     const file = e.target.files?.[0];
     if (!file) return;
     setFileName(file.name);
-    const isJson = file.name.endsWith(".json");
+    const format: ParseFormat = file.name.endsWith(".json") ? "json" : file.name.endsWith(".csv") ? "csv" : "jsonl";
     const reader = new FileReader();
     reader.onload = (ev) => {
       const content = ev.target?.result as string;
-      const parsed = parseJsonlCsv(content, isJson);
+      const parsed = parseImportFile(content, format);
       setPreview(parsed);
     };
     reader.readAsText(file);
@@ -497,7 +555,7 @@ function ImportDialog({ open, onClose, datasetId, onImported }: ImportDialogProp
             <Upload className="w-4 h-4 text-primary" /> Import Goldens
           </DialogTitle>
           <DialogDescription>
-            Upload a <strong>.jsonl</strong> or <strong>.json</strong> file. Each record must include an <code>input</code> field and optionally <code>expectedOutput</code>.
+            Upload a <strong>.jsonl</strong>, <strong>.json</strong>, or <strong>.csv</strong> file. Each record must include an <code>input</code> field and optionally <code>expectedOutput</code>.
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4 py-2">
@@ -509,22 +567,22 @@ function ImportDialog({ open, onClose, datasetId, onImported }: ImportDialogProp
             data-testid="button-choose-file"
           >
             <Upload className="w-4 h-4 mr-1.5" />
-            {fileName || "Choose .jsonl or .json file"}
+            {fileName || "Choose .jsonl, .json, or .csv file"}
           </Button>
           <input
             ref={fileRef}
             type="file"
-            accept=".jsonl,.json"
+            accept=".jsonl,.json,.csv"
             className="hidden"
             onChange={handleFile}
           />
           {preview.length > 0 && (
             <div className="rounded-md border overflow-hidden">
               <div className="bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground font-medium">
-                Preview · {preview.length} records
+                Preview · first 5 of {preview.length} records
               </div>
               <div className="max-h-52 overflow-y-auto divide-y">
-                {preview.slice(0, 10).map((g, i) => (
+                {preview.slice(0, 5).map((g, i) => (
                   <div key={i} className="px-3 py-2">
                     <p className="text-xs font-mono truncate text-foreground">{g.input}</p>
                     {g.expectedOutput && (
@@ -532,8 +590,8 @@ function ImportDialog({ open, onClose, datasetId, onImported }: ImportDialogProp
                     )}
                   </div>
                 ))}
-                {preview.length > 10 && (
-                  <div className="px-3 py-2 text-xs text-muted-foreground">…and {preview.length - 10} more</div>
+                {preview.length > 5 && (
+                  <div className="px-3 py-2 text-xs text-muted-foreground">…and {preview.length - 5} more</div>
                 )}
               </div>
             </div>
@@ -674,7 +732,22 @@ export default function EvalDatasets() {
     enabled: !!selectedDatasetId,
   });
 
-  const goldens = goldensData ?? [];
+  const goldens = useMemo(() => {
+    const all = goldensData ?? [];
+    if (passFail === "all") return all;
+    return all.filter((g) => {
+      if (g.lastScore == null) return false;
+      const pass = g.lastScore >= 0.85;
+      return passFail === "pass" ? pass : !pass;
+    });
+  }, [goldensData, passFail]);
+
+  const versionSiblings = useMemo(() => {
+    if (!selectedDataset) return [];
+    return (datasets ?? [])
+      .filter((d) => d.name === selectedDataset.name && d.agentId === selectedDataset.agentId)
+      .sort((a, b) => (a.version ?? 1) - (b.version ?? 1));
+  }, [datasets, selectedDataset]);
 
   const deleteMutation = useMutation({
     mutationFn: async (goldenId: string) => {
@@ -837,7 +910,23 @@ export default function EvalDatasets() {
                   <div className="min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <h2 className="text-base font-semibold truncate">{selectedDataset.name}</h2>
-                      <Badge variant="outline" className="text-[10px]">v{selectedDataset.version ?? 1}</Badge>
+                      {versionSiblings.length > 1 ? (
+                        <Select
+                          value={selectedDatasetId!}
+                          onValueChange={(v) => { setSelectedDatasetId(v); setGoldenPage(1); setGoldenSearch(""); }}
+                        >
+                          <SelectTrigger className="h-6 w-20 text-[10px]" data-testid="select-dataset-version">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {versionSiblings.map((s) => (
+                              <SelectItem key={s.id} value={s.id}>v{s.version ?? 1}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px]">v{selectedDataset.version ?? 1}</Badge>
+                      )}
                       {selectedDataset.isBaseline && (
                         <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/20">baseline</Badge>
                       )}
@@ -942,12 +1031,13 @@ export default function EvalDatasets() {
                   <thead>
                     <tr className="border-b bg-muted/30">
                       <th className="text-left px-4 py-2.5 text-muted-foreground font-medium w-8">#</th>
-                      <th className="text-left px-4 py-2.5 text-muted-foreground font-medium min-w-[260px]">Input</th>
-                      <th className="text-left px-4 py-2.5 text-muted-foreground font-medium min-w-[180px]">Expected Output</th>
-                      <th className="text-left px-4 py-2.5 text-muted-foreground font-medium">Tags</th>
+                      <th className="text-left px-4 py-2.5 text-muted-foreground font-medium min-w-[220px]">Input</th>
+                      <th className="text-left px-4 py-2.5 text-muted-foreground font-medium min-w-[160px]">Expected Output</th>
+                      <th className="text-left px-4 py-2.5 text-muted-foreground font-medium w-28">Tags</th>
                       <th className="text-left px-4 py-2.5 text-muted-foreground font-medium w-20">Last Score</th>
-                      <th className="text-left px-4 py-2.5 text-muted-foreground font-medium w-32">Created</th>
-                      <th className="w-20 px-4 py-2.5" />
+                      <th className="text-left px-4 py-2.5 text-muted-foreground font-medium w-24">Author</th>
+                      <th className="text-left px-4 py-2.5 text-muted-foreground font-medium w-32">Last Updated</th>
+                      <th className="w-16 px-4 py-2.5" />
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -992,11 +1082,12 @@ export default function EvalDatasets() {
                         return (
                           <tr
                             key={g.id}
-                            className="hover:bg-muted/20 transition-colors group"
+                            className="hover:bg-muted/20 transition-colors group cursor-pointer"
+                            onClick={() => { setEditGolden(g); setSheetOpen(true); }}
                             data-testid={`row-golden-${g.id}`}
                           >
                             <td className="px-4 py-2.5 text-muted-foreground">{rowIdx}</td>
-                            <td className="px-4 py-2.5 max-w-[260px]">
+                            <td className="px-4 py-2.5 max-w-[220px]">
                               <div className="flex items-start gap-1.5">
                                 {hasPii && (
                                   <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0 mt-0.5" title="Possible PII" />
@@ -1004,7 +1095,7 @@ export default function EvalDatasets() {
                                 <span className="font-mono line-clamp-2 text-[11px] leading-relaxed">{g.input}</span>
                               </div>
                             </td>
-                            <td className="px-4 py-2.5 max-w-[180px]">
+                            <td className="px-4 py-2.5 max-w-[160px]">
                               <span className="font-mono line-clamp-2 text-[11px] text-muted-foreground leading-relaxed">
                                 {g.expectedOutput ?? <span className="italic text-muted-foreground/50">—</span>}
                               </span>
@@ -1025,13 +1116,16 @@ export default function EvalDatasets() {
                                 <span className="text-muted-foreground/40">—</span>
                               )}
                             </td>
-                            <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
-                              {formatDate(g.createdAt)}
+                            <td className="px-4 py-2.5 text-muted-foreground text-[11px] whitespace-nowrap">
+                              {g.author ?? <span className="text-muted-foreground/40">—</span>}
                             </td>
-                            <td className="px-4 py-2.5">
+                            <td className="px-4 py-2.5 text-muted-foreground whitespace-nowrap">
+                              {g.updatedAt ? formatDate(g.updatedAt) : formatDate(g.createdAt)}
+                            </td>
+                            <td className="px-4 py-2.5" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                 <button
-                                  onClick={() => { setEditGolden(g); setSheetOpen(true); }}
+                                  onClick={(e) => { e.stopPropagation(); setEditGolden(g); setSheetOpen(true); }}
                                   className="p-1 hover:bg-muted rounded"
                                   title="Edit"
                                   data-testid={`button-edit-golden-${g.id}`}
@@ -1039,7 +1133,7 @@ export default function EvalDatasets() {
                                   <Edit2 className="w-3.5 h-3.5 text-muted-foreground" />
                                 </button>
                                 <button
-                                  onClick={() => setDeleteGoldenId(g.id)}
+                                  onClick={(e) => { e.stopPropagation(); setDeleteGoldenId(g.id); }}
                                   className="p-1 hover:bg-destructive/10 rounded"
                                   title="Delete"
                                   data-testid={`button-delete-golden-${g.id}`}
