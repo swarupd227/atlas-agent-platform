@@ -1271,23 +1271,12 @@ router.get("/api/eval/runs/:id/metric-summary", async (req, res) => {
 
 // ── Alias routes: /api/eval/agents/:agentId/gates ──────────────────────────────
 // These provide the documented path alongside the existing /api/eval/gates/:agentId.
-router.get("/api/eval/agents/:agentId/gates", async (req, res) => {
-  try {
-    const orgId = getOrgId(req);
-    const gate = await storage.getEvalGate(req.params.agentId);
-    if (!gate) return res.status(404).json({ message: "No gate configured for this agent" });
-    assertOrgOwnership(gate.organizationId, orgId);
-    res.json(gate);
-  } catch (err: any) {
-    if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
-    res.status(500).json({ message: err.message });
-  }
-});
 
-router.put("/api/eval/agents/:agentId/gates", async (req, res) => {
-  // Delegate to the primary handler by re-routing the params
-  req.params.agentId = req.params.agentId; // already correct
-  // Inline the same logic for clarity — avoids internal router re-dispatch
+// Shared upsert handler used by both POST and PUT alias routes
+async function agentGateUpsert(
+  req: import("express").Request,
+  res: import("express").Response
+): Promise<void> {
   try {
     const orgId = getOrgId(req);
     const { agentId } = req.params;
@@ -1313,11 +1302,32 @@ router.put("/api/eval/agents/:agentId/gates", async (req, res) => {
     });
 
     res.json(gate);
-  } catch (err: any) {
+  } catch (err: unknown) {
+    if (isForbiddenError(err)) { res.status(403).json({ message: "Forbidden" }); return; }
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ message: msg });
+  }
+}
+
+router.get("/api/eval/agents/:agentId/gates", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const gate = await storage.getEvalGate(req.params.agentId);
+    if (!gate) return res.status(404).json({ message: "No gate configured for this agent" });
+    assertOrgOwnership(gate.organizationId, orgId);
+    res.json(gate);
+  } catch (err: unknown) {
     if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
-    res.status(500).json({ message: err.message });
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ message: msg });
   }
 });
+
+// POST creates/replaces the gate (upsert semantics — same as PUT)
+router.post("/api/eval/agents/:agentId/gates", agentGateUpsert);
+
+// PUT updates the gate (upsert semantics)
+router.put("/api/eval/agents/:agentId/gates", agentGateUpsert);
 
 // ── Regression Hub: Gate Definition Upsert ────────────────────────────────────
 router.put("/api/eval/gates/:agentId", async (req, res) => {
@@ -1376,7 +1386,14 @@ router.post("/api/eval/gates/:agentId/trigger", async (req, res) => {
     const targetAgent = await storage.getAgent(agentId);
     if (targetAgent) assertOrgOwnership(targetAgent.organizationId, orgId);
 
-    const metricIds = (gate.attachedMetricIds as string[] | null) ?? [];
+    // Resolve metric IDs: prefer explicitly attached list, fall back to metric collection
+    let metricIds = (gate.attachedMetricIds as string[] | null) ?? [];
+    if (metricIds.length === 0 && gate.metricCollectionId) {
+      const collection = await storage.getEvalMetricCollection(gate.metricCollectionId);
+      if (collection?.metricIds) {
+        metricIds = (collection.metricIds as string[]).filter(Boolean);
+      }
+    }
 
     const run = await storage.createEvalTestRun({
       organizationId: orgId,

@@ -353,11 +353,14 @@ export default function EvalRegression() {
     metricCollectionId: string;
     passThreshold: string;
     regressionWindowPct: string;
+    // Per-metric threshold overrides (metric name → threshold %)
+    metricThresholds: Array<{ metric: string; threshold: string }>;
   }>({
     datasetId: ANY_SENTINEL,
     metricCollectionId: ANY_SENTINEL,
     passThreshold: "85",
     regressionWindowPct: "5",
+    metricThresholds: [],
   });
 
   // ── Data fetching ──────────────────────────────────────────────────────────
@@ -521,20 +524,28 @@ export default function EvalRegression() {
         metricCollectionId: ANY_SENTINEL,
         passThreshold: "85",
         regressionWindowPct: "5",
+        metricThresholds: [],
       });
       return;
     }
     const overrides =
       selectedGate.thresholdOverrides as Record<string, number> | null;
-    const vals = overrides
-      ? Object.values(overrides).filter((v) => typeof v === "number")
+    // "passRate" key → the global threshold slider; all other keys → per-metric rows
+    const globalThreshold = overrides?.["passRate"] ?? 0.85;
+    const perMetric = overrides
+      ? Object.entries(overrides)
+          .filter(([k]) => k !== "passRate")
+          .map(([k, v]) => ({
+            metric: k,
+            threshold: String(Math.round(v * 100)),
+          }))
       : [];
-    const threshold = vals.length > 0 ? Math.min(...vals) : 0.85;
     setGateForm({
       datasetId: selectedGate.datasetId ?? ANY_SENTINEL,
       metricCollectionId: selectedGate.metricCollectionId ?? ANY_SENTINEL,
-      passThreshold: String(Math.round(threshold * 100)),
+      passThreshold: String(Math.round(globalThreshold * 100)),
       regressionWindowPct: String(selectedGate.regressionWindowPct ?? 5),
+      metricThresholds: perMetric,
     });
   }, [selectedGate]);
 
@@ -598,10 +609,17 @@ export default function EvalRegression() {
   // ── Mutations ──────────────────────────────────────────────────────────────
   const saveGateMutation = useMutation({
     mutationFn: async (agentId: string) => {
-      const pct = parseFloat(gateForm.passThreshold) / 100;
+      const globalPct = parseFloat(gateForm.passThreshold) / 100;
+      // Build thresholdOverrides: global passRate + per-metric entries
+      const thresholdOverrides: Record<string, number> = { passRate: globalPct };
+      for (const row of gateForm.metricThresholds) {
+        const name = row.metric.trim();
+        const val = parseFloat(row.threshold) / 100;
+        if (name && !isNaN(val)) thresholdOverrides[name] = val;
+      }
       const body: Record<string, unknown> = {
         regressionWindowPct: parseFloat(gateForm.regressionWindowPct) || 5,
-        thresholdOverrides: { passRate: pct },
+        thresholdOverrides,
         isActive: true,
       };
       // Map sentinel back to null (no specific selection)
@@ -1385,6 +1403,96 @@ export default function EvalRegression() {
                           previous run — even if above the absolute threshold.
                         </p>
                       </div>
+                    </div>
+
+                    {/* Per-metric threshold overrides */}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs">Per-Metric Threshold Overrides</Label>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-6 px-2 text-[11px]"
+                          onClick={() =>
+                            setGateForm((p) => ({
+                              ...p,
+                              metricThresholds: [
+                                ...p.metricThresholds,
+                                { metric: "", threshold: "85" },
+                              ],
+                            }))
+                          }
+                          data-testid="button-add-metric-threshold"
+                        >
+                          + Add metric
+                        </Button>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">
+                        Set per-metric pass thresholds. If any named metric falls below
+                        its threshold the gate fails, regardless of the global rate.
+                      </p>
+
+                      {gateForm.metricThresholds.length === 0 ? (
+                        <p className="text-[11px] text-muted-foreground/60 italic">
+                          No per-metric overrides — only the global pass rate threshold
+                          applies.
+                        </p>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {gateForm.metricThresholds.map((row, idx) => (
+                            <div
+                              key={idx}
+                              className="flex items-center gap-2"
+                              data-testid={`metric-threshold-row-${idx}`}
+                            >
+                              <Input
+                                placeholder="Metric name (e.g. correctness)"
+                                value={row.metric}
+                                onChange={(e) => {
+                                  const updated = [...gateForm.metricThresholds];
+                                  updated[idx] = { ...updated[idx], metric: e.target.value };
+                                  setGateForm((p) => ({ ...p, metricThresholds: updated }));
+                                }}
+                                className="h-7 text-xs flex-1"
+                                data-testid={`input-metric-name-${idx}`}
+                              />
+                              <Input
+                                type="number"
+                                min={0}
+                                max={100}
+                                placeholder="Threshold %"
+                                value={row.threshold}
+                                onChange={(e) => {
+                                  const updated = [...gateForm.metricThresholds];
+                                  updated[idx] = { ...updated[idx], threshold: e.target.value };
+                                  setGateForm((p) => ({ ...p, metricThresholds: updated }));
+                                }}
+                                className="h-7 text-xs w-24"
+                                data-testid={`input-metric-threshold-${idx}`}
+                              />
+                              <span className="text-xs text-muted-foreground">%</span>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0 text-muted-foreground hover:text-red-500"
+                                onClick={() =>
+                                  setGateForm((p) => ({
+                                    ...p,
+                                    metricThresholds: p.metricThresholds.filter(
+                                      (_, i) => i !== idx
+                                    ),
+                                  }))
+                                }
+                                data-testid={`button-remove-metric-threshold-${idx}`}
+                              >
+                                ×
+                              </Button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-3 pt-1">
