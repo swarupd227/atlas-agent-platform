@@ -3086,3 +3086,108 @@ export const evalReportSchedules = pgTable("eval_report_schedules", {
 export const insertEvalReportScheduleSchema = createInsertSchema(evalReportSchedules).omit({ id: true, createdAt: true });
 export type InsertEvalReportSchedule = z.infer<typeof insertEvalReportScheduleSchema>;
 export type EvalReportSchedule = typeof evalReportSchedules.$inferSelect;
+
+// ── Agent Prompts (Prompt Version Registry) ───────────────────────────────────
+export const agentPrompts = pgTable("agent_prompts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  agentId: varchar("agent_id").notNull(),
+  version: integer("version").notNull().default(1),
+  content: text("content").notNull(),
+  changeNote: text("change_note"),
+  createdBy: text("created_by").notNull().default("system"),
+  isActive: boolean("is_active").default(false),
+  sha256: text("sha256"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_agent_prompts_agent").on(table.agentId),
+  index("idx_agent_prompts_org").on(table.organizationId),
+]);
+export const insertAgentPromptSchema = createInsertSchema(agentPrompts).omit({ id: true, createdAt: true }).extend({ organizationId: z.string().optional() });
+export type InsertAgentPrompt = z.infer<typeof insertAgentPromptSchema>;
+export type AgentPrompt = typeof agentPrompts.$inferSelect;
+
+// ── Eval Experiments (Prompt A/B) ─────────────────────────────────────────────
+export const evalExperiments = pgTable("eval_experiments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  agentId: varchar("agent_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  datasetId: varchar("dataset_id").notNull(),
+  metricCollectionId: varchar("metric_collection_id"),
+  judgeModelOverride: text("judge_model_override"),
+  variantPromptVersions: integer("variant_prompt_versions").array().default(sql`'{}'::integer[]`),
+  status: text("status").notNull().default("pending"),
+  results: jsonb("results"),
+  significanceResults: jsonb("significance_results"),
+  winnerVersion: integer("winner_version"),
+  createdBy: text("created_by").notNull().default("system"),
+  startedAt: timestamp("started_at").defaultNow(),
+  completedAt: timestamp("completed_at"),
+}, (table) => [
+  index("idx_eval_experiments_agent").on(table.agentId),
+  index("idx_eval_experiments_org").on(table.organizationId),
+  index("idx_eval_experiments_status").on(table.status),
+]);
+export const insertEvalExperimentSchema = createInsertSchema(evalExperiments).omit({ id: true, startedAt: true }).extend({ organizationId: z.string().optional() });
+export type InsertEvalExperiment = z.infer<typeof insertEvalExperimentSchema>;
+export type EvalExperiment = typeof evalExperiments.$inferSelect;
+
+// ── Marketplace Assets ────────────────────────────────────────────────────────
+export const marketplaceAssets = pgTable("marketplace_assets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  title: text("title").notNull(),
+  description: text("description"),
+  assetType: text("asset_type").notNull().default("metric_pack"),
+  industryTags: text("industry_tags").array().default(sql`'{}'::text[]`),
+  author: text("author").notNull().default("nous"),
+  authorDisplayName: text("author_display_name").notNull().default("Nous"),
+  version: text("version").notNull().default("1.0.0"),
+  contentsJson: jsonb("contents_json").notNull().default(sql`'{}'::jsonb`),
+  contentsSummary: text("contents_summary"),
+  samplePreview: text("sample_preview"),
+  installedCount: integer("installed_count").default(0),
+  isBuiltin: boolean("is_builtin").default(true),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_marketplace_assets_type").on(table.assetType),
+  index("idx_marketplace_assets_author").on(table.author),
+]);
+export const insertMarketplaceAssetSchema = createInsertSchema(marketplaceAssets).omit({ id: true, createdAt: true });
+export type InsertMarketplaceAsset = z.infer<typeof insertMarketplaceAssetSchema>;
+export type MarketplaceAsset = typeof marketplaceAssets.$inferSelect;
+
+// ── Marketplace Installations ─────────────────────────────────────────────────
+export const marketplaceInstallations = pgTable("marketplace_installations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  assetId: varchar("asset_id").notNull(),
+  installedBy: text("installed_by"),
+  installedAt: timestamp("installed_at").defaultNow(),
+}, (table) => [
+  index("idx_mkt_installs_org").on(table.organizationId),
+  index("idx_mkt_installs_asset").on(table.assetId),
+]);
+export const insertMarketplaceInstallationSchema = createInsertSchema(marketplaceInstallations).omit({ id: true, installedAt: true });
+export type InsertMarketplaceInstallation = z.infer<typeof insertMarketplaceInstallationSchema>;
+export type MarketplaceInstallation = typeof marketplaceInstallations.$inferSelect;
+
+// ── Eval Personas (Marketplace install target) ────────────────────────────────
+export const evalPersonas = pgTable("eval_personas", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  name: text("name").notNull(),
+  description: text("description"),
+  systemPrompt: text("system_prompt"),
+  traits: jsonb("traits").default(sql`'{}'::jsonb`),
+  industryTags: text("industry_tags").array().default(sql`'{}'::text[]`),
+  provenance: text("provenance").default("custom"),
+  sourceAssetId: varchar("source_asset_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+}, (table) => [
+  index("idx_eval_personas_org").on(table.organizationId),
+]);
+export const insertEvalPersonaSchema = createInsertSchema(evalPersonas).omit({ id: true, createdAt: true }).extend({ organizationId: z.string().optional() });
+export type InsertEvalPersona = z.infer<typeof insertEvalPersonaSchema>;
+export type EvalPersona = typeof evalPersonas.$inferSelect;

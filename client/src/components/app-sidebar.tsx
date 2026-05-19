@@ -46,6 +46,7 @@ import {
   ShieldAlert,
   PenLine,
   ClipboardList,
+  Store,
 } from "lucide-react";
 import {
   Sidebar,
@@ -148,6 +149,8 @@ function FullAppSidebar() {
         { title: "Red Team", url: "/evals/redteam", icon: ShieldAlert },
         { title: "Annotate", url: "/evals/annotate", icon: PenLine },
         { title: "Reports", url: "/evals/reports", icon: ClipboardList },
+        { title: "Prompts", url: "/evals/prompts", icon: GitBranch },
+        { title: "Marketplace", url: "/evals/marketplace", icon: Store },
       ],
     },
     {

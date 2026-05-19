@@ -55,6 +55,8 @@ import EvalMonitor from "@/pages/eval-monitor";
 import EvalRedteam from "@/pages/eval-redteam";
 import EvalAnnotate from "@/pages/eval-annotate";
 import EvalReports from "@/pages/eval-reports";
+import EvalPrompts from "@/pages/eval-prompts";
+import EvalMarketplace from "@/pages/eval-marketplace";
 import EvalRuns from "@/pages/eval-runs";
 import EvalRunDetail from "@/pages/eval-run-detail";
 import EvalDatasets from "@/pages/eval-datasets";
@@ -293,6 +295,8 @@ function DashboardRouter() {
       <Route path="/evals/redteam" component={EvalRedteam} />
       <Route path="/evals/annotate" component={EvalAnnotate} />
       <Route path="/evals/reports" component={EvalReports} />
+      <Route path="/evals/prompts" component={EvalPrompts} />
+      <Route path="/evals/marketplace" component={EvalMarketplace} />
       <Route path="/evals/datasets" component={EvalDatasets} />
       <Route path="/evals/runs" component={EvalRuns} />
       <Route path="/evals/runs/:id" component={EvalRunDetail} />

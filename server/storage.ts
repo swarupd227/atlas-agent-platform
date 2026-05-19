@@ -193,6 +193,11 @@ import {
   evalRedteamResults, type EvalRedteamResult, type InsertEvalRedteamResult,
   evalReportSchedules, type EvalReportSchedule, type InsertEvalReportSchedule,
   evalReportArtifacts, type EvalReportArtifact, type InsertEvalReportArtifact,
+  agentPrompts, type AgentPrompt, type InsertAgentPrompt,
+  evalExperiments, type EvalExperiment, type InsertEvalExperiment,
+  marketplaceAssets, type MarketplaceAsset, type InsertMarketplaceAsset,
+  marketplaceInstallations, type MarketplaceInstallation, type InsertMarketplaceInstallation,
+  evalPersonas, type EvalPersona, type InsertEvalPersona,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -957,6 +962,31 @@ export interface IStorage {
 
   // Atlas Eval Studio — Redteam Results
   getEvalRedteamResults(runId: string): Promise<EvalRedteamResult[]>;
+
+  // Agent Prompts
+  getAgentPrompts(agentId: string, orgId?: string): Promise<AgentPrompt[]>;
+  getAgentPrompt(agentId: string, version: number): Promise<AgentPrompt | undefined>;
+  createAgentPrompt(prompt: InsertAgentPrompt): Promise<AgentPrompt>;
+  promoteAgentPrompt(agentId: string, version: number, orgId?: string): Promise<AgentPrompt | undefined>;
+
+  // Eval Experiments
+  getEvalExperiments(filters: { agentId?: string; organizationId?: string }): Promise<EvalExperiment[]>;
+  getEvalExperiment(id: string): Promise<EvalExperiment | undefined>;
+  createEvalExperiment(exp: InsertEvalExperiment): Promise<EvalExperiment>;
+  updateEvalExperiment(id: string, data: Partial<InsertEvalExperiment>): Promise<EvalExperiment | undefined>;
+
+  // Marketplace Assets
+  getMarketplaceAssets(filters: { assetType?: string; industryTag?: string; author?: string }): Promise<MarketplaceAsset[]>;
+  getMarketplaceAsset(id: string): Promise<MarketplaceAsset | undefined>;
+
+  // Marketplace Installations
+  getMarketplaceInstallations(orgId: string): Promise<MarketplaceInstallation[]>;
+  createMarketplaceInstallation(install: InsertMarketplaceInstallation): Promise<MarketplaceInstallation>;
+  incrementMarketplaceAssetInstallCount(assetId: string): Promise<void>;
+
+  // Eval Personas
+  getEvalPersonas(orgId?: string): Promise<EvalPersona[]>;
+  createEvalPersona(persona: InsertEvalPersona): Promise<EvalPersona>;
   createEvalRedteamResult(result: InsertEvalRedteamResult): Promise<EvalRedteamResult>;
 }
 
@@ -4638,6 +4668,104 @@ export class DatabaseStorage implements IStorage {
 
   async createEvalRedteamResult(result: InsertEvalRedteamResult): Promise<EvalRedteamResult> {
     const [row] = await db.insert(evalRedteamResults).values(result).returning();
+    return row;
+  }
+
+  // ── Agent Prompts ────────────────────────────────────────────────────────────
+  async getAgentPrompts(agentId: string, orgId?: string): Promise<AgentPrompt[]> {
+    const conditions = [eq(agentPrompts.agentId, agentId)];
+    if (orgId) conditions.push(eq(agentPrompts.organizationId, orgId));
+    return db.select().from(agentPrompts).where(and(...conditions)).orderBy(desc(agentPrompts.version));
+  }
+
+  async getAgentPrompt(agentId: string, version: number): Promise<AgentPrompt | undefined> {
+    const [row] = await db.select().from(agentPrompts)
+      .where(and(eq(agentPrompts.agentId, agentId), eq(agentPrompts.version, version)));
+    return row;
+  }
+
+  async createAgentPrompt(prompt: InsertAgentPrompt): Promise<AgentPrompt> {
+    const existing = await db.select().from(agentPrompts)
+      .where(eq(agentPrompts.agentId, prompt.agentId))
+      .orderBy(desc(agentPrompts.version)).limit(1);
+    const nextVersion = existing.length > 0 ? (existing[0].version + 1) : 1;
+    const [row] = await db.insert(agentPrompts).values({ ...prompt, version: nextVersion }).returning();
+    return row;
+  }
+
+  async promoteAgentPrompt(agentId: string, version: number, orgId?: string): Promise<AgentPrompt | undefined> {
+    await db.update(agentPrompts).set({ isActive: false }).where(eq(agentPrompts.agentId, agentId));
+    const [row] = await db.update(agentPrompts)
+      .set({ isActive: true })
+      .where(and(eq(agentPrompts.agentId, agentId), eq(agentPrompts.version, version)))
+      .returning();
+    return row;
+  }
+
+  // ── Eval Experiments ─────────────────────────────────────────────────────────
+  async getEvalExperiments(filters: { agentId?: string; organizationId?: string }): Promise<EvalExperiment[]> {
+    const conditions = [];
+    if (filters.agentId) conditions.push(eq(evalExperiments.agentId, filters.agentId));
+    if (filters.organizationId) conditions.push(eq(evalExperiments.organizationId, filters.organizationId));
+    return db.select().from(evalExperiments)
+      .where(conditions.length ? and(...conditions) : undefined)
+      .orderBy(desc(evalExperiments.startedAt));
+  }
+
+  async getEvalExperiment(id: string): Promise<EvalExperiment | undefined> {
+    const [row] = await db.select().from(evalExperiments).where(eq(evalExperiments.id, id));
+    return row;
+  }
+
+  async createEvalExperiment(exp: InsertEvalExperiment): Promise<EvalExperiment> {
+    const [row] = await db.insert(evalExperiments).values(exp).returning();
+    return row;
+  }
+
+  async updateEvalExperiment(id: string, data: Partial<InsertEvalExperiment>): Promise<EvalExperiment | undefined> {
+    const [row] = await db.update(evalExperiments).set(data).where(eq(evalExperiments.id, id)).returning();
+    return row;
+  }
+
+  // ── Marketplace Assets ───────────────────────────────────────────────────────
+  async getMarketplaceAssets(filters: { assetType?: string; industryTag?: string; author?: string }): Promise<MarketplaceAsset[]> {
+    let rows = await db.select().from(marketplaceAssets).orderBy(desc(marketplaceAssets.createdAt));
+    if (filters.assetType) rows = rows.filter(r => r.assetType === filters.assetType);
+    if (filters.industryTag) rows = rows.filter(r => (r.industryTags ?? []).includes(filters.industryTag!));
+    if (filters.author) rows = rows.filter(r => r.author === filters.author);
+    return rows;
+  }
+
+  async getMarketplaceAsset(id: string): Promise<MarketplaceAsset | undefined> {
+    const [row] = await db.select().from(marketplaceAssets).where(eq(marketplaceAssets.id, id));
+    return row;
+  }
+
+  // ── Marketplace Installations ────────────────────────────────────────────────
+  async getMarketplaceInstallations(orgId: string): Promise<MarketplaceInstallation[]> {
+    return db.select().from(marketplaceInstallations).where(eq(marketplaceInstallations.organizationId, orgId));
+  }
+
+  async createMarketplaceInstallation(install: InsertMarketplaceInstallation): Promise<MarketplaceInstallation> {
+    const [row] = await db.insert(marketplaceInstallations).values(install).returning();
+    return row;
+  }
+
+  async incrementMarketplaceAssetInstallCount(assetId: string): Promise<void> {
+    await db.update(marketplaceAssets)
+      .set({ installedCount: sql`installed_count + 1` })
+      .where(eq(marketplaceAssets.id, assetId));
+  }
+
+  // ── Eval Personas ────────────────────────────────────────────────────────────
+  async getEvalPersonas(orgId?: string): Promise<EvalPersona[]> {
+    return db.select().from(evalPersonas)
+      .where(orgId ? eq(evalPersonas.organizationId, orgId) : undefined)
+      .orderBy(desc(evalPersonas.createdAt));
+  }
+
+  async createEvalPersona(persona: InsertEvalPersona): Promise<EvalPersona> {
+    const [row] = await db.insert(evalPersonas).values(persona).returning();
     return row;
   }
 }

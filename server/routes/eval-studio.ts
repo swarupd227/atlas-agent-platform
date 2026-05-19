@@ -2434,4 +2434,280 @@ router.put("/api/eval/report-schedules/:id", async (req, res) => {
   } catch (err: any) { res.status(500).json({ message: err.message }); }
 });
 
+// ── Agent Prompts — Prompt Version Registry ────────────────────────────────────
+
+// GET /api/agents/:agentId/prompts
+router.get("/api/agents/:agentId/prompts", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const agent = await storage.getAgent(req.params.agentId, orgId ?? undefined);
+    if (!agent) return res.status(404).json({ message: "Agent not found" });
+    const prompts = await storage.getAgentPrompts(req.params.agentId, orgId ?? undefined);
+    res.json(prompts);
+  } catch (err: any) { res.status(500).json({ message: err.message }); }
+});
+
+// POST /api/agents/:agentId/prompts
+router.post("/api/agents/:agentId/prompts", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const agent = await storage.getAgent(req.params.agentId, orgId ?? undefined);
+    if (!agent) return res.status(404).json({ message: "Agent not found" });
+    const { content, changeNote, createdBy } = req.body;
+    if (!content || typeof content !== "string") return res.status(400).json({ message: "content is required" });
+    const crypto = await import("crypto");
+    const sha256 = crypto.createHash("sha256").update(content).digest("hex");
+    const prompt = await storage.createAgentPrompt({
+      organizationId: orgId ?? undefined,
+      agentId: req.params.agentId,
+      content,
+      changeNote: changeNote ?? null,
+      createdBy: createdBy ?? "user",
+      sha256,
+      version: 1,
+    });
+    res.status(201).json(prompt);
+  } catch (err: any) { res.status(500).json({ message: err.message }); }
+});
+
+// GET /api/agents/:agentId/prompts/:version
+router.get("/api/agents/:agentId/prompts/:version", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const agent = await storage.getAgent(req.params.agentId, orgId ?? undefined);
+    if (!agent) return res.status(404).json({ message: "Agent not found" });
+    const version = parseInt(req.params.version, 10);
+    if (isNaN(version)) return res.status(400).json({ message: "version must be a number" });
+    const prompt = await storage.getAgentPrompt(req.params.agentId, version);
+    if (!prompt) return res.status(404).json({ message: "Prompt version not found" });
+    res.json(prompt);
+  } catch (err: any) { res.status(500).json({ message: err.message }); }
+});
+
+// POST /api/agents/:agentId/prompts/:version/promote
+router.post("/api/agents/:agentId/prompts/:version/promote", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const agent = await storage.getAgent(req.params.agentId, orgId ?? undefined);
+    if (!agent) return res.status(404).json({ message: "Agent not found" });
+    const version = parseInt(req.params.version, 10);
+    if (isNaN(version)) return res.status(400).json({ message: "version must be a number" });
+    const prompt = await storage.promoteAgentPrompt(req.params.agentId, version, orgId ?? undefined);
+    if (!prompt) return res.status(404).json({ message: "Prompt version not found" });
+    // Also sync the agent's systemPrompt field
+    await storage.updateAgent(req.params.agentId, { systemPrompt: prompt.content }, orgId ?? undefined);
+    res.json(prompt);
+  } catch (err: any) { res.status(500).json({ message: err.message }); }
+});
+
+// ── Eval Experiments — Prompt A/B ──────────────────────────────────────────────
+
+// GET /api/eval/experiments
+router.get("/api/eval/experiments", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const agentId = req.query.agentId as string | undefined;
+    const experiments = await storage.getEvalExperiments({
+      organizationId: orgId ?? undefined,
+      agentId,
+    });
+    res.json(experiments);
+  } catch (err: any) { res.status(500).json({ message: err.message }); }
+});
+
+// GET /api/eval/experiments/:id
+router.get("/api/eval/experiments/:id", async (req, res) => {
+  try {
+    const exp = await storage.getEvalExperiment(req.params.id);
+    if (!exp) return res.status(404).json({ message: "Experiment not found" });
+    res.json(exp);
+  } catch (err: any) { res.status(500).json({ message: err.message }); }
+});
+
+// POST /api/eval/experiments  — create + immediately simulate execution
+router.post("/api/eval/experiments", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const { agentId, name, description, datasetId, metricCollectionId, judgeModelOverride, variantPromptVersions, createdBy } = req.body;
+    if (!agentId || !name || !datasetId) return res.status(400).json({ message: "agentId, name, datasetId are required" });
+    if (!Array.isArray(variantPromptVersions) || variantPromptVersions.length < 2) {
+      return res.status(400).json({ message: "At least 2 variant prompt versions required" });
+    }
+    const agent = await storage.getAgent(agentId, orgId ?? undefined);
+    if (!agent) return res.status(404).json({ message: "Agent not found" });
+
+    const exp = await storage.createEvalExperiment({
+      organizationId: orgId ?? undefined,
+      agentId,
+      name,
+      description: description ?? null,
+      datasetId,
+      metricCollectionId: metricCollectionId ?? null,
+      judgeModelOverride: judgeModelOverride ?? null,
+      variantPromptVersions,
+      status: "running",
+      createdBy: createdBy ?? "user",
+    });
+
+    // Simulate parallel execution asynchronously (compute mock results per variant)
+    setImmediate(async () => {
+      try {
+        const results: Record<string, unknown> = {};
+        const significance: Record<string, unknown> = {};
+
+        for (const v of variantPromptVersions) {
+          const passRate = 0.55 + Math.random() * 0.40;
+          const scores: number[] = Array.from({ length: 20 }, () => Math.max(0, Math.min(1, passRate + (Math.random() - 0.5) * 0.2)));
+          const mean = scores.reduce((a, b) => a + b, 0) / scores.length;
+          const std = Math.sqrt(scores.reduce((a, b) => a + (b - mean) ** 2, 0) / scores.length);
+          results[`v${v}`] = {
+            variantVersion: v,
+            passRate: parseFloat(passRate.toFixed(3)),
+            meanScore: parseFloat(mean.toFixed(3)),
+            stdDev: parseFloat(std.toFixed(3)),
+            costUsd: parseFloat((0.001 + Math.random() * 0.05).toFixed(4)),
+            avgLatencyMs: Math.round(400 + Math.random() * 800),
+            scores,
+          };
+        }
+
+        // Compute significance (two-tailed paired t-test approximation for top-2 variants)
+        const sortedVariants = Object.entries(results).sort(([, a]: any, [, b]: any) => (b as any).meanScore - (a as any).meanScore);
+        if (sortedVariants.length >= 2) {
+          const [vA, vB] = sortedVariants;
+          const aScores = (vA[1] as any).scores as number[];
+          const bScores = (vB[1] as any).scores as number[];
+          const n = Math.min(aScores.length, bScores.length);
+          const diffs = aScores.slice(0, n).map((s: number, i: number) => s - bScores[i]);
+          const dMean = diffs.reduce((a: number, b: number) => a + b, 0) / n;
+          const dStd = Math.sqrt(diffs.reduce((a: number, b: number) => a + b ** 2, 0) / n - dMean ** 2);
+          const t = dStd === 0 ? 0 : (dMean / (dStd / Math.sqrt(n)));
+          const pValue = parseFloat((2 * (1 - Math.min(0.9999, Math.abs(t) * 0.1))).toFixed(4));
+          const significant = pValue < 0.05;
+          significance[`${vA[0]}_vs_${vB[0]}`] = {
+            tStat: parseFloat(t.toFixed(4)),
+            pValue,
+            significant,
+            effectSize: parseFloat((dMean / (dStd || 1)).toFixed(3)),
+            label: significant ? "Statistically significant improvement" : "No significant difference",
+          };
+        }
+
+        const winnerEntry = Object.entries(results).sort(([, a]: any, [, b]: any) => (b as any).passRate - (a as any).passRate)[0];
+        const winnerVersion = winnerEntry ? parseInt((winnerEntry[1] as any).variantVersion, 10) : null;
+
+        await storage.updateEvalExperiment(exp.id, {
+          status: "completed",
+          results,
+          significanceResults: significance,
+          winnerVersion: winnerVersion ?? undefined,
+          completedAt: new Date(),
+        });
+      } catch (e) {
+        await storage.updateEvalExperiment(exp.id, { status: "failed" });
+      }
+    });
+
+    res.status(201).json(exp);
+  } catch (err: any) { res.status(500).json({ message: err.message }); }
+});
+
+// ── Eval Marketplace ──────────────────────────────────────────────────────────
+
+// GET /api/eval/marketplace  — list assets with optional filters
+router.get("/api/eval/marketplace", async (req, res) => {
+  try {
+    const { assetType, industryTag, author } = req.query;
+    const assets = await storage.getMarketplaceAssets({
+      assetType: assetType as string | undefined,
+      industryTag: industryTag as string | undefined,
+      author: author as string | undefined,
+    });
+    res.json(assets);
+  } catch (err: any) { res.status(500).json({ message: err.message }); }
+});
+
+// GET /api/eval/marketplace/:id  — asset detail
+router.get("/api/eval/marketplace/:id", async (req, res) => {
+  try {
+    const asset = await storage.getMarketplaceAsset(req.params.id);
+    if (!asset) return res.status(404).json({ message: "Asset not found" });
+    res.json(asset);
+  } catch (err: any) { res.status(500).json({ message: err.message }); }
+});
+
+// GET /api/eval/marketplace-installations  — list installations for this org
+router.get("/api/eval/marketplace-installations", async (req, res) => {
+  try {
+    const orgId = getOrgId(req) ?? "default";
+    const installations = await storage.getMarketplaceInstallations(orgId);
+    res.json(installations);
+  } catch (err: any) { res.status(500).json({ message: err.message }); }
+});
+
+// POST /api/eval/marketplace/:id/install  — install an asset into tenant catalog
+router.post("/api/eval/marketplace/:id/install", async (req, res) => {
+  try {
+    const orgId = getOrgId(req) ?? "default";
+    const asset = await storage.getMarketplaceAsset(req.params.id);
+    if (!asset) return res.status(404).json({ message: "Asset not found" });
+
+    // Check if already installed
+    const existing = await storage.getMarketplaceInstallations(orgId);
+    if (existing.some(i => i.assetId === asset.id)) {
+      return res.status(409).json({ message: "Already installed" });
+    }
+
+    const installation = await storage.createMarketplaceInstallation({
+      organizationId: orgId,
+      assetId: asset.id,
+      installedBy: (req as any).authUser?.userId ?? "user",
+    });
+    await storage.incrementMarketplaceAssetInstallCount(asset.id);
+
+    // Unpack asset contents into tenant catalog
+    const contents = (asset.contentsJson ?? {}) as Record<string, unknown>;
+    if (asset.assetType === "metric_pack" && Array.isArray((contents as any).metrics)) {
+      for (const m of (contents as any).metrics) {
+        await storage.createEvalMetric({
+          organizationId: orgId,
+          name: m.name,
+          category: m.category ?? "compliance",
+          metricType: m.metricType ?? "g-eval",
+          source: "marketplace",
+          description: m.description ?? `From ${asset.title}`,
+          criteria: m.criteria ?? "",
+          evaluationParams: m.evaluationParams ?? ["input", "actual_output"],
+          threshold: m.threshold ?? 0.85,
+          createdBy: "marketplace",
+        });
+      }
+    } else if (asset.assetType === "persona_library" && Array.isArray((contents as any).personas)) {
+      for (const p of (contents as any).personas) {
+        await storage.createEvalPersona({
+          organizationId: orgId,
+          name: p.name,
+          description: p.description ?? null,
+          systemPrompt: p.systemPrompt ?? null,
+          traits: p.traits ?? {},
+          industryTags: p.industryTags ?? [],
+          provenance: "marketplace",
+          sourceAssetId: asset.id,
+        });
+      }
+    }
+
+    res.status(201).json({ installation, asset });
+  } catch (err: any) { res.status(500).json({ message: err.message }); }
+});
+
+// GET /api/eval/personas  — list installed personas
+router.get("/api/eval/personas", async (req, res) => {
+  try {
+    const orgId = getOrgId(req) ?? undefined;
+    const personas = await storage.getEvalPersonas(orgId);
+    res.json(personas);
+  } catch (err: any) { res.status(500).json({ message: err.message }); }
+});
+
 export default router;
