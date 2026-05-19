@@ -120,10 +120,13 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   }
 
   // ── Bearer API key auth (for CI runners and programmatic access) ────────────
-  // Accepts: Authorization: Bearer <api-key>
+  // Accepts: Authorization: Bearer <api-key> on /eval/* paths only.
   // Key is hashed with SHA-256 and looked up in agent_api_keys table.
+  // The key must have "invoke" or "eval" scope (least-privilege enforcement).
+  const BEARER_ALLOWED_PREFIXES = ["/eval/", "/eval"];
+  const pathAllowsBearer = BEARER_ALLOWED_PREFIXES.some(p => req.path === p || req.path.startsWith("/eval/"));
   const authHeader = req.headers["authorization"];
-  if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
+  if (pathAllowsBearer && typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
     const rawKey = authHeader.slice(7).trim();
     if (rawKey) {
       try {
@@ -135,7 +138,11 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
 
         if (apiKey) {
           const isExpired = apiKey.expiresAt && apiKey.expiresAt <= new Date();
-          if (!isExpired) {
+          // Scope enforcement: key must have "invoke" or "eval" scope
+          const scopes: string[] = (apiKey.scopes as string[] | null) ?? [];
+          const hasRequiredScope = scopes.some(s => s === "invoke" || s === "eval");
+
+          if (!isExpired && hasRequiredScope) {
             // Resolve org from the owning agent
             const [agent] = await db
               .select()

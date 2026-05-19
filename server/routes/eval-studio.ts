@@ -8,6 +8,7 @@ import { randomUUID } from "crypto";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
 import { runLlmJudge, runAgentOnInput, buildAgentContext } from "../eval-judge";
+import { evaluateGateTag } from "../worker";
 
 // ── Secure upload registry ────────────────────────────────────────────────────
 // Maps a server-issued UUID token → {filePath, orgId, extractedText, ext}.
@@ -1462,14 +1463,6 @@ router.post("/api/eval/gates/:agentId/promote", async (req, res) => {
       );
     const latestRun = completedRuns[0] ?? null;
 
-    // Gate status: prefer persisted tags (set by worker with full per-metric data),
-    // fall back to passRate-only computation for backwards compatibility.
-    // Uses passRate key specifically — NOT Math.min(all overrides).
-    const globalThreshold = (() => {
-      const overrides = gate?.thresholdOverrides as Record<string, number> | null;
-      return typeof overrides?.passRate === "number" ? overrides.passRate : 0.85;
-    })();
-
     let serverGateStatus: "pass" | "warn" | "fail" | "unknown" = "unknown";
     if (latestRun) {
       const tags = (latestRun.tags as string[] | null) ?? [];
@@ -1477,9 +1470,11 @@ router.post("/api/eval/gates/:agentId/promote", async (req, res) => {
       else if (tags.includes("gate:warn")) serverGateStatus = "warn";
       else if (tags.includes("gate:fail")) serverGateStatus = "fail";
       else if (latestRun.passRate != null) {
-        // Fallback: per-metric data unavailable here, use global threshold only
-        if (latestRun.passRate >= globalThreshold) serverGateStatus = "pass";
-        else if (latestRun.passRate >= 0.7) serverGateStatus = "warn";
+        // Fallback: persisted tags unavailable — use evaluateGateTag with passRate only.
+        // Per-metric data not available here; worker persists tags for the normal path.
+        const tag = evaluateGateTag(latestRun.passRate, gate, {});
+        if (tag === "gate:pass") serverGateStatus = "pass";
+        else if (tag === "gate:warn") serverGateStatus = "warn";
         else serverGateStatus = "fail";
       }
     }

@@ -179,7 +179,9 @@ function buildCiSnippet(provider: string, agentId: string): string {
           TAGS=$(curl -sf "${pollBase}/$RUN_ID" \\
             -H "Authorization: Bearer ${key}" | jq -r '.tags[]' 2>/dev/null || echo "")
           echo "Gate tags: $TAGS"
-          echo "$TAGS" | grep -q "gate:pass" || { echo "Eval gate did not pass"; exit 1; }`;
+          # gate:warn is advisory (amber) — CI passes. Only gate:fail exits non-zero.
+          echo "$TAGS" | grep -q "gate:fail" && { echo "Eval gate failed"; exit 1; }
+          echo "Eval gate passed (status: $(echo "$TAGS" | grep -oE 'gate:[a-z]+'  | head -1))"`;
 
   if (provider === "github") {
     return `name: Atlas Eval Gate
@@ -247,7 +249,8 @@ jobs:
             curl -sf $POLL_BASE/\${runId} \\
               -H 'Authorization: Bearer '\$ATLAS_API_KEY | jq -r '.tags[]' 2>/dev/null || echo ''
           """).trim()
-          if (!tags.contains('gate:pass')) { error "Eval gate did not pass. Tags: \${tags}" }
+          // gate:warn is advisory — CI passes. Only gate:fail exits non-zero.
+          if (tags.contains('gate:fail')) { error "Eval gate failed. Tags: \${tags}" }
         }
       }
     }
