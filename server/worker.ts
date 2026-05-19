@@ -890,60 +890,105 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
 
   const processGolden = async (golden: typeof goldens[0]) => {
     const t0 = Date.now();
+    const orgId = (payload.organizationId as string | undefined) || undefined;
 
     let actualOutput = "";
+    let agentFailed = false;
+    let agentFailureReason: string | undefined;
+
     try {
       const agentResult = await runAgentOnInput(agent.systemPrompt, { input: golden.input });
-      actualOutput = agentResult.output;
-    } catch {
+      if (!agentResult.output || agentResult.output.trim() === "") {
+        agentFailed = true;
+        agentFailureReason = "Agent produced empty output";
+        actualOutput = "";
+      } else {
+        actualOutput = agentResult.output;
+      }
+    } catch (err: any) {
+      agentFailed = true;
+      agentFailureReason = `Agent execution error: ${err?.message || "Unknown error"}`;
       actualOutput = "";
+      console.warn(`[eval-test-run] Agent failed for golden ${golden.id.slice(0, 8)}: ${agentFailureReason}`);
     }
 
-    const judgeResult = await runLlmJudge(
-      `Golden ${golden.id.slice(0, 8)}`,
-      { input: golden.input },
-      golden.expectedOutput ? { expected: golden.expectedOutput } : null,
-      agentCtx,
-      actualOutput,
-    );
+    const scores: Record<string, number> = {};
+    let overallPass = false;
+
+    if (agentFailed) {
+      scores["overall"] = 0;
+      overallPass = false;
+    } else {
+      const activeMetrics = metrics.filter(Boolean);
+      if (activeMetrics.length > 0) {
+        for (const metric of activeMetrics) {
+          if (!metric) continue;
+          const metricResult = await runLlmJudge(
+            metric.name,
+            { input: golden.input },
+            golden.expectedOutput ? { expected: golden.expectedOutput } : null,
+            `${agentCtx}\n\nEvaluation metric: ${metric.name}\nCriteria: ${metric.criteria || "Evaluate quality"}`,
+            actualOutput,
+          );
+          const score = metricResult.isPassed ? metricResult.confidence : (1 - metricResult.confidence) * (metric.threshold || 0.5);
+          scores[metric.name] = Math.round(score * 1000) / 1000;
+        }
+        overallPass = Object.values(scores).every((s, _i) => {
+          const metric = activeMetrics[_i];
+          return s >= (metric?.threshold || 0.5);
+        });
+        scores["overall"] = Object.values(scores).reduce((a, b) => a + b, 0) / Object.values(scores).length;
+      } else {
+        const judgeResult = await runLlmJudge(
+          `Golden ${golden.id.slice(0, 8)}`,
+          { input: golden.input },
+          golden.expectedOutput ? { expected: golden.expectedOutput } : null,
+          agentCtx,
+          actualOutput,
+        );
+        overallPass = judgeResult.isPassed;
+        scores["overall"] = judgeResult.isPassed ? judgeResult.confidence : 1 - judgeResult.confidence;
+      }
+    }
 
     const latencyMs = Date.now() - t0;
     totalLatencyMs += latencyMs;
-    const estimatedCostUsd = 0.003;
+    const estimatedCostUsd = 0.003 * Math.max(1, metrics.filter(Boolean).length);
     totalCostUsd += estimatedCostUsd;
-    totalTokens += 300;
-
-    const scores: Record<string, number> = {
-      overall: judgeResult.isPassed ? judgeResult.confidence : 1 - judgeResult.confidence,
-    };
+    const tokenEstimate = 300 * Math.max(1, metrics.filter(Boolean).length);
+    totalTokens += tokenEstimate;
 
     const trace = await storage.createEvalTrace({
       runId,
       goldenId: golden.id,
+      organizationId: orgId,
       scores,
-      passFail: judgeResult.isPassed,
+      passFail: agentFailed ? false : overallPass,
+      agentFailed,
+      agentFailureReason: agentFailureReason || null,
       costUsd: estimatedCostUsd,
-      totalTokens: 300,
+      totalTokens: tokenEstimate,
       latencyMs,
     });
 
     await storage.createEvalSpan({
       traceId: trace.id,
+      organizationId: orgId,
       spanType: "llm",
       name: "agent_completion",
       inputs: { input: golden.input },
-      outputs: { output: actualOutput },
-      attributes: { model: agent.modelId || "default", reason: judgeResult.reason },
+      outputs: agentFailed ? { error: agentFailureReason } : { output: actualOutput },
+      attributes: { model: agent.modelId || "default", agentFailed, scores },
       durationMs: latencyMs,
       endedAt: new Date(),
     });
 
     await storage.updateEvalGolden(golden.id, {
-      lastScore: scores.overall,
+      lastScore: scores["overall"] ?? 0,
       lastRunAt: new Date(),
     });
 
-    if (judgeResult.isPassed) passedCount++; else failedCount++;
+    if (!agentFailed && overallPass) passedCount++; else failedCount++;
   };
 
   const progressIncrement = Math.floor(90 / goldens.length);

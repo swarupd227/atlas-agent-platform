@@ -2763,6 +2763,7 @@ export type EvalDataset = typeof evalDatasets.$inferSelect;
 
 export const evalGoldens = pgTable("eval_goldens", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
   datasetId: varchar("dataset_id").notNull(),
   input: text("input").notNull(),
   expectedOutput: text("expected_output"),
@@ -2777,6 +2778,7 @@ export const evalGoldens = pgTable("eval_goldens", {
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
   index("idx_eval_goldens_dataset").on(table.datasetId),
+  index("idx_eval_goldens_org").on(table.organizationId),
 ]);
 
 export const insertEvalGoldenSchema = createInsertSchema(evalGoldens).omit({ id: true, createdAt: true, updatedAt: true });
@@ -2823,12 +2825,15 @@ export type EvalTestRun = typeof evalTestRuns.$inferSelect;
 
 export const evalTraces = pgTable("eval_traces", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
   runId: varchar("run_id").notNull(),
   goldenId: varchar("golden_id").notNull(),
   agentInvocationId: varchar("agent_invocation_id"),
   rootSpanId: varchar("root_span_id"),
   scores: jsonb("scores"),
   passFail: boolean("pass_fail"),
+  agentFailed: boolean("agent_failed").default(false),
+  agentFailureReason: text("agent_failure_reason"),
   costUsd: real("cost_usd").default(0),
   totalTokens: integer("total_tokens").default(0),
   latencyMs: integer("latency_ms"),
@@ -2839,6 +2844,7 @@ export const evalTraces = pgTable("eval_traces", {
 }, (table) => [
   index("idx_eval_traces_run").on(table.runId),
   index("idx_eval_traces_golden").on(table.goldenId),
+  index("idx_eval_traces_org").on(table.organizationId),
 ]);
 
 export const insertEvalTraceSchema = createInsertSchema(evalTraces).omit({ id: true, createdAt: true });
@@ -2847,6 +2853,7 @@ export type EvalTrace = typeof evalTraces.$inferSelect;
 
 export const evalSpans = pgTable("eval_spans", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
   traceId: varchar("trace_id").notNull(),
   parentSpanId: varchar("parent_span_id"),
   spanType: text("span_type").notNull().default("agent"),
@@ -2861,6 +2868,7 @@ export const evalSpans = pgTable("eval_spans", {
 }, (table) => [
   index("idx_eval_spans_trace").on(table.traceId),
   index("idx_eval_spans_parent").on(table.parentSpanId),
+  index("idx_eval_spans_org").on(table.organizationId),
 ]);
 
 export const insertEvalSpanSchema = createInsertSchema(evalSpans).omit({ id: true, startedAt: true });
@@ -2869,6 +2877,7 @@ export type EvalSpan = typeof evalSpans.$inferSelect;
 
 export const evalAnnotations = pgTable("eval_annotations", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
   traceId: varchar("trace_id").notNull(),
   annotatorId: text("annotator_id").notNull(),
   ratings: jsonb("ratings"),
@@ -2879,6 +2888,7 @@ export const evalAnnotations = pgTable("eval_annotations", {
 }, (table) => [
   index("idx_eval_annotations_trace").on(table.traceId),
   index("idx_eval_annotations_annotator").on(table.annotatorId),
+  index("idx_eval_annotations_org").on(table.organizationId),
 ]);
 
 export const insertEvalAnnotationSchema = createInsertSchema(evalAnnotations).omit({ id: true, createdAt: true });
