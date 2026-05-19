@@ -1172,16 +1172,43 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
   let gateTag: string | null = null;
   try {
     const gate = await storage.getEvalGate(agentId);
+
+    // Absolute pass-rate threshold from gate definition (default 0.85)
     const threshold: number = (() => {
       if (!gate?.thresholdOverrides) return 0.85;
       const vals = Object.values(gate.thresholdOverrides as Record<string, number>).filter(v => typeof v === "number");
       return vals.length > 0 ? Math.min(...vals) : 0.85;
     })();
+
     if (passRate !== null) {
       if (passRate >= threshold) gateTag = "gate:pass";
       else if (passRate >= 0.7) gateTag = "gate:warn";
       else gateTag = "gate:fail";
     }
+
+    // ── Regression-window check: compare vs. previous completed run ───────────
+    // If pass rate dropped more than regressionWindowPct from baseline, force gate:fail
+    // regardless of whether absolute threshold is met.
+    const regressionWindowPct = gate?.regressionWindowPct ?? 5;
+    if (passRate !== null && regressionWindowPct > 0) {
+      const runHistory = await storage.getEvalTestRuns({ agentId });
+      const baselineRun = runHistory
+        .filter(r => r.id !== runId && r.status === "completed" && r.passRate != null)
+        .sort((a, b) =>
+          new Date(b.completedAt ?? b.startedAt ?? 0).getTime() -
+          new Date(a.completedAt ?? a.startedAt ?? 0).getTime()
+        )[0] ?? null;
+
+      if (baselineRun?.passRate != null) {
+        const dropPct = (baselineRun.passRate - passRate) * 100;
+        if (dropPct > regressionWindowPct) {
+          // Regression window exceeded — demote to fail even if above absolute threshold
+          gateTag = "gate:fail";
+          console.log(`[eval-test-run] Regression window exceeded for run ${runId}: dropped ${dropPct.toFixed(1)}pp (window=${regressionWindowPct}%), forcing gate:fail`);
+        }
+      }
+    }
+
     if (gateTag) {
       const currentRun = await storage.getEvalTestRun(runId);
       const currentTags = (currentRun?.tags as string[] | null) ?? [];

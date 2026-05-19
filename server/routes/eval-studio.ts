@@ -1220,6 +1220,105 @@ router.get("/api/eval/summary", async (req, res) => {
   }
 });
 
+// ── Per-metric aggregates for regression detail ────────────────────────────────
+// Aggregates trace-level scores into per-metric pass rates for a given run.
+router.get("/api/eval/runs/:id/metric-summary", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const run = await storage.getEvalTestRun(req.params.id);
+    if (!run) return res.status(404).json({ message: "Run not found" });
+    assertOrgOwnership(run.organizationId, orgId);
+
+    // Fetch all traces (up to 500 — enough for meaningful aggregation)
+    const traces = await storage.getEvalTraces({ runId: run.id, limit: 500 });
+
+    // Aggregate per-metric scores from trace.scores (Record<string, number>)
+    const metricBuckets = new Map<string, { total: number; passed: number; scoreSum: number }>();
+    for (const trace of traces) {
+      const scores = trace.scores as Record<string, number> | null;
+      if (!scores) continue;
+      for (const [metric, score] of Object.entries(scores)) {
+        if (typeof score !== "number") continue;
+        const bucket = metricBuckets.get(metric) ?? { total: 0, passed: 0, scoreSum: 0 };
+        bucket.total++;
+        bucket.scoreSum += score;
+        if (score >= 0.5) bucket.passed++;
+        metricBuckets.set(metric, bucket);
+      }
+    }
+
+    const summary = Array.from(metricBuckets.entries()).map(([metric, b]) => ({
+      metric,
+      total: b.total,
+      passed: b.passed,
+      passRate: b.total > 0 ? b.passed / b.total : null,
+      avgScore: b.total > 0 ? Math.round((b.scoreSum / b.total) * 1000) / 1000 : null,
+    }));
+
+    // Put "overall" last, sort rest alphabetically
+    summary.sort((a, b) => {
+      if (a.metric === "overall") return 1;
+      if (b.metric === "overall") return -1;
+      return a.metric.localeCompare(b.metric);
+    });
+
+    res.json({ runId: run.id, metrics: summary, traceCount: traces.length });
+  } catch (err: any) {
+    if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ── Alias routes: /api/eval/agents/:agentId/gates ──────────────────────────────
+// These provide the documented path alongside the existing /api/eval/gates/:agentId.
+router.get("/api/eval/agents/:agentId/gates", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const gate = await storage.getEvalGate(req.params.agentId);
+    if (!gate) return res.status(404).json({ message: "No gate configured for this agent" });
+    assertOrgOwnership(gate.organizationId, orgId);
+    res.json(gate);
+  } catch (err: any) {
+    if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.put("/api/eval/agents/:agentId/gates", async (req, res) => {
+  // Delegate to the primary handler by re-routing the params
+  req.params.agentId = req.params.agentId; // already correct
+  // Inline the same logic for clarity — avoids internal router re-dispatch
+  try {
+    const orgId = getOrgId(req);
+    const { agentId } = req.params;
+    const agent = await storage.getAgent(agentId);
+    if (agent) assertOrgOwnership(agent.organizationId, orgId);
+
+    const body = req.body as {
+      datasetId?: string;
+      metricCollectionId?: string;
+      thresholdOverrides?: Record<string, number>;
+      regressionWindowPct?: number;
+      isActive?: boolean;
+    };
+
+    const gate = await storage.upsertEvalGate({
+      agentId,
+      organizationId: orgId ?? undefined,
+      datasetId: body.datasetId ?? null,
+      metricCollectionId: body.metricCollectionId ?? null,
+      thresholdOverrides: body.thresholdOverrides ?? null,
+      regressionWindowPct: body.regressionWindowPct ?? 5,
+      isActive: body.isActive !== false,
+    });
+
+    res.json(gate);
+  } catch (err: any) {
+    if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
+    res.status(500).json({ message: err.message });
+  }
+});
+
 // ── Regression Hub: Gate Definition Upsert ────────────────────────────────────
 router.put("/api/eval/gates/:agentId", async (req, res) => {
   try {
