@@ -2224,7 +2224,19 @@ router.post("/api/eval/annotations", async (req, res) => {
           // Target dataset: explicit override from body, or golden's own dataset
           const targetDatasetId = datasetId ?? golden.datasetId;
           const ratingMap = (ratings as Record<string, any>) ?? {};
-          const correctedOutput = ratingMap.overall?.correctedOutput ?? golden.expectedOutput ?? "";
+
+          // Fallback priority: 1) annotator's corrected output, 2) trace actual output (from root span), 3) golden expected
+          let correctedOutput = ratingMap.overall?.correctedOutput ?? "";
+          if (!correctedOutput) {
+            const spans = await storage.getEvalSpans(traceId).catch(() => []);
+            const rootSpan = spans.find((s: any) => !s.parentSpanId) ?? spans[0];
+            if (rootSpan?.outputs) {
+              const out = rootSpan.outputs as Record<string, any>;
+              correctedOutput = typeof out.text === "string" ? out.text : JSON.stringify(out);
+            }
+          }
+          if (!correctedOutput) correctedOutput = golden.expectedOutput ?? "";
+
           const newGolden = await storage.createEvalGolden({
             datasetId: targetDatasetId,
             organizationId: orgId ?? undefined,
@@ -2318,7 +2330,7 @@ router.get("/api/eval/annotations/stats/:annotatorId", async (req, res) => {
 router.post("/api/eval/reports", async (req, res) => {
   try {
     const orgId = getOrgId(req);
-    const { templateType, agentIds, timeWindowDays, format } = req.body;
+    const { templateType, agentIds, timeWindowDays, format, dateFrom, dateTo } = req.body;
     if (!templateType || !REPORT_TEMPLATES[templateType]) {
       return res.status(400).json({ message: "Invalid templateType" });
     }
@@ -2328,6 +2340,8 @@ router.post("/api/eval/reports", async (req, res) => {
       timeWindowDays: (timeWindowDays as number) ?? 30,
       format: (format as string) ?? "json",
       orgId: orgId ?? undefined,
+      dateFrom: typeof dateFrom === "string" ? dateFrom : undefined,
+      dateTo: typeof dateTo === "string" ? dateTo : undefined,
     });
     res.json(report);
   } catch (err: any) { res.status(500).json({ message: err.message }); }

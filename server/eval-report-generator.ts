@@ -46,13 +46,20 @@ export async function generateComplianceReport(opts: {
   timeWindowDays: number;
   format: string;
   orgId?: string;
+  /** ISO date string for custom range start (inclusive) */
+  dateFrom?: string;
+  /** ISO date string for custom range end (inclusive) */
+  dateTo?: string;
 }): Promise<GeneratedReport> {
-  const { templateType, agentIds, timeWindowDays, format, orgId } = opts;
+  const { templateType, agentIds, timeWindowDays, format, orgId, dateFrom, dateTo } = opts;
   const tmpl = REPORT_TEMPLATES[templateType];
   if (!tmpl) throw new Error(`Unknown templateType: ${templateType}`);
 
-  const windowMs = timeWindowDays * 24 * 60 * 60 * 1000;
-  const since = new Date(Date.now() - windowMs);
+  // Derive since/until from explicit date range or rolling window
+  const since: Date = dateFrom ? new Date(dateFrom) : new Date(Date.now() - timeWindowDays * 24 * 60 * 60 * 1000);
+  const until: Date = dateTo ? new Date(new Date(dateTo).getTime() + 86400000) : new Date(); // dateTo inclusive
+  const effectiveWindowDays = Math.max(1, Math.round((until.getTime() - since.getTime()) / 86400000));
+
   const ids: string[] = agentIds ?? [];
 
   const allRuns = await Promise.all(
@@ -60,15 +67,18 @@ export async function generateComplianceReport(opts: {
       ? ids.map(aid => storage.getEvalTestRuns({ agentId: aid, organizationId: orgId }))
       : [storage.getEvalTestRuns({ organizationId: orgId })]
   );
-  const runs = allRuns.flat().filter(r =>
-    r.startedAt && new Date(r.startedAt) >= since && r.status === "completed"
-  );
+  const runs = allRuns.flat().filter(r => {
+    if (!r.startedAt || r.status !== "completed") return false;
+    const t = new Date(r.startedAt);
+    return t >= since && t <= until;
+  });
 
   const rtRuns = await storage.getEvalRedteamRuns({ organizationId: orgId });
-  const relevantRtRuns = rtRuns.filter(r =>
-    r.startedAt && new Date(r.startedAt) >= since &&
-    (ids.length === 0 || ids.includes(r.agentId))
-  );
+  const relevantRtRuns = rtRuns.filter(r => {
+    if (!r.startedAt) return false;
+    const t = new Date(r.startedAt);
+    return t >= since && t <= until && (ids.length === 0 || ids.includes(r.agentId));
+  });
   const rtResults = (await Promise.all(
     relevantRtRuns.slice(0, 5).map(r => storage.getEvalRedteamResults(r.id).catch(() => []))
   )).flat();
@@ -164,15 +174,21 @@ export async function generateComplianceReport(opts: {
   const passingCount = sections.filter(s => s.status === "pass").length;
   const failingCount = sections.filter(s => s.status === "fail").length;
 
+  const windowLabel = dateFrom && dateTo
+    ? `${dateFrom} – ${dateTo}`
+    : `past ${effectiveWindowDays} days`;
+
   return {
     id: `rpt_${Date.now()}`,
     templateType,
     templateName: tmpl.name,
     format,
     generatedAt: new Date().toISOString(),
-    timeWindowDays,
+    timeWindowDays: effectiveWindowDays,
+    dateFrom: dateFrom ?? null,
+    dateTo: dateTo ?? null,
     agentIds: ids,
-    executiveSummary: `${tmpl.name} generated for ${ids.length > 0 ? ids.length : "all"} agent(s) over the past ${timeWindowDays} days. ${totalRuns} eval runs analyzed. Overall score: ${overallScore ?? "N/A"}%. ${passingCount} controls passing, ${failingCount} failing.`,
+    executiveSummary: `${tmpl.name} generated for ${ids.length > 0 ? ids.length : "all"} agent(s) over ${windowLabel}. ${totalRuns} eval runs analyzed. Overall score: ${overallScore ?? "N/A"}%. ${passingCount} controls passing, ${failingCount} failing.`,
     overallScore,
     sections,
     evidenceTable,

@@ -113,6 +113,8 @@ interface GeneratedReport {
   templateName: string;
   generatedAt: string;
   timeWindowDays: number;
+  dateFrom?: string | null;
+  dateTo?: string | null;
   agentIds: string[];
   executiveSummary: string;
   overallScore: number | null;
@@ -134,6 +136,53 @@ interface ReportSchedule {
   lastRunAt: string | null;
   nextRunAt: string | null;
   createdAt: string;
+}
+
+// ── PDF HTML builder ─────────────────────────────────────────────────────────
+
+function buildReportHtml(report: GeneratedReport): string {
+  const statusColor: Record<string, string> = { pass: "#16a34a", fail: "#dc2626", warning: "#ca8a04", info: "#2563eb" };
+  const sectionsHtml = report.sections.map(s => `
+    <div style="border:1px solid #e5e7eb;border-radius:6px;padding:12px 16px;margin-bottom:8px;">
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span style="color:${statusColor[s.status]};font-weight:700;font-size:11px;text-transform:uppercase;">${s.status}</span>
+        <span style="font-weight:600;font-size:14px;">${s.title}</span>
+        ${s.score !== null ? `<span style="margin-left:auto;font-weight:700;color:${s.score >= 90 ? "#16a34a" : s.score >= 70 ? "#ca8a04" : "#dc2626"};">${s.score}%</span>` : ""}
+      </div>
+      <p style="color:#6b7280;font-size:12px;margin:6px 0 4px;">${s.content}</p>
+      <ul style="margin:0;padding-left:16px;color:#374151;font-size:11px;">
+        ${s.evidence.map(e => `<li>${e}</li>`).join("")}
+      </ul>
+    </div>
+  `).join("");
+  const gapsHtml = report.gaps.length > 0
+    ? `<h3 style="font-size:14px;font-weight:600;margin:20px 0 8px;">Identified Gaps</h3>
+       <ul style="color:#dc2626;font-size:12px;padding-left:16px;">${report.gaps.map(g => `<li>${g}</li>`).join("")}</ul>`
+    : "";
+  const recsHtml = report.recommendations.length > 0
+    ? `<h3 style="font-size:14px;font-weight:600;margin:20px 0 8px;">Recommendations</h3>
+       <ul style="color:#2563eb;font-size:12px;padding-left:16px;">${report.recommendations.map(r => `<li>${r}</li>`).join("")}</ul>`
+    : "";
+
+  return `<!DOCTYPE html><html><head><title>${report.templateName}</title>
+<style>body{font-family:system-ui,sans-serif;max-width:860px;margin:40px auto;color:#111827;}
+@media print{body{margin:0;}}</style></head><body>
+<div style="border-bottom:2px solid #111827;padding-bottom:16px;margin-bottom:24px;">
+  <h1 style="font-size:22px;font-weight:700;margin:0 0 4px;">${report.templateName}</h1>
+  <p style="color:#6b7280;font-size:12px;margin:0;">Generated ${new Date(report.generatedAt).toLocaleString()} · ${report.dateFrom && report.dateTo ? `${report.dateFrom} – ${report.dateTo}` : `${report.timeWindowDays}-day window`} · ${report.agentIds.length || "All"} agent(s)</p>
+</div>
+<div style="display:flex;gap:24px;margin-bottom:24px;">
+  <div style="text-align:center;border:1px solid #e5e7eb;border-radius:8px;padding:16px 24px;">
+    <div style="font-size:36px;font-weight:700;color:${(report.overallScore ?? 0) >= 90 ? "#16a34a" : (report.overallScore ?? 0) >= 70 ? "#ca8a04" : "#dc2626"};">${report.overallScore ?? "—"}</div>
+    <div style="font-size:11px;color:#6b7280;">Overall Score</div>
+  </div>
+  <div style="flex:1;border:1px solid #e5e7eb;border-radius:8px;padding:16px;">
+    <p style="font-size:13px;line-height:1.6;margin:0;">${report.executiveSummary}</p>
+  </div>
+</div>
+<h3 style="font-size:14px;font-weight:600;margin:0 0 10px;">Controls & Findings</h3>
+${sectionsHtml}${gapsHtml}${recsHtml}
+</body></html>`;
 }
 
 // ── Status chip ───────────────────────────────────────────────────────────────
@@ -230,14 +279,17 @@ function ReportViewer({ report, onClose }: { report: GeneratedReport; onClose: (
               <h2 className="font-bold text-lg">{report.templateName}</h2>
             </div>
             <p className="text-xs text-muted-foreground">
-              Generated {new Date(report.generatedAt).toLocaleString()} · {report.timeWindowDays}-day window
+              Generated {new Date(report.generatedAt).toLocaleString()} ·{" "}
+              {report.dateFrom && report.dateTo
+                ? `${report.dateFrom} – ${report.dateTo}`
+                : `${report.timeWindowDays}-day window`}
             </p>
           </div>
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
               size="sm"
-              data-testid="download-report-btn"
+              data-testid="download-json-btn"
               onClick={() => {
                 const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
                 const url = URL.createObjectURL(blob);
@@ -248,7 +300,23 @@ function ReportViewer({ report, onClose }: { report: GeneratedReport; onClose: (
                 URL.revokeObjectURL(url);
               }}
             >
-              <Download className="h-4 w-4 mr-1.5" /> Download JSON
+              <Download className="h-4 w-4 mr-1.5" /> JSON
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="download-pdf-btn"
+              onClick={() => {
+                const html = buildReportHtml(report);
+                const win = window.open("", "_blank");
+                if (!win) return;
+                win.document.write(html);
+                win.document.close();
+                win.focus();
+                setTimeout(() => { win.print(); }, 400);
+              }}
+            >
+              <Download className="h-4 w-4 mr-1.5" /> PDF
             </Button>
             <Button variant="ghost" size="sm" data-testid="close-report-btn" onClick={onClose}>
               Close
@@ -569,6 +637,11 @@ export default function EvalReports() {
   const [activeView, setActiveView] = useState<ActiveView>("templates");
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
   const [timeWindowDays, setTimeWindowDays] = useState("30");
+  const [windowMode, setWindowMode] = useState<"preset" | "custom">("preset");
+  const [dateFrom, setDateFrom] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10);
+  });
+  const [dateTo, setDateTo] = useState(() => new Date().toISOString().slice(0, 10));
   const [selectedFormat, setSelectedFormat] = useState("json");
   const [generatedReport, setGeneratedReport] = useState<GeneratedReport | null>(null);
 
@@ -740,20 +813,56 @@ export default function EvalReports() {
                   <Separator />
 
                   {/* Time window */}
-                  <div>
-                    <Label className="text-xs mb-1.5 block">Time Window</Label>
-                    <Select value={timeWindowDays} onValueChange={setTimeWindowDays}>
-                      <SelectTrigger data-testid="generate-window-select" className="h-9">
+                  <div className="space-y-2">
+                    <Label className="text-xs block">Analysis Window</Label>
+                    <Select value={windowMode} onValueChange={setWindowMode}>
+                      <SelectTrigger data-testid="generate-window-mode-select" className="h-9">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="7">Last 7 days</SelectItem>
-                        <SelectItem value="14">Last 14 days</SelectItem>
-                        <SelectItem value="30">Last 30 days</SelectItem>
-                        <SelectItem value="60">Last 60 days</SelectItem>
-                        <SelectItem value="90">Last 90 days</SelectItem>
+                        <SelectItem value="preset">Preset</SelectItem>
+                        <SelectItem value="custom">Custom date range</SelectItem>
                       </SelectContent>
                     </Select>
+                    {windowMode === "preset" ? (
+                      <Select value={timeWindowDays} onValueChange={setTimeWindowDays}>
+                        <SelectTrigger data-testid="generate-window-select" className="h-9">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="7">Last 7 days</SelectItem>
+                          <SelectItem value="14">Last 14 days</SelectItem>
+                          <SelectItem value="30">Last 30 days</SelectItem>
+                          <SelectItem value="60">Last 60 days</SelectItem>
+                          <SelectItem value="90">Last 90 days</SelectItem>
+                          <SelectItem value="180">Last 180 days</SelectItem>
+                          <SelectItem value="365">Last 365 days</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <Label className="text-[10px] text-muted-foreground mb-1 block">From</Label>
+                          <Input
+                            type="date"
+                            data-testid="window-date-from"
+                            value={dateFrom}
+                            onChange={e => setDateFrom(e.target.value)}
+                            className="h-9 text-xs"
+                          />
+                        </div>
+                        <div>
+                          <Label className="text-[10px] text-muted-foreground mb-1 block">To</Label>
+                          <Input
+                            type="date"
+                            data-testid="window-date-to"
+                            value={dateTo}
+                            onChange={e => setDateTo(e.target.value)}
+                            className="h-9 text-xs"
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   <Separator />
@@ -779,13 +888,24 @@ export default function EvalReports() {
                   <Button
                     className="w-full"
                     data-testid="generate-report-btn"
-                    disabled={generateReport.isPending}
-                    onClick={() => generateReport.mutate({
-                      templateType: selectedTemplate,
-                      agentIds: selectedAgentIds,
-                      timeWindowDays: parseInt(timeWindowDays),
-                      format: selectedFormat,
-                    })}
+                    disabled={generateReport.isPending || (windowMode === "custom" && (!dateFrom || !dateTo))}
+                    onClick={() => {
+                      const payload: Record<string, any> = {
+                        templateType: selectedTemplate,
+                        agentIds: selectedAgentIds,
+                        format: selectedFormat,
+                      };
+                      if (windowMode === "custom" && dateFrom && dateTo) {
+                        payload.dateFrom = dateFrom;
+                        payload.dateTo = dateTo;
+                        // Derive approx window days for display
+                        const ms = new Date(dateTo).getTime() - new Date(dateFrom).getTime();
+                        payload.timeWindowDays = Math.max(1, Math.round(ms / 86400000));
+                      } else {
+                        payload.timeWindowDays = parseInt(timeWindowDays);
+                      }
+                      generateReport.mutate(payload);
+                    }}
                   >
                     {generateReport.isPending ? (
                       <>

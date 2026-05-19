@@ -584,14 +584,30 @@ async function processReportScheduleRun(job: Job): Promise<Record<string, unknow
           timeWindowDays: schedule.timeWindowDays ?? 30,
           format: "json",
           orgId: schedule.organizationId ?? undefined,
-        });
+        }) as Record<string, unknown>;
         await storage.createEvalReportArtifact({
           scheduleId: schedule.id,
           organizationId: schedule.organizationId ?? undefined,
           templateType: schedule.templateType,
-          format: "json",
-          payload: report as Record<string, unknown>,
+          timeWindowDays: schedule.timeWindowDays ?? 30,
+          agentIds: (schedule.agentIds as string[]) ?? [],
+          reportData: report,
+          overallScore: typeof report.overallScore === "number" ? report.overallScore : undefined,
+          status: "ready",
         });
+
+        // Notify recipients (stub — replace with transactional email service in production)
+        const recipients: string[] = (schedule.recipients as string[]) ?? [];
+        if (recipients.length > 0) {
+          const overallScore = typeof report.overallScore === "number" ? `${report.overallScore}%` : "N/A";
+          console.log(
+            `[worker] [email-stub] Report schedule ${schedule.id} — would send to ${recipients.join(", ")}:` +
+            ` "${report.templateName ?? schedule.templateType}" | overall=${overallScore}` +
+            ` | ${(report as any).stats?.totalRuns ?? 0} eval runs | generated ${new Date().toISOString()}`
+          );
+          // TODO: integrate a transactional email provider (e.g. SendGrid, Resend)
+          // and call something like: await sendEmail({ to: recipients, subject, html });
+        }
 
         // Advance nextRunAt based on cadence
         const now = new Date();
