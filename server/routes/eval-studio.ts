@@ -158,6 +158,7 @@ router.post("/api/eval/metrics/:id/clone", async (req, res) => {
     const orgId = getOrgId(req);
     const original = await storage.getEvalMetric(req.params.id);
     if (!original) return res.status(404).json({ message: "Metric not found" });
+    assertOrgOwnership(original.organizationId, orgId);
     const customName: string | undefined = req.body?.name;
     const cloned = await storage.createEvalMetric({
       name: customName || `${original.name} (Clone)`,

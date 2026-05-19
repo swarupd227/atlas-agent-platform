@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { useRole } from "@/components/role-provider";
-import type { Agent, EvalTestRun, EvalDataset } from "@shared/schema";
+import type { Agent, EvalTestRun, EvalDataset, AuditEvent } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -97,21 +97,25 @@ function passRateColor(rate: number | null | undefined): string {
   return "text-red-600 dark:text-red-400";
 }
 
-function generateAgentSparkline(passRate: number | null, id: string): number[] {
-  if (passRate == null) return [];
-  const seed = hashCode(id);
-  return Array.from({ length: 7 }, (_, i) => {
-    const variance = ((seed * (i + 1) * 7) % 100 - 50) / 500;
-    return Math.max(0, Math.min(1, passRate + variance));
-  });
+function runsToSparkline(sortedRunsAsc: EvalTestRun[]): number[] {
+  return sortedRunsAsc
+    .filter(r => r.passRate != null)
+    .map(r => r.passRate as number);
 }
 
-function generateCostSparkline(totalCost: number, seed: number): number[] {
-  return Array.from({ length: 30 }, (_, i) => {
-    const base = totalCost / 30;
-    const noise = ((seed * (i + 1) * 13) % 100 - 50) / 100;
-    return Math.max(0, base * (1 + noise * 0.6));
-  });
+function buildDailyCostSparkline(runs: EvalTestRun[], days = 30): number[] {
+  const dayMs = 86_400_000;
+  const now = Date.now();
+  const buckets: number[] = new Array(days).fill(0);
+  for (const run of runs) {
+    if (!run.startedAt || run.costUsd == null) continue;
+    const age = now - new Date(run.startedAt).getTime();
+    const dayIdx = Math.floor(age / dayMs);
+    if (dayIdx >= 0 && dayIdx < days) {
+      buckets[days - 1 - dayIdx] += run.costUsd;
+    }
+  }
+  return buckets;
 }
 
 interface EvalSummary {
@@ -144,6 +148,10 @@ export default function Evals() {
     queryKey: ["/api/eval/datasets"],
   });
 
+  const { data: auditEvents } = useQuery<AuditEvent[]>({
+    queryKey: ["/api/audit-events"],
+  });
+
   const agentMap = useMemo(() => {
     const m = new Map<string, Agent>();
     for (const a of (agents || [])) m.set(a.id, a);
@@ -151,6 +159,7 @@ export default function Evals() {
   }, [agents]);
 
   const RISK_THRESHOLD = 0.85;
+  const sevenDaysAgo = useMemo(() => Date.now() - 7 * 86_400_000, []);
 
   const agentsAtRisk = useMemo(() => {
     if (!runs) return [];
@@ -160,26 +169,44 @@ export default function Evals() {
       list.push(run);
       runsByAgent.set(run.agentId, list);
     }
-    const results: Array<{ run: EvalTestRun; prevRun: EvalTestRun | null; reason: "below_threshold" | "trending_down" }> = [];
+    const results: Array<{
+      run: EvalTestRun;
+      prevRun: EvalTestRun | null;
+      reason: "below_threshold" | "trending_down";
+      sparkline: number[];
+    }> = [];
     for (const [, agentRuns] of runsByAgent.entries()) {
-      const sorted = [...agentRuns].sort((a, b) => new Date(b.startedAt!).getTime() - new Date(a.startedAt!).getTime());
-      const latest = sorted[0];
-      const prev = sorted[1] ?? null;
+      const allSorted = [...agentRuns].sort((a, b) => new Date(a.startedAt!).getTime() - new Date(b.startedAt!).getTime());
+      const latest = allSorted[allSorted.length - 1];
+      const prev = allSorted.length >= 2 ? allSorted[allSorted.length - 2] : null;
+      const sparkline = runsToSparkline(allSorted.slice(-7));
+
+      const sevenDayRuns = allSorted.filter(r => r.startedAt && new Date(r.startedAt).getTime() >= sevenDaysAgo);
       const isBelowThreshold = latest.passRate != null && latest.passRate < RISK_THRESHOLD;
-      const isTrendingDown = prev?.passRate != null && latest.passRate != null && latest.passRate < prev.passRate - 0.03;
-      if (isBelowThreshold) results.push({ run: latest, prevRun: prev, reason: "below_threshold" });
-      else if (isTrendingDown) results.push({ run: latest, prevRun: prev, reason: "trending_down" });
+      let isTrendingDown = false;
+      if (sevenDayRuns.length >= 2) {
+        const firstOfWindow = sevenDayRuns[0].passRate ?? 0;
+        const lastOfWindow = sevenDayRuns[sevenDayRuns.length - 1].passRate ?? 0;
+        isTrendingDown = lastOfWindow < firstOfWindow - 0.03;
+      } else if (prev?.passRate != null && latest.passRate != null) {
+        isTrendingDown = latest.passRate < prev.passRate - 0.03;
+      }
+
+      if (isBelowThreshold) results.push({ run: latest, prevRun: prev, reason: "below_threshold", sparkline });
+      else if (isTrendingDown) results.push({ run: latest, prevRun: prev, reason: "trending_down", sparkline });
     }
     return results
       .sort((a, b) => (a.run.passRate ?? 1) - (b.run.passRate ?? 1))
       .slice(0, 8);
-  }, [runs]);
+  }, [runs, sevenDaysAgo]);
 
   interface ActivityItem {
     id: string;
-    type: "run_completed" | "run_regressed" | "run_started" | "run_failed" | "dataset_created" | "golden_added";
+    type: "run_completed" | "run_regressed" | "run_started" | "run_failed" | "dataset_created" | "golden_added" | "audit_event";
     label: string;
     sublabel: string;
+    actor?: string;
+    targetLink?: string;
     timestamp: string;
   }
 
@@ -196,14 +223,16 @@ export default function Evals() {
           type: regressed ? "run_regressed" : "run_completed",
           label: regressed ? "Regression detected" : "Eval run passed",
           sublabel: `${agentName} · ${pct}% pass rate`,
+          actor: "system",
+          targetLink: `/evals/runs/${run.id}`,
           timestamp: ts,
         });
       } else if (run.status === "running") {
-        items.push({ id: `run-${run.id}`, type: "run_started", label: "Eval run started", sublabel: agentName, timestamp: ts });
+        items.push({ id: `run-${run.id}`, type: "run_started", label: "Eval run started", sublabel: agentName, actor: "system", targetLink: `/evals/runs/${run.id}`, timestamp: ts });
       } else if (run.status === "failed") {
-        items.push({ id: `run-${run.id}`, type: "run_failed", label: "Eval run failed", sublabel: agentName, timestamp: ts });
+        items.push({ id: `run-${run.id}`, type: "run_failed", label: "Eval run failed", sublabel: agentName, actor: "system", targetLink: `/evals/runs/${run.id}`, timestamp: ts });
       } else {
-        items.push({ id: `run-${run.id}`, type: "run_started", label: "Eval run queued", sublabel: agentName, timestamp: ts });
+        items.push({ id: `run-${run.id}`, type: "run_started", label: "Eval run queued", sublabel: agentName, actor: "system", targetLink: `/evals/runs/${run.id}`, timestamp: ts });
       }
     }
     for (const ds of (datasets ?? [])) {
@@ -213,6 +242,8 @@ export default function Evals() {
           type: "golden_added",
           label: `${ds.goldenCount} golden${ds.goldenCount !== 1 ? "s" : ""} in dataset`,
           sublabel: ds.name,
+          actor: "system",
+          targetLink: `/golden-datasets/${ds.id}`,
           timestamp: (ds.updatedAt ?? ds.createdAt) as string,
         });
       }
@@ -221,19 +252,37 @@ export default function Evals() {
         type: "dataset_created",
         label: "Dataset created",
         sublabel: ds.name,
+        actor: "system",
+        targetLink: `/golden-datasets/${ds.id}`,
         timestamp: ds.createdAt as string,
+      });
+    }
+    for (const evt of (auditEvents ?? []).slice(0, 30)) {
+      const actorLabel = evt.actorId
+        ? `${evt.actorType}:${String(evt.actorId).slice(0, 10)}`
+        : evt.actorType;
+      const targetLink = evt.objectType === "agent" ? `/agents/${evt.objectId}`
+        : evt.objectType === "eval_run" ? `/evals/runs/${evt.objectId}`
+        : evt.objectType === "policy" ? `/governance`
+        : undefined;
+      items.push({
+        id: `audit-${evt.id}`,
+        type: "audit_event",
+        label: evt.action.replace(/\./g, " "),
+        sublabel: `${evt.objectType}${evt.objectId ? ` · ${String(evt.objectId).slice(0, 10)}` : ""}`,
+        actor: actorLabel,
+        targetLink,
+        timestamp: evt.createdAt as string,
       });
     }
     return items
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
       .slice(0, 14);
-  }, [runs, datasets, agentMap]);
+  }, [runs, datasets, auditEvents, agentMap]);
 
   const costSparkline = useMemo(() => {
-    const cost = summary?.evalCostUsd ?? 0;
-    const seed = Math.floor(cost * 1000) || 42;
-    return generateCostSparkline(cost, seed);
-  }, [summary?.evalCostUsd]);
+    return buildDailyCostSparkline(runs ?? [], 30);
+  }, [runs]);
 
   const kpiTiles = [
     {
@@ -305,6 +354,7 @@ export default function Evals() {
       case "run_failed": return { icon: AlertTriangle, color: "text-red-500" };
       case "dataset_created": return { icon: Database, color: "text-violet-500" };
       case "golden_added": return { icon: PlusCircle, color: "text-emerald-500" };
+      case "audit_event": return { icon: BookOpen, color: "text-slate-500" };
       default: return { icon: Clock, color: "text-muted-foreground" };
     }
   };
@@ -387,7 +437,7 @@ export default function Evals() {
               </div>
             ) : (
               <div className="divide-y">
-                {agentsAtRisk.map(({ run, prevRun, reason }) => {
+                {agentsAtRisk.map(({ run, prevRun, reason, sparkline }) => {
                   const agent = agentMap.get(run.agentId);
                   const name = agent?.name ?? `Agent ${run.agentId.slice(0, 8)}`;
                   const passRate = run.passRate ?? 0;
@@ -395,7 +445,7 @@ export default function Evals() {
                   const trendDelta = prevRate != null ? passRate - prevRate : 0;
                   const TrendIcon = trendDelta > 0.01 ? TrendingUp : trendDelta < -0.01 ? TrendingDown : Minus;
                   const trendColor = trendDelta > 0.01 ? "text-emerald-500" : trendDelta < -0.01 ? "text-red-500" : "text-muted-foreground";
-                  const sparkData = generateAgentSparkline(passRate, run.agentId);
+                  const sparkData = sparkline.length >= 2 ? sparkline : [passRate];
                   return (
                     <div key={run.id} className="flex items-center gap-3 px-4 py-3 hover:bg-muted/30 transition-colors" data-testid={`row-agent-risk-${run.agentId}`}>
                       <div className="flex-1 min-w-0">
@@ -456,19 +506,27 @@ export default function Evals() {
               <div className="divide-y">
                 {recentActivity.map((item) => {
                   const { icon: Icon, color } = activityIconConfig(item.type);
-                  return (
-                    <div key={item.id} className="flex items-start gap-3 px-4 py-3 hover:bg-muted/30 transition-colors" data-testid={`row-activity-${item.id}`}>
+                  const content = (
+                    <div key={item.id} className="flex items-start gap-3 px-4 py-3 hover:bg-muted/30 transition-colors cursor-pointer" data-testid={`row-activity-${item.id}`}>
                       <div className={`mt-0.5 shrink-0 ${color}`}>
                         <Icon className="w-4 h-4" />
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{item.label}</p>
+                        <p className="text-sm font-medium truncate capitalize">{item.label}</p>
                         <p className="text-xs text-muted-foreground truncate">{item.sublabel}</p>
+                        {item.actor && (
+                          <p className="text-[10px] text-muted-foreground/50 truncate mt-0.5 font-mono">{item.actor}</p>
+                        )}
                       </div>
                       <div className="text-[10px] text-muted-foreground/60 whitespace-nowrap shrink-0 mt-0.5">
                         {formatDate(item.timestamp)}
                       </div>
                     </div>
+                  );
+                  return item.targetLink ? (
+                    <Link key={item.id} href={item.targetLink}>{content}</Link>
+                  ) : (
+                    <div key={item.id}>{content}</div>
                   );
                 })}
               </div>
