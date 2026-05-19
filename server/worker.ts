@@ -841,6 +841,41 @@ export async function enqueueOtcSmokeTestNow(): Promise<{ jobId: string }> {
   return { jobId: job.id };
 }
 
+// ── Canonical gate evaluator — single source of truth for worker + promote endpoint ──
+// Rules (in order):
+//   1. Per-metric threshold checks: any named metric with passRate < its threshold → gate:fail
+//   2. Global passRate threshold ("passRate" key, default 0.85) for overall gate:pass/warn/fail
+// IMPORTANT: uses thresholdOverrides.passRate specifically, NOT Math.min(all values).
+//            Per-metric keys are separate enforcement rules, not the global threshold.
+type GateOverrides = { thresholdOverrides?: unknown; regressionWindowPct?: number | null };
+
+export function evaluateGateTag(
+  passRate: number,
+  gate: GateOverrides | null | undefined,
+  perMetricPassRates: Record<string, number> = {}
+): "gate:pass" | "gate:warn" | "gate:fail" {
+  const overrides = (gate?.thresholdOverrides as Record<string, number> | null) ?? {};
+
+  // Global pass-rate threshold comes from the "passRate" key specifically (default 0.85)
+  const globalThreshold =
+    typeof overrides.passRate === "number" ? overrides.passRate : 0.85;
+
+  // Per-metric enforcement: any violation is an immediate gate:fail
+  for (const [metricName, threshold] of Object.entries(overrides)) {
+    if (metricName === "passRate") continue;
+    if (typeof threshold !== "number") continue;
+    const metricPassRate = perMetricPassRates[metricName];
+    if (metricPassRate != null && metricPassRate < threshold) {
+      return "gate:fail";
+    }
+  }
+
+  // Global threshold evaluation
+  if (passRate >= globalThreshold) return "gate:pass";
+  if (passRate >= 0.7) return "gate:warn";
+  return "gate:fail";
+}
+
 async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
   const payload = job.payload as Record<string, unknown>;
   const runId = payload.runId as string;
@@ -905,6 +940,9 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
   let totalLatencyMs = 0;
   let totalCostUsd = 0;
   let totalTokens = 0;
+
+  // Accumulate per-metric pass rates for gate enforcement (JS single-threaded, safe across async)
+  const perMetricAgg = new Map<string, { total: number; passed: number }>();
 
   const CONCURRENCY = Math.min(parallelism, 10);
   let cursor = 0;
@@ -1020,6 +1058,15 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
           threshold: 0.5,
         };
       }
+    }
+
+    // Accumulate per-metric scores for gate enforcement
+    for (const [metric, score] of Object.entries(scores)) {
+      if (typeof score !== "number") continue;
+      const bucket = perMetricAgg.get(metric) ?? { total: 0, passed: 0 };
+      bucket.total++;
+      if (score >= 0.5) bucket.passed++;
+      perMetricAgg.set(metric, bucket);
     }
 
     const latencyMs = Date.now() - t0;
@@ -1173,22 +1220,19 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
   try {
     const gate = await storage.getEvalGate(agentId);
 
-    // Absolute pass-rate threshold from gate definition (default 0.85)
-    const threshold: number = (() => {
-      if (!gate?.thresholdOverrides) return 0.85;
-      const vals = Object.values(gate.thresholdOverrides as Record<string, number>).filter(v => typeof v === "number");
-      return vals.length > 0 ? Math.min(...vals) : 0.85;
-    })();
-
     if (passRate !== null) {
-      if (passRate >= threshold) gateTag = "gate:pass";
-      else if (passRate >= 0.7) gateTag = "gate:warn";
-      else gateTag = "gate:fail";
+      // Build per-metric pass rates from accumulator
+      const perMetricPassRates: Record<string, number> = {};
+      for (const [metric, bucket] of perMetricAgg.entries()) {
+        perMetricPassRates[metric] = bucket.total > 0 ? bucket.passed / bucket.total : 0;
+      }
+      // Evaluate gate using the shared canonical evaluator
+      gateTag = evaluateGateTag(passRate, gate, perMetricPassRates);
     }
 
     // ── Regression-window check: compare vs. previous completed run ───────────
     // If pass rate dropped more than regressionWindowPct from baseline, force gate:fail
-    // regardless of whether absolute threshold is met.
+    // regardless of whether absolute threshold is met or per-metric checks passed.
     const regressionWindowPct = gate?.regressionWindowPct ?? 5;
     if (passRate !== null && regressionWindowPct > 0) {
       const runHistory = await storage.getEvalTestRuns({ agentId });
@@ -1202,7 +1246,6 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
       if (baselineRun?.passRate != null) {
         const dropPct = (baselineRun.passRate - passRate) * 100;
         if (dropPct > regressionWindowPct) {
-          // Regression window exceeded — demote to fail even if above absolute threshold
           gateTag = "gate:fail";
           console.log(`[eval-test-run] Regression window exceeded for run ${runId}: dropped ${dropPct.toFixed(1)}pp (window=${regressionWindowPct}%), forcing gate:fail`);
         }
@@ -1215,8 +1258,9 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
       const filteredTags = currentTags.filter(t => !t.startsWith("gate:"));
       await storage.updateEvalTestRun(runId, { tags: [...filteredTags, gateTag] });
     }
-  } catch (gateErr: any) {
-    console.warn(`[eval-test-run] Gate tag failed for run ${runId}:`, gateErr?.message);
+  } catch (gateErr: unknown) {
+    const msg = gateErr instanceof Error ? gateErr.message : String(gateErr);
+    console.warn(`[eval-test-run] Gate tag failed for run ${runId}:`, msg);
   }
 
   await storage.updateJob(job.id, { progress: 100 });

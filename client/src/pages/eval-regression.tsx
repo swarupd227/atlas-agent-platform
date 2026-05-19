@@ -94,11 +94,11 @@ type MetricDetailRow = {
 const ANY_SENTINEL = "__any__";
 
 function gateThresholdFromGate(gate: EvalGate | undefined): number {
-  if (!gate?.thresholdOverrides) return 0.85;
-  const vals = Object.values(gate.thresholdOverrides as Record<string, number>).filter(
-    (v) => typeof v === "number"
-  );
-  return vals.length > 0 ? Math.min(...vals) : 0.85;
+  // Use the "passRate" key specifically — NOT Math.min(all values).
+  // Per-metric keys are separate override rules, not the global threshold.
+  const overrides = gate?.thresholdOverrides as Record<string, number> | null;
+  if (overrides && typeof overrides.passRate === "number") return overrides.passRate;
+  return 0.85;
 }
 
 function computeGateStatus(passRate: number, threshold: number): GateStatus {

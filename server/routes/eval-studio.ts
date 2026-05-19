@@ -1462,10 +1462,12 @@ router.post("/api/eval/gates/:agentId/promote", async (req, res) => {
       );
     const latestRun = completedRuns[0] ?? null;
 
-    const gateThreshold = (() => {
-      if (!gate?.thresholdOverrides) return 0.85;
-      const vals = Object.values(gate.thresholdOverrides as Record<string, number>).filter(v => typeof v === "number");
-      return vals.length > 0 ? Math.min(...vals) : 0.85;
+    // Gate status: prefer persisted tags (set by worker with full per-metric data),
+    // fall back to passRate-only computation for backwards compatibility.
+    // Uses passRate key specifically — NOT Math.min(all overrides).
+    const globalThreshold = (() => {
+      const overrides = gate?.thresholdOverrides as Record<string, number> | null;
+      return typeof overrides?.passRate === "number" ? overrides.passRate : 0.85;
     })();
 
     let serverGateStatus: "pass" | "warn" | "fail" | "unknown" = "unknown";
@@ -1475,7 +1477,8 @@ router.post("/api/eval/gates/:agentId/promote", async (req, res) => {
       else if (tags.includes("gate:warn")) serverGateStatus = "warn";
       else if (tags.includes("gate:fail")) serverGateStatus = "fail";
       else if (latestRun.passRate != null) {
-        if (latestRun.passRate >= gateThreshold) serverGateStatus = "pass";
+        // Fallback: per-metric data unavailable here, use global threshold only
+        if (latestRun.passRate >= globalThreshold) serverGateStatus = "pass";
         else if (latestRun.passRate >= 0.7) serverGateStatus = "warn";
         else serverGateStatus = "fail";
       }
