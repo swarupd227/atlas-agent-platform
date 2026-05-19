@@ -2090,27 +2090,33 @@ router.get("/api/eval/annotation-queue", async (req, res) => {
       const agent = run?.agentId ? await storage.getAgent(run.agentId).catch(() => null) : null;
       const traceAnnotations = annotationsByTrace.get(trace.id) ?? [];
 
-      // Priority assignment
-      let priority: "disagreement" | "failing" | "low_confidence" | "sampled";
-      if (traceAnnotations.length >= 2) {
-        // Check if annotators disagree on pass/fail
-        const passFails = traceAnnotations
-          .map(a => (a.ratings as Record<string, any> | null)?.overall?.passFail as boolean | undefined)
-          .filter(v => v !== undefined);
-        const hasDisagreement = passFails.length >= 2 && passFails.some(v => v !== passFails[0]);
-        priority = hasDisagreement ? "disagreement" : "sampled";
-      } else if (trace.passFail === false) {
-        priority = "failing";
-      } else if (trace.passFail === null || trace.passFail === undefined) {
-        priority = "low_confidence";
-      } else {
-        priority = "sampled";
-      }
-
-      // Compute auto-judge score
+      // Compute auto-judge score first — used for priority
       const scores = trace.scores as Record<string, any> | null;
       const scoreVals = scores ? Object.values(scores).map((s: any) => typeof s?.score === "number" ? s.score : null).filter(v => v !== null) as number[] : [];
       const autoJudgeScore = scoreVals.length > 0 ? scoreVals.reduce((a, b) => a + b, 0) / scoreVals.length : null;
+
+      // Priority assignment (spec order: auto-judge disagreement > low confidence > sampled)
+      // "Auto-judge disagreement" = automated metric result contradicts the pass/fail label,
+      //   or metric scores have high variance (conflicting signals across metrics).
+      let priority: "disagreement" | "failing" | "low_confidence" | "sampled";
+      const autoDisagreement = autoJudgeScore !== null && trace.passFail !== null && trace.passFail !== undefined &&
+        ((autoJudgeScore > 0.5 && trace.passFail === false) || (autoJudgeScore <= 0.5 && trace.passFail === true));
+      const scoreVariance = scoreVals.length >= 2
+        ? scoreVals.reduce((s, v) => s + Math.pow(v - (autoJudgeScore ?? 0), 2), 0) / scoreVals.length
+        : 0;
+      const highVariance = scoreVariance > 0.04; // std-dev > 0.2 across metric scores
+
+      if (autoDisagreement || highVariance) {
+        priority = "disagreement";
+      } else if (autoJudgeScore !== null && autoJudgeScore >= 0.35 && autoJudgeScore <= 0.65) {
+        priority = "low_confidence";   // borderline auto-judge score
+      } else if (trace.passFail === null || trace.passFail === undefined || autoJudgeScore === null) {
+        priority = "low_confidence";   // no judge verdict — also needs human review
+      } else if (trace.passFail === false) {
+        priority = "failing";
+      } else {
+        priority = "sampled";
+      }
 
       // IAA stats when 2+ annotations exist
       let iaaStats: { kappa: number; consensus: number } | null = null;
@@ -2159,6 +2165,10 @@ router.get("/api/eval/traces/:id/annotation-detail", async (req, res) => {
 
     const trace = await storage.getEvalTrace(id);
     if (!trace) return res.status(404).json({ message: "Trace not found" });
+    // Org-scope guard: prevent cross-org data access (IDOR protection)
+    if (orgId && trace.organizationId && trace.organizationId !== orgId) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
 
     const golden = await storage.getEvalGolden(trace.goldenId).catch(() => null);
     const spans = await storage.getEvalSpans(id).catch(() => []);
@@ -2213,11 +2223,18 @@ router.post("/api/eval/annotations", async (req, res) => {
     const { traceId, ratings, comment, promoteToGolden, isEdgeCase, datasetId } = req.body;
     if (!traceId) return res.status(400).json({ message: "traceId is required" });
 
+    // Org-scope guard: verify the trace belongs to this org before annotating (IDOR protection)
+    const targetTrace = await storage.getEvalTrace(traceId);
+    if (!targetTrace) return res.status(404).json({ message: "Trace not found" });
+    if (orgId && targetTrace.organizationId && targetTrace.organizationId !== orgId) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
     let promotedToGoldenId: string | null = null;
 
     // Promote to golden if requested — use the golden's own datasetId by default
     if (promoteToGolden) {
-      const trace = await storage.getEvalTrace(traceId);
+      const trace = targetTrace;
       if (trace) {
         const golden = await storage.getEvalGolden(trace.goldenId).catch(() => null);
         if (golden) {
@@ -2316,11 +2333,22 @@ router.get("/api/eval/annotations/stats", async (req, res) => {
   } catch (err: any) { res.status(500).json({ message: err.message }); }
 });
 
-// GET /api/eval/annotations/stats/:annotatorId  — admin view of any annotator's stats
+// GET /api/eval/annotations/stats/:annotatorId  — org-scoped annotator stats (requires org membership)
+// Callers must share the same org as the target annotator; cross-org lookups return 403.
 router.get("/api/eval/annotations/stats/:annotatorId", async (req, res) => {
   try {
     const orgId = getOrgId(req);
-    res.json(await computeAnnotatorStats(req.params.annotatorId, orgId ?? undefined));
+    const { annotatorId } = req.params;
+    // Verify the requested annotator has at least one annotation in this org
+    // (prevents cross-org data leakage without a full role/auth system)
+    if (orgId) {
+      const orgAnnotations = await storage.getEvalAnnotationsByOrg(orgId);
+      const annotatorIsInOrg = orgAnnotations.some(a => a.annotatorId === annotatorId);
+      if (!annotatorIsInOrg) {
+        return res.status(403).json({ message: "Forbidden: annotator not found in this organization" });
+      }
+    }
+    res.json(await computeAnnotatorStats(annotatorId, orgId ?? undefined));
   } catch (err: any) { res.status(500).json({ message: err.message }); }
 });
 

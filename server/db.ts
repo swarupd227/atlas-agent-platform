@@ -769,6 +769,52 @@ export async function runStartupMigrations() {
       );
       CREATE INDEX IF NOT EXISTS idx_eval_rt_results_run   ON eval_redteam_results(run_id);
       CREATE INDEX IF NOT EXISTS idx_eval_rt_results_agent ON eval_redteam_results(agent_id);
+
+      -- P2: Human Annotation + Compliance Report tables
+      CREATE TABLE IF NOT EXISTS eval_annotations (
+        id                    VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        trace_id              VARCHAR NOT NULL,
+        annotator_id          TEXT NOT NULL,
+        organization_id       VARCHAR,
+        ratings               JSONB DEFAULT '{}',
+        comment               TEXT,
+        is_edge_case          BOOLEAN DEFAULT FALSE,
+        promoted_to_golden_id VARCHAR,
+        created_at            TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_eval_annotations_trace ON eval_annotations(trace_id);
+      CREATE INDEX IF NOT EXISTS idx_eval_annotations_org   ON eval_annotations(organization_id);
+      CREATE INDEX IF NOT EXISTS idx_eval_annotations_ann   ON eval_annotations(annotator_id);
+
+      CREATE TABLE IF NOT EXISTS eval_report_artifacts (
+        id               VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id  VARCHAR,
+        schedule_id      VARCHAR,
+        template_type    TEXT NOT NULL,
+        generated_at     TIMESTAMP DEFAULT NOW(),
+        time_window_days INTEGER,
+        agent_ids        TEXT[] DEFAULT '{}',
+        report_data      JSONB NOT NULL,
+        overall_score    INTEGER,
+        status           TEXT NOT NULL DEFAULT 'ready'
+      );
+      CREATE INDEX IF NOT EXISTS idx_eval_report_artifacts_org      ON eval_report_artifacts(organization_id);
+      CREATE INDEX IF NOT EXISTS idx_eval_report_artifacts_schedule ON eval_report_artifacts(schedule_id);
+
+      CREATE TABLE IF NOT EXISTS eval_report_schedules (
+        id               VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id  VARCHAR,
+        template_type    TEXT NOT NULL,
+        agent_ids        TEXT[] DEFAULT '{}',
+        cadence          TEXT NOT NULL DEFAULT 'monthly',
+        recipients       TEXT[] DEFAULT '{}',
+        time_window_days INTEGER DEFAULT 30,
+        enabled          BOOLEAN DEFAULT TRUE,
+        last_run_at      TIMESTAMP,
+        next_run_at      TIMESTAMP,
+        created_at       TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_eval_report_schedules_org ON eval_report_schedules(organization_id);
     `);
 
     // Remove operational metrics that were re-sourced from atlas-native → deepeval
