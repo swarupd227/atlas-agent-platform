@@ -881,28 +881,39 @@ function PreviewPane({
     reasoning: string;
     latencyMs: number;
     estimatedCostUsd: number;
+    tokens?: { prompt: number; completion: number; total: number };
   } | null>(null);
 
   const previewMutation = useMutation({
     mutationFn: async () => {
       const config = getPreviewConfig();
-      const res = await apiRequest("POST", "/api/eval/metrics/preview", {
-        metricConfig: {
-          name: config.name,
-          criteria: config.criteria,
-          metricType: config.metricType,
-          threshold: config.threshold,
-          strictMode: config.strictMode,
-        },
-        sampleInput,
-        sampleActualOutput: sampleActual || undefined,
-        sampleExpectedOutput: sampleExpected || undefined,
-      });
-      if (!res.ok) throw new Error("Preview failed");
-      return res.json() as Promise<typeof result>;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8_000);
+      try {
+        const res = await apiRequest("POST", "/api/eval/metrics/preview", {
+          metricConfig: {
+            name: config.name,
+            criteria: config.criteria,
+            metricType: config.metricType,
+            threshold: config.threshold,
+            strictMode: config.strictMode,
+          },
+          sampleInput,
+          sampleActualOutput: sampleActual || undefined,
+          sampleExpectedOutput: sampleExpected || undefined,
+        });
+        if (!res.ok) throw new Error("Preview failed");
+        return res.json() as Promise<typeof result>;
+      } finally {
+        clearTimeout(timeoutId);
+      }
     },
     onSuccess: (data) => setResult(data),
-    onError: () => toast({ title: "Preview failed", description: "Could not run metric preview. Check your criteria.", variant: "destructive" }),
+    onError: (err: Error) => toast({
+      title: err.name === "AbortError" ? "Preview timed out" : "Preview failed",
+      description: err.name === "AbortError" ? "Request exceeded 8s — try shorter sample text." : "Could not run metric preview. Check your criteria.",
+      variant: "destructive",
+    }),
   });
 
   const costPerRun = result ? result.estimatedCostUsd * defaultDatasetSize : null;
@@ -1022,6 +1033,23 @@ function PreviewPane({
                 <span className="text-muted-foreground">× {defaultDatasetSize} goldens</span>
                 <span className="font-semibold text-primary">~${costPerRun!.toFixed(2)}/run</span>
               </div>
+              {result.tokens && (
+                <>
+                  <Separator className="my-1" />
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Prompt tokens</span>
+                    <span className="font-mono">{result.tokens.prompt.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Completion tokens</span>
+                    <span className="font-mono">{result.tokens.completion.toLocaleString()}</span>
+                  </div>
+                  <div className="flex justify-between border-t pt-0.5 mt-0.5">
+                    <span className="text-muted-foreground font-medium">Total tokens</span>
+                    <span className="font-mono font-medium">{result.tokens.total.toLocaleString()}</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         </div>

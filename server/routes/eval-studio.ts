@@ -22,7 +22,7 @@ const createMetricSchema = z.object({
   dagConfig: z.any().optional(),
 });
 
-const updateMetricSchema = createMetricSchema.partial().omit({ name: true });
+const updateMetricSchema = createMetricSchema.partial();
 
 const createDatasetSchema = z.object({
   name: z.string().min(1).max(200),
@@ -333,12 +333,16 @@ router.post("/api/eval/metrics/preview", async (req, res) => {
     const score = Math.max(0, Math.min(1, rawScore));
     // In strict mode the score must be exactly 1.0 to pass; otherwise use threshold
     const pass = strictMode ? score === 1 : score >= threshold;
+    // Rough token estimates: criteria + sample texts → prompt; judge response → completion
+    const promptTokens = Math.round((criteria.length + body.sampleInput.length + (body.sampleActualOutput?.length ?? 0) + (body.sampleExpectedOutput?.length ?? 0)) / 4);
+    const completionTokens = Math.round((judgeResult.reason?.length ?? 100) / 4);
     res.json({
       score,
       pass,
       reasoning: judgeResult.reason,
       latencyMs: Date.now() - startMs,
       estimatedCostUsd: 0.002 + (criteria.length / 10_000) * 0.01,
+      tokens: { prompt: promptTokens, completion: completionTokens, total: promptTokens + completionTokens },
     });
   } catch (err: any) {
     if (err instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: err.errors });
