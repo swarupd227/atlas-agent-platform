@@ -466,9 +466,14 @@ function ScheduleBuilder() {
   const [recipients, setRecipients] = useState("");
   const [timeWindowDays, setTimeWindowDays] = useState("30");
   const [enabled, setEnabled] = useState(true);
+  const [scheduleAgentIds, setScheduleAgentIds] = useState<string[]>([]);
 
   const { data: schedules = [], isLoading } = useQuery<ReportSchedule[]>({
     queryKey: ["/api/eval/report-schedules"],
+  });
+
+  const { data: agents = [] } = useQuery<any[]>({
+    queryKey: ["/api/agents"],
   });
 
   const createSchedule = useMutation({
@@ -478,6 +483,7 @@ function ScheduleBuilder() {
       queryClient.invalidateQueries({ queryKey: ["/api/eval/report-schedules"] });
       setTemplateType("");
       setRecipients("");
+      setScheduleAgentIds([]);
     },
     onError: () => toast({ title: "Error creating schedule", variant: "destructive" }),
   });
@@ -549,6 +555,35 @@ function ScheduleBuilder() {
               />
             </div>
           </div>
+          {/* Agent targeting */}
+          <div>
+            <Label className="text-xs mb-1.5 block">Target Agents (optional — leave empty for all org agents)</Label>
+            <div className="space-y-1 max-h-36 overflow-y-auto border rounded-md p-2">
+              {agents.length === 0 && <p className="text-xs text-muted-foreground">No agents found</p>}
+              {agents.slice(0, 20).map((agent: any) => (
+                <label
+                  key={agent.id}
+                  data-testid={`schedule-agent-${agent.id}`}
+                  className="flex items-center gap-2 text-xs cursor-pointer hover:bg-muted/50 rounded px-1 py-0.5"
+                >
+                  <input
+                    type="checkbox"
+                    className="rounded"
+                    checked={scheduleAgentIds.includes(agent.id)}
+                    onChange={e => {
+                      if (e.target.checked) setScheduleAgentIds(ids => [...ids, agent.id]);
+                      else setScheduleAgentIds(ids => ids.filter(id => id !== agent.id));
+                    }}
+                  />
+                  <span className="truncate">{agent.name}</span>
+                </label>
+              ))}
+            </div>
+            {scheduleAgentIds.length > 0 && (
+              <p className="text-[10px] text-muted-foreground mt-1">{scheduleAgentIds.length} agent(s) selected</p>
+            )}
+          </div>
+
           <div className="flex items-center gap-2">
             <Switch
               id="schedule-enabled"
@@ -565,6 +600,7 @@ function ScheduleBuilder() {
               templateType,
               cadence,
               timeWindowDays: parseInt(timeWindowDays),
+              agentIds: scheduleAgentIds,
               recipients: recipients.split(",").map(r => r.trim()).filter(Boolean),
               enabled,
             })}

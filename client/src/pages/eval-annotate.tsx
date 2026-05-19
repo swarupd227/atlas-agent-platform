@@ -250,7 +250,10 @@ export default function EvalAnnotate() {
                     <span className="text-xs font-mono text-muted-foreground">{item.trace.id.slice(0, 8)}</span>
                     <PriorityBadge priority={item.priority} />
                   </div>
-                  <p className="text-xs text-foreground line-clamp-2 mt-1">
+                  {item.agentName && (
+                    <p className="text-[10px] text-primary/70 font-medium truncate mb-0.5">{item.agentName}</p>
+                  )}
+                  <p className="text-xs text-foreground line-clamp-2 mt-0.5">
                     {item.golden?.input ?? "No input available"}
                   </p>
                   <div className="flex items-center gap-2 mt-1.5">

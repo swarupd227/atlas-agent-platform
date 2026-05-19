@@ -2150,9 +2150,15 @@ router.get("/api/eval/annotation-queue", async (req, res) => {
     }));
 
     // Sort by priority: disagreement > low_confidence > sampled
+    // Within the sampled tier, shuffle to produce a random sample (not deterministic ordering)
     const priorityOrder = { disagreement: 0, low_confidence: 1, sampled: 2 };
-    const sorted = enriched
-      .sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority])
+    const sampledItems = enriched.filter(e => e.priority === "sampled");
+    for (let i = sampledItems.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [sampledItems[i], sampledItems[j]] = [sampledItems[j], sampledItems[i]];
+    }
+    const nonSampled = enriched.filter(e => e.priority !== "sampled");
+    const sorted = [...nonSampled.sort((a, b) => priorityOrder[a.priority] - priorityOrder[b.priority]), ...sampledItems]
       .slice(0, limit);
 
     res.json(sorted);
