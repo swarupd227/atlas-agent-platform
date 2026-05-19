@@ -1168,10 +1168,34 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
     completedAt: new Date(),
   });
 
+  // ── Gate status propagation — tag the run with its gate result ───────────────
+  let gateTag: string | null = null;
+  try {
+    const gate = await storage.getEvalGate(agentId);
+    const threshold: number = (() => {
+      if (!gate?.thresholdOverrides) return 0.85;
+      const vals = Object.values(gate.thresholdOverrides as Record<string, number>).filter(v => typeof v === "number");
+      return vals.length > 0 ? Math.min(...vals) : 0.85;
+    })();
+    if (passRate !== null) {
+      if (passRate >= threshold) gateTag = "gate:pass";
+      else if (passRate >= 0.7) gateTag = "gate:warn";
+      else gateTag = "gate:fail";
+    }
+    if (gateTag) {
+      const currentRun = await storage.getEvalTestRun(runId);
+      const currentTags = (currentRun?.tags as string[] | null) ?? [];
+      const filteredTags = currentTags.filter(t => !t.startsWith("gate:"));
+      await storage.updateEvalTestRun(runId, { tags: [...filteredTags, gateTag] });
+    }
+  } catch (gateErr: any) {
+    console.warn(`[eval-test-run] Gate tag failed for run ${runId}:`, gateErr?.message);
+  }
+
   await storage.updateJob(job.id, { progress: 100 });
   jobEvents.emit("progress", { jobId: job.id, agentId, progress: 100, step: "complete" });
 
-  console.log(`[eval-test-run] Run ${runId} complete: ${passedCount}/${goldens.length} passed (${Math.round((passRate || 0) * 100)}%)`);
+  console.log(`[eval-test-run] Run ${runId} complete: ${passedCount}/${goldens.length} passed (${Math.round((passRate || 0) * 100)}%) gate=${gateTag ?? "n/a"}`);
 
   return {
     runId,
@@ -1181,6 +1205,7 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
     passRate: passRate !== null ? Math.round((passRate) * 100) : null,
     avgLatencyMs,
     costUsd: totalCostUsd,
+    gateStatus: gateTag,
   };
 }
 

@@ -1220,4 +1220,99 @@ router.get("/api/eval/summary", async (req, res) => {
   }
 });
 
+// ── Regression Hub: Gate Definition Upsert ────────────────────────────────────
+router.put("/api/eval/gates/:agentId", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const { agentId } = req.params;
+
+    // Confirm agent belongs to caller's org
+    const agent = await storage.getAgent(agentId);
+    if (agent) assertOrgOwnership(agent.organizationId, orgId);
+
+    const body = req.body as {
+      datasetId?: string;
+      metricCollectionId?: string;
+      thresholdOverrides?: Record<string, number>;
+      regressionWindowPct?: number;
+      isActive?: boolean;
+    };
+
+    const gate = await storage.upsertEvalGate({
+      agentId,
+      organizationId: orgId ?? undefined,
+      datasetId: body.datasetId ?? null,
+      metricCollectionId: body.metricCollectionId ?? null,
+      thresholdOverrides: body.thresholdOverrides ?? null,
+      regressionWindowPct: body.regressionWindowPct ?? 5,
+      isActive: body.isActive !== false,
+    });
+
+    res.json(gate);
+  } catch (err: any) {
+    if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ── Regression Hub: Promote to Staging / Production ───────────────────────────
+router.post("/api/eval/gates/:agentId/promote", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const { agentId } = req.params;
+    const { environment, overrideComment, gateStatus } = req.body as {
+      environment: "staging" | "production";
+      overrideComment?: string;
+      gateStatus?: string; // "pass" | "warn" | "fail" — sent by client
+    };
+
+    if (!environment || !["staging", "production"].includes(environment)) {
+      return res.status(400).json({ message: "environment must be 'staging' or 'production'" });
+    }
+
+    const isGateRed = gateStatus === "fail";
+
+    // Production promotion is blocked when gate is red unless override comment provided
+    if (environment === "production" && isGateRed) {
+      if (!overrideComment?.trim()) {
+        return res.status(422).json({
+          message: "Gate is failing. Provide an override comment to proceed.",
+          requiresOverride: true,
+        });
+      }
+    }
+
+    const agent = await storage.getAgent(agentId);
+    if (agent) assertOrgOwnership(agent.organizationId, orgId);
+
+    // Audit-log the promote action
+    await storage.createAuditEvent({
+      action: isGateRed && overrideComment
+        ? `eval.gate.promote_override.${environment}`
+        : `eval.gate.promote.${environment}`,
+      objectType: "agent",
+      objectId: agentId,
+      actorType: "user",
+      organizationId: orgId ?? undefined,
+      details: {
+        environment,
+        gateStatus: gateStatus ?? "unknown",
+        overrideComment: overrideComment?.trim() || null,
+        agentName: agent?.name ?? agentId,
+        promotedAt: new Date().toISOString(),
+      },
+    });
+
+    res.json({
+      success: true,
+      environment,
+      overridden: isGateRed && !!overrideComment,
+      promotedAt: new Date().toISOString(),
+    });
+  } catch (err: any) {
+    if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
+    res.status(500).json({ message: err.message });
+  }
+});
+
 export default router;

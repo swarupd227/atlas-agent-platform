@@ -29,6 +29,7 @@ import {
   PlusCircle,
   Sparkles,
   MessageSquare,
+  GitBranch,
 } from "lucide-react";
 import { formatDate } from "@/components/shared-utils";
 
@@ -397,6 +398,12 @@ export default function Evals() {
           <p className="text-sm text-muted-foreground mt-0.5">Quality health across all agents under evaluation</p>
         </div>
         <div className="flex items-center gap-2">
+          <Link href="/evals/regression">
+            <Button variant="outline" size="sm" data-testid="button-regression-hub">
+              <GitBranch className="w-4 h-4 mr-1.5" />
+              Regression Hub
+            </Button>
+          </Link>
           <Link href="/evals/synthesizer">
             <Button variant="outline" size="sm" data-testid="button-synthesizer">
               <Sparkles className="w-4 h-4 mr-1.5" />
