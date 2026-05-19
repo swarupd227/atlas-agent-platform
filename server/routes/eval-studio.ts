@@ -456,6 +456,31 @@ router.put("/api/eval/goldens/:id", async (req, res) => {
   }
 });
 
+router.post("/api/eval/datasets/:id/goldens/bulk-tag", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const dataset = await storage.getEvalDataset(req.params.id);
+    if (!dataset) return res.status(404).json({ message: "Dataset not found" });
+    assertOrgOwnership(dataset.organizationId, orgId);
+    const { tags, mode } = z.object({
+      tags: z.array(z.string()),
+      mode: z.enum(["add", "replace"]),
+    }).parse(req.body);
+    const goldens = await storage.getEvalGoldens({ datasetId: req.params.id, limit: 10000 });
+    let updated = 0;
+    for (const g of goldens) {
+      const newTags = mode === "replace" ? tags : Array.from(new Set([...(g.tags ?? []), ...tags]));
+      await storage.updateEvalGolden(g.id, { tags: newTags });
+      updated++;
+    }
+    res.json({ updated });
+  } catch (err: any) {
+    if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
+    if (err instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: err.errors });
+    res.status(400).json({ message: err.message });
+  }
+});
+
 router.delete("/api/eval/goldens/:id", async (req, res) => {
   try {
     const orgId = getOrgId(req);

@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import type { Agent, EvalDataset, EvalGolden, EvalMetric } from "@shared/schema";
@@ -292,20 +292,27 @@ function GoldenSheet({ open, onClose, golden, datasetId, onSaved }: GoldenSheetP
   const [expectedOutput, setExpectedOutput] = useState(golden?.expectedOutput ?? "");
   const [retrievalContext, setRetrievalContext] = useState<string[]>(golden?.retrievalContext ?? []);
   const [newCtx, setNewCtx] = useState("");
-  const [tagsStr, setTagsStr] = useState((golden?.tags ?? []).join(", "));
+  const [tags, setTags] = useState<string[]>(golden?.tags ?? []);
+  const [newTagInput, setNewTagInput] = useState("");
   const [author, setAuthor] = useState(golden?.author ?? "");
+  const [expectedToolsStr, setExpectedToolsStr] = useState(
+    golden?.expectedTools ? JSON.stringify(golden.expectedTools, null, 2) : ""
+  );
+  const [toolsJsonError, setToolsJsonError] = useState<string | null>(null);
   const [piiAcknowledged, setPiiAcknowledged] = useState(false);
   const qc = useQueryClient();
   const { toast } = useToast();
 
-  // Reset when golden changes
-  useMemo(() => {
+  // Reset when golden changes (useEffect to avoid side effects in render phase)
+  useEffect(() => {
     setInput(golden?.input ?? "");
     setExpectedOutput(golden?.expectedOutput ?? "");
     setRetrievalContext(golden?.retrievalContext ?? []);
-    setTagsStr((golden?.tags ?? []).join(", "));
+    setTags(golden?.tags ?? []);
+    setNewTagInput("");
     setAuthor(golden?.author ?? "");
-    setNewCtx("");
+    setExpectedToolsStr(golden?.expectedTools ? JSON.stringify(golden.expectedTools, null, 2) : "");
+    setToolsJsonError(null);
     setPiiAcknowledged(false);
   }, [golden?.id]);
 
@@ -318,14 +325,32 @@ function GoldenSheet({ open, onClose, golden, datasetId, onSaved }: GoldenSheetP
     return found;
   }, [input, expectedOutput]);
 
+  const addTag = (raw: string) => {
+    const t = raw.trim().replace(/,/g, "").trim();
+    if (t && !tags.includes(t)) setTags((prev) => [...prev, t]);
+    setNewTagInput("");
+  };
+
+  const validateTools = (str: string) => {
+    if (!str.trim()) { setToolsJsonError(null); return; }
+    try { JSON.parse(str); setToolsJsonError(null); }
+    catch (e: any) { setToolsJsonError(e.message); }
+  };
+
   const mutation = useMutation({
     mutationFn: async () => {
+      let expectedTools: unknown = undefined;
+      if (expectedToolsStr.trim()) {
+        try { expectedTools = JSON.parse(expectedToolsStr); }
+        catch { throw new Error("Expected Tools JSON is invalid"); }
+      }
       const body = {
         input,
         expectedOutput: expectedOutput || undefined,
         retrievalContext,
-        tags: tagsStr ? tagsStr.split(",").map((t) => t.trim()).filter(Boolean) : [],
+        tags,
         author: author || undefined,
+        expectedTools,
       };
       if (isEdit) {
         const res = await apiRequest("PUT", `/api/eval/goldens/${golden!.id}`, body);
@@ -347,7 +372,7 @@ function GoldenSheet({ open, onClose, golden, datasetId, onSaved }: GoldenSheetP
 
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
-      <SheetContent className="w-[520px] sm:w-[580px] overflow-y-auto">
+      <SheetContent className="w-[540px] sm:w-[600px] overflow-y-auto">
         <SheetHeader className="pb-4">
           <SheetTitle className="flex items-center gap-2">
             {isEdit ? <Edit2 className="w-4 h-4 text-primary" /> : <Plus className="w-4 h-4 text-primary" />}
@@ -393,6 +418,7 @@ function GoldenSheet({ open, onClose, golden, datasetId, onSaved }: GoldenSheetP
               className="font-mono text-xs"
               data-testid="textarea-golden-input"
             />
+            <p className="text-[10px] text-muted-foreground mt-1">Supports Markdown for display in reports.</p>
           </div>
 
           <div>
@@ -405,6 +431,28 @@ function GoldenSheet({ open, onClose, golden, datasetId, onSaved }: GoldenSheetP
               className="font-mono text-xs"
               data-testid="textarea-golden-expected"
             />
+            <p className="text-[10px] text-muted-foreground mt-1">Supports Markdown for display in reports.</p>
+          </div>
+
+          <div>
+            <Label className="text-xs mb-1.5 block font-medium flex items-center gap-1.5">
+              <FileJson className="w-3.5 h-3.5" />
+              Expected Tool Calls (JSON)
+            </Label>
+            <Textarea
+              value={expectedToolsStr}
+              onChange={(e) => { setExpectedToolsStr(e.target.value); setToolsJsonError(null); }}
+              onBlur={(e) => validateTools(e.target.value)}
+              rows={4}
+              placeholder={`[\n  { "name": "search", "args": { "query": "…" } }\n]`}
+              className={`font-mono text-xs ${toolsJsonError ? "border-red-500" : ""}`}
+              data-testid="textarea-golden-tools"
+            />
+            {toolsJsonError ? (
+              <p className="text-[10px] text-red-500 mt-1">{toolsJsonError}</p>
+            ) : (
+              <p className="text-[10px] text-muted-foreground mt-1">Array of tool call objects, or a single object. Leave blank if not applicable.</p>
+            )}
           </div>
 
           <div>
@@ -454,11 +502,34 @@ function GoldenSheet({ open, onClose, golden, datasetId, onSaved }: GoldenSheetP
           </div>
 
           <div>
-            <Label className="text-xs mb-1.5 block font-medium">Tags (comma-separated)</Label>
+            <Label className="text-xs mb-1.5 block font-medium">Tags</Label>
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {tags.map((t) => (
+                <span key={t} className="inline-flex items-center gap-1 bg-primary/10 text-primary rounded-full px-2 py-0.5 text-[11px] font-medium">
+                  {t}
+                  <button
+                    type="button"
+                    onClick={() => setTags((prev) => prev.filter((x) => x !== t))}
+                    className="hover:text-destructive transition-colors"
+                    data-testid={`button-remove-tag-${t}`}
+                  >
+                    <X className="w-2.5 h-2.5" />
+                  </button>
+                </span>
+              ))}
+            </div>
             <Input
-              value={tagsStr}
-              onChange={(e) => setTagsStr(e.target.value)}
-              placeholder="e.g. happy-path, edge-case"
+              value={newTagInput}
+              onChange={(e) => setNewTagInput(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.key === "Enter" || e.key === ",") && newTagInput.trim()) {
+                  e.preventDefault();
+                  addTag(newTagInput);
+                }
+              }}
+              onBlur={() => { if (newTagInput.trim()) addTag(newTagInput); }}
+              placeholder="Type a tag and press Enter or comma"
+              className="text-xs"
               data-testid="input-golden-tags"
             />
           </div>
@@ -478,7 +549,7 @@ function GoldenSheet({ open, onClose, golden, datasetId, onSaved }: GoldenSheetP
           <Button variant="ghost" size="sm" onClick={onClose} data-testid="button-cancel-golden">Cancel</Button>
           <Button
             size="sm"
-            disabled={!input.trim() || mutation.isPending || (piiFields.length > 0 && !piiAcknowledged)}
+            disabled={!input.trim() || mutation.isPending || !!toolsJsonError || (piiFields.length > 0 && !piiAcknowledged)}
             onClick={() => mutation.mutate()}
             data-testid="button-save-golden"
             title={piiFields.length > 0 && !piiAcknowledged ? "Acknowledge PII detection above before saving" : undefined}
@@ -488,6 +559,312 @@ function GoldenSheet({ open, onClose, golden, datasetId, onSaved }: GoldenSheetP
         </SheetFooter>
       </SheetContent>
     </Sheet>
+  );
+}
+
+// ── Version Diff Dialog ───────────────────────────────────────────────────────
+
+interface VersionDiffDialogProps {
+  open: boolean;
+  onClose: () => void;
+  currentDataset: EvalDataset;
+  siblings: EvalDataset[];
+}
+
+type DiffRow = { status: "added" | "removed" | "changed" | "unchanged"; input: string; currentOut?: string | null; baselineOut?: string | null };
+
+function VersionDiffDialog({ open, onClose, currentDataset, siblings }: VersionDiffDialogProps) {
+  const otherSiblings = siblings.filter((s) => s.id !== currentDataset.id);
+  const [compareId, setCompareId] = useState<string>(otherSiblings[0]?.id ?? "");
+
+  useEffect(() => {
+    if (!compareId && otherSiblings.length > 0) setCompareId(otherSiblings[0].id);
+  }, [otherSiblings.length]);
+
+  const { data: currentGoldens } = useQuery<EvalGolden[]>({
+    queryKey: ["/api/eval/datasets", currentDataset.id, "goldens", 1, 1000, ""],
+    queryFn: async () => {
+      const res = await fetch(`/api/eval/datasets/${currentDataset.id}/goldens?limit=1000`);
+      return res.json();
+    },
+    enabled: open,
+  });
+
+  const { data: compareGoldens } = useQuery<EvalGolden[]>({
+    queryKey: ["/api/eval/datasets", compareId, "goldens", 1, 1000, ""],
+    queryFn: async () => {
+      if (!compareId) return [];
+      const res = await fetch(`/api/eval/datasets/${compareId}/goldens?limit=1000`);
+      return res.json();
+    },
+    enabled: open && !!compareId,
+  });
+
+  const diffRows: DiffRow[] = useMemo(() => {
+    if (!currentGoldens || !compareGoldens) return [];
+    const baseMap = new Map<string, EvalGolden>();
+    for (const g of compareGoldens) baseMap.set(g.input, g);
+    const curMap = new Map<string, EvalGolden>();
+    for (const g of currentGoldens) curMap.set(g.input, g);
+
+    const rows: DiffRow[] = [];
+    for (const g of currentGoldens) {
+      const base = baseMap.get(g.input);
+      if (!base) {
+        rows.push({ status: "added", input: g.input, currentOut: g.expectedOutput });
+      } else if (base.expectedOutput !== g.expectedOutput) {
+        rows.push({ status: "changed", input: g.input, currentOut: g.expectedOutput, baselineOut: base.expectedOutput });
+      } else {
+        rows.push({ status: "unchanged", input: g.input, currentOut: g.expectedOutput });
+      }
+    }
+    for (const g of compareGoldens) {
+      if (!curMap.has(g.input)) {
+        rows.push({ status: "removed", input: g.input, baselineOut: g.expectedOutput });
+      }
+    }
+    rows.sort((a, b) => {
+      const order = { added: 0, changed: 1, removed: 2, unchanged: 3 };
+      return order[a.status] - order[b.status];
+    });
+    return rows;
+  }, [currentGoldens, compareGoldens]);
+
+  const summary = useMemo(() => ({
+    added: diffRows.filter((r) => r.status === "added").length,
+    removed: diffRows.filter((r) => r.status === "removed").length,
+    changed: diffRows.filter((r) => r.status === "changed").length,
+    unchanged: diffRows.filter((r) => r.status === "unchanged").length,
+  }), [diffRows]);
+
+  const compareDataset = siblings.find((s) => s.id === compareId);
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <GitBranch className="w-4 h-4 text-primary" />
+            Version Diff — {currentDataset.name}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="flex items-center gap-3 pb-2">
+          <div className="flex items-center gap-2 text-sm">
+            <Badge variant="outline" className="text-[10px] bg-primary/10 text-primary border-primary/20">
+              v{currentDataset.version ?? 1} (current)
+            </Badge>
+            <span className="text-muted-foreground">vs</span>
+            <Select value={compareId} onValueChange={setCompareId}>
+              <SelectTrigger className="h-7 w-32 text-xs" data-testid="select-diff-compare">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {otherSiblings.map((s) => (
+                  <SelectItem key={s.id} value={s.id}>v{s.version ?? 1}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center gap-2 ml-auto text-[10px]">
+            <span className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 font-medium">+{summary.added} added</span>
+            <span className="px-2 py-0.5 rounded bg-amber-500/10 text-amber-600 font-medium">~{summary.changed} changed</span>
+            <span className="px-2 py-0.5 rounded bg-red-500/10 text-red-600 font-medium">−{summary.removed} removed</span>
+            <span className="px-2 py-0.5 rounded bg-muted text-muted-foreground">{summary.unchanged} unchanged</span>
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto rounded border">
+          {!currentGoldens || !compareGoldens ? (
+            <div className="flex items-center justify-center py-16">
+              <div className="text-xs text-muted-foreground">Loading goldens…</div>
+            </div>
+          ) : diffRows.length === 0 ? (
+            <div className="flex items-center justify-center py-16">
+              <div className="text-xs text-muted-foreground">No goldens to compare.</div>
+            </div>
+          ) : (
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-muted/80 backdrop-blur border-b">
+                <tr>
+                  <th className="text-left px-3 py-2 text-muted-foreground font-medium w-16">Status</th>
+                  <th className="text-left px-3 py-2 text-muted-foreground font-medium min-w-[200px]">Input</th>
+                  <th className="text-left px-3 py-2 text-muted-foreground font-medium min-w-[180px]">
+                    v{currentDataset.version ?? 1} Expected Output
+                  </th>
+                  {summary.changed > 0 && (
+                    <th className="text-left px-3 py-2 text-muted-foreground font-medium min-w-[180px]">
+                      v{compareDataset?.version ?? "?"} Expected Output
+                    </th>
+                  )}
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {diffRows.filter((r) => r.status !== "unchanged").map((row, i) => {
+                  const rowCls = row.status === "added"
+                    ? "bg-emerald-500/5 border-l-2 border-emerald-500/40"
+                    : row.status === "removed"
+                    ? "bg-red-500/5 border-l-2 border-red-500/40"
+                    : row.status === "changed"
+                    ? "bg-amber-500/5 border-l-2 border-amber-500/40"
+                    : "";
+                  const statusBadge = row.status === "added"
+                    ? <span className="text-[9px] font-semibold text-emerald-600 bg-emerald-500/10 px-1.5 py-0.5 rounded">+Added</span>
+                    : row.status === "removed"
+                    ? <span className="text-[9px] font-semibold text-red-600 bg-red-500/10 px-1.5 py-0.5 rounded">−Removed</span>
+                    : <span className="text-[9px] font-semibold text-amber-600 bg-amber-500/10 px-1.5 py-0.5 rounded">~Changed</span>;
+                  return (
+                    <tr key={i} className={rowCls}>
+                      <td className="px-3 py-2">{statusBadge}</td>
+                      <td className="px-3 py-2 max-w-[200px]">
+                        <span className="font-mono line-clamp-3 text-[11px]">{row.input}</span>
+                      </td>
+                      <td className="px-3 py-2 max-w-[180px]">
+                        <span className="font-mono line-clamp-3 text-[11px] text-muted-foreground">{row.currentOut ?? "—"}</span>
+                      </td>
+                      {summary.changed > 0 && (
+                        <td className="px-3 py-2 max-w-[180px]">
+                          {row.status === "changed" && (
+                            <span className="font-mono line-clamp-3 text-[11px] text-muted-foreground line-through opacity-60">{row.baselineOut ?? "—"}</span>
+                          )}
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+                {summary.unchanged > 0 && (
+                  <tr className="bg-muted/10">
+                    <td colSpan={4} className="px-3 py-2 text-[10px] text-muted-foreground italic text-center">
+                      {summary.unchanged} unchanged row{summary.unchanged !== 1 ? "s" : ""} hidden
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div className="flex justify-end pt-2">
+          <Button variant="outline" size="sm" onClick={onClose} data-testid="button-close-diff">Close</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Bulk-tag Dialog ───────────────────────────────────────────────────────────
+
+interface BulkTagDialogProps {
+  open: boolean;
+  onClose: () => void;
+  datasetId: string;
+  onTagged: () => void;
+}
+
+function BulkTagDialog({ open, onClose, datasetId, onTagged }: BulkTagDialogProps) {
+  const [tagInput, setTagInput] = useState("");
+  const [pendingTags, setPendingTags] = useState<string[]>([]);
+  const [mode, setMode] = useState<"add" | "replace">("add");
+  const { toast } = useToast();
+
+  useEffect(() => {
+    if (!open) { setTagInput(""); setPendingTags([]); setMode("add"); }
+  }, [open]);
+
+  const addTag = (raw: string) => {
+    const t = raw.trim().replace(/,/g, "").trim();
+    if (t && !pendingTags.includes(t)) setPendingTags((prev) => [...prev, t]);
+    setTagInput("");
+  };
+
+  const mutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/eval/datasets/${datasetId}/goldens/bulk-tag`, { tags: pendingTags, mode });
+      if (!res.ok) { const e = await res.json(); throw new Error(e.message); }
+      return res.json();
+    },
+    onSuccess: (data: { updated: number }) => {
+      toast({ title: `Bulk-tag applied`, description: `${data.updated} golden${data.updated !== 1 ? "s" : ""} updated.` });
+      onTagged();
+      onClose();
+    },
+    onError: (err: any) => toast({ title: "Error", description: err.message, variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Tag className="w-4 h-4 text-primary" /> Bulk-tag Goldens
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="flex flex-col gap-4 py-2">
+          <div>
+            <Label className="text-xs mb-1.5 block font-medium">Tags to apply</Label>
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {pendingTags.map((t) => (
+                <span key={t} className="inline-flex items-center gap-1 bg-primary/10 text-primary rounded-full px-2 py-0.5 text-[11px] font-medium">
+                  {t}
+                  <button
+                    type="button"
+                    onClick={() => setPendingTags((prev) => prev.filter((x) => x !== t))}
+                    className="hover:text-destructive"
+                  >
+                    <X className="w-2.5 h-2.5" />
+                  </button>
+                </span>
+              ))}
+            </div>
+            <Input
+              value={tagInput}
+              onChange={(e) => setTagInput(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.key === "Enter" || e.key === ",") && tagInput.trim()) {
+                  e.preventDefault();
+                  addTag(tagInput);
+                }
+              }}
+              onBlur={() => { if (tagInput.trim()) addTag(tagInput); }}
+              placeholder="Type a tag and press Enter"
+              className="text-xs"
+              data-testid="input-bulk-tag"
+            />
+          </div>
+
+          <div>
+            <Label className="text-xs mb-1.5 block font-medium">Apply mode</Label>
+            <Select value={mode} onValueChange={(v) => setMode(v as "add" | "replace")}>
+              <SelectTrigger className="h-8 text-xs" data-testid="select-bulk-tag-mode">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="add">Merge with existing tags</SelectItem>
+                <SelectItem value="replace">Replace existing tags</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <p className="text-xs text-muted-foreground">
+            This will update <strong>all goldens</strong> in this dataset. The operation cannot be undone.
+          </p>
+        </div>
+
+        <DialogFooter>
+          <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
+          <Button
+            size="sm"
+            disabled={pendingTags.length === 0 || mutation.isPending}
+            onClick={() => mutation.mutate()}
+            data-testid="button-apply-bulk-tag"
+          >
+            {mutation.isPending ? "Applying…" : `Apply to All Goldens`}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -682,6 +1059,8 @@ export default function EvalDatasets() {
   const [newDsOpen, setNewDsOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [forkOpen, setForkOpen] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(false);
+  const [bulkTagOpen, setBulkTagOpen] = useState(false);
   const [deleteGoldenId, setDeleteGoldenId] = useState<string | null>(null);
 
   const qc = useQueryClient();
@@ -937,6 +1316,17 @@ export default function EvalDatasets() {
                     )}
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
+                    {versionSiblings.length > 1 && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setDiffOpen(true)}
+                        data-testid="button-version-diff"
+                      >
+                        <Search className="w-3.5 h-3.5 mr-1.5" />
+                        Compare Versions
+                      </Button>
+                    )}
                     <Button
                       size="sm"
                       variant="outline"
@@ -1013,6 +1403,16 @@ export default function EvalDatasets() {
                   <SelectItem value="fail">Failed</SelectItem>
                 </SelectContent>
               </Select>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs"
+                onClick={() => setBulkTagOpen(true)}
+                data-testid="button-bulk-tag"
+              >
+                <Tag className="w-3.5 h-3.5 mr-1.5" />
+                Bulk-tag
+              </Button>
               <Button
                 variant="ghost"
                 size="icon"
@@ -1208,12 +1608,28 @@ export default function EvalDatasets() {
             onImported={() => {}}
           />
           {selectedDataset && (
-            <ForkVersionDialog
-              open={forkOpen}
-              onClose={() => setForkOpen(false)}
-              dataset={selectedDataset}
-              onForked={(ds) => setSelectedDatasetId(ds.id)}
-            />
+            <>
+              <ForkVersionDialog
+                open={forkOpen}
+                onClose={() => setForkOpen(false)}
+                dataset={selectedDataset}
+                onForked={(ds) => setSelectedDatasetId(ds.id)}
+              />
+              {versionSiblings.length > 1 && (
+                <VersionDiffDialog
+                  open={diffOpen}
+                  onClose={() => setDiffOpen(false)}
+                  currentDataset={selectedDataset}
+                  siblings={versionSiblings}
+                />
+              )}
+              <BulkTagDialog
+                open={bulkTagOpen}
+                onClose={() => setBulkTagOpen(false)}
+                datasetId={selectedDatasetId}
+                onTagged={() => qc.invalidateQueries({ queryKey: ["/api/eval/datasets", selectedDatasetId, "goldens"] })}
+              />
+            </>
           )}
         </>
       )}
