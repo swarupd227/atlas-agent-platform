@@ -786,15 +786,17 @@ const router = Router();
 
       // Rank MCP servers by outcome relevance; take top 8 only to keep prompt concise.
       // Exclude servers whose industryId is set to a DIFFERENT industry than the current outcome
-      // (prevents cross-demo MCP tools from leaking into unrelated agent plans).
+      // (prevents cross-demo MCP tools — e.g. BlackRock IAM pipeline — from leaking into unrelated agent plans).
       // Also require at least 1 keyword match (score >= 1) so zero-relevance servers are never included.
-      const rankedMcpServers = allMcpServers
+      const rankedMcpServersWithScores = allMcpServers
         .filter(s => !s.industryId || s.industryId === industryId)
         .map(s => ({ server: s, score: relevanceScore(s) }))
         .filter(x => x.score >= 1)
         .sort((a, b) => b.score - a.score)
-        .slice(0, 8)
-        .map(x => x.server);
+        .slice(0, 8);
+      // Preserve scores so the mandatory-blueprint gate can use them later
+      const mcpServerScoreMap = new Map<string, number>(rankedMcpServersWithScores.map(x => [x.server.name, x.score]));
+      const rankedMcpServers = rankedMcpServersWithScores.map(x => x.server);
       const mcpToolsByServer: Record<string, any[]> = {};
       for (const server of rankedMcpServers) {
         try {
@@ -999,6 +1001,8 @@ You MUST incorporate this feedback into the new plan. Adjust the agents, roles, 
         }));
         // Coverage = systems with ACTUAL MCP tools (tool descriptions only, not server description)
         const coveredSystems = extractCoveredSystemsFromText(toolSlice.map(t => t.description || ""));
+        // Carry the outcome-relevance score so the mandatory-blueprint gate can enforce a minimum
+        const outcomeRelevanceScore = mcpServerScoreMap.get(serverName) ?? 0;
         return {
           server: serverName,
           serverDescription,
@@ -1006,13 +1010,26 @@ You MUST incorporate this feedback into the new plan. Adjust the agents, roles, 
           declaredStages,
           coveredSystems,
           tools: toolSlice,
+          outcomeRelevanceScore,
         };
       });
 
-      // Pre-compute agent blueprint and coverage ground truth for injection into prompt
+      // Pre-compute agent blueprint and coverage ground truth for injection into prompt.
+      // MANDATORY-BLUEPRINT GUARD: require outcomeRelevanceScore >= 3 before a staged-pipeline
+      // server can override the LLM's agent design.  A score < 3 means the server only shares
+      // generic words (e.g. "service", "agent") with the outcome — not enough to justify locking
+      // the plan into that server's IAM/financial/domain-specific pipeline stages.
+      // This prevents cross-demo pollution (e.g. BlackRock IAM stages appearing in a
+      // "Field Service Warranty Claim Recovery" outcome).
+      const MANDATE_MIN_RELEVANCE = 3;
       interface StagedPipeline { server: string; count: number; stages: string[]; coveredSystems: string[] }
       const stagedPipelines: StagedPipeline[] = mcpToolSummary
-        .filter(s => s.declaredStageCount && s.declaredStageCount >= 2 && s.declaredStages.length >= 2)
+        .filter(s =>
+          s.declaredStageCount &&
+          s.declaredStageCount >= 2 &&
+          s.declaredStages.length >= 2 &&
+          s.outcomeRelevanceScore >= MANDATE_MIN_RELEVANCE
+        )
         .map(s => ({ server: s.server, count: s.declaredStageCount!, stages: s.declaredStages, coveredSystems: s.coveredSystems }));
 
       // Build system→server coverage map: any system name found in coveredSystems → that server

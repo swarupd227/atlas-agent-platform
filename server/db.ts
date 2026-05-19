@@ -1100,6 +1100,16 @@ export async function runStartupMigrations() {
     // Seed built-in DeepEval metric catalog (always runs; ON CONFLICT skips existing rows)
     await seedBuiltinMetrics(client);
 
+    // Fix: BlackRock Synthetic Worker MCP was seeded without an industry_id, causing its
+    // IAM pipeline stages (Aquera Registration, SailPoint, etc.) to appear as the mandatory
+    // blueprint for unrelated outcomes.  Pin it to financial-services permanently.
+    await client.query(`
+      UPDATE mcp_servers
+      SET industry_id = 'financial-services'
+      WHERE name = 'BlackRock Synthetic Worker MCP'
+        AND (industry_id IS NULL OR industry_id = '')
+    `);
+
     console.log("[db] Startup migrations complete");
   } catch (err: any) {
     console.error("[db] Startup migration FAILED:", err.message);
