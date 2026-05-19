@@ -926,6 +926,8 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
     const scores: Record<string, number> = {};
     // Per-metric reasoning keyed by metric name — persisted in child span JSONB
     const metricReasonings: Record<string, { score: number; pass: boolean; reason: string; threshold: number }> = {};
+    // Per-metric duration tracked in a proper Map — no `any` mutation
+    const metricDurations = new Map<string, number>();
     let overallPass = false;
     const invocationStartedAt = new Date();
 
@@ -946,6 +948,7 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
             actualOutput,
           );
           const metricDurationMs = Date.now() - metricT0;
+          metricDurations.set(metric.name, metricDurationMs);
           const score = metricResult.isPassed
             ? metricResult.confidence
             : (1 - metricResult.confidence) * (metric.threshold || 0.5);
@@ -957,8 +960,6 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
             reason: metricResult.reason || "",
             threshold: metric.threshold || 0.5,
           };
-          // Store per-metric duration for span creation below
-          (metric as any)._durationMs = metricDurationMs;
         }
         const scoreValues = Object.values(scores);
         overallPass = activeMetrics.every(m => m && scores[m.name] >= (m.threshold || 0.5));
@@ -1023,9 +1024,9 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
     });
 
     // One child span per evaluated metric, with full reasoning in attributes
-    const activeMetrics = metrics.filter(Boolean);
-    if (!agentFailed && activeMetrics.length > 0) {
-      for (const metric of activeMetrics) {
+    const activeMetrics2 = metrics.filter(Boolean);
+    if (!agentFailed && activeMetrics2.length > 0) {
+      for (const metric of activeMetrics2) {
         if (!metric) continue;
         const reasoning = metricReasonings[metric.name];
         if (!reasoning) continue;
@@ -1049,7 +1050,7 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
             pass: reasoning.pass,
           },
           scores: { [metric.name]: reasoning.score },
-          durationMs: (metric as any)._durationMs || 0,
+          durationMs: metricDurations.get(metric.name) ?? 0,
           endedAt: new Date(),
         });
       }

@@ -2901,6 +2901,7 @@ export const evalGates = pgTable("eval_gates", {
   agentId: varchar("agent_id").notNull().unique(),
   datasetId: varchar("dataset_id"),
   metricCollectionId: varchar("metric_collection_id"),
+  attachedMetricIds: text("attached_metric_ids").array().default(sql`'{}'::text[]`),
   thresholdOverrides: jsonb("threshold_overrides"),
   regressionWindowPct: real("regression_window_pct").default(5),
   isActive: boolean("is_active").default(true),

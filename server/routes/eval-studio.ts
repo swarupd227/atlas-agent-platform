@@ -173,13 +173,35 @@ router.post("/api/eval/metrics/:id/attach", async (req, res) => {
     const metric = await storage.getEvalMetric(req.params.id);
     if (!metric) return res.status(404).json({ message: "Metric not found" });
     assertOrgOwnership(metric.organizationId, orgId);
+
+    // Persist real metric-to-agent attachment mapping in eval_gates
+    const attachment = await storage.attachMetricToAgent(agentId, req.params.id, orgId);
+
+    // Also bump usage count for catalog analytics
     await storage.updateEvalMetric(req.params.id, {
       usageCount: (metric.usageCount || 0) + 1,
     });
-    res.json({ success: true, metricId: req.params.id, agentId, scope });
+
+    res.json({
+      success: true,
+      metricId: req.params.id,
+      agentId,
+      scope,
+      attachedMetricIds: attachment.metricIds,
+      updatedAt: attachment.updatedAt,
+    });
   } catch (err: any) {
     if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
     if (err instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: err.errors });
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.get("/api/eval/metrics/attached/:agentId", async (req, res) => {
+  try {
+    const attachment = await storage.getAgentEvalMetricAttachments(req.params.agentId);
+    res.json(attachment);
+  } catch (err: any) {
     res.status(500).json({ message: err.message });
   }
 });

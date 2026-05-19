@@ -899,6 +899,11 @@ export interface IStorage {
   getEvalAnnotations(traceId: string): Promise<EvalAnnotation[]>;
   createEvalAnnotation(annotation: InsertEvalAnnotation): Promise<EvalAnnotation>;
 
+  // Atlas Eval Studio — Metric Attachments (via eval_gates)
+  getAgentEvalMetricAttachments(agentId: string): Promise<{ agentId: string; metricIds: string[]; updatedAt: Date | null }>;
+  attachMetricToAgent(agentId: string, metricId: string, organizationId?: string): Promise<{ agentId: string; metricIds: string[]; updatedAt: Date | null }>;
+  detachMetricFromAgent(agentId: string, metricId: string): Promise<{ agentId: string; metricIds: string[] }>;
+
   // Atlas Eval Studio — Gates
   getEvalGate(agentId: string): Promise<EvalGate | undefined>;
   upsertEvalGate(gate: InsertEvalGate): Promise<EvalGate>;
@@ -4013,7 +4018,10 @@ export class DatabaseStorage implements IStorage {
         .where(sql`(${evalMetricCollections.organizationId} IS NULL OR ${evalMetricCollections.organizationId} = ${organizationId})`)
         .orderBy(evalMetricCollections.name);
     }
-    return db.select().from(evalMetricCollections).orderBy(evalMetricCollections.name);
+    // When no org context, only return null-org (global/demo) records
+    return db.select().from(evalMetricCollections)
+      .where(sql`${evalMetricCollections.organizationId} IS NULL`)
+      .orderBy(evalMetricCollections.name);
   }
 
   async getEvalMetricCollection(id: string): Promise<EvalMetricCollection | undefined> {
@@ -4035,10 +4043,15 @@ export class DatabaseStorage implements IStorage {
 
   async getEvalDatasets(filters: { organizationId?: string; agentId?: string }): Promise<EvalDataset[]> {
     const conditions: any[] = [];
-    if (filters.organizationId) conditions.push(eq(evalDatasets.organizationId, filters.organizationId));
+    if (filters.organizationId) {
+      conditions.push(eq(evalDatasets.organizationId, filters.organizationId));
+    } else {
+      // When no org context, only return null-org (global/demo) records — prevents cross-tenant exposure
+      conditions.push(sql`${evalDatasets.organizationId} IS NULL`);
+    }
     if (filters.agentId) conditions.push(eq(evalDatasets.agentId, filters.agentId));
     return db.select().from(evalDatasets)
-      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .where(and(...conditions))
       .orderBy(desc(evalDatasets.createdAt));
   }
 
@@ -4118,11 +4131,16 @@ export class DatabaseStorage implements IStorage {
 
   async getEvalTestRuns(filters: { organizationId?: string; agentId?: string; datasetId?: string }): Promise<EvalTestRun[]> {
     const conditions: any[] = [];
-    if (filters.organizationId) conditions.push(eq(evalTestRuns.organizationId, filters.organizationId));
+    if (filters.organizationId) {
+      conditions.push(eq(evalTestRuns.organizationId, filters.organizationId));
+    } else {
+      // When no org context, only return null-org records — prevents cross-tenant exposure
+      conditions.push(sql`${evalTestRuns.organizationId} IS NULL`);
+    }
     if (filters.agentId) conditions.push(eq(evalTestRuns.agentId, filters.agentId));
     if (filters.datasetId) conditions.push(eq(evalTestRuns.datasetId, filters.datasetId));
     return db.select().from(evalTestRuns)
-      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .where(and(...conditions))
       .orderBy(desc(evalTestRuns.startedAt));
   }
 
@@ -4213,6 +4231,35 @@ export class DatabaseStorage implements IStorage {
       .onConflictDoUpdate({ target: evalGates.agentId, set: { ...gate, updatedAt: new Date() } })
       .returning();
     return row;
+  }
+
+  // ── Atlas Eval Studio — Metric Attachments ─────────────────────────────────
+
+  async getAgentEvalMetricAttachments(agentId: string): Promise<{ agentId: string; metricIds: string[]; updatedAt: Date | null }> {
+    const [gate] = await db.select().from(evalGates).where(eq(evalGates.agentId, agentId));
+    return { agentId, metricIds: gate?.attachedMetricIds ?? [], updatedAt: gate?.updatedAt ?? null };
+  }
+
+  async attachMetricToAgent(agentId: string, metricId: string, organizationId?: string): Promise<{ agentId: string; metricIds: string[]; updatedAt: Date | null }> {
+    const existing = await this.getAgentEvalMetricAttachments(agentId);
+    const metricIds = Array.from(new Set([...existing.metricIds, metricId]));
+    const [row] = await db.insert(evalGates)
+      .values({ agentId, organizationId: organizationId ?? null, attachedMetricIds: metricIds })
+      .onConflictDoUpdate({
+        target: evalGates.agentId,
+        set: { attachedMetricIds: metricIds, updatedAt: new Date() },
+      })
+      .returning();
+    return { agentId, metricIds: row.attachedMetricIds ?? [], updatedAt: row.updatedAt };
+  }
+
+  async detachMetricFromAgent(agentId: string, metricId: string): Promise<{ agentId: string; metricIds: string[] }> {
+    const existing = await this.getAgentEvalMetricAttachments(agentId);
+    const metricIds = existing.metricIds.filter(id => id !== metricId);
+    await db.update(evalGates)
+      .set({ attachedMetricIds: metricIds, updatedAt: new Date() })
+      .where(eq(evalGates.agentId, agentId));
+    return { agentId, metricIds };
   }
 }
 
