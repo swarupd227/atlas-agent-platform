@@ -112,9 +112,19 @@ export default function EvalRedteam() {
     refetchInterval: activeRunId ? 3000 : false,
   });
 
-  const { data: posture = [] } = useQuery<any[]>({
+  interface PosturePoint {
+    runId: string; startedAt: string; agentId: string;
+    vulnerabilitiesFound: number | null; postureScore: number | null;
+    byCat: Record<string, number>; totalProbes: number; safeProbes: number;
+  }
+  interface WeeklyTrendPoint { week: string; open: number; closed: number; regressed: number; }
+  interface PostureData { posture: PosturePoint[]; weeklyTrend: WeeklyTrendPoint[]; }
+
+  const { data: postureData } = useQuery<PostureData>({
     queryKey: ["/api/eval/redteam/posture"],
   });
+  const posture = postureData?.posture ?? [];
+  const weeklyTrend = postureData?.weeklyTrend ?? [];
 
   const startRun = useMutation({
     mutationFn: () => apiRequest("POST", "/api/eval/redteam/runs", {
@@ -476,6 +486,13 @@ export default function EvalRedteam() {
                             <div className="flex items-start justify-between gap-3 mb-2">
                               <div className="flex items-center gap-2">
                                 <Badge variant="secondary" className="text-[10px] capitalize">{r.category.replace(/_/g, " ")}</Badge>
+                                {(r as any).traceId && (
+                                  <Link href={`/observability?traceId=${(r as any).traceId}`}>
+                                    <Badge variant="outline" className="text-[10px] gap-1 cursor-pointer hover:bg-muted" data-testid={`link-trace-${r.id}`}>
+                                      <ExternalLink className="w-2.5 h-2.5" /> View Trace
+                                    </Badge>
+                                  </Link>
+                                )}
                               </div>
                               <span className="text-[10px] text-muted-foreground shrink-0">{r.latencyMs != null ? `${r.latencyMs}ms` : ""}</span>
                             </div>
@@ -559,7 +576,7 @@ export default function EvalRedteam() {
                   </CardContent>
                 </Card>
 
-                {/* Historical posture trend */}
+                {/* Historical posture score trend */}
                 {posture.length > 1 && (
                   <Card data-testid="card-posture-trend">
                     <CardHeader className="pb-3">
@@ -588,6 +605,40 @@ export default function EvalRedteam() {
                         <span>Oldest run</span>
                         <span className="text-green-500">— 80 target</span>
                         <span>Latest run</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Weekly open/closed/regressed stacked bar trend */}
+                {weeklyTrend.length > 0 && (
+                  <Card data-testid="card-weekly-vuln-trend">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm font-medium">Weekly Vulnerability Trend</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="flex items-end gap-1 h-28 mb-2" data-testid="chart-weekly-trend">
+                        {weeklyTrend.map((w, i) => {
+                          const total = Math.max(w.open + w.closed + w.regressed, 1);
+                          const maxTotal = Math.max(...weeklyTrend.map(x => x.open + x.closed + x.regressed), 1);
+                          const barH = Math.round((total / maxTotal) * 100);
+                          const openH = Math.round((w.open / total) * barH);
+                          const regressedH = Math.round((w.regressed / total) * barH);
+                          const closedH = barH - openH - regressedH;
+                          return (
+                            <div key={i} className="flex-1 flex flex-col-reverse gap-0 rounded-sm overflow-hidden" style={{ height: `${barH}%` }} data-testid={`bar-week-${w.week}`} title={`${w.week}: ${w.open} open, ${w.closed} closed, ${w.regressed} regressed`}>
+                              {closedH > 0 && <div style={{ height: `${closedH}%` }} className="bg-green-500/60" />}
+                              {regressedH > 0 && <div style={{ height: `${regressedH}%` }} className="bg-amber-500/70" />}
+                              {openH > 0 && <div style={{ height: `${openH}%` }} className="bg-red-500/70" />}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="flex items-center gap-4 text-[10px] text-muted-foreground">
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-red-500/70 inline-block" />Open vulns</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-amber-500/70 inline-block" />Regressed</span>
+                        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-green-500/60 inline-block" />Safe probes</span>
+                        <span className="ml-auto">{weeklyTrend.length} week{weeklyTrend.length !== 1 ? "s" : ""}</span>
                       </div>
                     </CardContent>
                   </Card>

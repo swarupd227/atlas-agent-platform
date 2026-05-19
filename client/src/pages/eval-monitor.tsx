@@ -11,7 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import {
   Activity, AlertTriangle, Bell, BellOff, Bot, CheckCircle2, ChevronRight,
-  DollarSign, Eye, FlaskConical, Radio, RefreshCw, Shield, TrendingDown, TrendingUp, Zap,
+  DollarSign, ExternalLink, Eye, FlaskConical, Radio, RefreshCw, Shield, TrendingDown, TrendingUp, Zap,
 } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -38,6 +38,13 @@ interface EvalAlert {
   triggeredAt: string;
 }
 
+interface FailingTrace {
+  id: string;
+  passRate: number | null;
+  startedAt: string | null;
+  datasetId: string | null;
+}
+
 interface AgentMonitorRow {
   agent: { id: string; name: string; description?: string };
   sparkline: (number | null)[];
@@ -45,6 +52,7 @@ interface AgentMonitorRow {
   totalRuns14d: number;
   openAlerts: EvalAlert[];
   config: { samplingRate: number; enabled: boolean };
+  topFailingRuns: FailingTrace[];
 }
 
 // Inline sparkline SVG
@@ -423,14 +431,42 @@ function AlertDetailPanel({ alert, agentRows, onAck, onResolve }: { alert: EvalA
         </div>
 
         <div>
-          <p className="text-xs font-medium text-muted-foreground mb-2">Recent test runs</p>
-          <Link href={`/evals/runs?agentId=${alert.agentId}&passFail=fail`}>
-            <Button variant="outline" size="sm" className="w-full gap-2 text-xs" data-testid="link-failing-traces">
-              <FlaskConical className="w-3.5 h-3.5" />
-              View failing traces for this agent
-              <ChevronRight className="w-3 h-3 ml-auto" />
-            </Button>
-          </Link>
+          <p className="text-xs font-medium text-muted-foreground mb-2">Top failing traces</p>
+          {row && row.topFailingRuns.length > 0 ? (
+            <div className="flex flex-col gap-1">
+              {row.topFailingRuns.map((trace, i) => (
+                <Link key={trace.id} href={`/evals/runs/${trace.id}`}>
+                  <div className="flex items-center justify-between px-3 py-2 rounded-md border hover:bg-muted/30 cursor-pointer transition-colors" data-testid={`link-trace-${trace.id}`}>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="text-[10px] text-muted-foreground w-4 shrink-0">#{i + 1}</span>
+                      <span className="text-xs text-muted-foreground truncate">
+                        {trace.startedAt ? new Date(trace.startedAt).toLocaleDateString() : "—"}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs font-semibold text-red-600">
+                        {trace.passRate != null ? `${Math.round(trace.passRate * 100)}%` : "—"}
+                      </span>
+                      <ExternalLink className="w-3 h-3 text-muted-foreground/60" />
+                    </div>
+                  </div>
+                </Link>
+              ))}
+              <Link href={`/evals/runs?agentId=${alert.agentId}`}>
+                <Button variant="ghost" size="sm" className="w-full text-xs mt-1 gap-2" data-testid="link-all-failing-traces">
+                  <FlaskConical className="w-3.5 h-3.5" /> View all runs for this agent <ChevronRight className="w-3 h-3 ml-auto" />
+                </Button>
+              </Link>
+            </div>
+          ) : (
+            <Link href={`/evals/runs?agentId=${alert.agentId}`}>
+              <Button variant="outline" size="sm" className="w-full gap-2 text-xs" data-testid="link-failing-traces">
+                <FlaskConical className="w-3.5 h-3.5" />
+                View test runs for this agent
+                <ChevronRight className="w-3 h-3 ml-auto" />
+              </Button>
+            </Link>
+          )}
         </div>
       </div>
     </>
