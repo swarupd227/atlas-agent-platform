@@ -196,7 +196,10 @@ export default function Evals() {
       threshold: number;
     }> = [];
     for (const [agentId, agentRuns] of runsByAgent.entries()) {
-      const allSorted = [...agentRuns].sort((a, b) => new Date(a.startedAt!).getTime() - new Date(b.startedAt!).getTime());
+      const allSorted = [...agentRuns]
+        .filter(r => r.status === "completed" && r.passRate != null)
+        .sort((a, b) => new Date(a.startedAt!).getTime() - new Date(b.startedAt!).getTime());
+      if (allSorted.length === 0) continue;
       const latest = allSorted[allSorted.length - 1];
       const prev = allSorted.length >= 2 ? allSorted[allSorted.length - 2] : null;
       const sparkline = runsToSparkline(allSorted.slice(-7));
@@ -362,7 +365,7 @@ export default function Evals() {
       ];
     }
     return [
-      { label: "New Test Run", icon: Play, href: "/evals/runs", variant: "default" as const },
+      { label: "Test Runs", icon: Play, href: "/evals/runs", variant: "default" as const },
       ...base,
     ];
   }, [role]);
@@ -398,10 +401,10 @@ export default function Evals() {
               Metric Library
             </Button>
           </Link>
-          <Button size="sm" data-testid="button-new-test-run" asChild>
-            <Link href="/golden-datasets">
-              <Plus className="w-4 h-4 mr-1.5" />
-              New Test Run
+          <Button size="sm" data-testid="button-test-runs" asChild>
+            <Link href="/evals/runs">
+              <Play className="w-4 h-4 mr-1.5" />
+              Test Runs
             </Link>
           </Button>
         </div>

@@ -44,15 +44,15 @@ function statusIcon(status: string, passRate: number | null | undefined) {
 export default function EvalRunDetail() {
   const { id } = useParams<{ id: string }>();
 
-  const { data: runs, isLoading } = useQuery<EvalTestRun[]>({
-    queryKey: ["/api/eval/runs"],
+  const { data: run, isLoading } = useQuery<EvalTestRun>({
+    queryKey: ["/api/eval/runs", id],
+    enabled: !!id,
   });
 
   const { data: agents } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
   });
 
-  const run = runs?.find(r => r.id === id);
   const agent = run ? agents?.find(a => a.id === run.agentId) : undefined;
   const agentName = agent?.name ?? (run ? `Agent ${run.agentId.slice(0, 8)}` : "");
   const passRatePct = run?.passRate != null ? Math.round(run.passRate * 100) : null;
