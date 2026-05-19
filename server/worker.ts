@@ -976,7 +976,7 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
           if (evalParams.includes("actual_output")) judgeInputData.actual_output = actualOutput;
           if (evalParams.includes("expected_output") && golden.expectedOutput) judgeInputData.expected_output = golden.expectedOutput;
           if (evalParams.includes("retrieval_context") && golden.retrievalContext?.length) judgeInputData.retrieval_context = golden.retrievalContext;
-          if (evalParams.includes("context") && golden.context?.length) judgeInputData.context = golden.context;
+          // Note: evalGoldens has no separate "context" field; retrieval_context covers this param
           const metricResult = await runLlmJudge(
             metric.name,
             judgeInputData,
@@ -1052,13 +1052,13 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
       inputs: { input: golden.input },
       outputs: agentFailed ? { error: agentFailureReason } : { output: actualOutput },
       attributes: {
-        model: agent.modelId || "default",
+        model: (agent as any).modelId || "default",
         agentFailed,
         agentId: agent.id,
       },
       scores: agentFailed ? { overall: 0 } : {},
       durationMs: latencyMs,
-      startedAt: invocationStartedAt,
+      // startedAt has DB defaultNow() and is omitted from InsertEvalSpan — use endedAt only
       endedAt: new Date(),
     });
 
