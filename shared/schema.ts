@@ -3047,6 +3047,26 @@ export const insertEvalRedteamResultSchema = createInsertSchema(evalRedteamResul
 export type InsertEvalRedteamResult = z.infer<typeof insertEvalRedteamResultSchema>;
 export type EvalRedteamResult = typeof evalRedteamResults.$inferSelect;
 
+// ── Eval Report Artifacts ─────────────────────────────────────────────────────
+export const evalReportArtifacts = pgTable("eval_report_artifacts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  scheduleId: varchar("schedule_id"),
+  templateType: text("template_type").notNull(),
+  generatedAt: timestamp("generated_at").defaultNow(),
+  timeWindowDays: integer("time_window_days"),
+  agentIds: text("agent_ids").array().default(sql`'{}'::text[]`),
+  reportData: jsonb("report_data").notNull(),
+  overallScore: integer("overall_score"),
+  status: text("status").notNull().default("ready"),
+}, (table) => [
+  index("idx_eval_report_artifacts_org").on(table.organizationId),
+  index("idx_eval_report_artifacts_schedule").on(table.scheduleId),
+]);
+export const insertEvalReportArtifactSchema = createInsertSchema(evalReportArtifacts).omit({ id: true, generatedAt: true });
+export type InsertEvalReportArtifact = z.infer<typeof insertEvalReportArtifactSchema>;
+export type EvalReportArtifact = typeof evalReportArtifacts.$inferSelect;
+
 // ── Eval Report Schedules ─────────────────────────────────────────────────────
 export const evalReportSchedules = pgTable("eval_report_schedules", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
@@ -27,6 +26,8 @@ import {
   Award,
   TrendingUp,
   Info,
+  Eye,
+  FileText,
 } from "lucide-react";
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -58,6 +59,7 @@ interface AnnotationQueueItem {
     id: string;
     input: string;
     expectedOutput: string | null;
+    retrievalContext?: string[] | null;
     tags: string[] | null;
   } | null;
   agentId: string | null;
@@ -74,6 +76,14 @@ interface AnnotationQueueItem {
     createdAt: string;
   }>;
   iaaStats: { kappa: number; consensus: number } | null;
+}
+
+interface AnnotationDetail {
+  trace: AnnotationQueueItem["trace"];
+  golden: AnnotationQueueItem["golden"] | null;
+  rootSpan: { actualOutput: string | null; actualContext: any; durationMs: number | null } | null;
+  existingAnnotations: AnnotationQueueItem["existingAnnotations"];
+  perMetricIaa: Record<string, { kappa: number; consensus: string; annotatorCount: number }>;
 }
 
 // ── Priority badge ────────────────────────────────────────────────────────────
@@ -122,9 +132,14 @@ function StarRating({ value, onChange }: { value: number; onChange: (v: number) 
   );
 }
 
-// ── Main page ─────────────────────────────────────────────────────────────────
+// ── Kappa color ───────────────────────────────────────────────────────────────
 
-const ANNOTATOR_ID = "annotator-current"; // In a real app, pull from auth context
+function KappaLabel({ kappa }: { kappa: number }) {
+  const color = kappa >= 0.6 ? "text-green-600" : kappa >= 0.2 ? "text-yellow-600" : "text-red-600";
+  return <span className={`text-xl font-bold ${color}`}>{kappa.toFixed(2)}</span>;
+}
+
+// ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function EvalAnnotate() {
   const { toast } = useToast();
@@ -133,20 +148,33 @@ export default function EvalAnnotate() {
   const [comment, setComment] = useState("");
   const [isEdgeCase, setIsEdgeCase] = useState(false);
   const [promoteToGolden, setPromoteToGolden] = useState(false);
-  const [targetDatasetId, setTargetDatasetId] = useState("");
 
   const { data: queue = [], isLoading } = useQuery<AnnotationQueueItem[]>({
     queryKey: ["/api/eval/annotation-queue"],
   });
 
   const { data: stats } = useQuery({
-    queryKey: ["/api/eval/annotations/stats", ANNOTATOR_ID],
-    queryFn: () => apiRequest("GET", `/api/eval/annotations/stats/${ANNOTATOR_ID}`).then(r => r.json()),
+    queryKey: ["/api/eval/annotations/stats"],
   });
 
-  const { data: datasets = [] } = useQuery<any[]>({
-    queryKey: ["/api/eval/datasets"],
+  const currentItem = queue[selectedIdx];
+
+  // Detailed annotation info: actual output, retrieval context, per-metric IAA
+  const { data: detail } = useQuery<AnnotationDetail>({
+    queryKey: ["/api/eval/traces", currentItem?.trace?.id, "annotation-detail"],
+    queryFn: () =>
+      apiRequest("GET", `/api/eval/traces/${currentItem!.trace.id}/annotation-detail`).then(r => r.json()),
+    enabled: !!currentItem?.trace?.id,
   });
+
+  const metricKeys = currentItem?.trace?.scores ? Object.keys(currentItem.trace.scores) : [];
+
+  const setMetricRating = (metric: string, field: keyof MetricRating | "correctedOutput", value: any) => {
+    setRatings(prev => ({
+      ...prev,
+      [metric]: { ...(prev[metric] ?? { stars: 0, passFail: null, note: "" }), [field]: value },
+    }));
+  };
 
   const saveAnnotation = useMutation({
     mutationFn: (data: any) => apiRequest("POST", "/api/eval/annotations", data).then(r => r.json()),
@@ -154,12 +182,11 @@ export default function EvalAnnotate() {
       toast({
         title: result.promotedToGoldenId ? "Annotation saved & promoted to golden" : "Annotation saved",
         description: result.promotedToGoldenId
-          ? `Golden #${result.promotedToGoldenId.slice(0, 8)} created successfully.`
+          ? `Golden #${result.promotedToGoldenId.slice(0, 8)} created in source dataset.`
           : "Your rating has been recorded.",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/eval/annotation-queue"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/eval/annotations/stats", ANNOTATOR_ID] });
-      // Advance to next item
+      queryClient.invalidateQueries({ queryKey: ["/api/eval/annotations/stats"] });
       if (selectedIdx < queue.length - 1) {
         setSelectedIdx(idx => idx + 1);
       }
@@ -175,20 +202,14 @@ export default function EvalAnnotate() {
     setPromoteToGolden(false);
   };
 
-  // Reset form when trace changes
   useEffect(() => { resetForm(); }, [selectedIdx]);
 
-  const currentItem = queue[selectedIdx];
-  const metricKeys = currentItem?.trace?.scores ? Object.keys(currentItem.trace.scores) : [];
-
-  const setMetricRating = (metric: string, field: keyof MetricRating | "correctedOutput", value: any) => {
-    setRatings(prev => ({
-      ...prev,
-      [metric]: { ...(prev[metric] ?? { stars: 0, passFail: null, note: "" }), [field]: value },
-    }));
-  };
-
   const canSubmit = ratings.overall.stars > 0 || ratings.overall.passFail !== null;
+
+  const existingAnnotations = detail?.existingAnnotations ?? currentItem?.existingAnnotations ?? [];
+  const perMetricIaa = detail?.perMetricIaa ?? {};
+  const actualOutput = detail?.rootSpan?.actualOutput ?? null;
+  const retrievalContext: string[] = (detail?.golden?.retrievalContext ?? currentItem?.golden?.retrievalContext ?? []) as string[];
 
   return (
     <div className="flex h-full">
@@ -293,7 +314,7 @@ export default function EvalAnnotate() {
                 </div>
               </div>
 
-              {/* Input / Expected / Actual */}
+              {/* Input / Expected / Actual Output */}
               <div className="space-y-3">
                 <div className="rounded-lg border bg-muted/30 p-4">
                   <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Input Prompt</p>
@@ -305,6 +326,29 @@ export default function EvalAnnotate() {
                     {currentItem.golden?.expectedOutput ?? "No expected output defined"}
                   </p>
                 </div>
+                {actualOutput !== null && (
+                  <div className="rounded-lg border border-blue-200 dark:border-blue-800/50 bg-blue-50/30 dark:bg-blue-950/10 p-4">
+                    <p className="text-xs font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                      <Eye className="h-3.5 w-3.5" /> Actual Agent Output
+                    </p>
+                    <p className="text-sm whitespace-pre-wrap">{actualOutput}</p>
+                  </div>
+                )}
+                {retrievalContext.length > 0 && (
+                  <div className="rounded-lg border p-4">
+                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                      <FileText className="h-3.5 w-3.5" /> Retrieval Context ({retrievalContext.length} chunk{retrievalContext.length !== 1 ? "s" : ""})
+                    </p>
+                    <div className="space-y-2 max-h-40 overflow-y-auto">
+                      {retrievalContext.map((chunk, i) => (
+                        <div key={i} className="rounded bg-muted/40 p-2">
+                          <p className="text-xs text-muted-foreground font-mono">Chunk {i + 1}</p>
+                          <p className="text-xs whitespace-pre-wrap mt-0.5 line-clamp-3">{chunk}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 {currentItem.trace.agentFailed && (
                   <div className="rounded-lg border border-red-200 bg-red-50 dark:bg-red-950/20 p-4">
                     <p className="text-xs font-semibold text-red-600 uppercase tracking-wide mb-2">Agent Failed</p>
@@ -324,6 +368,15 @@ export default function EvalAnnotate() {
                             {result.passed
                               ? <CheckCircle2 className="h-3.5 w-3.5 text-green-500" />
                               : <XCircle className="h-3.5 w-3.5 text-red-500" />}
+                            {/* Per-metric IAA kappa inline */}
+                            {perMetricIaa[metric] && (
+                              <span className={`text-[10px] font-mono ml-1 ${
+                                perMetricIaa[metric].kappa >= 0.6 ? "text-green-600" :
+                                perMetricIaa[metric].kappa >= 0.2 ? "text-yellow-600" : "text-red-600"
+                              }`}>
+                                κ={perMetricIaa[metric].kappa.toFixed(2)}
+                              </span>
+                            )}
                           </div>
                         </div>
                       ))}
@@ -346,7 +399,7 @@ export default function EvalAnnotate() {
               </div>
 
               {/* ── IAA panel ── */}
-              {currentItem.existingAnnotations.length > 0 && (
+              {existingAnnotations.length > 0 && (
                 <Card className="border-blue-200 dark:border-blue-800/50 bg-blue-50/30 dark:bg-blue-950/10">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-sm flex items-center gap-2">
@@ -355,40 +408,56 @@ export default function EvalAnnotate() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-3">
-                    <div className="flex items-center gap-6">
-                      {currentItem.iaaStats && (
-                        <>
-                          <div>
-                            <p className="text-xs text-muted-foreground">Cohen's κ</p>
-                            <p className="text-xl font-bold">
-                              {currentItem.iaaStats.kappa >= 0.6 ? (
-                                <span className="text-green-600">{currentItem.iaaStats.kappa.toFixed(2)}</span>
-                              ) : currentItem.iaaStats.kappa >= 0.2 ? (
-                                <span className="text-yellow-600">{currentItem.iaaStats.kappa.toFixed(2)}</span>
-                              ) : (
-                                <span className="text-red-600">{currentItem.iaaStats.kappa.toFixed(2)}</span>
-                              )}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">Consensus</p>
-                            <p className="text-sm font-semibold">
-                              {currentItem.iaaStats.consensus > 0 ? (
-                                <span className="text-green-600 flex items-center gap-1"><ThumbsUp className="h-3.5 w-3.5" /> Pass</span>
-                              ) : (
-                                <span className="text-red-600 flex items-center gap-1"><ThumbsDown className="h-3.5 w-3.5" /> Fail</span>
-                              )}
-                            </p>
-                          </div>
-                        </>
-                      )}
-                      <div>
-                        <p className="text-xs text-muted-foreground">Annotators</p>
-                        <p className="text-sm font-semibold">{currentItem.existingAnnotations.length}</p>
+                    {/* Overall IAA */}
+                    {currentItem.iaaStats && (
+                      <div className="flex items-center gap-6 pb-2">
+                        <div>
+                          <p className="text-xs text-muted-foreground">Overall κ</p>
+                          <KappaLabel kappa={currentItem.iaaStats.kappa} />
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">Consensus</p>
+                          <p className="text-sm font-semibold">
+                            {currentItem.iaaStats.consensus > 0 ? (
+                              <span className="text-green-600 flex items-center gap-1"><ThumbsUp className="h-3.5 w-3.5" /> Pass</span>
+                            ) : (
+                              <span className="text-red-600 flex items-center gap-1"><ThumbsDown className="h-3.5 w-3.5" /> Fail</span>
+                            )}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-muted-foreground">Annotators</p>
+                          <p className="text-sm font-semibold">{existingAnnotations.length}</p>
+                        </div>
                       </div>
-                    </div>
+                    )}
+
+                    {/* Per-metric IAA */}
+                    {Object.keys(perMetricIaa).length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Per-Metric IAA</p>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {Object.entries(perMetricIaa).map(([metric, iaa]) => (
+                            <div key={metric} className="flex items-center justify-between text-xs bg-white/60 dark:bg-white/5 rounded px-2 py-1.5">
+                              <span className="text-muted-foreground truncate mr-2">{metric}</span>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <KappaLabel kappa={iaa.kappa} />
+                                <span className={`text-[10px] ${
+                                  iaa.consensus === "pass" ? "text-green-600" :
+                                  iaa.consensus === "fail" ? "text-red-600" : "text-yellow-600"
+                                }`}>
+                                  {iaa.consensus}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Existing annotation list */}
                     <div className="space-y-1.5">
-                      {currentItem.existingAnnotations.map(ann => (
+                      {existingAnnotations.map(ann => (
                         <div key={ann.id} className="flex items-center justify-between text-xs bg-white/60 dark:bg-white/5 rounded px-2 py-1.5">
                           <span className="font-mono text-muted-foreground">{ann.annotatorId.slice(0, 16)}</span>
                           <div className="flex items-center gap-2">
@@ -413,13 +482,13 @@ export default function EvalAnnotate() {
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-sm">Your Annotation</h3>
-                  <span className="text-xs text-muted-foreground">All ratings optional except overall</span>
+                  <span className="text-xs text-muted-foreground">Overall rating required</span>
                 </div>
 
                 {/* Overall rating */}
                 <Card>
                   <CardContent className="pt-4 space-y-3">
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between flex-wrap gap-3">
                       <Label className="font-semibold">Overall Quality</Label>
                       <div className="flex items-center gap-3">
                         <StarRating
@@ -466,22 +535,31 @@ export default function EvalAnnotate() {
                   </CardContent>
                 </Card>
 
-                {/* Per-metric ratings */}
+                {/* Per-metric ratings with notes */}
                 {metricKeys.length > 0 && (
                   <div className="space-y-2">
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Per-Metric Ratings</p>
                     {metricKeys.map(metric => {
                       const judgeResult = currentItem.trace.scores?.[metric];
                       const myRating = ratings[metric] as MetricRating | undefined;
+                      const iaa = perMetricIaa[metric];
                       return (
                         <Card key={metric} className="border-dashed">
-                          <CardContent className="pt-3 pb-3">
+                          <CardContent className="pt-3 pb-3 space-y-2">
                             <div className="flex items-center justify-between gap-2 flex-wrap">
                               <div className="flex items-center gap-2">
                                 <span className="text-sm font-medium">{metric}</span>
                                 {judgeResult && (
                                   <span className="text-xs text-muted-foreground">
                                     (Judge: {(judgeResult.score * 100).toFixed(0)}% — {judgeResult.passed ? "PASS" : "FAIL"})
+                                  </span>
+                                )}
+                                {iaa && (
+                                  <span className={`text-xs font-mono ${
+                                    iaa.kappa >= 0.6 ? "text-green-600" :
+                                    iaa.kappa >= 0.2 ? "text-yellow-600" : "text-red-600"
+                                  }`}>
+                                    κ={iaa.kappa.toFixed(2)} ({iaa.consensus}, n={iaa.annotatorCount})
                                   </span>
                                 )}
                               </div>
@@ -506,6 +584,13 @@ export default function EvalAnnotate() {
                                 </button>
                               </div>
                             </div>
+                            <Textarea
+                              placeholder={`Note on ${metric} (optional)…`}
+                              data-testid={`metric-note-${metric}`}
+                              value={myRating?.note ?? ""}
+                              onChange={e => setMetricRating(metric, "note", e.target.value)}
+                              className="h-12 text-xs resize-none"
+                            />
                           </CardContent>
                         </Card>
                       );
@@ -549,20 +634,14 @@ export default function EvalAnnotate() {
                   </div>
                 </div>
 
-                {/* Dataset selector for golden promotion */}
+                {/* Auto-dataset info when promote is on */}
                 {promoteToGolden && (
-                  <div>
-                    <Label className="text-sm mb-1.5 block">Target Dataset</Label>
-                    <Select value={targetDatasetId} onValueChange={setTargetDatasetId}>
-                      <SelectTrigger data-testid="target-dataset-select" className="w-64">
-                        <SelectValue placeholder="Select dataset…" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {datasets.map((d: any) => (
-                          <SelectItem key={d.id} value={d.id}>{d.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                  <div className="rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/50 p-3 text-xs text-amber-700 dark:text-amber-400 flex items-start gap-1.5">
+                    <Sparkles className="h-3.5 w-3.5 mt-0.5 shrink-0 text-amber-500" />
+                    <span>
+                      A new golden will be created in the <strong>same dataset</strong> as the original golden.
+                      The corrected expected output above (if provided) will be used.
+                    </span>
                   </div>
                 )}
 
@@ -578,15 +657,13 @@ export default function EvalAnnotate() {
                   </Button>
                   <Button
                     data-testid="save-annotation-btn"
-                    disabled={!canSubmit || saveAnnotation.isPending || (promoteToGolden && !targetDatasetId)}
+                    disabled={!canSubmit || saveAnnotation.isPending}
                     onClick={() => saveAnnotation.mutate({
                       traceId: currentItem.trace.id,
-                      annotatorId: ANNOTATOR_ID,
                       ratings,
                       comment: comment || null,
                       promoteToGolden,
                       isEdgeCase,
-                      datasetId: promoteToGolden ? targetDatasetId : null,
                     })}
                   >
                     {saveAnnotation.isPending ? "Saving…" : "Save Annotation"}
@@ -613,17 +690,17 @@ export default function EvalAnnotate() {
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                       <Award className="h-3.5 w-3.5" /> Total Annotations
                     </div>
-                    <span className="text-sm font-bold">{stats.totalAnnotations}</span>
+                    <span className="text-sm font-bold">{(stats as any).totalAnnotations}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                       <Users className="h-3.5 w-3.5" /> Peer Agreement
                     </div>
                     <span className={`text-sm font-bold ${
-                      stats.peerAgreementRate >= 80 ? "text-green-600" :
-                      stats.peerAgreementRate >= 60 ? "text-yellow-600" : "text-red-600"
+                      (stats as any).peerAgreementRate >= 80 ? "text-green-600" :
+                      (stats as any).peerAgreementRate >= 60 ? "text-yellow-600" : "text-red-600"
                     }`}>
-                      {stats.peerAgreementRate !== null ? `${stats.peerAgreementRate}%` : "—"}
+                      {(stats as any).peerAgreementRate !== null ? `${(stats as any).peerAgreementRate}%` : "—"}
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
@@ -631,34 +708,34 @@ export default function EvalAnnotate() {
                       <TrendingUp className="h-3.5 w-3.5" /> Judge Agreement
                     </div>
                     <span className={`text-sm font-bold ${
-                      stats.judgeAgreementRate >= 80 ? "text-green-600" :
-                      stats.judgeAgreementRate >= 60 ? "text-yellow-600" : "text-red-600"
+                      (stats as any).judgeAgreementRate >= 80 ? "text-green-600" :
+                      (stats as any).judgeAgreementRate >= 60 ? "text-yellow-600" : "text-red-600"
                     }`}>
-                      {stats.judgeAgreementRate !== null ? `${stats.judgeAgreementRate}%` : "—"}
+                      {(stats as any).judgeAgreementRate !== null ? `${(stats as any).judgeAgreementRate}%` : "—"}
                     </span>
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                       <Sparkles className="h-3.5 w-3.5 text-amber-500" /> Goldens Created
                     </div>
-                    <span className="text-sm font-bold">{stats.promotedToGolden}</span>
+                    <span className="text-sm font-bold">{(stats as any).promotedToGolden}</span>
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                       <AlertTriangle className="h-3.5 w-3.5" /> Edge Cases
                     </div>
-                    <span className="text-sm font-bold">{stats.edgeCasesTagged}</span>
+                    <span className="text-sm font-bold">{(stats as any).edgeCasesTagged}</span>
                   </div>
                 </div>
 
                 <Separator />
 
                 {/* Recent annotations */}
-                {stats.recentAnnotations?.length > 0 && (
+                {(stats as any).recentAnnotations?.length > 0 && (
                   <div>
                     <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Recent</p>
                     <div className="space-y-2">
-                      {stats.recentAnnotations.map((ann: any) => (
+                      {(stats as any).recentAnnotations.map((ann: any) => (
                         <div key={ann.id} className="text-xs space-y-0.5">
                           <div className="flex items-center justify-between">
                             <span className="font-mono text-muted-foreground">{ann.traceId.slice(0, 10)}…</span>

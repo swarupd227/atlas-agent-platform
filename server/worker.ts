@@ -561,6 +561,93 @@ async function processAuditChainIntegrityCheck(job: Job): Promise<Record<string,
   return { ...checkResult, durationMs: Date.now() - startedAt, healthCheckId };
 }
 
+// ── Report Schedule Worker ────────────────────────────────────────────────────
+
+const REPORT_SCHEDULE_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
+
+async function processReportScheduleRun(job: Job): Promise<Record<string, unknown>> {
+  const { generateComplianceReport } = await import("./eval-report-generator");
+  const startedAt = Date.now();
+  let processed = 0;
+  let errors = 0;
+  let jobError: Error | undefined;
+
+  try {
+    const dueSchedules = await storage.getDueEvalReportSchedules();
+    console.log(`[worker] Report schedule check: ${dueSchedules.length} schedule(s) due`);
+
+    for (const schedule of dueSchedules) {
+      try {
+        const report = await generateComplianceReport({
+          templateType: schedule.templateType,
+          agentIds: (schedule.agentIds as string[]) ?? [],
+          timeWindowDays: schedule.timeWindowDays ?? 30,
+          format: "json",
+          orgId: schedule.organizationId ?? undefined,
+        });
+        await storage.createEvalReportArtifact({
+          scheduleId: schedule.id,
+          organizationId: schedule.organizationId ?? undefined,
+          templateType: schedule.templateType,
+          format: "json",
+          payload: report as Record<string, unknown>,
+        });
+
+        // Advance nextRunAt based on cadence
+        const now = new Date();
+        const next = new Date(now);
+        if (schedule.cadence === "weekly") next.setDate(now.getDate() + 7);
+        else if (schedule.cadence === "quarterly") next.setMonth(now.getMonth() + 3);
+        else next.setMonth(now.getMonth() + 1);
+
+        await storage.updateEvalReportSchedule(schedule.id, { nextRunAt: next, lastRunAt: now });
+        processed++;
+        console.log(`[worker] Report schedule ${schedule.id} ran: ${schedule.templateType}, next at ${next.toISOString()}`);
+      } catch (schedErr: any) {
+        errors++;
+        console.error(`[worker] Report schedule ${schedule.id} failed:`, schedErr.message);
+      }
+    }
+  } catch (err: any) {
+    jobError = err;
+    console.error("[worker] Report schedule check failed:", err.message);
+  } finally {
+    const nextRunAt = new Date(Date.now() + REPORT_SCHEDULE_CHECK_INTERVAL_MS);
+    try {
+      await storage.createJob({
+        type: "eval_report_schedule_check",
+        status: "queued",
+        payload: { triggeredBy: "scheduled" },
+        scheduledFor: nextRunAt,
+      });
+    } catch (enqueueErr: any) {
+      console.error("[worker] Failed to re-enqueue report schedule check:", enqueueErr.message);
+    }
+  }
+
+  if (jobError) throw jobError;
+  return { processed, errors, durationMs: Date.now() - startedAt };
+}
+
+export async function enqueueReportScheduleCheck() {
+  try {
+    const hasPending = await storage.hasPendingJobOfType("eval_report_schedule_check");
+    if (hasPending) {
+      console.log("[startup] Report schedule check already queued, skipping initial enqueue");
+      return;
+    }
+    await storage.createJob({
+      type: "eval_report_schedule_check",
+      status: "queued",
+      payload: { triggeredBy: "scheduled" },
+      scheduledFor: new Date(Date.now() + 60_000), // first run 1 min after startup
+    });
+    console.log("[startup] Enqueued initial report schedule check");
+  } catch (err: any) {
+    console.error("[startup] Failed to enqueue report schedule check:", err.message);
+  }
+}
+
 export async function enqueueAuditChainCheck() {
   try {
     const existing = await storage.getPendingAuditChainJob();
@@ -1322,6 +1409,8 @@ export function startWorker(intervalMs = 2000) {
             result = await processSynthesizerRun(job);
           } else if (job.type === "simulator_run") {
             result = await processSimulatorRun(job);
+          } else if (job.type === "eval_report_schedule_check") {
+            result = await processReportScheduleRun(job);
           } else {
             result = { message: `Unknown job type: ${job.type}` };
           }

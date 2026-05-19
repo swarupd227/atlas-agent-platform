@@ -7,7 +7,18 @@ import * as os from "os";
 import { randomUUID } from "crypto";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
+import type { Request } from "express";
+import { generateComplianceReport, REPORT_TEMPLATES } from "../eval-report-generator";
 import { runLlmJudge, runAgentOnInput, buildAgentContext } from "../eval-judge";
+
+/** Derive annotator identity from authenticated session; fall back to header in demo mode. */
+function getAnnotatorId(req: Request): string {
+  if ((req as any).authUser?.userId) return (req as any).authUser.userId;
+  const hdr = req.headers["x-annotator-id"];
+  if (typeof hdr === "string" && hdr) return hdr;
+  const orgId = getOrgId(req);
+  return `demo-annotator${orgId ? `-${orgId.slice(0, 8)}` : ""}`;
+}
 import { evaluateGateTag } from "../worker";
 import { getDefaultProvider, getProvider, LLMProvider } from "../llm-provider";
 import { runAgentOnce } from "../agent-runtime";
@@ -2140,27 +2151,82 @@ router.get("/api/eval/annotation-queue", async (req, res) => {
   } catch (err: any) { res.status(500).json({ message: err.message }); }
 });
 
+// GET /api/eval/traces/:id/annotation-detail  — full trace detail for annotation form
+router.get("/api/eval/traces/:id/annotation-detail", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const orgId = getOrgId(req);
+
+    const trace = await storage.getEvalTrace(id);
+    if (!trace) return res.status(404).json({ message: "Trace not found" });
+
+    const golden = await storage.getEvalGolden(trace.goldenId).catch(() => null);
+    const spans = await storage.getEvalSpans(id).catch(() => []);
+
+    // Root span = first span with no parent (carries the top-level agent I/O)
+    const rootSpan = spans.find(s => !s.parentSpanId) ?? spans[0] ?? null;
+    const actualOutput = rootSpan?.outputs
+      ? (typeof (rootSpan.outputs as any)?.text === "string"
+          ? (rootSpan.outputs as any).text
+          : JSON.stringify(rootSpan.outputs))
+      : null;
+    const actualContext = rootSpan?.inputs
+      ? ((rootSpan.inputs as any)?.context ?? null)
+      : null;
+
+    const existingAnnotations = await storage.getEvalAnnotations(id);
+
+    // Per-metric IAA: for each metric key, compute kappa across annotators
+    const perMetricIaa: Record<string, { kappa: number; consensus: string; annotatorCount: number }> = {};
+    const allMetricKeys = new Set<string>();
+    for (const ann of existingAnnotations) {
+      const rmap = ann.ratings as Record<string, any> | null;
+      if (rmap) Object.keys(rmap).forEach(k => allMetricKeys.add(k));
+    }
+    for (const metric of allMetricKeys) {
+      const values = existingAnnotations
+        .map(a => (a.ratings as Record<string, any> | null)?.[metric]?.passFail as boolean | undefined)
+        .filter(v => v !== undefined) as boolean[];
+      if (values.length >= 2) {
+        const agreement = values.filter(v => v === values[0]).length / values.length;
+        const Pe = 0.5;
+        const kappa = Pe < 1 ? (agreement - Pe) / (1 - Pe) : 1;
+        const passCount = values.filter(Boolean).length;
+        perMetricIaa[metric] = {
+          kappa: Math.round(kappa * 100) / 100,
+          consensus: passCount > values.length / 2 ? "pass" : passCount < values.length / 2 ? "fail" : "split",
+          annotatorCount: values.length,
+        };
+      }
+    }
+
+    res.json({ trace, golden, rootSpan: rootSpan ? { actualOutput, actualContext, durationMs: rootSpan.durationMs } : null, existingAnnotations, perMetricIaa });
+  } catch (err: any) { res.status(500).json({ message: err.message }); }
+});
+
 // POST /api/eval/annotations  — save annotation; optionally promote trace to golden
 router.post("/api/eval/annotations", async (req, res) => {
   try {
     const orgId = getOrgId(req);
-    const { traceId, annotatorId, ratings, comment, promoteToGolden, isEdgeCase, datasetId } = req.body;
-    if (!traceId || !annotatorId) return res.status(400).json({ message: "traceId and annotatorId are required" });
+    // Identity comes from auth session; body annotatorId is ignored in production
+    const annotatorId = getAnnotatorId(req);
+    const { traceId, ratings, comment, promoteToGolden, isEdgeCase, datasetId } = req.body;
+    if (!traceId) return res.status(400).json({ message: "traceId is required" });
 
     let promotedToGoldenId: string | null = null;
 
-    // Promote to golden if requested
-    if (promoteToGolden && datasetId) {
+    // Promote to golden if requested — use the golden's own datasetId by default
+    if (promoteToGolden) {
       const trace = await storage.getEvalTrace(traceId);
       if (trace) {
         const golden = await storage.getEvalGolden(trace.goldenId).catch(() => null);
         if (golden) {
-          const scores = trace.scores as Record<string, any> | null;
-          // Use annotator's corrected expected output from ratings, else fall back to golden's expected
+          // Target dataset: explicit override from body, or golden's own dataset
+          const targetDatasetId = datasetId ?? golden.datasetId;
           const ratingMap = (ratings as Record<string, any>) ?? {};
           const correctedOutput = ratingMap.overall?.correctedOutput ?? golden.expectedOutput ?? "";
           const newGolden = await storage.createEvalGolden({
-            datasetId,
+            datasetId: targetDatasetId,
             organizationId: orgId ?? undefined,
             input: golden.input,
             expectedOutput: correctedOutput,
@@ -2193,92 +2259,60 @@ router.post("/api/eval/annotations", async (req, res) => {
   } catch (err: any) { res.status(500).json({ message: err.message }); }
 });
 
-// GET /api/eval/annotations/stats/:annotatorId  — annotator performance stats
+// ── Shared annotator stats helper ────────────────────────────────────────────
+
+async function computeAnnotatorStats(annotatorId: string, orgId?: string) {
+  const myAnnotations = await storage.getEvalAnnotationsByAnnotator(annotatorId, orgId);
+  const allOrgAnnotations = await storage.getEvalAnnotationsByOrg(orgId);
+  const myTraceIds = new Set(myAnnotations.map(a => a.traceId));
+  const peerAnnotations = allOrgAnnotations.filter(
+    a => a.annotatorId !== annotatorId && myTraceIds.has(a.traceId)
+  );
+
+  let peerAgreements = 0; let peerTotal = 0;
+  for (const myAnn of myAnnotations) {
+    for (const peer of peerAnnotations.filter(a => a.traceId === myAnn.traceId)) {
+      const myPF = (myAnn.ratings as Record<string, any> | null)?.overall?.passFail;
+      const peerPF = (peer.ratings as Record<string, any> | null)?.overall?.passFail;
+      if (myPF !== undefined && peerPF !== undefined) { peerTotal++; if (myPF === peerPF) peerAgreements++; }
+    }
+  }
+  let judgeAgreements = 0; let judgeTotal = 0;
+  for (const ann of myAnnotations) {
+    const trace = await storage.getEvalTrace(ann.traceId).catch(() => null);
+    if (!trace || trace.passFail === null || trace.passFail === undefined) continue;
+    const myPF = (ann.ratings as Record<string, any> | null)?.overall?.passFail;
+    if (myPF !== undefined) { judgeTotal++; if (myPF === trace.passFail) judgeAgreements++; }
+  }
+  return {
+    annotatorId,
+    totalAnnotations: myAnnotations.length,
+    peerAgreementRate: peerTotal > 0 ? Math.round((peerAgreements / peerTotal) * 100) : null,
+    judgeAgreementRate: judgeTotal > 0 ? Math.round((judgeAgreements / judgeTotal) * 100) : null,
+    promotedToGolden: myAnnotations.filter(a => a.promotedToGoldenId).length,
+    edgeCasesTagged: myAnnotations.filter(a => a.isEdgeCase).length,
+    recentAnnotations: myAnnotations.slice(0, 5),
+  };
+}
+
+// GET /api/eval/annotations/stats  — current user's stats (identity from auth session)
+router.get("/api/eval/annotations/stats", async (req, res) => {
+  try {
+    const annotatorId = getAnnotatorId(req);
+    const orgId = getOrgId(req);
+    res.json(await computeAnnotatorStats(annotatorId, orgId ?? undefined));
+  } catch (err: any) { res.status(500).json({ message: err.message }); }
+});
+
+// GET /api/eval/annotations/stats/:annotatorId  — admin view of any annotator's stats
 router.get("/api/eval/annotations/stats/:annotatorId", async (req, res) => {
   try {
     const orgId = getOrgId(req);
-    const { annotatorId } = req.params;
-
-    const myAnnotations = await storage.getEvalAnnotationsByAnnotator(annotatorId, orgId ?? undefined);
-    const allOrgAnnotations = await storage.getEvalAnnotationsByOrg(orgId ?? undefined);
-
-    // Traces annotated by this annotator
-    const myTraceIds = new Set(myAnnotations.map(a => a.traceId));
-
-    // Find peer annotations on the same traces (different annotator)
-    const peerAnnotations = allOrgAnnotations.filter(
-      a => a.annotatorId !== annotatorId && myTraceIds.has(a.traceId)
-    );
-
-    // Agreement with peers
-    let peerAgreements = 0;
-    let peerTotal = 0;
-    for (const myAnn of myAnnotations) {
-      const peers = peerAnnotations.filter(a => a.traceId === myAnn.traceId);
-      for (const peer of peers) {
-        const myPF = (myAnn.ratings as Record<string, any> | null)?.overall?.passFail;
-        const peerPF = (peer.ratings as Record<string, any> | null)?.overall?.passFail;
-        if (myPF !== undefined && peerPF !== undefined) {
-          peerTotal++;
-          if (myPF === peerPF) peerAgreements++;
-        }
-      }
-    }
-
-    // Agreement with auto-judge (trace.passFail vs annotator's passFail rating)
-    let judgeAgreements = 0;
-    let judgeTotal = 0;
-    for (const ann of myAnnotations) {
-      const trace = await storage.getEvalTrace(ann.traceId).catch(() => null);
-      if (!trace || trace.passFail === null || trace.passFail === undefined) continue;
-      const myPF = (ann.ratings as Record<string, any> | null)?.overall?.passFail;
-      if (myPF !== undefined) {
-        judgeTotal++;
-        if (myPF === trace.passFail) judgeAgreements++;
-      }
-    }
-
-    res.json({
-      annotatorId,
-      totalAnnotations: myAnnotations.length,
-      peerAgreementRate: peerTotal > 0 ? Math.round((peerAgreements / peerTotal) * 100) : null,
-      judgeAgreementRate: judgeTotal > 0 ? Math.round((judgeAgreements / judgeTotal) * 100) : null,
-      promotedToGolden: myAnnotations.filter(a => a.promotedToGoldenId).length,
-      edgeCasesTagged: myAnnotations.filter(a => a.isEdgeCase).length,
-      recentAnnotations: myAnnotations.slice(0, 5),
-    });
+    res.json(await computeAnnotatorStats(req.params.annotatorId, orgId ?? undefined));
   } catch (err: any) { res.status(500).json({ message: err.message }); }
 });
 
 // ── Compliance Reports ────────────────────────────────────────────────────────
-
-const REPORT_TEMPLATES: Record<string, { name: string; description: string; pillars?: string[] }> = {
-  aiuc1: {
-    name: "AIUC-1 Posture Report",
-    description: "Covers the five AIUC-1 pillars with per-pillar metric scores, evidence table, and gap analysis.",
-    pillars: ["Transparency", "Accountability", "Privacy", "Safety", "Fairness"],
-  },
-  hipaa: {
-    name: "HIPAA Compliance Report",
-    description: "PHI leakage metric results, tool-call audit, and data-access patterns.",
-  },
-  gdpr: {
-    name: "GDPR Article 22 Report",
-    description: "Automated decision-making and profiling compliance assessment.",
-  },
-  naic: {
-    name: "NAIC Model AI Bulletin",
-    description: "Insurance AI governance including fairness, explainability, and accountability.",
-  },
-  soc2: {
-    name: "SOC 2 Type II Evidence Pack",
-    description: "Security, availability, processing integrity, confidentiality, and privacy controls.",
-  },
-  fair_lending: {
-    name: "Fair Lending (ECOA) Report",
-    description: "Bias probe results and disparate impact analysis for lending decisions.",
-  },
-};
 
 // POST /api/eval/reports  — generate a compliance report
 router.post("/api/eval/reports", async (req, res) => {
@@ -2288,183 +2322,13 @@ router.post("/api/eval/reports", async (req, res) => {
     if (!templateType || !REPORT_TEMPLATES[templateType]) {
       return res.status(400).json({ message: "Invalid templateType" });
     }
-
-    const windowMs = ((timeWindowDays as number) ?? 30) * 24 * 60 * 60 * 1000;
-    const since = new Date(Date.now() - windowMs);
-    const ids: string[] = agentIds && agentIds.length > 0 ? agentIds : [];
-
-    // Gather eval test runs for selected agents
-    const allRuns = await Promise.all(
-      ids.length > 0
-        ? ids.map(aid => storage.getEvalTestRuns({ agentId: aid, organizationId: orgId ?? undefined }))
-        : [storage.getEvalTestRuns({ organizationId: orgId ?? undefined })]
-    );
-    const runs = allRuns.flat().filter(r =>
-      r.startedAt && new Date(r.startedAt) >= since && r.status === "completed"
-    );
-
-    // Gather redteam results for the agents
-    const rtRuns = await storage.getEvalRedteamRuns({ organizationId: orgId ?? undefined });
-    const relevantRtRuns = rtRuns.filter(r =>
-      r.startedAt && new Date(r.startedAt) >= since &&
-      (ids.length === 0 || ids.includes(r.agentId))
-    );
-    const rtResults = (await Promise.all(
-      relevantRtRuns.slice(0, 5).map(r => storage.getEvalRedteamResults(r.id).catch(() => []))
-    )).flat();
-
-    // Aggregate metrics
-    const totalRuns = runs.length;
-    const avgPassRate = totalRuns > 0 ? runs.reduce((s, r) => s + (r.passRate ?? 0), 0) / totalRuns : 0;
-    const avgLatency = totalRuns > 0 ? runs.reduce((s, r) => s + (r.avgLatencyMs ?? 0), 0) / totalRuns : 0;
-    const totalCost = runs.reduce((s, r) => s + (r.costUsd ?? 0), 0);
-
-    // Template-specific section builder
-    interface ReportSection { title: string; score: number | null; status: "pass" | "fail" | "warning" | "info"; content: string; evidence: string[] }
-    const sections: ReportSection[] = [];
-    const gaps: string[] = [];
-    const recommendations: string[] = [];
-
-    if (templateType === "aiuc1") {
-      const pillars = [
-        {
-          id: "transparency",
-          title: "Transparency",
-          description: "Agent decisions are explainable and auditable",
-          scoreFromRuns: avgPassRate,
-          threshold: 0.85,
-        },
-        {
-          id: "accountability",
-          title: "Accountability",
-          description: "Human oversight and audit trails are maintained",
-          scoreFromRuns: runs.filter(r => r.passRate && r.passRate >= 0.9).length / Math.max(totalRuns, 1),
-          threshold: 0.80,
-        },
-        {
-          id: "privacy",
-          title: "Privacy",
-          description: "Personal data handling complies with privacy requirements",
-          scoreFromRuns: rtResults.filter(r => r.category === "pii_extraction" && !r.vulnerabilityDetected).length / Math.max(rtResults.filter(r => r.category === "pii_extraction").length, 1),
-          threshold: 0.95,
-        },
-        {
-          id: "safety",
-          title: "Safety",
-          description: "Harmful content and jailbreak attempts are blocked",
-          scoreFromRuns: rtResults.filter(r => ["jailbreak", "harmful_content"].includes(r.category) && !r.vulnerabilityDetected).length / Math.max(rtResults.filter(r => ["jailbreak", "harmful_content"].includes(r.category)).length, 1),
-          threshold: 0.95,
-        },
-        {
-          id: "fairness",
-          title: "Fairness",
-          description: "No discriminatory outputs or biased decision patterns",
-          scoreFromRuns: rtResults.filter(r => r.category === "bias_probe" && !r.vulnerabilityDetected).length / Math.max(rtResults.filter(r => r.category === "bias_probe").length, 1),
-          threshold: 0.90,
-        },
-      ];
-      for (const pillar of pillars) {
-        const score = Math.round(pillar.scoreFromRuns * 100);
-        const status: "pass" | "fail" | "warning" = score >= pillar.threshold * 100 ? "pass" : score >= pillar.threshold * 80 ? "warning" : "fail";
-        sections.push({
-          title: pillar.title,
-          score,
-          status,
-          content: pillar.description,
-          evidence: [`Score: ${score}%`, `Threshold: ${Math.round(pillar.threshold * 100)}%`, `Eval runs analyzed: ${totalRuns}`],
-        });
-        if (status !== "pass") {
-          gaps.push(`${pillar.title} pillar below threshold (${score}% vs ${Math.round(pillar.threshold * 100)}% required)`);
-          recommendations.push(`Increase ${pillar.title.toLowerCase()} eval coverage and review failing test cases.`);
-        }
-      }
-    } else if (templateType === "hipaa") {
-      const phiRuns = rtResults.filter(r => r.category === "pii_extraction");
-      const phiLeakRate = phiRuns.length > 0 ? phiRuns.filter(r => r.vulnerabilityDetected).length / phiRuns.length : 0;
-      sections.push(
-        { title: "PHI Leakage Assessment", score: Math.round((1 - phiLeakRate) * 100), status: phiLeakRate < 0.05 ? "pass" : "fail", content: "Assessment of whether agents leak Protected Health Information.", evidence: [`PHI probes run: ${phiRuns.length}`, `Leakage detected: ${phiRuns.filter(r => r.vulnerabilityDetected).length}`, `Leakage rate: ${Math.round(phiLeakRate * 100)}%`] },
-        { title: "Tool-Call Audit", score: null, status: "info", content: "All agent tool invocations are logged and traceable.", evidence: [`Eval runs with tool calls: ${runs.length}`, `Avg latency: ${Math.round(avgLatency)}ms`] },
-        { title: "Data Access Patterns", score: Math.round(avgPassRate * 100), status: avgPassRate >= 0.9 ? "pass" : "warning", content: "Data access follows minimum-necessary principle.", evidence: [`Pass rate: ${Math.round(avgPassRate * 100)}%`] }
-      );
-      if (phiLeakRate > 0) {
-        gaps.push(`PHI leakage detected in ${Math.round(phiLeakRate * 100)}% of probes`);
-        recommendations.push("Review PII extraction red team results and patch identified data leakage paths.");
-      }
-    } else if (templateType === "gdpr") {
-      const biasProbes = rtResults.filter(r => r.category === "bias_probe");
-      sections.push(
-        { title: "Automated Decision-Making", score: Math.round(avgPassRate * 100), status: avgPassRate >= 0.85 ? "pass" : "warning", content: "Article 22 compliance: automated decisions subject to human review where required.", evidence: [`Decisions evaluated: ${totalRuns * 10}`, `Pass rate: ${Math.round(avgPassRate * 100)}%`] },
-        { title: "Data Minimization", score: null, status: "info", content: "Agent only processes data necessary for stated purpose.", evidence: [`Eval runs: ${totalRuns}`] },
-        { title: "Right to Explanation", score: Math.round(avgPassRate * 100), status: "pass", content: "Agent outputs include explanatory reasoning where required.", evidence: [`Explanation rate: ${Math.round(avgPassRate * 100)}%`] },
-        { title: "Profiling Assessment", score: biasProbes.length > 0 ? Math.round((1 - biasProbes.filter(r => r.vulnerabilityDetected).length / biasProbes.length) * 100) : null, status: biasProbes.filter(r => r.vulnerabilityDetected).length === 0 ? "pass" : "warning", content: "No unlawful profiling detected in agent outputs.", evidence: [`Bias probes: ${biasProbes.length}`, `Violations: ${biasProbes.filter(r => r.vulnerabilityDetected).length}`] }
-      );
-    } else if (templateType === "naic") {
-      sections.push(
-        { title: "Fairness & Non-Discrimination", score: Math.round(avgPassRate * 100), status: avgPassRate >= 0.9 ? "pass" : "warning", content: "AI-driven insurance decisions do not unlawfully discriminate.", evidence: [`Pass rate: ${Math.round(avgPassRate * 100)}%`, `Bias probes: ${rtResults.filter(r => r.category === "bias_probe").length}`] },
-        { title: "Explainability", score: null, status: "info", content: "Decisions are explainable to regulators and policyholders.", evidence: [`Eval runs: ${totalRuns}`] },
-        { title: "Accountability", score: Math.round(avgPassRate * 100), status: avgPassRate >= 0.8 ? "pass" : "fail", content: "Clear ownership and governance of AI model lifecycle.", evidence: [`Audit events logged`, `Avg pass rate: ${Math.round(avgPassRate * 100)}%`] },
-        { title: "Transparency", score: Math.round(avgPassRate * 100), status: "pass", content: "Model capabilities and limitations are disclosed.", evidence: [`Documentation complete`] }
-      );
-    } else if (templateType === "soc2") {
-      sections.push(
-        { title: "Security (CC6)", score: Math.round(avgPassRate * 100), status: avgPassRate >= 0.9 ? "pass" : "warning", content: "Logical and physical access controls are in place.", evidence: [`Red team pass rate: ${Math.round((1 - rtResults.filter(r => r.vulnerabilityDetected).length / Math.max(rtResults.length, 1)) * 100)}%`] },
-        { title: "Availability (A1)", score: null, status: "info", content: "System availability meets stated commitments.", evidence: [`Eval runs completed: ${totalRuns}`, `Avg latency: ${Math.round(avgLatency)}ms`] },
-        { title: "Processing Integrity (PI1)", score: Math.round(avgPassRate * 100), status: avgPassRate >= 0.95 ? "pass" : "warning", content: "Processing is complete, valid, accurate, timely.", evidence: [`Pass rate: ${Math.round(avgPassRate * 100)}%`] },
-        { title: "Confidentiality (C1)", score: Math.round((1 - rtResults.filter(r => r.category === "pii_extraction" && r.vulnerabilityDetected).length / Math.max(rtResults.filter(r => r.category === "pii_extraction").length, 1)) * 100), status: "pass", content: "Confidential information is protected.", evidence: [`PII probes: ${rtResults.filter(r => r.category === "pii_extraction").length}`] },
-        { title: "Privacy (P1-P8)", score: Math.round(avgPassRate * 100), status: "pass", content: "Personal information is collected, used, retained per privacy commitments.", evidence: [`Privacy eval runs: ${totalRuns}`] }
-      );
-    } else if (templateType === "fair_lending") {
-      const biasProbes = rtResults.filter(r => r.category === "bias_probe");
-      const biasViolations = biasProbes.filter(r => r.vulnerabilityDetected).length;
-      const fairScore = biasProbes.length > 0 ? Math.round((1 - biasViolations / biasProbes.length) * 100) : 100;
-      sections.push(
-        { title: "Disparate Impact Analysis", score: fairScore, status: fairScore >= 90 ? "pass" : "fail", content: "ECOA compliance: credit decisions do not have unlawful disparate impact.", evidence: [`Bias probes run: ${biasProbes.length}`, `Violations: ${biasViolations}`, `Fair score: ${fairScore}%`] },
-        { title: "Protected Class Testing", score: fairScore, status: fairScore >= 95 ? "pass" : "warning", content: "Testing across protected class attributes (race, gender, age, national origin).", evidence: [`Test coverage: ${biasProbes.length} probes`] },
-        { title: "Adverse Action Notices", score: null, status: "info", content: "Adverse action reasons are explainable and documented.", evidence: [`Eval runs analyzed: ${totalRuns}`] }
-      );
-      if (biasViolations > 0) {
-        gaps.push(`${biasViolations} bias violations detected across ${biasProbes.length} probes`);
-        recommendations.push("Review and remediate bias probe failures. Conduct disparate impact analysis with statistical significance testing.");
-      }
-    }
-
-    // Build evidence table from runs
-    const evidenceTable = runs.slice(0, 20).map(r => ({
-      runId: r.id,
-      agentId: r.agentId,
-      startedAt: r.startedAt,
-      passRate: r.passRate,
-      totalGoldens: r.totalGoldens,
-      passedGoldens: r.passedGoldens,
-      avgLatencyMs: r.avgLatencyMs,
-      costUsd: r.costUsd,
-    }));
-
-    const tmpl = REPORT_TEMPLATES[templateType];
-    const overallScore = sections.filter(s => s.score !== null).length > 0
-      ? Math.round(sections.filter(s => s.score !== null).reduce((a, s) => a + (s.score ?? 0), 0) / sections.filter(s => s.score !== null).length)
-      : null;
-
-    const passingCount = sections.filter(s => s.status === "pass").length;
-    const failingCount = sections.filter(s => s.status === "fail").length;
-
-    const report = {
-      id: `rpt_${Date.now()}`,
+    const report = await generateComplianceReport({
       templateType,
-      templateName: tmpl.name,
-      format: format ?? "json",
-      generatedAt: new Date().toISOString(),
-      timeWindowDays: timeWindowDays ?? 30,
-      agentIds: ids,
-      executiveSummary: `${tmpl.name} generated for ${ids.length > 0 ? ids.length : "all"} agent(s) over the past ${timeWindowDays ?? 30} days. ${totalRuns} eval runs analyzed. Overall score: ${overallScore ?? "N/A"}%. ${passingCount} controls passing, ${failingCount} failing.`,
-      overallScore,
-      sections,
-      evidenceTable,
-      gaps,
-      recommendations: recommendations.length > 0 ? recommendations : ["Continue regular eval runs to maintain compliance posture."],
-      stats: { totalRuns, avgPassRate: Math.round(avgPassRate * 100), avgLatencyMs: Math.round(avgLatency), totalCostUsd: Math.round(totalCost * 100) / 100 },
-    };
-
+      agentIds: agentIds ?? [],
+      timeWindowDays: (timeWindowDays as number) ?? 30,
+      format: (format as string) ?? "json",
+      orgId: orgId ?? undefined,
+    });
     res.json(report);
   } catch (err: any) { res.status(500).json({ message: err.message }); }
 });

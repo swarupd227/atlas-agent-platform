@@ -192,6 +192,7 @@ import {
   evalRedteamRuns, type EvalRedteamRun, type InsertEvalRedteamRun,
   evalRedteamResults, type EvalRedteamResult, type InsertEvalRedteamResult,
   evalReportSchedules, type EvalReportSchedule, type InsertEvalReportSchedule,
+  evalReportArtifacts, type EvalReportArtifact, type InsertEvalReportArtifact,
 } from "@shared/schema";
 
 export interface IStorage {
@@ -334,6 +335,7 @@ export interface IStorage {
   getAuditChainHealthChecks(limit: number): Promise<AuditChainHealthCheck[]>;
   getPendingAuditChainJob(): Promise<Job | null>;
   getPendingOtcSmokeTestJob(): Promise<Job | null>;
+  hasPendingJobOfType(type: string): Promise<boolean>;
   persistAuditChainCheckResult(
     integrityResult: { valid: boolean; totalEvents: number; verifiedEvents: number; brokenAt?: number },
     durationMs: number,
@@ -912,8 +914,13 @@ export interface IStorage {
 
   // Atlas Eval Studio — Report Schedules
   getEvalReportSchedules(orgId?: string): Promise<EvalReportSchedule[]>;
+  getDueEvalReportSchedules(): Promise<EvalReportSchedule[]>;
   createEvalReportSchedule(schedule: InsertEvalReportSchedule): Promise<EvalReportSchedule>;
   updateEvalReportSchedule(id: string, data: Partial<InsertEvalReportSchedule>): Promise<EvalReportSchedule | undefined>;
+
+  // Atlas Eval Studio — Report Artifacts
+  getEvalReportArtifacts(orgId?: string, scheduleId?: string): Promise<EvalReportArtifact[]>;
+  createEvalReportArtifact(artifact: InsertEvalReportArtifact): Promise<EvalReportArtifact>;
 
   // Atlas Eval Studio — Metric Attachments (via eval_gates)
   getAgentEvalMetricAttachments(agentId: string, organizationId?: string): Promise<{ agentId: string; metricIds: string[]; updatedAt: Date | null }>;
@@ -1626,6 +1633,15 @@ export class DatabaseStorage implements IStorage {
 
   async getAuditChainHealthChecks(limit: number) {
     return db.select().from(auditChainHealthChecks).orderBy(desc(auditChainHealthChecks.checkedAt)).limit(limit);
+  }
+
+  async hasPendingJobOfType(type: string): Promise<boolean> {
+    const [job] = await db
+      .select({ id: jobs.id })
+      .from(jobs)
+      .where(and(eq(jobs.type, type), eq(jobs.status, "queued")))
+      .limit(1);
+    return !!job;
   }
 
   async getPendingAuditChainJob() {
@@ -4303,6 +4319,31 @@ export class DatabaseStorage implements IStorage {
 
   async updateEvalReportSchedule(id: string, data: Partial<InsertEvalReportSchedule>): Promise<EvalReportSchedule | undefined> {
     const [row] = await db.update(evalReportSchedules).set(data).where(eq(evalReportSchedules.id, id)).returning();
+    return row;
+  }
+
+  async getDueEvalReportSchedules(): Promise<EvalReportSchedule[]> {
+    return db.select().from(evalReportSchedules).where(
+      and(
+        eq(evalReportSchedules.enabled, true),
+        lte(evalReportSchedules.nextRunAt, new Date()),
+      )
+    );
+  }
+
+  // ── Eval Report Artifacts ────────────────────────────────────────────────────
+
+  async getEvalReportArtifacts(orgId?: string, scheduleId?: string): Promise<EvalReportArtifact[]> {
+    const conditions: any[] = [];
+    if (orgId) conditions.push(eq(evalReportArtifacts.organizationId, orgId));
+    if (scheduleId) conditions.push(eq(evalReportArtifacts.scheduleId, scheduleId));
+    return conditions.length > 0
+      ? db.select().from(evalReportArtifacts).where(and(...conditions)).orderBy(desc(evalReportArtifacts.generatedAt))
+      : db.select().from(evalReportArtifacts).orderBy(desc(evalReportArtifacts.generatedAt));
+  }
+
+  async createEvalReportArtifact(artifact: InsertEvalReportArtifact): Promise<EvalReportArtifact> {
+    const [row] = await db.insert(evalReportArtifacts).values(artifact).returning();
     return row;
   }
 

@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { startWorker, enqueueAuditChainCheck, enqueueOtcSmokeTest, enqueueOtcSmokeTestNow } from "./worker";
+import { startWorker, enqueueAuditChainCheck, enqueueOtcSmokeTest, enqueueOtcSmokeTestNow, enqueueReportScheduleCheck } from "./worker";
 import { runStartupMigrations } from "./db";
 import authRouter from "./routes/auth";
 import toolConnectorsRouter from "./routes/tool-connectors";
@@ -347,6 +347,9 @@ export async function registerRoutes(
 
   // Enqueue initial OTC Fulfillment smoke test (runs weekly, idempotent).
   await enqueueOtcSmokeTest();
+
+  // Enqueue compliance report schedule checker (runs hourly, idempotent).
+  await enqueueReportScheduleCheck();
 
   // Ensure Hearst NBA agents + MCP servers are registered
   ensureHearstAgents().catch((err: any) => console.error("[startup] ensureHearstAgents:", err?.message));

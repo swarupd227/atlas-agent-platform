@@ -234,8 +234,21 @@ function ReportViewer({ report, onClose }: { report: GeneratedReport; onClose: (
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" data-testid="download-report-btn">
-              <Download className="h-4 w-4 mr-1.5" /> Download
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="download-report-btn"
+              onClick={() => {
+                const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `${report.templateType}-report-${new Date().toISOString().slice(0, 10)}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+            >
+              <Download className="h-4 w-4 mr-1.5" /> Download JSON
             </Button>
             <Button variant="ghost" size="sm" data-testid="close-report-btn" onClick={onClose}>
               Close
@@ -556,6 +569,7 @@ export default function EvalReports() {
   const [activeView, setActiveView] = useState<ActiveView>("templates");
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
   const [timeWindowDays, setTimeWindowDays] = useState("30");
+  const [selectedFormat, setSelectedFormat] = useState("json");
   const [generatedReport, setGeneratedReport] = useState<GeneratedReport | null>(null);
 
   const { data: agents = [] } = useQuery<any[]>({
@@ -744,6 +758,23 @@ export default function EvalReports() {
 
                   <Separator />
 
+                  {/* Format selection */}
+                  <div>
+                    <Label className="text-xs mb-1.5 block">Output Format</Label>
+                    <Select value={selectedFormat} onValueChange={setSelectedFormat}>
+                      <SelectTrigger data-testid="generate-format-select" className="h-9">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="json">JSON</SelectItem>
+                        <SelectItem value="markdown">Markdown</SelectItem>
+                        <SelectItem value="csv">CSV (evidence table)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <Separator />
+
                   {/* Generate button */}
                   <Button
                     className="w-full"
@@ -753,7 +784,7 @@ export default function EvalReports() {
                       templateType: selectedTemplate,
                       agentIds: selectedAgentIds,
                       timeWindowDays: parseInt(timeWindowDays),
-                      format: "json",
+                      format: selectedFormat,
                     })}
                   >
                     {generateReport.isPending ? (
