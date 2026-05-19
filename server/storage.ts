@@ -901,12 +901,13 @@ export interface IStorage {
 
   // Atlas Eval Studio — Metric Attachments (via eval_gates)
   getAgentEvalMetricAttachments(agentId: string, organizationId?: string): Promise<{ agentId: string; metricIds: string[]; updatedAt: Date | null }>;
-  attachMetricToAgent(agentId: string, metricId: string, organizationId?: string): Promise<{ agentId: string; metricIds: string[]; updatedAt: Date | null }>;
+  attachMetricToAgent(agentId: string, metricId: string, organizationId?: string, thresholdOverride?: number): Promise<{ agentId: string; metricIds: string[]; updatedAt: Date | null }>;
   detachMetricFromAgent(agentId: string, metricId: string, organizationId?: string): Promise<{ agentId: string; metricIds: string[] }>;
   getAgentsUsingMetric(metricId: string, organizationId?: string): Promise<string[]>;
 
   // Atlas Eval Studio — Gates
   getEvalGate(agentId: string): Promise<EvalGate | undefined>;
+  getEvalGates(organizationId?: string): Promise<EvalGate[]>;
   upsertEvalGate(gate: InsertEvalGate): Promise<EvalGate>;
 }
 
@@ -4222,6 +4223,14 @@ export class DatabaseStorage implements IStorage {
 
   // ── Atlas Eval Studio — Gates ─────────────────────────────────────────────────
 
+  async getEvalGates(organizationId?: string): Promise<EvalGate[]> {
+    const conditions = [];
+    if (organizationId) conditions.push(eq(evalGates.organizationId, organizationId));
+    return conditions.length > 0
+      ? db.select().from(evalGates).where(and(...conditions))
+      : db.select().from(evalGates);
+  }
+
   async getEvalGate(agentId: string): Promise<EvalGate | undefined> {
     const [row] = await db.select().from(evalGates).where(eq(evalGates.agentId, agentId));
     return row;
@@ -4243,16 +4252,22 @@ export class DatabaseStorage implements IStorage {
     return { agentId, metricIds: gate?.attachedMetricIds ?? [], updatedAt: gate?.updatedAt ?? null };
   }
 
-  async attachMetricToAgent(agentId: string, metricId: string, organizationId?: string): Promise<{ agentId: string; metricIds: string[]; updatedAt: Date | null }> {
+  async attachMetricToAgent(agentId: string, metricId: string, organizationId?: string, thresholdOverride?: number): Promise<{ agentId: string; metricIds: string[]; updatedAt: Date | null }> {
     // Read existing gate respecting org boundary — no org leakage
     const existing = await this.getAgentEvalMetricAttachments(agentId, organizationId);
     const metricIds = Array.from(new Set([...existing.metricIds, metricId]));
+    // Merge threshold override into existing thresholdOverrides JSONB
+    const existingGate = await this.getEvalGate(agentId);
+    const existingOverrides = (existingGate?.thresholdOverrides as Record<string, number> | null) ?? {};
+    const thresholdOverrides = thresholdOverride != null
+      ? { ...existingOverrides, [metricId]: thresholdOverride }
+      : existingOverrides;
     // On conflict: only update the row when organizationId matches (or was null/unscoped)
     const [row] = await db.insert(evalGates)
-      .values({ agentId, organizationId: organizationId ?? null, attachedMetricIds: metricIds })
+      .values({ agentId, organizationId: organizationId ?? null, attachedMetricIds: metricIds, thresholdOverrides })
       .onConflictDoUpdate({
         target: evalGates.agentId,
-        set: { attachedMetricIds: metricIds, updatedAt: new Date() },
+        set: { attachedMetricIds: metricIds, thresholdOverrides, updatedAt: new Date() },
         // Enforce that we don't stomp on a different org's gate row
         setWhere: organizationId
           ? sql`eval_gates.organization_id = ${organizationId} OR eval_gates.organization_id IS NULL`

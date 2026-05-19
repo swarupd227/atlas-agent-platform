@@ -211,7 +211,8 @@ function MetricDetailPanel({
 
   const cloneMutation = useMutation({
     mutationFn: async () => {
-      return apiRequest<EvalMetric>("POST", `/api/eval/metrics/${metric.id}/clone`);
+      const res = await apiRequest("POST", `/api/eval/metrics/${metric.id}/clone`);
+      return res.json() as Promise<EvalMetric>;
     },
     onSuccess: (cloned) => {
       queryClient.invalidateQueries({ queryKey: ["/api/eval/metrics"] });

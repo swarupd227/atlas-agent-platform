@@ -196,11 +196,11 @@ export default function EvalRuns() {
                     </div>
                     <div className="shrink-0 text-right">
                       <div className="text-xs text-muted-foreground">
-                        {formatDate((run.completedAt ?? run.startedAt) as string)}
+                        {formatDate(run.completedAt ?? run.startedAt)}
                       </div>
-                      {run.totalCases != null && (
+                      {run.totalGoldens != null && (
                         <div className="text-[10px] text-muted-foreground/60 mt-0.5">
-                          {run.totalCases} cases
+                          {run.totalGoldens} cases
                         </div>
                       )}
                     </div>

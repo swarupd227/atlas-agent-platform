@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { useRole } from "@/components/role-provider";
-import type { Agent, EvalTestRun, EvalDataset, AuditEvent } from "@shared/schema";
+import type { Agent, EvalTestRun, EvalDataset, AuditEvent, EvalGate } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -152,14 +152,33 @@ export default function Evals() {
     queryKey: ["/api/audit-events"],
   });
 
+  const { data: gates } = useQuery<EvalGate[]>({
+    queryKey: ["/api/eval/gates"],
+  });
+
   const agentMap = useMemo(() => {
     const m = new Map<string, Agent>();
     for (const a of (agents || [])) m.set(a.id, a);
     return m;
   }, [agents]);
 
-  const RISK_THRESHOLD = 0.85;
+  const DEFAULT_RISK_THRESHOLD = 0.85;
   const sevenDaysAgo = useMemo(() => Date.now() - 7 * 86_400_000, []);
+
+  const gateMap = useMemo(() => {
+    const m = new Map<string, EvalGate>();
+    for (const g of (gates || [])) m.set(g.agentId, g);
+    return m;
+  }, [gates]);
+
+  function effectiveThreshold(agentId: string): number {
+    const gate = gateMap.get(agentId);
+    if (!gate?.thresholdOverrides) return DEFAULT_RISK_THRESHOLD;
+    const overrides = gate.thresholdOverrides as Record<string, number>;
+    const values = Object.values(overrides).filter(v => typeof v === "number");
+    if (values.length === 0) return DEFAULT_RISK_THRESHOLD;
+    return Math.min(...values);
+  }
 
   const agentsAtRisk = useMemo(() => {
     if (!runs) return [];
@@ -174,15 +193,17 @@ export default function Evals() {
       prevRun: EvalTestRun | null;
       reason: "below_threshold" | "trending_down";
       sparkline: number[];
+      threshold: number;
     }> = [];
-    for (const [, agentRuns] of runsByAgent.entries()) {
+    for (const [agentId, agentRuns] of runsByAgent.entries()) {
       const allSorted = [...agentRuns].sort((a, b) => new Date(a.startedAt!).getTime() - new Date(b.startedAt!).getTime());
       const latest = allSorted[allSorted.length - 1];
       const prev = allSorted.length >= 2 ? allSorted[allSorted.length - 2] : null;
       const sparkline = runsToSparkline(allSorted.slice(-7));
+      const threshold = effectiveThreshold(agentId);
 
       const sevenDayRuns = allSorted.filter(r => r.startedAt && new Date(r.startedAt).getTime() >= sevenDaysAgo);
-      const isBelowThreshold = latest.passRate != null && latest.passRate < RISK_THRESHOLD;
+      const isBelowThreshold = latest.passRate != null && latest.passRate < threshold;
       let isTrendingDown = false;
       if (sevenDayRuns.length >= 2) {
         const firstOfWindow = sevenDayRuns[0].passRate ?? 0;
@@ -192,13 +213,13 @@ export default function Evals() {
         isTrendingDown = latest.passRate < prev.passRate - 0.03;
       }
 
-      if (isBelowThreshold) results.push({ run: latest, prevRun: prev, reason: "below_threshold", sparkline });
-      else if (isTrendingDown) results.push({ run: latest, prevRun: prev, reason: "trending_down", sparkline });
+      if (isBelowThreshold) results.push({ run: latest, prevRun: prev, reason: "below_threshold", sparkline, threshold });
+      else if (isTrendingDown) results.push({ run: latest, prevRun: prev, reason: "trending_down", sparkline, threshold });
     }
     return results
       .sort((a, b) => (a.run.passRate ?? 1) - (b.run.passRate ?? 1))
       .slice(0, 8);
-  }, [runs, sevenDaysAgo]);
+  }, [runs, sevenDaysAgo, gateMap]);
 
   interface ActivityItem {
     id: string;
@@ -437,7 +458,7 @@ export default function Evals() {
               </div>
             ) : (
               <div className="divide-y">
-                {agentsAtRisk.map(({ run, prevRun, reason, sparkline }) => {
+                {agentsAtRisk.map(({ run, prevRun, reason, sparkline, threshold }) => {
                   const agent = agentMap.get(run.agentId);
                   const name = agent?.name ?? `Agent ${run.agentId.slice(0, 8)}`;
                   const passRate = run.passRate ?? 0;
@@ -457,9 +478,9 @@ export default function Evals() {
                           <span className={`text-xs font-semibold ${passRateColor(passRate)}`}>
                             {Math.round(passRate * 100)}%
                           </span>
-                          <span className="text-[10px] text-muted-foreground">/ {Math.round(RISK_THRESHOLD * 100)}%</span>
+                          <span className="text-[10px] text-muted-foreground">/ {Math.round(threshold * 100)}%</span>
                           <TrendIcon className={`w-3 h-3 ${trendColor}`} />
-                          {reason === "trending_down" && passRate >= RISK_THRESHOLD && (
+                          {reason === "trending_down" && passRate >= threshold && (
                             <Badge variant="outline" className="text-[10px] bg-amber-500/10 text-amber-600 border-amber-500/20 h-4">trend ↓</Badge>
                           )}
                         </div>

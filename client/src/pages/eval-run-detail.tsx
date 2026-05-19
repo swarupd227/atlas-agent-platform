@@ -57,6 +57,8 @@ export default function EvalRunDetail() {
   const agentName = agent?.name ?? (run ? `Agent ${run.agentId.slice(0, 8)}` : "");
   const passRatePct = run?.passRate != null ? Math.round(run.passRate * 100) : null;
   const badge = passRateBadge(run?.passRate);
+  const startedAtDate: Date | null = run?.startedAt instanceof Date ? run.startedAt : (run?.startedAt ? new Date(run.startedAt as unknown as string) : null);
+  const completedAtDate: Date | null = run?.completedAt instanceof Date ? run.completedAt : (run?.completedAt ? new Date(run.completedAt as unknown as string) : null);
 
   return (
     <div className="flex flex-col gap-6 p-6 max-w-[1000px] mx-auto">
@@ -82,7 +84,7 @@ export default function EvalRunDetail() {
         </h1>
         {run && (
           <p className="text-sm text-muted-foreground mt-0.5">
-            {agentName} · started {formatDate(run.startedAt as string)}
+            {agentName} · started {startedAtDate ? formatDate(startedAtDate) : "—"}
           </p>
         )}
       </div>
@@ -143,10 +145,10 @@ export default function EvalRunDetail() {
                   <div className="text-[10px] text-muted-foreground mb-1 flex items-center gap-1">
                     <Hash className="w-2.5 h-2.5" /> Test Cases
                   </div>
-                  <div className="text-2xl font-bold">{run.totalCases ?? "—"}</div>
-                  {run.passedCases != null && run.failedCases != null && (
+                  <div className="text-2xl font-bold">{run.totalGoldens ?? "—"}</div>
+                  {run.passedCount != null && run.failedCount != null && (
                     <div className="text-[10px] text-muted-foreground mt-0.5">
-                      {run.passedCases} passed · {run.failedCases} failed
+                      {run.passedCount} passed · {run.failedCount} failed
                     </div>
                   )}
                 </div>
@@ -180,11 +182,11 @@ export default function EvalRunDetail() {
                 </div>
                 <div className="flex justify-between py-1.5 border-b">
                   <span className="text-muted-foreground">Started</span>
-                  <span className="text-xs">{formatDate(run.startedAt as string)}</span>
+                  <span className="text-xs">{startedAtDate ? formatDate(startedAtDate) : "—"}</span>
                 </div>
                 <div className="flex justify-between py-1.5 border-b">
                   <span className="text-muted-foreground">Completed</span>
-                  <span className="text-xs">{run.completedAt ? formatDate(run.completedAt as string) : "—"}</span>
+                  <span className="text-xs">{completedAtDate ? formatDate(completedAtDate) : "—"}</span>
                 </div>
                 {run.costUsd != null && (
                   <div className="flex justify-between py-1.5 border-b">

@@ -224,8 +224,12 @@ router.put("/api/eval/metrics/:id", async (req, res) => {
 router.post("/api/eval/metrics/:id/attach", async (req, res) => {
   try {
     const orgId = getOrgId(req);
-    const attachSchema = z.object({ agentId: z.string().min(1), scope: z.string().default("end-to-end") });
-    const { agentId, scope } = attachSchema.parse(req.body);
+    const attachSchema = z.object({
+      agentId: z.string().min(1),
+      scope: z.string().default("end-to-end"),
+      threshold: z.number().min(0).max(1).optional(),
+    });
+    const { agentId, scope, threshold } = attachSchema.parse(req.body);
 
     // Validate metric ownership
     const metric = await storage.getEvalMetric(req.params.id);
@@ -236,8 +240,11 @@ router.post("/api/eval/metrics/:id/attach", async (req, res) => {
     const agent = await storage.getAgent(agentId);
     if (agent) assertOrgOwnership(agent.organizationId, orgId);
 
-    // Persist real metric-to-agent attachment mapping in eval_gates
-    const attachment = await storage.attachMetricToAgent(agentId, req.params.id, orgId);
+    // Use provided threshold or fall back to the metric's default threshold
+    const effectiveThreshold = threshold ?? metric.threshold ?? 0.5;
+
+    // Persist real metric-to-agent attachment mapping in eval_gates (with threshold override)
+    const attachment = await storage.attachMetricToAgent(agentId, req.params.id, orgId, effectiveThreshold);
 
     // Also bump usage count for catalog analytics
     await storage.updateEvalMetric(req.params.id, {
@@ -249,12 +256,23 @@ router.post("/api/eval/metrics/:id/attach", async (req, res) => {
       metricId: req.params.id,
       agentId,
       scope,
+      threshold: effectiveThreshold,
       attachedMetricIds: attachment.metricIds,
       updatedAt: attachment.updatedAt,
     });
   } catch (err: any) {
     if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
     if (err instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: err.errors });
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.get("/api/eval/gates", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const gates = await storage.getEvalGates(orgId ?? undefined);
+    res.json(gates);
+  } catch (err: any) {
     res.status(500).json({ message: err.message });
   }
 });
