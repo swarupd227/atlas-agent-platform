@@ -833,6 +833,173 @@ router.patch("/api/eval/traces/:id", async (req, res) => {
   }
 });
 
+// ── Golden Synthesizer ───────────────────────────────────────────────────────
+
+const synthEstimateSchema = z.object({
+  count: z.number().int().min(1).max(1000).default(50),
+  sourceTextLength: z.number().int().min(0).default(0),
+  model: z.string().default("claude-sonnet-4-5"),
+  evolution: z.object({
+    reasoning: z.boolean().default(false),
+    multiContext: z.boolean().default(false),
+    hypothetical: z.boolean().default(false),
+    comparative: z.boolean().default(false),
+  }).optional(),
+});
+
+const synthRunSchema = z.object({
+  sourceType: z.enum(["text", "seeds"]).default("text"),
+  sourceText: z.string().default(""),
+  seedGoldens: z.string().default(""),
+  count: z.number().int().min(1).max(1000).default(50),
+  model: z.string().default("claude-sonnet-4-5"),
+  distribution: z.object({
+    happy: z.number().default(40),
+    variation: z.number().default(30),
+    edge: z.number().default(20),
+    adversarial: z.number().default(10),
+  }).default({}),
+  evolution: z.object({
+    reasoning: z.boolean().default(false),
+    multiContext: z.boolean().default(false),
+    hypothetical: z.boolean().default(false),
+    comparative: z.boolean().default(false),
+  }).default({}),
+  style: z.string().default("formal"),
+});
+
+router.post("/api/eval/synthesizer/estimate", async (req, res) => {
+  try {
+    const body = synthEstimateSchema.parse(req.body);
+    const { count, sourceTextLength, model, evolution } = body;
+
+    const evolveMultiplier = evolution
+      ? 1 + [evolution.reasoning, evolution.multiContext, evolution.hypothetical, evolution.comparative].filter(Boolean).length * 0.25
+      : 1;
+
+    const contextChunks = Math.ceil(sourceTextLength / 2000) || Math.ceil(count / 5);
+    const tokensPerGolden = 800;
+    const generationTokens = count * tokensPerGolden * evolveMultiplier;
+    const contextTokens = contextChunks * 500;
+    const totalTokens = Math.round(generationTokens + contextTokens);
+
+    const costPer1k = model.includes("opus") ? 0.015 : model.includes("gpt-4o") ? 0.010 : 0.003;
+    const estimatedCostUsd = Math.round((totalTokens / 1000) * costPer1k * 100) / 100;
+
+    const estimatedMinutes = Math.round(count / 10 * evolveMultiplier * 0.5 * 10) / 10;
+
+    res.json({ totalTokens, estimatedCostUsd, estimatedMinutes, count, evolveMultiplier });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: err.errors });
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.post("/api/eval/synthesizer/run", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const body = synthRunSchema.parse(req.body);
+
+    const job = await storage.createJob({
+      type: "synthesizer_run",
+      status: "queued",
+      payload: { ...body, orgId },
+      scheduledFor: new Date(),
+    });
+
+    res.status(201).json({ jobId: job.id });
+  } catch (err: any) {
+    if (err instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: err.errors });
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.get("/api/eval/synthesizer/:jobId/status", async (req, res) => {
+  try {
+    const job = await storage.getJob(req.params.jobId);
+    if (!job) return res.status(404).json({ message: "Job not found" });
+    if (job.type !== "synthesizer_run") return res.status(400).json({ message: "Not a synthesizer job" });
+
+    const result = job.status === "completed" ? (job.result as Record<string, unknown>) : null;
+    res.json({
+      jobId: job.id,
+      status: job.status,
+      progress: job.progress ?? 0,
+      goldens: result?.goldens ?? [],
+      currentStep: result?.currentStep ?? null,
+      error: job.status === "failed" ? (job.result as any)?.error : null,
+    });
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ── Conversation Simulator ────────────────────────────────────────────────────
+
+const simRunSchema = z.object({
+  agentId: z.string().min(1),
+  personas: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    goals: z.string(),
+    knowledgeLevel: z.string().default("medium"),
+    emotionalState: z.string().default("neutral"),
+    communicationStyle: z.string().default("formal"),
+    adversarialLevel: z.number().int().min(1).max(5).default(1),
+    industry: z.string().optional(),
+  })).min(1),
+  scenarios: z.array(z.string().min(1)).min(1),
+  maxTurns: z.number().int().min(1).max(20).default(5),
+  stopConditions: z.array(z.string()).default([]),
+  model: z.string().default("claude-sonnet-4-5"),
+  metricCollectionId: z.string().optional(),
+});
+
+router.post("/api/eval/simulations", async (req, res) => {
+  try {
+    const orgId = getOrgId(req);
+    const body = simRunSchema.parse(req.body);
+
+    const agent = await storage.getAgent(body.agentId);
+    if (!agent) return res.status(404).json({ message: "Agent not found" });
+    assertOrgOwnership(agent.organizationId, orgId);
+
+    const job = await storage.createJob({
+      type: "simulator_run",
+      status: "queued",
+      agentId: body.agentId,
+      payload: { ...body, orgId },
+      scheduledFor: new Date(),
+    });
+
+    res.status(201).json({ jobId: job.id });
+  } catch (err: any) {
+    if (isForbiddenError(err)) return res.status(403).json({ message: "Forbidden" });
+    if (err instanceof z.ZodError) return res.status(400).json({ message: "Validation error", errors: err.errors });
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.get("/api/eval/simulations/:jobId/status", async (req, res) => {
+  try {
+    const job = await storage.getJob(req.params.jobId);
+    if (!job) return res.status(404).json({ message: "Job not found" });
+    if (job.type !== "simulator_run") return res.status(400).json({ message: "Not a simulator job" });
+
+    const result = job.status === "completed" ? (job.result as Record<string, unknown>) : null;
+    res.json({
+      jobId: job.id,
+      status: job.status,
+      progress: job.progress ?? 0,
+      conversations: result?.conversations ?? [],
+      totalConversations: result?.totalConversations ?? 0,
+      error: job.status === "failed" ? (job.result as any)?.error : null,
+    });
+  } catch (err: any) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 // ── Eval Studio KPI summary ──────────────────────────────────────────────────
 
 router.get("/api/eval/summary", async (req, res) => {

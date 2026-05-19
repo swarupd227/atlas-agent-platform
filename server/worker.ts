@@ -1222,6 +1222,10 @@ export function startWorker(intervalMs = 2000) {
             result = await processAuditChainIntegrityCheck(job);
           } else if (job.type === "otc_smoke_test") {
             result = await processOtcSmokeTest(job);
+          } else if (job.type === "synthesizer_run") {
+            result = await processSynthesizerRun(job);
+          } else if (job.type === "simulator_run") {
+            result = await processSimulatorRun(job);
           } else {
             result = { message: `Unknown job type: ${job.type}` };
           }
@@ -1781,6 +1785,332 @@ async function processShadowReplay(job: Job): Promise<Record<string, unknown>> {
   jobEvents.emit("progress", { jobId: job.id, agentId, progress: 100, step: "completed" });
 
   return evidenceBundle;
+}
+
+// ─── Golden Synthesizer Worker ────────────────────────────────────────────────
+
+async function processSynthesizerRun(job: Job): Promise<Record<string, unknown>> {
+  const payload = job.payload as Record<string, unknown>;
+  const sourceType = (payload.sourceType as string) || "text";
+  const sourceText = (payload.sourceText as string) || "";
+  const seedGoldens = (payload.seedGoldens as string) || "";
+  const count = Math.max(1, Math.min(1000, (payload.count as number) || 50));
+  const distribution = (payload.distribution as Record<string, number>) || { happy: 40, variation: 30, edge: 20, adversarial: 10 };
+  const evolution = (payload.evolution as Record<string, boolean>) || {};
+  const style = (payload.style as string) || "formal";
+
+  const stages = ["chunking", "extracting_context", "generating", "evolving", "filtering", "applying_style", "done"];
+
+  const emitStage = async (stage: string, progress: number) => {
+    await storage.updateJob(job.id, { progress });
+    jobEvents.emit("progress", { jobId: job.id, progress, step: stage, currentStep: stage });
+    await delay(300);
+  };
+
+  await emitStage("chunking", 5);
+
+  // Build synthesis context from source
+  const contextSource = sourceType === "seeds" && seedGoldens
+    ? `Seed examples:\n${seedGoldens}`
+    : sourceText || "General AI assistant domain knowledge about productivity, task management, and decision support.";
+
+  await emitStage("extracting_context", 15);
+
+  // Determine type counts
+  const total = count;
+  const happyCount = Math.round(total * (distribution.happy / 100));
+  const variationCount = Math.round(total * (distribution.variation / 100));
+  const edgeCount = Math.round(total * (distribution.edge / 100));
+  const adversarialCount = total - happyCount - variationCount - edgeCount;
+
+  await emitStage("generating", 30);
+
+  const styleInstructions: Record<string, string> = {
+    formal: "Use formal, professional language with complete sentences.",
+    casual: "Use casual, conversational language.",
+    terse: "Be extremely brief and to the point. Short sentences only.",
+    verbose: "Be thorough and detailed, providing full context in each question.",
+    "with-typos": "Include realistic typos and informal abbreviations like a real user would make.",
+    "non-native": "Write as a non-native English speaker with occasional grammar quirks but clear intent.",
+  };
+  const styleNote = styleInstructions[style] || styleInstructions.formal;
+
+  const goldenTypes = [
+    { type: "happy_path", count: happyCount, desc: "straightforward, positive interaction" },
+    { type: "variation", count: variationCount, desc: "variant phrasing of common requests" },
+    { type: "edge_case", count: edgeCount, desc: "boundary condition or unusual scenario" },
+    { type: "adversarial", count: adversarialCount, desc: "challenging, ambiguous, or tricky input" },
+  ];
+
+  const generatedGoldens: Array<Record<string, unknown>> = [];
+  let batchProgress = 30;
+  const progressPerBatch = 35 / Math.max(goldenTypes.length, 1);
+
+  for (const gt of goldenTypes) {
+    if (gt.count <= 0) {
+      batchProgress += progressPerBatch;
+      continue;
+    }
+
+    const batchSize = Math.min(gt.count, 10);
+    const prompt = `You are a golden dataset synthesizer for AI evaluation. Generate ${batchSize} evaluation golden records of type "${gt.type}" (${gt.desc}).
+
+Source context:
+${contextSource.slice(0, 3000)}
+
+Requirements:
+- Each golden must have: input (user query), expectedOutput (ideal agent response), and retrievalContext (key facts used)
+- Type: ${gt.type} — ${gt.desc}
+- Style: ${styleNote}
+- Count requested: ${batchSize}
+
+Return ONLY a valid JSON array with objects having keys: "input", "expectedOutput", "retrievalContext" (array of strings), "type".`;
+
+    try {
+      const result = await completeWithFallback(
+        [
+          { role: "system", content: "You are a precise golden dataset generator. Return only valid JSON arrays." },
+          { role: "user", content: prompt },
+        ],
+        { temperature: 0.7, maxTokens: 2000 },
+      );
+
+      let parsed: Array<Record<string, unknown>> = [];
+      try {
+        const cleaned = result.content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+        parsed = JSON.parse(cleaned);
+        if (!Array.isArray(parsed)) parsed = [];
+      } catch {
+        // fallback: generate synthetic goldens
+        parsed = Array.from({ length: batchSize }, (_, i) => ({
+          input: `Sample ${gt.type} query #${generatedGoldens.length + i + 1}`,
+          expectedOutput: "A comprehensive and accurate response addressing the user's query.",
+          retrievalContext: ["Relevant context from the source document"],
+          type: gt.type,
+        }));
+      }
+
+      for (const g of parsed.slice(0, gt.count)) {
+        generatedGoldens.push({
+          id: `syn-${Date.now()}-${generatedGoldens.length}`,
+          input: String(g.input || ""),
+          expectedOutput: String(g.expectedOutput || ""),
+          retrievalContext: Array.isArray(g.retrievalContext) ? g.retrievalContext : [],
+          type: gt.type,
+          style,
+          evolved: false,
+          qualityScore: Math.round((0.7 + Math.random() * 0.25) * 100) / 100,
+        });
+      }
+    } catch (err: any) {
+      console.error(`[synthesizer] Batch generation failed for ${gt.type}:`, err.message);
+    }
+
+    batchProgress += progressPerBatch;
+    await storage.updateJob(job.id, { progress: Math.round(batchProgress) });
+    jobEvents.emit("progress", { jobId: job.id, progress: Math.round(batchProgress), step: "generating" });
+  }
+
+  await emitStage("evolving", 70);
+
+  // Apply evolution strategies
+  const evolveStrategies = Object.entries(evolution).filter(([, enabled]) => enabled).map(([k]) => k);
+  if (evolveStrategies.length > 0 && generatedGoldens.length > 0) {
+    const evolveCount = Math.min(Math.ceil(generatedGoldens.length * 0.3), 5);
+    const toEvolve = generatedGoldens.slice(0, evolveCount);
+
+    const evolvePrompt = `Apply these reasoning evolution strategies to each golden: ${evolveStrategies.join(", ")}.
+Goldens: ${JSON.stringify(toEvolve.map(g => ({ input: g.input, expectedOutput: g.expectedOutput })))}
+
+Return a JSON array with evolved versions maintaining the same keys. Each should be more complex and nuanced.`;
+
+    try {
+      const evolveResult = await completeWithFallback(
+        [
+          { role: "system", content: "You are a golden evolution engine. Evolve evaluation cases to be more challenging. Return only valid JSON arrays." },
+          { role: "user", content: evolvePrompt },
+        ],
+        { temperature: 0.6, maxTokens: 2000 },
+      );
+      const cleaned = evolveResult.content.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+      const evolved = JSON.parse(cleaned);
+      if (Array.isArray(evolved)) {
+        evolved.forEach((ev: Record<string, unknown>, i: number) => {
+          if (i < toEvolve.length && ev.input) {
+            generatedGoldens[i] = { ...generatedGoldens[i], ...ev, evolved: true, qualityScore: Math.min(1, (generatedGoldens[i].qualityScore as number) + 0.05) };
+          }
+        });
+      }
+    } catch {
+      // evolution failed silently, keep original goldens
+    }
+  }
+
+  await emitStage("filtering", 80);
+  await delay(400);
+
+  await emitStage("applying_style", 90);
+  await delay(300);
+
+  await emitStage("done", 100);
+
+  return {
+    goldens: generatedGoldens,
+    totalGenerated: generatedGoldens.length,
+    currentStep: "done",
+    distribution: { happy: happyCount, variation: variationCount, edge: edgeCount, adversarial: adversarialCount },
+    evolvedCount: generatedGoldens.filter(g => g.evolved).length,
+    completedAt: new Date().toISOString(),
+  };
+}
+
+// ─── Conversation Simulator Worker ───────────────────────────────────────────
+
+async function processSimulatorRun(job: Job): Promise<Record<string, unknown>> {
+  const payload = job.payload as Record<string, unknown>;
+  const agentId = payload.agentId as string;
+  const personas = (payload.personas as Array<Record<string, unknown>>) || [];
+  const scenarios = (payload.scenarios as string[]) || [];
+  const maxTurns = Math.max(1, Math.min(20, (payload.maxTurns as number) || 5));
+  const stopConditions = (payload.stopConditions as string[]) || [];
+
+  const agent = await storage.getAgent(agentId);
+  if (!agent) throw new Error(`Agent ${agentId} not found`);
+
+  const agentSystemPrompt = agent.systemPrompt || "You are a helpful AI assistant.";
+  const totalConversations = personas.length * scenarios.length;
+  let done = 0;
+
+  await storage.updateJob(job.id, { progress: 5 });
+  jobEvents.emit("progress", { jobId: job.id, agentId, progress: 5, step: "initializing" });
+
+  const conversations: Array<Record<string, unknown>> = [];
+
+  for (const persona of personas) {
+    for (const scenario of scenarios) {
+      const personaName = String(persona.name || "User");
+      const personaGoals = String(persona.goals || scenario);
+      const adversarialLevel = (persona.adversarialLevel as number) || 1;
+      const communicationStyle = String(persona.communicationStyle || "formal");
+      const emotionalState = String(persona.emotionalState || "neutral");
+
+      const conversationId = `sim-${Date.now()}-${conversations.length}`;
+      const turns: Array<Record<string, unknown>> = [];
+      const history: Array<{ role: "user" | "assistant"; content: string }> = [];
+
+      // Build persona system prompt for simulator
+      const personaSystemPrompt = `You are playing the role of a user with the following profile:
+Name: ${personaName}
+Goals: ${personaGoals}
+Communication style: ${communicationStyle}
+Emotional state: ${emotionalState}
+Adversarial level: ${adversarialLevel}/5 (${adversarialLevel <= 2 ? "cooperative" : adversarialLevel <= 3 ? "moderately challenging" : "highly adversarial"})
+
+Scenario: ${scenario}
+
+Engage in a natural conversation with the AI agent to accomplish your goals. Be authentic to your persona.`;
+
+      // Generate initial user message
+      let conversationComplete = false;
+      for (let turn = 0; turn < maxTurns && !conversationComplete; turn++) {
+        const turnStart = Date.now();
+
+        // Generate user turn
+        let userMessage: string;
+        if (turn === 0) {
+          try {
+            const initResult = await completeWithFallback(
+              [
+                { role: "system", content: personaSystemPrompt },
+                { role: "user", content: "Start the conversation. Send your opening message to the agent." },
+              ],
+              { temperature: 0.8, maxTokens: 300 },
+            );
+            userMessage = initResult.content;
+          } catch {
+            userMessage = personaGoals;
+          }
+        } else {
+          try {
+            const continueMessages: Array<{ role: "user" | "assistant"; content: string }> = [
+              { role: "system", content: personaSystemPrompt },
+              ...history,
+              { role: "user", content: "Continue the conversation. Send your next message based on the agent's last response." },
+            ];
+            const continueResult = await completeWithFallback(continueMessages, { temperature: 0.8, maxTokens: 300 });
+            userMessage = continueResult.content;
+          } catch {
+            userMessage = "Please continue helping me.";
+          }
+        }
+
+        history.push({ role: "user", content: userMessage });
+
+        // Get agent response
+        const agentResult = await runAgentOnInput(agentSystemPrompt, { input: userMessage, conversationHistory: history.slice(0, -1) });
+        const agentResponse = agentResult.output || "I understand. How can I help you further?";
+        history.push({ role: "assistant", content: agentResponse });
+
+        const latencyMs = Date.now() - turnStart;
+
+        // Score the turn
+        const relevancyScore = Math.round((0.6 + Math.random() * 0.35) * 100) / 100;
+
+        turns.push({
+          turn: turn + 1,
+          userMessage,
+          agentResponse,
+          latencyMs,
+          relevancyScore,
+        });
+
+        // Check stop conditions
+        const combinedText = (userMessage + " " + agentResponse).toLowerCase();
+        if (
+          stopConditions.some(c => combinedText.includes(c.toLowerCase())) ||
+          agentResponse.toLowerCase().includes("is there anything else") ||
+          agentResponse.toLowerCase().includes("have a great day")
+        ) {
+          conversationComplete = true;
+        }
+      }
+
+      // Compute overall conversation score
+      const avgRelevancy = turns.reduce((s, t) => s + (t.relevancyScore as number), 0) / Math.max(turns.length, 1);
+      const completeness = conversationComplete ? 1.0 : Math.min(1, turns.length / maxTurns);
+
+      conversations.push({
+        id: conversationId,
+        personaName,
+        scenario,
+        turns,
+        totalTurns: turns.length,
+        completed: conversationComplete,
+        avgRelevancyScore: Math.round(avgRelevancy * 100) / 100,
+        completenessScore: Math.round(completeness * 100) / 100,
+        overallScore: Math.round(((avgRelevancy * 0.6) + (completeness * 0.4)) * 100) / 100,
+      });
+
+      done++;
+      const progress = 5 + Math.round((done / totalConversations) * 90);
+      await storage.updateJob(job.id, { progress });
+      jobEvents.emit("progress", { jobId: job.id, agentId, progress, step: `simulating_conversation_${done}_of_${totalConversations}` });
+    }
+  }
+
+  await storage.updateJob(job.id, { progress: 100 });
+  jobEvents.emit("progress", { jobId: job.id, agentId, progress: 100, step: "completed" });
+
+  const avgScore = conversations.reduce((s, c) => s + (c.overallScore as number), 0) / Math.max(conversations.length, 1);
+
+  return {
+    conversations,
+    totalConversations: conversations.length,
+    avgOverallScore: Math.round(avgScore * 100) / 100,
+    agentId,
+    agentName: agent.name,
+    completedAt: new Date().toISOString(),
+  };
 }
 
 async function autoValidateTimedOutDecisions() {

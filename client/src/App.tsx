@@ -48,6 +48,8 @@ import EvalDetail from "@/pages/eval-detail";
 import Evals from "@/pages/evals";
 import EvalMetrics from "@/pages/eval-metrics";
 import EvalMetricBuilder from "@/pages/eval-metric-builder";
+import EvalSynthesizer from "@/pages/eval-synthesizer";
+import EvalSimulator from "@/pages/eval-simulator";
 import EvalRuns from "@/pages/eval-runs";
 import EvalRunDetail from "@/pages/eval-run-detail";
 import EvalDatasets from "@/pages/eval-datasets";
@@ -279,6 +281,8 @@ function DashboardRouter() {
       <Route path="/evals/metrics/new" component={EvalMetricBuilder} />
       <Route path="/evals/metrics/:id/edit" component={EvalMetricBuilder} />
       <Route path="/evals/metrics" component={EvalMetrics} />
+      <Route path="/evals/synthesizer" component={EvalSynthesizer} />
+      <Route path="/evals/simulator" component={EvalSimulator} />
       <Route path="/evals/datasets" component={EvalDatasets} />
       <Route path="/evals/runs" component={EvalRuns} />
       <Route path="/evals/runs/:id" component={EvalRunDetail} />

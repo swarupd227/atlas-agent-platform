@@ -27,6 +27,8 @@ import {
   Activity,
   Database,
   PlusCircle,
+  Sparkles,
+  MessageSquare,
 } from "lucide-react";
 import { formatDate } from "@/components/shared-utils";
 
@@ -395,6 +397,18 @@ export default function Evals() {
           <p className="text-sm text-muted-foreground mt-0.5">Quality health across all agents under evaluation</p>
         </div>
         <div className="flex items-center gap-2">
+          <Link href="/evals/synthesizer">
+            <Button variant="outline" size="sm" data-testid="button-synthesizer">
+              <Sparkles className="w-4 h-4 mr-1.5" />
+              Synthesizer
+            </Button>
+          </Link>
+          <Link href="/evals/simulator">
+            <Button variant="outline" size="sm" data-testid="button-simulator">
+              <MessageSquare className="w-4 h-4 mr-1.5" />
+              Simulator
+            </Button>
+          </Link>
           <Link href="/evals/metrics">
             <Button variant="outline" size="sm" data-testid="button-browse-metrics">
               <ListChecks className="w-4 h-4 mr-1.5" />
