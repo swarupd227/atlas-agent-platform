@@ -4,3 +4,7 @@ dist
 server/public
 vite.config.ts.*
 *.tar.gz
+# Playwright E2E test artefacts
+test-results/
+playwright-report/
+.local/.last-run.json
