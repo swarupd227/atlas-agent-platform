@@ -8,31 +8,34 @@ import { defineConfig, devices } from "@playwright/test";
  * launchOptions.env.LD_LIBRARY_PATH so Playwright can launch the headless
  * Chrome shell without installing system-wide deps.
  *
+ * Library paths are obtained via `nix-build '<nixpkgs>' -A <pkg> --no-out-link`
+ * and may change after a container restart / nix-channel update.
+ * Re-run that command for any path that stops working.
+ *
  * Target: https://atlas-agent-platform.replit.app  (demo mode — no auth)
  */
 
-const NIX = "/nix/store";
+const N = "/nix/store";
 
 // All nix store paths that Playwright's chromium-headless-shell requires.
-// Determined by ldd + iterative resolution in the Replit NixOS stable-24_05 env.
+// Determined by `ldd chrome-headless-shell | grep "not found"` in Replit NixOS.
+// Single source-of-truth: update here when container is rebuilt.
 const CHROMIUM_LIB_PATH = [
-  `${NIX}/c2v6ycn0sjcpx9ww8x7j4ima6xnpssry-glib-2.80.2/lib`,          // libglib-2.0.so.0
-  `${NIX}/lr06m26d9qh6ssa3x5zx2ll33wm44xid-nss-3.90.2/lib`,            // libnss3.so, libnssutil3.so
-  `${NIX}/8a651pfg6s4z27j274baqqb57pp34jkf-nspr-4.35/lib`,             // libnspr4.so
-  `${NIX}/jd41k79l3nxq4b7b7yvc0kmcjd3lq7sa-dbus-1.14.10-lib/lib`,     // libdbus-1.so.3
-  `${NIX}/jj3qn3wbzjqvwnz5cmhkc949r5iv783s-libxkbcommon-1.3.0/lib`,   // libxkbcommon.so.0
-  `${NIX}/1bmhxjz5bjpdsn68hwkbr8rscmi68j3w-atk-2.36.0/lib`,           // libatk-1.0.so.0
-  `${NIX}/4knwrajbbpnfzqgqw54s8zlv5sncm5dp-at-spi2-atk-2.38.0/lib`,   // libatk-bridge-2.0.so.0
-  `${NIX}/6rigmq2ycbpgywmq9jjyhdr6vs8k8h8x-at-spi2-core-2.52.0/lib`,  // libatspi.so.0
-  `${NIX}/k4n7c5m82dvh51ym88n6f2aws8m90g0m-libX11-1.7.2/lib`,         // libX11.so.6
-  `${NIX}/8arzrsr4smih7l52hmvmxsjwrvkcrsgp-libXcomposite-0.4.5/lib`,  // libXcomposite.so.1
-  `${NIX}/hg241r4rpf8djryryxj6ylfngl6zaxsh-libXdamage-1.1.5/lib`,    // libXdamage.so.1
-  `${NIX}/pqbf78jqja4i0804d8f810nkic9y9ahx-libXext-1.3.4/lib`,        // libXext.so.6
-  `${NIX}/drg97qy1sqw4zk2zbvn2f398vzrm5f8x-libXfixes-6.0.0/lib`,     // libXfixes.so.3
-  `${NIX}/6hfav2jxqfj9m0i9gz17yndpd5ws10bn-libXrandr-1.5.2/lib`,     // libXrandr.so.2
-  `${NIX}/vh35dr1f33gxn05y50vqzc5zqgjfpn07-libxcb-1.14/lib`,          // libxcb.so.1
-  `${NIX}/39bjnqk8l13bn1xnq1bc1baf3z957rkh-alsa-lib-1.2.5.1/lib`,    // libasound.so.2
-  `${process.env.HOME}/.nix-profile/lib`,                               // libgbm.so.1 (mesa)
+  `${N}/c2v6ycn0sjcpx9ww8x7j4ima6xnpssry-glib-2.80.2/lib`,               // libglib-2.0, libgio, libgobject
+  `${N}/lr06m26d9qh6ssa3x5zx2ll33wm44xid-nss-3.90.2/lib`,                // libnss3, libnssutil3
+  `${N}/8a651pfg6s4z27j274baqqb57pp34jkf-nspr-4.35/lib`,                 // libnspr4
+  `${N}/jd41k79l3nxq4b7b7yvc0kmcjd3lq7sa-dbus-1.14.10-lib/lib`,         // libdbus-1 (dbus.lib output)
+  `${N}/6rigmq2ycbpgywmq9jjyhdr6vs8k8h8x-at-spi2-core-2.52.0/lib`,      // libatk-1.0, libatk-bridge-2.0, libatspi
+  `${N}/x9fw7rbdb34gq0f8q750kw344lbv9nk1-libX11-1.8.9/lib`,              // libX11
+  `${N}/y16mr4fhn8a8snp5177a6aznq42ci22c-libXcomposite-0.4.6/lib`,       // libXcomposite
+  `${N}/2y8irckx5v4fav7r7p9ghaz7rbwdmfb2-libXdamage-1.1.6/lib`,         // libXdamage
+  `${N}/gbjygp4wz7b5rgayckmqfc00hy34dqfn-libXext-1.3.6/lib`,             // libXext
+  `${N}/1jjjvxa4v0qqjhlc9ig3j6ljdlskm2kr-libXfixes-6.0.1/lib`,          // libXfixes
+  `${N}/2rq584mkybbbvm1ciyams5s2lh8cdq32-libXrandr-1.5.4/lib`,           // libXrandr
+  `${N}/18kar5zwp16xyppfmigq92xzm1pkcqf1-libxcb-1.17.0/lib`,             // libxcb
+  `${N}/0g7r7krqiz6g3nb3651sfa5myd9gqkzf-alsa-lib-1.2.11/lib`,           // libasound
+  `${N}/1mv469gq5n0l32cb2lam7mkfl9s22dlg-libxkbcommon-1.7.0/lib`,        // libxkbcommon
+  `${N}/f3bmrmcdxxgxzsh8pgwg49z2zhfs9qfq-mesa-24.0.7/lib`,               // libgbm
 ].join(":");
 
 export default defineConfig({

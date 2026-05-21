@@ -25,7 +25,7 @@
 import { test, expect } from "@playwright/test";
 
 const TS = Date.now();
-const DATASET_NAME = `[E2E] Smoke Eval — ${TS}`;
+const DATASET_NAME = `[E2E] AQEWS Assessment Report Generator — ${TS}`;
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -100,16 +100,21 @@ test("Eval Workflow: full E2E smoke test against production", async ({ page, req
     const body    = await res.json();
     const all: any[] = Array.isArray(body) ? body : (body.metrics ?? body.items ?? []);
 
-    // Prefer "general" or "safety" category; exclude [E2E] artefacts from
-    // previous test runs to keep selections deterministic and production-grade.
-    const preferred = all.filter(
-      (m) =>
-        ["general", "safety"].includes(m.category ?? "") &&
-        !m.name.startsWith("[E2E]"),
+    // Filter to "general" category, exclude any [E2E] artefacts from previous runs.
+    const general = all.filter(
+      (m) => m.category === "general" && !m.name.startsWith("[E2E]"),
     );
-    const pool  = preferred.length > 0 ? preferred : all.filter((m) => !m.name.startsWith("[E2E]"));
-    expect(pool.length, "No suitable metrics found in production — cannot proceed").toBeGreaterThan(0);
+    expect(general.length, "No general-category metrics found in production").toBeGreaterThan(0);
 
+    // For credit/financial domain evaluation, prefer metrics that judge answer
+    // quality holistically: GEval (LLM-as-judge), InstructionFollowing, and
+    // SemanticSimilarity are more meaningful than CodeCorrectness or DAGMetric.
+    const PREFERRED_NAMES = ["GEval", "InstructionFollowing", "SemanticSimilarity", "NonContradiction"];
+    const preferred = PREFERRED_NAMES
+      .map((n) => general.find((m: any) => m.name === n))
+      .filter(Boolean) as any[];
+
+    const pool  = preferred.length > 0 ? preferred : general;
     metricIds = pool.slice(0, 3).map((m: any) => m.id as string);
     const names = pool.slice(0, 3).map((m: any) => m.name);
     console.log(`  ✓ metrics selected (${metricIds.length}): ${names.join(", ")}`);
@@ -135,9 +140,12 @@ test("Eval Workflow: full E2E smoke test against production", async ({ page, req
     const res = await request.post("/api/eval/datasets", {
       data: {
         name: DATASET_NAME,
-        description: "Automated E2E test dataset — safe to delete",
+        description:
+          "Automated E2E test dataset for the AQEWS Assessment Report Generator — " +
+          "covers SVB advance warning identification, watchlist recommendation logic, " +
+          "and full quarterly package assembly. Safe to delete.",
         agentId,
-        tags: ["e2e", "automated", "smoke"],
+        tags: ["e2e", "automated", "aqews", "credit-assessment"],
       },
     });
     expect(res.ok(), `POST /api/eval/datasets → ${res.status()}: ${await res.text()}`).toBeTruthy();
@@ -147,26 +155,81 @@ test("Eval Workflow: full E2E smoke test against production", async ({ page, req
     console.log(`  ✓ dataset: "${ds.name}" (${datasetId})`);
   });
 
-  await test.step("1.5 — Seed 3 golden test cases (POST .../goldens/bulk)", async () => {
+  await test.step("1.5 — Seed 3 agent-specific golden test cases (POST .../goldens/bulk)", async () => {
+    // These goldens exercise the actual capabilities of the Assessment Report
+    // Generator — Fitch's AQEWS system for credit risk early warning.
+    // They cover: (a) SVB advance-warning identification, (b) watchlist
+    // recommendation logic, and (c) full quarterly assessment package assembly.
     const res = await request.post(`/api/eval/datasets/${datasetId}/goldens/bulk`, {
       data: {
         goldens: [
+          // ── Golden 1: SVB advance-warning identification ─────────────────
+          // Tests that the agent correctly identifies and interprets the 182-day
+          // advance warning the AQEWS model produced before SVB's March 2023
+          // collapse — a core proof-point of Fitch's early detection capability.
           {
-            input: "What is 2 + 2?",
-            expectedOutput: "4",
-            tags: ["arithmetic", "e2e"],
-          },
-          {
-            input: "Summarise the purpose of an AI agent in one sentence.",
+            input:
+              "Analyse Silicon Valley Bank's AQEWS composite score trajectory from " +
+              "Q1 2022 through March 2023. Identify where the model first flagged " +
+              "deteriorating asset quality and explain what the advance warning timeline " +
+              "indicates about Fitch's early detection capability.",
             expectedOutput:
-              "An AI agent autonomously perceives its environment and takes actions to achieve a goal.",
-            tags: ["summarisation", "e2e"],
+              "The AQEWS model flagged Silicon Valley Bank's deteriorating credit quality " +
+              "approximately 182 days before its collapse in March 2023. The composite score " +
+              "trajectory shows a progressive decline beginning in mid-2022, crossing the " +
+              "watchlist threshold well ahead of the bank's failure. The svbComparison section " +
+              "of the assessment package should include the quarterly score timeline with " +
+              "labeled events, parallelsFound narratives for current watchlist banks, and a " +
+              "recommendation of Active Monitor or Immediate Review for institutions showing " +
+              "similar early-warning patterns.",
+            tags: ["svb-backtest", "advance-warning", "e2e", "aqews"],
           },
+
+          // ── Golden 2: Watchlist recommendation logic ─────────────────────
+          // Tests the agent's recommendation tier selection given a deteriorating
+          // regional bank profile with elevated CRE concentration — a common
+          // stress pattern in the post-SVB environment.
           {
-            input: "Is the following sentence grammatically correct? 'She go to school every day.'",
+            input:
+              "A regional bank on the AQEWS watchlist shows a composite score declining " +
+              "from 74 in Q1 2023 to 51 in Q3 2023 — three consecutive quarters of " +
+              "deterioration. CRE concentration stands at 360% of Tier 1 capital and " +
+              "uninsured deposit share has risen to 62%. Assemble the credit assessment " +
+              "package and provide the appropriate recommendation tier.",
             expectedOutput:
-              "No — 'go' should be 'goes' for third-person singular present tense.",
-            tags: ["grammar", "e2e"],
+              "Given three consecutive quarters of score decline (74→51), CRE concentration " +
+              "at 360% of Tier 1 (above the 300% stress threshold), and uninsured deposit share " +
+              "at 62%, the assessment package should assign an Immediate Review recommendation. " +
+              "The ratioHighlights section should flag CRE concentration as CRITICAL severity " +
+              "and deposit concentration as HIGH. The executiveSummary should note the score " +
+              "trajectory, the SVB parallels in the svbComparison section should identify " +
+              "similarities to SVB's pre-collapse profile, and the watchList should include " +
+              "this institution with the Immediate Review tier.",
+            tags: ["watchlist", "recommendation", "cre-concentration", "e2e", "aqews"],
+          },
+
+          // ── Golden 3: Full quarterly assessment package assembly ──────────
+          // Tests the core output capability: assembling a complete structured
+          // JSON package with all required sections — the primary deliverable
+          // of this agent in the AQEWS pipeline.
+          {
+            input:
+              "Assemble the Q3 2023 AQEWS quarterly assessment package. Include the " +
+              "executive summary covering current watchlist composition and key risks, " +
+              "ratio highlights with severity levels for flagged banks, NLP signals from " +
+              "recent earnings transcripts and filings, and SVB backtest comparisons for " +
+              "institutions showing early-warning parallels.",
+            expectedOutput:
+              "The Q3 2023 AQEWS quarterly assessment package should be a complete JSON " +
+              "structure with reportGenerated: true. The assessmentPackage must contain: " +
+              "an executiveSummary (2-3 sentences covering watchlist composition and top risks), " +
+              "ratioHighlights array with ratio IDs, finding text, and CRITICAL/HIGH/MEDIUM " +
+              "severity labels, and nlpHighlights with bank name, signal text, and source type " +
+              "(transcript, filing, or news). The svbComparison section must include the " +
+              "quarterly composite score timeline and parallelsFound narratives for any " +
+              "flagged institutions. The top-level recommendation field should reflect the " +
+              "highest-risk institution's tier: Watch, Active Monitor, or Immediate Review.",
+            tags: ["package-assembly", "quarterly", "full-output", "e2e", "aqews"],
           },
         ],
       },
