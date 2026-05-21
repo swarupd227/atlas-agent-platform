@@ -4,7 +4,7 @@ import { agentAlerts } from "@shared/schema";
 import { EventEmitter } from "events";
 import { checkOntologyCompliance, executeScheduledAgentCycle, runAgentOnce } from "./agent-runtime";
 import { industryEvalFrameworks } from "./routes";
-import { runLlmJudge, runAgentOnInput, buildAgentContext } from "./eval-judge";
+import { runLlmJudge, runAgentOnInput, buildAgentContext, routeMetricMeasurement } from "./eval-judge";
 import { getDefaultProvider, getProvider, completeWithFallback } from "./llm-provider";
 import { runAlertCheck } from "./routes/observability";
 import { db } from "./db";
@@ -1156,7 +1156,7 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
 
     const scores: Record<string, number> = {};
     // Per-metric reasoning keyed by metric name — persisted in child span JSONB
-    const metricReasonings: Record<string, { score: number; pass: boolean; reason: string; threshold: number }> = {};
+    const metricReasonings: Record<string, { score: number; pass: boolean; reason: string; threshold: number; evaluationSteps?: string[] }> = {};
     // Per-metric duration tracked in a proper Map — no `any` mutation
     const metricDurations = new Map<string, number>();
     let overallPass = false;
@@ -1179,15 +1179,21 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
           if (evalParams.includes("expected_output") && golden.expectedOutput) judgeInputData.expected_output = golden.expectedOutput;
           if (evalParams.includes("retrieval_context") && golden.retrievalContext?.length) judgeInputData.retrieval_context = golden.retrievalContext;
           // Note: evalGoldens has no separate "context" field; retrieval_context covers this param
-          const metricResult = await runLlmJudge(
-            metric.name,
-            judgeInputData,
-            golden.expectedOutput ? { expected: golden.expectedOutput } : null,
-            `${agentCtx}\n\nEvaluation metric: ${metric.name}\nCriteria: ${metric.criteria || "Evaluate quality"}`,
-            actualOutput,
-            undefined,
-            judgeModelOverride,
-          );
+          const metricResult = await routeMetricMeasurement(metric.metricType || "g-eval", {
+            input: golden.input,
+            actual_output: actualOutput,
+            expected_output: golden.expectedOutput !== undefined && golden.expectedOutput !== null ? String(golden.expectedOutput) : undefined,
+            retrieval_context: golden.retrievalContext as string[] | undefined,
+            criteria: metric.criteria || undefined,
+            threshold: metric.threshold || 0.5,
+            strict_mode: metric.strictMode || false,
+            judge_model: judgeModelOverride || metric.judgeModel || undefined,
+            testName: metric.name,
+            inputData: judgeInputData,
+            expectedOutput: golden.expectedOutput ? { expected: golden.expectedOutput } : null,
+            agentContext: `${agentCtx}\n\nEvaluation metric: ${metric.name}\nCriteria: ${metric.criteria || "Evaluate quality"}`,
+            industryDimensions: undefined,
+          });
           const metricDurationMs = Date.now() - metricT0;
           metricDurations.set(metric.name, metricDurationMs);
           const score = metricResult.isPassed
@@ -1200,6 +1206,7 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
             pass: metricResult.isPassed,
             reason: metricResult.reason || "",
             threshold: metric.threshold || 0.5,
+            evaluationSteps: (metricResult as any).evaluationSteps,
           };
         }
         const scoreValues = Object.values(scores);
@@ -1298,6 +1305,7 @@ async function processEvalTestRun(job: Job): Promise<Record<string, unknown>> {
             threshold: reasoning.threshold,
             reason: reasoning.reason,
             pass: reasoning.pass,
+            evaluation_steps: reasoning.evaluationSteps || [],
           },
           scores: { [metric.name]: reasoning.score },
           durationMs: metricDurations.get(metric.name) ?? 0,

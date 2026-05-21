@@ -26,8 +26,8 @@ localPort = 5904
 externalPort = 5000
 
 [[ports]]
-localPort = 23636
-externalPort = 3001
+localPort = 8000
+externalPort = 8000
 
 [[ports]]
 localPort = 23637
@@ -57,6 +57,10 @@ args = "Start application"
 task = "workflow.run"
 args = "Business App"
 
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "DeepEval Service"
+
 [[workflows.workflow]]
 name = "Start application"
 author = "agent"
@@ -77,6 +81,18 @@ outputType = "console"
 task = "shell.exec"
 args = "npx vite --config vite.business.config.ts"
 waitForPort = 5001
+
+[[workflows.workflow]]
+name = "DeepEval Service"
+author = "agent"
+
+[workflows.workflow.metadata]
+outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "uvicorn deepeval-service.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir deepeval-service"
+waitForPort = 8000
 
 [agent]
 integrations = ["javascript_openai_ai_integrations:2.0.0", "javascript_anthropic_ai_integrations:2.0.0"]

@@ -1,4 +1,6 @@
 import { completeWithFallback } from "./llm-provider";
+import { measureWithDeepEval } from "./deepeval-bridge";
+import type { DeepEvalJudgeResult } from "./deepeval-bridge";
 
 export interface CriterionResult {
   criterion: string;
@@ -18,9 +20,91 @@ export interface LlmJudgeResult {
   dimensionResults?: DimensionJudgeResult[];
 }
 
+export type { DeepEvalJudgeResult };
+
 export interface AgentRunResult {
   output: string;
   latencyMs: number;
+}
+
+/**
+ * Metric types that route to the DeepEval Python sidecar.
+ * All other types (including "industry-dim" and unrecognised values)
+ * fall through to the existing runLlmJudge() implementation.
+ */
+export const DEEPEVAL_METRIC_TYPES = new Set([
+  "g-eval",
+  "answer-relevancy",
+  "faithfulness",
+  "hallucination",
+  "contextual-precision",
+  "contextual-recall",
+  "contextual-relevancy",
+  "bias",
+  "toxicity",
+  "summarization",
+]);
+
+/** Unified params accepted by routeMetricMeasurement for both paths. */
+export interface RouteMeasureParams {
+  // ── DeepEval path ────────────────────────────────────────────────────
+  input: string;
+  actual_output: string;
+  expected_output?: string;
+  retrieval_context?: string[];
+  criteria?: string;
+  threshold?: number;
+  strict_mode?: boolean;
+  judge_model?: string;
+  // ── Fallback (runLlmJudge) path ──────────────────────────────────────
+  testName: string;
+  inputData: Record<string, unknown>;
+  expectedOutput: Record<string, unknown> | null;
+  agentContext: string;
+  industryDimensions?: Array<{ id: string; name: string; scoringCriteria: string[] }>;
+}
+
+/**
+ * Route a metric measurement to either the DeepEval service (for standard
+ * DeepEval metric types) or the local LLM judge (for industry-specific or
+ * unrecognised types).
+ *
+ * On DeepEval service unavailability the function falls back to runLlmJudge
+ * and logs a warning — eval runs are never blocked by the Python service.
+ */
+export async function routeMetricMeasurement(
+  metricType: string,
+  params: RouteMeasureParams,
+): Promise<DeepEvalJudgeResult> {
+  if (DEEPEVAL_METRIC_TYPES.has(metricType)) {
+    try {
+      return await measureWithDeepEval({
+        metricType,
+        input: params.input,
+        actual_output: params.actual_output,
+        expected_output: params.expected_output,
+        retrieval_context: params.retrieval_context,
+        criteria: params.criteria,
+        threshold: params.threshold,
+        strict_mode: params.strict_mode,
+        judge_model: params.judge_model,
+      });
+    } catch (err: any) {
+      console.warn(
+        `[eval-judge] DeepEval service unreachable for metricType="${metricType}" — falling back to LLM judge: ${err.message}`,
+      );
+    }
+  }
+  // Fallback: existing generic LLM judge (industry-dim, custom, or service down)
+  return runLlmJudge(
+    params.testName,
+    params.inputData,
+    params.expectedOutput,
+    params.agentContext,
+    params.actual_output || null,
+    params.industryDimensions,
+    params.judge_model,
+  );
 }
 
 export function buildAgentContext(agent: { name?: string | null; description?: string | null; systemPrompt?: string | null }): string {
