@@ -870,6 +870,7 @@ export const mcpServers = pgTable("mcp_servers", {
   lastHealthCheck: timestamp("last_health_check"),
   addedBy: text("added_by"),
   approvedBy: text("approved_by"),
+  connectionId: varchar("connection_id"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });

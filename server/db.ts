@@ -1102,6 +1102,9 @@ export async function runStartupMigrations() {
       );
       CREATE INDEX IF NOT EXISTS idx_int_conn_org ON integration_connections(organization_id);
       CREATE INDEX IF NOT EXISTS idx_int_conn_org_integration ON integration_connections(organization_id, integration_id);
+
+      -- MCP server linkage for enterprise integrations (Task #55)
+      ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS connection_id VARCHAR;
     `);
 
     // Seed Nous-curated marketplace asset packs (always runs; ON CONFLICT skips existing rows)

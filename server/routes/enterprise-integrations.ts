@@ -5,6 +5,9 @@ import { storage } from "../storage";
 import { encryptCredentialMap, decryptCredentialMap } from "../credential-vault";
 import { INTEGRATION_REGISTRY, getIntegrationDef } from "../integrations/registry";
 import { getDefaultOrgId } from "../auth";
+import { db } from "../db";
+import { mcpServers, auditEvents } from "@shared/schema";
+import { eq, and, gte, sql as drizzleSql } from "drizzle-orm";
 
 const router = Router();
 
@@ -79,13 +82,16 @@ router.post("/api/enterprise-integrations/:id/connect", async (req: Request, res
       // Test failure is non-fatal; connection is still stored
     }
 
+    // MCP server linkage: create/activate the MCP server record tied to this connection
+    const mcpServerId = await upsertIntegrationMcpServer(conn.id, integrationId, def.name, orgId);
+
     // Audit the connection event
     storage.createAuditEvent({
       actorType: "user",
       action: "enterprise_integration_connect",
       objectType: "integration",
       objectId: integrationId,
-      details: JSON.stringify({ integrationId, testOk: testResult?.ok }),
+      details: JSON.stringify({ integrationId, testOk: testResult?.ok, mcpServerId }),
       organizationId: orgId,
     }).catch(() => {});
 
@@ -94,6 +100,7 @@ router.post("/api/enterprise-integrations/:id/connect", async (req: Request, res
       integrationId: conn.integrationId,
       status: conn.status,
       createdAt: conn.createdAt,
+      mcpServerId,
       immediateTest: testResult,
     });
   } catch (err: any) {
@@ -106,7 +113,12 @@ router.post("/api/enterprise-integrations/:id/disconnect", async (req: Request, 
   try {
     const orgId = getDefaultOrgId(req);
     const integrationId = req.params.id;
+    const conn = await storage.getIntegrationConnection(orgId, integrationId);
+
     await storage.disconnectIntegration(orgId, integrationId);
+
+    // Deactivate linked MCP server
+    if (conn?.id) await deactivateIntegrationMcpServer(conn.id);
 
     storage.createAuditEvent({
       actorType: "user",
@@ -127,7 +139,12 @@ router.delete("/api/enterprise-integrations/:id", async (req: Request, res: Resp
   try {
     const orgId = getDefaultOrgId(req);
     const integrationId = req.params.id;
+    const conn = await storage.getIntegrationConnection(orgId, integrationId);
+
     await storage.disconnectIntegration(orgId, integrationId);
+
+    // Deactivate linked MCP server
+    if (conn?.id) await deactivateIntegrationMcpServer(conn.id);
 
     storage.createAuditEvent({
       actorType: "user",
@@ -463,11 +480,125 @@ async function refreshExpiringTokens(aheadMs: number): Promise<void> {
   }
 }
 
+// ── GET /api/enterprise-integrations/:id/health ───────────────────────────────
+// Returns error rate and tool-call counts derived from audit events (last 24 h).
+router.get("/api/enterprise-integrations/:id/health", async (req: Request, res: Response) => {
+  try {
+    const orgId = getDefaultOrgId(req);
+    const integrationId = req.params.id;
+    const def = getIntegrationDef(integrationId);
+    if (!def) return res.status(404).json({ error: `Integration '${integrationId}' not found` });
+
+    const conn = await storage.getIntegrationConnection(orgId, integrationId);
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    // Query audit events for this integration in the last 24 h
+    const rows = await db
+      .select({ action: auditEvents.action })
+      .from(auditEvents)
+      .where(
+        and(
+          eq(auditEvents.organizationId, orgId),
+          gte(auditEvents.createdAt, since),
+        )
+      );
+
+    const calls = rows.filter(
+      (r) => r.action === "integration_tool_call" || r.action === "integration_tool_error"
+    );
+    const errors = calls.filter((r) => r.action === "integration_tool_error");
+
+    const totalCalls = calls.length;
+    const totalErrors = errors.length;
+    const errorRate = totalCalls > 0 ? +(totalErrors / totalCalls).toFixed(4) : 0;
+    const successRate = totalCalls > 0 ? +((totalCalls - totalErrors) / totalCalls).toFixed(4) : 1;
+
+    res.json({
+      integrationId,
+      window: "24h",
+      status: conn?.status ?? "disconnected",
+      lastTestedAt: conn?.lastTestedAt ?? null,
+      lastTestResult: conn?.lastTestResult ?? null,
+      lastError: conn?.lastError ?? null,
+      tokenExpiresAt: conn?.tokenExpiresAt ?? null,
+      mcpServerId: conn?.mcpServerId ?? null,
+      metrics: {
+        totalCalls,
+        totalErrors,
+        errorRate,
+        successRate,
+      },
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function maskValue(value: string): string {
   if (!value || value.length <= 6) return "••••••";
   return value.slice(0, 4) + "••••" + value.slice(-2);
+}
+
+/**
+ * Create or reactivate the MCP server record that backs this integration connection.
+ * Returns the MCP server ID.
+ */
+async function upsertIntegrationMcpServer(
+  connectionId: string,
+  integrationId: string,
+  integrationName: string,
+  orgId: string
+): Promise<string | null> {
+  try {
+    // Check for an existing MCP server with this connectionId
+    const [existing] = await db
+      .select({ id: mcpServers.id })
+      .from(mcpServers)
+      .where(eq(mcpServers.connectionId, connectionId))
+      .limit(1);
+
+    if (existing) {
+      await db
+        .update(mcpServers)
+        .set({ status: "registered", updatedAt: new Date() })
+        .where(eq(mcpServers.id, existing.id));
+      return existing.id;
+    }
+
+    // Create a new MCP server record linked to this connection
+    const [created] = await db
+      .insert(mcpServers)
+      .values({
+        name: `${integrationName} MCP`,
+        description: `Enterprise integration MCP server for ${integrationName}`,
+        transportType: "enterprise",
+        status: "registered",
+        riskTier: "MEDIUM",
+        connectionId,
+        industryId: orgId,
+        addedBy: "system",
+      })
+      .returning({ id: mcpServers.id });
+
+    return created?.id ?? null;
+  } catch (err: any) {
+    console.warn(`[integrations] MCP server upsert failed for ${integrationId}:`, err?.message);
+    return null;
+  }
+}
+
+/** Set the linked MCP server to 'inactive' when an integration is disconnected. */
+async function deactivateIntegrationMcpServer(connectionId: string): Promise<void> {
+  try {
+    await db
+      .update(mcpServers)
+      .set({ status: "inactive", updatedAt: new Date() })
+      .where(eq(mcpServers.connectionId, connectionId));
+  } catch (err: any) {
+    console.warn(`[integrations] MCP server deactivation failed for connection ${connectionId}:`, err?.message);
+  }
 }
 
 async function testConnectionHealth(

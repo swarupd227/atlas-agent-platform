@@ -16,6 +16,23 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const MAX_RETRIES = 3;
 const RETRY_BASE_MS = 500;
 
+/** Masks credential-like values in tool args for safe audit logging */
+export function maskAuditArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const SENSITIVE = /token|secret|key|pass|auth|credential/i;
+  return Object.fromEntries(
+    Object.entries(args).map(([k, v]) => {
+      if (SENSITIVE.test(k) && typeof v === "string") {
+        const s = v as string;
+        return [k, s.length > 6 ? s.slice(0, 3) + "••••" + s.slice(-2) : "••••••"];
+      }
+      if (typeof v === "string" && v.length > 200) {
+        return [k, v.slice(0, 100) + "…[truncated]"];
+      }
+      return [k, v];
+    })
+  );
+}
+
 export abstract class RealMcpBase {
   abstract readonly integrationId: string;
   abstract readonly tools: RealMcpToolDef[];
@@ -101,23 +118,34 @@ export abstract class RealMcpBase {
       return this.err(`Integration '${this.integrationId}' is not connected for this organization.`);
     }
 
+    const startMs = Date.now();
+    let result: McpToolResult;
     try {
-      const result = await this.handleTool(toolName, args, credentials);
-
-      // Audit log via storage
-      storage.createAuditEvent({
-        actorType: "agent",
-        action: result.isError ? "integration_tool_error" : "integration_tool_call",
-        objectType: "integration",
-        objectId: `${this.integrationId}:${toolName}`,
-        details: JSON.stringify({ toolName, integrationId: this.integrationId }),
-        organizationId: orgId,
-      }).catch(() => {});
-
-      return result;
+      result = await this.handleTool(toolName, args, credentials);
     } catch (err: any) {
-      return this.err(`Tool '${toolName}' failed: ${err?.message ?? "Unknown error"}`);
+      result = this.err(`Tool '${toolName}' failed: ${err?.message ?? "Unknown error"}`);
     }
+
+    const latencyMs = Date.now() - startMs;
+
+    // Emit enriched audit event: masked args, latency, outcome, integration/tool IDs, org
+    const maskedArgs = maskAuditArgs(args);
+    storage.createAuditEvent({
+      actorType: "agent",
+      action: result.isError ? "integration_tool_error" : "integration_tool_call",
+      objectType: "integration",
+      objectId: `${this.integrationId}:${toolName}`,
+      details: JSON.stringify({
+        toolName,
+        integrationId: this.integrationId,
+        maskedArgs,
+        latencyMs,
+        outcome: result.isError ? "error" : "success",
+      }),
+      organizationId: orgId,
+    }).catch(() => {});
+
+    return result;
   }
 
   // ── Response helpers ──────────────────────────────────────────────────────
