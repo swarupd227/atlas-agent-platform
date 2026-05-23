@@ -97,6 +97,9 @@ import outputContractsRouter from "./routes/output-contracts";
 import generationMetadataRouter from "./routes/generation-metadata";
 import evalStudioRouter from "./routes/eval-studio";
 import enterpriseIntegrationsRouter, { startTokenRefreshDaemon } from "./routes/enterprise-integrations";
+import { registerEnterpriseIntegrations } from "./integrations/register";
+import { createSalesforceRouter } from "./integrations/salesforce/mcp-server";
+import { createHubSpotRouter } from "./integrations/hubspot/mcp-server";
 
 export { computeConstraintGraph, recomputeOutcomeKpis };
 export type { KpiReEvalResult };
@@ -335,6 +338,20 @@ export async function registerRoutes(
   app.use(evalStudioRouter);
   app.use(enterpriseIntegrationsRouter);
 
+  // ── Enterprise CRM Integration routers ──────────────────────────────────────
+  app.use("/api/integrations/salesforce", createSalesforceRouter());
+  app.use("/api/integrations/hubspot", createHubSpotRouter());
+
+  // ── Enterprise integration catalog endpoint ──────────────────────────────────
+  app.post("/api/integrations/register", async (_req, res) => {
+    try {
+      const result = await registerEnterpriseIntegrations();
+      res.json({ success: true, ...result, message: `Registered ${result.servers.length} enterprise integration MCP servers with ${result.tools} tools` });
+    } catch (error: any) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
   // Run idempotent startup SQL migrations (CREATE TABLE IF NOT EXISTS).
   // Awaited before starting the worker so tables are guaranteed to exist before
   // any jobs are dequeued and attempt to write to them. Errors are NOT caught here
@@ -369,6 +386,11 @@ export async function registerRoutes(
 
   // Start OAuth token refresh daemon (refreshes tokens expiring in next 5 min, runs every 4 min)
   startTokenRefreshDaemon();
+
+  // Register enterprise CRM integration MCP servers in catalog (idempotent)
+  registerEnterpriseIntegrations().catch((err: any) =>
+    console.error("[startup] registerEnterpriseIntegrations:", err?.message)
+  );
 
   return httpServer;
 }
