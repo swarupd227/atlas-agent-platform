@@ -1,8 +1,12 @@
 /**
- * Salesforce REST API client — raw fetch, no heavy SDK.
+ * Salesforce REST API client — raw fetch is injected by the caller.
+ * The fetcher is pre-configured with auth headers, retry/backoff, and 401-refresh
+ * via RealMcpBase.fetchWithAuth(), so this client only handles request formatting
+ * and user-friendly error translation.
  * Supports production (login.salesforce.com) and sandbox (test.salesforce.com).
- * Token refresh is handled upstream by RealMcpBase.fetchWithAuth().
  */
+
+export const SF_API_VERSION = "v59.0";
 
 export interface SFRecord {
   [key: string]: unknown;
@@ -43,78 +47,59 @@ export interface SFDescribeResult {
 }
 
 export interface SFGlobalDescribe {
-  sobjects: Array<{ name: string; label: string; labelPlural: string; queryable: boolean; createable: boolean; updateable: boolean }>;
+  sobjects: Array<{
+    name: string;
+    label: string;
+    labelPlural: string;
+    queryable: boolean;
+    createable: boolean;
+    updateable: boolean;
+  }>;
 }
 
-export const SF_API_VERSION = "v59.0";
+/** Fetcher type: injected by MCP server so fetchWithAuth handles retry/backoff/auth */
+export type SfFetcher = (path: string, options?: RequestInit) => Promise<Response>;
 
 export class SalesforceClient {
-  private instanceUrl: string;
-  private accessToken: string;
+  constructor(
+    private readonly fetcher: SfFetcher,
+    readonly instanceUrl: string
+  ) {}
 
-  constructor(credentials: Record<string, string>) {
-    if (!credentials.instance_url) throw new Error("Salesforce credentials missing instance_url");
-    if (!credentials.access_token) throw new Error("Salesforce credentials missing access_token");
-    this.instanceUrl = credentials.instance_url.replace(/\/$/, "");
-    this.accessToken = credentials.access_token;
-  }
+  private async request<T>(path: string, options?: RequestInit): Promise<T> {
+    const res = await this.fetcher(path, options);
 
-  private get baseUrl(): string {
-    return `${this.instanceUrl}/services/data/${SF_API_VERSION}`;
-  }
-
-  private async request<T>(
-    path: string,
-    options: RequestInit = {},
-    timeoutMs = 15_000
-  ): Promise<T> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const res = await fetch(`${this.baseUrl}${path}`, {
-        ...options,
-        headers: {
-          "Authorization": `Bearer ${this.accessToken}`,
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-          ...(options.headers as Record<string, string> | undefined),
-        },
-        signal: controller.signal,
-      });
-
-      if (!res.ok) {
-        let errorText = await res.text().catch(() => res.statusText);
-        try {
-          const errJson = JSON.parse(errorText);
-          const sfErr = Array.isArray(errJson) ? errJson[0] : errJson;
-          const code: string = sfErr?.errorCode ?? sfErr?.error ?? "";
-          const msg: string = sfErr?.message ?? sfErr?.error_description ?? errorText;
-          if (code === "INVALID_SESSION_ID") {
-            throw new SalesforceAuthError("Salesforce session expired — token refresh required");
-          }
-          errorText = msg || errorText;
-        } catch (e) {
-          if (e instanceof SalesforceAuthError) throw e;
+    if (!res.ok) {
+      let errorText = await res.text().catch(() => res.statusText);
+      try {
+        const errJson = JSON.parse(errorText);
+        const sfErr = Array.isArray(errJson) ? errJson[0] : errJson;
+        const code: string = sfErr?.errorCode ?? sfErr?.error ?? "";
+        const msg: string = sfErr?.message ?? sfErr?.error_description ?? errorText;
+        if (code === "INVALID_SESSION_ID") {
+          throw new SalesforceAuthError("Salesforce session expired — please reconnect the integration");
         }
-        throw new Error(`Salesforce API error ${res.status}: ${errorText}`);
+        errorText = msg || errorText;
+      } catch (e) {
+        if (e instanceof SalesforceAuthError) throw e;
       }
-
-      if (res.status === 204) return {} as T;
-      return res.json() as Promise<T>;
-    } finally {
-      clearTimeout(timer);
+      if (res.status === 404) throw new Error(`Salesforce record not found (404): ${path}`);
+      throw new Error(`Salesforce API ${res.status}: ${errorText}`);
     }
+
+    if (res.status === 204) return {} as T;
+    return res.json() as Promise<T>;
   }
 
   async query(soql: string): Promise<SFQueryResult> {
-    const encoded = encodeURIComponent(soql);
-    return this.request<SFQueryResult>(`/query/?q=${encoded}`);
+    return this.request<SFQueryResult>(`/query/?q=${encodeURIComponent(soql)}`);
   }
 
   async queryAll(soql: string): Promise<SFRecord[]> {
     const result = await this.query(soql);
     const records = [...result.records];
     let next = result.nextRecordsUrl;
+    // Follow next-page links (relative paths like /services/data/v59.0/query/...)
     while (next && records.length < 2000) {
       const path = next.replace(/.*\/services\/data\/[^/]+/, "");
       const more = await this.request<SFQueryResult>(path);
@@ -129,7 +114,10 @@ export class SalesforceClient {
     return this.request<SFRecord>(`/sobjects/${objectType}/${id}${fieldParam}`);
   }
 
-  async createRecord(objectType: string, data: Record<string, unknown>): Promise<{ id: string; success: boolean }> {
+  async createRecord(
+    objectType: string,
+    data: Record<string, unknown>
+  ): Promise<{ id: string; success: boolean }> {
     return this.request<{ id: string; success: boolean }>(`/sobjects/${objectType}/`, {
       method: "POST",
       body: JSON.stringify(data),
@@ -144,8 +132,7 @@ export class SalesforceClient {
   }
 
   async search(sosl: string): Promise<SFSearchResult> {
-    const encoded = encodeURIComponent(sosl);
-    return this.request<SFSearchResult>(`/search/?q=${encoded}`);
+    return this.request<SFSearchResult>(`/search/?q=${encodeURIComponent(sosl)}`);
   }
 
   async describeGlobal(): Promise<SFGlobalDescribe> {
@@ -156,7 +143,11 @@ export class SalesforceClient {
     return this.request<SFDescribeResult>(`/sobjects/${objectType}/describe/`);
   }
 
-  async createCaseComment(caseId: string, commentBody: string, isPublished = true): Promise<{ id: string; success: boolean }> {
+  async createCaseComment(
+    caseId: string,
+    commentBody: string,
+    isPublished = true
+  ): Promise<{ id: string; success: boolean }> {
     return this.request<{ id: string; success: boolean }>("/sobjects/CaseComment/", {
       method: "POST",
       body: JSON.stringify({ ParentId: caseId, CommentBody: commentBody, IsPublished: isPublished }),
@@ -177,7 +168,7 @@ export function normalizeSFRecord(record: SFRecord): Record<string, unknown> {
   return rest;
 }
 
-/** Safely escape string values in SOQL WHERE clauses */
+/** Safely escape string values for use in SOQL WHERE clause literals */
 export function escapeSoqlString(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }

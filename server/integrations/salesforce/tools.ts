@@ -7,19 +7,31 @@
 import { SalesforceClient, escapeSoqlString, normalizeSFRecord, type SFRecord } from "./client";
 
 // ── PII masking (Atlas R1/R2 policy) ─────────────────────────────────────────
-// R1 = partial mask, R2 = full mask. Default to R1 in tool responses.
-const PII_FIELDS = new Set(["Email", "Phone", "MobilePhone", "Fax", "OtherPhone", "PersonEmail"]);
+// Covers email, phone, and name fields per the Atlas PII policy (R1/R2).
+// R1 = partial mask (default in tool responses), R2 = full mask.
+const EMAIL_FIELDS = new Set(["Email", "PersonEmail"]);
+const PHONE_FIELDS = new Set(["Phone", "MobilePhone", "Fax", "OtherPhone", "HomePhone"]);
+const NAME_FIELDS = new Set(["FirstName", "LastName"]);
 
 export function maskPiiFields(record: Record<string, unknown>, level: "R1" | "R2" = "R1"): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(record).map(([k, v]) => {
-      if (!PII_FIELDS.has(k) || typeof v !== "string" || !v) return [k, v];
-      if (level === "R2") return [k, "••••••••"];
-      if (k === "Email") {
+      if (typeof v !== "string" || !v) return [k, v];
+      if (EMAIL_FIELDS.has(k)) {
+        if (level === "R2") return [k, "••••••••@••••"];
         const [local, domain] = v.split("@");
-        return [k, `${local[0]}••••@${domain ?? "••••"}`];
+        return [k, `${local[0] ?? "•"}••••@${domain ?? "••••"}`];
       }
-      return [k, v.slice(0, -4).replace(/\d/g, "•") + v.slice(-4)];
+      if (PHONE_FIELDS.has(k)) {
+        if (level === "R2") return [k, "••••••••••"];
+        return [k, v.slice(-4).padStart(v.length, "•")];
+      }
+      if (NAME_FIELDS.has(k)) {
+        if (level === "R2") return [k, "••••"];
+        // R1: keep first initial + dots (e.g. "John" → "J•••")
+        return [k, v[0] + "•".repeat(Math.max(v.length - 1, 3))];
+      }
+      return [k, v];
     })
   );
 }

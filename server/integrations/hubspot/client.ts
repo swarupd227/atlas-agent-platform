@@ -1,7 +1,9 @@
 /**
- * HubSpot CRM v3 API client — raw fetch with Private App token authentication.
- * Rate limit: 100 requests / 10 seconds (handled by RealMcpBase retry backoff).
- * Base URL: https://api.hubapi.com
+ * HubSpot CRM v3 API client — fetcher is injected by the caller.
+ * The fetcher is pre-configured with Bearer auth, 429 exponential backoff,
+ * and 5xx retry via RealMcpBase.fetchWithAuth(). This client only formats
+ * requests and translates HubSpot errors into user-readable messages.
+ * Rate limit: 100 requests / 10 seconds (handled by injected fetcher).
  */
 
 const HS_BASE = "https://api.hubapi.com";
@@ -38,7 +40,11 @@ export interface HSSearchResult<T> {
 export interface HSFilterGroup {
   filters: Array<{
     propertyName: string;
-    operator: "EQ" | "NEQ" | "LT" | "LTE" | "GT" | "GTE" | "BETWEEN" | "IN" | "NOT_IN" | "HAS_PROPERTY" | "NOT_HAS_PROPERTY" | "CONTAINS_TOKEN" | "NOT_CONTAINS_TOKEN";
+    operator:
+      | "EQ" | "NEQ" | "LT" | "LTE" | "GT" | "GTE"
+      | "BETWEEN" | "IN" | "NOT_IN"
+      | "HAS_PROPERTY" | "NOT_HAS_PROPERTY"
+      | "CONTAINS_TOKEN" | "NOT_CONTAINS_TOKEN";
     value?: string;
     values?: string[];
     highValue?: string;
@@ -47,56 +53,35 @@ export interface HSFilterGroup {
 
 export type HSObjType = "contacts" | "companies" | "deals" | "notes" | "meetings" | "tasks";
 
+/** Fetcher type: relative path under HS_BASE, injected by MCP server */
+export type HsFetcher = (path: string, options?: RequestInit) => Promise<Response>;
+
 export class HubSpotClient {
-  private token: string;
+  constructor(private readonly fetcher: HsFetcher) {}
 
-  constructor(credentials: Record<string, string>) {
-    if (!credentials.api_key) throw new Error("HubSpot credentials missing api_key (Private App Token)");
-    this.token = credentials.api_key;
-  }
+  private async request<T>(path: string, options?: RequestInit): Promise<T> {
+    const res = await this.fetcher(path, options);
 
-  private async request<T>(
-    path: string,
-    options: RequestInit = {},
-    timeoutMs = 15_000
-  ): Promise<T> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const res = await fetch(`${HS_BASE}${path}`, {
-        ...options,
-        headers: {
-          "Authorization": `Bearer ${this.token}`,
-          "Content-Type": "application/json",
-          "Accept": "application/json",
-          ...(options.headers as Record<string, string> | undefined),
-        },
-        signal: controller.signal,
-      });
-
-      if (!res.ok) {
-        let errorText = await res.text().catch(() => res.statusText);
-        try {
-          const errJson = JSON.parse(errorText);
-          const msg = errJson?.message ?? errJson?.error ?? errorText;
-          const cat = errJson?.category ?? "";
-          if (cat === "INVALID_AUTHENTICATION" || res.status === 401) {
-            throw new HubSpotAuthError("HubSpot authentication failed — check Private App token");
-          }
-          errorText = msg;
-        } catch (e) {
-          if (e instanceof HubSpotAuthError) throw e;
+    if (!res.ok) {
+      let errorText = await res.text().catch(() => res.statusText);
+      try {
+        const errJson = JSON.parse(errorText);
+        const msg = errJson?.message ?? errJson?.error ?? errorText;
+        const cat = errJson?.category ?? "";
+        if (cat === "INVALID_AUTHENTICATION" || res.status === 401) {
+          throw new HubSpotAuthError("HubSpot authentication failed — check Private App token and reconnect the integration");
         }
-        if (res.status === 404) throw new Error(`HubSpot record not found (404): ${path}`);
-        if (res.status === 429) throw new HubSpotRateLimitError("HubSpot rate limit hit (100 req/10 sec)");
-        throw new Error(`HubSpot API error ${res.status}: ${errorText}`);
+        errorText = msg;
+      } catch (e) {
+        if (e instanceof HubSpotAuthError) throw e;
       }
-
-      if (res.status === 204) return {} as T;
-      return res.json() as Promise<T>;
-    } finally {
-      clearTimeout(timer);
+      if (res.status === 404) throw new Error(`HubSpot record not found: ${path}`);
+      if (res.status === 429) throw new HubSpotRateLimitError("HubSpot rate limit hit — retry momentarily");
+      throw new Error(`HubSpot API ${res.status}: ${errorText}`);
     }
+
+    if (res.status === 204) return {} as T;
+    return res.json() as Promise<T>;
   }
 
   async searchObjects<T>(
@@ -126,9 +111,9 @@ export class HubSpotClient {
     associations?: string[]
   ): Promise<T> {
     const params = new URLSearchParams();
-    properties.forEach(p => params.append("properties", p));
+    properties.forEach((p) => params.append("properties", p));
     if (associations?.length) {
-      associations.forEach(a => params.append("associations", a));
+      associations.forEach((a) => params.append("associations", a));
     }
     return this.request<T>(`/crm/v3/objects/${objectType}/${id}?${params.toString()}`);
   }
@@ -136,7 +121,10 @@ export class HubSpotClient {
   async createObject<T>(
     objectType: HSObjType,
     properties: Record<string, string>,
-    associations?: Array<{ to: { id: string }; types: Array<{ associationCategory: string; associationTypeId: number }> }>
+    associations?: Array<{
+      to: { id: string };
+      types: Array<{ associationCategory: string; associationTypeId: number }>;
+    }>
   ): Promise<T> {
     return this.request<T>(`/crm/v3/objects/${objectType}`, {
       method: "POST",
@@ -151,13 +139,25 @@ export class HubSpotClient {
     });
   }
 
-  async getPipelines(objectType: "deals"): Promise<Array<{ id: string; label: string; stages: Array<{ id: string; label: string; metadata?: Record<string, unknown> }> }>> {
-    const res = await this.request<{ results: Array<{ id: string; label: string; stages: Array<{ id: string; label: string; metadata?: Record<string, unknown> }> }> }>(`/crm/v3/pipelines/${objectType}`);
+  async getPipelines(objectType: "deals"): Promise<
+    Array<{
+      id: string;
+      label: string;
+      stages: Array<{ id: string; label: string; metadata?: Record<string, unknown> }>;
+    }>
+  > {
+    const res = await this.request<{
+      results: Array<{
+        id: string;
+        label: string;
+        stages: Array<{ id: string; label: string; metadata?: Record<string, unknown> }>;
+      }>;
+    }>(`/crm/v3/pipelines/${objectType}`);
     return res.results;
   }
 
   async createEngagement(
-    engagementType: "NOTE" | "CALL" | "MEETING",
+    _engagementType: "NOTE" | "CALL" | "MEETING",
     objectType: "contacts" | "companies" | "deals",
     objectId: string,
     body: string,
@@ -168,11 +168,17 @@ export class HubSpotClient {
       hs_timestamp: new Date().toISOString(),
       ...(metadata as Record<string, string> | undefined),
     };
-    const note = await this.createObject<HSNote>("notes", properties, [{
-      to: { id: objectId },
-      types: [{ associationCategory: "HUBSPOT_DEFINED", associationTypeId: getAssociationTypeId(objectType) }],
-    }]);
-    return note;
+    return this.createObject<HSNote>("notes", properties, [
+      {
+        to: { id: objectId },
+        types: [
+          {
+            associationCategory: "HUBSPOT_DEFINED",
+            associationTypeId: getAssociationTypeId(objectType),
+          },
+        ],
+      },
+    ]);
   }
 }
 
@@ -195,20 +201,46 @@ export class HubSpotRateLimitError extends Error {
   }
 }
 
-/** Default contact properties to always fetch */
 export const DEFAULT_CONTACT_PROPS = [
-  "firstname", "lastname", "email", "phone", "company", "jobtitle",
-  "hs_lead_status", "lifecyclestage", "createdate", "lastmodifieddate", "hubspot_owner_id",
+  "firstname",
+  "lastname",
+  "email",
+  "phone",
+  "company",
+  "jobtitle",
+  "hs_lead_status",
+  "lifecyclestage",
+  "createdate",
+  "lastmodifieddate",
+  "hubspot_owner_id",
 ];
 
-/** Default company properties to always fetch */
 export const DEFAULT_COMPANY_PROPS = [
-  "name", "domain", "industry", "city", "country", "annualrevenue",
-  "numberofemployees", "phone", "description", "createdate", "lastmodifieddate",
+  "name",
+  "domain",
+  "industry",
+  "city",
+  "country",
+  "annualrevenue",
+  "numberofemployees",
+  "phone",
+  "description",
+  "createdate",
+  "lastmodifieddate",
 ];
 
-/** Default deal properties to always fetch */
 export const DEFAULT_DEAL_PROPS = [
-  "dealname", "amount", "dealstage", "pipeline", "closedate",
-  "hubspot_owner_id", "hs_priority", "description", "createdate", "lastmodifieddate",
+  "dealname",
+  "amount",
+  "dealstage",
+  "pipeline",
+  "closedate",
+  "hubspot_owner_id",
+  "hs_priority",
+  "description",
+  "createdate",
+  "lastmodifieddate",
 ];
+
+/** Full HubSpot API base URL — prepend to relative paths for fetchWithAuth */
+export { HS_BASE };

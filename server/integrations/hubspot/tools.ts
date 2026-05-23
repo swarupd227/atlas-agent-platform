@@ -11,17 +11,34 @@ import {
 } from "./client";
 
 // ── PII masking (Atlas R1/R2 policy) ─────────────────────────────────────────
-const PII_PROP_KEYS = new Set(["email", "phone", "mobilephone"]);
+// Covers email, phone, and name fields per the Atlas PII policy (R1/R2).
+// R1 = partial mask (default), R2 = full mask.
+const EMAIL_PROPS = new Set(["email"]);
+const PHONE_PROPS = new Set(["phone", "mobilephone", "fax"]);
+const NAME_PROPS = new Set(["firstname", "lastname"]);
 
-function maskContactPii(props: Record<string, string | null>): Record<string, string | null> {
+function maskContactPii(
+  props: Record<string, string | null>,
+  level: "R1" | "R2" = "R1"
+): Record<string, string | null> {
   return Object.fromEntries(
     Object.entries(props).map(([k, v]) => {
-      if (!PII_PROP_KEYS.has(k) || !v) return [k, v];
-      if (k === "email") {
+      if (!v) return [k, v];
+      if (EMAIL_PROPS.has(k)) {
+        if (level === "R2") return [k, "••••••••@••••"];
         const [local, domain] = v.split("@");
-        return [k, `${local[0]}••••@${domain ?? "••••"}`];
+        return [k, `${local[0] ?? "•"}••••@${domain ?? "••••"}`];
       }
-      return [k, v.slice(-4).padStart(v.length, "•")];
+      if (PHONE_PROPS.has(k)) {
+        if (level === "R2") return [k, "••••••••••"];
+        return [k, v.slice(-4).padStart(v.length, "•")];
+      }
+      if (NAME_PROPS.has(k)) {
+        if (level === "R2") return [k, "••••"];
+        // R1: keep first initial + dots
+        return [k, v[0] + "•".repeat(Math.max(v.length - 1, 3))];
+      }
+      return [k, v];
     })
   );
 }

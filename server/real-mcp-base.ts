@@ -40,7 +40,8 @@ export abstract class RealMcpBase {
   abstract handleTool(
     toolName: string,
     args: Record<string, unknown>,
-    credentials: Record<string, string>
+    credentials: Record<string, string>,
+    orgId: string
   ): Promise<McpToolResult>;
 
   // ── Credential retrieval ──────────────────────────────────────────────────
@@ -121,7 +122,7 @@ export abstract class RealMcpBase {
     const startMs = Date.now();
     let result: McpToolResult;
     try {
-      result = await this.handleTool(toolName, args, credentials);
+      result = await this.handleTool(toolName, args, credentials, orgId);
     } catch (err: any) {
       result = this.err(`Tool '${toolName}' failed: ${err?.message ?? "Unknown error"}`);
     }

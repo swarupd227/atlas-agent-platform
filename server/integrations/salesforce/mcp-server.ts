@@ -1,12 +1,13 @@
 /**
  * Salesforce MCP Server — extends RealMcpBase with 12 Salesforce tools.
- * Handles credential resolution, token refresh, retry/backoff via base class.
+ * Uses RealMcpBase.fetchWithAuth() for all HTTP calls so 401 token refresh
+ * and 5xx/429 exponential backoff are transparently handled.
  * Express router mounts at /api/integrations/salesforce/tools/:toolName
  */
 
 import { Router, type Request, type Response } from "express";
 import { RealMcpBase, type McpToolResult, type RealMcpToolDef } from "../../real-mcp-base";
-import { SalesforceClient, SalesforceAuthError } from "./client";
+import { SalesforceClient, SalesforceAuthError, SF_API_VERSION } from "./client";
 import {
   sfQuery, sfGetRecord, sfCreateRecord, sfUpdateRecord, sfSearch, sfListObjects,
   sfGetAccount, sfGetOpportunity, sfCreateCase, sfUpdateCaseStatus, sfAddCaseComment, sfLogActivity,
@@ -47,7 +48,11 @@ export class SalesforceMcpServer extends RealMcpBase {
       inputSchema: {
         type: "object",
         properties: {
-          objectType: { type: "string", enum: ["Contact", "Account", "Opportunity", "Case", "Lead", "Task"], description: "Salesforce object type to create" },
+          objectType: {
+            type: "string",
+            enum: ["Contact", "Account", "Opportunity", "Case", "Lead", "Task"],
+            description: "Salesforce object type to create",
+          },
           fields: {
             type: "object",
             description: "Field values for the new record. Field names must match Salesforce API names (e.g. FirstName, LastName, Email for Contact).",
@@ -77,8 +82,16 @@ export class SalesforceMcpServer extends RealMcpBase {
         type: "object",
         properties: {
           searchTerm: { type: "string", description: "Search term (supports wildcards: * and ?)" },
-          objectTypes: { type: "array", items: { type: "string" }, description: "Object types to search (default: Contact, Account, Lead, Opportunity)" },
-          returnFields: { type: "object", description: "Per-object field lists to return, e.g. { Account: ['Id', 'Name', 'Industry'] }", additionalProperties: true },
+          objectTypes: {
+            type: "array",
+            items: { type: "string" },
+            description: "Object types to search (default: Contact, Account, Lead, Opportunity)",
+          },
+          returnFields: {
+            type: "object",
+            description: "Per-object field lists to return, e.g. { Account: ['Id', 'Name', 'Industry'] }",
+            additionalProperties: true,
+          },
           limit: { type: "number", description: "Max results per object (default 20, max 50)" },
         },
         required: ["searchTerm"],
@@ -90,14 +103,17 @@ export class SalesforceMcpServer extends RealMcpBase {
       inputSchema: {
         type: "object",
         properties: {
-          objectType: { type: "string", description: "If specified, return detailed field metadata for this object only" },
+          objectType: {
+            type: "string",
+            description: "If specified, return detailed field metadata for this object only",
+          },
           queryable: { type: "boolean", description: "Filter to only queryable objects (default true)" },
         },
       },
     },
     {
       name: "sf_get_account",
-      description: "Enriched account view including related contacts, open opportunities, and recent cases. Use accountId from SOQL query or sf_search.",
+      description: "Enriched account view including related contacts, open opportunities, and recent cases.",
       inputSchema: {
         type: "object",
         properties: {
@@ -142,7 +158,7 @@ export class SalesforceMcpServer extends RealMcpBase {
     },
     {
       name: "sf_update_case_status",
-      description: "Advance a case through the support workflow by updating its status. Optionally add a comment at the same time.",
+      description: "Advance a case through the support workflow by updating its status. Optionally add a comment.",
       inputSchema: {
         type: "object",
         properties: {
@@ -191,37 +207,63 @@ export class SalesforceMcpServer extends RealMcpBase {
   async handleTool(
     toolName: string,
     args: Record<string, unknown>,
-    credentials: Record<string, string>
+    credentials: Record<string, string>,
+    orgId: string
   ): Promise<McpToolResult> {
-    let client: SalesforceClient;
-    try {
-      client = new SalesforceClient(credentials);
-    } catch (e: any) {
-      return this.err(`Salesforce configuration error: ${e.message}`);
+    const instanceUrl = credentials.instance_url;
+    const accessToken = credentials.access_token;
+
+    if (!instanceUrl) {
+      return this.err(
+        "Salesforce instance_url is missing from stored credentials. " +
+        "Please reconnect via OAuth — the instance URL is captured automatically during authorization."
+      );
     }
+    if (!accessToken) {
+      return this.err("Salesforce access_token is missing. Please reconnect the Salesforce integration.");
+    }
+
+    // Build a fetcher that uses RealMcpBase.fetchWithAuth() for:
+    // - Bearer token injection
+    // - 401 → automatic token refresh + retry
+    // - 429 → Retry-After / exponential backoff
+    // - 5xx → exponential backoff retry
+    const sfFetcher = (path: string, options?: RequestInit) =>
+      this.fetchWithAuth(`${instanceUrl}/services/data/${SF_API_VERSION}${path}`, {
+        ...options,
+        bearerToken: accessToken,
+        orgId,
+      });
+
+    const client = new SalesforceClient(sfFetcher, instanceUrl);
 
     try {
       switch (toolName) {
-        case "sf_query":            return this.ok(await sfQuery(client, args as any));
-        case "sf_get_record":       return this.ok(await sfGetRecord(client, args as any));
-        case "sf_create_record":    return this.ok(await sfCreateRecord(client, args as any));
-        case "sf_update_record":    return this.ok(await sfUpdateRecord(client, args as any));
-        case "sf_search":           return this.ok(await sfSearch(client, args as any));
-        case "sf_list_objects":     return this.ok(await sfListObjects(client, args as any));
-        case "sf_get_account":      return this.ok(await sfGetAccount(client, args as any));
-        case "sf_get_opportunity":  return this.ok(await sfGetOpportunity(client, args as any));
-        case "sf_create_case":      return this.ok(await sfCreateCase(client, args as any));
+        case "sf_query":              return this.ok(await sfQuery(client, args as any));
+        case "sf_get_record":         return this.ok(await sfGetRecord(client, args as any));
+        case "sf_create_record":      return this.ok(await sfCreateRecord(client, args as any));
+        case "sf_update_record":      return this.ok(await sfUpdateRecord(client, args as any));
+        case "sf_search":             return this.ok(await sfSearch(client, args as any));
+        case "sf_list_objects":       return this.ok(await sfListObjects(client, args as any));
+        case "sf_get_account":        return this.ok(await sfGetAccount(client, args as any));
+        case "sf_get_opportunity":    return this.ok(await sfGetOpportunity(client, args as any));
+        case "sf_create_case":        return this.ok(await sfCreateCase(client, args as any));
         case "sf_update_case_status": return this.ok(await sfUpdateCaseStatus(client, args as any));
-        case "sf_add_case_comment": return this.ok(await sfAddCaseComment(client, args as any));
-        case "sf_log_activity":     return this.ok(await sfLogActivity(client, args as any));
+        case "sf_add_case_comment":   return this.ok(await sfAddCaseComment(client, args as any));
+        case "sf_log_activity":       return this.ok(await sfLogActivity(client, args as any));
         default:
-          return this.err(`Unknown Salesforce tool: ${toolName}. Available tools: ${this.tools.map(t => t.name).join(", ")}`);
+          return this.err(
+            `Unknown Salesforce tool: '${toolName}'. Available: ${this.tools.map((t) => t.name).join(", ")}`
+          );
       }
     } catch (e: any) {
       if (e instanceof SalesforceAuthError) {
-        return this.err(`Salesforce authentication error: ${e.message}. Please reconnect the Salesforce integration.`);
+        return this.err(`Salesforce authentication error: ${e.message}`);
       }
-      const msg = e?.message ?? "Unknown error";
+      const msg: string = e?.message ?? "Unknown error";
+      if (msg.toLowerCase().includes("not found")) {
+        return this.err(`Salesforce record not found: ${msg}`);
+      }
       return this.err(`Salesforce tool '${toolName}' failed: ${msg}`);
     }
   }
@@ -229,7 +271,7 @@ export class SalesforceMcpServer extends RealMcpBase {
 
 export const salesforceMcpServer = new SalesforceMcpServer();
 
-// ── Express router for tool dispatch ─────────────────────────────────────────
+// ── Express router ─────────────────────────────────────────────────────────────
 
 export function createSalesforceRouter(): Router {
   const router = Router();

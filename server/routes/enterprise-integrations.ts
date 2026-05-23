@@ -353,6 +353,10 @@ router.get("/api/integrations/oauth/callback", async (req: Request, res: Respons
       access_token: tokenData.access_token ?? "",
       refresh_token: tokenData.refresh_token ?? "",
       token_type: tokenData.token_type ?? "Bearer",
+      // Salesforce-specific: instance_url is returned in the token response body
+      ...(tokenData.instance_url ? { instance_url: tokenData.instance_url } : {}),
+      // Salesforce sandbox flag: set when test.salesforce.com is the token endpoint
+      ...(def.oauthConfig?.tokenUrl?.includes("test.salesforce.com") ? { sandbox: "true" } : {}),
     });
 
     const expiresAt = tokenData.expires_in
