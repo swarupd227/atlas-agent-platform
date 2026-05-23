@@ -6,8 +6,8 @@ import { encryptCredentialMap, decryptCredentialMap } from "../credential-vault"
 import { INTEGRATION_REGISTRY, getIntegrationDef } from "../integrations/registry";
 import { getDefaultOrgId } from "../auth";
 import { db } from "../db";
-import { mcpServers, auditEvents } from "@shared/schema";
-import { eq, and, gte, sql as drizzleSql } from "drizzle-orm";
+import { mcpServers, auditEvents, integrationConnections } from "@shared/schema";
+import { eq, and, gte, like } from "drizzle-orm";
 
 const router = Router();
 
@@ -84,6 +84,12 @@ router.post("/api/enterprise-integrations/:id/connect", async (req: Request, res
 
     // MCP server linkage: create/activate the MCP server record tied to this connection
     const mcpServerId = await upsertIntegrationMcpServer(conn.id, integrationId, def.name, orgId);
+
+    // Persist mcpServerId back onto the connection row
+    if (mcpServerId) {
+      await db.update(integrationConnections).set({ mcpServerId, updatedAt: new Date() })
+        .where(eq(integrationConnections.id, conn.id));
+    }
 
     // Audit the connection event
     storage.createAuditEvent({
@@ -368,11 +374,21 @@ router.get("/api/integrations/oauth/callback", async (req: Request, res: Respons
       await storage.recordIntegrationTestResult(conn.id, testResult.ok, testResult.error ?? null);
     } catch { /* non-fatal */ }
 
+    // MCP server linkage: create/activate the MCP server record tied to this connection
+    const mcpServerId = await upsertIntegrationMcpServer(conn.id, pending.integrationId, def.name, pending.orgId);
+
+    // Persist mcpServerId back onto the connection row
+    if (mcpServerId) {
+      await db.update(integrationConnections).set({ mcpServerId, updatedAt: new Date() })
+        .where(eq(integrationConnections.id, conn.id));
+    }
+
     storage.createAuditEvent({
       actorType: "user",
       action: "enterprise_integration_oauth_complete",
       objectType: "integration",
       objectId: pending.integrationId,
+      details: JSON.stringify({ integrationId: pending.integrationId, mcpServerId }),
       organizationId: pending.orgId,
     }).catch(() => {});
 
@@ -492,7 +508,8 @@ router.get("/api/enterprise-integrations/:id/health", async (req: Request, res: 
     const conn = await storage.getIntegrationConnection(orgId, integrationId);
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-    // Query audit events for this integration in the last 24 h
+    // Query audit events for this specific integration in the last 24 h
+    // objectId is stored as `${integrationId}:${toolName}` for tool calls
     const rows = await db
       .select({ action: auditEvents.action })
       .from(auditEvents)
@@ -500,6 +517,7 @@ router.get("/api/enterprise-integrations/:id/health", async (req: Request, res: 
         and(
           eq(auditEvents.organizationId, orgId),
           gte(auditEvents.createdAt, since),
+          like(auditEvents.objectId, `${integrationId}:%`),
         )
       );
 
