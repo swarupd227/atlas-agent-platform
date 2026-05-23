@@ -2282,31 +2282,30 @@ export class DatabaseStorage implements IStorage {
   }
 
   async upsertMcpServerAuth(auth: InsertMcpServerAuth) {
-    // Progressively encrypt config into vault blob on every write
+    // Always encrypt config via vault — never persist plaintext secrets in the DB.
+    // If vault encryption fails (should not happen in any env), throw rather than silently
+    // falling back to plaintext, which would violate the secure-by-default policy.
     let configEncrypted: string | undefined;
     if (auth.config && typeof auth.config === "object" && !Array.isArray(auth.config)) {
-      try {
-        const { encryptCredentialMap } = await import("./credential-vault");
-        const configMap = Object.fromEntries(
-          Object.entries(auth.config as Record<string, unknown>).map(([k, v]) => [k, String(v ?? "")])
-        );
-        configEncrypted = encryptCredentialMap(configMap);
-      } catch {
-        // Vault unavailable; proceed without encryption (legacy mode)
-      }
+      const { encryptCredentialMap } = await import("./credential-vault");
+      const configMap = Object.fromEntries(
+        Object.entries(auth.config as Record<string, unknown>).map(([k, v]) => [k, String(v ?? "")])
+      );
+      configEncrypted = encryptCredentialMap(configMap);
     }
+
+    // Write encrypted blob; set config to null to stop persisting plaintext secrets
+    const safeWrite = { ...auth, config: null, configEncrypted: configEncrypted, lastRotated: new Date() };
 
     const existing = await this.getMcpServerAuth(auth.serverId);
     if (existing) {
       const [updated] = await db.update(mcpServerAuth)
-        .set({ ...auth, configEncrypted: configEncrypted ?? existing.configEncrypted, lastRotated: new Date() })
+        .set(safeWrite)
         .where(eq(mcpServerAuth.serverId, auth.serverId))
         .returning();
       return updated;
     }
-    const [created] = await db.insert(mcpServerAuth)
-      .values({ ...auth, configEncrypted })
-      .returning();
+    const [created] = await db.insert(mcpServerAuth).values(safeWrite).returning();
     return created;
   }
 

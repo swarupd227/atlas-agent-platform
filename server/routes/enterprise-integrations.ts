@@ -73,11 +73,14 @@ router.post("/api/enterprise-integrations/:id/connect", async (req: Request, res
     });
 
     // Auto-test immediately after connecting
-    let testResult: { ok: boolean; latencyMs?: number; error?: string } | null = null;
+    let testResult: { ok: boolean; status?: string; latencyMs?: number; error?: string } | null = null;
     try {
       const credentials = decryptCredentialMap(credentialBlob);
       testResult = await testConnectionHealth(integrationId, credentials, def);
-      await storage.recordIntegrationTestResult(conn.id, testResult.ok, testResult.error ?? null);
+      // Only persist test result for verifiable connectors — not_verifiable should not mark as error
+      if ((testResult as any).status !== "not_verifiable") {
+        await storage.recordIntegrationTestResult(conn.id, testResult.ok, testResult.error ?? null);
+      }
     } catch {
       // Test failure is non-fatal; connection is still stored
     }
@@ -700,15 +703,39 @@ async function testConnectionHealth(
       }
       default:
         // Integration not yet implemented — return explicit "not_verifiable" instead of implicit success
-        return { ok: null as unknown as boolean, status: "not_verifiable", latencyMs: Date.now() - start } as any;
+        return { ok: true, status: "not_verifiable", latencyMs: Date.now() - start };
     }
   } catch (err: any) {
     return { ok: false, error: err?.message ?? "Connection timeout", latencyMs: Date.now() - start };
   }
 }
 
-// ── Route aliases: /api/integrations/:id/* → same handlers ───────────────────
+// ── Route aliases: /api/integrations → same handlers ─────────────────────────
 // Provides the canonical /api/integrations API contract alongside /api/enterprise-integrations
+
+// GET /api/integrations — list all integrations with per-org connection status (mirrors /api/enterprise-integrations)
+router.get("/api/integrations", async (req: Request, res: Response) => {
+  try {
+    const orgId = getDefaultOrgId(req);
+    const connections = await storage.listIntegrationConnections(orgId);
+    const connMap = new Map(connections.map((c) => [c.integrationId, c]));
+    const result = INTEGRATION_REGISTRY.map((def) => {
+      const conn = connMap.get(def.id);
+      return {
+        ...def,
+        connection: conn
+          ? { id: conn.id, status: conn.status, lastTestedAt: conn.lastTestedAt,
+              lastTestResult: conn.lastTestResult, lastError: conn.lastError,
+              tokenExpiresAt: conn.tokenExpiresAt, mcpServerId: conn.mcpServerId }
+          : null,
+      };
+    });
+    res.json(result);
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get("/api/integrations/:id/status", async (req, res) => {
   req.url = `/api/enterprise-integrations/${req.params.id}/status`;
   const orgId = getDefaultOrgId(req);
