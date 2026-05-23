@@ -8,6 +8,7 @@
 import { Router, type Request, type Response } from "express";
 import { RealMcpBase, type McpToolResult, type RealMcpToolDef } from "../../real-mcp-base";
 import { HubSpotClient, HubSpotAuthError, HubSpotRateLimitError, HS_BASE } from "./client";
+import { getOrgId, getDefaultOrgId } from "../../auth";
 import {
   hsSearchContacts, hsGetContact, hsCreateContact, hsUpdateContact,
   hsSearchCompanies, hsGetDeal, hsCreateDeal, hsUpdateDealStage,
@@ -258,14 +259,16 @@ export function createHubSpotRouter(): Router {
 
   router.post("/tools/:toolName", async (req: Request, res: Response) => {
     const { toolName } = req.params;
-    const { args = {}, orgId } = req.body as { args?: Record<string, unknown>; orgId?: string };
+    const { args = {} } = req.body as { args?: Record<string, unknown> };
 
-    const resolvedOrgId: string = orgId ?? (req as any).user?.organizationId ?? "";
-    if (!resolvedOrgId) {
-      return res.status(400).json({ error: "orgId is required to call a HubSpot tool" });
+    // Always derive org from authenticated session — never trust caller-supplied orgId.
+    // getOrgId() reads from JWT (production) or x-organization-id header (demo mode).
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
+    if (!orgId) {
+      return res.status(401).json({ error: "Authentication required to call HubSpot tools" });
     }
 
-    const result = await hubspotMcpServer.callTool(toolName, args, resolvedOrgId);
+    const result = await hubspotMcpServer.callTool(toolName, args, orgId);
     return res.json(result);
   });
 

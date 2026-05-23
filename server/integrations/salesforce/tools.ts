@@ -219,18 +219,27 @@ export async function sfGetAccount(client: SalesforceClient, args: SfGetAccountA
   if (!result.records.length) throw new Error(`Account not found in Salesforce: ${accountId}`);
 
   const account = result.records[0];
-  const norm = normalizeSFRecord(account);
+
+  // Extract nested relationship objects BEFORE normalization so they are not spread
+  // into the base account fields. Masking is applied to ALL returned records.
+  const contactRecords: SFRecord[] = (account.Contacts as any)?.records ?? [];
+  const oppRecords: SFRecord[] = (account.Opportunities as any)?.records ?? [];
+  const caseRecords: SFRecord[] = (account.Cases as any)?.records ?? [];
+
+  const rawNorm = normalizeSFRecord(account);
+  // Remove SOQL relationship sub-query keys before masking account fields
+  const { Contacts: _c, Opportunities: _o, Cases: _ca, ...accountFields } = rawNorm as any;
 
   return {
-    ...maskRecord(norm),
+    ...maskRecord(accountFields),
     contacts: includeContacts
-      ? ((account.Contacts as any)?.records ?? []).map((c: SFRecord) => maskRecord(normalizeSFRecord(c)))
+      ? contactRecords.map((c: SFRecord) => maskRecord(normalizeSFRecord(c)))
       : undefined,
     opportunities: includeOpportunities
-      ? ((account.Opportunities as any)?.records ?? []).map((o: SFRecord) => normalizeSFRecord(o))
+      ? oppRecords.map((o: SFRecord) => maskRecord(normalizeSFRecord(o)))
       : undefined,
     cases: includeCases
-      ? ((account.Cases as any)?.records ?? []).map((c: SFRecord) => normalizeSFRecord(c))
+      ? caseRecords.map((c: SFRecord) => maskRecord(normalizeSFRecord(c)))
       : undefined,
   };
 }
@@ -258,15 +267,23 @@ export async function sfGetOpportunity(client: SalesforceClient, args: SfGetOppo
   if (!result.records.length) throw new Error(`Opportunity not found in Salesforce: ${opportunityId}`);
 
   const opp = result.records[0];
-  const norm = normalizeSFRecord(opp);
+
+  // Extract nested relationship objects before normalization
+  const contactRoleRecords: SFRecord[] = (opp.OpportunityContactRoles as any)?.records ?? [];
+  const historyRecords: SFRecord[] = (opp.OpportunityHistories as any)?.records ?? [];
+
+  const rawNorm = normalizeSFRecord(opp);
+  // Remove SOQL sub-query keys before masking opportunity fields
+  const { OpportunityContactRoles: _r, OpportunityHistories: _h, ...oppFields } = rawNorm as any;
 
   return {
-    ...norm,
+    ...maskRecord(oppFields),
     contacts: includeContacts
-      ? ((opp.OpportunityContactRoles as any)?.records ?? []).map((r: SFRecord) => maskRecord(normalizeSFRecord(r)))
+      ? contactRoleRecords.map((r: SFRecord) => maskRecord(normalizeSFRecord(r)))
       : undefined,
     stageHistory: includeStageHistory
-      ? ((opp.OpportunityHistories as any)?.records ?? []).map((h: SFRecord) => normalizeSFRecord(h))
+      // Stage history has no PII — no masking needed, but normalize for clean output
+      ? historyRecords.map((h: SFRecord) => normalizeSFRecord(h))
       : undefined,
   };
 }

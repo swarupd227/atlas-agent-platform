@@ -8,6 +8,7 @@
 import { Router, type Request, type Response } from "express";
 import { RealMcpBase, type McpToolResult, type RealMcpToolDef } from "../../real-mcp-base";
 import { SalesforceClient, SalesforceAuthError, SF_API_VERSION } from "./client";
+import { getOrgId, getDefaultOrgId } from "../../auth";
 import {
   sfQuery, sfGetRecord, sfCreateRecord, sfUpdateRecord, sfSearch, sfListObjects,
   sfGetAccount, sfGetOpportunity, sfCreateCase, sfUpdateCaseStatus, sfAddCaseComment, sfLogActivity,
@@ -15,6 +16,65 @@ import {
 
 export class SalesforceMcpServer extends RealMcpBase {
   readonly integrationId = "salesforce";
+
+  /**
+   * Override refreshOAuthToken to support Salesforce sandbox orgs.
+   * The base class uses the integration's static tokenUrl (login.salesforce.com),
+   * but sandbox orgs must use test.salesforce.com. We check the stored sandbox
+   * flag (set during OAuth callback) to select the right endpoint.
+   */
+  override async refreshOAuthToken(orgId: string): Promise<Record<string, string> | null> {
+    const credentials = await this.getCredentials(orgId);
+    if (!credentials?.refresh_token) return null;
+
+    const isSandbox = credentials.sandbox === "true";
+    const tokenUrl = isSandbox
+      ? "https://test.salesforce.com/services/oauth2/token"
+      : "https://login.salesforce.com/services/oauth2/token";
+
+    try {
+      const res = await fetch(tokenUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          grant_type: "refresh_token",
+          refresh_token: credentials.refresh_token,
+          client_id: process.env["OAUTH_SALESFORCE_CLIENT_ID"] ?? "",
+          client_secret: process.env["OAUTH_SALESFORCE_CLIENT_SECRET"] ?? "",
+        }).toString(),
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (!res.ok) return null;
+      const data = await res.json() as any;
+      if (data.error) return null;
+
+      const { encryptCredentialMap } = await import("../../credential-vault");
+      const { storage: stor } = await import("../../storage");
+      const updated: Record<string, string> = {
+        ...credentials,
+        access_token: data.access_token ?? credentials.access_token,
+        refresh_token: data.refresh_token ?? credentials.refresh_token,
+        token_type: data.token_type ?? "Bearer",
+        // Salesforce may return a new instance_url on refresh
+        ...(data.instance_url ? { instance_url: data.instance_url } : {}),
+      };
+
+      const credentialBlob = encryptCredentialMap(updated);
+      const expiresAt = data.expires_in ? new Date(Date.now() + data.expires_in * 1000) : null;
+      const conn = await stor.getIntegrationConnection(orgId, this.integrationId);
+      if (conn) {
+        await stor.upsertIntegrationConnection({
+          ...conn,
+          credentialBlob,
+          tokenExpiresAt: expiresAt ?? conn.tokenExpiresAt,
+        });
+      }
+      return updated;
+    } catch {
+      return null;
+    }
+  }
 
   readonly tools: RealMcpToolDef[] = [
     {
@@ -223,17 +283,48 @@ export class SalesforceMcpServer extends RealMcpBase {
       return this.err("Salesforce access_token is missing. Please reconnect the Salesforce integration.");
     }
 
-    // Build a fetcher that uses RealMcpBase.fetchWithAuth() for:
-    // - Bearer token injection
-    // - 401 → automatic token refresh + retry
-    // - 429 → Retry-After / exponential backoff
-    // - 5xx → exponential backoff retry
-    const sfFetcher = (path: string, options?: RequestInit) =>
-      this.fetchWithAuth(`${instanceUrl}/services/data/${SF_API_VERSION}${path}`, {
+    // sfFetcher wraps fetchWithAuth to also handle Salesforce INVALID_SESSION_ID
+    // errors that arrive in non-401 response bodies (e.g. HTTP 400).
+    // On INVALID_SESSION_ID: attempt refreshOAuthToken() and retry once;
+    // fall back to exposing the error so the caller can surface reconnect guidance.
+    const sfFetcher = async (path: string, options?: RequestInit): Promise<Response> => {
+      const url = `${instanceUrl}/services/data/${SF_API_VERSION}${path}`;
+      let res = await this.fetchWithAuth(url, {
         ...options,
         bearerToken: accessToken,
         orgId,
       });
+
+      // Salesforce can return INVALID_SESSION_ID as HTTP 400 (not 401) in some flows
+      if (!res.ok && res.status !== 401) {
+        const clone = res.clone();
+        try {
+          const body = await clone.json();
+          const errCode: string | undefined =
+            (Array.isArray(body) ? body[0] : body)?.errorCode;
+          if (errCode === "INVALID_SESSION_ID") {
+            const refreshed = await this.refreshOAuthToken(orgId);
+            if (refreshed?.access_token) {
+              res = await this.fetchWithAuth(url, {
+                ...options,
+                bearerToken: refreshed.access_token,
+                orgId,
+              });
+            } else {
+              // Surface as 401 so the client translates it to SalesforceAuthError
+              return new Response(JSON.stringify(body), {
+                status: 401,
+                headers: { "Content-Type": "application/json" },
+              });
+            }
+          }
+        } catch (_) {
+          // Body was not JSON or non-auth error — return original response unchanged
+        }
+      }
+
+      return res;
+    };
 
     const client = new SalesforceClient(sfFetcher, instanceUrl);
 
@@ -278,14 +369,16 @@ export function createSalesforceRouter(): Router {
 
   router.post("/tools/:toolName", async (req: Request, res: Response) => {
     const { toolName } = req.params;
-    const { args = {}, orgId } = req.body as { args?: Record<string, unknown>; orgId?: string };
+    const { args = {} } = req.body as { args?: Record<string, unknown> };
 
-    const resolvedOrgId: string = orgId ?? (req as any).user?.organizationId ?? "";
-    if (!resolvedOrgId) {
-      return res.status(400).json({ error: "orgId is required to call a Salesforce tool" });
+    // Always derive org from authenticated session — never trust caller-supplied orgId.
+    // getOrgId() reads from JWT (production) or x-organization-id header (demo mode).
+    const orgId = getOrgId(req) ?? getDefaultOrgId();
+    if (!orgId) {
+      return res.status(401).json({ error: "Authentication required to call Salesforce tools" });
     }
 
-    const result = await salesforceMcpServer.callTool(toolName, args, resolvedOrgId);
+    const result = await salesforceMcpServer.callTool(toolName, args, orgId);
     return res.json(result);
   });
 
