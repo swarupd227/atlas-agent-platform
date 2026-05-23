@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { randomBytes } from "crypto";
+import { randomBytes, createHash } from "crypto";
 import { z } from "zod";
 import { storage } from "../storage";
 import { encryptCredentialMap, decryptCredentialMap } from "../credential-vault";
@@ -9,7 +9,6 @@ import { getDefaultOrgId } from "../auth";
 const router = Router();
 
 // ── GET /api/enterprise-integrations ─────────────────────────────────────────
-// Returns all registry entries enriched with per-org connection status
 router.get("/api/enterprise-integrations", async (req: Request, res: Response) => {
   try {
     const orgId = getDefaultOrgId(req);
@@ -70,11 +69,32 @@ router.post("/api/enterprise-integrations/:id/connect", async (req: Request, res
       lastError: null,
     });
 
+    // Auto-test immediately after connecting
+    let testResult: { ok: boolean; latencyMs?: number; error?: string } | null = null;
+    try {
+      const credentials = decryptCredentialMap(credentialBlob);
+      testResult = await testConnectionHealth(integrationId, credentials, def);
+      await storage.recordIntegrationTestResult(conn.id, testResult.ok, testResult.error ?? null);
+    } catch {
+      // Test failure is non-fatal; connection is still stored
+    }
+
+    // Audit the connection event
+    storage.createAuditEvent({
+      actorType: "user",
+      action: "enterprise_integration_connect",
+      objectType: "integration",
+      objectId: integrationId,
+      details: JSON.stringify({ integrationId, testOk: testResult?.ok }),
+      organizationId: orgId,
+    }).catch(() => {});
+
     res.json({
       id: conn.id,
       integrationId: conn.integrationId,
       status: conn.status,
       createdAt: conn.createdAt,
+      immediateTest: testResult,
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -87,7 +107,37 @@ router.post("/api/enterprise-integrations/:id/disconnect", async (req: Request, 
     const orgId = getDefaultOrgId(req);
     const integrationId = req.params.id;
     await storage.disconnectIntegration(orgId, integrationId);
+
+    storage.createAuditEvent({
+      actorType: "user",
+      action: "enterprise_integration_disconnect",
+      objectType: "integration",
+      objectId: integrationId,
+      organizationId: orgId,
+    }).catch(() => {});
+
     res.json({ ok: true });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── DELETE /api/enterprise-integrations/:id — alias for disconnect ────────────
+router.delete("/api/enterprise-integrations/:id", async (req: Request, res: Response) => {
+  try {
+    const orgId = getDefaultOrgId(req);
+    const integrationId = req.params.id;
+    await storage.disconnectIntegration(orgId, integrationId);
+
+    storage.createAuditEvent({
+      actorType: "user",
+      action: "enterprise_integration_delete",
+      objectType: "integration",
+      objectId: integrationId,
+      organizationId: orgId,
+    }).catch(() => {});
+
+    res.status(204).send();
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -112,7 +162,6 @@ router.post("/api/enterprise-integrations/:id/test", async (req: Request, res: R
 
     const def = getIntegrationDef(integrationId);
     const result = await testConnectionHealth(integrationId, credentials, def);
-
     await storage.recordIntegrationTestResult(conn.id, result.ok, result.error ?? null);
     res.json(result);
   } catch (err: any) {
@@ -120,8 +169,29 @@ router.post("/api/enterprise-integrations/:id/test", async (req: Request, res: R
   }
 });
 
+// ── GET /api/enterprise-integrations/:id/status ──────────────────────────────
+router.get("/api/enterprise-integrations/:id/status", async (req: Request, res: Response) => {
+  try {
+    const orgId = getDefaultOrgId(req);
+    const integrationId = req.params.id;
+    const conn = await storage.getIntegrationConnection(orgId, integrationId);
+    if (!conn) {
+      return res.json({ integrationId, status: "disconnected", connection: null });
+    }
+    res.json({
+      integrationId,
+      status: conn.status,
+      lastTestedAt: conn.lastTestedAt,
+      lastTestResult: conn.lastTestResult,
+      lastError: conn.lastError,
+      tokenExpiresAt: conn.tokenExpiresAt,
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── GET /api/enterprise-integrations/:id/credentials-hint ────────────────────
-// Returns masked/hinted credential keys (no values) for the connected integration
 router.get("/api/enterprise-integrations/:id/credentials-hint", async (req: Request, res: Response) => {
   try {
     const orgId = getDefaultOrgId(req);
@@ -141,21 +211,34 @@ router.get("/api/enterprise-integrations/:id/credentials-hint", async (req: Requ
   }
 });
 
-// ── OAuth 2.0 Flow ────────────────────────────────────────────────────────────
-// In-memory pending states (TTL 10 min, sufficient for browser redirect round-trip)
-const pendingOAuthStates = new Map<string, {
+// ── OAuth 2.0 Flow with PKCE ──────────────────────────────────────────────────
+
+interface PendingOAuthState {
   integrationId: string;
   orgId: string;
   expiresAt: number;
   codeVerifier?: string;
-}>();
+}
 
+const pendingOAuthStates = new Map<string, PendingOAuthState>();
+
+// Prune expired states every minute
 setInterval(() => {
   const now = Date.now();
   for (const [k, v] of pendingOAuthStates) {
     if (v.expiresAt < now) pendingOAuthStates.delete(k);
   }
 }, 60_000);
+
+/** Generate a PKCE code_verifier (43-128 random URL-safe chars) */
+function generateCodeVerifier(): string {
+  return randomBytes(48).toString("base64url");
+}
+
+/** Derive code_challenge = BASE64URL(SHA256(verifier)) */
+function deriveCodeChallenge(verifier: string): string {
+  return createHash("sha256").update(verifier).digest("base64url");
+}
 
 router.get("/api/integrations/oauth/start/:provider", async (req: Request, res: Response) => {
   try {
@@ -165,14 +248,14 @@ router.get("/api/integrations/oauth/start/:provider", async (req: Request, res: 
       return res.status(400).json({ error: `${provider} does not support OAuth2` });
     }
     const orgId = getDefaultOrgId(req);
-    const state = randomHex(24);
+    const state = randomBytes(24).toString("hex");
     const redirectUri = `${req.protocol}://${req.get("host")}/api/integrations/oauth/callback`;
 
-    pendingOAuthStates.set(state, {
+    const pending: PendingOAuthState = {
       integrationId: provider,
       orgId,
       expiresAt: Date.now() + 10 * 60 * 1000,
-    });
+    };
 
     const url = new URL(def.oauthConfig.authorizationUrl);
     url.searchParams.set("client_id", process.env[`OAUTH_${provider.toUpperCase()}_CLIENT_ID`] ?? "PLACEHOLDER_CLIENT_ID");
@@ -181,6 +264,15 @@ router.get("/api/integrations/oauth/start/:provider", async (req: Request, res: 
     url.searchParams.set("state", state);
     url.searchParams.set("scope", def.oauthConfig.defaultScopes.join(" "));
 
+    if (def.oauthConfig.pkce) {
+      const codeVerifier = generateCodeVerifier();
+      const codeChallenge = deriveCodeChallenge(codeVerifier);
+      url.searchParams.set("code_challenge", codeChallenge);
+      url.searchParams.set("code_challenge_method", "S256");
+      pending.codeVerifier = codeVerifier;
+    }
+
+    pendingOAuthStates.set(state, pending);
     res.json({ authUrl: url.toString(), state });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -205,21 +297,30 @@ router.get("/api/integrations/oauth/callback", async (req: Request, res: Respons
 
   try {
     const redirectUri = `${req.protocol}://${req.get("host")}/api/integrations/oauth/callback`;
+    const bodyParams: Record<string, string> = {
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: redirectUri,
+      client_id: process.env[`OAUTH_${pending.integrationId.toUpperCase()}_CLIENT_ID`] ?? "",
+      client_secret: process.env[`OAUTH_${pending.integrationId.toUpperCase()}_CLIENT_SECRET`] ?? "",
+    };
+
+    // Include PKCE code_verifier if we stored one
+    if (pending.codeVerifier) {
+      bodyParams.code_verifier = pending.codeVerifier;
+    }
+
     const tokenRes = await fetch(def.oauthConfig.tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "authorization_code",
-        code,
-        redirect_uri: redirectUri,
-        client_id: process.env[`OAUTH_${pending.integrationId.toUpperCase()}_CLIENT_ID`] ?? "",
-        client_secret: process.env[`OAUTH_${pending.integrationId.toUpperCase()}_CLIENT_SECRET`] ?? "",
-      }).toString(),
+      body: new URLSearchParams(bodyParams).toString(),
+      signal: AbortSignal.timeout(10_000),
     });
 
     const tokenData = await tokenRes.json() as any;
     if (!tokenRes.ok || tokenData.error) {
-      return res.redirect(`/integrations?oauth_error=${encodeURIComponent(tokenData.error_description ?? tokenData.error ?? "token_exchange_failed")}`);
+      const msg = tokenData.error_description ?? tokenData.error ?? "token_exchange_failed";
+      return res.redirect(`/integrations?oauth_error=${encodeURIComponent(msg)}`);
     }
 
     const credentialBlob = encryptCredentialMap({
@@ -230,18 +331,33 @@ router.get("/api/integrations/oauth/callback", async (req: Request, res: Respons
 
     const expiresAt = tokenData.expires_in
       ? new Date(Date.now() + tokenData.expires_in * 1000)
-      : null;
+      : undefined;
 
-    await storage.upsertIntegrationConnection({
+    const conn = await storage.upsertIntegrationConnection({
       organizationId: pending.orgId,
       integrationId: pending.integrationId,
       credentialBlob,
       oauthScopes: def.oauthConfig.defaultScopes,
       status: "connected",
-      tokenExpiresAt: expiresAt ?? undefined,
+      tokenExpiresAt: expiresAt,
       lastTestResult: null,
       lastError: null,
     });
+
+    // Auto-test after OAuth callback
+    try {
+      const credentials = decryptCredentialMap(credentialBlob);
+      const testResult = await testConnectionHealth(pending.integrationId, credentials, def);
+      await storage.recordIntegrationTestResult(conn.id, testResult.ok, testResult.error ?? null);
+    } catch { /* non-fatal */ }
+
+    storage.createAuditEvent({
+      actorType: "user",
+      action: "enterprise_integration_oauth_complete",
+      objectType: "integration",
+      objectId: pending.integrationId,
+      organizationId: pending.orgId,
+    }).catch(() => {});
 
     res.redirect(`/integrations?oauth_success=${pending.integrationId}`);
   } catch (err: any) {
@@ -249,10 +365,105 @@ router.get("/api/integrations/oauth/callback", async (req: Request, res: Respons
   }
 });
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-function randomHex(bytes: number): string {
-  return randomBytes(bytes).toString("hex");
+// ── Token Refresh Daemon ──────────────────────────────────────────────────────
+// Runs every 4 minutes; refreshes OAuth tokens expiring in the next 5 minutes.
+
+let _refreshDaemonStarted = false;
+
+export function startTokenRefreshDaemon(): void {
+  if (_refreshDaemonStarted) return;
+  _refreshDaemonStarted = true;
+
+  const INTERVAL_MS = 4 * 60 * 1000;
+  const REFRESH_AHEAD_MS = 5 * 60 * 1000;
+
+  setInterval(async () => {
+    try {
+      await refreshExpiringTokens(REFRESH_AHEAD_MS);
+    } catch (err: any) {
+      console.error("[token-refresh] Daemon error:", err?.message);
+    }
+  }, INTERVAL_MS);
+
+  console.log("[token-refresh] OAuth token refresh daemon started (4 min interval)");
 }
+
+async function refreshExpiringTokens(aheadMs: number): Promise<void> {
+  const { db } = await import("../db");
+  const { integrationConnections } = await import("@shared/schema");
+  const { and, eq, lt, isNotNull } = await import("drizzle-orm");
+  const sql = (await import("drizzle-orm")).sql;
+
+  const soon = new Date(Date.now() + aheadMs);
+  const expiring = await db
+    .select()
+    .from(integrationConnections)
+    .where(
+      and(
+        eq(integrationConnections.status, "connected"),
+        lt(integrationConnections.tokenExpiresAt, soon),
+        isNotNull(integrationConnections.credentialBlob),
+      )
+    );
+
+  for (const conn of expiring) {
+    const def = getIntegrationDef(conn.integrationId);
+    if (!def?.oauthConfig) continue;
+
+    let creds: Record<string, string>;
+    try {
+      creds = decryptCredentialMap(conn.credentialBlob!);
+    } catch { continue; }
+
+    if (!creds.refresh_token) continue;
+
+    try {
+      const bodyParams: Record<string, string> = {
+        grant_type: "refresh_token",
+        refresh_token: creds.refresh_token,
+        client_id: process.env[`OAUTH_${conn.integrationId.toUpperCase()}_CLIENT_ID`] ?? "",
+        client_secret: process.env[`OAUTH_${conn.integrationId.toUpperCase()}_CLIENT_SECRET`] ?? "",
+      };
+
+      const tokenRes = await fetch(def.oauthConfig.tokenUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams(bodyParams).toString(),
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (!tokenRes.ok) {
+        console.warn(`[token-refresh] Failed to refresh ${conn.integrationId} (${conn.organizationId}): HTTP ${tokenRes.status}`);
+        continue;
+      }
+
+      const data = await tokenRes.json() as any;
+      if (data.error) continue;
+
+      const updated: Record<string, string> = {
+        ...creds,
+        access_token: data.access_token ?? creds.access_token,
+        refresh_token: data.refresh_token ?? creds.refresh_token,
+        token_type: data.token_type ?? "Bearer",
+      };
+
+      const expiresAt = data.expires_in ? new Date(Date.now() + data.expires_in * 1000) : undefined;
+
+      await storage.upsertIntegrationConnection({
+        ...conn,
+        credentialBlob: encryptCredentialMap(updated),
+        tokenExpiresAt: expiresAt ?? conn.tokenExpiresAt,
+        oauthScopes: conn.oauthScopes ?? [],
+      });
+
+      console.log(`[token-refresh] Refreshed token for ${conn.integrationId} (org: ${conn.organizationId})`);
+    } catch (err: any) {
+      console.warn(`[token-refresh] Error refreshing ${conn.integrationId}:`, err?.message);
+    }
+  }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 function maskValue(value: string): string {
   if (!value || value.length <= 6) return "••••••";
@@ -318,7 +529,28 @@ async function testConnectionHealth(
           ? { ok: true, latencyMs: Date.now() - start }
           : { ok: false, error: `HTTP ${r.status}`, latencyMs: Date.now() - start };
       }
+      case "slack": {
+        const r = await fetch("https://slack.com/api/auth.test", {
+          headers: { Authorization: `Bearer ${credentials.access_token}` },
+          signal: AbortSignal.timeout(5000),
+        });
+        const data = await r.json() as any;
+        return data.ok
+          ? { ok: true, latencyMs: Date.now() - start }
+          : { ok: false, error: data.error ?? "auth.test failed", latencyMs: Date.now() - start };
+      }
+      case "microsoft_teams":
+      case "dynamics365": {
+        const r = await fetch("https://graph.microsoft.com/v1.0/me", {
+          headers: { Authorization: `Bearer ${credentials.access_token}` },
+          signal: AbortSignal.timeout(5000),
+        });
+        return r.ok
+          ? { ok: true, latencyMs: Date.now() - start }
+          : { ok: false, error: `HTTP ${r.status}`, latencyMs: Date.now() - start };
+      }
       default:
+        // For integrations without a live test, return ok with a note
         return { ok: true, latencyMs: Date.now() - start };
     }
   } catch (err: any) {

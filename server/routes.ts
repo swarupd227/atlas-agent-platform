@@ -96,7 +96,7 @@ import myActionsRouter from "./routes/my-actions";
 import outputContractsRouter from "./routes/output-contracts";
 import generationMetadataRouter from "./routes/generation-metadata";
 import evalStudioRouter from "./routes/eval-studio";
-import enterpriseIntegrationsRouter from "./routes/enterprise-integrations";
+import enterpriseIntegrationsRouter, { startTokenRefreshDaemon } from "./routes/enterprise-integrations";
 
 export { computeConstraintGraph, recomputeOutcomeKpis };
 export type { KpiReEvalResult };
@@ -366,6 +366,9 @@ export async function registerRoutes(
 
   // Backfill AAR configs for all already-deployed agents
   backfillAarConfigs().catch((err: any) => console.error("[startup] backfillAarConfigs:", err?.message));
+
+  // Start OAuth token refresh daemon (refreshes tokens expiring in next 5 min, runs every 4 min)
+  startTokenRefreshDaemon();
 
   return httpServer;
 }
