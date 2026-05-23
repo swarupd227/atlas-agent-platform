@@ -2264,16 +2264,49 @@ export class DatabaseStorage implements IStorage {
 
   async getMcpServerAuth(serverId: string) {
     const [auth] = await db.select().from(mcpServerAuth).where(eq(mcpServerAuth.serverId, serverId));
+    if (!auth) return auth;
+
+    // Vault-backed read: if configEncrypted is present, decrypt and merge over legacy plaintext config.
+    // This provides a backward-compatible migration path — legacy rows still have plaintext config
+    // until they are re-written through upsertMcpServerAuth, at which point they will be re-encrypted.
+    if (auth.configEncrypted) {
+      try {
+        const { decryptCredentialMap } = await import("./credential-vault");
+        const decrypted = decryptCredentialMap(auth.configEncrypted);
+        return { ...auth, config: decrypted };
+      } catch {
+        // Decryption failed (e.g. key rotation); fall back to plaintext config
+      }
+    }
     return auth;
   }
 
   async upsertMcpServerAuth(auth: InsertMcpServerAuth) {
+    // Progressively encrypt config into vault blob on every write
+    let configEncrypted: string | undefined;
+    if (auth.config && typeof auth.config === "object" && !Array.isArray(auth.config)) {
+      try {
+        const { encryptCredentialMap } = await import("./credential-vault");
+        const configMap = Object.fromEntries(
+          Object.entries(auth.config as Record<string, unknown>).map(([k, v]) => [k, String(v ?? "")])
+        );
+        configEncrypted = encryptCredentialMap(configMap);
+      } catch {
+        // Vault unavailable; proceed without encryption (legacy mode)
+      }
+    }
+
     const existing = await this.getMcpServerAuth(auth.serverId);
     if (existing) {
-      const [updated] = await db.update(mcpServerAuth).set(auth).where(eq(mcpServerAuth.serverId, auth.serverId)).returning();
+      const [updated] = await db.update(mcpServerAuth)
+        .set({ ...auth, configEncrypted: configEncrypted ?? existing.configEncrypted, lastRotated: new Date() })
+        .where(eq(mcpServerAuth.serverId, auth.serverId))
+        .returning();
       return updated;
     }
-    const [created] = await db.insert(mcpServerAuth).values(auth).returning();
+    const [created] = await db.insert(mcpServerAuth)
+      .values({ ...auth, configEncrypted })
+      .returning();
     return created;
   }
 

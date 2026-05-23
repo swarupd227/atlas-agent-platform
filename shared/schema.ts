@@ -957,6 +957,7 @@ export const mcpServerAuth = pgTable("mcp_server_auth", {
   serverId: varchar("server_id").notNull(),
   authType: text("auth_type").notNull().default("none"),
   config: jsonb("config"),
+  configEncrypted: text("config_encrypted"),
   lastRotated: timestamp("last_rotated"),
   createdAt: timestamp("created_at").defaultNow(),
 });

@@ -1105,6 +1105,9 @@ export async function runStartupMigrations() {
 
       -- MCP server linkage for enterprise integrations (Task #55)
       ALTER TABLE mcp_servers ADD COLUMN IF NOT EXISTS connection_id VARCHAR;
+
+      -- Vault-encrypted auth config for mcp_server_auth (Task #55 backward-compat migration)
+      ALTER TABLE mcp_server_auth ADD COLUMN IF NOT EXISTS config_encrypted TEXT;
     `);
 
     // Seed Nous-curated marketplace asset packs (always runs; ON CONFLICT skips existing rows)

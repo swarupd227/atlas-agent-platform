@@ -699,12 +699,73 @@ async function testConnectionHealth(
           : { ok: false, error: `HTTP ${r.status}`, latencyMs: Date.now() - start };
       }
       default:
-        // For integrations without a live test, return ok with a note
-        return { ok: true, latencyMs: Date.now() - start };
+        // Integration not yet implemented — return explicit "not_verifiable" instead of implicit success
+        return { ok: null as unknown as boolean, status: "not_verifiable", latencyMs: Date.now() - start } as any;
     }
   } catch (err: any) {
     return { ok: false, error: err?.message ?? "Connection timeout", latencyMs: Date.now() - start };
   }
 }
+
+// ── Route aliases: /api/integrations/:id/* → same handlers ───────────────────
+// Provides the canonical /api/integrations API contract alongside /api/enterprise-integrations
+router.get("/api/integrations/:id/status", async (req, res) => {
+  req.url = `/api/enterprise-integrations/${req.params.id}/status`;
+  const orgId = getDefaultOrgId(req);
+  const conn = await storage.getIntegrationConnection(orgId, req.params.id).catch(() => null);
+  if (!conn) return res.json({ integrationId: req.params.id, status: "disconnected", connection: null });
+  res.json({ integrationId: req.params.id, status: conn.status, lastTestedAt: conn.lastTestedAt,
+    lastTestResult: conn.lastTestResult, lastError: conn.lastError, tokenExpiresAt: conn.tokenExpiresAt,
+    mcpServerId: conn.mcpServerId });
+});
+
+router.get("/api/integrations/:id/health", async (req, res) => {
+  req.params.id = req.params.id;
+  // Re-use the enterprise health handler logic
+  const orgId = getDefaultOrgId(req);
+  const integrationId = req.params.id;
+  const def = getIntegrationDef(integrationId);
+  if (!def) return res.status(404).json({ error: `Integration '${integrationId}' not found` });
+  const conn = await storage.getIntegrationConnection(orgId, integrationId).catch(() => null);
+  const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const rows = await db.select({ action: auditEvents.action }).from(auditEvents)
+    .where(and(eq(auditEvents.organizationId, orgId), gte(auditEvents.createdAt, since), like(auditEvents.objectId, `${integrationId}:%`)));
+  const calls = rows.filter(r => r.action === "integration_tool_call" || r.action === "integration_tool_error");
+  const errors = calls.filter(r => r.action === "integration_tool_error");
+  const totalCalls = calls.length, totalErrors = errors.length;
+  res.json({ integrationId, window: "24h", status: conn?.status ?? "disconnected",
+    lastTestedAt: conn?.lastTestedAt ?? null, lastTestResult: conn?.lastTestResult ?? null,
+    lastError: conn?.lastError ?? null, tokenExpiresAt: conn?.tokenExpiresAt ?? null,
+    mcpServerId: conn?.mcpServerId ?? null,
+    metrics: { totalCalls, totalErrors,
+      errorRate: totalCalls > 0 ? +(totalErrors / totalCalls).toFixed(4) : 0,
+      successRate: totalCalls > 0 ? +((totalCalls - totalErrors) / totalCalls).toFixed(4) : 1 } });
+});
+
+router.post("/api/integrations/:id/test", async (req, res) => {
+  const orgId = getDefaultOrgId(req);
+  const integrationId = req.params.id;
+  const conn = await storage.getIntegrationConnection(orgId, integrationId).catch(() => null);
+  if (!conn || !conn.credentialBlob) return res.status(404).json({ error: "No connection found" });
+  try {
+    const credentials = decryptCredentialMap(conn.credentialBlob);
+    const def = getIntegrationDef(integrationId);
+    const result = await testConnectionHealth(integrationId, credentials, def);
+    await storage.recordIntegrationTestResult(conn.id, result.ok, (result as any).error ?? null);
+    res.json(result);
+  } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+router.post("/api/integrations/:id/connect", async (req, res) => {
+  res.redirect(307, `/api/enterprise-integrations/${req.params.id}/connect`);
+});
+
+router.post("/api/integrations/:id/disconnect", async (req, res) => {
+  res.redirect(307, `/api/enterprise-integrations/${req.params.id}/disconnect`);
+});
+
+router.delete("/api/integrations/:id", async (req, res) => {
+  res.redirect(307, `/api/enterprise-integrations/${req.params.id}`);
+});
 
 export default router;

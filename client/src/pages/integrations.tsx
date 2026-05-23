@@ -527,6 +527,69 @@ function ToolCatalogSection() {
 
 interface SchemaChange { date: string; description: string; breaking: boolean }
 
+// ── Enterprise Integration Health Panel ───────────────────────────────────────
+function EnterpriseIntegrationHealthGrid() {
+  const { data: integrations, isLoading } = useQuery<IntegrationDef[]>({
+    queryKey: ["/api/enterprise-integrations"],
+  });
+
+  const connected = (integrations || []).filter((i) => i.connection && i.connection.status !== "disconnected");
+
+  if (isLoading) {
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {[1, 2, 3].map((i) => <Card key={i}><CardContent className="p-3"><Skeleton className="h-20 w-full" /></CardContent></Card>)}
+      </div>
+    );
+  }
+
+  if (connected.length === 0) return null;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <h3 className="text-sm font-medium text-muted-foreground">Enterprise Connectors</h3>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {connected.map((intg) => {
+          const conn = intg.connection!;
+          const isOk = conn.lastTestResult === "ok";
+          const isError = conn.lastTestResult === "error";
+          const isNotVerifiable = !conn.lastTestResult;
+          return (
+            <Card key={intg.id} data-testid={`card-ent-health-${intg.id}`} className="border">
+              <CardContent className="p-3 flex flex-col gap-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: intg.logoColor }} />
+                    <span className="text-xs font-medium truncate" data-testid={`text-ent-health-name-${intg.id}`}>{intg.name}</span>
+                  </div>
+                  <Badge
+                    variant={isOk ? "secondary" : isError ? "destructive" : "outline"}
+                    className="text-[10px] shrink-0"
+                    data-testid={`badge-ent-health-status-${intg.id}`}
+                  >
+                    {isOk ? "Healthy" : isError ? "Error" : conn.status === "connected" ? "Connected" : conn.status}
+                  </Badge>
+                </div>
+                {conn.lastError && (
+                  <p className="text-[10px] text-destructive line-clamp-1" data-testid={`text-ent-health-error-${intg.id}`}>{conn.lastError}</p>
+                )}
+                <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                  <span>Wave {intg.wave}</span>
+                  {conn.lastTestedAt && (
+                    <span data-testid={`text-ent-health-tested-${intg.id}`}>
+                      Tested {new Date(conn.lastTestedAt).toLocaleTimeString()}
+                    </span>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function ConnectorHealthSection() {
   const { data: connectors, isLoading } = useQuery<ToolConnector[]>({
     queryKey: ["/api/tool-connectors"],
@@ -544,20 +607,22 @@ function ConnectorHealthSection() {
 
   const healthConnectors = (connectors || []).filter((c) => c.status !== "disconnected" || c.uptimePercent != null);
 
-  if (healthConnectors.length === 0) {
-    return (
-      <Card>
-        <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
-          <Activity className="w-8 h-8 text-muted-foreground" />
-          <p className="text-sm text-muted-foreground" data-testid="text-no-health-data">
-            No connector health data available. Connect a tool to start monitoring.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
   return (
+    <div className="flex flex-col gap-6">
+      <EnterpriseIntegrationHealthGrid />
+
+      {healthConnectors.length === 0 ? (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
+            <Activity className="w-8 h-8 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground" data-testid="text-no-health-data">
+              No tool connector health data available. Connect a tool to start monitoring.
+            </p>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {healthConnectors.length > 0 && (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-muted-foreground" data-testid="text-health-description">
         Real-time health metrics for connected tool integrations
@@ -666,6 +731,8 @@ function ConnectorHealthSection() {
           );
         })}
       </div>
+    </div>
+      )}
     </div>
   );
 }
