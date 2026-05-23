@@ -369,7 +369,15 @@ export function createSalesforceRouter(): Router {
 
   router.post("/tools/:toolName", async (req: Request, res: Response) => {
     const { toolName } = req.params;
-    const { args = {} } = req.body as { args?: Record<string, unknown> };
+
+    // Accept two payload shapes for compatibility with all callers:
+    //   { args: { ... } }  — direct API callers (docs examples, UI, etc.)
+    //   { soql: "...", ... } — agent runtime, which sends raw tool args as the body
+    const body = req.body as Record<string, unknown>;
+    const args: Record<string, unknown> =
+      body.args !== undefined && body.args !== null && typeof body.args === "object" && !Array.isArray(body.args)
+        ? (body.args as Record<string, unknown>)
+        : body;
 
     // Always derive org from authenticated session — never trust caller-supplied orgId.
     // getOrgId() reads from JWT (production) or x-organization-id header (demo mode).
