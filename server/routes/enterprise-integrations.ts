@@ -244,6 +244,8 @@ interface PendingOAuthState {
   orgId: string;
   expiresAt: number;
   codeVerifier?: string;
+  /** Salesforce-specific: use test.salesforce.com endpoints when true */
+  sandbox?: boolean;
 }
 
 const pendingOAuthStates = new Map<string, PendingOAuthState>();
@@ -277,13 +279,22 @@ router.get("/api/integrations/oauth/start/:provider", async (req: Request, res: 
     const state = randomBytes(24).toString("hex");
     const redirectUri = `${req.protocol}://${req.get("host")}/api/integrations/oauth/callback`;
 
+    // Salesforce: caller may request sandbox mode via ?sandbox=true query param
+    const isSandbox = provider === "salesforce" && req.query.sandbox === "true";
+
     const pending: PendingOAuthState = {
       integrationId: provider,
       orgId,
       expiresAt: Date.now() + 10 * 60 * 1000,
+      ...(isSandbox ? { sandbox: true } : {}),
     };
 
-    const url = new URL(def.oauthConfig.authorizationUrl);
+    // Select the correct authorization base URL (sandbox vs production)
+    const authorizationUrl = isSandbox
+      ? def.oauthConfig.authorizationUrl.replace("login.salesforce.com", "test.salesforce.com")
+      : def.oauthConfig.authorizationUrl;
+
+    const url = new URL(authorizationUrl);
     url.searchParams.set("client_id", process.env[`OAUTH_${provider.toUpperCase()}_CLIENT_ID`] ?? "PLACEHOLDER_CLIENT_ID");
     url.searchParams.set("redirect_uri", redirectUri);
     url.searchParams.set("response_type", "code");
@@ -336,7 +347,12 @@ router.get("/api/integrations/oauth/callback", async (req: Request, res: Respons
       bodyParams.code_verifier = pending.codeVerifier;
     }
 
-    const tokenRes = await fetch(def.oauthConfig.tokenUrl, {
+    // Salesforce sandbox: use test.salesforce.com for token exchange if sandbox flag is set
+    const tokenUrl = pending.sandbox
+      ? def.oauthConfig.tokenUrl.replace("login.salesforce.com", "test.salesforce.com")
+      : def.oauthConfig.tokenUrl;
+
+    const tokenRes = await fetch(tokenUrl, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams(bodyParams).toString(),
@@ -355,8 +371,8 @@ router.get("/api/integrations/oauth/callback", async (req: Request, res: Respons
       token_type: tokenData.token_type ?? "Bearer",
       // Salesforce-specific: instance_url is returned in the token response body
       ...(tokenData.instance_url ? { instance_url: tokenData.instance_url } : {}),
-      // Salesforce sandbox flag: set when test.salesforce.com is the token endpoint
-      ...(def.oauthConfig?.tokenUrl?.includes("test.salesforce.com") ? { sandbox: "true" } : {}),
+      // Salesforce sandbox flag: sourced from pending state set at OAuth start
+      ...(pending.sandbox ? { sandbox: "true" } : {}),
     });
 
     const expiresAt = tokenData.expires_in

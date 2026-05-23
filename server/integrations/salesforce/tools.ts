@@ -16,6 +16,18 @@ const NAME_FIELDS = new Set(["FirstName", "LastName"]);
 export function maskPiiFields(record: Record<string, unknown>, level: "R1" | "R2" = "R1"): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(record).map(([k, v]) => {
+      // Recursively mask nested objects (e.g. Contact.FirstName, Contact.Email from Salesforce sub-queries)
+      if (v !== null && typeof v === "object" && !Array.isArray(v)) {
+        return [k, maskPiiFields(v as Record<string, unknown>, level)];
+      }
+      // Recursively mask arrays of objects
+      if (Array.isArray(v)) {
+        return [k, v.map(item =>
+          item !== null && typeof item === "object" && !Array.isArray(item)
+            ? maskPiiFields(item as Record<string, unknown>, level)
+            : item
+        )];
+      }
       if (typeof v !== "string" || !v) return [k, v];
       if (EMAIL_FIELDS.has(k)) {
         if (level === "R2") return [k, "••••••••@••••"];
