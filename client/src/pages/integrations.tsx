@@ -17,6 +17,8 @@ import {
   Ticket, Users, Database, MessageSquare, Target, HardDrive, LifeBuoy, MessagesSquare,
   Shield, Eye, EyeOff, Zap, RefreshCw, Activity, AlertCircle,
   Tag, Lock, Unlock, Timer, FileText, Download, FileCode, Terminal,
+  KeyRound, Building2, GitBranch, LayoutGrid, Snowflake, Link2,
+  CheckCheck, WifiOff, Loader2, ExternalLink, Info,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -1155,12 +1157,17 @@ export default function Integrations() {
         </Card>
       </div>
 
-      <Tabs defaultValue="catalog" data-testid="tabs-integrations">
+      <Tabs defaultValue="enterprise" data-testid="tabs-integrations">
         <TabsList data-testid="tabs-list-integrations">
-          <TabsTrigger value="catalog" data-testid="tab-catalog">Connectors</TabsTrigger>
+          <TabsTrigger value="enterprise" data-testid="tab-enterprise">Enterprise Connectors</TabsTrigger>
+          <TabsTrigger value="catalog" data-testid="tab-catalog">Tool Connectors</TabsTrigger>
           <TabsTrigger value="health" data-testid="tab-health">Connector Health</TabsTrigger>
           <TabsTrigger value="logging" data-testid="tab-logging">Logging</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="enterprise" className="mt-4">
+          <EnterpriseConnectorsSection />
+        </TabsContent>
 
         <TabsContent value="catalog" className="mt-4">
           <ToolCatalogSection />
@@ -1174,6 +1181,526 @@ export default function Integrations() {
           <LoggingSection />
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+// ── Enterprise Connectors Section ─────────────────────────────────────────────
+
+type AuthMethod = "oauth2" | "apikey" | "basic" | "service_account";
+type IntegrationCategory = "crm" | "itsm" | "devops" | "collaboration" | "data" | "erp" | "finance";
+
+interface OAuthConfig {
+  authorizationUrl: string;
+  tokenUrl: string;
+  defaultScopes: string[];
+  pkce: boolean;
+}
+
+interface FieldDef {
+  key: string;
+  label: string;
+  type: "text" | "password" | "url";
+  required: boolean;
+  placeholder?: string;
+}
+
+interface IntegrationDef {
+  id: string;
+  name: string;
+  description: string;
+  category: IntegrationCategory;
+  logoColor: string;
+  authMethod: AuthMethod;
+  oauthConfig?: OAuthConfig;
+  credentialFields?: FieldDef[];
+  docsUrl?: string;
+  wave: 1 | 2 | 3 | 4;
+  capabilities: string[];
+  connection: {
+    id: string;
+    status: string;
+    lastTestedAt: string | null;
+    lastTestResult: string | null;
+    lastError: string | null;
+    tokenExpiresAt: string | null;
+  } | null;
+}
+
+const ENT_CATEGORY_META: Record<IntegrationCategory, { label: string; icon: LucideIcon; color: string }> = {
+  crm:           { label: "CRM",           icon: Users,      color: "text-violet-500" },
+  itsm:          { label: "ITSM",          icon: Ticket,     color: "text-blue-500" },
+  devops:        { label: "DevOps",        icon: GitBranch,  color: "text-cyan-500" },
+  collaboration: { label: "Collaboration", icon: MessageSquare, color: "text-green-500" },
+  data:          { label: "Data",          icon: Database,   color: "text-sky-500" },
+  erp:           { label: "ERP",           icon: Building2,  color: "text-amber-500" },
+  finance:       { label: "Finance",       icon: LayoutGrid, color: "text-emerald-500" },
+};
+
+const AUTH_METHOD_META: Record<AuthMethod, { label: string; icon: LucideIcon }> = {
+  oauth2:          { label: "OAuth 2.0",        icon: Link2 },
+  apikey:          { label: "API Key",           icon: KeyRound },
+  basic:           { label: "Basic Auth",        icon: Lock },
+  service_account: { label: "Service Account",  icon: Shield },
+};
+
+function EntStatusBadge({ status }: { status: string | null | undefined }) {
+  if (!status || status === "disconnected") {
+    return (
+      <Badge variant="outline" className="text-[10px] gap-1">
+        <WifiOff className="w-3 h-3" />
+        Not connected
+      </Badge>
+    );
+  }
+  if (status === "connected") {
+    return (
+      <Badge variant="default" className="text-[10px] gap-1 bg-green-600 hover:bg-green-600">
+        <CheckCircle2 className="w-3 h-3" />
+        Connected
+      </Badge>
+    );
+  }
+  if (status === "error") {
+    return (
+      <Badge variant="destructive" className="text-[10px] gap-1">
+        <AlertCircle className="w-3 h-3" />
+        Error
+      </Badge>
+    );
+  }
+  return (
+    <Badge variant="secondary" className="text-[10px] gap-1">
+      <Clock className="w-3 h-3" />
+      {status}
+    </Badge>
+  );
+}
+
+function ConnectDialog({
+  integration,
+  open,
+  onOpenChange,
+}: {
+  integration: IntegrationDef | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { toast } = useToast();
+  const [formValues, setFormValues] = useState<Record<string, string>>({});
+  const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({});
+
+  const connectMutation = useMutation({
+    mutationFn: (credentials: Record<string, string>) =>
+      apiRequest("POST", `/api/enterprise-integrations/${integration?.id}/connect`, { credentials }),
+    onSuccess: () => {
+      toast({ title: `${integration?.name} connected`, description: "Credentials saved securely in the vault." });
+      queryClient.invalidateQueries({ queryKey: ["/api/enterprise-integrations"] });
+      onOpenChange(false);
+      setFormValues({});
+    },
+    onError: (err: any) => {
+      toast({ title: "Connection failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  if (!integration) return null;
+  const fields = integration.credentialFields ?? [];
+
+  function handleSubmit() {
+    const missing = fields.filter((f) => f.required && !formValues[f.key]?.trim());
+    if (missing.length > 0) {
+      toast({ title: "Missing required fields", description: missing.map((f) => f.label).join(", "), variant: "destructive" });
+      return;
+    }
+    connectMutation.mutate(formValues);
+  }
+
+  if (integration.authMethod === "oauth2") {
+    return (
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Connect {integration.name}</DialogTitle>
+            <DialogDescription>
+              You will be redirected to {integration.name} to authorize Atlas access.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-3 py-2">
+            <div className="rounded-md bg-muted p-3 text-sm text-muted-foreground flex items-start gap-2">
+              <Info className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>
+                Scopes requested: <span className="font-mono text-foreground">{integration.oauthConfig?.defaultScopes.join(", ")}</span>
+              </span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              After authorization, Atlas will securely store your tokens in an AES-256-GCM encrypted vault. Tokens are never logged.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+            <Button
+              data-testid={`button-oauth-start-${integration.id}`}
+              onClick={async () => {
+                try {
+                  const res = await apiRequest("GET", `/api/integrations/oauth/start/${integration.id}`);
+                  const data = await res.json();
+                  if (data.authUrl) window.open(data.authUrl, "_blank", "width=600,height=700");
+                } catch (err: any) {
+                  toast({ title: "OAuth error", description: err.message, variant: "destructive" });
+                }
+              }}
+            >
+              <ExternalLink className="w-4 h-4 mr-1.5" />
+              Authorize with {integration.name}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Connect {integration.name}</DialogTitle>
+          <DialogDescription>
+            Credentials are encrypted with AES-256-GCM before storage.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-3 py-1">
+          {fields.map((field) => (
+            <div key={field.key} className="flex flex-col gap-1.5">
+              <Label htmlFor={`field-${field.key}`} className="text-xs">
+                {field.label}
+                {field.required && <span className="text-destructive ml-0.5">*</span>}
+              </Label>
+              <div className="relative">
+                <Input
+                  id={`field-${field.key}`}
+                  data-testid={`input-cred-${field.key}`}
+                  type={field.type === "password" && !showPasswords[field.key] ? "password" : "text"}
+                  placeholder={field.placeholder}
+                  value={formValues[field.key] ?? ""}
+                  onChange={(e) => setFormValues((prev) => ({ ...prev, [field.key]: e.target.value }))}
+                />
+                {field.type === "password" && (
+                  <button
+                    type="button"
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowPasswords((p) => ({ ...p, [field.key]: !p[field.key] }))}
+                  >
+                    {showPasswords[field.key] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                )}
+              </div>
+            </div>
+          ))}
+          {integration.docsUrl && (
+            <a
+              href={integration.docsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-primary flex items-center gap-1 hover:underline"
+              data-testid={`link-docs-${integration.id}`}
+            >
+              <ExternalLink className="w-3 h-3" />
+              View API documentation
+            </a>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button
+            data-testid={`button-connect-${integration.id}`}
+            onClick={handleSubmit}
+            disabled={connectMutation.isPending}
+          >
+            {connectMutation.isPending && <Loader2 className="w-4 h-4 mr-1.5 animate-spin" />}
+            Save & Connect
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EnterpriseIntegrationCard({
+  integration,
+  onConnect,
+  onDisconnect,
+  onTest,
+}: {
+  integration: IntegrationDef;
+  onConnect: () => void;
+  onDisconnect: () => void;
+  onTest: () => void;
+}) {
+  const catMeta = ENT_CATEGORY_META[integration.category];
+  const CatIcon = catMeta.icon;
+  const authMeta = AUTH_METHOD_META[integration.authMethod];
+  const AuthIcon = authMeta.icon;
+  const conn = integration.connection;
+  const isConnected = conn?.status === "connected";
+  const hasError = conn?.status === "error";
+
+  return (
+    <Card
+      className="hover-elevate flex flex-col"
+      data-testid={`card-enterprise-integration-${integration.id}`}
+    >
+      <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pb-2">
+        <div className="flex items-center gap-3">
+          <div
+            className="flex items-center justify-center w-9 h-9 rounded-md shrink-0 text-white font-bold text-sm"
+            style={{ backgroundColor: integration.logoColor }}
+          >
+            {integration.name.slice(0, 2).toUpperCase()}
+          </div>
+          <div className="flex flex-col gap-0.5">
+            <CardTitle className="text-sm font-medium" data-testid={`text-integration-name-${integration.id}`}>
+              {integration.name}
+            </CardTitle>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <Badge variant="secondary" className={`text-[10px] gap-1 ${catMeta.color}`}>
+                <CatIcon className="w-3 h-3" />
+                {catMeta.label}
+              </Badge>
+              <Badge variant="outline" className="text-[10px] gap-1">
+                <AuthIcon className="w-3 h-3" />
+                {authMeta.label}
+              </Badge>
+            </div>
+          </div>
+        </div>
+        <EntStatusBadge status={conn?.status} />
+      </CardHeader>
+
+      <CardContent className="flex flex-col gap-3 flex-1">
+        <p className="text-xs text-muted-foreground leading-relaxed">{integration.description}</p>
+
+        {hasError && conn?.lastError && (
+          <div className="rounded-md bg-destructive/10 border border-destructive/20 px-2.5 py-1.5 text-xs text-destructive flex items-start gap-2">
+            <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+            <span className="line-clamp-2">{conn.lastError}</span>
+          </div>
+        )}
+
+        {isConnected && conn?.lastTestedAt && (
+          <p className="text-[10px] text-muted-foreground flex items-center gap-1">
+            <CheckCheck className="w-3 h-3 text-green-500" />
+            Last tested {new Date(conn.lastTestedAt).toLocaleString()}
+          </p>
+        )}
+
+        <div className="flex flex-wrap gap-1 mt-auto">
+          {integration.capabilities.slice(0, 4).map((cap) => (
+            <Badge key={cap} variant="outline" className="text-[9px] font-normal">
+              {cap.replace(/_/g, " ")}
+            </Badge>
+          ))}
+          {integration.capabilities.length > 4 && (
+            <Badge variant="outline" className="text-[9px] font-normal">
+              +{integration.capabilities.length - 4} more
+            </Badge>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 pt-1">
+          {isConnected ? (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                className="flex-1 text-xs"
+                onClick={onTest}
+                data-testid={`button-test-${integration.id}`}
+              >
+                <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                Test
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="flex-1 text-xs text-destructive hover:text-destructive"
+                onClick={onDisconnect}
+                data-testid={`button-disconnect-${integration.id}`}
+              >
+                <WifiOff className="w-3.5 h-3.5 mr-1.5" />
+                Disconnect
+              </Button>
+            </>
+          ) : (
+            <Button
+              size="sm"
+              className="flex-1 text-xs"
+              onClick={onConnect}
+              data-testid={`button-connect-card-${integration.id}`}
+            >
+              <Plug className="w-3.5 h-3.5 mr-1.5" />
+              Connect
+            </Button>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+const WAVE_LABELS: Record<number, { label: string; description: string }> = {
+  1: { label: "CRM", description: "Customer relationship management systems" },
+  2: { label: "ITSM & DevOps", description: "IT service management and developer toolchains" },
+  3: { label: "Collaboration", description: "Team messaging and productivity platforms" },
+  4: { label: "Data & ERP", description: "Data warehouses and enterprise resource planning" },
+};
+
+function EnterpriseConnectorsSection() {
+  const { toast } = useToast();
+  const [connectTarget, setConnectTarget] = useState<IntegrationDef | null>(null);
+  const [filterWave, setFilterWave] = useState<string>("all");
+  const [filterStatus, setFilterStatus] = useState<string>("all");
+
+  const { data: integrations = [], isLoading } = useQuery<IntegrationDef[]>({
+    queryKey: ["/api/enterprise-integrations"],
+  });
+
+  const disconnectMutation = useMutation({
+    mutationFn: (integrationId: string) =>
+      apiRequest("POST", `/api/enterprise-integrations/${integrationId}/disconnect`),
+    onSuccess: (_data, integrationId) => {
+      toast({ title: "Disconnected", description: `Integration removed.` });
+      queryClient.invalidateQueries({ queryKey: ["/api/enterprise-integrations"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Disconnect failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const testMutation = useMutation({
+    mutationFn: (integrationId: string) =>
+      apiRequest("POST", `/api/enterprise-integrations/${integrationId}/test`),
+    onSuccess: async (res, integrationId) => {
+      const data = await res.json();
+      if (data.ok) {
+        toast({ title: "Connection healthy", description: `Latency: ${data.latencyMs ?? "—"}ms` });
+      } else {
+        toast({ title: "Connection test failed", description: data.error, variant: "destructive" });
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/enterprise-integrations"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Test failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const filtered = useMemo(() => {
+    return integrations.filter((i) => {
+      if (filterWave !== "all" && String(i.wave) !== filterWave) return false;
+      if (filterStatus === "connected" && i.connection?.status !== "connected") return false;
+      if (filterStatus === "disconnected" && (i.connection?.status === "connected")) return false;
+      return true;
+    });
+  }, [integrations, filterWave, filterStatus]);
+
+  const byWave = useMemo(() => {
+    const groups: Record<number, IntegrationDef[]> = {};
+    for (const i of filtered) {
+      if (!groups[i.wave]) groups[i.wave] = [];
+      groups[i.wave].push(i);
+    }
+    return groups;
+  }, [filtered]);
+
+  const connectedCount = integrations.filter((i) => i.connection?.status === "connected").length;
+
+  if (isLoading) {
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {[1, 2, 3, 4, 5, 6].map((i) => (
+          <Card key={i}><CardContent className="p-4"><Skeleton className="h-40 w-full" /></CardContent></Card>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex items-center justify-between gap-4 flex-wrap">
+        <div className="flex flex-col gap-0.5">
+          <p className="text-sm font-medium">Enterprise System Connectors</p>
+          <p className="text-xs text-muted-foreground">
+            {connectedCount} of {integrations.length} connected — credentials stored in AES-256-GCM vault
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <Select value={filterWave} onValueChange={setFilterWave}>
+            <SelectTrigger className="h-8 text-xs w-40" data-testid="select-filter-wave">
+              <SelectValue placeholder="All waves" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All categories</SelectItem>
+              <SelectItem value="1">CRM</SelectItem>
+              <SelectItem value="2">ITSM & DevOps</SelectItem>
+              <SelectItem value="3">Collaboration</SelectItem>
+              <SelectItem value="4">Data & ERP</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={filterStatus} onValueChange={setFilterStatus}>
+            <SelectTrigger className="h-8 text-xs w-36" data-testid="select-filter-status">
+              <SelectValue placeholder="All status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All status</SelectItem>
+              <SelectItem value="connected">Connected</SelectItem>
+              <SelectItem value="disconnected">Not connected</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      {Object.keys(byWave).length === 0 && (
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-12 gap-3">
+            <Plug className="w-8 h-8 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground" data-testid="text-no-integrations">
+              No integrations match the current filter.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {[1, 2, 3, 4].map((wave) => {
+        const items = byWave[wave];
+        if (!items || items.length === 0) return null;
+        const waveLabel = WAVE_LABELS[wave];
+        return (
+          <div key={wave} className="flex flex-col gap-3">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{waveLabel.label}</span>
+              <Separator className="flex-1" />
+              <span className="text-[10px] text-muted-foreground">{waveLabel.description}</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {items.map((integration) => (
+                <EnterpriseIntegrationCard
+                  key={integration.id}
+                  integration={integration}
+                  onConnect={() => setConnectTarget(integration)}
+                  onDisconnect={() => disconnectMutation.mutate(integration.id)}
+                  onTest={() => testMutation.mutate(integration.id)}
+                />
+              ))}
+            </div>
+          </div>
+        );
+      })}
+
+      <ConnectDialog
+        integration={connectTarget}
+        open={!!connectTarget}
+        onOpenChange={(open) => { if (!open) setConnectTarget(null); }}
+      />
     </div>
   );
 }

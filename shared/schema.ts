@@ -3195,6 +3195,29 @@ export const insertMarketplaceInstallationSchema = createInsertSchema(marketplac
 export type InsertMarketplaceInstallation = z.infer<typeof insertMarketplaceInstallationSchema>;
 export type MarketplaceInstallation = typeof marketplaceInstallations.$inferSelect;
 
+// ── Enterprise Integration Connections ────────────────────────────────────────
+export const integrationConnections = pgTable("integration_connections", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id").notNull(),
+  integrationId: varchar("integration_id").notNull(),
+  credentialBlob: text("credential_blob"),
+  oauthScopes: text("oauth_scopes").array().default(sql`'{}'::text[]`),
+  tokenExpiresAt: timestamp("token_expires_at"),
+  status: varchar("status", { length: 20 }).default("disconnected"),
+  lastTestedAt: timestamp("last_tested_at"),
+  lastTestResult: varchar("last_test_result", { length: 10 }),
+  lastError: text("last_error"),
+  mcpServerId: varchar("mcp_server_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+}, (table) => [
+  index("idx_int_conn_org").on(table.organizationId),
+  index("idx_int_conn_org_integration").on(table.organizationId, table.integrationId),
+]);
+export const insertIntegrationConnectionSchema = createInsertSchema(integrationConnections).omit({ id: true, createdAt: true, updatedAt: true });
+export type InsertIntegrationConnection = z.infer<typeof insertIntegrationConnectionSchema>;
+export type IntegrationConnection = typeof integrationConnections.$inferSelect;
+
 // ── Eval Personas (Marketplace install target) ────────────────────────────────
 export const evalPersonas = pgTable("eval_personas", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

@@ -3,6 +3,8 @@ import { createHash } from "crypto";
 import { db } from "./db";
 import { getDefaultOrgId } from "./auth";
 import {
+  integrationConnections,
+  type IntegrationConnection, type InsertIntegrationConnection,
   users, agents, outcomeContracts, kpiDefinitions, deployments,
   runTraces, evalSuites, policies, approvals, auditEvents, invoices, outcomeEvents,
   agentTemplates, evalTestCases, evalRuns, evalCaseResults,
@@ -4798,6 +4800,65 @@ export class DatabaseStorage implements IStorage {
   async createEvalPersona(persona: InsertEvalPersona): Promise<EvalPersona> {
     const [row] = await db.insert(evalPersonas).values(persona).returning();
     return row;
+  }
+
+  // ── Enterprise Integration Connections ────────────────────────────────────
+  async listIntegrationConnections(orgId: string): Promise<IntegrationConnection[]> {
+    return db.select().from(integrationConnections)
+      .where(eq(integrationConnections.organizationId, orgId))
+      .orderBy(desc(integrationConnections.createdAt));
+  }
+
+  async getIntegrationConnection(orgId: string, integrationId: string): Promise<IntegrationConnection | null> {
+    const [row] = await db.select().from(integrationConnections)
+      .where(and(
+        eq(integrationConnections.organizationId, orgId),
+        eq(integrationConnections.integrationId, integrationId),
+      ));
+    return row ?? null;
+  }
+
+  async upsertIntegrationConnection(data: InsertIntegrationConnection): Promise<IntegrationConnection> {
+    const existing = await this.getIntegrationConnection(data.organizationId, data.integrationId);
+    if (existing) {
+      const [row] = await db.update(integrationConnections)
+        .set({
+          credentialBlob: data.credentialBlob,
+          oauthScopes: data.oauthScopes,
+          tokenExpiresAt: data.tokenExpiresAt,
+          status: data.status,
+          lastTestResult: data.lastTestResult,
+          lastError: data.lastError,
+          mcpServerId: data.mcpServerId,
+          updatedAt: new Date(),
+        })
+        .where(eq(integrationConnections.id, existing.id))
+        .returning();
+      return row;
+    }
+    const [row] = await db.insert(integrationConnections).values(data).returning();
+    return row;
+  }
+
+  async disconnectIntegration(orgId: string, integrationId: string): Promise<void> {
+    await db.update(integrationConnections)
+      .set({ status: "disconnected", credentialBlob: null, updatedAt: new Date() })
+      .where(and(
+        eq(integrationConnections.organizationId, orgId),
+        eq(integrationConnections.integrationId, integrationId),
+      ));
+  }
+
+  async recordIntegrationTestResult(connectionId: string, ok: boolean, error: string | null): Promise<void> {
+    await db.update(integrationConnections)
+      .set({
+        lastTestedAt: new Date(),
+        lastTestResult: ok ? "ok" : "error",
+        lastError: error,
+        status: ok ? "connected" : "error",
+        updatedAt: new Date(),
+      })
+      .where(eq(integrationConnections.id, connectionId));
   }
 }
 

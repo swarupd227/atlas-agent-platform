@@ -1083,6 +1083,25 @@ export async function runStartupMigrations() {
         created_at      TIMESTAMP DEFAULT NOW()
       );
       CREATE INDEX IF NOT EXISTS idx_eval_personas_org ON eval_personas(organization_id);
+
+      -- Enterprise Integration Connections (Task #55)
+      CREATE TABLE IF NOT EXISTS integration_connections (
+        id              VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id VARCHAR NOT NULL,
+        integration_id  VARCHAR NOT NULL,
+        credential_blob TEXT,
+        oauth_scopes    TEXT[] DEFAULT '{}',
+        token_expires_at TIMESTAMP,
+        status          VARCHAR(20) DEFAULT 'disconnected',
+        last_tested_at  TIMESTAMP,
+        last_test_result VARCHAR(10),
+        last_error      TEXT,
+        mcp_server_id   VARCHAR,
+        created_at      TIMESTAMP DEFAULT NOW(),
+        updated_at      TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_int_conn_org ON integration_connections(organization_id);
+      CREATE INDEX IF NOT EXISTS idx_int_conn_org_integration ON integration_connections(organization_id, integration_id);
     `);
 
     // Seed Nous-curated marketplace asset packs (always runs; ON CONFLICT skips existing rows)
