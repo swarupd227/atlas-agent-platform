@@ -166,6 +166,33 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     wave: 3,
     capabilities: ["read_teams", "send_messages", "read_chats", "read_files"],
   },
+  {
+    id: "msgraph",
+    name: "Microsoft Graph / M365",
+    description: "Microsoft Graph API v1.0 — unified API surface for Exchange email, Outlook Calendar, Teams channels, SharePoint, OneDrive, and Azure AD user directory",
+    category: "collaboration",
+    logoColor: "#00A4EF",
+    authMethod: "oauth2",
+    oauthConfig: {
+      authorizationUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+      tokenUrl: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+      defaultScopes: [
+        "https://graph.microsoft.com/Mail.ReadWrite",
+        "https://graph.microsoft.com/Mail.Send",
+        "https://graph.microsoft.com/Calendars.ReadWrite",
+        "https://graph.microsoft.com/User.Read.All",
+        "https://graph.microsoft.com/Team.ReadBasic.All",
+        "https://graph.microsoft.com/ChannelMessage.Send",
+        "https://graph.microsoft.com/Files.Read.All",
+        "https://graph.microsoft.com/Sites.Read.All",
+        "offline_access",
+      ],
+      pkce: true,
+    },
+    docsUrl: "https://docs.microsoft.com/en-us/graph/overview",
+    wave: 3,
+    capabilities: ["read_email", "send_email", "read_calendar", "create_events", "read_users", "send_teams_messages", "read_sharepoint", "read_onedrive"],
+  },
 
   // ── Wave 4: Data & ERP ────────────────────────────────────────────────────
   {

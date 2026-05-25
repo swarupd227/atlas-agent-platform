@@ -11,6 +11,8 @@ import { hubspotMcpServer } from "./hubspot/mcp-server";
 import { serviceNowMcpServer } from "./servicenow/mcp-server";
 import { jiraMcpServer } from "./jira/mcp-server";
 import { githubMcpServer } from "./github/mcp-server";
+import { slackMcpServer } from "./slack/mcp-server";
+import { microsoftGraphMcpServer } from "./msgraph/mcp-server";
 import type { RealMcpBase } from "../real-mcp-base";
 
 const BASE_URL = `http://localhost:${process.env.PORT || 5000}`;
@@ -65,6 +67,22 @@ function getEnterpriseServerDefs(): EnterpriseServerDef[] {
       route: "/api/integrations/github",
       riskTier: "MEDIUM",
       tags: ["devops", "github", "enterprise", "wave-2"],
+    },
+    {
+      server: slackMcpServer,
+      catalogName: "Slack (Collaboration)",
+      description: "Slack Web API — 12 real tools for posting messages, reading channel history, searching messages, managing threads, reactions, files, and canvases. Requires Bot Token (xoxb-) and optional User Token (xoxp-) for search.",
+      route: "/api/integrations/slack",
+      riskTier: "MEDIUM",
+      tags: ["collaboration", "slack", "enterprise", "wave-3"],
+    },
+    {
+      server: microsoftGraphMcpServer,
+      catalogName: "Microsoft Graph / M365 (Collaboration)",
+      description: "Microsoft Graph API v1.0 — 14 real tools spanning Exchange email, Outlook Calendar, Microsoft Teams channels, SharePoint document search, and Azure AD user directory. Requires Azure App Registration OAuth2.",
+      route: "/api/integrations/msgraph",
+      riskTier: "HIGH",
+      tags: ["collaboration", "microsoft365", "teams", "exchange", "sharepoint", "enterprise", "wave-3"],
     },
   ];
 }
@@ -144,4 +162,4 @@ export async function registerEnterpriseIntegrations(): Promise<{ servers: any[]
   return { servers, tools: toolCount };
 }
 
-export { salesforceMcpServer, hubspotMcpServer, serviceNowMcpServer, jiraMcpServer, githubMcpServer };
+export { salesforceMcpServer, hubspotMcpServer, serviceNowMcpServer, jiraMcpServer, githubMcpServer, slackMcpServer, microsoftGraphMcpServer };

@@ -11,6 +11,7 @@ import { otcFulfillmentLiveRunHandler, getOtcFulfillmentAgentRuns, resetOtcFulfi
 import { advSupportLiveRunHandler, getAdvSupportAgentRuns, resetAdvSupportDemo } from "../advantive-support-live-run";
 import { otcCashLiveRunHandler, getOtcCashAgentRuns, resetOtcCashDemo, ensureOtcCashAgents } from "../otc-cash-application-live-run";
 import { itTriageTriggerHandler, itTriageStatusHandler, itTriageResetHandler } from "../it-triage-live-run";
+import { escalationTriggerHandler, escalationStatusHandler, escalationResetHandler } from "../escalation-demo-live-run";
 
 import { seedPartnerPortalRegistry } from "../seed-blackrock2-partner-portal";
 import { storage } from "../storage";
@@ -3251,6 +3252,11 @@ Log every action.`;
   router.post("/api/demo/it-triage/trigger", itTriageTriggerHandler);
   router.get("/api/demo/it-triage/status",   itTriageStatusHandler);
   router.post("/api/demo/it-triage/reset",   itTriageResetHandler);
+
+  // ── Escalation Agent Demo (Wave 3 — Jira + Microsoft Graph) ────────────────
+  router.post("/api/demo/escalation/trigger", escalationTriggerHandler);
+  router.get("/api/demo/escalation/status",   escalationStatusHandler);
+  router.post("/api/demo/escalation/reset",   escalationResetHandler);
 
   // ── Demo 4: Advantive ONE AI-First Tier 1 Support Intelligence ─────────────
   router.get("/demo-api/advantive-support/live-run",   advSupportLiveRunHandler);

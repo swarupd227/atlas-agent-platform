@@ -141,6 +141,7 @@ import SHRetailDemo from "@client-shared/pages/demo/sh-retail-demo";
 import SHEnergyDemo from "@client-shared/pages/demo/sh-energy-demo";
 import SHInsuranceDemo from "@client-shared/pages/demo/sh-insurance-demo";
 import AdvSupportDemo from "@client-shared/pages/demo/adv-support-demo";
+import EscalationDemo from "@client-shared/pages/demo/escalation-demo";
 import DemoCenter from "@client-shared/pages/demo/demo-center";
 import ObservabilityPage from "@/pages/observability";
 import FeedbackTracker from "@/pages/feedback";
@@ -387,6 +388,7 @@ function DashboardRouter() {
       <Route path="/demo/sh-energy" component={SHEnergyDemo} />
       <Route path="/demo/sh-insurance" component={SHInsuranceDemo} />
       <Route path="/demo/advantive-support" component={AdvSupportDemo} />
+      <Route path="/demo/escalation" component={EscalationDemo} />
       <Route path="/feedback" component={FeedbackTracker} />
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />

@@ -103,6 +103,8 @@ import { createHubSpotRouter } from "./integrations/hubspot/mcp-server";
 import { createServiceNowRouter } from "./integrations/servicenow/mcp-server";
 import { createJiraRouter } from "./integrations/jira/mcp-server";
 import { createGitHubRouter } from "./integrations/github/mcp-server";
+import { createSlackRouter } from "./integrations/slack/mcp-server";
+import { createMicrosoftGraphRouter } from "./integrations/msgraph/mcp-server";
 
 export { computeConstraintGraph, recomputeOutcomeKpis };
 export type { KpiReEvalResult };
@@ -347,6 +349,8 @@ export async function registerRoutes(
   app.use("/api/integrations/servicenow", createServiceNowRouter());
   app.use("/api/integrations/jira", createJiraRouter());
   app.use("/api/integrations/github", createGitHubRouter());
+  app.use("/api/integrations/slack", createSlackRouter());
+  app.use("/api/integrations/msgraph", createMicrosoftGraphRouter());
 
   // ── Enterprise integration catalog endpoint ──────────────────────────────────
   app.post("/api/integrations/register", async (_req, res) => {
