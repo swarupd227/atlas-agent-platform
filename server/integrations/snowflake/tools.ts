@@ -38,11 +38,26 @@ export async function sf_execute_warehouse_query(client: SnowflakeClient, args: 
 }
 
 // ── Tool: sf_list_databases ───────────────────────────────────────────────────
+// Returns databases AND their schemas (via SHOW TERSE SCHEMAS IN ACCOUNT).
+// Falls back to database-only listing if SHOW SCHEMAS IN ACCOUNT is unavailable.
 
 export async function sf_list_databases(client: SnowflakeClient, args: Record<string, unknown>): Promise<McpToolResult> {
   try {
-    const result = await client.listDatabases();
-    return ok(result);
+    const [dbResult, schemaResult] = await Promise.allSettled([
+      client.listDatabases(),
+      client.listSchemasInAccount(),
+    ]);
+
+    const databases = dbResult.status === "fulfilled" ? dbResult.value : null;
+    const schemas   = schemaResult.status === "fulfilled" ? schemaResult.value : null;
+
+    return ok({
+      databases: databases?.rows ?? [],
+      databases_meta: databases ? { columns: databases.columns, row_count: databases.row_count } : null,
+      schemas: schemas?.rows ?? [],
+      schemas_meta: schemas ? { columns: schemas.columns, row_count: schemas.row_count } : null,
+      note: !schemas ? "Schema enumeration unavailable (SHOW TERSE SCHEMAS IN ACCOUNT requires ACCOUNT_USAGE privilege). Use sf_list_tables per database." : undefined,
+    });
   } catch (e: any) { return err(e.message); }
 }
 
@@ -59,6 +74,7 @@ export async function sf_list_tables(client: SnowflakeClient, args: Record<strin
 }
 
 // ── Tool: sf_describe_table ───────────────────────────────────────────────────
+// Returns column schema PLUS up to 5 sample rows to illustrate data shape.
 
 export async function sf_describe_table(client: SnowflakeClient, args: Record<string, unknown>): Promise<McpToolResult> {
   const database = String(args.database ?? "");
@@ -66,8 +82,26 @@ export async function sf_describe_table(client: SnowflakeClient, args: Record<st
   const table = String(args.table ?? "");
   if (!database || !table) return err("database and table are required");
   try {
-    const result = await client.describeTable(database, schema, table);
-    return ok(result);
+    const [schemaResult, previewResult] = await Promise.allSettled([
+      client.describeTable(database, schema, table),
+      client.previewTable(database, schema, table, 5),
+    ]);
+
+    const columns = schemaResult.status === "fulfilled" ? schemaResult.value : null;
+    const preview = previewResult.status === "fulfilled" ? previewResult.value : null;
+
+    return ok({
+      database,
+      schema,
+      table,
+      columns: columns?.rows ?? [],
+      columns_meta: columns ? { row_count: columns.row_count } : null,
+      sample_rows: preview?.rows ?? [],
+      sample_row_count: preview?.row_count ?? 0,
+      sample_columns: preview?.columns ?? [],
+      schema_error: schemaResult.status === "rejected" ? (schemaResult as any).reason?.message : undefined,
+      sample_error: previewResult.status === "rejected" ? (previewResult as any).reason?.message : undefined,
+    });
   } catch (e: any) { return err(e.message); }
 }
 

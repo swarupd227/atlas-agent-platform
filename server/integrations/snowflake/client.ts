@@ -232,20 +232,39 @@ export class SnowflakeClient {
       payload = await this.pollStatement(payload.statementHandle);
     }
 
-    const { rows, columns } = rowsFromPayload(payload);
-    const truncated = rows.length > maxRows;
+    const handle: string | undefined = payload?.statementHandle ?? payload?.queryId;
+    const numPartitions: number = payload?.resultSetMetaData?.numPartitions ?? 1;
+
+    const { rows: firstRows, columns } = rowsFromPayload(payload);
+    let allRows = firstRows;
+
+    // Fetch additional partitions if the result set spans multiple pages.
+    // Only fetch until we have maxRows to avoid unnecessary network calls.
+    if (numPartitions > 1 && handle) {
+      for (let p = 1; p < numPartitions && allRows.length < maxRows; p++) {
+        const partPayload = await this.apiGet(`/api/v2/statements/${handle}?partition=${p}`) as any;
+        const { rows: partRows } = rowsFromPayload(partPayload);
+        allRows = allRows.concat(partRows);
+      }
+    }
+
+    const truncated = allRows.length > maxRows || numPartitions > 1 && allRows.length >= maxRows;
     return {
-      rows: rows.slice(0, maxRows),
+      rows: allRows.slice(0, maxRows),
       columns,
-      row_count: rows.length,
+      row_count: allRows.length,
       truncated,
       elapsed_ms: Date.now() - start,
-      query_id: payload?.statementHandle ?? payload?.queryId,
+      query_id: handle,
     };
   }
 
   async listDatabases(): Promise<SnowflakeResult> {
     return this.executeQuery("SHOW DATABASES");
+  }
+
+  async listSchemasInAccount(): Promise<SnowflakeResult> {
+    return this.executeQuery("SHOW TERSE SCHEMAS IN ACCOUNT");
   }
 
   async listSchemas(database: string): Promise<SnowflakeResult> {

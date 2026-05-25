@@ -194,19 +194,21 @@ export class SapMcpServer extends RealMcpBase {
       }
     };
 
+    let result: McpToolResult;
     switch (toolName) {
-      case "sap_get_sales_order":          return sap_get_sales_order(client, args);
-      case "sap_search_sales_orders":      return sap_search_sales_orders(client, args);
-      case "sap_get_purchase_order":       return sap_get_purchase_order(client, args);
-      case "sap_search_purchase_orders":   return sap_search_purchase_orders(client, args);
-      case "sap_get_vendor":               return applyPii(await sap_get_vendor(client, args));
-      case "sap_get_customer":             return sap_get_customer(client, args);
-      case "sap_get_material":             return applyPii(await sap_get_material(client, args));
-      case "sap_check_inventory":          return sap_check_inventory(client, args);
-      case "sap_get_invoice":              return sap_get_invoice(client, args);
-      case "sap_search_gl_accounts":       return sap_search_gl_accounts(client, args);
+      case "sap_get_sales_order":        result = await sap_get_sales_order(client, args);        break;
+      case "sap_search_sales_orders":    result = await sap_search_sales_orders(client, args);    break;
+      case "sap_get_purchase_order":     result = await sap_get_purchase_order(client, args);     break;
+      case "sap_search_purchase_orders": result = await sap_search_purchase_orders(client, args); break;
+      case "sap_get_vendor":             result = await sap_get_vendor(client, args);             break;
+      case "sap_get_customer":           result = await sap_get_customer(client, args);           break;
+      case "sap_get_material":           result = await sap_get_material(client, args);           break;
+      case "sap_check_inventory":        result = await sap_check_inventory(client, args);        break;
+      case "sap_get_invoice":            result = await sap_get_invoice(client, args);            break;
+      case "sap_search_gl_accounts":     result = await sap_search_gl_accounts(client, args);     break;
       default: return this.err(`Unknown SAP tool: ${toolName}`);
     }
+    return applyPii(result);
   }
 }
 

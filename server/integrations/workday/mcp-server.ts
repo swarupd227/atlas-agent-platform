@@ -148,20 +148,29 @@ export class WorkdayMcpServer extends RealMcpBase {
     if (!tenantName) {
       return this.err("Workday tenant_name is not configured. Connect your Workday API Client via the Integrations settings.");
     }
-    const token = credentials.access_token;
-    if (!token) {
-      return this.err("Workday access_token is not configured. Authenticate via OAuth2 in the Integrations settings.");
+    const hasOAuthCreds = credentials.client_id && credentials.client_secret;
+    const hasToken = credentials.access_token;
+    if (!hasOAuthCreds && !hasToken) {
+      return this.err(
+        "Workday credentials not configured. Provide client_id + client_secret for OAuth2 client credentials, " +
+        "or supply a pre-generated access_token, in the Integrations settings."
+      );
     }
 
     const creds: WorkdayCredentials = {
       tenant_name:   tenantName,
       client_id:     credentials.client_id ?? "",
       client_secret: credentials.client_secret ?? "",
-      access_token:  token,
+      access_token:  credentials.access_token,
     };
 
+    // WorkdayClient manages its own OAuth2 token lifecycle (acquires + refreshes via
+    // client_credentials grant). The fetcher must NOT inject a bearerToken — doing so
+    // would override the Authorization header that WorkdayClient already sets with the
+    // freshly-obtained token. Pass options through unmodified so WorkdayClient's auth
+    // header wins.
     const fetcher = (url: string, options?: RequestInit) =>
-      this.fetchWithAuth(url, { ...options, orgId, bearerToken: token });
+      this.fetchWithAuth(url, { ...options, orgId });
 
     const client = new WorkdayClient(creds, fetcher);
 
@@ -211,11 +220,22 @@ export function createWorkdayRouter(): Router {
     if (!credentials?.tenant_name) {
       return res.json({ connected: false, error: "No credentials configured" });
     }
-    const token = credentials.access_token;
-    if (!token) {
-      return res.json({ connected: false, error: "access_token is missing. Complete OAuth2 flow first." });
+    const hasOAuthCreds = credentials.client_id && credentials.client_secret;
+    const hasToken = credentials.access_token;
+    if (!hasOAuthCreds && !hasToken) {
+      return res.json({ connected: false, error: "No credentials configured (client_id+client_secret or access_token required)" });
     }
     try {
+      const wdCreds: WorkdayCredentials = {
+        tenant_name:   credentials.tenant_name,
+        client_id:     credentials.client_id ?? "",
+        client_secret: credentials.client_secret ?? "",
+        access_token:  credentials.access_token,
+      };
+      const testFetcher = (url: string, options?: RequestInit) =>
+        workdayMcpServer["fetchWithAuth"](url, { ...options, orgId });
+      const client = new WorkdayClient(wdCreds, testFetcher);
+      const token = await (client as any).getAccessToken();
       const testRes = await workdayMcpServer["fetchWithAuth"](
         `https://wd2.myworkday.com/api/v1/${credentials.tenant_name}/workers?limit=1`,
         { bearerToken: token, orgId }
