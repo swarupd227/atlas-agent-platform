@@ -37,6 +37,19 @@ export async function sap_search_sales_orders(client: SapClient, args: Record<st
   } catch (e: any) { return err(e.message); }
 }
 
+// ── Tool: sap_search_purchase_orders ──────────────────────────────────────────
+
+export async function sap_search_purchase_orders(client: SapClient, args: Record<string, unknown>): Promise<McpToolResult> {
+  try {
+    return ok(await client.searchPurchaseOrders({
+      supplier: args.supplier ? String(args.supplier) : undefined,
+      dateFrom: args.date_from ? String(args.date_from) : undefined,
+      dateTo:   args.date_to   ? String(args.date_to)   : undefined,
+      top:      args.top ? Number(args.top) : 20,
+    }));
+  } catch (e: any) { return err(e.message); }
+}
+
 // ── Tool: sap_get_purchase_order ──────────────────────────────────────────────
 
 export async function sap_get_purchase_order(client: SapClient, args: Record<string, unknown>): Promise<McpToolResult> {

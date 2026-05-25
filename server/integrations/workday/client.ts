@@ -1,6 +1,7 @@
 /**
  * Workday REST API client
- * Auth: OAuth 2.0 client credentials (Workday as Authorization Server)
+ * Auth: OAuth 2.0 client credentials — obtains/refreshes a Bearer token from
+ *       the Workday Authorization Server automatically.
  * Base URL: https://wd2.myworkday.com/api/v1/{tenant}
  * RAAS (Report-As-A-Service) used for headcount/GL reports that lack REST equivalents.
  *
@@ -57,13 +58,14 @@ async function parseWorkday(res: Response): Promise<unknown> {
 export class WorkdayClient {
   private readonly tenant: string;
   private token: string;
+  private tokenExpiry = 0;
 
   constructor(
     private readonly creds: WorkdayCredentials,
     private readonly fetch: Fetcher
   ) {
     this.tenant = creds.tenant_name;
-    this.token = creds.access_token ?? "";
+    this.token  = creds.access_token ?? "";
   }
 
   private get restBase(): string {
@@ -74,11 +76,51 @@ export class WorkdayClient {
     return `https://wd2.myworkday.com/ccx/service/customreport2/${this.tenant}`;
   }
 
+  private get tokenEndpoint(): string {
+    return `https://wd2.myworkday.com/ccx/oauth2/${this.tenant}/token`;
+  }
+
+  /**
+   * Returns a valid access token, obtaining a new one via client_credentials
+   * if the cached token is missing or expired (5-minute buffer applied).
+   */
+  private async getAccessToken(): Promise<string> {
+    const now = Date.now();
+    if (this.token && now < this.tokenExpiry - 300_000) {
+      return this.token;
+    }
+    if (!this.creds.client_id || !this.creds.client_secret) {
+      if (this.token) return this.token;
+      throw new Error(
+        "Workday: client_id and client_secret are required to obtain an OAuth2 token. " +
+        "Configure them in the Integrations settings or supply a pre-generated access_token."
+      );
+    }
+    const body = new URLSearchParams({
+      grant_type:    "client_credentials",
+      client_id:     this.creds.client_id,
+      client_secret: this.creds.client_secret,
+    });
+    const res = await this.fetch(this.tokenEndpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    });
+    const data = await parseWorkday(res) as any;
+    if (!data?.access_token) {
+      throw new Error("Workday token endpoint did not return an access_token");
+    }
+    this.token       = data.access_token as string;
+    this.tokenExpiry = now + ((data.expires_in ?? 3600) as number) * 1000;
+    return this.token;
+  }
+
   private async get(path: string): Promise<unknown> {
+    const token = await this.getAccessToken();
     const res = await this.fetch(`${this.restBase}${path}`, {
       method: "GET",
       headers: {
-        Authorization: `Bearer ${this.token}`,
+        Authorization: `Bearer ${token}`,
         Accept: "application/json",
       },
     });
@@ -86,11 +128,12 @@ export class WorkdayClient {
   }
 
   private async raasGet(reportName: string, params?: Record<string, string>): Promise<unknown> {
+    const token = await this.getAccessToken();
     const sp = new URLSearchParams({ format: "json", ...params });
     const res = await this.fetch(`${this.raasBase}/${reportName}?${sp.toString()}`, {
       method: "GET",
       headers: {
-        Authorization: `Bearer ${this.token}`,
+        Authorization: `Bearer ${token}`,
         Accept: "application/json",
       },
     });

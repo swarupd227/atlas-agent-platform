@@ -3,7 +3,7 @@
  * Cross-system: SAP (open POs) → SAP inventory check → SAP vendor lookup → Jira ticket creation
  *
  * Steps:
- *  1. sap_search_sales_orders  — Find open purchase orders overdue > 7 days
+ *  1. sap_search_purchase_orders — Find open purchase orders overdue > 7 days
  *  2. sap_check_inventory      — Check stock levels for the ordered material
  *  3. sap_get_vendor           — Look up vendor master data and payment terms
  *  4. sap_get_purchase_order   — Full PO detail with line items
@@ -82,8 +82,7 @@ async function runPoDemo(orgId: string): Promise<void> {
   _state.startedAt = new Date().toISOString();
 
   const steps: PoDemoStep[] = [
-    initStep(1, "Search SAP for open purchase orders overdue > 7 days", "sap_search_sales_orders", "sap", {
-      status: "Open",
+    initStep(1, "Search SAP for open purchase orders overdue > 7 days", "sap_search_purchase_orders", "sap", {
       date_to: new Date(Date.now() - 7 * 86400_000).toISOString().slice(0, 10),
       top: 5,
     }),
@@ -114,21 +113,21 @@ async function runPoDemo(orgId: string): Promise<void> {
   ];
   _state.steps = steps;
 
-  // ── Step 1: SAP search overdue POs ───────────────────────────────────────
+  // ── Step 1: SAP search overdue purchase orders ───────────────────────────
   steps[0].status = "running";
   try {
     const { sapMcpServer } = await import("./integrations/sap/mcp-server");
     const t0 = Date.now();
-    const result = await sapMcpServer.callTool("sap_search_sales_orders", steps[0].input!, orgId);
+    const result = await sapMcpServer.callTool("sap_search_purchase_orders", steps[0].input!, orgId);
     steps[0].elapsedMs = Date.now() - t0;
     if (!result.isError) { steps[0].output = JSON.parse(result.content[0].text); steps[0].mode = "live"; }
     else steps[0].output = [
-      { SalesOrder: DEMO_PO_NUMBER, SoldToParty: DEMO_VENDOR_ID, SalesOrderDate: "2026-05-10", TotalNetOrderAmount: 87400, SDProcessStatus: "Open", TransactionCurrency: "USD" },
-      { SalesOrder: "4500012801", SoldToParty: "V-10039", SalesOrderDate: "2026-05-08", TotalNetOrderAmount: 23100, SDProcessStatus: "Open", TransactionCurrency: "USD" },
+      { PurchaseOrder: DEMO_PO_NUMBER, Supplier: DEMO_VENDOR_ID, PurchaseOrderDate: "2026-05-10", TotalNetOrderAmount: 87400, OverallProcessingStatus: "Open", DocumentCurrency: "USD", CompanyCode: "1000" },
+      { PurchaseOrder: "4500012801", Supplier: "V-10039", PurchaseOrderDate: "2026-05-08", TotalNetOrderAmount: 23100, OverallProcessingStatus: "Open", DocumentCurrency: "USD", CompanyCode: "1000" },
     ];
   } catch {
     steps[0].elapsedMs = 0;
-    steps[0].output = [{ SalesOrder: DEMO_PO_NUMBER, SoldToParty: DEMO_VENDOR_ID, SalesOrderDate: "2026-05-10", TotalNetOrderAmount: 87400, SDProcessStatus: "Open" }];
+    steps[0].output = [{ PurchaseOrder: DEMO_PO_NUMBER, Supplier: DEMO_VENDOR_ID, PurchaseOrderDate: "2026-05-10", TotalNetOrderAmount: 87400, OverallProcessingStatus: "Open" }];
   }
   steps[0].status = "complete";
 

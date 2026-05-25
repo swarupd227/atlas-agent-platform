@@ -2,11 +2,39 @@
  * SAP OData API client
  * Supports both:
  *   - SAP S/4HANA Cloud: OData v4, Bearer token (OAuth2 — XSUAA)
- *   - SAP Business One Service Layer: REST/JSON, Session auth (B1 cookie)
+ *   - SAP Business One Service Layer: REST/JSON, Basic auth
  *
  * All calls are read-only (GET + $filter/$select/$expand).
  * Base URL is tenant-configurable and stored in credentials as `base_url`.
+ *
+ * PII stripping: bank account, tax, payment card, and salary fields are
+ * removed unless pii_level_high is granted — applied consistently to both
+ * vendor master and material-level financial data.
  */
+
+const SAP_SENSITIVE_FIELDS = new Set([
+  "BankAccountNumber", "BankAccount", "BankControlKey", "IBANNumber", "IBAN", "BBAN",
+  "PaymentCardNumber", "CardNumber", "CardType",
+  "TaxNumber1", "TaxNumber2", "TaxNumber3", "TaxNumber4", "TaxNumber5",
+  "VATRegistration", "FiscalCode", "TaxJurisdiction",
+  "SocialSecurityNumber", "TaxId", "NationalId",
+  "PaymentMethod", "PaymentMethodSupplement",
+  "Salary", "Wage", "HourlyRate", "Compensation", "StandardPrice", "MovingAveragePrice",
+]);
+
+export function stripSapPii(obj: unknown, allow = false): unknown {
+  if (!obj || typeof obj !== "object") return obj;
+  if (Array.isArray(obj)) return (obj as unknown[]).map(item => stripSapPii(item, allow));
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
+    if (!allow && SAP_SENSITIVE_FIELDS.has(k)) {
+      out[k] = "[REDACTED — requires pii_level_high]";
+    } else {
+      out[k] = typeof v === "object" ? stripSapPii(v, allow) : v;
+    }
+  }
+  return out;
+}
 
 export interface SapCredentials {
   base_url: string;
@@ -15,6 +43,7 @@ export interface SapCredentials {
   client?: string;
   access_token?: string;
   system_type?: "s4hana" | "b1";
+  pii_level?: string;
 }
 
 type Fetcher = (url: string, options?: RequestInit) => Promise<Response>;
@@ -55,14 +84,16 @@ export class SapClient {
   private readonly systemType: "s4hana" | "b1";
   private readonly token: string | undefined;
   private readonly basicAuth: { username: string; password: string } | undefined;
+  readonly piiAllowed: boolean;
 
   constructor(
     private readonly creds: SapCredentials,
     private readonly fetch: Fetcher
   ) {
-    this.base = creds.base_url.replace(/\/$/, "");
+    this.base       = creds.base_url.replace(/\/$/, "");
     this.systemType = creds.system_type ?? "s4hana";
-    this.token = creds.access_token;
+    this.token      = creds.access_token;
+    this.piiAllowed = creds.pii_level === "high";
     if (creds.username && creds.password) {
       this.basicAuth = { username: creds.username, password: creds.password };
     }
@@ -109,14 +140,14 @@ export class SapClient {
   async searchSalesOrders(filter?: { customer?: string; status?: string; dateFrom?: string; dateTo?: string; top?: number }): Promise<unknown> {
     const filters: string[] = [];
     if (filter?.customer) filters.push(`SoldToParty eq '${filter.customer}'`);
-    if (filter?.status) filters.push(`SDProcessStatus eq '${filter.status}'`);
+    if (filter?.status)   filters.push(`SDProcessStatus eq '${filter.status}'`);
     if (filter?.dateFrom) filters.push(`SalesOrderDate ge ${filter.dateFrom}`);
-    if (filter?.dateTo) filters.push(`SalesOrderDate le ${filter.dateTo}`);
+    if (filter?.dateTo)   filters.push(`SalesOrderDate le ${filter.dateTo}`);
 
     if (this.systemType === "b1") {
       const bFilters: string[] = [];
       if (filter?.customer) bFilters.push(`CardCode eq '${filter.customer}'`);
-      if (filter?.status) bFilters.push(`DocStatus eq '${filter.status}'`);
+      if (filter?.status)   bFilters.push(`DocStatus eq '${filter.status}'`);
       return this.get(`/Orders`, {
         $filter: bFilters.join(" and ") || "DocStatus ne 'X'",
         $top: String(Math.min(filter?.top ?? 20, 50)),
@@ -143,6 +174,30 @@ export class SapClient {
     return this.get(`/API_PURCHASEORDER_PROCESS_SRV/A_PurchaseOrder('${encodeURIComponent(poId)}')`, {
       $expand: "to_PurchaseOrderItem",
       $select: "PurchaseOrder,PurchaseOrderType,Supplier,CompanyCode,CreationDate,PurchaseOrderDate,TotalNetOrderAmount,DocumentCurrency,PurchasingOrganization",
+    });
+  }
+
+  async searchPurchaseOrders(filter?: { supplier?: string; dateFrom?: string; dateTo?: string; top?: number }): Promise<unknown> {
+    if (this.systemType === "b1") {
+      const bFilters: string[] = ["DocStatus ne 'X'"];
+      if (filter?.supplier) bFilters.push(`CardCode eq '${filter.supplier}'`);
+      if (filter?.dateTo)   bFilters.push(`DocDueDate le '${filter.dateTo}'`);
+      return this.get(`/PurchaseOrders`, {
+        $filter: bFilters.join(" and "),
+        $top: String(Math.min(filter?.top ?? 20, 50)),
+        $select: "DocEntry,DocNum,CardCode,CardName,DocDate,DocDueDate,DocStatus,DocTotal",
+        $orderby: "DocDueDate asc",
+      });
+    }
+    const filters: string[] = [];
+    if (filter?.supplier) filters.push(`Supplier eq '${filter.supplier}'`);
+    if (filter?.dateFrom) filters.push(`PurchaseOrderDate ge ${filter.dateFrom}`);
+    if (filter?.dateTo)   filters.push(`PurchaseOrderDate le ${filter.dateTo}`);
+    return this.get(`/API_PURCHASEORDER_PROCESS_SRV/A_PurchaseOrder`, {
+      ...(filters.length ? { $filter: filters.join(" and ") } : {}),
+      $top: String(Math.min(filter?.top ?? 20, 50)),
+      $select: "PurchaseOrder,PurchaseOrderType,Supplier,CompanyCode,CreationDate,PurchaseOrderDate,TotalNetOrderAmount,DocumentCurrency,PurchasingOrganization,OverallProcessingStatus",
+      $orderby: "PurchaseOrderDate desc",
     });
   }
 

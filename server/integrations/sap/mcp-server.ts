@@ -1,5 +1,5 @@
 /**
- * SAP MCP Server — 9 read-only tools for SAP S/4HANA Cloud or SAP Business One.
+ * SAP MCP Server — 10 read-only tools for SAP S/4HANA Cloud or SAP Business One.
  * Supports both OData v4 (S/4HANA) and Business One Service Layer via system_type selector.
  * Auth: Basic (username+password) or Bearer token (S/4HANA OAuth2/XSUAA).
  * Mounted at /api/integrations/sap
@@ -13,6 +13,7 @@ import {
   sap_get_sales_order,
   sap_search_sales_orders,
   sap_get_purchase_order,
+  sap_search_purchase_orders,
   sap_get_vendor,
   sap_get_customer,
   sap_get_material,
@@ -20,6 +21,7 @@ import {
   sap_get_invoice,
   sap_search_gl_accounts,
 } from "./tools";
+import { stripSapPii } from "./client";
 
 export class SapMcpServer extends RealMcpBase {
   readonly integrationId = "sap";
@@ -59,6 +61,19 @@ export class SapMcpServer extends RealMcpBase {
           po_id: { type: "string", description: "Purchase order number or DocEntry (required)" },
         },
         required: ["po_id"],
+      },
+    },
+    {
+      name: "sap_search_purchase_orders",
+      description: "Search SAP purchase orders by supplier and date range. Returns a list of open/recent POs with amounts and processing status. Use for procurement overdue analysis.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          supplier: { type: "string", description: "SAP supplier/vendor number filter (optional)" },
+          date_from: { type: "string", description: "PO date range start (ISO 8601, e.g. 2025-01-01)" },
+          date_to:   { type: "string", description: "PO date range end (ISO 8601)" },
+          top:       { type: "number", description: "Results to return (default 20, max 50)" },
+        },
       },
     },
     {
@@ -154,6 +169,7 @@ export class SapMcpServer extends RealMcpBase {
       client:       credentials.client,
       access_token: credentials.access_token,
       system_type:  (credentials.system_type as "s4hana" | "b1") ?? "s4hana",
+      pii_level:    credentials.pii_level,
     };
 
     const fetcher = (url: string, options?: RequestInit) =>
@@ -166,17 +182,29 @@ export class SapMcpServer extends RealMcpBase {
       });
 
     const client = new SapClient(creds, fetcher);
+    const piiAllowed = creds.pii_level === "high";
+
+    const applyPii = (result: McpToolResult): McpToolResult => {
+      if (result.isError || !result.content?.[0]) return result;
+      try {
+        const parsed = JSON.parse(result.content[0].text);
+        return { content: [{ type: "text", text: JSON.stringify(stripSapPii(parsed, piiAllowed), null, 2) }] };
+      } catch {
+        return result;
+      }
+    };
 
     switch (toolName) {
-      case "sap_get_sales_order":     return sap_get_sales_order(client, args);
-      case "sap_search_sales_orders": return sap_search_sales_orders(client, args);
-      case "sap_get_purchase_order":  return sap_get_purchase_order(client, args);
-      case "sap_get_vendor":          return sap_get_vendor(client, args);
-      case "sap_get_customer":        return sap_get_customer(client, args);
-      case "sap_get_material":        return sap_get_material(client, args);
-      case "sap_check_inventory":     return sap_check_inventory(client, args);
-      case "sap_get_invoice":         return sap_get_invoice(client, args);
-      case "sap_search_gl_accounts":  return sap_search_gl_accounts(client, args);
+      case "sap_get_sales_order":          return sap_get_sales_order(client, args);
+      case "sap_search_sales_orders":      return sap_search_sales_orders(client, args);
+      case "sap_get_purchase_order":       return sap_get_purchase_order(client, args);
+      case "sap_search_purchase_orders":   return sap_search_purchase_orders(client, args);
+      case "sap_get_vendor":               return applyPii(await sap_get_vendor(client, args));
+      case "sap_get_customer":             return sap_get_customer(client, args);
+      case "sap_get_material":             return applyPii(await sap_get_material(client, args));
+      case "sap_check_inventory":          return sap_check_inventory(client, args);
+      case "sap_get_invoice":              return sap_get_invoice(client, args);
+      case "sap_search_gl_accounts":       return sap_search_gl_accounts(client, args);
       default: return this.err(`Unknown SAP tool: ${toolName}`);
     }
   }
