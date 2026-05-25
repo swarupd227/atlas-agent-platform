@@ -12,6 +12,8 @@ import { advSupportLiveRunHandler, getAdvSupportAgentRuns, resetAdvSupportDemo }
 import { otcCashLiveRunHandler, getOtcCashAgentRuns, resetOtcCashDemo, ensureOtcCashAgents } from "../otc-cash-application-live-run";
 import { itTriageTriggerHandler, itTriageStatusHandler, itTriageResetHandler } from "../it-triage-live-run";
 import { escalationTriggerHandler, escalationStatusHandler, escalationResetHandler } from "../escalation-demo-live-run";
+import { fpaTriggerHandler, fpaStatusHandler, fpaResetHandler } from "../fpa-demo-live-run";
+import { poTriggerHandler, poStatusHandler, poResetHandler } from "../po-status-demo-live-run";
 
 import { seedPartnerPortalRegistry } from "../seed-blackrock2-partner-portal";
 import { storage } from "../storage";
@@ -3257,6 +3259,16 @@ Log every action.`;
   router.post("/api/demo/escalation/trigger", escalationTriggerHandler);
   router.get("/api/demo/escalation/status",   escalationStatusHandler);
   router.post("/api/demo/escalation/reset",   escalationResetHandler);
+
+  // ── FP&A Financial Variance Agent Demo (Wave 4 — Snowflake + Workday + Slack) ─
+  router.post("/api/demo/fpa/trigger", fpaTriggerHandler);
+  router.get("/api/demo/fpa/status",   fpaStatusHandler);
+  router.post("/api/demo/fpa/reset",   fpaResetHandler);
+
+  // ── PO Status Agent Demo (Wave 4 — SAP + Jira) ──────────────────────────────
+  router.post("/api/demo/po-status/trigger", poTriggerHandler);
+  router.get("/api/demo/po-status/status",   poStatusHandler);
+  router.post("/api/demo/po-status/reset",   poResetHandler);
 
   // ── Demo 4: Advantive ONE AI-First Tier 1 Support Intelligence ─────────────
   router.get("/demo-api/advantive-support/live-run",   advSupportLiveRunHandler);

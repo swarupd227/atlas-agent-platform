@@ -13,6 +13,9 @@ import { jiraMcpServer } from "./jira/mcp-server";
 import { githubMcpServer } from "./github/mcp-server";
 import { slackMcpServer } from "./slack/mcp-server";
 import { microsoftGraphMcpServer } from "./msgraph/mcp-server";
+import { snowflakeMcpServer } from "./snowflake/mcp-server";
+import { workdayMcpServer } from "./workday/mcp-server";
+import { sapMcpServer } from "./sap/mcp-server";
 import type { RealMcpBase } from "../real-mcp-base";
 
 const BASE_URL = `http://localhost:${process.env.PORT || 5000}`;
@@ -83,6 +86,31 @@ function getEnterpriseServerDefs(): EnterpriseServerDef[] {
       route: "/api/integrations/msgraph",
       riskTier: "HIGH",
       tags: ["collaboration", "microsoft365", "teams", "exchange", "sharepoint", "enterprise", "wave-3"],
+    },
+    // ── Wave 4: Data & ERP ──────────────────────────────────────────────────
+    {
+      server: snowflakeMcpServer,
+      catalogName: "Snowflake (Data Warehouse)",
+      description: "Snowflake SQL REST API v2 — 9 read-only tools for query execution, schema inspection, table search, column statistics, and query history. All queries are enforced read-only; DDL/DML is blocked. Requires account + key-pair JWT or username/password. Setup complexity: Advanced.",
+      route: "/api/integrations/snowflake",
+      riskTier: "MEDIUM",
+      tags: ["data", "snowflake", "data-warehouse", "enterprise", "wave-4"],
+    },
+    {
+      server: workdayMcpServer,
+      catalogName: "Workday HCM & Finance (ERP)",
+      description: "Workday REST API + RAAS — 10 tools for worker directory, org structure, open positions, PTO balances, pay groups, headcount reports, cost centers, GL summaries, and fiscal periods. PII fields are masked by default. Requires OAuth2 API Client setup in Workday tenant. Setup complexity: Advanced.",
+      route: "/api/integrations/workday",
+      riskTier: "HIGH",
+      tags: ["erp", "workday", "hcm", "finance", "enterprise", "wave-4"],
+    },
+    {
+      server: sapMcpServer,
+      catalogName: "SAP S/4HANA / Business One (ERP)",
+      description: "SAP OData APIs — 9 read-only tools for sales orders, purchase orders, vendors, customers, materials, inventory, invoices, and GL accounts. Supports both S/4HANA Cloud (OData v4) and Business One Service Layer via system_type selector. Setup complexity: Advanced.",
+      route: "/api/integrations/sap",
+      riskTier: "HIGH",
+      tags: ["erp", "sap", "s4hana", "procurement", "enterprise", "wave-4"],
     },
   ];
 }
@@ -162,4 +190,4 @@ export async function registerEnterpriseIntegrations(): Promise<{ servers: any[]
   return { servers, tools: toolCount };
 }
 
-export { salesforceMcpServer, hubspotMcpServer, serviceNowMcpServer, jiraMcpServer, githubMcpServer, slackMcpServer, microsoftGraphMcpServer };
+export { salesforceMcpServer, hubspotMcpServer, serviceNowMcpServer, jiraMcpServer, githubMcpServer, slackMcpServer, microsoftGraphMcpServer, snowflakeMcpServer, workdayMcpServer, sapMcpServer };

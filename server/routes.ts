@@ -105,6 +105,9 @@ import { createJiraRouter } from "./integrations/jira/mcp-server";
 import { createGitHubRouter } from "./integrations/github/mcp-server";
 import { createSlackRouter } from "./integrations/slack/mcp-server";
 import { createMicrosoftGraphRouter } from "./integrations/msgraph/mcp-server";
+import { createSnowflakeRouter } from "./integrations/snowflake/mcp-server";
+import { createWorkdayRouter } from "./integrations/workday/mcp-server";
+import { createSapRouter } from "./integrations/sap/mcp-server";
 
 export { computeConstraintGraph, recomputeOutcomeKpis };
 export type { KpiReEvalResult };
@@ -351,6 +354,10 @@ export async function registerRoutes(
   app.use("/api/integrations/github", createGitHubRouter());
   app.use("/api/integrations/slack", createSlackRouter());
   app.use("/api/integrations/msgraph", createMicrosoftGraphRouter());
+  // ── Enterprise Integration routers (Wave 4: Data & ERP) ──────────────────
+  app.use("/api/integrations/snowflake", createSnowflakeRouter());
+  app.use("/api/integrations/workday", createWorkdayRouter());
+  app.use("/api/integrations/sap", createSapRouter());
 
   // ── Enterprise integration catalog endpoint ──────────────────────────────────
   app.post("/api/integrations/register", async (_req, res) => {
