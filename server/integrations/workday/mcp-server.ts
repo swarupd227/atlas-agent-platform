@@ -174,11 +174,10 @@ export class WorkdayMcpServer extends RealMcpBase {
 
     const client = new WorkdayClient(creds, fetcher);
 
-    // PII: default-deny. Unmasked access requires EITHER:
-    //  (a) the agent explicitly passes _pii_level: "high" in tool args (agent-level permission), OR
-    //  (b) the integration credential has pii_level: "high" (admin-granted connection-wide override).
-    // Checking args at the per-call level gives agents and the platform fine-grained control.
-    const piiAllowed = args._pii_level === "high" || credentials.pii_level === "high";
+    // PII: default-deny. Unmasked access requires the admin to have set pii_level: "high"
+    // in the integration credential vault at connection time. This is a server-side,
+    // admin-controlled policy — callers cannot self-elevate by injecting values into args.
+    const piiAllowed = credentials.pii_level === "high";
 
     switch (toolName) {
       case "wd_get_worker":           return wd_get_worker(client, args, piiAllowed);

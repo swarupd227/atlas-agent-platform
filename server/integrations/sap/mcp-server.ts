@@ -182,10 +182,10 @@ export class SapMcpServer extends RealMcpBase {
       });
 
     const client = new SapClient(creds, fetcher);
-    // PII: default-deny. Unmasked access requires EITHER:
-    //  (a) the agent explicitly passes _pii_level: "high" in tool args (agent-level permission), OR
-    //  (b) the integration credential has pii_level: "high" (admin-granted connection-wide override).
-    const piiAllowed = args._pii_level === "high" || creds.pii_level === "high";
+    // PII: default-deny. Unmasked access requires the admin to have set pii_level: "high"
+    // in the integration credential vault at connection time. This is a server-side,
+    // admin-controlled policy — callers cannot self-elevate by injecting values into args.
+    const piiAllowed = creds.pii_level === "high";
 
     const applyPii = (result: McpToolResult): McpToolResult => {
       if (result.isError || !result.content?.[0]) return result;
