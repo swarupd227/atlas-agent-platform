@@ -3,6 +3,12 @@
  * Auth: Bearer access_token (OAuth2, delegated or application permissions)
  * Base URL: https://graph.microsoft.com/v1.0
  * Token refresh is handled by RealMcpBase.refreshOAuthToken / fetchWithAuth (401 retry).
+ *
+ * Routing semantics:
+ * - When userId === "me" (the default for delegated/on-behalf-of access), we use /me/...
+ *   so the Graph API resolves the authenticated user's mailbox/calendar/OneDrive.
+ * - When userId is an explicit UPN or GUID (service-account / admin impersonation),
+ *   we use /users/{userId}/... so the call targets that specific user.
  */
 
 export const GRAPH_BASE = "https://graph.microsoft.com/v1.0";
@@ -24,7 +30,7 @@ async function parseGraph(res: Response): Promise<unknown> {
     const code = err?.code ?? res.status;
     const message = err?.message ?? "Unknown error";
     if (res.status === 403) {
-      throw new Error(`Graph permission denied [${code}]: ${message}. Ensure the required Microsoft Graph app permissions are consented.`);
+      throw new Error(`Graph permission denied [${code}]: ${message}. Ensure the required Microsoft Graph app permissions are consented via the admin consent URL.`);
     }
     throw new Error(`Graph API error [${code}]: ${message}`);
   }
@@ -45,11 +51,13 @@ export class MicrosoftGraphClient {
     }));
   }
 
-  private async patch(path: string, body: unknown): Promise<unknown> {
-    return parseGraph(await this.fetch(path, {
-      method: "PATCH",
-      body: JSON.stringify(body),
-    }));
+  /**
+   * Returns the base path prefix for user-scoped API calls:
+   * - "me"        → "/me"   (delegated — uses the token's own identity)
+   * - anything else → "/users/{encoded}" (admin/service-account impersonation)
+   */
+  private userBase(userId: string): string {
+    return userId === "me" ? "/me" : `/users/${encodeURIComponent(userId)}`;
   }
 
   // ── Users / Azure AD ────────────────────────────────────────────────────────
@@ -65,9 +73,7 @@ export class MicrosoftGraphClient {
   async listUsers(filter?: string, search?: string, top = 20): Promise<unknown> {
     const sp = new URLSearchParams({ $top: String(top) });
     if (filter) sp.set("$filter", filter);
-    if (search) {
-      sp.set("$search", `"${search}"`);
-    }
+    if (search) sp.set("$search", `"${search}"`);
     return this.get(`/users?${sp.toString()}`);
   }
 
@@ -80,11 +86,14 @@ export class MicrosoftGraphClient {
     ccRecipients?: { emailAddress: { address: string; name?: string } }[];
     importance?: "Low" | "Normal" | "High";
   }): Promise<null> {
-    return this.post(`/users/${encodeURIComponent(userId)}/sendMail`, { message, saveToSentItems: true }) as Promise<null>;
+    return this.post(`${this.userBase(userId)}/sendMail`, {
+      message,
+      saveToSentItems: true,
+    }) as Promise<null>;
   }
 
   async getMessage(userId: string, messageId: string): Promise<unknown> {
-    return this.get(`/users/${encodeURIComponent(userId)}/messages/${encodeURIComponent(messageId)}?$expand=attachments`);
+    return this.get(`${this.userBase(userId)}/messages/${encodeURIComponent(messageId)}?$expand=attachments`);
   }
 
   async searchMessages(userId: string, query: string, top = 20): Promise<unknown> {
@@ -93,7 +102,7 @@ export class MicrosoftGraphClient {
       $top: String(top),
       $select: "id,subject,from,receivedDateTime,importance,isRead,bodyPreview,hasAttachments",
     });
-    return this.get(`/users/${encodeURIComponent(userId)}/messages?${sp.toString()}`);
+    return this.get(`${this.userBase(userId)}/messages?${sp.toString()}`);
   }
 
   // ── Calendar ─────────────────────────────────────────────────────────────────
@@ -106,7 +115,7 @@ export class MicrosoftGraphClient {
       $orderby: "start/dateTime",
       $select: "id,subject,start,end,organizer,attendees,location,onlineMeeting,isAllDay,isCancelled,bodyPreview",
     });
-    return this.get(`/users/${encodeURIComponent(userId)}/calendarView?${sp.toString()}`);
+    return this.get(`${this.userBase(userId)}/calendarView?${sp.toString()}`);
   }
 
   async createCalendarEvent(userId: string, event: {
@@ -119,11 +128,12 @@ export class MicrosoftGraphClient {
     isOnlineMeeting?: boolean;
     recurrence?: unknown;
   }): Promise<unknown> {
-    return this.post(`/users/${encodeURIComponent(userId)}/events`, event);
+    return this.post(`${this.userBase(userId)}/events`, event);
   }
 
   // ── Teams ──────────────────────────────────────────────────────────────────
 
+  /** Lists Teams the authenticated user (delegated) or service account is a member of */
   async listJoinedTeams(): Promise<unknown> {
     return this.get("/me/joinedTeams");
   }
@@ -165,7 +175,7 @@ export class MicrosoftGraphClient {
   }
 
   async getOneDriveFile(userId: string, itemPath: string): Promise<unknown> {
-    return this.get(`/users/${encodeURIComponent(userId)}/drive/root:/${encodeURIComponent(itemPath)}`);
+    return this.get(`${this.userBase(userId)}/drive/root:/${encodeURIComponent(itemPath)}`);
   }
 
   // ── Connection test ─────────────────────────────────────────────────────────

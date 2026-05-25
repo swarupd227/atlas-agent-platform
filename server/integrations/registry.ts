@@ -6,6 +6,12 @@ export interface OAuthConfig {
   tokenUrl: string;
   defaultScopes: string[];
   pkce: boolean;
+  /** Azure AD / similar: admin consent URL template for app-level permissions */
+  adminConsentUrlTemplate?: string;
+  /** Human-readable required permissions for the connect-flow guidance step */
+  requiredPermissions?: { permission: string; type: "Delegated" | "Application"; description: string }[];
+  /** Connect-flow guidance shown before the user clicks "Authorize" */
+  connectGuidance?: string;
 }
 
 export interface FieldDef {
@@ -142,7 +148,19 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     oauthConfig: {
       authorizationUrl: "https://slack.com/oauth/v2/authorize",
       tokenUrl: "https://slack.com/api/oauth.v2.access",
-      defaultScopes: ["channels:read", "chat:write", "users:read", "files:read"],
+      defaultScopes: [
+        "channels:history",
+        "channels:read",
+        "chat:write",
+        "files:read",
+        "groups:history",
+        "groups:read",
+        "reactions:write",
+        "search:read",
+        "users:read",
+        "users:read.email",
+        "canvases:write",
+      ],
       pkce: false,
     },
     docsUrl: "https://api.slack.com",
@@ -188,10 +206,23 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
         "offline_access",
       ],
       pkce: true,
+      adminConsentUrlTemplate: "https://login.microsoftonline.com/{tenantId}/adminconsent?client_id={clientId}&redirect_uri={redirectUri}",
+      requiredPermissions: [
+        { permission: "Mail.ReadWrite",        type: "Delegated",   description: "Read and send email on behalf of the signed-in user" },
+        { permission: "Mail.Send",             type: "Delegated",   description: "Send email on behalf of the signed-in user" },
+        { permission: "Calendars.ReadWrite",   type: "Delegated",   description: "Read and create calendar events" },
+        { permission: "User.Read.All",         type: "Application", description: "Look up any user in the Azure AD directory" },
+        { permission: "Team.ReadBasic.All",    type: "Application", description: "List Teams the service account is a member of" },
+        { permission: "ChannelMessage.Send",   type: "Application", description: "Post messages to Teams channels" },
+        { permission: "ChannelMessage.Read.All", type: "Application", description: "Read Teams channel messages" },
+        { permission: "Files.Read.All",        type: "Application", description: "Read SharePoint and OneDrive files" },
+        { permission: "Sites.Read.All",        type: "Application", description: "Read SharePoint site pages and content" },
+      ],
     },
     docsUrl: "https://docs.microsoft.com/en-us/graph/overview",
     wave: 3,
     capabilities: ["read_email", "send_email", "read_calendar", "create_events", "read_users", "send_teams_messages", "read_sharepoint", "read_onedrive"],
+    connectGuidance: "Before connecting, an Azure AD Global Administrator must grant admin consent for the required application permissions. Use the Admin Consent URL below (substitute your tenant_id and client_id) to open the Microsoft Entra admin center consent flow: https://login.microsoftonline.com/{tenant_id}/adminconsent?client_id={client_id}",
   },
 
   // ── Wave 4: Data & ERP ────────────────────────────────────────────────────

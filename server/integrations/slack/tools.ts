@@ -38,12 +38,26 @@ export async function slack_post_message(
   if (!channel) throw new Error("channel is required");
   if (!text && !blocks) throw new Error("Either text or blocks is required");
 
-  const attributed = text ? withAttribution(text, agent_name) : undefined;
+  // Attribution: always append footer to text; for block-only posts, inject a
+  // plain-text context block at the bottom (used for accessibility + transparency)
+  const attributedText = text ? withAttribution(text, agent_name) : undefined;
+
+  let finalBlocks = blocks;
+  if (blocks && !text) {
+    const byLine = agent_name ? `Sent by *${agent_name}* via Atlas` : "Sent via Atlas Agent Orchestrator";
+    finalBlocks = [
+      ...blocks,
+      {
+        type: "context",
+        elements: [{ type: "mrkdwn", text: `_${byLine}_` }],
+      },
+    ];
+  }
 
   const result = await client.postMessage({
     channel,
-    text: attributed ?? text ?? "",
-    blocks,
+    text: attributedText ?? (blocks ? "Atlas agent message" : ""),
+    blocks: finalBlocks,
     mrkdwn: true,
   });
 

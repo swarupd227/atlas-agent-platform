@@ -303,6 +303,30 @@ export function createMicrosoftGraphRouter(): Router {
     res.json(result);
   });
 
+  /**
+   * GET /api/integrations/msgraph/permissions
+   * Returns the required Azure AD app permissions and admin-consent URL template.
+   * Used by the Atlas connect-flow UI to show an admin-consent guidance step before OAuth.
+   */
+  router.get("/permissions", (_req: Request, res: Response) => {
+    res.json({
+      integration: "msgraph",
+      adminConsentUrlTemplate: "https://login.microsoftonline.com/{tenant_id}/adminconsent?client_id={client_id}&redirect_uri={redirect_uri}",
+      connectGuidance: "An Azure AD Global Administrator must grant admin consent for the permissions below before users can connect. Substitute {tenant_id} and {client_id} with your Azure App Registration values.",
+      requiredPermissions: [
+        { permission: "Mail.ReadWrite",          type: "Delegated",   description: "Read and send email on behalf of the signed-in user" },
+        { permission: "Mail.Send",               type: "Delegated",   description: "Send email on behalf of the signed-in user" },
+        { permission: "Calendars.ReadWrite",     type: "Delegated",   description: "Read and create calendar events" },
+        { permission: "User.Read.All",           type: "Application", description: "Look up any user in the Azure AD directory" },
+        { permission: "Team.ReadBasic.All",      type: "Application", description: "List Teams the service account is a member of" },
+        { permission: "ChannelMessage.Send",     type: "Application", description: "Post messages to Teams channels" },
+        { permission: "ChannelMessage.Read.All", type: "Application", description: "Read Teams channel messages" },
+        { permission: "Files.Read.All",          type: "Application", description: "Read SharePoint and OneDrive files" },
+        { permission: "Sites.Read.All",          type: "Application", description: "Read SharePoint site pages and content" },
+      ],
+    });
+  });
+
   router.post("/connection-test", async (req: Request, res: Response) => {
     const orgId = getOrgId(req) ?? getDefaultOrgId();
     const credentials = await microsoftGraphMcpServer.getCredentials(orgId);
