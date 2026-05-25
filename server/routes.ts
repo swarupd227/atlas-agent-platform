@@ -100,6 +100,9 @@ import enterpriseIntegrationsRouter, { startTokenRefreshDaemon } from "./routes/
 import { registerEnterpriseIntegrations } from "./integrations/register";
 import { createSalesforceRouter } from "./integrations/salesforce/mcp-server";
 import { createHubSpotRouter } from "./integrations/hubspot/mcp-server";
+import { createServiceNowRouter } from "./integrations/servicenow/mcp-server";
+import { createJiraRouter } from "./integrations/jira/mcp-server";
+import { createGitHubRouter } from "./integrations/github/mcp-server";
 
 export { computeConstraintGraph, recomputeOutcomeKpis };
 export type { KpiReEvalResult };
@@ -338,9 +341,12 @@ export async function registerRoutes(
   app.use(evalStudioRouter);
   app.use(enterpriseIntegrationsRouter);
 
-  // ── Enterprise CRM Integration routers ──────────────────────────────────────
+  // ── Enterprise Integration routers (Wave 1: CRM, Wave 2: ITSM + DevOps) ────
   app.use("/api/integrations/salesforce", createSalesforceRouter());
   app.use("/api/integrations/hubspot", createHubSpotRouter());
+  app.use("/api/integrations/servicenow", createServiceNowRouter());
+  app.use("/api/integrations/jira", createJiraRouter());
+  app.use("/api/integrations/github", createGitHubRouter());
 
   // ── Enterprise integration catalog endpoint ──────────────────────────────────
   app.post("/api/integrations/register", async (_req, res) => {

@@ -8,6 +8,9 @@
 import { storage } from "../storage";
 import { salesforceMcpServer } from "./salesforce/mcp-server";
 import { hubspotMcpServer } from "./hubspot/mcp-server";
+import { serviceNowMcpServer } from "./servicenow/mcp-server";
+import { jiraMcpServer } from "./jira/mcp-server";
+import { githubMcpServer } from "./github/mcp-server";
 import type { RealMcpBase } from "../real-mcp-base";
 
 const BASE_URL = `http://localhost:${process.env.PORT || 5000}`;
@@ -38,6 +41,30 @@ function getEnterpriseServerDefs(): EnterpriseServerDef[] {
       route: "/api/integrations/hubspot",
       riskTier: "MEDIUM",
       tags: ["crm", "hubspot", "enterprise", "wave-1"],
+    },
+    {
+      server: serviceNowMcpServer,
+      catalogName: "ServiceNow ITSM (Enterprise)",
+      description: "ServiceNow Table API + CMDB API — 11 real tools for incident management, change requests, CMDB CI lookup, task creation, and service catalog. Supports Basic auth and OAuth Bearer.",
+      route: "/api/integrations/servicenow",
+      riskTier: "HIGH",
+      tags: ["itsm", "servicenow", "enterprise", "wave-2"],
+    },
+    {
+      server: jiraMcpServer,
+      catalogName: "Jira Cloud (Enterprise)",
+      description: "Jira Cloud REST API v3 — 10 real tools for issue search (JQL), creation, updates, transitions, sprint management, and project enumeration. Requires API token.",
+      route: "/api/integrations/jira",
+      riskTier: "MEDIUM",
+      tags: ["devops", "jira", "enterprise", "wave-2"],
+    },
+    {
+      server: githubMcpServer,
+      catalogName: "GitHub (Enterprise)",
+      description: "GitHub REST API v3 — 10 real tools for issue and PR management, code search, commit history, and repository metadata. Requires Personal Access Token.",
+      route: "/api/integrations/github",
+      riskTier: "MEDIUM",
+      tags: ["devops", "github", "enterprise", "wave-2"],
     },
   ];
 }
@@ -117,4 +144,4 @@ export async function registerEnterpriseIntegrations(): Promise<{ servers: any[]
   return { servers, tools: toolCount };
 }
 
-export { salesforceMcpServer, hubspotMcpServer };
+export { salesforceMcpServer, hubspotMcpServer, serviceNowMcpServer, jiraMcpServer, githubMcpServer };
