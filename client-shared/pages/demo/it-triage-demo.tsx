@@ -17,6 +17,7 @@ interface TriageStep {
   tool: string;
   integration: Integration;
   status: StepStatus;
+  mode: "live" | "demo" | null;
   durationMs?: number;
   result?: unknown;
   error?: string;
@@ -29,6 +30,7 @@ interface TriageSummary {
   jiraTicketKey: string;
   workNoteAdded: boolean;
   totalMs: number;
+  mode: "live" | "demo";
 }
 
 interface DemoStatus {
@@ -83,6 +85,20 @@ function StatusIcon({ status }: { status: StepStatus }) {
   return <AlertCircle className="w-4 h-4 text-rose-400" />;
 }
 
+function ModeBadge({ mode }: { mode: "live" | "demo" | null }) {
+  if (!mode) return null;
+  if (mode === "live") return (
+    <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 font-semibold">
+      LIVE
+    </span>
+  );
+  return (
+    <span className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded border border-slate-600/40 bg-slate-700/20 text-slate-500 font-semibold">
+      DEMO
+    </span>
+  );
+}
+
 function StepCard({ step, expanded, onToggle }: {
   step: TriageStep;
   expanded: boolean;
@@ -110,10 +126,11 @@ function StepCard({ step, expanded, onToggle }: {
               <IntegrationIcon integration={step.integration} />
               {INTEGRATION_LABEL[step.integration]}
             </span>
+            {step.status === "complete" && <ModeBadge mode={step.mode} />}
           </div>
           <div className="text-xs text-slate-500 mt-0.5 font-mono">{step.tool}</div>
         </div>
-        {step.durationMs && (
+        {step.durationMs != null && (
           <span className="text-xs text-slate-500 shrink-0">{step.durationMs}ms</span>
         )}
       </button>
@@ -137,11 +154,16 @@ function StepCard({ step, expanded, onToggle }: {
 
 function SummaryCard({ summary }: { summary: TriageSummary }) {
   const elapsed = (summary.totalMs / 1000).toFixed(1);
+  const isLive = summary.mode === "live";
   return (
     <div className="border border-emerald-500/30 rounded-lg bg-emerald-500/5 p-4 space-y-3">
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <CheckCircle2 className="w-5 h-5 text-emerald-400" />
         <span className="text-sm font-semibold text-emerald-400">Triage complete — {elapsed}s end-to-end</span>
+        {isLive
+          ? <span className="text-[10px] px-1.5 py-0.5 rounded border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 font-bold">LIVE APIS</span>
+          : <span className="text-[10px] px-1.5 py-0.5 rounded border border-slate-600/40 bg-slate-700/20 text-slate-400 font-bold">DEMO DATA</span>
+        }
       </div>
       <div className="grid grid-cols-2 gap-3 text-sm">
         <div>
@@ -331,8 +353,8 @@ export default function ItTriageDemo() {
               <li><span className="text-[#62D84E]">ServiceNow</span> — <code className="text-xs bg-slate-800 px-1 py-0.5 rounded">snow_add_work_note</code> links the new Jira ticket back to the incident for the ops team</li>
             </ol>
             <div className="text-xs text-slate-500 border-t border-slate-700/50 pt-3">
-              <Badge variant="outline" className="text-xs border-slate-600 text-slate-500 mr-2">Demo mode</Badge>
-              This scenario uses realistic mock data. Connect real credentials in the Integrations settings to run against live instances.
+              <Badge variant="outline" className="text-xs border-slate-600 text-slate-500 mr-2">Real tool calls</Badge>
+              Each step invokes the actual MCP tool (snow/github/jira). Steps show <span className="text-emerald-400 font-semibold">LIVE</span> when connected credentials are present, or <span className="text-slate-400 font-semibold">DEMO</span> when falling back to representative data. Connect credentials in Integrations settings to run fully live.
             </div>
           </div>
         ) : null}
