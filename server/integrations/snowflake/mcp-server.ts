@@ -146,7 +146,6 @@ export class SnowflakeMcpServer extends RealMcpBase {
       access_token: credentials.access_token,
       warehouse:    credentials.warehouse,
       database:     credentials.database,
-      role:         credentials.role,
     };
 
     const fetcher = (url: string, options?: RequestInit) =>

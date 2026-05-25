@@ -34,6 +34,8 @@ export interface IntegrationDef {
   docsUrl?: string;
   wave: 1 | 2 | 3 | 4;
   capabilities: string[];
+  /** Indicates whether connecting this integration requires advanced admin steps (key-pair auth, tenant config, etc.) */
+  setupComplexity?: "standard" | "advanced";
 }
 
 export const INTEGRATION_REGISTRY: IntegrationDef[] = [
@@ -242,6 +244,7 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     ],
     docsUrl: "https://docs.snowflake.com/en/developer-guide/sql-api",
     wave: 4,
+    setupComplexity: "advanced",
     capabilities: ["run_queries", "read_schema", "read_tables", "create_views"],
   },
   {
@@ -264,6 +267,7 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     ],
     docsUrl: "https://community.workday.com/api",
     wave: 4,
+    setupComplexity: "advanced",
     capabilities: ["read_workers", "read_organizations", "read_payroll", "read_financials"],
   },
   {
@@ -281,6 +285,7 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
     ],
     docsUrl: "https://api.sap.com",
     wave: 4,
+    setupComplexity: "advanced",
     capabilities: ["read_materials", "read_purchase_orders", "read_financials", "create_service_orders"],
   },
 ];
