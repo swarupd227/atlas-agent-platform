@@ -230,7 +230,20 @@ export async function jira_list_projects(
   args: Record<string, unknown>
 ): Promise<McpToolResult> {
   const max_results = Math.min(Number(args.max_results ?? 50), 100);
+  const include_issue_counts = Boolean(args.include_issue_counts ?? true);
   const projects = await client.listProjects(max_results);
+
+  let issueCounts: Record<string, number> = {};
+  if (include_issue_counts && projects.length > 0) {
+    const counts = await Promise.all(
+      projects.map(p =>
+        client.searchIssues(`project = "${p.key}"`, ["summary"], 0, 0)
+          .then(r => ({ key: p.key, count: r.total }))
+          .catch(() => ({ key: p.key, count: null as number | null }))
+      )
+    );
+    issueCounts = Object.fromEntries(counts.map(c => [c.key, c.count ?? 0]));
+  }
 
   const summary = projects.map(p => ({
     key: p.key,
@@ -238,6 +251,7 @@ export async function jira_list_projects(
     type: p.projectTypeKey,
     description: (p as any).description ?? null,
     lead: maskEmail((p as any).lead?.emailAddress) ?? (p as any).lead?.displayName ?? null,
+    issue_count: include_issue_counts ? (issueCounts[p.key] ?? null) : undefined,
   }));
 
   return ok({ count: summary.length, projects: summary });

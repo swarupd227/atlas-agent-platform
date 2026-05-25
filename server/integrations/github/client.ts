@@ -226,12 +226,12 @@ export class GitHubClient {
     return this.request(`/repos/${owner}/${repo}/pulls/${number}/reviews`);
   }
 
-  /** Get PR check runs (CI status) */
-  async getPRChecks(owner: string, repo: string, ref: string): Promise<{
+  /** Get PR check runs by commit SHA */
+  async getPRChecks(owner: string, repo: string, sha: string): Promise<{
     total_count: number;
     check_runs: Array<{ name: string; status: string; conclusion: string | null; html_url: string }>;
   }> {
-    return this.request(`/repos/${owner}/${repo}/check-runs?ref=${encodeURIComponent(ref)}&per_page=10`);
+    return this.request(`/repos/${owner}/${repo}/commits/${encodeURIComponent(sha)}/check-runs?per_page=10`);
   }
 
   /** Get repository metadata */
@@ -255,6 +255,11 @@ export class GitHubClient {
       per_page: String(Math.min(perPage, 30)),
     });
     return this.request(`/search/code?${sp.toString()}`);
+  }
+
+  /** Get a single commit with diff stats */
+  async getCommit(owner: string, repo: string, sha: string): Promise<GHCommit & { stats?: { additions: number; deletions: number; total: number } }> {
+    return this.request(`/repos/${owner}/${repo}/commits/${sha}`);
   }
 
   /** List commits for a branch */

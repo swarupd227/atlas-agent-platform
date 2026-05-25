@@ -145,11 +145,13 @@ export class ServiceNowClient {
     });
   }
 
-  /** Service Catalog: get a catalog item */
+  /** Service Catalog: get a catalog item via Table API (most universally supported) */
   async getCatalogItem(sysId: string): Promise<SNRecord> {
-    const sp = new URLSearchParams({ sysparm_display_value: "true" });
-    const result = await this.request<SNSingleResult>(`/sc/catalog/items/${sysId}?${sp.toString()}`);
-    return result.result;
+    return this.getRecord("sc_cat_item", sysId, [
+      "sys_id", "name", "short_description", "description", "category",
+      "price", "delivery_time", "active", "sc_catalogs", "availability",
+      "visible_standalone", "order_now", "variables",
+    ]);
   }
 }
 

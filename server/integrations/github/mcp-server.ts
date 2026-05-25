@@ -153,15 +153,16 @@ export class GitHubMcpServer extends RealMcpBase {
     },
     {
       name: "gh_list_commits",
-      description: "List recent commits for a branch with author, message, and diff stats.",
+      description: "List recent commits for a branch with author and message. Set include_stats=true to fetch per-commit diff stats (capped at 10 commits due to API cost).",
       inputSchema: {
         type: "object",
         properties: {
           repo: { type: "string", description: "Repository in owner/repo format (required)" },
           branch: { type: "string", description: "Branch name (default: repository default branch)" },
-          per_page: { type: "number", description: "Commits to return (default 20, max 50)" },
+          per_page: { type: "number", description: "Commits to return (default 10, max 30)" },
           since: { type: "string", description: "ISO 8601 date: only commits after this date" },
           until: { type: "string", description: "ISO 8601 date: only commits before this date" },
+          include_stats: { type: "boolean", description: "If true and per_page <= 10, fetches per-commit diff stats (additions/deletions). Default false." },
         },
         required: ["repo"],
       },

@@ -10,6 +10,7 @@ import { runOnespanDemo, setupOnespanDemo, resetOnespanDemo, getOnespanAgentRuns
 import { otcFulfillmentLiveRunHandler, getOtcFulfillmentAgentRuns, resetOtcFulfillmentDemo, ensureOtcFulfillmentAgents } from "../otc-fulfillment-live-run";
 import { advSupportLiveRunHandler, getAdvSupportAgentRuns, resetAdvSupportDemo } from "../advantive-support-live-run";
 import { otcCashLiveRunHandler, getOtcCashAgentRuns, resetOtcCashDemo, ensureOtcCashAgents } from "../otc-cash-application-live-run";
+import { itTriageTriggerHandler, itTriageStatusHandler, itTriageResetHandler } from "../it-triage-live-run";
 
 import { seedPartnerPortalRegistry } from "../seed-blackrock2-partner-portal";
 import { storage } from "../storage";
@@ -3245,6 +3246,11 @@ Log every action.`;
   router.post("/demo-api/fitch-rw/reset",     fitchRWResetHandler);
   router.get("/demo-api/fitch-rw/live-run",   fitchRWLiveRunHandler);
   router.get("/demo-api/fitch-rw/agent-runs", getFitchRWAgentRuns);
+
+  // ── IT Incident Triage — ServiceNow + GitHub + Jira multi-integration demo ─
+  router.post("/api/demo/it-triage/trigger", itTriageTriggerHandler);
+  router.get("/api/demo/it-triage/status",   itTriageStatusHandler);
+  router.post("/api/demo/it-triage/reset",   itTriageResetHandler);
 
   // ── Demo 4: Advantive ONE AI-First Tier 1 Support Intelligence ─────────────
   router.get("/demo-api/advantive-support/live-run",   advSupportLiveRunHandler);

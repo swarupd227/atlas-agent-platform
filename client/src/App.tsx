@@ -131,6 +131,7 @@ import OtcDisputeDemo from "@client-shared/pages/demo/otc-dispute-demo";
 import HnpGovtDemo from "@client-shared/pages/demo/hnp-govt-demo";
 import HnpSubDemo from "@client-shared/pages/demo/hnp-sub-demo";
 import McgKbDemo from "@client-shared/pages/demo/mcg-kb-demo";
+import ItTriageDemo from "@client-shared/pages/demo/it-triage-demo";
 import SolifiDealerDemo from "@client-shared/pages/demo/solifi-dealer-demo";
 import PkgSchedDemo from "@client-shared/pages/demo/pkg-sched-demo";
 import SHHealthcareDemo from "@client-shared/pages/demo/sh-healthcare-demo";
@@ -375,6 +376,7 @@ function DashboardRouter() {
       <Route path="/demo/hnp-govt" component={HnpGovtDemo} />
       <Route path="/demo/hnp-sub" component={HnpSubDemo} />
       <Route path="/demo/mcg-kb" component={McgKbDemo} />
+      <Route path="/demo/it-triage" component={ItTriageDemo} />
       <Route path="/demo/solifi-dealer" component={SolifiDealerDemo} />
       <Route path="/demo/pkg-sched" component={PkgSchedDemo} />
           <Route path="/demo/onespan" component={OnespanDemo} />

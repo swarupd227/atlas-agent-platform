@@ -217,10 +217,10 @@ export async function gh_get_pr(
   if (!number) throw new Error("number is required");
 
   const { owner, repo: repoName } = parseRepo(repo);
-  const [pr, reviews, checks] = await Promise.all([
-    client.getPR(owner, repoName, number),
+  const pr = await client.getPR(owner, repoName, number);
+  const [reviews, checks] = await Promise.all([
     client.getPRReviews(owner, repoName, number),
-    client.getPRChecks(owner, repoName, pr?.head?.sha ?? "").catch(() => ({ total_count: 0, check_runs: [] })),
+    client.getPRChecks(owner, repoName, pr.head.sha).catch(() => ({ total_count: 0, check_runs: [] })),
   ]);
 
   const checkRuns = checks.check_runs ?? [];
@@ -333,32 +333,57 @@ export async function gh_list_commits(
   if (!repo) throw new Error("repo is required");
 
   const { owner, repo: repoName } = parseRepo(repo);
+  const perPage = Math.min(Number(args.per_page ?? 10), 30);
   const commits = await client.listCommits(
     owner,
     repoName,
     args.branch as string | undefined,
-    Math.min(Number(args.per_page ?? 20), 50),
+    perPage,
     args.since as string | undefined,
     args.until as string | undefined
   );
 
-  const items = commits.map(c => ({
-    sha: c.sha.slice(0, 7),
-    full_sha: c.sha,
-    message: c.commit.message.split("\n")[0],
-    author_name: c.commit.author.name,
-    author_login: c.author?.login ?? null,
-    date: c.commit.author.date,
-    additions: c.stats?.additions,
-    deletions: c.stats?.deletions,
-    total_changes: c.stats?.total,
-    html_url: c.html_url,
-    verified: c.commit.verification?.verified ?? null,
-  }));
+  const withStats = Boolean(args.include_stats ?? false);
+  let enriched: Array<{ sha: string; additions?: number; deletions?: number; total_changes?: number }> = [];
+
+  if (withStats && commits.length > 0 && commits.length <= 10) {
+    const statResults = await Promise.all(
+      commits.map(c => client.getCommit(owner, repoName, c.sha).catch(() => null))
+    );
+    enriched = statResults.map((c, i) => ({
+      sha: commits[i].sha,
+      additions: c?.stats?.additions,
+      deletions: c?.stats?.deletions,
+      total_changes: c?.stats?.total,
+    }));
+  }
+
+  const statsMap = new Map(enriched.map(e => [e.sha, e]));
+
+  const items = commits.map(c => {
+    const stats = statsMap.get(c.sha);
+    const base: Record<string, unknown> = {
+      sha: c.sha.slice(0, 7),
+      full_sha: c.sha,
+      message: c.commit.message.split("\n")[0],
+      author_name: c.commit.author.name,
+      author_login: c.author?.login ?? null,
+      date: c.commit.author.date,
+      html_url: c.html_url,
+      verified: c.commit.verification?.verified ?? null,
+    };
+    if (withStats && stats) {
+      base.additions = stats.additions ?? null;
+      base.deletions = stats.deletions ?? null;
+      base.total_changes = stats.total_changes ?? null;
+    }
+    return base;
+  });
 
   return ok({
     count: items.length,
-    has_more: commits.length === Math.min(Number(args.per_page ?? 20), 50),
+    has_more: commits.length === perPage,
+    stats_included: withStats && enriched.length > 0,
     commits: items,
   });
 }
