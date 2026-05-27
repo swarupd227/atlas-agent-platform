@@ -162,6 +162,7 @@ export class WorkdayMcpServer extends RealMcpBase {
       client_id:     credentials.client_id ?? "",
       client_secret: credentials.client_secret ?? "",
       access_token:  credentials.access_token,
+      hostname:      credentials.hostname,
     };
 
     // WorkdayClient manages its own OAuth2 token lifecycle (acquires + refreshes via
@@ -233,13 +234,15 @@ export function createWorkdayRouter(): Router {
         client_id:     credentials.client_id ?? "",
         client_secret: credentials.client_secret ?? "",
         access_token:  credentials.access_token,
+        hostname:      credentials.hostname,
       };
       const testFetcher = (url: string, options?: RequestInit) =>
         workdayMcpServer["fetchWithAuth"](url, { ...options, orgId });
       const client = new WorkdayClient(wdCreds, testFetcher);
       const token = await (client as any).getAccessToken();
+      const wdHost = wdCreds.hostname?.replace(/^https?:\/\//, "").replace(/\/$/, "") ?? "wd2.myworkday.com";
       const testRes = await workdayMcpServer["fetchWithAuth"](
-        `https://wd2.myworkday.com/api/v1/${credentials.tenant_name}/workers?limit=1`,
+        `https://${wdHost}/api/v1/${credentials.tenant_name}/workers?limit=1`,
         { bearerToken: token, orgId }
       );
       res.json({
@@ -247,6 +250,7 @@ export function createWorkdayRouter(): Router {
         statusCode: testRes.status,
         integration: "workday",
         tenant: credentials.tenant_name,
+        host: wdHost,
         error: testRes.ok ? undefined : `HTTP ${testRes.status}`,
       });
     } catch (e: any) {

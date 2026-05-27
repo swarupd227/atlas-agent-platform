@@ -62,14 +62,55 @@ export async function sf_list_databases(client: SnowflakeClient, args: Record<st
 }
 
 // ── Tool: sf_list_tables ──────────────────────────────────────────────────────
+// Returns tables with row counts AND a column summary (names + types) fetched
+// in a single INFORMATION_SCHEMA.COLUMNS batch query, grouped by table.
 
 export async function sf_list_tables(client: SnowflakeClient, args: Record<string, unknown>): Promise<McpToolResult> {
   const database = String(args.database ?? "");
   const schema = String(args.schema ?? "PUBLIC");
   if (!database) return err("database is required");
   try {
-    const result = await client.listTables(database, schema);
-    return ok(result);
+    const [tableResult, colResult] = await Promise.allSettled([
+      client.listTables(database, schema),
+      client.executeQuery(
+        `SELECT table_name, column_name, data_type, ordinal_position ` +
+        `FROM "${database}".information_schema.columns ` +
+        `WHERE table_schema = '${schema.toUpperCase()}' ` +
+        `ORDER BY table_name, ordinal_position`
+      ),
+    ]);
+
+    if (tableResult.status === "rejected") return err((tableResult as any).reason?.message ?? "Failed to list tables");
+
+    const tables: Record<string, unknown>[] = (tableResult.value.rows ?? []) as Record<string, unknown>[];
+
+    // Build a map from table_name → [{column_name, data_type}] from the column query
+    const colsByTable = new Map<string, { column_name: string; data_type: string }[]>();
+    if (colResult.status === "fulfilled") {
+      for (const row of (colResult.value.rows ?? []) as Record<string, string>[]) {
+        const tbl = (row.table_name ?? row.TABLE_NAME ?? "").toUpperCase();
+        if (!colsByTable.has(tbl)) colsByTable.set(tbl, []);
+        colsByTable.get(tbl)!.push({
+          column_name: row.column_name ?? row.COLUMN_NAME ?? "",
+          data_type:   row.data_type   ?? row.DATA_TYPE   ?? "",
+        });
+      }
+    }
+
+    const enriched = tables.map(t => {
+      const tblKey = String(t.table_name ?? t.TABLE_NAME ?? "").toUpperCase();
+      return { ...t, columns: colsByTable.get(tblKey) ?? [] };
+    });
+
+    return ok({
+      database,
+      schema,
+      tables: enriched,
+      table_count: enriched.length,
+      columns_note: colResult.status === "rejected"
+        ? "Column summaries unavailable (INFORMATION_SCHEMA.COLUMNS query failed)"
+        : undefined,
+    });
   } catch (e: any) { return err(e.message); }
 }
 

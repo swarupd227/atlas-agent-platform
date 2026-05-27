@@ -35,6 +35,8 @@ export interface WorkdayCredentials {
   client_id: string;
   client_secret: string;
   access_token?: string;
+  /** Optional override for tenants not on the default wd2.myworkday.com host (e.g. wd5.myworkday.com or a VAN host) */
+  hostname?: string;
 }
 
 type Fetcher = (url: string, options?: RequestInit) => Promise<Response>;
@@ -68,16 +70,20 @@ export class WorkdayClient {
     this.token  = creds.access_token ?? "";
   }
 
+  private get wdHost(): string {
+    return this.creds.hostname?.replace(/^https?:\/\//, "").replace(/\/$/, "") ?? "wd2.myworkday.com";
+  }
+
   private get restBase(): string {
-    return `https://wd2.myworkday.com/api/v1/${this.tenant}`;
+    return `https://${this.wdHost}/api/v1/${this.tenant}`;
   }
 
   private get raasBase(): string {
-    return `https://wd2.myworkday.com/ccx/service/customreport2/${this.tenant}`;
+    return `https://${this.wdHost}/ccx/service/customreport2/${this.tenant}`;
   }
 
   private get tokenEndpoint(): string {
-    return `https://wd2.myworkday.com/ccx/oauth2/${this.tenant}/token`;
+    return `https://${this.wdHost}/ccx/oauth2/${this.tenant}/token`;
   }
 
   /**

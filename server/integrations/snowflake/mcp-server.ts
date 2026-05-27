@@ -197,11 +197,12 @@ export function createSnowflakeRouter(): Router {
     }
     try {
       const creds: SnowflakeCredentials = {
-        account: credentials.account,
-        username: credentials.username ?? "",
-        password: credentials.password,
+        account:      credentials.account,
+        username:     credentials.username ?? "",
+        private_key:  credentials.private_key,
+        password:     credentials.password,
         access_token: credentials.access_token,
-        warehouse: credentials.warehouse,
+        warehouse:    credentials.warehouse,
       };
       const fetcher = (url: string, options?: RequestInit) =>
         snowflakeMcpServer["fetchWithAuth"](url, { ...options, orgId, timeoutMs: 15_000 });

@@ -265,6 +265,7 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
       { key: "tenant_name", label: "Tenant Name", type: "text", required: true, placeholder: "mycompany" },
       { key: "client_id", label: "Client ID", type: "text", required: true },
       { key: "client_secret", label: "Client Secret", type: "password", required: true },
+      { key: "hostname", label: "Workday Host (optional — defaults to wd2.myworkday.com)", type: "text", required: false, placeholder: "wd5.myworkday.com" },
     ],
     docsUrl: "https://community.workday.com/api",
     wave: 4,
