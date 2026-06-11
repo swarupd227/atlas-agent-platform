@@ -90,7 +90,7 @@ const SCENARIO_LABELS: Record<Scenario, { label: string; description: string; co
 const SYSTEM_COLORS: Record<string, string> = {
   SignPlus: "bg-indigo-600",
   USPS: "bg-blue-600",
-  "XNective Gateway": "bg-emerald-600",
+  "Kinective Gateway": "bg-emerald-600",
   "Digital Banking": "bg-cyan-600",
   "Statement Vendor": "bg-teal-600",
   "Card Management": "bg-orange-600",
@@ -420,7 +420,7 @@ function MemberCard({
 
 // ── System Configuration Panel ─────────────────────────────────────────────
 const ALL_SYSTEMS = [
-  "XNective Gateway (Core Banking)",
+  "Kinective Gateway (Core Banking)",
   "Digital Banking (Alkami)",
   "Statement Vendor (Doxim)",
   "Card Management (PSCU)",
@@ -434,7 +434,7 @@ const ALL_SYSTEMS = [
 ];
 
 const SYSTEM_TOOLS_MAP: Record<string, string[]> = {
-  "XNective Gateway (Core Banking)": ["update_member_address", "get_member_profile"],
+  "Kinective Gateway (Core Banking)": ["update_member_address", "get_member_profile"],
   "Digital Banking (Alkami)": ["update_digital_address", "notify_digital_banking"],
   "Statement Vendor (Doxim)": ["update_statement_address"],
   "Card Management (PSCU)": ["update_card_address"],
@@ -968,7 +968,7 @@ function NotificationPanel({ scenario, hasRun }: { scenario: Scenario; hasRun: b
   );
 }
 
-interface XNectiveLogEntry {
+interface KinectiveLogEntry {
   id: number;
   time: string;
   type: "run_start" | "setup" | "agent_start" | "tool_call_start" | "tool_call_result" | "run_complete" | "error";
@@ -978,7 +978,7 @@ interface XNectiveLogEntry {
   success?: boolean;
 }
 
-function XNectiveLogFeed({ entries, running, complete }: { entries: XNectiveLogEntry[]; running: boolean; complete: boolean }) {
+function KinectiveLogFeed({ entries, running, complete }: { entries: KinectiveLogEntry[]; running: boolean; complete: boolean }) {
   const feedRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight;
@@ -1100,11 +1100,11 @@ function ActivityFeed({ entries }: { entries: AuditEntry[] }) {
   );
 }
 
-export default function XNectiveDemo() {
+export default function KinectiveDemo() {
   const [scenario, setScenario] = useState<Scenario>("happy");
   const [running, setRunning] = useState(false);
   const [agentTeamOpen, setAgentTeamOpen] = useState(false);
-  const [logEntries, setLogEntries] = useState<XNectiveLogEntry[]>([]);
+  const [logEntries, setLogEntries] = useState<KinectiveLogEntry[]>([]);
   const [complete, setComplete] = useState(false);
   const sseRef = useRef<EventSource | null>(null);
   const logCounter = useRef(0);
@@ -1155,7 +1155,7 @@ export default function XNectiveDemo() {
     return () => { sseRef.current?.close(); };
   }, []);
 
-  const openXNectiveStream = (scenarioName: Scenario) => {
+  const openKinectiveStream = (scenarioName: Scenario) => {
     if (sseRef.current) {
       sseRef.current.close();
       sseRef.current = null;
@@ -1168,7 +1168,7 @@ export default function XNectiveDemo() {
       const d = new Date();
       return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
     };
-    const addEntry = (type: XNectiveLogEntry["type"], message: string, extra?: Partial<XNectiveLogEntry>) => {
+    const addEntry = (type: KinectiveLogEntry["type"], message: string, extra?: Partial<KinectiveLogEntry>) => {
       const id = ++logCounter.current;
       setLogEntries((prev) => [...prev, { id, time: now(), type, message, ...extra }]);
     };
@@ -1260,7 +1260,7 @@ export default function XNectiveDemo() {
   });
 
   const handlePipelineStarted = () => {
-    openXNectiveStream(scenario);
+    openKinectiveStream(scenario);
   };
 
   const systemUpdates = systemUpdatesQuery.data?.updates || [];
@@ -1278,7 +1278,7 @@ export default function XNectiveDemo() {
             <div>
               <div className="flex items-center gap-3">
                 <h1 className="text-xl font-bold" data-testid="kinective-demo-title">
-                  XNective — Change of Address
+                  Kinective — Change of Address
                 </h1>
                 <Badge variant="outline" className="bg-emerald-500/20 text-emerald-400 border-emerald-500/30">
                   Credit Union
@@ -1359,7 +1359,7 @@ export default function XNectiveDemo() {
               </Link>
             )}
             <Button
-              onClick={() => openXNectiveStream(scenario)}
+              onClick={() => openKinectiveStream(scenario)}
               disabled={running}
               variant="outline"
               size="sm"
@@ -1400,7 +1400,7 @@ export default function XNectiveDemo() {
           </div>
 
           <div className="col-span-5 space-y-4">
-            <XNectiveLogFeed entries={logEntries} running={running} complete={complete} />
+            <KinectiveLogFeed entries={logEntries} running={running} complete={complete} />
 
             <Collapsible open={agentTeamOpen} onOpenChange={setAgentTeamOpen}>
               <Card className="bg-zinc-900 border-zinc-800">

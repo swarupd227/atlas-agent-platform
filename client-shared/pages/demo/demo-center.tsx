@@ -84,7 +84,7 @@ const DEMOS: Demo[] = [
   {
     id: "kinective-change-of-address",
     title: "Change of Address Workflow",
-    client: "XNective",
+    client: "Kinective",
     description:
       "Intelligent address-change processing for financial accounts. Agent validates identity, cross-references fraud signals, updates downstream systems, and dispatches confirmation — all autonomously.",
     industry: "Financial Services",
