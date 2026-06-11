@@ -495,15 +495,15 @@ function EndpointCard({ entry, baseUrl }: { entry: EndpointEntry; baseUrl: strin
 
 function generatePythonSdk(baseUrl: string): string {
   return `"""
-Nous Agent Orchestrator - Python SDK Client
-Auto-generated client for the Nous platform API.
+ASTRA Agents - Python SDK Client
+Auto-generated client for the ASTRA Agents API.
 """
 import requests
 from typing import Optional, Dict, Any, List
 
 
 class NousClient:
-    """Client for the Nous Agent Orchestrator API."""
+    """Client for the ASTRA Agents API."""
 
     def __init__(self, base_url: str = "${baseUrl}", api_key: str = ""):
         self.base_url = base_url.rstrip("/")
@@ -703,8 +703,8 @@ if __name__ == "__main__":
 
 function generateTypeScriptSdk(baseUrl: string): string {
   return `/**
- * Nous Agent Orchestrator - TypeScript SDK Client
- * Auto-generated client for the Nous platform API.
+ * ASTRA Agents - TypeScript SDK Client
+ * Auto-generated client for the ASTRA Agents API.
  */
 
 interface RequestOptions {
@@ -989,7 +989,7 @@ export default function DeveloperPortal() {
       <div className="space-y-1">
         <h1 className="text-2xl font-bold tracking-tight" data-testid="text-page-title">Developer Portal</h1>
         <p className="text-muted-foreground">
-          API reference, code examples, and SDKs for programmatic access to the Nous Agent Orchestrator.
+          API reference, code examples, and SDKs for programmatic access to ASTRA Agents.
         </p>
       </div>
 

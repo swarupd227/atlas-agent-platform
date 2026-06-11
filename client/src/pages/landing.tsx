@@ -245,7 +245,7 @@ export default function Landing() {
         <div className="max-w-6xl mx-auto px-6 py-8 flex items-center justify-between gap-4 flex-wrap text-sm text-muted-foreground">
           <div className="flex items-center gap-2">
             <Bot className="w-4 h-4" />
-            <span>Nous Agent Orchestrator</span>
+            <span>ASTRA Agents</span>
           </div>
           <div>Industry-native AI agent operations</div>
         </div>

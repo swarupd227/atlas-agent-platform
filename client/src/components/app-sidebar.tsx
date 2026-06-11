@@ -226,8 +226,8 @@ function FullAppSidebar() {
               <Zap className="w-4 h-4 text-primary-foreground" />
             </div>
             <div className="flex flex-col">
-              <span className="text-sm font-semibold text-sidebar-foreground" data-testid="text-app-name">ATLAS</span>
-              <span className="text-[10px] text-muted-foreground leading-tight">Nous Agent Orchestrator Platform</span>
+              <span className="text-sm font-semibold text-sidebar-foreground" data-testid="text-app-name">ASTRA</span>
+              <span className="text-[10px] text-muted-foreground leading-tight">ASTRA Agents Platform</span>
             </div>
           </div>
         </Link>

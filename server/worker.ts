@@ -657,12 +657,12 @@ async function processReportScheduleRun(job: Job): Promise<Record<string, unknow
         <td style="padding:8px 0;font-size:13px;">${schedule.timeWindowDays ?? 30} days</td></tr>
   </table>
   <p style="color:#374151;font-size:13px;">${(report as any).executiveSummary ?? ""}</p>
-  <p style="color:#9ca3af;font-size:11px;margin-top:32px;">Nous Atlas · Compliance Report Scheduler</p>
+  <p style="color:#9ca3af;font-size:11px;margin-top:32px;">ASTRA Agents · Compliance Report Scheduler</p>
 </body></html>`;
           try {
             await sendReportEmail({
               to: recipients,
-              subject: `[Nous Atlas] ${reportName} — Score: ${overallScore}`,
+              subject: `[ASTRA Agents] ${reportName} — Score: ${overallScore}`,
               html,
             });
           } catch (emailErr: any) {

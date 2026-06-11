@@ -2,9 +2,9 @@ export function generateOpenAPISpec(baseUrl: string): object {
   return {
     openapi: "3.0.3",
     info: {
-      title: "Nous Agent Orchestrator API",
+      title: "ASTRA Agents API",
       version: "1.0.0",
-      description: "Complete REST API for the Nous Agent Orchestrator platform — an AI agent lifecycle management system covering agent creation, governance, evaluation, deployment, monitoring, and execution across industry verticals.",
+      description: "Complete REST API for the ASTRA Agents platform — an AI agent lifecycle management system covering agent creation, governance, evaluation, deployment, monitoring, and execution across industry verticals.",
       contact: {
         name: "Nous Platform Team",
       },

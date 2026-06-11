@@ -38,8 +38,8 @@ export default function LoginPage() {
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-primary/10 mb-4">
             <Shield className="h-8 w-8 text-primary" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-app-title">Nous Agent Orchestrator</h1>
-          <p className="text-sm text-muted-foreground">Nous Agent Orchestrator Platform</p>
+          <h1 className="text-2xl font-bold tracking-tight" data-testid="text-app-title">ASTRA Agents</h1>
+          <p className="text-sm text-muted-foreground">ASTRA Agents Platform</p>
         </div>
 
         <Card>

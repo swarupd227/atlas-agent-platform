@@ -16,7 +16,7 @@ interface DemoSlide {
 const DEMO_SLIDES: DemoSlide[] = [
   {
     image: "/demo-screenshots/01-overview.png",
-    title: "Nous Agent Orchestrator",
+    title: "ASTRA Agents",
     headline: "Your Industry. Your Agents. Your Context.",
     keywords: ["Industry-Native AI", "Autonomous Operations", "Compliance-First"],
     highlights: [
@@ -134,7 +134,7 @@ const DEMO_SLIDES: DemoSlide[] = [
   },
   {
     image: "/demo-screenshots/01-overview.png",
-    title: "Nous Agent Orchestrator",
+    title: "ASTRA Agents",
     headline: "Your Agents. Your Industry. Your Context.",
     keywords: ["Industry-Native", "Regulation-Ready", "Enterprise-Grade"],
     highlights: [
@@ -808,7 +808,7 @@ export default function DemoPlayer({ onClose }: DemoPlayerProps) {
       <div className="flex items-center justify-between gap-4 px-4 py-3 bg-black/80 border-b border-white/10">
         <div className="flex items-center gap-3 flex-wrap">
           <div className="text-white/90 text-sm font-semibold tracking-wide uppercase">
-            Nous Agent Orchestrator
+            ASTRA Agents
           </div>
         </div>
         <div className="flex items-center gap-1">
