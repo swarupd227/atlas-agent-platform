@@ -18,3 +18,9 @@ id = "WZDIhUrBwef3DVek05L2r"
 uri = "file://exports/Atlas_Accelerator_Proposal.md"
 type = "text"
 title = "Atlas Accelerator Proposal v2 — with Agent Creation, Outcome Contracts & KB Prerequisites"
+
+[[outputs]]
+id = "0y-vWJW7dANLJ3hmVHNA5"
+uri = "file://database_export.sql.gz"
+type = "unspecified"
+title = "ASTRA Agents — Database Export (.sql.gz)"
