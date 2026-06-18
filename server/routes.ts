@@ -89,6 +89,12 @@ import { mcgKbLiveRunHandler, getMcgKbAgentRuns, resetMcgKbDemo } from "./mcg-kb
 import { bbLiveRunHandler, getBBAgentRuns, getBBOutcomeData, getBBSelfHealingStatus, resetBBDemo, ensureBBAgents } from "./blackbook-live-run";
 import solifiDehRouter from "./mock-mcp/solifi-deh";
 import { dehEnsureAgentsHandler } from "./demo-routes";
+import glSyncGatewayRouter       from "./mock-mcp/gl-sync-gateway";
+import glSyncIntacctRouter       from "./mock-mcp/gl-sync-intacct";
+import glSyncReconciliationRouter from "./mock-mcp/gl-sync-reconciliation";
+import glSyncFileDeliveryRouter  from "./mock-mcp/gl-sync-file-delivery";
+import glSyncNotificationRouter  from "./mock-mcp/gl-sync-notification";
+import { glSyncLiveRunHandler, resetGlSyncHandler, getGlSyncStatusHandler } from "./gl-sync-live-run";
 import { registerMockMcpServers } from "./mock-mcp/register";
 import piiRouter from "./routes/pii";
 import feedbackRouter from "./routes/feedback";
@@ -278,6 +284,16 @@ export async function registerRoutes(
   // Solifi — Dealer Experience Hub (SCN-SOLIFI-DEH-1)
   app.use("/api/mock/solifi-deh",                    solifiDehRouter);
   app.post("/demo-api/solifi-dealer/ensure-agents",  dehEnsureAgentsHandler);
+
+  // Kinective — Prior-Day GL Synchronization (SCN-KINECTIVE-GL-1)
+  app.use("/api/mock/kinective-gateway-gl",    glSyncGatewayRouter);
+  app.use("/api/mock/sage-intacct",            glSyncIntacctRouter);
+  app.use("/api/mock/reconciliation-ledger",   glSyncReconciliationRouter);
+  app.use("/api/mock/file-delivery",           glSyncFileDeliveryRouter);
+  app.use("/api/mock/gl-notification",         glSyncNotificationRouter);
+  app.get("/demo-api/kinective-gl/stream",     glSyncLiveRunHandler);
+  app.post("/demo-api/kinective-gl/reset",     resetGlSyncHandler);
+  app.get("/demo-api/kinective-gl/status",     getGlSyncStatusHandler);
 
   // HNP Subscriber Intelligence & Churn Prevention (HNP-SUB) — Hearst Newspapers demo
   app.use("/api/mock/hnp-subscriber",      hnpSubscriberRouter);

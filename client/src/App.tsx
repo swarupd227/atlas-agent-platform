@@ -133,6 +133,7 @@ import HnpSubDemo from "@client-shared/pages/demo/hnp-sub-demo";
 import McgKbDemo from "@client-shared/pages/demo/mcg-kb-demo";
 import ItTriageDemo from "@client-shared/pages/demo/it-triage-demo";
 import SolifiDealerDemo from "@client-shared/pages/demo/solifi-dealer-demo";
+import KinectiveGlSyncDemo from "@client-shared/pages/demo/kinective-gl-sync-demo";
 import PkgSchedDemo from "@client-shared/pages/demo/pkg-sched-demo";
 import SHHealthcareDemo from "@client-shared/pages/demo/sh-healthcare-demo";
 import SHFinancialDemo from "@client-shared/pages/demo/sh-financial-demo";
@@ -363,6 +364,7 @@ function DashboardRouter() {
       <Route path="/demo" component={DemoCenter} />
       <Route path="/demo/blackrock" component={BlackRockDemo} />
       <Route path="/demo/blackrock2" component={BlackRock2Demo} />
+      <Route path="/demo/kinective-gl-sync" component={KinectiveGlSyncDemo} />
       <Route path="/demo/kinective-coa" component={KinectiveDemo} />
       <Route path="/demo/kinective" component={KinectiveDemo} />
       <Route path="/demo/moodys" component={MoodysDemo} />

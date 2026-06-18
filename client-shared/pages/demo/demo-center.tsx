@@ -31,6 +31,7 @@ import {
   FileSignature,
   Newspaper,
   Car,
+  GitMerge,
 } from "lucide-react";
 
 interface Demo {
@@ -80,6 +81,22 @@ const DEMOS: Demo[] = [
     duration: "10 min",
     screens: 4,
     tags: ["Offboarding", "Access Management", "IAM"],
+  },
+  {
+    id: "kinective-gl-sync",
+    title: "Prior-Day GL Synchronization",
+    client: "Kinective",
+    description:
+      "7-agent pod that extracts prior-day GL movements from Symitar, transforms and dimensions each entry, posts them to Sage Intacct, and reconciles control totals — all autonomously. Handles dimension mismatches and FX variance exceptions.",
+    industry: "Financial Services",
+    industryId: "financial_services",
+    route: "/demo/kinective-gl-sync",
+    icon: GitMerge,
+    iconColor: "hsl(265 70% 55%)",
+    duration: "6 min",
+    screens: 3,
+    tags: ["GL Sync", "Multi-Agent", "Reconciliation"],
+    badge: "New",
   },
   {
     id: "kinective-change-of-address",
