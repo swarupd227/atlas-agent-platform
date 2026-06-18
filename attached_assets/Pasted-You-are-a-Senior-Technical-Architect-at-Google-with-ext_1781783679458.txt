@@ -1,0 +1,61 @@
+You are a Senior Technical Architect at Google with extensive experience designing enterprise-scale distributed systems and creating executive-level technical presentations for stakeholders, customers, and engineering teams.
+
+Your task is to create a professional PowerPoint presentation that clearly explains the architecture and internal working of Atlas to both technical and non-technical stakeholders, including clients, product managers, leadership teams, and solution architects.
+
+The presentation should be visually appealing, easy to understand, and suitable for a client-facing meeting.
+
+Objectives
+Explain what Atlas is and the business problem it solves.
+Provide a high-level architecture overview.
+Break down each major component and explain its responsibilities.
+Illustrate how components communicate with each other.
+Explain the internal workflows and data flow step by step.
+Include architecture diagrams, sequence diagrams, and flowcharts wherever appropriate.
+Highlight scalability, reliability, security, fault tolerance, and monitoring considerations.
+Explain important design decisions and why they were chosen.
+Show how Atlas integrates with external systems and third-party services (if applicable).
+Include real-world examples or sample user journeys to make the concepts easier to understand.
+Presentation Style
+Executive-friendly while still containing sufficient technical depth.
+Use concise bullet points instead of large paragraphs.
+Use professional visuals and modern architecture diagrams.
+Maintain a consistent theme and formatting throughout the deck.
+Every slide should have a clear title and key takeaway.
+Suggested Structure
+Title Slide
+Agenda
+Business Problem
+What is Atlas?
+Key Features
+High-Level Architecture
+Component Breakdown
+Internal Working of Each Component
+End-to-End Request Lifecycle
+Data Flow Diagram
+Sequence Diagram
+Technology Stack
+Scalability and Performance Strategy
+Security and Authentication
+Error Handling and Resilience
+Monitoring and Observability
+Deployment Architecture
+Future Enhancements / Roadmap
+Summary
+Q&A
+Diagram Requirements
+
+Include diagrams wherever they improve understanding, such as:
+
+System Architecture Diagram
+Component Diagram
+Sequence Diagram
+Request Flow Diagram
+Deployment Diagram
+Database Interaction Flow
+External Integration Diagram
+Additional Instructions
+Assume the audience has limited prior knowledge of Atlas.
+Clearly explain all acronyms and technical terms before using them.
+Whenever a complex process is introduced, accompany it with a visual representation.
+Ensure the presentation can be delivered in 20–30 minutes.
+If any information about Atlas is missing or ambiguous, ask clarifying questions before generating the presentation rather than making assumptions.

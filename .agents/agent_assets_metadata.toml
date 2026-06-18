@@ -24,3 +24,9 @@ id = "0y-vWJW7dANLJ3hmVHNA5"
 uri = "file://database_export.sql.gz"
 type = "unspecified"
 title = "ASTRA Agents — Database Export (.sql.gz)"
+
+[[outputs]]
+id = "9-3JZKM7xTwoIpTUu1STf"
+uri = "file://ASTRA_Agents_Architecture_Deck.pptx"
+type = "slides"
+title = "ASTRA Agents — Atlas Platform Architecture Deck"
