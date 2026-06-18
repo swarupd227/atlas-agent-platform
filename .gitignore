@@ -8,3 +8,9 @@ vite.config.ts.*
 test-results/
 playwright-report/
 .local/.last-run.json
+
+# Generated exports & presentations (not for version control)
+database_export.sql
+database_export.sql.gz
+*.pptx
+scripts/generate_pptx.mjs
