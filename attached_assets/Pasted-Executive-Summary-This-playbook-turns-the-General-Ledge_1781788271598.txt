@@ -1,0 +1,94 @@
+Executive Summary
+This playbook turns the General Ledger synchronization workflow your team sketched into a live, governed Atlas demonstration. It takes the exact swim-lane process — start the service, pull the GL account list from Sage Intacct, fetch each account's prior-day entries from the core, transform them, post journal entries back to Sage Intacct, and report success or error — and shows it running as a pod of cooperating agents inside the Atlas Agent Lifecycle Management Platform (ALMP).
+It is deliberately the second template we demonstrate to Kinective, following Change of Address. That sequencing is the point: Change of Address proved Atlas can orchestrate a multi-system write workflow across your product lines; GL Synchronization proves the same platform, the same skills library, and the same MCP connectors handle a scheduled, high-volume, financial-integrity reconciliation workflow. Two very different processes, one template factory.
+THE ONE-SENTENCE PITCH
+Atlas lets Kinective publish a single “GL Synchronization” template that any FI can switch on — the orchestration engine, the skills, and the governance are built once; only the core adapter and the dimension map change per customer.
+What the audience should walk away believing
+•	It is a template, not a project. The GL sync is authored once and appears in the Kinective template gallery beside Change of Address. Onboarding a new FI is configuration, not redevelopment.
+•	The hard parts are governed, not hoped for. Atlas guarantees balanced entries, complete dimensions, idempotent posting, and a full audit trail — the things a controller and an NCUA examiner actually care about.
+•	It answers “yours or third-party?” cleanly. The orchestration engine, templates, skills, governance, and self-healing are Atlas IP. Connectivity uses the open MCP standard; reasoning uses configurable LLMs. Atlas is not a thin wrapper around a model.
+•	It compounds. Every skill and connector built for this template — the Sage Intacct connector, the Kinective Gateway core connector, the dimension-mapping skill — is now reusable by the next template you build.
+ 
+2. Why This Use Case, Why Now
+Prior-day GL synchronization is an unusually good second demo because it is boring in exactly the right way. It runs every business day, touches money, must reconcile to the penny, and is today done by a person re-keying or hand-importing core activity into Sage Intacct. That combination — repetitive, high-volume, high-consequence, currently manual — is the sweet spot for governed agentic orchestration.
+It maps directly to questions your team already raised
+The workflow diagram is annotated with a set of open questions — about how far back history must go, whether GL account data should be validated or trusted, how branch-level dimensions and NCUA compliance are handled, and whether output needs to land in a file. Rather than answer those in a document, this playbook answers each one inside a live demo. The four scenarios are organized around them, so the meeting becomes a working session, not a slideshow.
+Open question on the workflow	Where this playbook answers it
+How much history — beyond previous day? Adjustments on activity date vs. in history?	Demo 1 (prior-day watermark) and Demo 2 (historical backfill & late-adjustment handling).
+Validate GL account data, or trust Sage Intacct is correct?	Demo 2 — the GL Account Catalog Agent reconciles core chart vs. Sage Intacct and flags drift before any posting.
+Configure at dimensional level — branch = location / class / item / User-Defined Dimension for NCUA?	Demo 3 — dimensional mapping & NCUA compliance tagging, end to end.
+If updates occur in the core, update entries on the Sage side too (low likelihood for prior day).	Demo 2 — idempotency + reversing-entry strategy for late changes.
+Status type set prior to post; may need to drop output into a file.	Demo 1 (draft vs. posted status policy) and Demo 2 (file/SFTP delivery of the run report).
+Reuse across customers with per-customer modification.	Demo 4 — same template deployed across Symitar, jXchange, and Fiserv with only adapter + map changes.
+
+NOTE ON ATTRIBUTION
+The open questions above are taken faithfully from the annotations on the workflow diagram your team shared. This playbook treats them as the discovery agenda and does not put any new words in any named individual’s mouth.
+ 
+3. The Business Problem, in Plain Terms
+A credit union or community bank runs its money on a core banking system — Symitar Episys, a Jack Henry platform reached through jXchange, or a Fiserv platform. Its accounting and financial reporting, however, increasingly live in Sage Intacct, a multi-dimensional cloud GL. Every business day, the prior day’s general-ledger activity in the core has to land in Sage Intacct as journal entries so the finance team can close, report, and file.
+Today that hand-off is manual or brittle: someone exports balances or history from the core, massages them in a spreadsheet, maps each core GL number to the right Sage Intacct account and dimensions, and keys or imports journal entries — then reconciles by hand and chases anything that doesn’t balance. It is slow, error-prone, and it scales linearly with branches and entities. For a 14-branch credit union with NCUA dimensional reporting obligations, it is a daily tax on the accounting team.
+Why this is hard to automate with point integrations
+•	Many cores, one ERP. Kinective’s customers sit on different cores. A bespoke Symitar-to-Intacct integration does nothing for a Jack Henry or Fiserv customer.
+•	Mapping is judgment, not a lookup. Core GL numbers map to Intacct accounts and dimensions through rules that differ per FI, and they drift as charts of accounts change.
+•	Integrity is non-negotiable. An unbalanced or double-posted journal entry is not a glitch — it is a financial-statement problem. The automation has to refuse to do the wrong thing.
+•	Exceptions are the real work. The happy path is easy; the value is in catching the account that doesn’t map, the day with a late adjustment, the entry that won’t balance, and routing it to a human cleanly.
+WHAT “GOOD” LOOKS LIKE
+By 6:00 AM local each business day, every prior-day GL movement from the core is posted to Sage Intacct as a balanced journal entry, each line carrying its branch (location) and any NCUA dimensions; nothing is posted twice; and the controller has a reconciliation report confirming in-balance status with a clean exception list — delivered to the inbox and, where required, dropped to the FI’s SFTP.
+ 
+4. Discovery Snapshot
+What we are designing against, drawn from the workflow diagram and verified product behavior. Where a fact is an assumption for the demo, it is labeled.
+The systems in play
+System	Role in the GL sync
+Sage Intacct	Destination ERP / GL. REST objects used: general-ledger/account (read the GL account list) and general-ledger/journal-entry (post entries). Journal entries can be created in Draft or Posted state — this is the “status set prior to post” on the diagram. Dimensions tag each line.
+Kinective Gateway	The connective tissue to the core. Already speaks to 40+ cores, so it is the single abstraction the sync calls to read GL data regardless of which core the FI runs. This is the reuse pivot of the whole template.
+Core — Jack Henry (jXchange)	GL read via jXchange operations GLAcctSrch (GL account search) and GLHistSrch (GL history search).
+Core — Symitar (Episys)	GL read via SymXchange plus a PowerOn parameter/extract — the diagram’s note that this is “better done with PowerOn” is correct for high-volume history pulls.
+Core — Fiserv	Third core variant for the multi-core demo; GL history via the platform’s extract/API surface, routed through the same Gateway connector. (Assumption for demo breadth.)
+Core Services API layer	The middle tier on the diagram (the “get transaction by AccountId / AccountType General Ledger” step). Represented as the Core Services API reached through Kinective Gateway, with the core-specific adapter underneath.
+Dimensions & NCUA (verified)
+Sage Intacct ships eight standard dimensions — location, department, vendor, customer, employee, project, item, and class — and supports User-Defined Dimensions (UDDs) created through Platform Services. For a credit union, branch maps naturally to Location, and NCUA call-report or regulatory groupings are typically carried as a repurposed Class or a UDD. Each journal-entry line can carry these dimension IDs, which is exactly what makes per-branch and compliance reporting possible without exploding the chart of accounts.
+Demo anchor customer (synthetic)
+Attribute	Cascade Ridge Credit Union
+Profile	$1.8B in assets, 14 branches across the Pacific Northwest, NCUA-regulated.
+Core	Symitar (Episys), reached through Kinective Gateway.
+ERP	Sage Intacct — recently adopted for accounting and financial reporting.
+Dimensions	Branch → Location (14 values); a UDD “NCUA_Class” for call-report grouping; Class repurposed for product line.
+People	Diane Okafor, Controller (owns the close). Marcus Bell, Staff Accountant (runs today’s manual import). Priya Raman, Kinective Implementation Lead.
+Pain	~90 minutes every morning of export, map, key, and reconcile — and a nervous month-end when a branch doesn’t tie out.
+ 
+5. How This Answers Kinective’s Standing Questions
+From the prior ALMP session, five questions remained on the table. The GL sync template is a clean vehicle for all five.
+Q1. How does the orchestration layer get integrated into our product?
+The template is triggered from inside the Kinective experience — a scheduled run, or an operator action in the Kinective console. Atlas exposes the template through an API and an embeddable trigger, so to the FI it looks like a Kinective feature, not a separate tool. The same pattern you saw for a SignPlus-initiated Change of Address applies here for a scheduled GL sync.
+Q2. How do we start a use case and create a reusable template, MCP servers, and skills?
+Demo 4 shows it literally: author the template once in Atlas, register the sage-intacct and kinective-gateway-core MCP servers once, build the dimension-mapping and balance-check skills once — then deploy to a new FI by selecting a core adapter and supplying its account/dimension map. Modifications per customer are configuration overlays, not forks.
+Q3. How does the orchestration layer speed up our development / integration effort?
+Two ways, both shown in Section 17. First, connector reuse — the Gateway core connector and Sage Intacct connector are built once and used by every template forever. Second, skill reuse — balance-check, dimension-mapping, and reconciliation skills carry across templates. The marginal cost of the third, fourth, and fifth template falls sharply.
+Q4. What is the underlying architecture — LLMs, MCP servers, components?
+Section 13 walks the five layers: Trigger → Orchestration Engine → Skills → MCP Servers → APIs. Reasoning runs on configurable Claude models; connectivity is MCP; governance, memory, and self-healing are Atlas services that wrap every agent action.
+Q5. Is this your own tool, or a third party you’ve integrated?
+Both, honestly bounded. Section 16 is the IP map: the engine, templates, skills, governance, and self-healing are Atlas IP; the MCP protocol is open; the LLMs are configurable best-in-class models. Atlas is the governance and deployment layer no model gives you on its own — not a wrapper.
+ 
+PART 2 · THE POD
+6. The GL Synchronization Pod
+The template runs as a pod of seven cooperating agents under a single orchestrator. Each agent owns one stage of the workflow you sketched; together they form the reusable “GL Synchronization” template. The orchestrator owns the outcome contract and decides what runs, in what order, and what needs a human.
+ID	Agent	What it owns
+A0	Sync Orchestrator	Supervises the run. Holds the outcome contract, sequences the pod, enforces autonomy level, assembles the reconciliation report. (Claude Sonnet 4.6.)
+A1	GL Account Catalog Agent	Reads the Sage Intacct GL account list, reconciles it against the core chart of accounts, flags drift. Maps to “Get List of GL Accounts.”
+A2	Core Ledger Extraction Agent	For each in-scope account, pulls prior-day GL entries/history from the core via Kinective Gateway. Maps to “for each account, get prior-day GL entries.”
+A3	Transformation Agent	Reshapes core transactions into Sage Intacct journal-entry structure; groups into balanced entries. Maps to “Transform Transactions.”
+A4	Dimension & Compliance Agent	Resolves dimension tags (branch → location, class, UDD) and enforces NCUA dimensional requirements per line.
+A5	Journal Posting Agent	Posts journal entries to Sage Intacct in the configured status (draft/posted); guarantees idempotency. Maps to “Post new entries.”
+A6	Reconciliation & Exception Agent	Confirms in-balance, detects duplicates/gaps, builds the success/error report, drops to file/SFTP if configured, routes exceptions. Maps to “Complete — report of success/error.”
+
+RUNNING UNDERNEATH ALL SEVEN
+Self-healing is not an eighth agent — it is a platform service. Atlas continuously fingerprints the Sage Intacct and core API behavior. If a schema or response shape drifts, the run pauses and alerts the controller rather than posting malformed entries. Governance, memory, and the audit trail wrap every action the same way.
+How the pod maps onto your diagram
+Reading the swim-lanes left to right, the agent that owns each step:
+•	Startup Service → A0 Sync Orchestrator (scheduled trigger).
+•	Get List of GL Accounts → A1 via the sage-intacct MCP server (general-ledger/account).
+•	Transform Account List → A1 normalizes and scopes the account list.
+•	For each account, get prior-day GL entries → A2 via kinective-gateway-core (jXchange GLHistSrch / Symitar PowerOn / Fiserv).
+•	Transform Transactions → A3 reshapes to journal-entry lines; A4 tags dimensions.
+•	For each GL entry, post new entries → A5 via sage-intacct (general-ledger/journal-entry), status per policy.
+•	Complete — report of success/error / drop to file → A6 reconciles, reports, and delivers to inbox + SFTP.
