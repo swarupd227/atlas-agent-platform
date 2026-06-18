@@ -1,0 +1,43 @@
+Demo 1 — Prior-Day GL Synchronization (End to End)
+This is the anchor demo. It walks the entire workflow you sketched as a single governed run, from scheduled start to a reconciliation report in the controller’s inbox. Everything else in the playbook hangs off this run.
+Business problem
+Cascade Ridge’s prior-day core GL activity must land in Sage Intacct as balanced, dimensioned journal entries before the accounting team starts the day. Today Marcus does it by hand in ~90 minutes; the goal is a hands-off run that finishes before he logs in, with a report he can trust.
+Target operator
+Diane Okafor (Controller) — she does not want to run anything; she wants to arrive to a posted, in-balance ledger and a one-screen confirmation. Marcus Bell (Staff Accountant) is the human-in-the-loop for exceptions only.
+Demo narrative
+1. 5:00 AM — the run starts itself.  The Sync Orchestrator (A0) wakes on schedule for Cascade Ridge. It reads the outcome contract: post all prior-day GL activity, balanced, dimensioned, idempotent, with a report by 6:00 AM. On screen: the Atlas live execution trace lighting up.
+2. Pull the GL account list.  A1 calls the sage-intacct MCP server (general-ledger/account) and retrieves Cascade Ridge’s 240 active GL accounts. It always pulls the live list — never a cached copy — because the chart can change.
+3. Scope and normalize.  A1 transforms the list into the working set: which accounts are in scope for the prior-day sync, keyed by the core GL number via the crosswalk. 240 accounts → 188 in scope for daily movement.
+4. For each account, fetch prior-day entries from the core.  A2 calls kinective-gateway-core. Because Cascade Ridge is on Symitar, the Gateway routes to a PowerOn extract for GL history (GLHistSrch-equivalent). 188 accounts → 1,742 prior-day GL movements returned.
+5. Transform into journal-entry shape.  A3 reshapes the raw movements into Sage Intacct journal-entry lines and groups them into balanced entries by source batch and date. On screen: a side-by-side of a raw core record and the resulting JE line.
+6. Tag dimensions.  A4 stamps each line with its branch (Location) and the NCUA_Class UDD, using the dimension map. A line that cannot be tagged is held back, not guessed.
+7. The balance guardrail fires — correctly.  Before posting, A0 checks every entry: debits must equal credits. 47 entries, all balanced. One batch is 2 cents off; the Reconciliation Agent (A6) flags it and the Orchestrator refuses to post it. On screen: the governance guardrail blocking a single unbalanced entry while the other 46 proceed.
+8. Post to Sage Intacct.  A5 posts the 46 balanced entries via general-ledger/journal-entry. Per Cascade Ridge’s policy, they post in Posted status (a draft-first FI would see them land as Draft). Idempotency keys ensure a re-run never double-posts.
+9. Reconcile and report.  A6 confirms the posted total ties to the core control total for the day, lists the one held entry with the 2-cent variance, and assembles the reconciliation report.
+10. Deliver — inbox and file.  The report lands in Diane’s inbox at 5:41 AM and, because Cascade Ridge requires it, a copy is dropped to their SFTP as a dated file. Marcus arrives to one exception to clear, not 90 minutes of keying.
+Agent pipeline
+ID	Agent	Role in this demo	Tools / MCP servers
+A0	Sync Orchestrator	Triggers the run, holds the outcome contract, runs the balance guardrail, assembles and routes the report.	Atlas scheduler, reconciliation-ledger
+A1	GL Account Catalog Agent	Pulls the live GL account list, scopes to accounts with daily movement via the crosswalk.	sage-intacct (general-ledger/account)
+A2	Core Ledger Extraction Agent	Pulls prior-day GL movements per account from the Symitar core.	kinective-gateway-core (PowerOn/SymXchange)
+A3	Transformation Agent	Reshapes core movements into JE lines, groups into balanced entries by batch/date.	Transform skill, JE Template KB
+A4	Dimension & Compliance Agent	Tags each line with Location + NCUA_Class UDD; holds untaggable lines.	sage-intacct (list_dimensions), Dimension Map KB
+A5	Journal Posting Agent	Posts balanced entries in configured status; enforces idempotency keys.	sage-intacct (general-ledger/journal-entry)
+A6	Reconciliation & Exception Agent	Ties posted total to core control total, builds report, drops to SFTP, routes exceptions.	reconciliation-ledger, file-delivery, notification
+Atlas platform intelligence
+Atlas dimension	How it is configured for this demo
+Outcome Contract	By 6:00 AM local each business day, all prior-day core GL activity is posted to Sage Intacct as balanced journal entries, each line dimensioned (Location + NCUA_Class); zero unbalanced entries posted; no entry posted twice; a reconciliation report delivered to the controller and to SFTP.
+Knowledge Bases	Core→Intacct GL Account Crosswalk KB; Dimension Map KB (branch→Location, NCUA_Class UDD); FI Profile KB (Cascade Ridge: Symitar, 14 branches, fiscal calendar, 6:00 AM cutoff, Posted-status policy); Journal Entry Template KB.
+MCP Servers	sage-intacct (read accounts, post journal entries); kinective-gateway-core (read prior-day GL from Symitar); reconciliation-ledger (run state, idempotency); file-delivery (SFTP); notification (email).
+Ontology	GL Account → Account Type (Asset/Liability/Equity/Income/Expense) → Core GL Number ↔ Intacct Account ID → Required Dimensions → Posting Rules. Branch → Location. Movement → Debit/Credit → JE Line. The ontology is data, which is why one template serves every FI.
+Governance	Hard guardrails: never post an unbalanced entry; never post a line missing a required dimension; never double-post (watermark + idempotency). Posting autonomy = Supervised → Adaptive (controller approves the first N runs, then it runs unattended within the contract). Every posting hash-chained in the audit trail.
+Memory	Per-FI watermark (last synced posting date/time per account) so re-runs are safe and gaps are detectable; per-account volume/amount baseline for anomaly detection; per-run provenance for the audit trail.
+Atlas screens shown	(a) Template Gallery with the GL Synchronization card; (b) live execution trace of the 5:00 AM run; (c) the balance guardrail blocking one entry; (d) the reconciliation report with the single 2-cent exception; (e) the audit trail / hash chain for the 46 postings.
+Success metrics & value to Cascade Ridge
+Metric	Manual today	With Atlas
+Time to post prior-day GL	~90 min/day	0 min (hands-off)
+Day starts with ledger	after manual import	posted by 6:00 AM
+Unbalanced entries posted	possible	0 (blocked)
+Double-posting risk on re-run	manual care	eliminated
+Audit evidence per posting	reconstructed	hash-chained, instant
+ 
