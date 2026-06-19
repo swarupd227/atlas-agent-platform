@@ -8,26 +8,44 @@ import { autoResumeRuntimes } from "./agent-runtime";
 import { authMiddleware, seedDefaultAdmin, getSecurityMode, setDefaultOrgId } from "./auth";
 import { storage } from "./storage";
 import { otlpIngestRouter } from "./routes/observability";
+import { pool } from "./db";
+import { validateEnv, demosEnabled } from "./config";
+
+// Fail fast on misconfiguration before anything else starts.
+validateEnv();
+
+// Readiness state — true once startup seeding has finished.
+let appReady = false;
 
 process.on("uncaughtException", (err) => {
-  console.error("[CRASH] Uncaught exception:", err.message, err.stack);
+  console.error("[FATAL] Uncaught exception:", err?.message, err?.stack);
+  process.exit(1);
 });
 process.on("unhandledRejection", (reason) => {
-  console.error("[CRASH] Unhandled rejection:", reason);
+  // Logged loudly; not fatal in Phase 0 to avoid crash-loops from background
+  // tasks. Promote to process.exit(1) once those rejections are cleaned up.
+  console.error("[ERROR] Unhandled rejection:", reason);
 });
-process.on("SIGHUP", () => {});
-
-let serverReady = false;
-const originalExit = process.exit;
-process.exit = function patchedExit(code?: number) {
-  if (serverReady) {
-    return undefined as never;
-  }
-  return originalExit.call(process, code as any);
-} as never;
 
 const app = express();
 const httpServer = createServer(app);
+
+// Graceful shutdown: stop accepting traffic, drain, close DB pool, exit.
+function shutdown(signal: string) {
+  console.log(`[shutdown] ${signal} received — draining and shutting down`);
+  appReady = false;
+  const force = setTimeout(() => {
+    console.error("[shutdown] Forced exit after 25s drain timeout");
+    process.exit(1);
+  }, 25_000);
+  httpServer.close(async () => {
+    try { await pool.end(); } catch { /* ignore */ }
+    clearTimeout(force);
+    process.exit(0);
+  });
+}
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
 
 declare module "http" {
   interface IncomingMessage {
@@ -46,6 +64,19 @@ app.use(
 
 app.use(express.urlencoded({ extended: false }));
 app.use(cookieParser());
+
+// Liveness & readiness probes (public, no auth, registered before the SPA catch-all).
+app.get("/health", (_req, res) => res.status(200).json({ status: "ok" }));
+app.get("/ready", async (_req, res) => {
+  if (!appReady) return res.status(503).json({ status: "starting" });
+  try {
+    await pool.query("SELECT 1");
+    return res.status(200).json({ status: "ready" });
+  } catch {
+    return res.status(503).json({ status: "db_unavailable" });
+  }
+});
+
 app.use(otlpIngestRouter);
 app.use("/api", authMiddleware);
 
@@ -90,7 +121,17 @@ app.use((req, res, next) => {
 (async () => {
   // Import demo routes so the router is available before listening
   const { seedDemoMcpServer, seedWorkerMcpEndpoints, demoRouter } = await import("./demo-routes");
-  app.use("/demo-api", demoRouter);
+
+  // Hard-gate all demo & mock surfaces off unless demos are explicitly enabled.
+  app.use((req, res, next) => {
+    if (!demosEnabled() && (req.path.startsWith("/demo-api") || req.path.startsWith("/api/mock"))) {
+      return res.status(404).json({ message: "Not found" });
+    }
+    next();
+  });
+  if (demosEnabled()) {
+    app.use("/demo-api", demoRouter);
+  }
 
   log(`Security mode: ${getSecurityMode()}`);
   await registerRoutes(httpServer, app);
@@ -127,11 +168,12 @@ app.use((req, res, next) => {
     {
       port,
       host: "0.0.0.0",
-      reusePort: true,
+      // reusePort is a Linux-only socket option (used on Replit). It throws
+      // ENOTSUP on Windows, so only enable it on platforms that support it.
+      ...(process.platform !== "win32" ? { reusePort: true } : {}),
     },
     () => {
       log(`serving on port ${port}`);
-      serverReady = true;
 
       // Run all database seeding and background initialization AFTER the port
       // is open so health checks pass immediately on deployment
@@ -149,16 +191,23 @@ app.use((req, res, next) => {
         await seedDefaultAdmin(defaultOrg?.id).catch((err) => {
           console.error("Admin seed error:", err);
         });
-        await seedDemoMcpServer(storage).catch((err) => {
-          console.error("Demo MCP seed error:", err);
-        });
-        await seedWorkerMcpEndpoints(storage).catch((err) => {
-          console.error("Worker MCP endpoint seed error:", err);
-        });
-        const { registerMockMcpServers } = await import("./mock-mcp/register");
-        await registerMockMcpServers().catch((err) => {
-          console.error("Mock MCP register error:", err);
-        });
+
+        // Essential initialization is complete — the instance can serve traffic.
+        appReady = true;
+        log("ready to serve traffic");
+
+        if (demosEnabled()) {
+          await seedDemoMcpServer(storage).catch((err) => {
+            console.error("Demo MCP seed error:", err);
+          });
+          await seedWorkerMcpEndpoints(storage).catch((err) => {
+            console.error("Worker MCP endpoint seed error:", err);
+          });
+          const { registerMockMcpServers } = await import("./mock-mcp/register");
+          await registerMockMcpServers().catch((err) => {
+            console.error("Mock MCP register error:", err);
+          });
+        }
         import("./permissions").then(({ getOntologySensitivityKeys }) => {
           getOntologySensitivityKeys()
             .then(({ keys }) => {

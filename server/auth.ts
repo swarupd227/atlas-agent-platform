@@ -8,16 +8,20 @@ import { eq, and } from "drizzle-orm";
 export type SecurityMode = "demo" | "production";
 
 export function getSecurityMode(): SecurityMode {
-  const mode = process.env.SECURITY_MODE || "demo";
-  return mode === "production" ? "production" : "demo";
+  // Secure by default: demo mode must be explicitly opted into.
+  const mode = process.env.SECURITY_MODE || "production";
+  return mode === "demo" ? "demo" : "production";
 }
 
 function getJwtSecret(): string {
   const secret = process.env.JWT_SECRET;
-  if (!secret && getSecurityMode() === "production") {
-    console.warn("[auth] WARNING: JWT_SECRET is not set in production mode. Using fallback. Set JWT_SECRET environment variable for security.");
+  if (secret) return secret;
+  if (getSecurityMode() === "production") {
+    // No insecure fallback in production (startup validation also enforces this).
+    throw new Error("[auth] JWT_SECRET must be set in production mode");
   }
-  return secret || "nous-dev-secret-change-in-production";
+  // Demo / local only.
+  return "nous-dev-secret-change-in-production";
 }
 
 const TOKEN_EXPIRY = "24h";
@@ -193,15 +197,26 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
 export async function seedDefaultAdmin(defaultOrgId?: string) {
   if (getSecurityMode() !== "production") return;
 
+  // No hardcoded credentials. Seed a bootstrap admin only from an explicit
+  // env-provided password; otherwise skip and require API/CLI provisioning.
+  const bootstrapPassword = process.env.BOOTSTRAP_ADMIN_PASSWORD;
+  if (!bootstrapPassword) {
+    console.warn(
+      "[auth] BOOTSTRAP_ADMIN_PASSWORD not set — no bootstrap admin seeded. Provision an admin via the API/CLI.",
+    );
+    return;
+  }
+
   if (!defaultOrgId) {
-    throw new Error("[auth] Cannot seed default admin: defaultOrgId is required but was not provided");
+    console.warn("[auth] Cannot seed bootstrap admin: no default organization available.");
+    return;
   }
 
   try {
     const existingUsers = await db.select().from(users);
     if (existingUsers.length > 0) return;
 
-    const hashed = await hashPassword("admin123");
+    const hashed = await hashPassword(bootstrapPassword);
     await db.insert(users).values({
       username: "admin",
       password: hashed,
@@ -209,9 +224,9 @@ export async function seedDefaultAdmin(defaultOrgId?: string) {
       role: "admin",
       organizationId: defaultOrgId,
     });
-    console.log("[auth] Default admin user created — username: admin, password: admin123");
+    // Never log the password.
+    console.log("[auth] Bootstrap admin 'admin' created from BOOTSTRAP_ADMIN_PASSWORD.");
   } catch (err: any) {
-    console.error("[auth] Failed to seed default admin:", err.message);
-    throw err;
+    console.error("[auth] Failed to seed bootstrap admin:", err.message);
   }
 }
