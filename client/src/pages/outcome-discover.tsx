@@ -425,6 +425,7 @@ export default function OutcomeDiscover() {
   const [analysisFailed, setAnalysisFailed] = useState(false);
   const [enhancingOutcome, setEnhancingOutcome] = useState(false);
   const [generatingKpis, setGeneratingKpis] = useState(false);
+  const [generatingFormKpis, setGeneratingFormKpis] = useState(false);
   const [detectingRegulations, setDetectingRegulations] = useState(false);
   const [showKpiBenchmarks, setShowKpiBenchmarks] = useState(false);
   const [expandedRegulations, setExpandedRegulations] = useState<Set<number>>(new Set());
@@ -966,6 +967,42 @@ export default function OutcomeDiscover() {
       toast({ title: "KPI generation failed", description: err.message || "Could not generate KPIs.", variant: "destructive" });
     } finally {
       setGeneratingKpis(false);
+    }
+  }
+
+  // Quick Create: AI-suggest KPIs from the form's name/description.
+  async function handleSuggestFormKpis() {
+    if (generatingFormKpis) return;
+    if (!formName.trim() && !formDescription.trim()) {
+      toast({ title: "Add a name or description first", description: "The AI needs some context to suggest KPIs.", variant: "destructive" });
+      return;
+    }
+    setGeneratingFormKpis(true);
+    try {
+      const res = await fetch("/api/ai/generate-kpis", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: formName, description: formDescription, industry: industry?.id || null }),
+      });
+      if (!res.ok) throw new Error("KPI suggestion failed");
+      const data = await res.json();
+      const aiKpis: any[] = Array.isArray(data) ? data : (data.kpis || []);
+      if (aiKpis.length === 0) throw new Error("No KPIs returned");
+      const mapped = aiKpis.map((k: any) => ({
+        name: k.name || "",
+        target: typeof k.target === "number" ? k.target : (parseFloat(k.target) || 0),
+        unit: k.unit || "percent",
+        baseline: (k.currentBaseline ?? k.baseline ?? 0) as number,
+        slaThreshold: typeof k.slaThreshold === "number" ? k.slaThreshold : (parseFloat(k.slaThreshold) || 0),
+        weight: typeof k.weight === "number" ? k.weight : (parseFloat(k.weight) || 1),
+        targetOperator: k.targetOperator || ">=",
+      }));
+      setFormKpis((prev) => [...prev, ...mapped]);
+      toast({ title: "KPIs suggested", description: `AI suggested ${mapped.length} success metric${mapped.length > 1 ? "s" : ""}.` });
+    } catch (err: any) {
+      toast({ title: "Couldn't suggest KPIs", description: err.message || "Try again or add KPIs manually.", variant: "destructive" });
+    } finally {
+      setGeneratingFormKpis(false);
     }
   }
 
@@ -1608,11 +1645,16 @@ export default function OutcomeDiscover() {
                       <p className="text-sm font-semibold">KPIs</p>
                       <Badge variant="outline" className="text-xs">{formKpis.length}</Badge>
                     </div>
-                    <Button size="sm" variant="outline" onClick={addFormKpi} data-testid="button-form-add-kpi">
-                      <Plus className="w-3.5 h-3.5 mr-1" /> Add KPI
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" variant="outline" onClick={handleSuggestFormKpis} disabled={generatingFormKpis || (!formName.trim() && !formDescription.trim())} data-testid="button-form-suggest-kpis">
+                        {generatingFormKpis ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" /> : <Sparkles className="w-3.5 h-3.5 mr-1" />} AI Suggest
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={addFormKpi} data-testid="button-form-add-kpi">
+                        <Plus className="w-3.5 h-3.5 mr-1" /> Add KPI
+                      </Button>
+                    </div>
                   </div>
-                  {formKpis.length === 0 && <p className="text-sm text-muted-foreground">No KPIs configured yet. Add one to get started.</p>}
+                  {formKpis.length === 0 && <p className="text-sm text-muted-foreground">No KPIs configured yet. Use <span className="font-medium">AI Suggest</span> or add one manually.</p>}
                   {formKpis.map((kpi, i) => (
                     <div key={i} className="grid grid-cols-[1fr_90px_80px_80px_auto] gap-2 items-end bg-muted/30 rounded-md p-2" data-testid={`form-kpi-row-${i}`}>
                       <div className="flex flex-col gap-1">
