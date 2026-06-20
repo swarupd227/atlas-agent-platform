@@ -455,6 +455,7 @@ export default function OutcomeDiscover() {
   const [showFormIntel, setShowFormIntel] = useState(true);
   const [showRoiEstimate, setShowRoiEstimate] = useState(true);
   const [generatingProposal, setGeneratingProposal] = useState(false);
+  const [buildingOppIndex, setBuildingOppIndex] = useState<number | null>(null);
   const [showMeetingContext, setShowMeetingContext] = useState(true);
   const [reviewDraft, setReviewDraft] = useState<{
     name: string;
@@ -1231,9 +1232,10 @@ export default function OutcomeDiscover() {
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   }
 
-  async function generateProposalForOpportunity(opp: { name: string; description: string; keyRequirements: string[]; suggestedSystems: string[]; draftKpis?: Array<{name: string; target: number; unit: string}>; riskTier?: string; estimatedRoiNarrative?: string }) {
+  async function generateProposalForOpportunity(opp: { name: string; description: string; keyRequirements: string[]; suggestedSystems: string[]; draftKpis?: Array<{name: string; target: number; unit: string}>; riskTier?: string; estimatedRoiNarrative?: string }, index?: number) {
     if (generatingProposal || streaming) return;
     setGeneratingProposal(true);
+    setBuildingOppIndex(index ?? null);
     try {
       const processContext = processSteps.length > 0
         ? ` Current process: ${processSteps.map((s, i) => `Step ${i + 1}: ${s.description} (${s.actor}, ${s.timeMins} mins, Pain: ${s.painPoints})`).join("; ")}.`
@@ -1325,6 +1327,7 @@ export default function OutcomeDiscover() {
       toast({ title: "Plan generation failed", description: err.message || "Please try again.", variant: "destructive" });
     } finally {
       setGeneratingProposal(false);
+      setBuildingOppIndex(null);
     }
   }
 
@@ -2502,8 +2505,8 @@ export default function OutcomeDiscover() {
                             ))}
                           </div>
                           <div className="flex items-center gap-2">
-                            <Button variant="default" size="sm" onClick={() => generateProposalForOpportunity(opp)} disabled={generatingProposal || streaming} data-testid={`button-build-plan-${i}`}>
-                              {generatingProposal ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />} Build Plan
+                            <Button variant="default" size="sm" onClick={() => generateProposalForOpportunity(opp, i)} disabled={generatingProposal || streaming} data-testid={`button-build-plan-${i}`}>
+                              {buildingOppIndex === i ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />} {buildingOppIndex === i ? "Building…" : "Build Plan"}
                             </Button>
                             <Button variant="outline" size="sm" onClick={() => useOpportunityForDiscovery(opp)} data-testid={`button-use-opportunity-${i}`}>
                               <MessageSquare className="w-3 h-3 mr-1" /> Refine via Chat
