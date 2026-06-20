@@ -12,6 +12,41 @@ import { eq, and, isNull } from "drizzle-orm";
 import { ensureOtcFulfillmentAgents, runOtcFulfillmentPipeline } from "./otc-fulfillment-live-run";
 import { OTC_AGT_005_NAME, OTC_AGT_007_NAME, OTC_AGT_012_NAME, OTC_EVAL_SUITE_NAME } from "./otc-fulfillment-shared-defs";
 import nodemailer from "nodemailer";
+import { runMeetingTranscription } from "./meeting-transcription";
+import { readFile, unlink } from "fs/promises";
+
+// ── Meeting transcription (async long-meeting path) ─────────────────────────────
+async function processMeetingTranscription(job: Job): Promise<Record<string, unknown>> {
+  const payload = (job.payload || {}) as {
+    filePath?: string;
+    originalname?: string;
+    industry?: { id: string; label: string } | null;
+    generateTopProposal?: boolean;
+  };
+  if (!payload.filePath) throw new Error("No audio file path in job payload");
+
+  let buffer: Buffer;
+  try {
+    buffer = await readFile(payload.filePath);
+  } catch (err: any) {
+    throw new Error(`Could not read audio file: ${err.message}`);
+  }
+
+  await storage.updateJob(job.id, { progress: 20 });
+  try {
+    const analysis = await runMeetingTranscription(
+      buffer,
+      payload.originalname || "recording.webm",
+      payload.industry ?? null,
+      payload.generateTopProposal ?? true,
+    );
+    await storage.updateJob(job.id, { progress: 90 });
+    return analysis as unknown as Record<string, unknown>;
+  } finally {
+    // Always clean up the uploaded audio file.
+    try { await unlink(payload.filePath); } catch { /* ignore */ }
+  }
+}
 
 // ── Email helper ──────────────────────────────────────────────────────────────
 
@@ -1496,6 +1531,8 @@ export function startWorker(intervalMs = 2000) {
             result = await processSimulatorRun(job);
           } else if (job.type === "eval_report_schedule_check") {
             result = await processReportScheduleRun(job);
+          } else if (job.type === "meeting_transcription") {
+            result = await processMeetingTranscription(job);
           } else {
             result = { message: `Unknown job type: ${job.type}` };
           }

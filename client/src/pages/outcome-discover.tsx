@@ -1053,7 +1053,9 @@ export default function OutcomeDiscover() {
   async function startRecording() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      // Low opus bitrate keeps even a ~1-hour meeting well under the 25 MB
+      // transcription cap (~14 MB/hr), so it transcribes in a single pass.
+      const recorder = new MediaRecorder(stream, { audioBitsPerSecond: 32000 });
       const chunks: Blob[] = [];
       pendingChunksRef.current = chunks;
 
@@ -1154,18 +1156,29 @@ export default function OutcomeDiscover() {
       if (industry) formData.append("industry", JSON.stringify({ id: industry.id, label: industry.label }));
       formData.append("generateTopProposal", "true");
 
-      const res = await fetch("/api/ai/transcribe-analyze", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const errText = await res.text();
-        let errMsg = "Analysis failed";
+      // Enqueue async transcription so long (~1h) meetings transcribe in the
+      // background instead of blocking the request / hitting proxy timeouts.
+      const enqueueRes = await fetch("/api/ai/transcribe-meeting", { method: "POST", body: formData });
+      if (!enqueueRes.ok) {
+        const errText = await enqueueRes.text();
+        let errMsg = enqueueRes.status === 413 ? "Recording is too large — keep it under ~1 hour." : "Transcription failed";
         try { errMsg = JSON.parse(errText).error || errMsg; } catch {}
         throw new Error(errMsg);
       }
-      const result = await res.json();
+      const { jobId } = await enqueueRes.json();
+
+      // Poll for the transcription + analysis result.
+      const deadline = Date.now() + 6 * 60 * 1000;
+      let result: any = null;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const statusRes = await fetch(`/api/ai/transcribe-meeting/${jobId}`);
+        if (!statusRes.ok) continue;
+        const s = await statusRes.json();
+        if (s.status === "completed") { result = s.result; break; }
+        if (s.status === "failed") throw new Error(s.error || "Transcription failed");
+      }
+      if (!result) throw new Error("Transcription is taking too long. Please try a shorter recording.");
       setTranscriptResult(result);
 
       if (result.topProposal?.type === "outcome_proposal") {
