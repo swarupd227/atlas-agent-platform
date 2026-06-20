@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { storage } from "../storage";
 import { db } from "../db";
-import { desc, eq } from "drizzle-orm";
-import { outcomeContracts, kpiDefinitions, type OutcomeContract } from "@shared/schema";
+import { desc, eq, and } from "drizzle-orm";
+import { outcomeContracts, kpiDefinitions, approvals, agents, type OutcomeContract } from "@shared/schema";
 import { z, ZodError } from "zod";
 import {
   insertOutcomeContractSchema,
@@ -482,6 +482,117 @@ async function createOutcomeVersion(
         const [updatedOutcome] = await tx.update(outcomeContracts).set({ constraintGraph: graphWithPolicies }).where(eq(outcomeContracts.id, outcome.id)).returning();
         return { outcome: updatedOutcome, kpis: createdKpis };
       });
+      res.status(201).json(result);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  // Unified, transactional outcome creation from a discovery/form proposal.
+  // Every path (chat, meeting, quick-create) commits through here, so they
+  // produce identical artifacts + governance. Outcomes start "pending_review"
+  // and only advance once the outcome_review approval is approved (real gate).
+  router.post("/api/outcomes/from-proposal", checkPermission("create_modify_outcomes"), async (req, res) => {
+    try {
+      const orgId = getOrgId(req) ?? getDefaultOrgId();
+      if (!orgId) return res.status(400).json({ message: "No organization context" });
+      const actor = (req as any).authUser?.username || (req as any).authUser?.userId || "system";
+
+      const { outcome: outcomeData, kpis: kpiData, constraints, acceptedAgentIds, source, evidence } = req.body ?? {};
+      if (!outcomeData || typeof outcomeData !== "object") {
+        return res.status(400).json({ message: "outcome is required" });
+      }
+
+      // Carry discovery policy matches into the constraint graph.
+      const matchedPolicyIds: string[] = Array.isArray(outcomeData.matchedPolicyIds) ? outcomeData.matchedPolicyIds : [];
+      const discoveryPolicies: any[] = Array.isArray(outcomeData.discoveryPolicies) ? outcomeData.discoveryPolicies : [];
+      const { matchedPolicyIds: _mp, discoveryPolicies: _dp, status: _st, ...cleanOutcome } = outcomeData;
+
+      const parsedOutcome = insertOutcomeContractSchema.omit({ organizationId: true }).parse({
+        ...cleanOutcome,
+        status: "pending_review", // real governance gate
+        slaConfig: constraints ? { constraints, ...(cleanOutcome.slaConfig || {}) } : cleanOutcome.slaConfig,
+      });
+
+      const parsedKpis = Array.isArray(kpiData)
+        ? kpiData.map((kpi: any) => insertKpiDefinitionSchema.omit({ outcomeId: true }).parse({
+            ...kpi,
+            target: typeof kpi.target === "number" ? kpi.target : (parseFloat(kpi.target) || 0),
+            baseline: kpi.baseline != null
+              ? (typeof kpi.baseline === "number" ? kpi.baseline : (parseFloat(kpi.baseline) || 0))
+              : (kpi.currentBaseline ?? 0),
+            // Preserve the proposal's own SLA threshold / weight (no hardcoding).
+            slaThreshold: kpi.slaThreshold != null
+              ? (typeof kpi.slaThreshold === "number" ? kpi.slaThreshold : parseFloat(kpi.slaThreshold))
+              : undefined,
+            weight: kpi.weight != null
+              ? (typeof kpi.weight === "number" ? kpi.weight : parseFloat(kpi.weight))
+              : 1,
+          }))
+        : [];
+
+      const agentIds: string[] = Array.isArray(acceptedAgentIds) ? acceptedAgentIds.filter((x: any) => typeof x === "string") : [];
+      const riskScore = parsedOutcome.riskTier === "HIGH" ? 8 : parsedOutcome.riskTier === "MEDIUM" ? 5 : 3;
+
+      const result = await db.transaction(async (tx) => {
+        const [outcome] = await tx.insert(outcomeContracts).values({ ...parsedOutcome, organizationId: orgId }).returning();
+
+        const createdKpis = [];
+        for (const kpi of parsedKpis) {
+          const [created] = await tx.insert(kpiDefinitions).values({ ...kpi, outcomeId: outcome.id }).returning();
+          createdKpis.push(created);
+        }
+
+        const graph = computeConstraintGraph(outcome, createdKpis);
+        const graphWithPolicies = {
+          ...graph,
+          ...(matchedPolicyIds.length > 0 ? { matchedPolicyIds } : {}),
+          ...(discoveryPolicies.length > 0 ? { discoveryPolicies } : {}),
+        };
+        const [updatedOutcome] = await tx.update(outcomeContracts)
+          .set({ constraintGraph: graphWithPolicies })
+          .where(eq(outcomeContracts.id, outcome.id)).returning();
+
+        // Bind accepted agents (org-scoped) atomically with the outcome.
+        let boundAgents = 0;
+        for (const agentId of agentIds) {
+          const bound = await tx.update(agents)
+            .set({ outcomeId: outcome.id })
+            .where(and(eq(agents.id, agentId), eq(agents.organizationId, orgId)))
+            .returning();
+          if (bound.length > 0) boundAgents++;
+        }
+
+        // The governance review gate — created atomically with the outcome.
+        const [approval] = await tx.insert(approvals).values({
+          type: "outcome_review",
+          objectType: "outcome_contract",
+          objectId: updatedOutcome.id,
+          objectName: updatedOutcome.name,
+          riskScore,
+          status: "pending",
+          requestedBy: actor,
+          requesterType: "user",
+          outcomeId: updatedOutcome.id,
+          organizationId: orgId,
+          evidenceJson: evidence ?? null,
+        }).returning();
+
+        return { outcome: updatedOutcome, kpis: createdKpis, approval, boundAgents };
+      });
+
+      // Audit (best-effort, outside the tx — matches the with-kpis pattern).
+      await storage.createAuditEvent({
+        organizationId: orgId,
+        actorType: "user",
+        actorId: actor,
+        action: "outcome_created",
+        objectType: "outcome",
+        objectId: result.outcome.id,
+        details: `Outcome "${result.outcome.name}" created (source: ${source || "unknown"}) — pending review`,
+        ontologyTags: resolveOntologyTags("outcome", "created", { details: String(result.outcome.name) }),
+      }).catch((err) => console.error("from-proposal audit error:", err));
+
       res.status(201).json(result);
     } catch (e) {
       handleZodError(res, e);

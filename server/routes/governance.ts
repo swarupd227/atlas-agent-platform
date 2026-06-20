@@ -1199,6 +1199,20 @@ Ontology: ${ontologyName || "industry standard"}`,
       details: `Approval "${approval.objectName || approval.type}" ${status || "updated"} by ${decidedBy || "system"}${constraintsJson ? " with constraints" : ""}`,
     });
 
+    // Real governance gate: approving an outcome review advances the outcome
+    // out of pending_review; rejecting it parks the outcome as a draft.
+    if (approval.objectType === "outcome_contract" && approval.objectId && (status === "approved" || status === "rejected")) {
+      const oid = getOrgId(req) ?? getDefaultOrgId() ?? undefined;
+      const outcome = await storage.getOutcome(approval.objectId, getOrgId(req));
+      if (outcome && outcome.status === "pending_review") {
+        await storage.updateOutcome(
+          approval.objectId,
+          { status: status === "approved" ? "awaiting_agent_plan" : "draft" },
+          oid,
+        );
+      }
+    }
+
     if (status === "approved" && approval.objectType === "patch" && approval.objectId) {
       const allPatches = await storage.getPatches();
       const patch = allPatches.find(p => p.id === approval.objectId);
