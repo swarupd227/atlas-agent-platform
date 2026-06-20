@@ -566,23 +566,25 @@ export default function OutcomeDiscover() {
           label: p.label,
           description: p.description,
         })),
+        source: "quick_create",
+        evidence: {
+          outcomeContract: { name: formName, description: formDescription, riskTier: formRiskTier },
+          proposedKpis: formKpis,
+        },
       };
-      const res = await apiRequest("POST", "/api/outcomes/with-kpis", payload);
+      // Unified, transactional create (outcome + KPIs + governance review).
+      const res = await apiRequest("POST", "/api/outcomes/from-proposal", payload);
       return res.json();
     },
-    onSuccess: async (data) => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
       queryClient.invalidateQueries({ queryKey: ["/api/kpis"] });
-      const outcomeId = data?.outcome?.id;
-      if (outcomeId) {
-        try {
-          await apiRequest("PATCH", `/api/outcomes/${outcomeId}`, { status: "awaiting_agent_plan" });
-          queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
-        } catch {}
+      queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
+      if (data?.outcome?.id) {
         setFormCreatedOutcome(data.outcome);
         setFormStep(3);
       }
-      toast({ title: "Outcome contract created" });
+      toast({ title: "Outcome created — pending review", description: "Submitted for governance review." });
     },
     onError: (err: Error) => {
       toast({ title: "Failed to create outcome", description: err.message, variant: "destructive" });
@@ -707,14 +709,6 @@ export default function OutcomeDiscover() {
         };
       });
       const governanceConstraints = industry?.defaultGovernancePolicies || [];
-      const res = await apiRequest("POST", "/api/outcomes/with-kpis", {
-        outcome: data,
-        kpis,
-        constraints: governanceConstraints.length > 0 ? governanceConstraints : undefined,
-      });
-      const result = await res.json();
-      const outcome = result.outcome;
-      // Collect all accepted agents and templates from decisions
       const acceptedAgentIds = Object.entries(agentDecisions).filter(([, d]) => d === 'accepted').map(([id]) => id);
       const acceptedTemplateIds = Object.entries(templateDecisions).filter(([, d]) => d === 'accepted').map(([id]) => id);
       const allAgentMatches = platformIntel?.matchedAgents.flatMap(r => r.matches) ?? [];
@@ -729,15 +723,14 @@ export default function OutcomeDiscover() {
       const hasDriftDefE = !!data.maxDriftPercent;
       const readinessScoreE = (hasKpisE ? 20 : 0) + (hasRiskTierE ? 15 : 0) + (hasPoliciesE ? 25 : 0) + (hasApprovalGatesE ? 15 : 0) + (hasDriftDefE ? 10 : 0) + 15;
 
-      await apiRequest("POST", "/api/approvals", {
-        type: "outcome_review",
-        objectType: "outcome_contract",
-        objectId: outcome.id,
-        objectName: outcome.name,
-        riskScore: data.riskTier === "HIGH" ? 8 : data.riskTier === "MEDIUM" ? 5 : 3,
-        requestedBy: "system",
-        status: "pending",
-        evidencePackage: {
+      // Single transactional create: outcome + KPIs + governance review + agent binding.
+      const res = await apiRequest("POST", "/api/outcomes/from-proposal", {
+        outcome: data,
+        kpis,
+        constraints: governanceConstraints.length > 0 ? governanceConstraints : undefined,
+        acceptedAgentIds,
+        source: transcriptResult ? "meeting" : "chat",
+        evidence: {
           proposedKpis: proposal?.kpis || [],
           proposedAgents: proposal?.proposedAgents || [],
           validationChecklist: proposal?.validationChecklist || [],
@@ -745,56 +738,27 @@ export default function OutcomeDiscover() {
           applicablePolicies: activeApplicablePolicies,
           outcomeContract: data,
           discoveryConversation: messages.length,
-          createdKpis: result.kpis?.length || 0,
-          // Platform intelligence — carried forward from proposal stage
           compositeRisk: platformIntel?.compositeRisk || null,
           matchedPolicies: platformIntel?.matchedPolicies || [],
           toolCoverage: platformIntel?.toolCoverage || [],
           governanceReadinessScore: readinessScoreE,
-          // Agent / template decisions — only accepted carry to Agent Map
           acceptedAgentMatches: acceptedAgentObjects,
           acceptedTemplateMatches: acceptedTemplateObjects,
           rejectedAgentIds: Object.entries(agentDecisions).filter(([, d]) => d === 'rejected').map(([id]) => id),
           rejectedTemplateIds: Object.entries(templateDecisions).filter(([, d]) => d === 'rejected').map(([id]) => id),
         },
       });
-      return outcome;
+      const result = await res.json();
+      return result.outcome as OutcomeContract;
     },
-    onSuccess: async (outcome: OutcomeContract) => {
+    onSuccess: (outcome: OutcomeContract) => {
       queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
       queryClient.invalidateQueries({ queryKey: ["/api/kpis"] });
       queryClient.invalidateQueries({ queryKey: ["/api/approvals"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
       setCreatedOutcome(outcome);
-      toast({ title: "Plan created", description: `"${outcome.name}" has been created with success metrics.` });
-      try {
-        await apiRequest("PATCH", `/api/outcomes/${outcome.id}`, { status: "awaiting_agent_plan" });
-        queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
-      } catch (err) {
-        console.error("Failed to set outcome status:", err);
-        toast({ title: "Outcome created, but status update failed", description: "The outcome was saved but could not be moved to ‘awaiting agent plan’. Retry from the outcome page.", variant: "destructive" });
-      }
-      // Assign ALL accepted live agents to the outcome
-      const acceptedIds = Object.entries(agentDecisions).filter(([, d]) => d === 'accepted').map(([id]) => id);
-      const failedBinds: string[] = [];
-      for (const agentId of acceptedIds) {
-        try {
-          await apiRequest("PATCH", `/api/agents/${agentId}`, { outcomeId: outcome.id });
-        } catch (err) {
-          console.error(`Failed to bind agent ${agentId}:`, err);
-          failedBinds.push(agentId);
-        }
-      }
-      const boundCount = acceptedIds.length - failedBinds.length;
-      if (acceptedIds.length > 0) {
-        queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
-        if (boundCount > 0) {
-          toast({ title: `${boundCount} agent${boundCount > 1 ? "s" : ""} assigned`, description: `Accepted agents bound to outcome "${outcome.name}"` });
-        }
-        if (failedBinds.length > 0) {
-          toast({ title: `${failedBinds.length} agent${failedBinds.length > 1 ? "s" : ""} could not be bound`, description: "Some accepted agents were not linked. Re-assign them from the agent map.", variant: "destructive" });
-        }
-      }
-      // Navigate to agent map seeded with first accepted template
+      toast({ title: "Outcome created — pending review", description: `"${outcome.name}" was submitted for governance review.` });
+      // Agent binding + governance review happen atomically server-side.
       const firstAcceptedTemplate = Object.entries(templateDecisions).find(([, d]) => d === 'accepted')?.[0];
       if (firstAcceptedTemplate) {
         navigate(`/outcomes/${outcome.id}?tab=agent-map&template=${firstAcceptedTemplate}`);
