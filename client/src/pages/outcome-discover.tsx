@@ -687,14 +687,23 @@ export default function OutcomeDiscover() {
     mutationFn: async (data: any) => {
       const kpis = (proposal?.kpis || []).map((k: any) => {
         const target = typeof k.target === "number" ? k.target : (parseFloat(k.target) || 0);
+        // Preserve the proposal's own SLA threshold / weight when provided;
+        // fall back to sensible defaults only when the proposal omits them.
+        const slaThreshold = k.slaThreshold != null
+          ? (typeof k.slaThreshold === "number" ? k.slaThreshold : parseFloat(k.slaThreshold))
+          : target * 0.9;
+        const weight = k.weight != null
+          ? (typeof k.weight === "number" ? k.weight : parseFloat(k.weight))
+          : 1.0;
         return {
           name: k.name,
           target,
           unit: k.unit || "count",
           baseline: k.currentBaseline ?? 0,
-          slaThreshold: target * 0.9,
-          weight: 1.0,
+          slaThreshold,
+          weight,
           measurement: k.measurement ?? "",
+          ...(k.targetOperator ? { targetOperator: k.targetOperator } : {}),
         };
       });
       const governanceConstraints = industry?.defaultGovernancePolicies || [];
@@ -760,17 +769,30 @@ export default function OutcomeDiscover() {
       try {
         await apiRequest("PATCH", `/api/outcomes/${outcome.id}`, { status: "awaiting_agent_plan" });
         queryClient.invalidateQueries({ queryKey: ["/api/outcomes"] });
-      } catch {}
+      } catch (err) {
+        console.error("Failed to set outcome status:", err);
+        toast({ title: "Outcome created, but status update failed", description: "The outcome was saved but could not be moved to ‘awaiting agent plan’. Retry from the outcome page.", variant: "destructive" });
+      }
       // Assign ALL accepted live agents to the outcome
       const acceptedIds = Object.entries(agentDecisions).filter(([, d]) => d === 'accepted').map(([id]) => id);
+      const failedBinds: string[] = [];
       for (const agentId of acceptedIds) {
         try {
           await apiRequest("PATCH", `/api/agents/${agentId}`, { outcomeId: outcome.id });
-        } catch { /* non-fatal */ }
+        } catch (err) {
+          console.error(`Failed to bind agent ${agentId}:`, err);
+          failedBinds.push(agentId);
+        }
       }
+      const boundCount = acceptedIds.length - failedBinds.length;
       if (acceptedIds.length > 0) {
         queryClient.invalidateQueries({ queryKey: ["/api/agents"] });
-        toast({ title: `${acceptedIds.length} agent${acceptedIds.length > 1 ? "s" : ""} assigned`, description: `Accepted agents bound to outcome "${outcome.name}"` });
+        if (boundCount > 0) {
+          toast({ title: `${boundCount} agent${boundCount > 1 ? "s" : ""} assigned`, description: `Accepted agents bound to outcome "${outcome.name}"` });
+        }
+        if (failedBinds.length > 0) {
+          toast({ title: `${failedBinds.length} agent${failedBinds.length > 1 ? "s" : ""} could not be bound`, description: "Some accepted agents were not linked. Re-assign them from the agent map.", variant: "destructive" });
+        }
       }
       // Navigate to agent map seeded with first accepted template
       const firstAcceptedTemplate = Object.entries(templateDecisions).find(([, d]) => d === 'accepted')?.[0];

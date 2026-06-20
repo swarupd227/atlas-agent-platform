@@ -1,8 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 
 export const anthropicClient = new Anthropic({
-  apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
+  // Prefer the Replit AI-gateway vars when present (legacy), otherwise fall
+  // back to a direct Anthropic API key. baseURL undefined => api.anthropic.com.
+  apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
+  baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL || undefined,
 });
 
 export async function callClaude(opts: {
