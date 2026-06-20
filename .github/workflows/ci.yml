@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Blocking gate: the production build must succeed.
+      - name: Build (client + server)
+        run: npm run build
+
+      # Blocking gate: deterministic unit tests (no external services).
+      - name: Unit tests
+        run: npx vitest run -c vitest.integration.config.ts tests/llm-resilience.test.ts
+
+      # Non-blocking for now: ~254 pre-existing type errors are tracked debt to
+      # be driven to zero in Phase 1, after which this becomes a blocking gate.
+      - name: Typecheck (non-blocking — known debt)
+        run: npx tsc --noEmit
+        continue-on-error: true
