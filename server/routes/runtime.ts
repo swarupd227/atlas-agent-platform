@@ -96,13 +96,13 @@ import Anthropic from "@anthropic-ai/sdk";
 import multer from "multer";
 
 const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
+  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined,
 });
 
 const anthropicClient = new Anthropic({
-  apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL,
+  apiKey: process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY,
+  baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL || undefined,
 });
 
 const router = Router();
@@ -1576,8 +1576,8 @@ function hashCode(str: string): number {
         }
       } else {
         const openai = new (await import("openai")).default({
-          apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-          baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+          apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY,
+          baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined,
         });
 
         const systemPromptBase = richAgentPrompt;
@@ -12617,7 +12617,7 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
   // AI: Generate regulatory policy code from regulation
   router.post("/api/ai/generate-regulatory-policy", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY && !process.env.OPENAI_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { regulationId, regulationName, regulationDescription, jurisdiction, industry, articleRef } = req.body;
@@ -12675,7 +12675,7 @@ You MUST return at least 8 policies. Return ONLY a valid JSON object with a "pol
   // AI: Generate compliance controls for a regulation
   router.post("/api/ai/generate-compliance-controls", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY && !process.env.OPENAI_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { regulationId, regulationName, regulationDescription, jurisdiction, industry, existingPolicies } = req.body;
@@ -12735,7 +12735,7 @@ Return ONLY a valid JSON object with a "controls" array.`
   // AI: Enhance existing regulatory policy code
   router.post("/api/ai/enhance-regulatory-policy", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY && !process.env.OPENAI_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { title, naturalLanguage, policyLanguage, policyCode, severity, regulationName } = req.body;
@@ -12791,7 +12791,7 @@ Return ONLY a valid JSON object.`
   // AI: Analyze compliance gaps and suggest remediation
   router.post("/api/ai/analyze-compliance-gaps", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY && !process.env.OPENAI_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { controls, regulationName } = req.body;
@@ -12861,7 +12861,7 @@ Return ONLY a valid JSON object.`
   // AI: Assess impact of regulatory changes
   router.post("/api/ai/assess-change-impact", checkPermission("create_modify_policies"), async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_OPENAI_API_KEY && !process.env.OPENAI_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { changeTitle, changeDescription, changeType, regulationName, existingPolicies, existingControls } = req.body;

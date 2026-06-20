@@ -1302,7 +1302,7 @@ export default function createEvaluationsRouter(industryEvalFrameworks: Record<s
   // AI Template Matching
   router.post("/api/ai/match-templates", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI matching is not configured" });
       }
       const { basicInfo, templates: templateList } = req.body;
@@ -1372,7 +1372,7 @@ Only include templates with matchScore >= 30. Respond ONLY with a valid JSON arr
   // AI Agent Design Assistant
   router.post("/api/ai/agent-assist", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI assistant is not configured" });
       }
       const { messages, wizardState } = req.body;

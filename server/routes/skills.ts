@@ -931,7 +931,7 @@ const router = Router();
   // AI: Enhance a skill with detailed analysis
   router.post("/api/ai/enhance-skill", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { skillName, skillDescription, industry, domain, dependencies, tags } = req.body;
@@ -979,7 +979,7 @@ Return ONLY a valid JSON object. Do not include markdown formatting or code bloc
   // AI: Generate new skills for an industry/domain
   router.post("/api/ai/generate-skills", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { industry, domain, skillName, skillDescription, existingSkillNames, count } = req.body;
@@ -1355,7 +1355,7 @@ Return ONLY a valid JSON object with a "skills" array.`,
   // AI: Score description quality
   router.post("/api/ai/skill-description-quality", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { description, industry, domain } = req.body;
@@ -1379,7 +1379,7 @@ Return JSON: { "score": number, "feedback": string (1-2 sentences of improvement
   // AI: Instruction Builder - convert natural language to structured SKILL.md
   router.post("/api/ai/skill-instruction-builder", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { naturalLanguageInput, skillName, industry, domain } = req.body;
@@ -1421,7 +1421,7 @@ ${naturalLanguageInput}`,
   // AI: Skill Testing Sandbox - simulate agent execution
   router.post("/api/ai/skill-test-sandbox", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { skillName, description, markdownBody, testScenario, withSkill } = req.body;
@@ -2465,7 +2465,7 @@ Return JSON with the enhanced fields: { "name": string, "inputScenario": string,
 
   router.post("/api/ai/suggest-memory-rules", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { industry, tier } = req.body;
@@ -2714,7 +2714,7 @@ Return a JSON object with:
 
   router.post("/api/ai/resolve-entities", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { entityA, sourceA, entityB, sourceB, entityType, industry } = req.body;
@@ -2750,7 +2750,7 @@ Return ONLY valid JSON.`,
 
   router.post("/api/ai/extract-relationships", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { text, industry, documentName } = req.body;
@@ -2793,7 +2793,7 @@ Return ONLY valid JSON.`,
 
   router.post("/api/ai/knowledge-graph-suggestions", async (req, res) => {
     try {
-      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY) {
+      if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
       const { entities, relationships, industry } = req.body;
