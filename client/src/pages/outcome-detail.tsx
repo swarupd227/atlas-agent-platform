@@ -1410,7 +1410,7 @@ export default function OutcomeDetail() {
       </div>
 
       {!isBusinessMode && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
           <StatCard
             title="Weighted Progress"
             value={`${Math.round(weightedProgress)}%`}
@@ -1466,6 +1466,15 @@ export default function OutcomeDetail() {
             variant={outcome.autoPauseTrigger ? "warning" : "default"}
             testId="stat-risk-threshold"
             tooltip="Maximum acceptable risk level. Agents auto-pause if risk exceeds this threshold."
+          />
+          <StatCard
+            title="Pending Approvals"
+            value={pendingApprovals.length}
+            icon={Clock}
+            subtitle={pendingApprovals.length === 0 ? "All resolved" : "Awaiting review"}
+            variant={pendingApprovals.length > 0 ? "warning" : "success"}
+            testId="stat-pending-approvals"
+            tooltip="Approvals awaiting a decision for this outcome and its bound agents."
           />
         </div>
       )}
@@ -1731,134 +1740,6 @@ export default function OutcomeDetail() {
         </Card>
       )}
 
-      {/* Platform Intelligence Strip — hidden in business mode */}
-      {!isBusinessMode && (() => {
-        const avgHealth = boundAgents.length > 0
-          ? Math.round(boundAgents.reduce((s, a) => s + (a.healthScore || 0), 0) / boundAgents.length)
-          : null;
-        const maxDrift = outcome.maxDriftPercent ?? 10;
-        const driftingKpis = (kpis || []).filter(k => {
-          if (!k.target || k.currentValue === null || k.currentValue === undefined) return false;
-          const pct = Math.abs((k.currentValue - k.target) / Math.max(Math.abs(k.target), 1)) * 100;
-          return pct > maxDrift;
-        });
-        const policyChecks24h = evidence?.correlatedMetrics?.policyChecks24h ?? null;
-        const boundAgentPolicyIds = new Set(boundAgents.flatMap(a => {
-          const pb = a.policyBindings as { policies?: Array<{ id?: string; policyId?: string }> } | null;
-          return (pb?.policies || []).map((p: { id?: string; policyId?: string }) => p.id ?? p.policyId).filter(Boolean);
-        }));
-        const allActive = (governancePolicies || []).filter(p => p.status === "active");
-        const activePoliciesCount = boundAgentPolicyIds.size > 0
-          ? allActive.filter(p => boundAgentPolicyIds.has(p.id)).length
-          : allActive.length;
-        const pendingCount = pendingApprovals.length;
-        const healthBg = avgHealth === null ? "bg-muted/30" : avgHealth >= 80 ? "bg-emerald-500/5" : avgHealth >= 60 ? "bg-amber-500/5" : "bg-red-500/5";
-
-        const latestUpdate = Math.max(agentsUpdatedAt || 0, evidenceUpdatedAt || 0);
-        const refreshedAt = latestUpdate > 0 ? new Date(latestUpdate) : new Date();
-        const minsAgo = Math.floor((Date.now() - refreshedAt.getTime()) / 60000);
-        return (
-          <div className="flex flex-col gap-1.5" data-testid="platform-intelligence-strip">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            {/* Tile 1: Agent Health Pulse — ProgressRing visualization */}
-            <button
-              type="button"
-              onClick={() => setActiveTab("agent-map")}
-              className={`flex items-center gap-3 p-3 rounded-lg border ${healthBg} hover:opacity-80 transition-opacity text-left`}
-              data-testid="strip-agent-health"
-            >
-              {avgHealth !== null ? (
-                <ProgressRing value={avgHealth} size={40} strokeWidth={3} />
-              ) : (
-                <div className="flex flex-col items-center justify-center w-10 h-10 rounded-full bg-background border shrink-0">
-                  <Activity className="w-4 h-4 text-muted-foreground" />
-                </div>
-              )}
-              <div className="flex flex-col min-w-0">
-                <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Agent Health</span>
-                {avgHealth !== null ? (
-                  <span className="text-xs text-muted-foreground">avg across {boundAgents.length} agent{boundAgents.length !== 1 ? "s" : ""}</span>
-                ) : (
-                  <span className="text-xs text-muted-foreground">No agents assigned</span>
-                )}
-              </div>
-            </button>
-
-            {/* Tile 2: Drift Status — KPIs outside maxDriftPercent */}
-            <button
-              type="button"
-              onClick={() => setActiveTab("kpi-delivery")}
-              className={`flex items-center gap-3 p-3 rounded-lg border ${driftingKpis.length > 0 ? "bg-amber-500/5" : "bg-muted/30"} hover:opacity-80 transition-opacity text-left`}
-              data-testid="strip-drift-status"
-            >
-              <div className="flex flex-col items-center justify-center w-10 h-10 rounded-full bg-background border shrink-0">
-                <TrendingDown className={`w-4 h-4 ${driftingKpis.length > 0 ? "text-amber-500 dark:text-amber-400" : "text-muted-foreground"}`} />
-              </div>
-              <div className="flex flex-col min-w-0">
-                <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Drift Status</span>
-                <span className={`text-lg font-bold tabular-nums leading-tight ${driftingKpis.length > 0 ? "text-amber-500 dark:text-amber-400" : "text-emerald-500 dark:text-emerald-400"}`}>
-                  {driftingKpis.length}
-                  <span className="text-xs font-normal ml-0.5">KPI{driftingKpis.length !== 1 ? "s" : ""}</span>
-                </span>
-                <span className="text-[10px] text-muted-foreground truncate">
-                  {driftingKpis.length === 0 ? "All within threshold" : `outside ${maxDrift}% threshold`}
-                </span>
-              </div>
-            </button>
-
-            {/* Tile 3: Policy Activity — checks fired in last 24h (from traces) + active policy count */}
-            <button
-              type="button"
-              onClick={() => setActiveTab("governance")}
-              className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30 hover:opacity-80 transition-opacity text-left"
-              data-testid="strip-policy-activity"
-            >
-              <div className="flex flex-col items-center justify-center w-10 h-10 rounded-full bg-background border shrink-0">
-                <ShieldCheck className={`w-4 h-4 ${activePoliciesCount > 0 ? "text-primary" : "text-muted-foreground"}`} />
-              </div>
-              <div className="flex flex-col min-w-0">
-                <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Policy Activity</span>
-                {policyChecks24h !== null ? (
-                  <>
-                    <span className="text-lg font-bold tabular-nums leading-tight text-primary">{policyChecks24h}</span>
-                    <span className="text-[10px] text-muted-foreground truncate">checks last 24h · {activePoliciesCount} active</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="text-lg font-bold tabular-nums leading-tight text-primary">{activePoliciesCount}</span>
-                    <span className="text-[10px] text-muted-foreground truncate">{activePoliciesCount === 0 ? "No policies bound" : "auto-enforced"}</span>
-                  </>
-                )}
-              </div>
-            </button>
-
-            {/* Tile 4: Approval Queue — pending approvals for outcome + bound agents */}
-            <button
-              type="button"
-              onClick={() => setActiveTab("governance")}
-              className={`flex items-center gap-3 p-3 rounded-lg border ${pendingCount > 0 ? "bg-amber-500/5" : "bg-muted/30"} hover:opacity-80 transition-opacity text-left`}
-              data-testid="strip-approval-queue"
-            >
-              <div className="flex flex-col items-center justify-center w-10 h-10 rounded-full bg-background border shrink-0">
-                <Clock className={`w-4 h-4 ${pendingCount > 0 ? "text-amber-500 dark:text-amber-400" : "text-muted-foreground"}`} />
-              </div>
-              <div className="flex flex-col min-w-0">
-                <span className="text-[10px] text-muted-foreground font-medium uppercase tracking-wide">Approval Queue</span>
-                <span className={`text-lg font-bold tabular-nums leading-tight ${pendingCount > 0 ? "text-amber-500 dark:text-amber-400" : "text-emerald-500 dark:text-emerald-400"}`}>
-                  {pendingCount}
-                </span>
-                <span className="text-[10px] text-muted-foreground truncate">
-                  {pendingCount === 0 ? "All resolved" : "pending review"}
-                </span>
-              </div>
-            </button>
-          </div>
-          <p className="text-[10px] text-muted-foreground text-right" data-testid="strip-refresh-label">
-            Refreshed {minsAgo === 0 ? "just now" : `${minsAgo}m ago`} · {refreshedAt.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-          </p>
-          </div>
-        );
-      })()}
 
       {isBusinessMode && (() => {
         // Phase 3: Launch in progress — show step-by-step progress screen
