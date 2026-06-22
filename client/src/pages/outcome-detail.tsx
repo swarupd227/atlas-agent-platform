@@ -2484,6 +2484,37 @@ export default function OutcomeDetail() {
 
         {/* Tab 2: Agent Plan & Contributions */}
         <TabsContent value="agent-map" className="space-y-6" data-testid="tabcontent-agent-map">
+          <div className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-muted/30" data-testid="banner-process-flow-entry">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Workflow className="w-4 h-4 text-primary shrink-0" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium">Process Flow</p>
+                <p className="text-xs text-muted-foreground truncate">
+                  {(outcome as any).processFlow?.steps?.length
+                    ? `${(outcome as any).processFlow.steps.length} steps — design how this outcome works; it guides agent generation below.`
+                    : "Design how this outcome works before generating agents. The flow guides agent naming and roles."}
+                </p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="shrink-0"
+              onClick={() => {
+                const params = new URLSearchParams({ outcomeId: outcome.id, outcomeName: outcome.name || "", kpis: (kpis || []).slice(0, 3).map(k => k.name).join(",") });
+                if (processFlowSteps.length > 0) {
+                  sessionStorage.setItem("process-flow-import-steps", JSON.stringify(processFlowSteps));
+                } else {
+                  sessionStorage.removeItem("process-flow-import-steps");
+                }
+                setLocation(`/process-flows?${params.toString()}`);
+              }}
+              data-testid="button-edit-process-flow-agentplan"
+            >
+              <Workflow className="w-3.5 h-3.5 mr-1.5" />
+              {(outcome as any).processFlow?.steps?.length ? "Edit Process Flow" : "Design Process Flow"}
+            </Button>
+          </div>
           <AgentProposalsTab outcome={outcome} kpis={kpis || []} initialTemplateId={initialTemplateId} processFlowSteps={processFlowSteps} onProcessFlowStepsGenerated={setProcessFlowSteps} />
 
           {!agentContributions ? (
