@@ -412,13 +412,30 @@ export default function OutcomeDetail() {
   const outcomeId = params?.id;
   const { toast } = useToast();
   const { industry } = useIndustry();
-  const { isBusinessMode } = useRole();
+  const { isBusinessMode, role } = useRole();
+  const roleId = role.id;
+  // Role-scoped tab visibility. Business Mode (outcome_owner) bypasses tabs entirely.
+  const TAB_VISIBILITY: Record<string, string[]> = {
+    "kpi-delivery": ["admin", "agent_engineer", "ops_sre", "compliance_security", "expert_validator", "finance"],
+    "agent-map": ["admin", "agent_engineer", "ops_sre"],
+    "governance": ["admin", "compliance_security", "expert_validator", "ops_sre"],
+    "evidence-vault": ["admin", "agent_engineer", "ops_sre", "compliance_security", "expert_validator", "finance"],
+    "constraint-graph": ["admin", "agent_engineer"],
+  };
+  const isTabVisible = (tab: string) => (TAB_VISIBILITY[tab] || []).includes(roleId);
+  const visibleTabs = ["kpi-delivery", "agent-map", "governance", "evidence-vault", "constraint-graph"].filter(isTabVisible);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const searchParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
   const _tabParam = searchParams?.get("tab");
-  const initialTab = _tabParam === "agent-map" ? "agent-map" : _tabParam === "process-flow" ? "process-flow" : "kpi-delivery";
+  const initialTab = _tabParam === "agent-map" ? "agent-map" : "kpi-delivery";
   const initialTemplateId = searchParams?.get("template") || null;
   const [activeTab, setActiveTab] = useState(initialTab);
+  // Keep the active tab valid for the current role (and after consolidation removed tabs).
+  useEffect(() => {
+    if (!isBusinessMode && visibleTabs.length > 0 && !visibleTabs.includes(activeTab)) {
+      setActiveTab(visibleTabs[0]);
+    }
+  }, [isBusinessMode, activeTab, visibleTabs.join(",")]);
   const [processFlowSteps, setProcessFlowSteps] = useState<AutoProcessStep[]>([]);
   const processFlowInitializedForRef = useRef<string | null>(null);
   const processFlowFromProposalRef = useRef<string | null>(null);
@@ -670,52 +687,6 @@ export default function OutcomeDetail() {
     enabled: !!outcomeId,
   });
 
-  const { data: remediation } = useQuery<{
-    risks: Array<{
-      id: string;
-      severity: string;
-      category: string;
-      title: string;
-      description: string;
-      affectedAgents: string[];
-      affectedKpis: string[];
-      detectedAt: string;
-      recommendation: {
-        type: string;
-        title: string;
-        description: string;
-        linkedPatchId: string | null;
-        linkedExperimentId: string | null;
-        estimatedImpact: string;
-        effort: string;
-      };
-    }>;
-    activeIncidents: Array<{
-      id: string;
-      title: string;
-      severity: string;
-      status: string;
-      agentId: string;
-      agentName: string;
-      detectedAt: string;
-      resolvedAt: string | null;
-      description: string;
-    }>;
-    recentPatches: Array<{
-      id: string;
-      description: string;
-      status: string;
-      agentId: string;
-      agentName: string;
-      changeType: string;
-      createdAt: string;
-      riskScore: number;
-    }>;
-  }>({
-    queryKey: ["/api/outcomes", outcomeId, "remediation"],
-    enabled: !!outcomeId,
-  });
-
   const { data: killChainAlerts } = useQuery<{
     alerts: Array<{
       alertId: string;
@@ -742,43 +713,6 @@ export default function OutcomeDetail() {
     queryKey: ["/api/outcomes", outcomeId, "kill-chain-alerts"],
     enabled: !!outcomeId,
     refetchInterval: 60000,
-  });
-
-  const { data: financialLedger } = useQuery<{
-    pipeline: Array<{
-      stage: string;
-      label: string;
-      count: number;
-      amount: number;
-    }>;
-    invoices: Array<{
-      id: string;
-      status: string;
-      totalAmount: number;
-      periodStart: string;
-      periodEnd: string;
-      lineItemCount: number;
-    }>;
-    recentEvents: Array<{
-      id: string;
-      type: string;
-      amount: number;
-      agentId: string;
-      agentName: string;
-      createdAt: string;
-      billable: boolean;
-    }>;
-    summary: {
-      totalCaptured: number;
-      totalMetered: number;
-      totalInvoiced: number;
-      totalCollected: number;
-      totalDisputed: number;
-      collectionRate: number;
-    };
-  }>({
-    queryKey: ["/api/outcomes", outcomeId, "financial-ledger"],
-    enabled: !!outcomeId,
   });
 
   // All SLA-critical governance fields per task spec.  The edit dialog currently
@@ -1560,14 +1494,6 @@ export default function OutcomeDetail() {
                   <p className="text-[11px] text-muted-foreground">Agent drift detected that threatens outcome SLA — immediate attention recommended</p>
                 </div>
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setActiveTab("risk-remediation")}
-                data-testid="button-investigate-alerts"
-              >
-                <Search className="w-3 h-3 mr-1" /> Investigate
-              </Button>
             </div>
 
             <div className="space-y-2">
@@ -2181,12 +2107,13 @@ export default function OutcomeDetail() {
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className={`space-y-4${isBusinessMode ? " hidden" : ""}`}>
         <TabsList className="flex-wrap">
-          <TabsTrigger value="kpi-delivery" data-testid="tab-kpi-delivery">KPI Delivery</TabsTrigger>
-          <TabsTrigger value="process-flow" data-testid="tab-process-flow">
-            <Workflow className="w-3.5 h-3.5 mr-1.5" />
-            Process Flow
-          </TabsTrigger>
-          <TabsTrigger value="agent-map" data-testid="tab-agent-map">Agent Plan</TabsTrigger>
+          {isTabVisible("kpi-delivery") && (
+            <TabsTrigger value="kpi-delivery" data-testid="tab-kpi-delivery">KPI Delivery</TabsTrigger>
+          )}
+          {isTabVisible("agent-map") && (
+            <TabsTrigger value="agent-map" data-testid="tab-agent-map">Agent Plan</TabsTrigger>
+          )}
+          {isTabVisible("governance") && (
           <TabsTrigger value="governance" data-testid="tab-governance">
             <Gavel className="w-3.5 h-3.5 mr-1.5" />
             Governance
@@ -2208,13 +2135,16 @@ export default function OutcomeDetail() {
               ) : null;
             })()}
           </TabsTrigger>
-          <TabsTrigger value="financial-ledger" data-testid="tab-financial-ledger">Financial Ledger</TabsTrigger>
-          <TabsTrigger value="evidence-vault" data-testid="tab-evidence-vault">Evidence Vault</TabsTrigger>
-          <TabsTrigger value="risk-remediation" data-testid="tab-risk-remediation">Risk & Remediation</TabsTrigger>
+          )}
+          {isTabVisible("evidence-vault") && (
+            <TabsTrigger value="evidence-vault" data-testid="tab-evidence-vault">Evidence &amp; Audit</TabsTrigger>
+          )}
+          {isTabVisible("constraint-graph") && (
           <TabsTrigger value="constraint-graph" data-testid="tab-constraint-graph">
             <Network className="w-3.5 h-3.5 mr-1.5" />
             Constraint Graph
           </TabsTrigger>
+          )}
         </TabsList>
 
         {/* Tab 1: KPI Delivery */}
@@ -2457,14 +2387,14 @@ export default function OutcomeDetail() {
                                 const isBetter = isInverse ? currentVal < bm.benchmark : currentVal > bm.benchmark;
                                 return (
                                   <div className="flex flex-col gap-0.5">
-                                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Industry Benchmark</span>
+                                    <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Illustrative Benchmark</span>
                                     <div className="flex items-center gap-1.5">
                                       <span className="text-sm font-medium" data-testid={`text-benchmark-${kpi.id}`}>{bm.benchmark} {bm.unit}</span>
                                       <Badge variant="outline" className={`text-[9px] ${isBetter ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" : "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"}`}>
                                         {isBetter ? "Above avg" : "Below avg"}
                                       </Badge>
                                     </div>
-                                    <span className="text-[9px] text-muted-foreground">{bm.source}</span>
+                                    <span className="text-[9px] text-muted-foreground italic">Illustrative reference only — not live data</span>
                                   </div>
                                 );
                               })()}
@@ -2664,15 +2594,6 @@ export default function OutcomeDetail() {
         </TabsContent>
 
         {/* Tab 1.5: Process Flow */}
-        <TabsContent value="process-flow" className="space-y-4" data-testid="tabcontent-process-flow">
-          <BusinessProcessFlowSection
-            outcome={outcome}
-            kpis={kpis || []}
-            steps={processFlowSteps}
-            onStepsChange={setProcessFlowSteps}
-            onNavigateToAgentPlan={() => setActiveTab("agent-map")}
-          />
-        </TabsContent>
 
         {/* Tab 2: Agent Plan & Contributions */}
         <TabsContent value="agent-map" className="space-y-6" data-testid="tabcontent-agent-map">
@@ -2814,24 +2735,6 @@ export default function OutcomeDetail() {
                               <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Cost-to-Serve</span>
                               <span className="text-sm font-semibold" data-testid={`text-cost-${agent.agentId}`}>${agent.costToServe.toFixed(2)}</span>
                             </div>
-                          </div>
-                        </div>
-
-                        <div className="flex flex-col gap-2">
-                          <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Capability Breakdown</span>
-                          <div className="flex flex-col gap-1.5">
-                            {agent.capabilities.map((cap, ci) => (
-                              <div key={ci} className="flex items-center gap-3" data-testid={`capability-${agent.agentId}-${ci}`}>
-                                <span className="text-xs text-muted-foreground w-40 shrink-0 truncate">{cap.name}</span>
-                                <div className="flex-1 h-2 rounded-sm bg-muted/50">
-                                  <div
-                                    className="h-full rounded-sm bg-primary/60"
-                                    style={{ width: `${cap.contribution}%` }}
-                                  />
-                                </div>
-                                <span className="text-[10px] text-muted-foreground w-8 text-right shrink-0">{cap.contribution}%</span>
-                              </div>
-                            ))}
                           </div>
                         </div>
 
@@ -3151,126 +3054,6 @@ export default function OutcomeDetail() {
           )}
         </TabsContent>
 
-        <TabsContent value="financial-ledger" className="space-y-6" data-testid="tabcontent-financial-ledger">
-          <div>
-            <h2 className="text-lg font-semibold">Financial Ledger</h2>
-            <p className="text-sm text-muted-foreground">Revenue lifecycle pipeline with drill-down to agent runs</p>
-          </div>
-
-          {!financialLedger || !financialLedger.summary ? (
-            <div className="space-y-3">
-              <Skeleton className="h-32 w-full" />
-              <Skeleton className="h-48 w-full" />
-            </div>
-          ) : (
-            <>
-              <Card data-testid="card-pipeline-visualization">
-                <CardContent className="p-4">
-                  <div className="flex flex-col gap-3">
-                    <span className="text-sm font-semibold">Revenue Pipeline</span>
-                    <div className="flex items-center gap-2 flex-wrap justify-center" data-testid="pipeline-flow">
-                      {financialLedger.pipeline.map((stage, i) => (
-                        <div key={stage.stage} className="flex items-center gap-2">
-                          <div className="flex flex-col items-center gap-1 p-3 rounded-md bg-muted/50 min-w-[100px]" data-testid={`pipeline-stage-${stage.stage}`}>
-                            <span className="text-[10px] text-muted-foreground uppercase tracking-wider">{stage.label}</span>
-                            <span className="text-lg font-semibold">${stage.amount.toLocaleString()}</span>
-                            <span className="text-[10px] text-muted-foreground">{stage.count} items</span>
-                          </div>
-                          {i < financialLedger.pipeline.length - 1 && (
-                            <ArrowRight className="w-4 h-4 text-muted-foreground shrink-0" />
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-4">
-                <StatCard title="Captured" value={`$${financialLedger.summary.totalCaptured.toLocaleString()}`} icon={Receipt} testId="stat-captured" tooltip="Total revenue captured from billable agent events" />
-                <StatCard title="Metered" value={`$${financialLedger.summary.totalMetered.toLocaleString()}`} icon={Gauge} testId="stat-metered" tooltip="Usage-based charges metered but not yet invoiced" />
-                <StatCard title="Invoiced" value={`$${financialLedger.summary.totalInvoiced.toLocaleString()}`} icon={FileText} testId="stat-invoiced" tooltip="Total amount invoiced to customers" />
-                <StatCard title="Collected" value={`$${financialLedger.summary.totalCollected.toLocaleString()}`} icon={Banknote} testId="stat-collected" variant="success" tooltip="Payments successfully collected" />
-                <StatCard title="Disputed" value={`$${financialLedger.summary.totalDisputed.toLocaleString()}`} icon={Gavel} testId="stat-disputed" variant={financialLedger.summary.totalDisputed > 0 ? "danger" : "default"} tooltip="Amount under dispute or chargeback" />
-                <StatCard title="Collection Rate" value={`${financialLedger.summary.collectionRate.toFixed(1)}%`} icon={TrendingUp} testId="stat-collection-rate" variant={financialLedger.summary.collectionRate >= 90 ? "success" : "warning"} tooltip="Percentage of invoiced amount successfully collected" />
-              </div>
-
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold">Invoices</h3>
-                {financialLedger.invoices.length === 0 ? (
-                  <Card>
-                    <CardContent className="flex flex-col items-center justify-center py-8 gap-2">
-                      <FileText className="w-8 h-8 text-muted-foreground/50" />
-                      <p className="text-sm text-muted-foreground" data-testid="text-no-invoices">No invoices generated</p>
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <Card>
-                    <CardContent className="p-0">
-                      <div className="divide-y">
-                        {financialLedger.invoices.map((inv) => (
-                          <div key={inv.id} className="flex items-center justify-between gap-3 px-4 py-3 flex-wrap" data-testid={`row-invoice-${inv.id}`}>
-                            <div className="flex items-center gap-3 min-w-0">
-                              <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
-                              <div className="flex flex-col min-w-0">
-                                <span className="text-sm font-medium truncate">Invoice {inv.id.slice(0, 8)}</span>
-                                <span className="text-xs text-muted-foreground">{inv.periodStart} - {inv.periodEnd}</span>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-3 shrink-0 flex-wrap">
-                              <StatusBadge status={inv.status} />
-                              <span className="text-sm font-semibold">${inv.totalAmount.toFixed(2)}</span>
-                              <Badge variant="outline" className="text-[10px]">{inv.lineItemCount} line items</Badge>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-              </div>
-
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold">Recent Revenue Events</h3>
-                {financialLedger.recentEvents.length === 0 ? (
-                  <Card>
-                    <CardContent className="flex flex-col items-center justify-center py-8 gap-2">
-                      <Database className="w-8 h-8 text-muted-foreground/50" />
-                      <p className="text-sm text-muted-foreground">No recent revenue events</p>
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <Card>
-                    <CardContent className="p-0">
-                      <div className="divide-y">
-                        {financialLedger.recentEvents.map((evt) => (
-                          <div key={evt.id} className="flex items-center justify-between gap-3 px-4 py-3 flex-wrap" data-testid={`row-revenue-event-${evt.id}`}>
-                            <div className="flex items-center gap-3 min-w-0">
-                              <CircleDot className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
-                              <div className="flex flex-col min-w-0">
-                                <span className="text-sm font-medium truncate">{evt.type}</span>
-                                <span className="text-xs text-muted-foreground truncate">Agent: {evt.agentName || (evt.agentId ? evt.agentId.slice(0, 8) + "..." : "N/A")}</span>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                              <span className="text-sm font-medium">${evt.amount.toFixed(2)}</span>
-                              {evt.billable ? (
-                                <Badge variant="outline" className="text-[10px] bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20">Billable</Badge>
-                              ) : (
-                                <Badge variant="outline" className="text-[10px] bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20">Excluded</Badge>
-                              )}
-                              <span className="text-xs text-muted-foreground whitespace-nowrap">{relativeTime(evt.createdAt)}</span>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
-              </div>
-            </>
-          )}
-        </TabsContent>
 
         {/* Tab 4: Evidence Vault */}
         <TabsContent value="evidence-vault" className="space-y-6" data-testid="tabcontent-evidence-vault">
@@ -3484,219 +3267,6 @@ export default function OutcomeDetail() {
         </TabsContent>
 
         {/* Tab 5: Risk & Remediation */}
-        <TabsContent value="risk-remediation" className="space-y-6" data-testid="tabcontent-risk-remediation">
-          <div>
-            <h2 className="text-lg font-semibold">Risk & Remediation</h2>
-            <p className="text-sm text-muted-foreground">Active risks, AI-generated recommendations, incidents, and pending approvals</p>
-          </div>
-
-          {!remediation ? (
-            <div className="space-y-3">
-              <Skeleton className="h-24 w-full" />
-              <Skeleton className="h-24 w-full" />
-            </div>
-          ) : (
-            <>
-              <div className="space-y-3">
-                <h3 className="text-sm font-semibold">Active Risks ({remediation.risks.length})</h3>
-                {remediation.risks.length === 0 ? (
-                  <Card>
-                    <CardContent className="flex flex-col items-center justify-center py-8 gap-2">
-                      <CheckCircle className="w-8 h-8 text-emerald-500/50" />
-                      <p className="text-sm text-muted-foreground">No active risks detected</p>
-                    </CardContent>
-                  </Card>
-                ) : (
-                  <div className="space-y-3">
-                    {remediation.risks.map((risk) => {
-                      const severityColors: Record<string, string> = {
-                        critical: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20",
-                        high: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20",
-                        medium: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20",
-                        low: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20",
-                      };
-                      return (
-                        <Card key={risk.id} data-testid={`card-risk-${risk.id}`}>
-                          <CardContent className="p-4">
-                            <div className="flex flex-col gap-4">
-                              <div className="flex items-start justify-between gap-3 flex-wrap">
-                                <div className="flex items-start gap-3 min-w-0">
-                                  <div className="flex items-center justify-center w-8 h-8 rounded-md bg-red-500/10 shrink-0 mt-0.5">
-                                    <AlertTriangle className="w-4 h-4 text-red-500" />
-                                  </div>
-                                  <div className="flex flex-col min-w-0">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                      <span className="text-sm font-semibold">{risk.title}</span>
-                                      <Badge variant="outline" className={`text-[10px] ${severityColors[risk.severity] || severityColors.medium}`}>
-                                        {risk.severity.charAt(0).toUpperCase() + risk.severity.slice(1)}
-                                      </Badge>
-                                      <Badge variant="outline" className="text-[10px]">{risk.category}</Badge>
-                                    </div>
-                                    <p className="text-xs text-muted-foreground mt-1">{risk.description}</p>
-                                  </div>
-                                </div>
-                                <span className="text-[10px] text-muted-foreground whitespace-nowrap shrink-0">{relativeTime(risk.detectedAt)}</span>
-                              </div>
-
-                              {risk.affectedAgents.length > 0 && (
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-[10px] text-muted-foreground">Affected agents:</span>
-                                  {risk.affectedAgents.map((a, i) => (
-                                    <Badge key={i} variant="outline" className="text-[10px]">{a}</Badge>
-                                  ))}
-                                </div>
-                              )}
-
-                              {risk.affectedKpis.length > 0 && (
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-[10px] text-muted-foreground">Affected KPIs:</span>
-                                  {risk.affectedKpis.map((k, i) => (
-                                    <Badge key={i} variant="outline" className="text-[10px]">{k}</Badge>
-                                  ))}
-                                </div>
-                              )}
-
-                              <div className="rounded-md bg-primary/5 border border-primary/10 p-3" data-testid={`remediation-${risk.id}`}>
-                                <div className="flex items-center gap-2 mb-2">
-                                  <Lightbulb className="w-3.5 h-3.5 text-primary" />
-                                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">AI Recommendation</span>
-                                </div>
-                                <div className="flex flex-col gap-2">
-                                  <span className="text-sm font-medium">{risk.recommendation.title}</span>
-                                  <p className="text-xs text-muted-foreground">{risk.recommendation.description}</p>
-                                  <div className="flex items-center gap-4 flex-wrap">
-                                    <div className="flex items-center gap-1.5">
-                                      <TrendingUp className="w-3 h-3 text-emerald-500" />
-                                      <span className="text-[10px] text-muted-foreground">{risk.recommendation.estimatedImpact}</span>
-                                    </div>
-                                    <div className="flex items-center gap-1.5">
-                                      <Clock className="w-3 h-3 text-muted-foreground" />
-                                      <span className="text-[10px] text-muted-foreground">Effort: {risk.recommendation.effort}</span>
-                                    </div>
-                                    <Badge variant="outline" className="text-[10px]">{risk.recommendation.type}</Badge>
-                                  </div>
-                                  <div className="flex items-center gap-2 flex-wrap mt-1">
-                                    {risk.recommendation.linkedPatchId && (
-                                      <Link href={`/agents`}>
-                                        <Button variant="outline" size="sm" data-testid={`button-view-patch-${risk.id}`}>
-                                          <Wrench className="w-3.5 h-3.5 mr-1" /> View Patch
-                                        </Button>
-                                      </Link>
-                                    )}
-                                    {risk.recommendation.linkedExperimentId && (
-                                      <Link href={`/improvements`}>
-                                        <Button variant="outline" size="sm" data-testid={`button-view-experiment-${risk.id}`}>
-                                          <FlaskConical className="w-3.5 h-3.5 mr-1" /> View Experiment
-                                        </Button>
-                                      </Link>
-                                    )}
-                                    <Button variant="outline" size="sm" data-testid={`button-approve-remediation-${risk.id}`}>
-                                      <CheckCircle className="w-3.5 h-3.5 mr-1" /> Approve
-                                    </Button>
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {remediation.activeIncidents.length > 0 && (
-                <div className="space-y-3">
-                  <h3 className="text-sm font-semibold">Active Incidents ({remediation.activeIncidents.length})</h3>
-                  <div className="space-y-2">
-                    {remediation.activeIncidents.map((incident) => (
-                      <Card key={incident.id} data-testid={`card-incident-${incident.id}`}>
-                        <CardContent className="p-4">
-                          <div className="flex items-center justify-between gap-3 flex-wrap">
-                            <div className="flex items-center gap-3 min-w-0">
-                              <Flame className="w-4 h-4 text-red-500 shrink-0" />
-                              <div className="flex flex-col min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-sm font-medium truncate">{incident.title}</span>
-                                  <Badge variant="outline" className={`text-[10px] ${
-                                    incident.severity === "critical" ? "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20"
-                                    : "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20"
-                                  }`}>{incident.severity}</Badge>
-                                  <StatusBadge status={incident.status} />
-                                </div>
-                                <span className="text-xs text-muted-foreground">Agent: {incident.agentName}</span>
-                              </div>
-                            </div>
-                            <span className="text-xs text-muted-foreground whitespace-nowrap shrink-0">{relativeTime(incident.detectedAt)}</span>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {remediation.recentPatches.length > 0 && (
-                <div className="space-y-3">
-                  <h3 className="text-sm font-semibold">Linked Patches ({remediation.recentPatches.length})</h3>
-                  <div className="space-y-2">
-                    {remediation.recentPatches.map((patch) => (
-                      <Card key={patch.id} data-testid={`card-patch-${patch.id}`}>
-                        <CardContent className="p-4">
-                          <div className="flex items-center justify-between gap-3 flex-wrap">
-                            <div className="flex items-center gap-3 min-w-0">
-                              <Wrench className="w-4 h-4 text-muted-foreground shrink-0" />
-                              <div className="flex flex-col min-w-0">
-                                <span className="text-sm font-medium truncate">{patch.description}</span>
-                                <span className="text-xs text-muted-foreground">Agent: {patch.agentName} | Type: {patch.changeType}</span>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2 shrink-0 flex-wrap">
-                              <StatusBadge status={patch.status} />
-                              {patch.riskScore > 0 && (
-                                <Badge variant="outline" className="text-[10px]">Risk: {(patch.riskScore * 100).toFixed(0)}%</Badge>
-                              )}
-                              <span className="text-xs text-muted-foreground whitespace-nowrap">{relativeTime(patch.createdAt)}</span>
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {pendingApprovals.length > 0 && (
-                <div className="space-y-3">
-                  <h3 className="text-sm font-semibold">Pending Approvals</h3>
-                  <div className="space-y-2">
-                    {pendingApprovals.map((approval) => (
-                      <Card key={approval.id} data-testid={`card-pending-approval-${approval.id}`}>
-                        <CardContent className="p-4">
-                          <div className="flex items-center justify-between gap-3 flex-wrap">
-                            <div className="flex items-center gap-2 min-w-0">
-                              <Clock className="w-4 h-4 text-amber-500 shrink-0" />
-                              <div className="flex flex-col min-w-0">
-                                <span className="text-sm font-medium truncate">{approval.objectName || approval.type}</span>
-                                <span className="text-xs text-muted-foreground">{approval.description || approval.type.replace(/_/g, " ")}</span>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <StatusBadge status={approval.status} />
-                              {approval.riskScore != null && (
-                                <Badge variant="outline" className="text-[10px]">Risk: {((approval.riskScore || 0) * 100).toFixed(0)}%</Badge>
-                              )}
-                            </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </TabsContent>
 
         <TabsContent value="constraint-graph" className="space-y-6" data-testid="tabcontent-constraint-graph">
           {(() => {
