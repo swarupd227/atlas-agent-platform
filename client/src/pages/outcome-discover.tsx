@@ -455,6 +455,7 @@ export default function OutcomeDiscover() {
   const [showFormIntel, setShowFormIntel] = useState(true);
   const [showRoiEstimate, setShowRoiEstimate] = useState(true);
   const [generatingProposal, setGeneratingProposal] = useState(false);
+  const [buildingOppIndex, setBuildingOppIndex] = useState<number | null>(null);
   const [showMeetingContext, setShowMeetingContext] = useState(true);
   const [reviewDraft, setReviewDraft] = useState<{
     name: string;
@@ -1053,7 +1054,9 @@ export default function OutcomeDiscover() {
   async function startRecording() {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const recorder = new MediaRecorder(stream);
+      // Low opus bitrate keeps even a ~1-hour meeting well under the 25 MB
+      // transcription cap (~14 MB/hr), so it transcribes in a single pass.
+      const recorder = new MediaRecorder(stream, { audioBitsPerSecond: 32000 });
       const chunks: Blob[] = [];
       pendingChunksRef.current = chunks;
 
@@ -1154,18 +1157,29 @@ export default function OutcomeDiscover() {
       if (industry) formData.append("industry", JSON.stringify({ id: industry.id, label: industry.label }));
       formData.append("generateTopProposal", "true");
 
-      const res = await fetch("/api/ai/transcribe-analyze", {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!res.ok) {
-        const errText = await res.text();
-        let errMsg = "Analysis failed";
+      // Enqueue async transcription so long (~1h) meetings transcribe in the
+      // background instead of blocking the request / hitting proxy timeouts.
+      const enqueueRes = await fetch("/api/ai/transcribe-meeting", { method: "POST", body: formData });
+      if (!enqueueRes.ok) {
+        const errText = await enqueueRes.text();
+        let errMsg = enqueueRes.status === 413 ? "Recording is too large — keep it under ~1 hour." : "Transcription failed";
         try { errMsg = JSON.parse(errText).error || errMsg; } catch {}
         throw new Error(errMsg);
       }
-      const result = await res.json();
+      const { jobId } = await enqueueRes.json();
+
+      // Poll for the transcription + analysis result.
+      const deadline = Date.now() + 6 * 60 * 1000;
+      let result: any = null;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const statusRes = await fetch(`/api/ai/transcribe-meeting/${jobId}`);
+        if (!statusRes.ok) continue;
+        const s = await statusRes.json();
+        if (s.status === "completed") { result = s.result; break; }
+        if (s.status === "failed") throw new Error(s.error || "Transcription failed");
+      }
+      if (!result) throw new Error("Transcription is taking too long. Please try a shorter recording.");
       setTranscriptResult(result);
 
       if (result.topProposal?.type === "outcome_proposal") {
@@ -1218,9 +1232,10 @@ export default function OutcomeDiscover() {
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   }
 
-  async function generateProposalForOpportunity(opp: { name: string; description: string; keyRequirements: string[]; suggestedSystems: string[]; draftKpis?: Array<{name: string; target: number; unit: string}>; riskTier?: string; estimatedRoiNarrative?: string }) {
+  async function generateProposalForOpportunity(opp: { name: string; description: string; keyRequirements: string[]; suggestedSystems: string[]; draftKpis?: Array<{name: string; target: number; unit: string}>; riskTier?: string; estimatedRoiNarrative?: string }, index?: number) {
     if (generatingProposal || streaming) return;
     setGeneratingProposal(true);
+    setBuildingOppIndex(index ?? null);
     try {
       const processContext = processSteps.length > 0
         ? ` Current process: ${processSteps.map((s, i) => `Step ${i + 1}: ${s.description} (${s.actor}, ${s.timeMins} mins, Pain: ${s.painPoints})`).join("; ")}.`
@@ -1312,6 +1327,7 @@ export default function OutcomeDiscover() {
       toast({ title: "Plan generation failed", description: err.message || "Please try again.", variant: "destructive" });
     } finally {
       setGeneratingProposal(false);
+      setBuildingOppIndex(null);
     }
   }
 
@@ -2489,8 +2505,8 @@ export default function OutcomeDiscover() {
                             ))}
                           </div>
                           <div className="flex items-center gap-2">
-                            <Button variant="default" size="sm" onClick={() => generateProposalForOpportunity(opp)} disabled={generatingProposal || streaming} data-testid={`button-build-plan-${i}`}>
-                              {generatingProposal ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />} Build Plan
+                            <Button variant="default" size="sm" onClick={() => generateProposalForOpportunity(opp, i)} disabled={generatingProposal || streaming} data-testid={`button-build-plan-${i}`}>
+                              {buildingOppIndex === i ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <Sparkles className="w-3 h-3 mr-1" />} {buildingOppIndex === i ? "Building…" : "Build Plan"}
                             </Button>
                             <Button variant="outline" size="sm" onClick={() => useOpportunityForDiscovery(opp)} data-testid={`button-use-opportunity-${i}`}>
                               <MessageSquare className="w-3 h-3 mr-1" /> Refine via Chat

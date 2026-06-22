@@ -39,7 +39,11 @@ import {
 } from "../agent-runtime";
 import OpenAI, { toFile } from "openai";
 import multer from "multer";
+import path from "path";
+import os from "os";
+import fs from "fs";
 import { anthropicClient, callClaude, stripJsonFences } from "../claude";
+import { runMeetingTranscription, aiConfigured } from "../meeting-transcription";
 
 const openai = new OpenAI({
   // Prefer the Replit AI-gateway vars when present (legacy), otherwise fall
@@ -2579,7 +2583,18 @@ Rules:
     }
   });
 
-  const upload = multer({ storage: multer.memoryStorage() });
+  const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+
+  // Disk-backed upload for the async (long-meeting) path so large audio isn't held in RAM.
+  const meetingUploadDir = path.join(os.tmpdir(), "atlas-meeting-uploads");
+  try { fs.mkdirSync(meetingUploadDir, { recursive: true }); } catch { /* ignore */ }
+  const meetingUpload = multer({
+    storage: multer.diskStorage({
+      destination: (_req, _file, cb) => cb(null, meetingUploadDir),
+      filename: (_req, file, cb) => cb(null, `meeting-${Date.now()}-${Math.round(Math.random() * 1e6)}.${(file.originalname.split(".").pop() || "webm")}`),
+    }),
+    limits: { fileSize: 25 * 1024 * 1024 },
+  });
 
   router.post("/api/ai/transcribe-analyze", upload.single("audio"), async (req, res) => {
     try {
@@ -2712,6 +2727,54 @@ Return ONLY this exact JSON structure (no other text, no markdown fences):
     } catch (error: any) {
       console.error("Transcribe-analyze error:", error);
       res.status(500).json({ error: error.message || "Failed to transcribe and analyze audio" });
+    }
+  });
+
+  // Async long-meeting transcription: upload -> job -> poll. Audio is written to
+  // disk (not RAM) and transcribed by the job worker so a long (~1h) meeting
+  // doesn't block the request or hit proxy timeouts.
+  router.post("/api/ai/transcribe-meeting", meetingUpload.single("audio"), async (req, res) => {
+    try {
+      if (!aiConfigured()) {
+        if (req.file?.path) { try { fs.unlinkSync(req.file.path); } catch { /* ignore */ } }
+        return res.status(503).json({ error: "AI transcription is not configured" });
+      }
+      if (!req.file) return res.status(400).json({ error: "No audio file provided" });
+
+      let industry: { id: string; label: string } | null = null;
+      try { if (req.body.industry) industry = JSON.parse(req.body.industry); } catch { /* ignore */ }
+      const generateTopProposal = req.body.generateTopProposal === "true";
+
+      const job = await storage.createJob({
+        type: "meeting_transcription",
+        status: "queued",
+        payload: {
+          filePath: req.file.path,
+          originalname: req.file.originalname || "recording.webm",
+          industry,
+          generateTopProposal,
+        },
+      });
+      res.status(202).json({ jobId: job.id, status: "queued" });
+    } catch (error: any) {
+      if (req.file?.path) { try { fs.unlinkSync(req.file.path); } catch { /* ignore */ } }
+      console.error("transcribe-meeting enqueue error:", error);
+      res.status(500).json({ error: error.message || "Failed to queue transcription" });
+    }
+  });
+
+  router.get("/api/ai/transcribe-meeting/:jobId", async (req, res) => {
+    try {
+      const job = await storage.getJob(req.params.jobId);
+      if (!job) return res.status(404).json({ error: "Job not found" });
+      res.json({
+        status: job.status,
+        progress: job.progress ?? 0,
+        ...(job.status === "completed" && job.result ? { result: job.result } : {}),
+        ...(job.status === "failed" ? { error: job.error || "Transcription failed" } : {}),
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message || "Failed to fetch job" });
     }
   });
 
