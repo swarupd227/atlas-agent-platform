@@ -1,10 +1,10 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect, useRef } from "react";
 import { useLocation, useSearch } from "wouter";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Workflow, Zap, Users, Brain, Bell, Square,
   Trash2, ArrowRight, ChevronRight, Sparkles, Loader2,
-  Play, Database, GitBranch,
+  Play, Database, GitBranch, Save,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -302,7 +302,7 @@ export default function ProcessFlows() {
 
   const urlParams = useMemo(() => {
     const p = new URLSearchParams(searchString);
-    return { outcomeName: p.get("outcomeName") || "", kpis: p.get("kpis") || "" };
+    return { outcomeId: p.get("outcomeId") || "", outcomeName: p.get("outcomeName") || "", kpis: p.get("kpis") || "" };
   }, [searchString]);
 
   const [activeCategory, setActiveCategory] = useState<typeof CATEGORIES[number]>("All");
@@ -354,6 +354,50 @@ export default function ProcessFlows() {
     },
     onError: () => {
       toast({ title: "Generation failed", description: "Could not generate flow. Please try again.", variant: "destructive" });
+    },
+  });
+
+  const queryClient = useQueryClient();
+
+  // When opened against a specific outcome, load its persisted flow (unless the
+  // detail page already handed off steps via sessionStorage).
+  const { data: outcomeData } = useQuery<any>({
+    queryKey: ["/api/outcomes", urlParams.outcomeId],
+    enabled: !!urlParams.outcomeId,
+  });
+  const loadedFlowRef = useRef(false);
+  useEffect(() => {
+    if (loadedFlowRef.current || !urlParams.outcomeId || !outcomeData) return;
+    loadedFlowRef.current = true;
+    if (steps.length > 0) return; // sessionStorage handoff wins
+    const stored = outcomeData?.processFlow?.steps as Array<any> | undefined;
+    if (Array.isArray(stored) && stored.length > 0) {
+      setSteps(stored.map((s, i) => ({
+        id: s.id || `loaded_${i}`,
+        type: (s.type as ProcessStep["type"]) || "take_action",
+        label: s.label || `Step ${i + 1}`,
+        description: s.description || "",
+        actor: s.actor,
+        estimatedMins: s.estimatedMins,
+      })));
+      setFlowName(outcomeData?.processFlow?.name || (urlParams.outcomeName ? `${urlParams.outcomeName} Flow` : "Process Flow"));
+    }
+  }, [outcomeData, urlParams.outcomeId]);
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PUT", `/api/outcomes/${urlParams.outcomeId}/process-flow`, {
+        name: flowName,
+        steps: steps.map(s => ({ id: s.id, type: s.type, label: s.label, description: s.description, actor: s.actor, estimatedMins: s.estimatedMins })),
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/outcomes", urlParams.outcomeId] });
+      toast({ title: "Process flow saved", description: "This flow is now attached to the outcome." });
+    },
+    onError: () => {
+      toast({ title: "Save failed", description: "Could not save the flow to the outcome.", variant: "destructive" });
     },
   });
 
@@ -463,6 +507,29 @@ export default function ProcessFlows() {
           <p className="text-xs text-muted-foreground">Design how your automation works in plain language</p>
         </div>
         <div className="flex-1" />
+        {urlParams.outcomeId && steps.length > 0 && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => saveMutation.mutate()}
+            disabled={saveMutation.isPending}
+            data-testid="button-save-flow-to-outcome"
+          >
+            {saveMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Save className="w-3.5 h-3.5 mr-1.5" />}
+            Save to Outcome
+          </Button>
+        )}
+        {urlParams.outcomeId && (
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => navigate(`/outcomes/${urlParams.outcomeId}`)}
+            data-testid="button-back-to-outcome"
+          >
+            <ArrowRight className="w-3.5 h-3.5 mr-1.5 rotate-180" />
+            Back to Outcome
+          </Button>
+        )}
         {steps.length > 0 && (
           <Button
             size="sm"

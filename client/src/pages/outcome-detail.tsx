@@ -487,7 +487,13 @@ export default function OutcomeDetail() {
     if (outcome && outcome.id !== processFlowInitializedForRef.current) {
       processFlowInitializedForRef.current = outcome.id;
       processFlowFromProposalRef.current = null;
-      setProcessFlowSteps(buildAutoFlow(outcome, kpis || []));
+      // Prefer a persisted, business-authored flow; fall back to an auto-generated one.
+      const stored = (outcome as any).processFlow?.steps as Array<{ id?: string; type: string; label: string; description?: string; actor?: string }> | undefined;
+      if (Array.isArray(stored) && stored.length > 0) {
+        setProcessFlowSteps(stored.map((s, i) => ({ id: s.id || `pf${i}`, type: s.type, label: s.label, description: s.description || "", actor: s.actor })));
+      } else {
+        setProcessFlowSteps(buildAutoFlow(outcome, kpis || []));
+      }
     }
   }, [outcome?.id]);
 
@@ -5193,7 +5199,7 @@ function BusinessProcessFlowSection({
             variant="ghost"
             className="h-7 text-xs"
             onClick={() => {
-              const params = new URLSearchParams({ outcomeName: outcome.name || "", kpis: kpis.slice(0, 3).map(k => k.name).join(",") });
+              const params = new URLSearchParams({ outcomeId: outcome.id, outcomeName: outcome.name || "", kpis: kpis.slice(0, 3).map(k => k.name).join(",") });
               if (steps.length > 0) {
                 sessionStorage.setItem("process-flow-import-steps", JSON.stringify(steps));
               } else {

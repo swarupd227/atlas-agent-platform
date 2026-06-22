@@ -1891,6 +1891,53 @@ async function createOutcomeVersion(
     }
   });
 
+  // Persist a business-authored process flow on the outcome (canonical typed steps).
+  router.put("/api/outcomes/:id/process-flow", checkPermission("create_modify_outcomes"), async (req, res) => {
+    try {
+      const outcomeId = String(req.params.id);
+      const outcome = await storage.getOutcome(outcomeId, getOrgId(req));
+      if (!outcome) return res.status(404).json({ message: "Outcome not found" });
+
+      const stepSchema = z.object({
+        id: z.string().optional(),
+        type: z.string(),
+        label: z.string(),
+        description: z.string().optional().default(""),
+        actor: z.string().optional(),
+        estimatedMins: z.number().optional(),
+        painPoints: z.string().optional(),
+        improvementIdeas: z.string().optional(),
+      });
+      const bodySchema = z.object({
+        name: z.string().optional().default(""),
+        steps: z.array(stepSchema).max(50),
+      });
+      const parsed = bodySchema.parse(req.body);
+
+      const processFlow = {
+        name: parsed.name,
+        steps: parsed.steps.map((s, i) => ({ ...s, id: s.id || `pf${i}` })),
+        updatedAt: new Date().toISOString(),
+      };
+      const updated = await storage.updateOutcome(outcomeId, { processFlow } as Partial<OutcomeContract>, getOrgId(req));
+      if (!updated) return res.status(404).json({ message: "Not found" });
+
+      await storage.createAuditEvent({
+        actorType: "user",
+        actorId: "system",
+        action: "outcome.process_flow_updated",
+        objectType: "outcome",
+        objectId: outcomeId,
+        details: JSON.stringify({ stepCount: processFlow.steps.length, name: processFlow.name }),
+        ontologyTags: resolveOntologyTags("outcome", "outcome.process_flow_updated"),
+      });
+
+      res.json({ success: true, processFlow, outcome: updated });
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
   router.post("/api/kpis", async (req, res) => {
     try {
       const data = insertKpiDefinitionSchema.parse(req.body);
