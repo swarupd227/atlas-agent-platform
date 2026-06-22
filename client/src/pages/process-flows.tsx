@@ -4,8 +4,16 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Workflow, Zap, Users, Brain, Bell, Square,
   Trash2, ArrowRight, ChevronRight, Sparkles, Loader2,
-  Play, Database, GitBranch, Save,
+  Play, Database, GitBranch, Save, GripVertical,
 } from "lucide-react";
+import {
+  DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext, horizontalListSortingStrategy, useSortable, arrayMove, sortableKeyboardCoordinates,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -224,14 +232,31 @@ function StepCard({
 }) {
   const meta = STEP_TYPE_MAP[step.type] || STEP_TYPES[0];
   const Icon = meta.icon;
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: step.id });
+  const sortableStyle = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 50 : undefined,
+  };
   return (
-    <div className="flex items-stretch gap-0 group/steprow">
+    <div ref={setNodeRef} style={sortableStyle} className="flex items-stretch gap-0 group/steprow">
       <div
         className={`flex flex-col rounded-xl border ${meta.border} ${meta.bg} p-3 w-44 shrink-0 cursor-pointer transition-all hover:shadow-md ${editing ? "ring-2 ring-primary" : ""}`}
         onClick={onEdit}
         data-testid={`process-step-card-${index}`}
       >
         <div className={`flex items-center gap-1.5 mb-1.5 ${meta.color}`}>
+          <button
+            type="button"
+            className="touch-none cursor-grab active:cursor-grabbing -ml-0.5 p-0.5 rounded hover:bg-black/10 text-muted-foreground"
+            onClick={e => e.stopPropagation()}
+            data-testid={`drag-handle-${index}`}
+            {...attributes}
+            {...listeners}
+          >
+            <GripVertical className="w-3 h-3" />
+          </button>
           <Icon className="w-3.5 h-3.5 shrink-0" />
           <span className="text-[10px] font-semibold uppercase tracking-wide truncate">{meta.label}</span>
         </div>
@@ -438,6 +463,21 @@ export default function ProcessFlows() {
     if (target < 0 || target >= newArr.length) return;
     [newArr[idx], newArr[target]] = [newArr[target], newArr[idx]];
     setSteps(newArr);
+  };
+
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setSteps(prev => {
+      const from = prev.findIndex(s => s.id === active.id);
+      const to = prev.findIndex(s => s.id === over.id);
+      if (from === -1 || to === -1) return prev;
+      return arrayMove(prev, from, to);
+    });
   };
 
   const updateStep = (id: string, patch: Partial<ProcessStep>) => {
@@ -679,23 +719,27 @@ export default function ProcessFlows() {
                 </div>
               ) : (
                 <div className="flex flex-col gap-6">
-                  <div className="flex items-start gap-0 flex-wrap">
-                    {steps.map((step, i) => (
-                      <StepCard
-                        key={step.id}
-                        step={step}
-                        index={i}
-                        total={steps.length}
-                        editing={editingStepId === step.id}
-                        onEdit={() => setEditingStepId(editingStepId === step.id ? null : step.id)}
-                        onDelete={() => deleteStep(step.id)}
-                        onMoveLeft={() => moveStep(i, -1)}
-                        onMoveRight={() => moveStep(i, 1)}
-                        onLabelChange={v => updateStep(step.id, { label: v })}
-                        onDescChange={v => updateStep(step.id, { description: v })}
-                      />
-                    ))}
-                  </div>
+                  <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                    <SortableContext items={steps.map(s => s.id)} strategy={horizontalListSortingStrategy}>
+                      <div className="flex items-start gap-0 flex-wrap">
+                        {steps.map((step, i) => (
+                          <StepCard
+                            key={step.id}
+                            step={step}
+                            index={i}
+                            total={steps.length}
+                            editing={editingStepId === step.id}
+                            onEdit={() => setEditingStepId(editingStepId === step.id ? null : step.id)}
+                            onDelete={() => deleteStep(step.id)}
+                            onMoveLeft={() => moveStep(i, -1)}
+                            onMoveRight={() => moveStep(i, 1)}
+                            onLabelChange={v => updateStep(step.id, { label: v })}
+                            onDescChange={v => updateStep(step.id, { description: v })}
+                          />
+                        ))}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
 
                   {/* Add step palette */}
                   <div className="flex flex-col gap-2">
