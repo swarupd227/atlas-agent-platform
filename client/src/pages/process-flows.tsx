@@ -719,6 +719,10 @@ export default function ProcessFlows() {
                 </div>
               ) : (
                 <div className="flex flex-col gap-6">
+                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground" data-testid="hint-drag-reorder">
+                    <GripVertical className="w-3 h-3" />
+                    <span>Drag a card by its handle to reorder steps</span>
+                  </div>
                   <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                     <SortableContext items={steps.map(s => s.id)} strategy={horizontalListSortingStrategy}>
                       <div className="flex items-start gap-0 flex-wrap">
