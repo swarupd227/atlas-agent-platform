@@ -22,6 +22,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { normalizeToGraph, flattenGraphToSteps } from "@shared/process-flow";
 
 export interface ProcessStep {
   id: string;
@@ -395,9 +396,10 @@ export default function ProcessFlows() {
     if (loadedFlowRef.current || !urlParams.outcomeId || !outcomeData) return;
     loadedFlowRef.current = true;
     if (steps.length > 0) return; // sessionStorage handoff wins
-    const stored = outcomeData?.processFlow?.steps as Array<any> | undefined;
-    if (Array.isArray(stored) && stored.length > 0) {
-      setSteps(stored.map((s, i) => ({
+    const graph = normalizeToGraph(outcomeData?.processFlow, urlParams.outcomeName || "Process Flow");
+    const flat = graph ? flattenGraphToSteps(graph) : [];
+    if (flat.length > 0) {
+      setSteps(flat.map((s, i) => ({
         id: s.id || `loaded_${i}`,
         type: (s.type as ProcessStep["type"]) || "take_action",
         label: s.label || `Step ${i + 1}`,
@@ -405,7 +407,7 @@ export default function ProcessFlows() {
         actor: s.actor,
         estimatedMins: s.estimatedMins,
       })));
-      setFlowName(outcomeData?.processFlow?.name || (urlParams.outcomeName ? `${urlParams.outcomeName} Flow` : "Process Flow"));
+      setFlowName(graph?.name || (urlParams.outcomeName ? `${urlParams.outcomeName} Flow` : "Process Flow"));
     }
   }, [outcomeData, urlParams.outcomeId]);
 

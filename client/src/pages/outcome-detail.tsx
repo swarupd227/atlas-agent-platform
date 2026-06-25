@@ -114,6 +114,7 @@ import { usePermission, useRole } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { OutcomeContract, KpiDefinition, Approval, OutcomeEvent, Agent, Policy, Skill, OntologyConcept } from "@shared/schema";
+import { normalizeToGraph, flattenGraphToSteps } from "@shared/process-flow";
 import { PolicyImpactGraph } from "@/components/policy-impact-graph";
 
 function getIndustryBenchmark(industry: string, kpiName: string, kpiUnit: string): { benchmark: number; unit: string; source: string; comparison: string } | null {
@@ -487,10 +488,12 @@ export default function OutcomeDetail() {
     if (outcome && outcome.id !== processFlowInitializedForRef.current) {
       processFlowInitializedForRef.current = outcome.id;
       processFlowFromProposalRef.current = null;
-      // Prefer a persisted, business-authored flow; fall back to an auto-generated one.
-      const stored = (outcome as any).processFlow?.steps as Array<{ id?: string; type: string; label: string; description?: string; actor?: string }> | undefined;
-      if (Array.isArray(stored) && stored.length > 0) {
-        setProcessFlowSteps(stored.map((s, i) => ({ id: s.id || `pf${i}`, type: s.type, label: s.label, description: s.description || "", actor: s.actor })));
+      // Prefer a persisted, business-authored flow (graph or legacy); flatten to
+      // the linear step list this view still uses. Fall back to an auto flow.
+      const graph = normalizeToGraph((outcome as any).processFlow, outcome.name || "Process Flow");
+      const flat = graph ? flattenGraphToSteps(graph) : [];
+      if (flat.length > 0) {
+        setProcessFlowSteps(flat.map((s, i) => ({ id: s.id || `pf${i}`, type: s.type, label: s.label, description: s.description || "", actor: s.actor })));
       } else {
         setProcessFlowSteps(buildAutoFlow(outcome, kpis || []));
       }
@@ -2490,8 +2493,8 @@ export default function OutcomeDetail() {
               <div className="min-w-0">
                 <p className="text-sm font-medium">Process Flow</p>
                 <p className="text-xs text-muted-foreground truncate">
-                  {(outcome as any).processFlow?.steps?.length
-                    ? `${(outcome as any).processFlow.steps.length} steps — design how this outcome works; it guides agent generation below.`
+                  {(outcome as any).processFlow?.nodes?.length
+                    ? `${(outcome as any).processFlow.nodes.length} steps — design how this outcome works; it guides agent generation below.`
                     : "Design how this outcome works before generating agents. The flow guides agent naming and roles."}
                 </p>
               </div>
@@ -2512,7 +2515,7 @@ export default function OutcomeDetail() {
               data-testid="button-edit-process-flow-agentplan"
             >
               <Workflow className="w-3.5 h-3.5 mr-1.5" />
-              {(outcome as any).processFlow?.steps?.length ? "Edit Process Flow" : "Design Process Flow"}
+              {(outcome as any).processFlow?.nodes?.length ? "Edit Process Flow" : "Design Process Flow"}
             </Button>
           </div>
           <AgentProposalsTab outcome={outcome} kpis={kpis || []} initialTemplateId={initialTemplateId} processFlowSteps={processFlowSteps} onProcessFlowStepsGenerated={setProcessFlowSteps} />

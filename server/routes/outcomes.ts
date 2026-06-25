@@ -4,6 +4,7 @@ import { db } from "../db";
 import { desc, eq, and } from "drizzle-orm";
 import { outcomeContracts, kpiDefinitions, approvals, agents, type OutcomeContract } from "@shared/schema";
 import { z, ZodError } from "zod";
+import { normalizeToGraph } from "@shared/process-flow";
 import {
   insertOutcomeContractSchema,
   insertKpiDefinitionSchema,
@@ -1898,27 +1899,20 @@ async function createOutcomeVersion(
       const outcome = await storage.getOutcome(outcomeId, getOrgId(req));
       if (!outcome) return res.status(404).json({ message: "Outcome not found" });
 
-      const stepSchema = z.object({
-        id: z.string().optional(),
-        type: z.string(),
-        label: z.string(),
-        description: z.string().optional().default(""),
-        actor: z.string().optional(),
-        estimatedMins: z.number().optional(),
-        painPoints: z.string().optional(),
-        improvementIdeas: z.string().optional(),
-      });
+      // Accept either a legacy ordered step list or a graph ({nodes, edges});
+      // both normalize to the canonical graph stored on the outcome.
       const bodySchema = z.object({
         name: z.string().optional().default(""),
-        steps: z.array(stepSchema).max(50),
+        steps: z.array(z.any()).max(100).optional(),
+        nodes: z.array(z.any()).max(100).optional(),
+        edges: z.array(z.any()).max(300).optional(),
       });
       const parsed = bodySchema.parse(req.body);
 
-      const processFlow = {
-        name: parsed.name,
-        steps: parsed.steps.map((s, i) => ({ ...s, id: s.id || `pf${i}` })),
-        updatedAt: new Date().toISOString(),
-      };
+      const graph = normalizeToGraph(parsed, outcome.name || "Process Flow");
+      if (!graph) return res.status(400).json({ message: "Invalid process flow payload" });
+      const processFlow = { ...graph, updatedAt: new Date().toISOString() };
+
       const updated = await storage.updateOutcome(outcomeId, { processFlow } as Partial<OutcomeContract>, getOrgId(req));
       if (!updated) return res.status(404).json({ message: "Not found" });
 
@@ -1928,7 +1922,7 @@ async function createOutcomeVersion(
         action: "outcome.process_flow_updated",
         objectType: "outcome",
         objectId: outcomeId,
-        details: JSON.stringify({ stepCount: processFlow.steps.length, name: processFlow.name }),
+        details: JSON.stringify({ nodeCount: processFlow.nodes.length, edgeCount: processFlow.edges.length, name: processFlow.name }),
         ontologyTags: resolveOntologyTags("outcome", "outcome.process_flow_updated"),
       });
 
