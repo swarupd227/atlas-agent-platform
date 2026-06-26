@@ -5,6 +5,7 @@ import { desc, eq, and } from "drizzle-orm";
 import { outcomeContracts, kpiDefinitions, approvals, agents, type OutcomeContract } from "@shared/schema";
 import { z, ZodError } from "zod";
 import { normalizeToGraph } from "@shared/process-flow";
+import { compileProcessFlow } from "../process-flow-compile";
 import {
   insertOutcomeContractSchema,
   insertKpiDefinitionSchema,
@@ -1927,6 +1928,25 @@ async function createOutcomeVersion(
       });
 
       res.json({ success: true, processFlow, outcome: updated });
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  // Compile an (in-editor or stored) process flow into an executable wave plan
+  // using the same DAG engine that runs team blueprints. Stateless preview.
+  router.post("/api/process-flow/compile", async (req, res) => {
+    try {
+      const bodySchema = z.object({
+        name: z.string().optional().default(""),
+        steps: z.array(z.any()).max(100).optional(),
+        nodes: z.array(z.any()).max(100).optional(),
+        edges: z.array(z.any()).max(300).optional(),
+      });
+      const parsed = bodySchema.parse(req.body);
+      const graph = normalizeToGraph(parsed, parsed.name || "Process Flow");
+      if (!graph) return res.status(400).json({ message: "Invalid process flow payload" });
+      res.json(compileProcessFlow(graph));
     } catch (e) {
       handleZodError(res, e);
     }

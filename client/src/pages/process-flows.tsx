@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { normalizeToGraph, stepsToGraph, type ProcessNode, type ProcessEdge } from "@shared/process-flow";
@@ -296,6 +297,17 @@ export default function ProcessFlows() {
     },
   });
 
+  const [compiled, setCompiled] = useState<any | null>(null);
+  const [compileOpen, setCompileOpen] = useState(false);
+  const compileMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/process-flow/compile", { name: flowName, nodes: graph.nodes, edges: graph.edges });
+      return res.json();
+    },
+    onSuccess: (data) => { setCompiled(data); setCompileOpen(true); },
+    onError: () => toast({ title: "Could not compile flow", variant: "destructive" }),
+  });
+
   const loadTemplate = (tpl: ProcessTemplate) => {
     setActiveTemplate(tpl);
     const g = stepsToGraph(tpl.name, tpl.steps.map(s => ({ ...s })));
@@ -388,6 +400,18 @@ export default function ProcessFlows() {
           >
             <ArrowRight className="w-3.5 h-3.5 mr-1.5 rotate-180" />
             Back to Outcome
+          </Button>
+        )}
+        {nodeCount > 0 && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => compileMutation.mutate()}
+            disabled={compileMutation.isPending}
+            data-testid="button-validate-flow"
+          >
+            {compileMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <GitBranch className="w-3.5 h-3.5 mr-1.5" />}
+            Validate &amp; Preview
           </Button>
         )}
         {nodeCount > 0 && (
@@ -541,6 +565,52 @@ export default function ProcessFlows() {
           </div>
         </div>
       </div>
+
+      <Dialog open={compileOpen} onOpenChange={setCompileOpen}>
+        <DialogContent className="max-w-lg" data-testid="dialog-execution-plan">
+          <DialogHeader><DialogTitle>Execution Plan</DialogTitle></DialogHeader>
+          {compiled && (compiled.valid ? (
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="secondary" className="text-[10px]">{compiled.totalNodes} steps</Badge>
+                <Badge variant="outline" className="text-[10px]">{compiled.totalWaves} stages</Badge>
+                <Badge variant="outline" className="text-[10px]">max {compiled.maxParallelism} parallel</Badge>
+                <Badge variant="outline" className="text-[10px]">{compiled.branches.length} branch point{compiled.branches.length !== 1 ? "s" : ""}</Badge>
+                {compiled.loops.length > 0 && <Badge variant="outline" className="text-[10px]">{compiled.loops.length} loop{compiled.loops.length !== 1 ? "s" : ""}</Badge>}
+              </div>
+              <p className="text-xs text-muted-foreground">Computed by the same wave-based DAG engine that runs agent teams. Steps in the same stage run in parallel.</p>
+              <div className="flex flex-col gap-1.5 max-h-60 overflow-y-auto">
+                {compiled.waves.map((w: any) => (
+                  <div key={w.wave} className="rounded-md border p-2" data-testid={`exec-stage-${w.wave}`}>
+                    <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide mb-1">Stage {w.wave}{w.parallel ? " · parallel" : ""}</div>
+                    <div className="flex flex-wrap gap-1">
+                      {w.nodes.map((n: any) => <Badge key={n.id} variant="secondary" className="text-[10px]">{n.label}</Badge>)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {compiled.branches.length > 0 && (
+                <div className="flex flex-col gap-1">
+                  <p className="text-xs font-medium">Conditional branches</p>
+                  {compiled.branches.map((b: any) => (
+                    <p key={b.nodeId} className="text-[11px] text-muted-foreground">
+                      <span className="font-medium text-foreground">{b.label}</span> → {b.outgoing.map((o: any) => `${o.toLabel}${o.condition ? ` [${o.condition}]` : o.label ? ` (${o.label})` : ""}`).join("  |  ")}
+                    </p>
+                  ))}
+                </div>
+              )}
+              {compiled.loops.length > 0 && (
+                <p className="text-[11px] text-muted-foreground">Loops run as bounded retries: {compiled.loops.map((l: any) => `${l.from}→${l.to}`).join(", ")}</p>
+              )}
+              {compiled.warnings?.length > 0 && (
+                <p className="text-[11px] text-amber-600 dark:text-amber-400">{compiled.warnings.join(" ")}</p>
+              )}
+            </div>
+          ) : (
+            <p className="text-sm text-destructive">{compiled.message || "This flow can't be compiled into an execution plan."}</p>
+          ))}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
