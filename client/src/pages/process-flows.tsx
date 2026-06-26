@@ -4,16 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Workflow, Zap, Users, Brain, Bell, Square,
   Trash2, ArrowRight, ChevronRight, Sparkles, Loader2,
-  Play, Database, GitBranch, Save, GripVertical,
+  Play, Database, GitBranch, Save,
 } from "lucide-react";
-import {
-  DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core";
-import {
-  SortableContext, horizontalListSortingStrategy, useSortable, arrayMove, sortableKeyboardCoordinates,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,7 +14,8 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { normalizeToGraph, flattenGraphToSteps } from "@shared/process-flow";
+import { normalizeToGraph, stepsToGraph, type ProcessNode, type ProcessEdge } from "@shared/process-flow";
+import FlowGraphCanvas from "@/components/flow-graph-canvas";
 
 export interface ProcessStep {
   id: string;
@@ -208,118 +201,6 @@ function stepId() {
   return `step_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
 }
 
-function StepCard({
-  step,
-  index,
-  total,
-  editing,
-  onEdit,
-  onDelete,
-  onMoveLeft,
-  onMoveRight,
-  onLabelChange,
-  onDescChange,
-}: {
-  step: ProcessStep;
-  index: number;
-  total: number;
-  editing: boolean;
-  onEdit: () => void;
-  onDelete: () => void;
-  onMoveLeft: () => void;
-  onMoveRight: () => void;
-  onLabelChange: (v: string) => void;
-  onDescChange: (v: string) => void;
-}) {
-  const meta = STEP_TYPE_MAP[step.type] || STEP_TYPES[0];
-  const Icon = meta.icon;
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: step.id });
-  const sortableStyle = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-    zIndex: isDragging ? 50 : undefined,
-  };
-  return (
-    <div ref={setNodeRef} style={sortableStyle} className="flex items-stretch gap-0 group/steprow">
-      <div
-        className={`flex flex-col rounded-xl border ${meta.border} ${meta.bg} p-3 w-44 shrink-0 cursor-pointer transition-all hover:shadow-md ${editing ? "ring-2 ring-primary" : ""}`}
-        onClick={onEdit}
-        data-testid={`process-step-card-${index}`}
-      >
-        <div className={`flex items-center gap-1.5 mb-1.5 ${meta.color}`}>
-          <button
-            type="button"
-            className="touch-none cursor-grab active:cursor-grabbing -ml-0.5 p-0.5 rounded hover:bg-black/10 text-muted-foreground"
-            onClick={e => e.stopPropagation()}
-            data-testid={`drag-handle-${index}`}
-            {...attributes}
-            {...listeners}
-          >
-            <GripVertical className="w-3 h-3" />
-          </button>
-          <Icon className="w-3.5 h-3.5 shrink-0" />
-          <span className="text-[10px] font-semibold uppercase tracking-wide truncate">{meta.label}</span>
-        </div>
-        {editing ? (
-          <Input
-            value={step.label}
-            onChange={e => onLabelChange(e.target.value)}
-            className="h-6 text-xs font-semibold mb-1 px-1"
-            onClick={e => e.stopPropagation()}
-            data-testid={`input-step-label-${index}`}
-          />
-        ) : (
-          <p className="text-xs font-semibold text-foreground leading-snug mb-1 line-clamp-2">{step.label}</p>
-        )}
-        {editing ? (
-          <Textarea
-            value={step.description}
-            onChange={e => onDescChange(e.target.value)}
-            className="text-[10px] resize-none h-14 px-1 py-0.5"
-            onClick={e => e.stopPropagation()}
-            data-testid={`input-step-desc-${index}`}
-          />
-        ) : (
-          <p className="text-[10px] text-muted-foreground leading-snug line-clamp-3">{step.description}</p>
-        )}
-        <div className="flex items-center gap-1 mt-2 opacity-0 group-hover/steprow:opacity-100 transition-opacity">
-          <button
-            type="button"
-            onClick={e => { e.stopPropagation(); onMoveLeft(); }}
-            disabled={index === 0}
-            className="p-0.5 rounded hover:bg-black/10 disabled:opacity-30"
-            data-testid={`button-step-left-${index}`}
-          >
-            <ChevronRight className="w-3 h-3 rotate-180" />
-          </button>
-          <button
-            type="button"
-            onClick={e => { e.stopPropagation(); onMoveRight(); }}
-            disabled={index === total - 1}
-            className="p-0.5 rounded hover:bg-black/10 disabled:opacity-30"
-            data-testid={`button-step-right-${index}`}
-          >
-            <ChevronRight className="w-3 h-3" />
-          </button>
-          <button
-            type="button"
-            onClick={e => { e.stopPropagation(); onDelete(); }}
-            className="p-0.5 rounded hover:bg-red-500/20 text-red-500 ml-auto"
-            data-testid={`button-step-delete-${index}`}
-          >
-            <Trash2 className="w-3 h-3" />
-          </button>
-        </div>
-      </div>
-      {index < total - 1 && (
-        <div className="flex items-center px-1 shrink-0">
-          <ArrowRight className="w-4 h-4 text-muted-foreground/50" />
-        </div>
-      )}
-    </div>
-  );
-}
 
 export default function ProcessFlows() {
   const [, navigate] = useLocation();
@@ -332,28 +213,21 @@ export default function ProcessFlows() {
   }, [searchString]);
 
   const [activeCategory, setActiveCategory] = useState<typeof CATEGORIES[number]>("All");
-  const [steps, setSteps] = useState<ProcessStep[]>(() => {
+  const [graph, setGraph] = useState<{ nodes: ProcessNode[]; edges: ProcessEdge[] }>(() => {
     try {
       const raw = sessionStorage.getItem("process-flow-import-steps");
       if (raw) {
         sessionStorage.removeItem("process-flow-import-steps");
-        const parsed: Array<{ id?: string; type?: string; label?: string; description?: string; actor?: string; estimatedMins?: number }> = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.map((s, i) => ({
-            id: s.id || `imported_${i}`,
-            type: (s.type as ProcessStep["type"]) || "take_action",
-            label: s.label || `Step ${i + 1}`,
-            description: s.description || "",
-            actor: s.actor,
-            estimatedMins: s.estimatedMins,
-          }));
-        }
+        const g = normalizeToGraph(JSON.parse(raw), "Process Flow");
+        if (g && g.nodes.length > 0) return { nodes: g.nodes, edges: g.edges };
       }
     } catch {}
-    return [];
+    return { nodes: [], edges: [] };
   });
+  // Bump to remount the canvas when the whole graph is replaced (AI / template / load).
+  const [flowKey, setFlowKey] = useState(0);
+  const replaceGraph = (g: { nodes: ProcessNode[]; edges: ProcessEdge[] }) => { setGraph(g); setFlowKey(k => k + 1); };
   const [activeTemplate, setActiveTemplate] = useState<ProcessTemplate | null>(null);
-  const [editingStepId, setEditingStepId] = useState<string | null>(null);
 
   const [aiDescription, setAiDescription] = useState(() => urlParams.outcomeName || "");
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
@@ -373,7 +247,8 @@ export default function ProcessFlows() {
     },
     onSuccess: (data) => {
       if (data.steps && Array.isArray(data.steps)) {
-        setSteps(data.steps.map((s: any) => ({ ...s, id: stepId() })));
+        const g = stepsToGraph(data.name || "Generated Flow", data.steps);
+        replaceGraph({ nodes: g.nodes, edges: g.edges });
         setFlowName(data.name || "Generated Flow");
         toast({ title: "Process flow generated" });
       }
@@ -395,19 +270,11 @@ export default function ProcessFlows() {
   useEffect(() => {
     if (loadedFlowRef.current || !urlParams.outcomeId || !outcomeData) return;
     loadedFlowRef.current = true;
-    if (steps.length > 0) return; // sessionStorage handoff wins
-    const graph = normalizeToGraph(outcomeData?.processFlow, urlParams.outcomeName || "Process Flow");
-    const flat = graph ? flattenGraphToSteps(graph) : [];
-    if (flat.length > 0) {
-      setSteps(flat.map((s, i) => ({
-        id: s.id || `loaded_${i}`,
-        type: (s.type as ProcessStep["type"]) || "take_action",
-        label: s.label || `Step ${i + 1}`,
-        description: s.description || "",
-        actor: s.actor,
-        estimatedMins: s.estimatedMins,
-      })));
-      setFlowName(graph?.name || (urlParams.outcomeName ? `${urlParams.outcomeName} Flow` : "Process Flow"));
+    if (graph.nodes.length > 0) return; // sessionStorage handoff wins
+    const g = normalizeToGraph(outcomeData?.processFlow, urlParams.outcomeName || "Process Flow");
+    if (g && g.nodes.length > 0) {
+      replaceGraph({ nodes: g.nodes, edges: g.edges });
+      setFlowName(g.name || (urlParams.outcomeName ? `${urlParams.outcomeName} Flow` : "Process Flow"));
     }
   }, [outcomeData, urlParams.outcomeId]);
 
@@ -415,7 +282,8 @@ export default function ProcessFlows() {
     mutationFn: async () => {
       const res = await apiRequest("PUT", `/api/outcomes/${urlParams.outcomeId}/process-flow`, {
         name: flowName,
-        steps: steps.map(s => ({ id: s.id, type: s.type, label: s.label, description: s.description, actor: s.actor, estimatedMins: s.estimatedMins })),
+        nodes: graph.nodes,
+        edges: graph.edges,
       });
       return res.json();
     },
@@ -430,70 +298,19 @@ export default function ProcessFlows() {
 
   const loadTemplate = (tpl: ProcessTemplate) => {
     setActiveTemplate(tpl);
-    setSteps(tpl.steps.map(s => ({ ...s, id: stepId() })));
+    const g = stepsToGraph(tpl.name, tpl.steps.map(s => ({ ...s })));
+    replaceGraph({ nodes: g.nodes, edges: g.edges });
     setFlowName(tpl.name);
-    setEditingStepId(null);
-  };
-
-  const addStep = (type: ProcessStep["type"]) => {
-    const meta = STEP_TYPE_MAP[type];
-    const newStep: ProcessStep = {
-      id: stepId(),
-      type,
-      label: meta.label,
-      description: "Describe what happens in this step",
-    };
-    const endIdx = steps.findIndex(s => s.type === "end");
-    if (endIdx > -1) {
-      const newSteps = [...steps];
-      newSteps.splice(endIdx, 0, newStep);
-      setSteps(newSteps);
-    } else {
-      setSteps(prev => [...prev, newStep]);
-    }
-    setEditingStepId(newStep.id);
-  };
-
-  const deleteStep = (id: string) => {
-    setSteps(prev => prev.filter(s => s.id !== id));
-    if (editingStepId === id) setEditingStepId(null);
-  };
-
-  const moveStep = (idx: number, dir: -1 | 1) => {
-    const newArr = [...steps];
-    const target = idx + dir;
-    if (target < 0 || target >= newArr.length) return;
-    [newArr[idx], newArr[target]] = [newArr[target], newArr[idx]];
-    setSteps(newArr);
-  };
-
-  const dndSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-  );
-  const handleDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-    setSteps(prev => {
-      const from = prev.findIndex(s => s.id === active.id);
-      const to = prev.findIndex(s => s.id === over.id);
-      if (from === -1 || to === -1) return prev;
-      return arrayMove(prev, from, to);
-    });
-  };
-
-  const updateStep = (id: string, patch: Partial<ProcessStep>) => {
-    setSteps(prev => prev.map(s => s.id === id ? { ...s, ...patch } : s));
   };
 
   const handleGenerateBlueprint = async () => {
-    if (steps.length === 0) {
+    if (graph.nodes.length === 0) {
       toast({ title: "Add at least one step first", variant: "destructive" });
       return;
     }
     setGeneratingBlueprint(true);
     try {
-      const nodeTypeMap: Record<ProcessStep["type"], string> = {
+      const nodeTypeMap: Record<string, string> = {
         trigger: "tool_call",
         get_info: "rag",
         ai_reasoning: "llm_call",
@@ -501,27 +318,27 @@ export default function ProcessFlows() {
         expert_approval: "human_review",
         take_action: "tool_call",
         send_notification: "tool_call",
+        parallel: "router",
+        loop: "tool_call",
         end: "schema_validate",
       };
-      const blueprintNodes = steps.map((s, i) => ({
-        id: `node_${i}`,
-        type: nodeTypeMap[s.type] || "llm_call",
-        label: s.label,
-        config: { description: s.description },
-        x: i * 200,
-        y: 100,
+      const blueprintNodes = graph.nodes.map((n, i) => ({
+        id: n.id,
+        type: nodeTypeMap[n.type] || "llm_call",
+        label: n.label,
+        config: { description: n.description },
+        x: n.position?.x ?? i * 200,
+        y: n.position?.y ?? 100,
       }));
-      const blueprintEdges = steps.slice(0, -1).map((_, i) => ({
-        from: `node_${i}`,
-        to: `node_${i + 1}`,
-      }));
+      // Edges now carry the real branching + conditions authored on the canvas.
+      const blueprintEdges = graph.edges.map(e => ({ from: e.from, to: e.to, condition: e.condition, label: e.label }));
       const res = await apiRequest("POST", "/api/blueprints", {
         name: flowName || "Business Process Blueprint",
         description: `Generated from Process Flow: ${flowName}`,
         blueprintJson: {
           nodes: blueprintNodes,
           edges: blueprintEdges,
-          metadata: { processFlowSteps: steps, sourceFlowName: flowName },
+          metadata: { processFlow: { name: flowName, nodes: graph.nodes, edges: graph.edges }, sourceFlowName: flowName },
         },
       });
       const bp = await res.json();
@@ -538,7 +355,8 @@ export default function ProcessFlows() {
     ? PROCESS_TEMPLATES
     : PROCESS_TEMPLATES.filter(t => t.category === activeCategory);
 
-  const totalMins = steps.reduce((s, st) => s + (st.estimatedMins || 0), 0);
+  const totalMins = graph.nodes.reduce((s, n) => s + (n.estimatedMins || 0), 0);
+  const nodeCount = graph.nodes.length;
 
   return (
     <div className="flex flex-col h-full" data-testid="page-process-flows">
@@ -549,7 +367,7 @@ export default function ProcessFlows() {
           <p className="text-xs text-muted-foreground">Design how your automation works in plain language</p>
         </div>
         <div className="flex-1" />
-        {urlParams.outcomeId && steps.length > 0 && (
+        {urlParams.outcomeId && nodeCount > 0 && (
           <Button
             size="sm"
             variant="outline"
@@ -572,7 +390,7 @@ export default function ProcessFlows() {
             Back to Outcome
           </Button>
         )}
-        {steps.length > 0 && (
+        {nodeCount > 0 && (
           <Button
             size="sm"
             onClick={handleGenerateBlueprint}
@@ -682,7 +500,7 @@ export default function ProcessFlows() {
 
           {/* Canvas header */}
           <div className="flex items-center gap-3 p-3 border-b bg-muted/10">
-            {steps.length > 0 ? (
+            {nodeCount > 0 ? (
               <>
                 <Input
                   value={flowName}
@@ -691,14 +509,16 @@ export default function ProcessFlows() {
                   placeholder="Flow name…"
                   data-testid="input-flow-name"
                 />
-                <Badge variant="secondary" className="text-[10px]">{steps.length} steps</Badge>
+                <Badge variant="secondary" className="text-[10px]">{nodeCount} steps</Badge>
+                <Badge variant="outline" className="text-[10px]">{graph.edges.length} connections</Badge>
                 {totalMins > 0 && (
                   <span className="text-xs text-muted-foreground">{totalMins >= 60 ? `~${Math.round(totalMins / 60)}h` : `~${totalMins}m`} total</span>
                 )}
                 <div className="flex-1" />
+                <span className="text-[11px] text-muted-foreground hidden lg:inline">Drag from a node's right dot to connect · click a connection to add a branch condition</span>
                 <button
                   type="button"
-                  onClick={() => { setSteps([]); setActiveTemplate(null); setFlowName(""); }}
+                  onClick={() => { replaceGraph({ nodes: [], edges: [] }); setActiveTemplate(null); setFlowName(""); }}
                   className="text-xs text-muted-foreground hover:text-foreground transition-colors"
                   data-testid="button-clear-flow"
                 >
@@ -706,72 +526,19 @@ export default function ProcessFlows() {
                 </button>
               </>
             ) : (
-              <span className="text-xs text-muted-foreground">Select a template or describe your workflow to get started</span>
+              <span className="text-xs text-muted-foreground">Add nodes from the canvas palette, pick a template, or describe your workflow to generate a flow</span>
             )}
           </div>
 
-          {/* Canvas */}
-          <ScrollArea className="flex-1">
-            <div className="p-6">
-              {steps.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-24 gap-4">
-                  <Workflow className="w-12 h-12 text-muted-foreground/30" />
-                  <p className="text-sm text-muted-foreground">No steps yet</p>
-                  <p className="text-xs text-muted-foreground">Pick a template from the left, or describe your workflow to auto-generate a flow</p>
-                </div>
-              ) : (
-                <div className="flex flex-col gap-6">
-                  <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground" data-testid="hint-drag-reorder">
-                    <GripVertical className="w-3 h-3" />
-                    <span>Drag a card by its handle to reorder steps</span>
-                  </div>
-                  <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                    <SortableContext items={steps.map(s => s.id)} strategy={horizontalListSortingStrategy}>
-                      <div className="flex items-start gap-0 flex-wrap">
-                        {steps.map((step, i) => (
-                          <StepCard
-                            key={step.id}
-                            step={step}
-                            index={i}
-                            total={steps.length}
-                            editing={editingStepId === step.id}
-                            onEdit={() => setEditingStepId(editingStepId === step.id ? null : step.id)}
-                            onDelete={() => deleteStep(step.id)}
-                            onMoveLeft={() => moveStep(i, -1)}
-                            onMoveRight={() => moveStep(i, 1)}
-                            onLabelChange={v => updateStep(step.id, { label: v })}
-                            onDescChange={v => updateStep(step.id, { description: v })}
-                          />
-                        ))}
-                      </div>
-                    </SortableContext>
-                  </DndContext>
-
-                  {/* Add step palette */}
-                  <div className="flex flex-col gap-2">
-                    <p className="text-xs font-medium text-muted-foreground">Add a step:</p>
-                    <div className="flex flex-wrap gap-2">
-                      {STEP_TYPES.map(t => {
-                        const Icon = t.icon;
-                        return (
-                          <button
-                            key={t.type}
-                            type="button"
-                            onClick={() => addStep(t.type)}
-                            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border ${t.border} ${t.bg} ${t.color} text-xs font-medium transition-all hover:shadow-sm`}
-                            data-testid={`add-step-${t.type}`}
-                          >
-                            <Icon className="w-3 h-3 shrink-0" />
-                            {t.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-          </ScrollArea>
+          {/* Canvas — React Flow graph editor (branch / parallel / loop) */}
+          <div className="flex-1 min-h-0" data-testid="flow-canvas-container">
+            <FlowGraphCanvas
+              flowKey={`flow-${flowKey}`}
+              initialNodes={graph.nodes}
+              initialEdges={graph.edges}
+              onChange={(nodes, edges) => setGraph({ nodes, edges })}
+            />
+          </div>
         </div>
       </div>
     </div>
