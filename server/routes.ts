@@ -6,6 +6,7 @@ import authRouter from "./routes/auth";
 import toolConnectorsRouter from "./routes/tool-connectors";
 import governanceProxyRouter from "./routes/governance-proxy";
 import llmProvidersRouter from "./routes/llm-providers";
+import publicApiRouter from "./routes/public-api";
 import demoRouter from "./routes/demo";
 import createEvaluationsRouter from "./routes/evaluations";
 import skillsRouter from "./routes/skills";
@@ -204,6 +205,9 @@ export async function registerRoutes(
 
   // ── Auth & OpenAPI router ─────────────────────────────────────
   app.use(authRouter);
+
+  // Public, API-key-authenticated surface for external automation (n8n, etc.)
+  app.use(publicApiRouter);
 
   registerKnowledgeBaseRoutes(app);
   app.use("/api/mock/adobe", adobeAnalyticsRouter);

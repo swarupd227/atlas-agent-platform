@@ -39,6 +39,22 @@ export interface IntegrationDef {
 }
 
 export const INTEGRATION_REGISTRY: IntegrationDef[] = [
+  // ── Automation / workflow ────────────────────────────────────────────────
+  {
+    id: "n8n",
+    name: "n8n",
+    description: "Workflow automation — trigger Nous from n8n and call n8n workflows from a Nous step (bidirectional)",
+    category: "devops",
+    logoColor: "#EA4B71",
+    authMethod: "apikey",
+    credentialFields: [
+      { key: "baseUrl", label: "n8n Base URL", type: "url", required: true, placeholder: "http://localhost:5678" },
+      { key: "apiKey", label: "n8n API Key (optional)", type: "password", required: false },
+    ],
+    docsUrl: "https://docs.n8n.io",
+    wave: 2,
+    capabilities: ["trigger_inbound", "call_workflow", "webhook"],
+  },
   // ── Wave 1: CRM ──────────────────────────────────────────────────────────
   {
     id: "salesforce",
