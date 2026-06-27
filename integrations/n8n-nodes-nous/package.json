@@ -1,0 +1,42 @@
+{
+  "name": "n8n-nodes-nous",
+  "version": "0.1.0",
+  "description": "n8n community node for Nous (Astra Agents) — run agents/outcomes and orchestrate agentic workflows",
+  "keywords": [
+    "n8n-community-node-package",
+    "nous",
+    "astra-agents",
+    "agents",
+    "orchestration"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/swarupd227/atlas-agent-platform",
+  "author": "Nous",
+  "engines": {
+    "node": ">=18.10"
+  },
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc && node -e \"const fs=require('fs');fs.mkdirSync('dist/nodes/Nous',{recursive:true});fs.copyFileSync('nodes/Nous/nous.svg','dist/nodes/Nous/nous.svg')\"",
+    "dev": "tsc --watch"
+  },
+  "files": [
+    "dist"
+  ],
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "credentials": [
+      "dist/credentials/NousApi.credentials.js"
+    ],
+    "nodes": [
+      "dist/nodes/Nous/Nous.node.js"
+    ]
+  },
+  "peerDependencies": {
+    "n8n-workflow": "*"
+  },
+  "devDependencies": {
+    "n8n-workflow": "^1.40.0",
+    "typescript": "^5.5.0"
+  }
+}
