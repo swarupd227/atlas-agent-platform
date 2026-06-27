@@ -114,6 +114,7 @@ import { usePermission, useRole } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { OutcomeContract, KpiDefinition, Approval, OutcomeEvent, Agent, Policy, Skill, OntologyConcept } from "@shared/schema";
+import { normalizeToGraph, flattenGraphToSteps } from "@shared/process-flow";
 import { PolicyImpactGraph } from "@/components/policy-impact-graph";
 
 function getIndustryBenchmark(industry: string, kpiName: string, kpiUnit: string): { benchmark: number; unit: string; source: string; comparison: string } | null {
@@ -487,7 +488,15 @@ export default function OutcomeDetail() {
     if (outcome && outcome.id !== processFlowInitializedForRef.current) {
       processFlowInitializedForRef.current = outcome.id;
       processFlowFromProposalRef.current = null;
-      setProcessFlowSteps(buildAutoFlow(outcome, kpis || []));
+      // Prefer a persisted, business-authored flow (graph or legacy); flatten to
+      // the linear step list this view still uses. Fall back to an auto flow.
+      const graph = normalizeToGraph((outcome as any).processFlow, outcome.name || "Process Flow");
+      const flat = graph ? flattenGraphToSteps(graph) : [];
+      if (flat.length > 0) {
+        setProcessFlowSteps(flat.map((s, i) => ({ id: s.id || `pf${i}`, type: s.type, label: s.label, description: s.description || "", actor: s.actor })));
+      } else {
+        setProcessFlowSteps(buildAutoFlow(outcome, kpis || []));
+      }
     }
   }, [outcome?.id]);
 
@@ -2478,6 +2487,37 @@ export default function OutcomeDetail() {
 
         {/* Tab 2: Agent Plan & Contributions */}
         <TabsContent value="agent-map" className="space-y-6" data-testid="tabcontent-agent-map">
+          <div className="flex items-center justify-between gap-3 p-3 rounded-lg border bg-muted/30" data-testid="banner-process-flow-entry">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <Workflow className="w-4 h-4 text-primary shrink-0" />
+              <div className="min-w-0">
+                <p className="text-sm font-medium">Process Flow</p>
+                <p className="text-xs text-muted-foreground truncate">
+                  {(outcome as any).processFlow?.nodes?.length
+                    ? `${(outcome as any).processFlow.nodes.length} steps — design how this outcome works; it guides agent generation below.`
+                    : "Design how this outcome works before generating agents. The flow guides agent naming and roles."}
+                </p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="shrink-0"
+              onClick={() => {
+                const params = new URLSearchParams({ outcomeId: outcome.id, outcomeName: outcome.name || "", kpis: (kpis || []).slice(0, 3).map(k => k.name).join(",") });
+                if (processFlowSteps.length > 0) {
+                  sessionStorage.setItem("process-flow-import-steps", JSON.stringify(processFlowSteps));
+                } else {
+                  sessionStorage.removeItem("process-flow-import-steps");
+                }
+                setLocation(`/process-flows?${params.toString()}`);
+              }}
+              data-testid="button-edit-process-flow-agentplan"
+            >
+              <Workflow className="w-3.5 h-3.5 mr-1.5" />
+              {(outcome as any).processFlow?.nodes?.length ? "Edit Process Flow" : "Design Process Flow"}
+            </Button>
+          </div>
           <AgentProposalsTab outcome={outcome} kpis={kpis || []} initialTemplateId={initialTemplateId} processFlowSteps={processFlowSteps} onProcessFlowStepsGenerated={setProcessFlowSteps} />
 
           {!agentContributions ? (
@@ -5193,7 +5233,7 @@ function BusinessProcessFlowSection({
             variant="ghost"
             className="h-7 text-xs"
             onClick={() => {
-              const params = new URLSearchParams({ outcomeName: outcome.name || "", kpis: kpis.slice(0, 3).map(k => k.name).join(",") });
+              const params = new URLSearchParams({ outcomeId: outcome.id, outcomeName: outcome.name || "", kpis: kpis.slice(0, 3).map(k => k.name).join(",") });
               if (steps.length > 0) {
                 sessionStorage.setItem("process-flow-import-steps", JSON.stringify(steps));
               } else {

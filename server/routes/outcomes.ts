@@ -4,6 +4,8 @@ import { db } from "../db";
 import { desc, eq, and } from "drizzle-orm";
 import { outcomeContracts, kpiDefinitions, approvals, agents, type OutcomeContract } from "@shared/schema";
 import { z, ZodError } from "zod";
+import { normalizeToGraph, starterFlow } from "@shared/process-flow";
+import { compileProcessFlow } from "../process-flow-compile";
 import {
   insertOutcomeContractSchema,
   insertKpiDefinitionSchema,
@@ -549,8 +551,18 @@ async function createOutcomeVersion(
           ...(matchedPolicyIds.length > 0 ? { matchedPolicyIds } : {}),
           ...(discoveryPolicies.length > 0 ? { discoveryPolicies } : {}),
         };
+
+        // Seed an editable process flow at creation so it's ready before the
+        // Agent Plan. Use a typed flow the proposal already carried (graph or
+        // typed steps); otherwise a sensible starter from the risk tier.
+        const discoveryFlow = (parsedOutcome.slaConfig as any)?.processFlow;
+        const isGraph = !!discoveryFlow && Array.isArray((discoveryFlow as any).nodes);
+        const isTypedSteps = Array.isArray(discoveryFlow) && discoveryFlow.length > 0 && discoveryFlow.every((s: any) => s?.type && s?.label);
+        const seeded = (isGraph || isTypedSteps) ? normalizeToGraph(discoveryFlow, outcome.name) : null;
+        const processFlow = { ...(seeded || starterFlow(outcome.name, outcome.riskTier)), updatedAt: new Date().toISOString() };
+
         const [updatedOutcome] = await tx.update(outcomeContracts)
-          .set({ constraintGraph: graphWithPolicies })
+          .set({ constraintGraph: graphWithPolicies, processFlow })
           .where(eq(outcomeContracts.id, outcome.id)).returning();
 
         // Bind accepted agents (org-scoped) atomically with the outcome.
@@ -1886,6 +1898,65 @@ async function createOutcomeVersion(
       });
 
       res.json({ success: true, updatedAt: new Date().toISOString(), outcome: updated });
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  // Persist a business-authored process flow on the outcome (canonical typed steps).
+  router.put("/api/outcomes/:id/process-flow", checkPermission("create_modify_outcomes"), async (req, res) => {
+    try {
+      const outcomeId = String(req.params.id);
+      const outcome = await storage.getOutcome(outcomeId, getOrgId(req));
+      if (!outcome) return res.status(404).json({ message: "Outcome not found" });
+
+      // Accept either a legacy ordered step list or a graph ({nodes, edges});
+      // both normalize to the canonical graph stored on the outcome.
+      const bodySchema = z.object({
+        name: z.string().optional().default(""),
+        steps: z.array(z.any()).max(100).optional(),
+        nodes: z.array(z.any()).max(100).optional(),
+        edges: z.array(z.any()).max(300).optional(),
+      });
+      const parsed = bodySchema.parse(req.body);
+
+      const graph = normalizeToGraph(parsed, outcome.name || "Process Flow");
+      if (!graph) return res.status(400).json({ message: "Invalid process flow payload" });
+      const processFlow = { ...graph, updatedAt: new Date().toISOString() };
+
+      const updated = await storage.updateOutcome(outcomeId, { processFlow } as Partial<OutcomeContract>, getOrgId(req));
+      if (!updated) return res.status(404).json({ message: "Not found" });
+
+      await storage.createAuditEvent({
+        actorType: "user",
+        actorId: "system",
+        action: "outcome.process_flow_updated",
+        objectType: "outcome",
+        objectId: outcomeId,
+        details: JSON.stringify({ nodeCount: processFlow.nodes.length, edgeCount: processFlow.edges.length, name: processFlow.name }),
+        ontologyTags: resolveOntologyTags("outcome", "outcome.process_flow_updated"),
+      });
+
+      res.json({ success: true, processFlow, outcome: updated });
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  // Compile an (in-editor or stored) process flow into an executable wave plan
+  // using the same DAG engine that runs team blueprints. Stateless preview.
+  router.post("/api/process-flow/compile", async (req, res) => {
+    try {
+      const bodySchema = z.object({
+        name: z.string().optional().default(""),
+        steps: z.array(z.any()).max(100).optional(),
+        nodes: z.array(z.any()).max(100).optional(),
+        edges: z.array(z.any()).max(300).optional(),
+      });
+      const parsed = bodySchema.parse(req.body);
+      const graph = normalizeToGraph(parsed, parsed.name || "Process Flow");
+      if (!graph) return res.status(400).json({ message: "Invalid process flow payload" });
+      res.json(compileProcessFlow(graph));
     } catch (e) {
       handleZodError(res, e);
     }
