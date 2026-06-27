@@ -66,6 +66,27 @@ export function isProcessFlowGraph(x: unknown): x is ProcessFlowGraph {
     && Array.isArray((x as any).edges);
 }
 
+/**
+ * A sensible starter flow seeded onto a new outcome so it's editable from day
+ * one (rather than a blank canvas). High/critical risk gets a human approval.
+ */
+export function starterFlow(name: string, riskTier?: string | null): ProcessFlowGraph {
+  const steps: LegacyProcessStep[] = [
+    { type: "trigger", label: "Process triggered", description: "A business event starts the process", actor: "System" },
+    { type: "get_info", label: "Gather information", description: "Collect the data needed to act", actor: "AI" },
+    { type: "ai_reasoning", label: "Analyze & decide", description: "Assess the case and determine the action", actor: "AI" },
+  ];
+  if (riskTier === "HIGH" || riskTier === "CRITICAL") {
+    steps.push({ type: "expert_approval", label: "Human approval", description: "Reviewer approves high-risk actions", actor: "Reviewer" });
+  }
+  steps.push(
+    { type: "take_action", label: "Execute action", description: "Carry out the decided action", actor: "System" },
+    { type: "send_notification", label: "Notify stakeholders", description: "Inform the relevant people", actor: "System" },
+    { type: "end", label: "Complete", description: "Outcome recorded", actor: "System" },
+  );
+  return stepsToGraph(name, steps);
+}
+
 /** Build a graph from an ordered list of legacy steps (chain of edges). */
 export function stepsToGraph(name: string, steps: LegacyProcessStep[]): ProcessFlowGraph {
   const nodes: ProcessNode[] = steps.map((s, i) => ({

@@ -4,7 +4,7 @@ import { db } from "../db";
 import { desc, eq, and } from "drizzle-orm";
 import { outcomeContracts, kpiDefinitions, approvals, agents, type OutcomeContract } from "@shared/schema";
 import { z, ZodError } from "zod";
-import { normalizeToGraph } from "@shared/process-flow";
+import { normalizeToGraph, starterFlow } from "@shared/process-flow";
 import { compileProcessFlow } from "../process-flow-compile";
 import {
   insertOutcomeContractSchema,
@@ -551,8 +551,18 @@ async function createOutcomeVersion(
           ...(matchedPolicyIds.length > 0 ? { matchedPolicyIds } : {}),
           ...(discoveryPolicies.length > 0 ? { discoveryPolicies } : {}),
         };
+
+        // Seed an editable process flow at creation so it's ready before the
+        // Agent Plan. Use a typed flow the proposal already carried (graph or
+        // typed steps); otherwise a sensible starter from the risk tier.
+        const discoveryFlow = (parsedOutcome.slaConfig as any)?.processFlow;
+        const isGraph = !!discoveryFlow && Array.isArray((discoveryFlow as any).nodes);
+        const isTypedSteps = Array.isArray(discoveryFlow) && discoveryFlow.length > 0 && discoveryFlow.every((s: any) => s?.type && s?.label);
+        const seeded = (isGraph || isTypedSteps) ? normalizeToGraph(discoveryFlow, outcome.name) : null;
+        const processFlow = { ...(seeded || starterFlow(outcome.name, outcome.riskTier)), updatedAt: new Date().toISOString() };
+
         const [updatedOutcome] = await tx.update(outcomeContracts)
-          .set({ constraintGraph: graphWithPolicies })
+          .set({ constraintGraph: graphWithPolicies, processFlow })
           .where(eq(outcomeContracts.id, outcome.id)).returning();
 
         // Bind accepted agents (org-scoped) atomically with the outcome.
