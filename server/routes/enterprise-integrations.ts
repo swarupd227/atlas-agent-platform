@@ -4,6 +4,7 @@ import { z } from "zod";
 import { storage } from "../storage";
 import { encryptCredentialMap, decryptCredentialMap } from "../credential-vault";
 import { INTEGRATION_REGISTRY, getIntegrationDef } from "../integrations/registry";
+import { callN8nWorkflow } from "../integrations/n8n";
 import { getDefaultOrgId } from "../auth";
 import { db } from "../db";
 import { mcpServers, auditEvents, integrationConnections } from "@shared/schema";
@@ -721,6 +722,19 @@ async function testConnectionHealth(
           ? { ok: true, latencyMs: Date.now() - start }
           : { ok: false, error: `HTTP ${r.status}`, latencyMs: Date.now() - start };
       }
+      case "n8n": {
+        const baseUrl = credentials.baseUrl?.replace(/\/$/, "") || "";
+        if (!baseUrl) return { ok: false, error: "n8n baseUrl not configured", latencyMs: Date.now() - start };
+        // n8n exposes /healthz on self-hosted instances; try it first, then fall back to root
+        const headers: Record<string, string> = {};
+        if (credentials.apiKey) headers["X-N8N-API-KEY"] = credentials.apiKey;
+        const r = await fetch(`${baseUrl}/healthz`, { headers, signal: AbortSignal.timeout(5000) });
+        if (r.ok || r.status === 404) {
+          // 404 on /healthz means n8n is reachable but endpoint doesn't exist on older builds
+          return { ok: true, latencyMs: Date.now() - start };
+        }
+        return { ok: false, error: `HTTP ${r.status}`, latencyMs: Date.now() - start };
+      }
       default:
         // Integration not yet implemented — return explicit "not_verifiable" instead of implicit success
         return { ok: true, status: "not_verifiable", latencyMs: Date.now() - start };
@@ -801,6 +815,47 @@ router.post("/api/integrations/:id/test", async (req, res) => {
     await storage.recordIntegrationTestResult(conn.id, result.ok, (result as any).error ?? null);
     res.json(result);
   } catch (err: any) { res.status(500).json({ error: err.message }); }
+});
+
+// ── Case 2: Session-authed n8n test-call (in-app panel) ─────────────────────
+// Distinct from the public API endpoint which requires an agent API key.
+// This one uses the standard session auth so the in-app user can test without
+// needing to know the public key.
+router.post("/api/integrations/n8n/call", async (req: Request, res: Response) => {
+  try {
+    const orgId = getDefaultOrgId(req);
+    const conn = await storage.getIntegrationConnection(orgId, "n8n");
+    if (!conn || !conn.credentialBlob) {
+      return res.status(404).json({ error: "n8n not connected — configure credentials first in Enterprise Connectors" });
+    }
+    const credentials = decryptCredentialMap(conn.credentialBlob);
+    const baseUrl = credentials.baseUrl?.replace(/\/$/, "");
+    if (!baseUrl) {
+      return res.status(400).json({ error: "n8n baseUrl missing from stored credentials" });
+    }
+
+    const body = req.body || {};
+    const path = typeof body.path === "string" ? body.path.replace(/^\//, "") : "";
+    const payload = body.payload ?? null;
+    const method: "POST" | "GET" = body.method === "GET" ? "GET" : "POST";
+
+    if (!path) {
+      return res.status(400).json({ error: "path is required (e.g. 'webhook/your-workflow-id')" });
+    }
+
+    const webhookUrl = `${baseUrl}/${path}`;
+    const result = await callN8nWorkflow({
+      webhookUrl,
+      payload,
+      method,
+      apiKey: credentials.apiKey || undefined,
+      timeoutMs: 15000,
+    });
+
+    res.json({ webhookUrl, ...result });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.post("/api/integrations/:id/connect", async (req, res) => {

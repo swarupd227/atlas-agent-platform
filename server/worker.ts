@@ -561,13 +561,14 @@ async function processAgentRun(job: Job): Promise<Record<string, unknown>> {
     throw new Error("Agent has no active deployment. Deploy the agent before triggering it via API or webhook.");
   }
 
-  const result = await runAgentOnce(deployment.id, input || undefined);
+  const triggeredBy = (payload.triggeredBy as string | undefined) ?? "api";
+  const result = await runAgentOnce(deployment.id, input || undefined, undefined, undefined, triggeredBy);
   return {
     agentId: job.agentId,
     deploymentId: deployment.id,
     success: result.success,
     message: result.message,
-    triggeredBy: payload.triggeredBy ?? "api",
+    triggeredBy,
     completedAt: new Date().toISOString(),
   };
 }

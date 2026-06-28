@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -1493,16 +1494,105 @@ function ConnectDialog({
   );
 }
 
+function N8nTestCallDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
+  const { toast } = useToast();
+  const [path, setPath] = useState("webhook/");
+  const [payloadText, setPayloadText] = useState('{\n  "message": "test from Astra Agents"\n}');
+  const [result, setResult] = useState<{ ok: boolean; status: number; data: unknown; error?: string; webhookUrl?: string } | null>(null);
+
+  const callMutation = useMutation({
+    mutationFn: async () => {
+      let payload: unknown = null;
+      try { payload = JSON.parse(payloadText); } catch { payload = payloadText; }
+      const res = await apiRequest("POST", "/api/integrations/n8n/call", { path, payload });
+      return res.json();
+    },
+    onSuccess: (data) => { setResult(data); },
+    onError: (err: any) => {
+      toast({ title: "Call failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg" data-testid="dialog-n8n-test-call">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <span className="w-5 h-5 rounded text-white text-[10px] font-bold flex items-center justify-center" style={{ backgroundColor: "#EA4B71" }}>n8</span>
+            Test n8n Workflow Call
+          </DialogTitle>
+          <DialogDescription>
+            Send a test POST to any n8n webhook using your stored connection credentials.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-3 py-1">
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-xs">Webhook Path</Label>
+            <Input
+              value={path}
+              onChange={(e) => setPath(e.target.value)}
+              placeholder="webhook/your-workflow-id"
+              className="font-mono text-xs"
+              data-testid="input-n8n-path"
+            />
+            <span className="text-[10px] text-muted-foreground">Combined with your stored n8n base URL</span>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label className="text-xs">JSON Payload</Label>
+            <Textarea
+              value={payloadText}
+              onChange={(e) => setPayloadText(e.target.value)}
+              className="font-mono text-xs h-28 resize-none"
+              data-testid="input-n8n-payload"
+            />
+          </div>
+          {result && (
+            <div className={`rounded-md border p-2.5 flex flex-col gap-1 ${result.ok ? "border-green-500/30 bg-green-500/5" : "border-red-500/30 bg-red-500/5"}`} data-testid="n8n-call-result">
+              <div className="flex items-center gap-2">
+                {result.ok
+                  ? <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0" />
+                  : <AlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />}
+                <span className="text-xs font-medium">{result.ok ? `HTTP ${result.status} — Success` : (result.error ?? `HTTP ${result.status}`)}</span>
+              </div>
+              {result.webhookUrl && (
+                <span className="text-[10px] text-muted-foreground font-mono truncate">{result.webhookUrl}</span>
+              )}
+              {result.data != null && (
+                <pre className="text-[10px] font-mono bg-muted/40 rounded p-1.5 overflow-auto max-h-32 mt-1">
+                  {typeof result.data === "string" ? result.data : JSON.stringify(result.data, null, 2)}
+                </pre>
+              )}
+            </div>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => { onOpenChange(false); setResult(null); }}>Close</Button>
+          <Button
+            onClick={() => callMutation.mutate()}
+            disabled={callMutation.isPending || !path.trim()}
+            data-testid="button-n8n-send-call"
+          >
+            {callMutation.isPending ? <Loader2 className="w-4 h-4 mr-1.5 animate-spin" /> : <Send className="w-4 h-4 mr-1.5" />}
+            {callMutation.isPending ? "Calling…" : "Send"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function EnterpriseIntegrationCard({
   integration,
   onConnect,
   onDisconnect,
   onTest,
+  onN8nTestCall,
 }: {
   integration: IntegrationDef;
   onConnect: () => void;
   onDisconnect: () => void;
   onTest: () => void;
+  onN8nTestCall?: () => void;
 }) {
   const catMeta = ENT_CATEGORY_META[integration.category];
   const CatIcon = catMeta.icon;
@@ -1574,7 +1664,7 @@ function EnterpriseIntegrationCard({
           )}
         </div>
 
-        <div className="flex items-center gap-2 pt-1">
+        <div className="flex items-center gap-2 pt-1 flex-wrap">
           {isConnected ? (
             <>
               <Button
@@ -1587,6 +1677,18 @@ function EnterpriseIntegrationCard({
                 <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
                 Test
               </Button>
+              {integration.id === "n8n" && onN8nTestCall && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="flex-1 text-xs text-pink-600 border-pink-500/40 hover:bg-pink-500/5"
+                  onClick={onN8nTestCall}
+                  data-testid="button-n8n-test-call"
+                >
+                  <Send className="w-3.5 h-3.5 mr-1.5" />
+                  Test Call
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="outline"
@@ -1627,6 +1729,7 @@ function EnterpriseConnectorsSection() {
   const [connectTarget, setConnectTarget] = useState<IntegrationDef | null>(null);
   const [filterWave, setFilterWave] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [n8nTestCallOpen, setN8nTestCallOpen] = useState(false);
 
   const { data: integrations = [], isLoading } = useQuery<IntegrationDef[]>({
     queryKey: ["/api/enterprise-integrations"],
@@ -1756,6 +1859,7 @@ function EnterpriseConnectorsSection() {
                   onConnect={() => setConnectTarget(integration)}
                   onDisconnect={() => disconnectMutation.mutate(integration.id)}
                   onTest={() => testMutation.mutate(integration.id)}
+                  onN8nTestCall={integration.id === "n8n" ? () => setN8nTestCallOpen(true) : undefined}
                 />
               ))}
             </div>
@@ -1768,6 +1872,7 @@ function EnterpriseConnectorsSection() {
         open={!!connectTarget}
         onOpenChange={(open) => { if (!open) setConnectTarget(null); }}
       />
+      <N8nTestCallDialog open={n8nTestCallOpen} onOpenChange={setN8nTestCallOpen} />
     </div>
   );
 }

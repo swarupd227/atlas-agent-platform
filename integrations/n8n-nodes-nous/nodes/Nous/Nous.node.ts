@@ -91,6 +91,7 @@ export class Nous implements INodeType {
         url: `${baseUrl}${path}`,
         body,
         json: true,
+        headers: { 'X-Source': 'n8n' },
       });
     };
 

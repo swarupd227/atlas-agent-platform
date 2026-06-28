@@ -104,6 +104,7 @@ export interface RuntimeAgent {
   modelName?: string;
   maxToolIterations?: number;
   orgId?: string | null;
+  triggeredBy?: string;
 }
 
 export interface ContextSectionMetric {
@@ -3159,6 +3160,7 @@ async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: Runti
       agentId: agent.agentId,
       environment: "prod",
       status: result.success ? "completed" : "failed",
+      triggeredBy: agent.triggeredBy || "manual",
       latencyMs: result.summary.latencyMs || 0,
       costUsd: result.summary.costUsd || 0,
       inputSummary: `Scheduled: ${agent.prompt.substring(0, 100)}${agent.prompt.length > 100 ? "..." : ""}`,
@@ -3588,7 +3590,7 @@ export async function executeScheduledAgentCycle(deploymentId: string): Promise<
   await executeAgentCycle(entry.agent);
 }
 
-export async function runAgentOnce(deploymentId: string, promptOverride?: string, maxIterationsOverride?: number, onProgress?: (event: RuntimeProgressEvent) => void): Promise<{ success: boolean; message: string }> {
+export async function runAgentOnce(deploymentId: string, promptOverride?: string, maxIterationsOverride?: number, onProgress?: (event: RuntimeProgressEvent) => void, triggeredBy?: string): Promise<{ success: boolean; message: string }> {
   const deployment = await storage.getDeployment(deploymentId);
   if (!deployment) return { success: false, message: "Deployment not found" };
 
@@ -3627,6 +3629,7 @@ export async function runAgentOnce(deploymentId: string, promptOverride?: string
     modelName: (agent as any).modelName || "gpt-4.1",
     maxToolIterations: maxIterationsOverride ?? (agent.maxToolIterations ?? 5),
     orgId: agent.organizationId ?? null,
+    triggeredBy: triggeredBy ?? "manual",
   };
 
   try {
