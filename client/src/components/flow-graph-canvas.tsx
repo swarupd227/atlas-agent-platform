@@ -34,7 +34,7 @@ export const PALETTE_TYPES: ProcessNodeType[] = [
   "expert_approval", "take_action", "send_notification", "parallel", "loop", "n8n", "end",
 ];
 
-type RFData = { ntype: ProcessNodeType; label: string; description?: string; actor?: string };
+type RFData = { ntype: ProcessNodeType; label: string; description?: string; actor?: string; config?: Record<string, unknown> };
 
 function ProcessFlowNode({ data, selected }: NodeProps) {
   const d = data as RFData;
@@ -61,7 +61,7 @@ function toRFNodes(nodes: ProcessNode[]): RFNode[] {
     id: n.id,
     type: "process",
     position: n.position && (n.position.x || n.position.y) ? n.position : { x: (i % 5) * 240, y: Math.floor(i / 5) * 140 },
-    data: { ntype: n.type, label: n.label, description: n.description, actor: n.actor } as RFData,
+    data: { ntype: n.type, label: n.label, description: n.description, actor: n.actor, config: n.config } as RFData,
   }));
 }
 function toRFEdges(edges: ProcessEdge[]): RFEdge[] {
@@ -78,7 +78,7 @@ function fromRF(nodes: RFNode[], edges: RFEdge[]): { nodes: ProcessNode[]; edges
   return {
     nodes: nodes.map(n => {
       const d = n.data as RFData;
-      return { id: n.id, type: d.ntype, label: d.label, description: d.description, actor: d.actor, position: n.position, estimatedMins: undefined } as ProcessNode;
+      return { id: n.id, type: d.ntype, label: d.label, description: d.description, actor: d.actor, position: n.position, estimatedMins: undefined, config: d.config } as ProcessNode;
     }),
     edges: edges.map(e => ({ id: e.id, from: e.source, to: e.target, label: e.label as string | undefined, condition: (e.data as any)?.condition })),
   };
@@ -221,6 +221,19 @@ function Canvas({ initialNodes, initialEdges, onChange }: Omit<Props, "flowKey">
                   <label className="text-[10px] text-muted-foreground uppercase tracking-wide">Actor</label>
                   <Input value={d.actor || ""} onChange={e => patchNode(selNode.id, { actor: e.target.value })} placeholder="System / AI / Manager…" className="h-7 text-xs" data-testid="input-node-actor" />
                 </div>
+                {d.ntype === "n8n" && (
+                  <div className="flex flex-col gap-1 rounded-md border border-pink-500/30 bg-pink-500/5 p-2">
+                    <label className="text-[10px] text-pink-600 dark:text-pink-400 uppercase tracking-wide font-medium">n8n workflow path</label>
+                    <Input
+                      value={String((d.config?.n8nPath as string) || "")}
+                      onChange={e => patchNode(selNode.id, { config: { ...(d.config || {}), n8nPath: e.target.value } })}
+                      placeholder="webhook/your-workflow-id"
+                      className="h-7 text-xs"
+                      data-testid="input-node-n8n-path"
+                    />
+                    <span className="text-[10px] text-muted-foreground">Combined with your connected n8n base URL. Execution runs once the process-flow runtime is enabled (design-only today).</span>
+                  </div>
+                )}
               </>
             );
           })()}

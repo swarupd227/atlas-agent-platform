@@ -7653,9 +7653,14 @@ print(result["output"])`;
           </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-3">
+          {agent.status !== "deployed" && (
+            <div className="flex items-center gap-2 p-3 bg-amber-500/10 border border-amber-500/20 rounded-md" data-testid="n8n-not-deployed-notice">
+              <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+              <span className="text-xs text-amber-700 dark:text-amber-400">Deploy this agent first — external runs (API / n8n) only execute a deployed agent.</span>
+            </div>
+          )}
           <p className="text-xs text-muted-foreground">
-            Trigger this agent from an n8n workflow. Install the <code className="text-[10px] bg-muted/50 px-1 py-0.5 rounded">n8n-nodes-nous</code> node
-            (or import the template), use an API key from below, and from an n8n container the host is <code className="text-[10px] bg-muted/50 px-1 py-0.5 rounded">host.docker.internal</code>.
+            Trigger this agent from an n8n workflow: install the native node or import the template, then use an API key from the API Keys card below. From an n8n container the Nous host is <code className="text-[10px] bg-muted/50 px-1 py-0.5 rounded">host.docker.internal</code>.
           </p>
           <div className="flex flex-col gap-1.5">
             <span className="text-[11px] font-medium text-muted-foreground">Run Endpoint (async)</span>
@@ -7663,6 +7668,14 @@ print(result["output"])`;
               <code className="flex-1 text-xs font-mono bg-muted/50 px-3 py-2 rounded-md overflow-x-auto" data-testid="text-n8n-run-url">POST {baseUrl}/api/v1/runs</code>
               <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => copyToClipboard(`${baseUrl}/api/v1/runs`)} data-testid="btn-copy-n8n-url"><Copy className="w-3.5 h-3.5" /></Button>
             </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] font-medium text-muted-foreground">Native node</span>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 text-xs font-mono bg-muted/50 px-3 py-2 rounded-md overflow-x-auto">npm i n8n-nodes-nous</code>
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => copyToClipboard("npm i n8n-nodes-nous")} data-testid="btn-copy-n8n-node"><Copy className="w-3.5 h-3.5" /></Button>
+            </div>
+            <span className="text-[10px] text-muted-foreground">Or in n8n → Settings → Community Nodes → install <code className="text-[10px] bg-muted/50 px-1 py-0.5 rounded">n8n-nodes-nous</code>, then drag the "Nous" node.</span>
           </div>
           <Button
             variant="outline"
