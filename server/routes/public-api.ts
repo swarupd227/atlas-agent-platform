@@ -62,11 +62,15 @@ router.post("/api/v1/runs", requireApiKey, async (req: Request, res: Response) =
     const agent = await storage.getAgent(agentId);
     if (!agent) return res.status(404).json({ error: "Agent not found" });
 
+    // Detect n8n as source via X-Source header (sent by n8n-nodes-nous package)
+    const xSource = req.headers["x-source"];
+    const triggeredBy = xSource === "n8n" ? "n8n" : "api";
+
     const job = await storage.createJob({
       type: "agent_run",
       agentId,
       status: "queued",
-      payload: { triggeredBy: "public_api", input: input ?? payload ?? null },
+      payload: { triggeredBy, input: input ?? payload ?? null },
     });
     res.status(202).json({
       runId: job.id,

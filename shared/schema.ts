@@ -208,6 +208,7 @@ export const runTraces = pgTable("run_traces", {
   provenanceHash: text("provenance_hash"),
   auditEventId: varchar("audit_event_id"),
   softPolicyViolations: jsonb("soft_policy_violations"),
+  triggeredBy: text("triggered_by").default("manual"),
   startedAt: timestamp("started_at").defaultNow(),
   endedAt: timestamp("ended_at"),
 });

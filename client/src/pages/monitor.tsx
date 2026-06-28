@@ -528,6 +528,7 @@ export default function Monitor() {
   const [envFilter, setEnvFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [toolFilter, setToolFilter] = useState("all");
+  const [sourceFilter, setSourceFilter] = useState("all");
   const [expandedTraceId, setExpandedTraceId] = useState<string | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
 
@@ -848,6 +849,10 @@ export default function Monitor() {
     if (toolFilter !== "all") {
       const tools = t.toolCalls as any[] | null;
       if (!tools || !tools.some((tc: any) => tc.type === toolFilter || tc.tool === toolFilter)) return false;
+    }
+    if (sourceFilter !== "all") {
+      const src = (t as any).triggeredBy ?? "manual";
+      if (src !== sourceFilter) return false;
     }
     return true;
   });
@@ -1459,6 +1464,19 @@ export default function Monitor() {
                     <SelectItem value="api_call">API Call</SelectItem>
                   </SelectContent>
                 </Select>
+                <Select value={sourceFilter} onValueChange={setSourceFilter}>
+                  <SelectTrigger className="w-[130px]" data-testid="select-source-filter">
+                    <SelectValue placeholder="Source" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Sources</SelectItem>
+                    <SelectItem value="manual">Manual</SelectItem>
+                    <SelectItem value="api">API</SelectItem>
+                    <SelectItem value="n8n">n8n</SelectItem>
+                    <SelectItem value="webhook">Webhook</SelectItem>
+                    <SelectItem value="schedule">Schedule</SelectItem>
+                  </SelectContent>
+                </Select>
                 <Badge variant="outline" className="text-[10px]" data-testid="badge-filtered-count">
                   {filteredTraces.length} runs
                 </Badge>
@@ -1477,7 +1495,25 @@ export default function Monitor() {
                         <span className="text-[11px] text-muted-foreground">{trace.environment} | {formatMs(trace.latencyMs)} | ${trace.costUsd?.toFixed(4)}</span>
                       </div>
                     </div>
-                    <StatusBadge status={trace.status} />
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {(() => {
+                        const src = (trace as any).triggeredBy ?? "manual";
+                        const sourceStyles: Record<string, string> = {
+                          n8n: "border-pink-500/40 text-pink-600 dark:text-pink-400",
+                          api: "border-sky-500/40 text-sky-600 dark:text-sky-400",
+                          webhook: "border-violet-500/40 text-violet-600 dark:text-violet-400",
+                          schedule: "border-amber-500/40 text-amber-600 dark:text-amber-400",
+                          manual: "border-muted-foreground/30 text-muted-foreground",
+                        };
+                        const cls = sourceStyles[src] ?? sourceStyles.manual;
+                        return src !== "manual" ? (
+                          <Badge variant="outline" className={`text-[9px] ${cls}`} data-testid={`badge-source-${trace.id}`}>
+                            {src}
+                          </Badge>
+                        ) : null;
+                      })()}
+                      <StatusBadge status={trace.status} />
+                    </div>
                   </div>
                   {expandedTraceId === trace.id && (
                     <div className="ml-4 mt-1 mb-2 p-3 rounded-md border bg-muted/10 flex flex-col gap-2" data-testid={`flight-recorder-${trace.id}`}>
