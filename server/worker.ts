@@ -546,6 +546,32 @@ const isDbConnectionError = (err: unknown): boolean => {
   return msg.includes("Connection terminated") || msg.includes("timeout") || msg.includes("ECONNREFUSED") || msg.includes("ETIMEDOUT");
 };
 
+// On-demand agent run from an external trigger (public API / webhook). Executes
+// the agent's active deployment with the provided input (tools + traces), so the
+// run is real and shows up in monitoring.
+async function processAgentRun(job: Job): Promise<Record<string, unknown>> {
+  const payload = (job.payload || {}) as Record<string, unknown>;
+  const rawInput = payload.input ?? payload.webhookPayload ?? "";
+  const input = typeof rawInput === "string" ? rawInput : JSON.stringify(rawInput);
+  if (!job.agentId) throw new Error("agent_run job missing agentId");
+
+  const deployments = await storage.getDeploymentsByAgentId(job.agentId, "deployed");
+  const deployment = deployments[0];
+  if (!deployment) {
+    throw new Error("Agent has no active deployment. Deploy the agent before triggering it via API or webhook.");
+  }
+
+  const result = await runAgentOnce(deployment.id, input || undefined);
+  return {
+    agentId: job.agentId,
+    deploymentId: deployment.id,
+    success: result.success,
+    message: result.message,
+    triggeredBy: payload.triggeredBy ?? "api",
+    completedAt: new Date().toISOString(),
+  };
+}
+
 async function processAgentScheduledRun(job: Job): Promise<Record<string, unknown>> {
   const payload = job.payload as Record<string, unknown>;
   const deploymentId = payload.deploymentId as string;
@@ -1521,6 +1547,8 @@ export function startWorker(intervalMs = 2000) {
             result = await processShadowReplay(job);
           } else if (job.type === "agent_scheduled_run") {
             result = await processAgentScheduledRun(job);
+          } else if (job.type === "agent_run") {
+            result = await processAgentRun(job);
           } else if (job.type === "audit_chain_integrity_check") {
             result = await processAuditChainIntegrityCheck(job);
           } else if (job.type === "otc_smoke_test") {

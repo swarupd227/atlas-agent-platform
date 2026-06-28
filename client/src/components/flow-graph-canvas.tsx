@@ -7,7 +7,7 @@ import {
 import "@xyflow/react/dist/style.css";
 import {
   Play, Database, Brain, GitBranch, UserCheck, Zap, Bell, GitFork, RotateCcw, Square,
-  Trash2, X,
+  Trash2, X, Workflow,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -25,12 +25,13 @@ const NODE_META: Record<ProcessNodeType, NodeMeta> = {
   send_notification: { label: "Notify",       icon: Bell,     color: "text-blue-600",    bg: "bg-blue-500/5",    border: "border-blue-500/40" },
   parallel:          { label: "Parallel",     icon: GitFork,  color: "text-indigo-600",  bg: "bg-indigo-500/5",  border: "border-indigo-500/40" },
   loop:              { label: "Loop / Retry", icon: RotateCcw,color: "text-orange-600",  bg: "bg-orange-500/5",  border: "border-orange-500/40" },
+  n8n:               { label: "n8n Workflow", icon: Workflow, color: "text-pink-600",    bg: "bg-pink-500/5",    border: "border-pink-500/40" },
   end:               { label: "End",          icon: Square,   color: "text-slate-600",   bg: "bg-slate-500/5",   border: "border-slate-500/40" },
 };
 
 export const PALETTE_TYPES: ProcessNodeType[] = [
   "trigger", "get_info", "ai_reasoning", "make_decision",
-  "expert_approval", "take_action", "send_notification", "parallel", "loop", "end",
+  "expert_approval", "take_action", "send_notification", "parallel", "loop", "n8n", "end",
 ];
 
 type RFData = { ntype: ProcessNodeType; label: string; description?: string; actor?: string };

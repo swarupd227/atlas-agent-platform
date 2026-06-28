@@ -15,6 +15,7 @@ export type ProcessNodeType =
   | "send_notification"
   | "parallel"
   | "loop"
+  | "n8n"
   | "end";
 
 export interface ProcessNode {
