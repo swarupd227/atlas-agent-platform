@@ -7643,6 +7643,61 @@ print(result["output"])`;
         </CardContent>
       </Card>
 
+      <Card data-testid="card-n8n">
+        <CardHeader className="pb-3">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center w-7 h-7 rounded-md bg-primary/10 shrink-0">
+              <Globe className="w-3.5 h-3.5 text-primary" />
+            </div>
+            <CardTitle className="text-sm font-medium">Run from n8n</CardTitle>
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <p className="text-xs text-muted-foreground">
+            Trigger this agent from an n8n workflow. Install the <code className="text-[10px] bg-muted/50 px-1 py-0.5 rounded">n8n-nodes-nous</code> node
+            (or import the template), use an API key from below, and from an n8n container the host is <code className="text-[10px] bg-muted/50 px-1 py-0.5 rounded">host.docker.internal</code>.
+          </p>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-[11px] font-medium text-muted-foreground">Run Endpoint (async)</span>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 text-xs font-mono bg-muted/50 px-3 py-2 rounded-md overflow-x-auto" data-testid="text-n8n-run-url">POST {baseUrl}/api/v1/runs</code>
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => copyToClipboard(`${baseUrl}/api/v1/runs`)} data-testid="btn-copy-n8n-url"><Copy className="w-3.5 h-3.5" /></Button>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="self-start"
+            data-testid="btn-download-n8n-template"
+            onClick={() => {
+              const n8nBase = baseUrl.replace(/localhost|127\.0\.0\.1/, "host.docker.internal");
+              const tpl = {
+                name: `Nous — Run ${agent.name}`,
+                nodes: [
+                  { parameters: {}, id: "a1111111-1111-4111-8111-111111111111", name: "When clicking Test", type: "n8n-nodes-base.manualTrigger", typeVersion: 1, position: [220, 300] },
+                  { parameters: { method: "POST", url: `${n8nBase}/api/v1/runs`, sendHeaders: true, headerParameters: { parameters: [{ name: "x-api-key", value: "YOUR_API_KEY" }] }, sendBody: true, specifyBody: "json", jsonBody: `={\n  "agentId": "${agent.id}",\n  "input": "Hello from n8n"\n}`, options: {} }, id: "b2222222-2222-4222-8222-222222222222", name: "Start Nous Run", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [460, 300] },
+                  { parameters: { amount: 4 }, id: "c3333333-3333-4333-8333-333333333333", name: "Wait", type: "n8n-nodes-base.wait", typeVersion: 1.1, position: [680, 300], webhookId: "d4444444-4444-4444-8444-444444444444" },
+                  { parameters: { url: `=${n8nBase}/api/v1/runs/{{ $json.runId }}`, sendHeaders: true, headerParameters: { parameters: [{ name: "x-api-key", value: "YOUR_API_KEY" }] }, options: {} }, id: "e5555555-5555-4555-8555-555555555555", name: "Get Run Result", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [900, 300] },
+                ],
+                connections: {
+                  "When clicking Test": { main: [[{ node: "Start Nous Run", type: "main", index: 0 }]] },
+                  "Start Nous Run": { main: [[{ node: "Wait", type: "main", index: 0 }]] },
+                  "Wait": { main: [[{ node: "Get Run Result", type: "main", index: 0 }]] },
+                },
+              };
+              const blob = new Blob([JSON.stringify(tpl, null, 2)], { type: "application/json" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url; a.download = `nous-${agent.id}.n8n.json`; a.click();
+              URL.revokeObjectURL(url);
+              toast({ title: "n8n template downloaded", description: "Import it in n8n, then set your API key." });
+            }}
+          >
+            Download n8n template
+          </Button>
+        </CardContent>
+      </Card>
+
       <Card data-testid="card-api-keys">
         <CardHeader className="pb-3">
           <div className="flex items-center gap-2">
