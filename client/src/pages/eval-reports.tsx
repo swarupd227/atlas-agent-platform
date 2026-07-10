@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { formatDate } from "@/lib/format";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
@@ -409,7 +410,7 @@ function ReportViewer({ report, onClose }: { report: GeneratedReport; onClose: (
                           <td className="px-3 py-2 text-right">{row.avgLatencyMs != null ? `${row.avgLatencyMs}ms` : "—"}</td>
                           <td className="px-3 py-2 text-right">{row.costUsd != null ? `$${row.costUsd.toFixed(4)}` : "—"}</td>
                           <td className="px-3 py-2 text-right text-muted-foreground">
-                            {row.startedAt ? new Date(row.startedAt).toLocaleDateString() : "—"}
+                            {row.startedAt ? formatDate(row.startedAt) : "—"}
                           </td>
                         </tr>
                       ))}
@@ -642,7 +643,7 @@ function ScheduleBuilder() {
                           <>
                             <span className="text-xs text-muted-foreground">·</span>
                             <span className="text-xs text-muted-foreground flex items-center gap-0.5">
-                              <Clock className="h-3 w-3" /> Next: {new Date(sched.nextRunAt).toLocaleDateString()}
+                              <Clock className="h-3 w-3" /> Next: {formatDate(sched.nextRunAt)}
                             </span>
                           </>
                         )}

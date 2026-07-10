@@ -9,6 +9,16 @@ export const pool = new pg.Pool({
   max: 10,
 });
 
+// An idle client whose TCP connection drops (server-side idle timeout, network
+// blip, DB restart) emits an 'error' event on the pool. Without a listener,
+// Node escalates it to an uncaughtException — which the process-level handler
+// turns into process.exit(1), taking down the whole server on a transient DB
+// hiccup. Log and swallow: the pool discards the bad client and opens a fresh
+// one on the next checkout.
+pool.on("error", (err) => {
+  console.error("[db] idle pool client error (non-fatal, client recycled):", err.message);
+});
+
 export const db = drizzle(pool, { schema });
 
 type PoolClient = Awaited<ReturnType<typeof pool.connect>>;
@@ -307,6 +317,7 @@ export async function runStartupMigrations() {
           CHECK (triggered_by IN ('scheduled', 'manual'))
       );
       ALTER TABLE runbooks ADD COLUMN IF NOT EXISTS agent_id VARCHAR REFERENCES agents(id);
+      ALTER TABLE agents ADD COLUMN IF NOT EXISTS source_template_id VARCHAR;
       CREATE TABLE IF NOT EXISTS agent_alerts (
         id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
         org_id VARCHAR,
@@ -375,6 +386,40 @@ export async function runStartupMigrations() {
       CREATE INDEX IF NOT EXISTS idx_aar_agent_state_reports_agent_id ON aar_agent_state_reports(agent_id);
 
       ALTER TABLE run_traces ADD COLUMN IF NOT EXISTS soft_policy_violations JSONB;
+      ALTER TABLE run_traces ADD COLUMN IF NOT EXISTS spans_json JSONB;
+      ALTER TABLE run_steps ADD COLUMN IF NOT EXISTS outcome TEXT;
+
+      ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS signature TEXT;
+      ALTER TABLE audit_events ADD COLUMN IF NOT EXISTS signer_key_id TEXT;
+      CREATE TABLE IF NOT EXISTS crypto_keys (
+        id               VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        purpose          TEXT NOT NULL,
+        key_id           TEXT NOT NULL,
+        private_key_pem  TEXT NOT NULL,
+        public_key_pem   TEXT NOT NULL,
+        created_at       TIMESTAMP DEFAULT now()
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_crypto_keys_purpose ON crypto_keys(purpose);
+
+      CREATE TABLE IF NOT EXISTS workspace_runs (
+        id                  VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
+        organization_id     VARCHAR,
+        agent_id            VARCHAR NOT NULL,
+        status              TEXT NOT NULL DEFAULT 'running',
+        request_text        TEXT NOT NULL,
+        actor_id            VARCHAR,
+        checkpoint          JSONB,
+        pending_approval_id VARCHAR,
+        pending_summary     TEXT,
+        output_summary      TEXT,
+        cost_usd            REAL DEFAULT 0,
+        trace_id            VARCHAR,
+        created_at          TIMESTAMP DEFAULT now(),
+        updated_at          TIMESTAMP DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS idx_workspace_runs_org ON workspace_runs(organization_id);
+      CREATE INDEX IF NOT EXISTS idx_workspace_runs_status ON workspace_runs(status);
+      ALTER TABLE agents ADD COLUMN IF NOT EXISTS workspace_audience TEXT[] DEFAULT '{}'::text[];
 
       CREATE TABLE IF NOT EXISTS workflow_state_schemas (
         id              VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1108,6 +1153,21 @@ export async function runStartupMigrations() {
 
       -- Vault-encrypted auth config for mcp_server_auth (Task #55 backward-compat migration)
       ALTER TABLE mcp_server_auth ADD COLUMN IF NOT EXISTS config_encrypted TEXT;
+    `);
+
+    // Add unique constraint on eval_gates.agent_id (idempotent)
+    // Note: ALTER TABLE ADD CONSTRAINT raises 42P07 (duplicate_table) not 42710 (duplicate_object)
+    await client.query(`
+      DO $$ BEGIN
+        ALTER TABLE eval_gates ADD CONSTRAINT eval_gates_agent_id_unique UNIQUE(agent_id);
+      EXCEPTION WHEN SQLSTATE '42P07' THEN NULL;
+      WHEN duplicate_object THEN NULL;
+      END $$;
+    `);
+
+    // Add triggered_by to run_traces (schema drift fix — column added to Drizzle schema but not yet in DB)
+    await client.query(`
+      ALTER TABLE run_traces ADD COLUMN IF NOT EXISTS triggered_by TEXT DEFAULT 'manual';
     `);
 
     // Seed Nous-curated marketplace asset packs (always runs; ON CONFLICT skips existing rows)

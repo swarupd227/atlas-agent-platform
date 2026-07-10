@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { formatDate } from "@/lib/format";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -1492,7 +1493,7 @@ export default function AutonomyEngine() {
                                     <span className={fromL?.color} data-testid={`evolution-from-${idx}`}>{fromL?.label}</span>
                                     <ArrowRight className="w-3 h-3" />
                                     <span className={toL?.color} data-testid={`evolution-to-${idx}`}>{toL?.label}</span>
-                                    <span className="text-xs text-muted-foreground" data-testid={`evolution-date-${idx}`}>{entry.appliedAt ? new Date(entry.appliedAt).toLocaleDateString() : ""}</span>
+                                    <span className="text-xs text-muted-foreground" data-testid={`evolution-date-${idx}`}>{entry.appliedAt ? formatDate(entry.appliedAt) : ""}</span>
                                   </div>
                                 </div>
                               );

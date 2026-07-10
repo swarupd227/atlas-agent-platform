@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { QueryBoundary } from "@/components/ui-vocab";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import type { GoldenDataset, Agent } from "@shared/schema";
@@ -168,7 +169,7 @@ export default function GoldenDatasetsPage() {
     setWVersion("1.0.0");
   };
 
-  const { data: datasets = [], isLoading } = useQuery<GoldenDataset[]>({ queryKey: ["/api/golden-datasets"] });
+  const { data: datasets = [], isLoading, isError, error, refetch } = useQuery<GoldenDataset[]>({ queryKey: ["/api/golden-datasets"] });
   const { data: agents = [] } = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
 
   const createMutation = useMutation({
@@ -292,6 +293,14 @@ export default function GoldenDatasetsPage() {
       });
     }
   };
+
+  if (isError) {
+    return (
+      <div className="p-6">
+        <QueryBoundary isLoading={false} isError error={error} onRetry={() => refetch()}>{null}</QueryBoundary>
+      </div>
+    );
+  }
 
   if (isLoading) return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-golden-datasets-loading">

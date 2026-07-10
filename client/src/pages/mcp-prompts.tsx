@@ -1,13 +1,19 @@
 import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { MessageSquare, Server, Search, CheckCircle2, XCircle, Clock, FileText } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { MessageSquare, Server, Search, CheckCircle2, XCircle, Clock, FileText, Plus, Trash2 } from "lucide-react";
 import { Link } from "wouter";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 interface McpPromptItem {
   id: string;
@@ -41,13 +47,60 @@ const APPROVAL_VARIANT: Record<string, "default" | "secondary" | "destructive"> 
 };
 
 export default function McpPromptsPage() {
+  const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
   const [serverFilter, setServerFilter] = useState("all");
   const [publishedFilter, setPublishedFilter] = useState("all");
   const [approvalFilter, setApprovalFilter] = useState("all");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [newName, setNewName] = useState("");
+  const [newDescription, setNewDescription] = useState("");
+  const [newServerId, setNewServerId] = useState("");
 
   const { data: prompts, isLoading } = useQuery<McpPromptItem[]>({
     queryKey: ["/api/mcp-prompts"],
+  });
+
+  const { data: mcpServers } = useQuery<Array<{ id: string; name: string }>>({
+    queryKey: ["/api/mcp-servers"],
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("DELETE", `/api/mcp-prompts/${id}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/mcp-prompts"] });
+      toast({ title: "Prompt deleted" });
+      setDeleteConfirmId(null);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to delete prompt", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const createMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/mcp-prompts", {
+        name: newName,
+        description: newDescription || undefined,
+        serverId: newServerId,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/mcp-prompts"] });
+      toast({ title: "Prompt created" });
+      setCreateOpen(false);
+      setNewName("");
+      setNewDescription("");
+      setNewServerId("");
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to create prompt", description: err.message, variant: "destructive" });
+    },
   });
 
   const serverNames = useMemo(() => {
@@ -99,9 +152,15 @@ export default function McpPromptsPage() {
 
   return (
     <div className="flex flex-col gap-6 p-6">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-page-title">MCP Prompts</h1>
-        <p className="text-sm text-muted-foreground" data-testid="text-page-subtitle">Governed catalog of prompts synced from MCP servers</p>
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="flex flex-col gap-1">
+          <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-page-title">MCP Prompts</h1>
+          <p className="text-sm text-muted-foreground" data-testid="text-page-subtitle">Governed catalog of prompts synced from MCP servers</p>
+        </div>
+        <Button onClick={() => setCreateOpen(true)} data-testid="button-create-prompt">
+          <Plus className="w-4 h-4 mr-1.5" />
+          Create Prompt
+        </Button>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -211,6 +270,7 @@ export default function McpPromptsPage() {
                   <TableHead>Approval</TableHead>
                   <TableHead>Arguments</TableHead>
                   <TableHead>Owner</TableHead>
+                  <TableHead />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -261,6 +321,18 @@ export default function McpPromptsPage() {
                         {prompt.owner || "—"}
                       </span>
                     </TableCell>
+                    <TableCell>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        aria-label={`Delete prompt ${prompt.name}`}
+                        className="h-7 w-7 text-destructive hover:text-destructive"
+                        onClick={(e) => { e.stopPropagation(); setDeleteConfirmId(prompt.id); }}
+                        data-testid={`button-delete-prompt-${prompt.id}`}
+                      >
+                        <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+                      </Button>
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -268,6 +340,79 @@ export default function McpPromptsPage() {
           </CardContent>
         </Card>
       )}
+      <Dialog open={deleteConfirmId !== null} onOpenChange={(open) => { if (!open) setDeleteConfirmId(null); }}>
+        <DialogContent data-testid="dialog-delete-prompt">
+          <DialogHeader>
+            <DialogTitle>Delete Prompt</DialogTitle>
+            <DialogDescription>This will permanently remove the prompt. This action cannot be undone.</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConfirmId(null)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => { if (deleteConfirmId) deleteMutation.mutate(deleteConfirmId); }}
+              disabled={deleteMutation.isPending}
+              data-testid="button-confirm-delete-prompt"
+            >
+              {deleteMutation.isPending ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent data-testid="dialog-create-prompt">
+          <DialogHeader>
+            <DialogTitle>Create Prompt</DialogTitle>
+            <DialogDescription>Add a new prompt to the MCP catalog</DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="prompt-name">Name *</Label>
+              <Input
+                id="prompt-name"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="my-prompt"
+                data-testid="input-prompt-name"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="prompt-description">Description</Label>
+              <Textarea
+                id="prompt-description"
+                value={newDescription}
+                onChange={(e) => setNewDescription(e.target.value)}
+                placeholder="What does this prompt do?"
+                data-testid="input-prompt-description"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="prompt-server">Server</Label>
+              <Select value={newServerId} onValueChange={setNewServerId}>
+                <SelectTrigger data-testid="select-prompt-server">
+                  <SelectValue placeholder="Select server" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(mcpServers || []).map((s) => (
+                    <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => createMutation.mutate()}
+              disabled={!newName || createMutation.isPending}
+              data-testid="button-submit-create-prompt"
+            >
+              {createMutation.isPending ? "Creating..." : "Create Prompt"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

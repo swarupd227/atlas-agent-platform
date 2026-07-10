@@ -12,6 +12,7 @@ import { storage } from "../storage";
 import { callN8nWorkflow } from "../integrations/n8n";
 import { getOrgId, getDefaultOrgId } from "../auth";
 import { decryptCredentialMap } from "../credential-vault";
+import { assertSafeOutboundUrl, UnsafeUrlError } from "../url-safety";
 
 const router = Router();
 
@@ -105,6 +106,12 @@ router.post("/api/v1/integrations/n8n/call", requireApiKey, async (req: Request,
   try {
     let { webhookUrl, apiKey } = req.body ?? {};
     const { path, payload, method } = req.body ?? {};
+    // Tracks whether webhookUrl came from the caller directly (needs the SSRF
+    // guard) vs. was derived from the org's own stored, admin-configured n8n
+    // connector base URL (an already-trusted host, which may legitimately be
+    // a self-hosted n8n instance on localhost — same trust model as an
+    // admin-registered MCP server).
+    const callerSuppliedUrl = !!webhookUrl;
 
     // If only a workflow path is given, combine it with the stored n8n
     // connection's base URL + API key (connected via the Integrations page).
@@ -123,6 +130,13 @@ router.post("/api/v1/integrations/n8n/call", requireApiKey, async (req: Request,
 
     if (!webhookUrl) {
       return res.status(400).json({ error: "Provide webhookUrl, or a path with a connected n8n integration" });
+    }
+    if (callerSuppliedUrl) {
+      try {
+        await assertSafeOutboundUrl(webhookUrl);
+      } catch (e: any) {
+        return res.status(400).json({ error: e instanceof UnsafeUrlError ? e.message : "That webhookUrl isn't reachable from this action." });
+      }
     }
     const out = await callN8nWorkflow({ webhookUrl, payload, method, apiKey });
     res.status(out.ok ? 200 : 502).json(out);

@@ -1400,6 +1400,8 @@ export default function OntologyExplorer() {
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 max-w-4xl mx-auto">
+                {/* Quality metrics render "—" until real interaction-to-concept
+                    telemetry exists — never invented percentages. */}
                 <Card data-testid="card-metric-coverage">
                   <CardHeader className="pb-2">
                     <CardTitle className="text-xs flex items-center gap-2">
@@ -1408,9 +1410,8 @@ export default function OntologyExplorer() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-2">
-                    <div className="text-2xl font-bold" data-testid="text-coverage-value">87%</div>
-                    <Progress value={87} className="h-2" data-testid="progress-coverage" />
-                    <p className="text-[11px] text-muted-foreground">of agent interactions reference ontology concepts</p>
+                    <div className="text-2xl font-bold text-muted-foreground" data-testid="text-coverage-value">—</div>
+                    <p className="text-[11px] text-muted-foreground">Awaiting measurement — requires agent interaction telemetry referencing concepts</p>
                   </CardContent>
                 </Card>
 
@@ -1422,9 +1423,8 @@ export default function OntologyExplorer() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-2">
-                    <div className="text-2xl font-bold" data-testid="text-consistency-value">94%</div>
-                    <Progress value={94} className="h-2" data-testid="progress-consistency" />
-                    <p className="text-[11px] text-muted-foreground">terminology alignment score</p>
+                    <div className="text-2xl font-bold text-muted-foreground" data-testid="text-consistency-value">—</div>
+                    <p className="text-[11px] text-muted-foreground">Awaiting measurement — terminology alignment is scored per run, not yet aggregated</p>
                   </CardContent>
                 </Card>
 
@@ -1436,11 +1436,8 @@ export default function OntologyExplorer() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-2">
-                    <div className="flex items-center gap-2">
-                      <CircleDot className="w-3.5 h-3.5 text-emerald-500" />
-                      <span className="text-sm font-medium" data-testid="text-freshness-value">Up to date</span>
-                    </div>
-                    <p className="text-[11px] text-muted-foreground">Last updated 2 days ago</p>
+                    <div className="text-2xl font-bold text-muted-foreground" data-testid="text-freshness-value">—</div>
+                    <p className="text-[11px] text-muted-foreground">Per-concept version history is tracked on each concept's detail view</p>
                   </CardContent>
                 </Card>
 
@@ -1452,8 +1449,8 @@ export default function OntologyExplorer() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-2">
-                    <div className="text-2xl font-bold" data-testid="text-gaps-value">12</div>
-                    <p className="text-[11px] text-muted-foreground">gaps found in conversations where agents couldn't find relevant concepts</p>
+                    <div className="text-2xl font-bold text-muted-foreground" data-testid="text-gaps-value">—</div>
+                    <p className="text-[11px] text-muted-foreground">Awaiting measurement — gap detection requires conversation-miss telemetry</p>
                   </CardContent>
                 </Card>
               </div>

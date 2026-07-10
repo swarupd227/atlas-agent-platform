@@ -2529,7 +2529,7 @@ export default function EvalDetail() {
                         const rate = (run.passRate || 0) * 100;
                         return (
                           <div key={run.id} className="flex-1 flex flex-col items-center gap-1" data-testid={`bar-run-${i}`}>
-                            <div className={`w-full rounded-t-sm ${rate > 90 ? "bg-emerald-500" : rate > 75 ? "bg-amber-500" : "bg-red-500"} transition-all`} style={{ height: `${rate}%` }} title={`${rate.toFixed(1)}% - ${run.startedAt ? new Date(run.startedAt).toLocaleDateString() : ""}`} />
+                            <div className={`w-full rounded-t-sm ${rate > 90 ? "bg-emerald-500" : rate > 75 ? "bg-amber-500" : "bg-red-500"} transition-all`} style={{ height: `${rate}%` }} title={`${rate.toFixed(1)}% - ${run.startedAt ? formatDate(run.startedAt) : ""}`} />
                           </div>
                         );
                       })}

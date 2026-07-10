@@ -1058,6 +1058,31 @@ export async function resolvePolicyBundle(agentId: string, orgId?: string) {
     ? activePolicies.filter(p => p.scopeType === "env" && p.scopeId === agent.environment)
     : [];
 
+  // Resolve wizard-selected policyBindings: the agent record carries explicit policy selections
+  // (policyId + per-binding enforcement override) made via New Agent or Use Template wizard.
+  // These must also contribute to tool-filtering, not just to the post-execution soft audit.
+  const bindingPolicies: (typeof activePolicies[number] & { _enforcementOverride?: string })[] = [];
+  const rawBindings = agent?.policyBindings;
+  const bindings: Array<{ policyId?: string; enforcement?: string }> = Array.isArray(rawBindings)
+    ? rawBindings as Array<{ policyId?: string; enforcement?: string }>
+    : typeof rawBindings === "object" && rawBindings !== null && Array.isArray((rawBindings as any).policies)
+      ? [] // old shape has no per-policy IDs — skip, org/outcome/agent scopes cover it
+      : [];
+  const alreadyScopedIds = new Set([
+    ...orgPolicies, ...outcomePolicies, ...agentPolicies, ...envPolicies,
+  ].map(p => p.id));
+  for (const binding of bindings) {
+    if (!binding.policyId) continue;
+    if (alreadyScopedIds.has(binding.policyId)) continue; // already included via scope
+    const policy = activePolicies.find(p => p.id === binding.policyId);
+    if (!policy) continue;
+    // Binding-level enforcement overrides the policy's own enforcement field when stricter.
+    // "hard"/"strict"/"block" from the wizard means the user explicitly asked for a hard block.
+    const bindingEnf = (binding.enforcement || "").toLowerCase();
+    (policy as any)._enforcementOverride = bindingEnf || undefined;
+    bindingPolicies.push(policy as typeof bindingPolicies[number]);
+  }
+
   const toolAllowlist: string[] = [];
   // blockedTools: only from strict/block-enforcement policies — these produce hard blocks at dispatch
   const blockedTools: string[] = [];
@@ -1069,14 +1094,15 @@ export async function resolvePolicyBundle(agentId: string, orgId?: string) {
   // declared it as blocked. Used for precise violation attribution in run traces and promotion checks.
   const blockedToolsToPolicyIds: Record<string, string[]> = {};
 
-  const allScoped = [...orgPolicies, ...outcomePolicies, ...agentPolicies, ...envPolicies];
+  const allScoped = [...orgPolicies, ...outcomePolicies, ...agentPolicies, ...envPolicies, ...bindingPolicies];
   for (const p of allScoped) {
     const pj = p.policyJson as Record<string, unknown> | null;
     if (!pj) continue;
-    // Normalize: accept both `enforcement` and legacy `enforcement_mode` field names.
-    // `enforcement` wins if both are present. Defaults to "monitor" (safe/log-only).
-    const enforcement = ((pj.enforcement || pj.enforcement_mode) as string) || "monitor";
-    const isHard = enforcement === "strict" || enforcement === "block";
+    // Normalize enforcement: binding-level override wins (user set "hard" in wizard),
+    // then policy's own field, then legacy enforcement_mode, then default "monitor".
+    const enfOverride = (p as any)._enforcementOverride as string | undefined;
+    const enforcement = enfOverride || ((pj.enforcement || pj.enforcement_mode) as string) || "monitor";
+    const isHard = enforcement === "hard" || enforcement === "strict" || enforcement === "block";
     // toolAllowlist is only enforced by hard policies (monitor policies cannot restrict LLM tool visibility)
     if (isHard && Array.isArray(pj.toolAllowlist)) toolAllowlist.push(...(pj.toolAllowlist as string[]));
     if (Array.isArray(pj.blockedTools)) {
@@ -1096,7 +1122,14 @@ export async function resolvePolicyBundle(agentId: string, orgId?: string) {
   }
 
   return {
-    appliedPolicies: allScoped.map(p => ({ id: p.id, name: p.name, scope: p.scopeType, domain: p.domain, version: p.version ?? 1, enforcement: (p.policyJson as any)?.enforcement || "monitor" })),
+    appliedPolicies: allScoped.map(p => ({
+      id: p.id,
+      name: p.name,
+      scope: p.scopeType,
+      domain: p.domain,
+      version: p.version ?? 1,
+      enforcement: (p as any)._enforcementOverride || (p.policyJson as any)?.enforcement || "monitor",
+    })),
     toolAllowlist: Array.from(new Set(toolAllowlist)),
     blockedTools: Array.from(new Set(blockedTools)),
     monitorBlockedTools: Array.from(new Set(monitorBlockedTools.filter(t => !blockedTools.includes(t)))),

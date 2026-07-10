@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { formatDate } from "@/lib/format";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Link } from "wouter";
 import { POLICY_PACKS } from "@/lib/policy-packs";
@@ -59,6 +60,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Dialog,
   DialogContent,
@@ -1942,15 +1945,92 @@ export default function Governance() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {integrityCheck && (
-            <div
-              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-medium cursor-pointer hover:opacity-80 transition-opacity ${integrityCheck.valid ? "border-green-500/30 bg-green-500/10 text-green-600 dark:text-green-400" : "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400"}`}
-              onClick={() => setActiveGovTab("audit")}
-              title="Click to view Audit Log"
-              data-testid="badge-chain-integrity"
-            >
-              {integrityCheck.valid ? <ShieldCheck className="w-3.5 h-3.5" /> : <ShieldAlert className="w-3.5 h-3.5" />}
-              {integrityCheck.valid ? "Chain Verified" : "Chain Broken"}
-            </div>
+            /* Every alarm carries its explanation (UX audit F-10): what it is,
+               what broke, why it matters, and the one action to take —
+               previously this was an unexplained red pill. */
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[11px] font-medium cursor-pointer hover:opacity-80 transition-opacity ${integrityCheck.valid ? "border-green-500/30 bg-green-500/10 text-green-600 dark:text-green-400" : "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400"}`}
+                  aria-label={integrityCheck.valid ? "Audit chain verified — details" : "Audit chain broken — details"}
+                  data-testid="badge-chain-integrity"
+                >
+                  {integrityCheck.valid ? <ShieldCheck className="w-3.5 h-3.5" aria-hidden="true" /> : <ShieldAlert className="w-3.5 h-3.5" aria-hidden="true" />}
+                  {integrityCheck.valid ? "Chain Verified" : "Chain Broken"}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-80" data-testid="popover-chain-integrity">
+                <div className="flex flex-col gap-2.5">
+                  <p className="text-sm font-semibold">
+                    {integrityCheck.valid ? "Audit chain verified" : "Audit chain integrity broken"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    The audit log is a tamper-evident chain: every event is cryptographically
+                    linked to the one before it, so records can't be altered or removed unnoticed.
+                  </p>
+                  {integrityCheck.valid ? (
+                    <p className="text-xs">
+                      All <span className="font-semibold">{integrityCheck.verifiedEvents.toLocaleString()}</span> of{" "}
+                      <span className="font-semibold">{integrityCheck.totalEvents.toLocaleString()}</span> events verified.
+                      Your audit trail is intact and auditor-ready.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="text-xs">
+                        Verification failed{integrityCheck.brokenAt != null ? (
+                          <> at sequence <span className="font-mono font-semibold">#{integrityCheck.brokenAt}</span></>
+                        ) : null}
+                        {" "}({integrityCheck.verifiedEvents.toLocaleString()} of {integrityCheck.totalEvents.toLocaleString()} events verified).
+                        Events after the break can no longer be relied on as compliance evidence.
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Common causes: direct database edits, a partial restore, or event deletion.
+                      </p>
+                    </>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant={integrityCheck.valid ? "outline" : "default"}
+                      className="w-fit"
+                      onClick={() => setActiveGovTab("audit")}
+                      data-testid="button-open-audit-log"
+                    >
+                      Open Audit Log
+                    </Button>
+                    {!integrityCheck.valid && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="w-fit"
+                        onClick={async () => {
+                          if (!window.confirm(
+                            "Re-baseline the audit chain?\n\nThis re-links the hash chain from the beginning and resets the tamper-evidence baseline. It does NOT restore trust in events before the break. The repair itself is recorded as an audit event.",
+                          )) return;
+                          try {
+                            const res = await apiRequest("POST", "/api/audit-chain/rebaseline", { reason: "Re-baselined from Governance header" });
+                            const data = await res.json();
+                            toast({ title: "Audit chain re-baselined", description: `${data.relinked} event(s) re-linked. Chain is now ${data.integrity?.valid ? "verified" : "still broken"}.` });
+                            refetchIntegrity();
+                          } catch (e: any) {
+                            toast({ title: "Re-baseline failed", description: e.message, variant: "destructive" });
+                          }
+                        }}
+                        data-testid="button-rebaseline-chain"
+                      >
+                        Re-baseline Chain
+                      </Button>
+                    )}
+                  </div>
+                  {!integrityCheck.valid && (
+                    <p className="text-[10px] text-muted-foreground">
+                      Re-baselining resets the tamper-evidence baseline going forward — it cannot
+                      restore trust in the events before the break. The repair is audit-logged.
+                    </p>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
           )}
           <Link href="/governance/policy-engine">
             <Button variant="outline" data-testid="button-policy-engine">
@@ -2091,6 +2171,7 @@ export default function Governance() {
       </div>
 
       <Tabs value={activeGovTab} onValueChange={setActiveGovTab} className="flex flex-col gap-4">
+        <div className="flex items-center gap-1 flex-wrap">
         <TabsList className="w-fit flex-wrap h-auto gap-0">
           <TabsTrigger value="coverage" data-testid="tab-coverage">
             <Target className="w-3.5 h-3.5 mr-1" />
@@ -2120,28 +2201,55 @@ export default function Governance() {
           </TabsTrigger>
           <TabsTrigger value="policies" data-testid="tab-policies">Policy Rules</TabsTrigger>
           <TabsTrigger value="audit" data-testid="tab-audit">Audit Log</TabsTrigger>
-          {/* ── Advanced separator ──────────────────────────────────── */}
-          <span className="h-5 w-px bg-border/60 mx-1 self-center shrink-0" aria-hidden="true" />
-          <span className="self-center px-1 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground/50 pointer-events-none select-none">Advanced</span>
-          <span className="h-5 w-px bg-border/60 mx-1 self-center shrink-0" aria-hidden="true" />
-          <TabsTrigger value="compliance-matrix" data-testid="tab-compliance-matrix" className="text-muted-foreground/70 text-[11px]">Compliance Matrix</TabsTrigger>
-          <TabsTrigger value="enforcement" data-testid="tab-enforcement" className="text-muted-foreground/70 text-[11px]">Enforcement</TabsTrigger>
-          <TabsTrigger value="compliance" data-testid="tab-compliance" className="text-muted-foreground/70 text-[11px]">Reports</TabsTrigger>
-          <TabsTrigger value="tool-access" data-testid="tab-tool-access" className="text-muted-foreground/70 text-[11px]">Tool Access</TabsTrigger>
-          <TabsTrigger value="tool-risk" data-testid="tab-tool-risk" className="text-muted-foreground/70 text-[11px]">Tool Risk</TabsTrigger>
-          <TabsTrigger value="ethics" data-testid="tab-ethics" className="text-muted-foreground/70 text-[11px]">Ethics</TabsTrigger>
-          <TabsTrigger value="policy-packs" data-testid="tab-policy-packs" className="text-muted-foreground/70 text-[11px]">Policy Packs</TabsTrigger>
-          <TabsTrigger value="what-if" data-testid="tab-what-if" className="text-muted-foreground/70 text-[11px]">What-If</TabsTrigger>
-          <TabsTrigger value="regulatory" data-testid="tab-regulatory" className="text-muted-foreground/70 text-[11px]">Regulatory</TabsTrigger>
-          <TabsTrigger value="impact-network" data-testid="tab-impact-network" className="text-muted-foreground/70 text-[11px]">
-            <Network className="w-3 h-3 mr-1" />
-            Impact Network
-          </TabsTrigger>
-          <TabsTrigger value="compliance-posture" data-testid="tab-compliance-posture" className="text-muted-foreground/70 text-[11px]">
-            <ShieldCheck className="w-3 h-3 mr-1" />
-            Compliance Posture
-          </TabsTrigger>
         </TabsList>
+        {/* IA consolidation (UX audit F-6): 17 peer tabs across two wrapped
+            rows made specialist views undiscoverable. The six everyday views
+            stay visible; the eleven advanced views live in an "Advanced" menu
+            whose trigger shows the active hidden view's name. */}
+        {(() => {
+          const advancedTabs = [
+            { value: "compliance-matrix", label: "Compliance Matrix" },
+            { value: "enforcement", label: "Enforcement" },
+            { value: "compliance", label: "Reports" },
+            { value: "tool-access", label: "Tool Access" },
+            { value: "tool-risk", label: "Tool Risk" },
+            { value: "ethics", label: "Ethics" },
+            { value: "policy-packs", label: "Policy Packs" },
+            { value: "what-if", label: "What-If" },
+            { value: "regulatory", label: "Regulatory" },
+            { value: "impact-network", label: "Impact Network" },
+            { value: "compliance-posture", label: "Compliance Posture" },
+          ];
+          const activeAdvanced = advancedTabs.find(t => t.value === activeGovTab);
+          return (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant={activeAdvanced ? "secondary" : "outline"}
+                  size="sm"
+                  className="gap-1 self-center"
+                  data-testid="button-advanced-gov-tabs"
+                >
+                  {activeAdvanced ? activeAdvanced.label : "Advanced"}
+                  <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" data-testid="dropdown-advanced-gov-tabs">
+                {advancedTabs.map(t => (
+                  <DropdownMenuItem
+                    key={t.value}
+                    onClick={() => setActiveGovTab(t.value)}
+                    className={activeGovTab === t.value ? "bg-accent" : ""}
+                    data-testid={`tab-${t.value}`}
+                  >
+                    {t.label}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          );
+        })()}
+        </div>
 
         {/* ─── Coverage Heatmap ──────────────────────────────────────── */}
         <TabsContent value="coverage" className="mt-0 flex flex-col gap-4" data-testid="content-coverage">
@@ -2621,7 +2729,7 @@ export default function Governance() {
                             )}
                             {item.dueDate && (
                               <span className="text-[11px] text-muted-foreground flex items-center gap-1">
-                                <Clock className="w-3 h-3" /> Due {new Date(item.dueDate).toLocaleDateString()}
+                                <Clock className="w-3 h-3" /> Due {formatDate(item.dueDate)}
                               </span>
                             )}
                           </div>
@@ -2913,7 +3021,7 @@ export default function Governance() {
                           <span className="text-[10px] text-muted-foreground">Coverage</span>
                         </div>
                         <div className="flex flex-col items-center">
-                          <span className="text-[11px] font-medium">{group.lastReview ? new Date(group.lastReview).toLocaleDateString() : "N/A"}</span>
+                          <span className="text-[11px] font-medium">{group.lastReview ? formatDate(group.lastReview) : "N/A"}</span>
                           <span className="text-[10px] text-muted-foreground">Last Review</span>
                         </div>
                       </div>
@@ -2979,9 +3087,9 @@ export default function Governance() {
                                   const vh = (policy as any).versionHistory;
                                   if (vh && Array.isArray(vh) && vh.length > 0) {
                                     const last = vh[vh.length - 1];
-                                    return `Updated ${last.changedAt ? new Date(last.changedAt).toLocaleDateString() : "N/A"}`;
+                                    return `Updated ${last.changedAt ? formatDate(last.changedAt) : "N/A"}`;
                                   }
-                                  return policy.createdAt ? `Created ${new Date(policy.createdAt).toLocaleDateString()}` : "";
+                                  return policy.createdAt ? `Created ${formatDate(policy.createdAt)}` : "";
                                 })()}
                               </span>
                             </div>
@@ -4010,7 +4118,7 @@ export default function Governance() {
                             </Button>
                             {existingReport && (
                               <Badge variant="outline" className="text-[10px]">
-                                Last: {existingReport.createdAt ? new Date(existingReport.createdAt).toLocaleDateString() : "N/A"}
+                                Last: {existingReport.createdAt ? formatDate(existingReport.createdAt) : "N/A"}
                               </Badge>
                             )}
                           </div>
@@ -4182,7 +4290,7 @@ export default function Governance() {
                         </span>
                       )}
                       <span className="text-[11px] text-muted-foreground">
-                        Generated by {report.generatedBy} on {report.createdAt ? new Date(report.createdAt).toLocaleDateString() : "N/A"}
+                        Generated by {report.generatedBy} on {report.createdAt ? formatDate(report.createdAt) : "N/A"}
                       </span>
                     </div>
                     <Button variant="outline" size="sm" data-testid={`button-export-report-${report.id}`}>
@@ -4382,7 +4490,7 @@ export default function Governance() {
                         <Clock className="w-3.5 h-3.5 text-muted-foreground" />
                         <span className="text-[11px] text-muted-foreground" data-testid={`text-expiry-${exception.id}`}>
                           {isExpired
-                            ? `Expired on ${new Date(exception.expiresAt).toLocaleDateString()}`
+                            ? `Expired on ${formatDate(exception.expiresAt)}`
                             : getTimeRemaining(exception.expiresAt)}
                         </span>
                       </div>
@@ -6035,7 +6143,7 @@ function PolicyDetailDialog({ policyId, open, onOpenChange, onDelete, onToggleSt
                         <StatusBadge status={tc.status} />
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground" data-testid={`text-test-lastrun-${tc.id}`}>
-                        {tc.lastRunAt ? new Date(tc.lastRunAt).toLocaleDateString() : "Never"}
+                        {tc.lastRunAt ? formatDate(tc.lastRunAt) : "Never"}
                       </TableCell>
                       <TableCell>
                         {result && (

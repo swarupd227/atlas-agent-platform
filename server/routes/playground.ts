@@ -3,6 +3,7 @@ import { storage } from "../storage";
 import { db } from "../db";
 import { eq, desc } from "drizzle-orm";
 import { getOrgId } from "../auth";
+import { getRequestRole } from "../permissions";
 import { conversations, messages as chatMessages } from "@shared/schema";
 import { buildAgentSystemPrompt } from "./helpers";
 import { executePromptWithMcp, type RuntimeProgressEvent } from "../agent-runtime";
@@ -135,6 +136,8 @@ const router = Router();
             systemPrompt,
             { conversational: true, ontologyLabels: playgroundOntologyTags.map(t => t.conceptLabel), maxToolIterations: agent.maxToolIterations ?? 5 },
             onProgress,
+            undefined,
+            getRequestRole(req),
           );
 
           if (!result.success && result.summary?.error) {

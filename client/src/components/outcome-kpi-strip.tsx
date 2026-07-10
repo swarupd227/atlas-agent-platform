@@ -35,33 +35,43 @@ export function OutcomeKpiStrip({ agentId, compact = false }: OutcomeKpiStripPro
   if (!relevantKpis.length) return null;
 
   const kpiStats = relevantKpis.map(k => {
-    const attainment = k.target > 0 ? ((k.currentValue || 0) / k.target) * 100 : 0;
+    // A KPI with no recorded measurements is "awaiting data", not "at risk"
+    // (UX audit F-1: never alarm on absence of data). currentValue of 0/null
+    // means no measurement has landed yet for attainment-style KPIs.
+    const measured = k.currentValue != null && k.currentValue !== 0;
+    const attainment = measured && k.target > 0 ? ((k.currentValue || 0) / k.target) * 100 : 0;
     return {
       name: k.name,
       current: k.currentValue || 0,
       target: k.target,
       attainment,
+      measured,
       trend: k.trend || "stable",
       unit: k.unit,
       outcomeName: outcomes?.find(o => o.id === k.outcomeId)?.name || "",
     };
   });
 
-  const overallAttainment = kpiStats.length > 0
-    ? kpiStats.reduce((sum, k) => sum + k.attainment, 0) / kpiStats.length
-    : 0;
+  const measuredStats = kpiStats.filter(k => k.measured);
+  const awaitingData = kpiStats.filter(k => !k.measured);
+  const overallAttainment = measuredStats.length > 0
+    ? measuredStats.reduce((sum, k) => sum + k.attainment, 0) / measuredStats.length
+    : null;
 
-  const atRisk = kpiStats.filter(k => k.attainment < 80);
-  const onTrack = kpiStats.filter(k => k.attainment >= 80 && k.attainment < 100);
-  const exceeded = kpiStats.filter(k => k.attainment >= 100);
+  const atRisk = measuredStats.filter(k => k.attainment < 80);
+  const onTrack = measuredStats.filter(k => k.attainment >= 80 && k.attainment < 100);
+  const exceeded = measuredStats.filter(k => k.attainment >= 100);
 
-  const statusColor = overallAttainment >= 100
+  const hasMeasurement = overallAttainment != null;
+  const statusColor = !hasMeasurement
+    ? "text-muted-foreground"
+    : overallAttainment >= 100
     ? "text-emerald-600 dark:text-emerald-400"
     : overallAttainment >= 80
     ? "text-blue-600 dark:text-blue-400"
     : "text-amber-600 dark:text-amber-400";
 
-  const StatusIcon = overallAttainment >= 100 ? CheckCircle : overallAttainment >= 80 ? TrendingUp : AlertTriangle;
+  const StatusIcon = !hasMeasurement ? Target : overallAttainment! >= 100 ? CheckCircle : overallAttainment! >= 80 ? TrendingUp : AlertTriangle;
 
   if (compact) {
     return (
@@ -72,11 +82,18 @@ export function OutcomeKpiStrip({ agentId, compact = false }: OutcomeKpiStripPro
         </div>
         <div className="flex items-center gap-1.5">
           <StatusIcon className={`w-3.5 h-3.5 ${statusColor}`} />
-          <span className={`text-xs font-semibold ${statusColor}`}>{overallAttainment.toFixed(0)}%</span>
+          <span className={`text-xs font-semibold ${statusColor}`}>
+            {hasMeasurement ? `${overallAttainment!.toFixed(0)}%` : "Awaiting data"}
+          </span>
         </div>
         {atRisk.length > 0 && (
           <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400" data-testid="badge-kpis-at-risk">
             {atRisk.length} at risk
+          </Badge>
+        )}
+        {awaitingData.length > 0 && (
+          <Badge variant="outline" className="text-[10px] text-muted-foreground" data-testid="badge-kpis-awaiting">
+            {awaitingData.length} awaiting data
           </Badge>
         )}
         {exceeded.length > 0 && (
@@ -97,11 +114,14 @@ export function OutcomeKpiStrip({ agentId, compact = false }: OutcomeKpiStripPro
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <StatusIcon className={`w-4 h-4 ${statusColor}`} />
-          <span className={`text-sm font-semibold ${statusColor}`}>{overallAttainment.toFixed(1)}% overall</span>
+          <span className={`text-sm font-semibold ${statusColor}`}>
+            {hasMeasurement ? `${overallAttainment!.toFixed(1)}% overall` : "Awaiting first measurements"}
+          </span>
           <div className="flex items-center gap-1.5 flex-wrap">
             {exceeded.length > 0 && <Badge variant="outline" className="text-[10px] text-emerald-600 dark:text-emerald-400" data-testid="badge-exceeded-count">{exceeded.length} exceeded</Badge>}
             {onTrack.length > 0 && <Badge variant="outline" className="text-[10px] text-blue-600 dark:text-blue-400" data-testid="badge-ontrack-count">{onTrack.length} on track</Badge>}
             {atRisk.length > 0 && <Badge variant="outline" className="text-[10px] text-amber-600 dark:text-amber-400" data-testid="badge-atrisk-count">{atRisk.length} at risk</Badge>}
+            {awaitingData.length > 0 && <Badge variant="outline" className="text-[10px] text-muted-foreground" data-testid="badge-awaiting-count">{awaitingData.length} awaiting data</Badge>}
           </div>
         </div>
       </div>

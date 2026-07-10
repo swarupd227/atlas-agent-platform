@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { formatDate } from "@/lib/format";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Badge } from "@/components/ui/badge";
@@ -440,7 +441,7 @@ function AlertDetailPanel({ alert, agentRows, onAck, onResolve }: { alert: EvalA
                     <div className="flex items-center gap-2 min-w-0">
                       <span className="text-[10px] text-muted-foreground w-4 shrink-0">#{i + 1}</span>
                       <span className="text-xs text-muted-foreground truncate">
-                        {trace.startedAt ? new Date(trace.startedAt).toLocaleDateString() : "—"}
+                        {trace.startedAt ? formatDate(trace.startedAt) : "—"}
                       </span>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">

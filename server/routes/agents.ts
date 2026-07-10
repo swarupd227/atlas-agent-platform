@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { storage } from "../storage";
 import { db } from "../db";
 import { ensureAarConfig } from "./aar";
@@ -7,6 +7,7 @@ import { traceSpans } from "@shared/schema";
 import { z, ZodError } from "zod";
 import {
   insertAgentSchema,
+  updateAgentSchema,
   insertRunTraceSchema,
   insertDeploymentSchema,
   insertEvalSuiteSchema,
@@ -76,6 +77,95 @@ const router = Router();
       const sourceTemplateId = req.body.sourceTemplateId || (agent.runtimeConfig as any)?.sourceTemplateId;
       if (sourceTemplateId) {
         await storage.incrementTemplateUsage(sourceTemplateId);
+      }
+
+      // Fix #1: Auto-create a blueprint record when blueprintJson provided but no blueprintId
+      // This ensures startAgentRuntime can resolve blueprint requirements via getBlueprintsByAgent
+      if (!data.blueprintId && agent.blueprintJson) {
+        try {
+          const bp = await storage.createBlueprint({
+            name: `${agent.name} Blueprint`,
+            agentId: agent.id,
+            status: "draft",
+            blueprintJson: agent.blueprintJson,
+          });
+          await storage.updateAgent(agent.id, { blueprintId: bp.id });
+        } catch (_) {}
+      }
+
+      // Fix #2: Auto-create MCP server link records from explicit IDs or server names
+      const mcpServerIds: string[] = Array.isArray(req.body.mcpServerIds) ? req.body.mcpServerIds : [];
+      const mcpServerNames: string[] = Array.isArray(req.body.mcpServerNames) ? req.body.mcpServerNames : [];
+      if (mcpServerIds.length > 0 || mcpServerNames.length > 0) {
+        try {
+          const allServers = mcpServerNames.length > 0 ? await storage.getMcpServers() : [];
+          for (const serverId of mcpServerIds) {
+            const existing = await storage.getAgentMcpServerByIds(agent.id, serverId);
+            if (!existing) await storage.createAgentMcpServer({ agentId: agent.id, serverId });
+          }
+          for (const name of mcpServerNames) {
+            const matched = allServers.find(s =>
+              s.name.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(s.name.toLowerCase())
+            );
+            if (matched) {
+              const existing = await storage.getAgentMcpServerByIds(agent.id, matched.id);
+              if (!existing) await storage.createAgentMcpServer({ agentId: agent.id, serverId: matched.id });
+            }
+          }
+        } catch (_) {}
+      }
+
+      // Fix #3: Auto-create KB link records from explicit IDs or KB names
+      const knowledgeBaseIds: string[] = Array.isArray(req.body.knowledgeBaseIds) ? req.body.knowledgeBaseIds : [];
+      const knowledgeBaseNames: string[] = Array.isArray(req.body.knowledgeBaseNames) ? req.body.knowledgeBaseNames : [];
+      if (knowledgeBaseIds.length > 0 || knowledgeBaseNames.length > 0) {
+        try {
+          const allKbs = knowledgeBaseNames.length > 0 ? await storage.getKnowledgeBases() : [];
+          for (const knowledgeBaseId of knowledgeBaseIds) {
+            await storage.createAgentKnowledgeBase({ agentId: agent.id, knowledgeBaseId });
+          }
+          for (const name of knowledgeBaseNames) {
+            const matched = allKbs.find(k =>
+              k.name?.toLowerCase().includes(name.toLowerCase()) || name.toLowerCase().includes(k.name?.toLowerCase() || "")
+            );
+            if (matched) await storage.createAgentKnowledgeBase({ agentId: agent.id, knowledgeBaseId: matched.id });
+          }
+        } catch (_) {}
+      }
+
+      // Fix #4: Auto-bind KPIs from linked outcome into runtimeConfig.kpiBindings
+      if (agent.outcomeId) {
+        try {
+          const kpis = await storage.getKpisByOutcome(agent.outcomeId);
+          if (kpis.length > 0) {
+            const existingRt = (agent.runtimeConfig as Record<string, any>) || {};
+            if (!Array.isArray(existingRt.kpiBindings) || existingRt.kpiBindings.length === 0) {
+              const kpiBindings = kpis.map(k => ({ kpiId: k.id, kpiName: k.name, target: (k as any).target || null }));
+              await storage.updateAgent(agent.id, { runtimeConfig: { ...existingRt, kpiBindings } });
+            }
+          }
+        } catch (_) {}
+      }
+
+      // Fix #5: Inherit outcome-scoped policies into policyBindings so bound governance applies at runtime
+      if (agent.outcomeId) {
+        try {
+          const outcomePolicies = await storage.getPoliciesByScope("outcome", agent.outcomeId);
+          if (outcomePolicies.length > 0) {
+            const existing = (agent.policyBindings as any) || {};
+            const existingNames: string[] = Array.isArray(existing.policies) ? existing.policies : [];
+            const newNames = outcomePolicies.map(p => p.name).filter(n => !existingNames.includes(n));
+            if (newNames.length > 0) {
+              await storage.updateAgent(agent.id, {
+                policyBindings: {
+                  ...existing,
+                  policies: [...existingNames, ...newNames],
+                  outcomeBindings: outcomePolicies.map(p => ({ policyId: p.id, policyName: p.name, domain: p.domain })),
+                },
+              });
+            }
+          }
+        } catch (_) {}
       }
 
       const hasMemGovRules = Array.isArray(req.body.memoryGovernanceRules) && req.body.memoryGovernanceRules.length > 0;
@@ -488,17 +578,18 @@ const router = Router();
     }
   });
 
-  router.patch("/api/agents/:id", async (req, res) => {
+  router.patch("/api/agents/:id", checkPermission("create_modify_blueprints"), async (req: Request<{ id: string }>, res: Response) => {
     try {
       const existing = await storage.getAgent(req.params.id, getOrgId(req));
       if (!existing) return res.status(404).json({ message: "Agent not found" });
 
-      const updated = await storage.updateAgent(req.params.id, req.body, getOrgId(req));
+      const patch = updateAgentSchema.parse(req.body);
+      const updated = await storage.updateAgent(req.params.id, patch, getOrgId(req));
       if (!updated) return res.status(404).json({ message: "Agent not found" });
 
-      const changedFields = Object.keys(req.body).filter(k => {
+      const changedFields = Object.keys(patch).filter(k => {
         const oldVal = JSON.stringify((existing as any)[k]);
-        const newVal = JSON.stringify((req.body as any)[k]);
+        const newVal = JSON.stringify((patch as any)[k]);
         return oldVal !== newVal;
       });
 
@@ -2879,6 +2970,30 @@ const router = Router();
         updateData.shadowEnabled = false;
         updateData.deployedAt = new Date();
       } else if (action === "canary_increase") {
+        // Health check before allowing canary to grow — auto-rollback if metrics fail
+        const canaryConfig = (deployment.canaryConfig as any) || {};
+        const maxErrorRate: number = canaryConfig.maxErrorRate ?? 0.05;
+        const minSuccessRate: number = canaryConfig.minSuccessRate ?? 0.90;
+        const recentTraces = await storage.getTracesByAgent(deployment.agentId, getOrgId(req));
+        const sample = recentTraces.slice(0, 20);
+        if (sample.length >= 5) {
+          const successCount = sample.filter(t => t.status === "completed").length;
+          const errorRate = 1 - successCount / sample.length;
+          if (errorRate > maxErrorRate || successCount / sample.length < minSuccessRate) {
+            // Auto-rollback: canary health below thresholds
+            const rolled = await storage.updateDeployment(deployment.id, { status: "rolled_back", completedAt: new Date() }, getOrgId(req));
+            try { await stopAgentRuntime(deployment.id); } catch (_) {}
+            await storage.createAuditEvent({
+              actorType: "system",
+              actorId: "canary-monitor",
+              action: "canary_auto_rollback",
+              objectType: "deployment",
+              objectId: deployment.id,
+              details: JSON.stringify({ errorRate: (errorRate * 100).toFixed(1) + "%", successRate: ((successCount / sample.length) * 100).toFixed(1) + "%", maxErrorRate, minSuccessRate, sampleSize: sample.length }),
+            });
+            return res.status(409).json({ message: `Canary auto-rolled back: error rate ${(errorRate * 100).toFixed(1)}% exceeds threshold ${(maxErrorRate * 100).toFixed(1)}%`, autoRollback: true, deployment: rolled });
+          }
+        }
         const newPercent = Math.min(canaryPercent || (deployment.canaryPercent || 0) + 10, 100);
         updateData.canaryPercent = newPercent;
         if (newPercent >= 100) {
@@ -3201,6 +3316,9 @@ const router = Router();
         completedAt: new Date(),
       }, getOrgId(req));
 
+      // Kill any in-flight execution cycles so rolled-back agents don't keep running
+      try { await stopAgentRuntime(deployment.id); } catch (_) {}
+
       const reason = req.body?.reason || "Manual rollback triggered";
       const auditEvents = await storage.getAuditEvents(getOrgId(req));
       const maxSeq = auditEvents.reduce((max, e) => Math.max(max, e.sequenceNum || 0), 0);
@@ -3233,6 +3351,22 @@ const router = Router();
       });
 
       res.json(updated);
+    } catch (e) {
+      handleZodError(res, e);
+    }
+  });
+
+  // Fix #4: External / webhook trigger — any authenticated caller can fire a deployed agent on-demand
+  router.post("/api/deployments/:id/trigger", async (req, res) => {
+    try {
+      const deployment = await storage.getDeployment(req.params.id, getOrgId(req));
+      if (!deployment) return res.status(404).json({ message: "Deployment not found" });
+      if (!["active", "deployed", "canary"].includes(deployment.status || "")) {
+        return res.status(400).json({ message: `Deployment is not active (status: ${deployment.status})` });
+      }
+      const { prompt, triggeredBy = "webhook" } = (req.body as { prompt?: string; triggeredBy?: string }) || {};
+      const result = await runAgentOnce(deployment.id, prompt || undefined, undefined, undefined, triggeredBy);
+      res.json({ triggered: true, deploymentId: deployment.id, ...result });
     } catch (e) {
       handleZodError(res, e);
     }
@@ -3514,6 +3648,9 @@ Respond in JSON format:
       await storage.updateSkill(skillId, {
         lastEvalPassRate: passRate,
         lastEvalAt: new Date(),
+        // Keep the catalog's "performance" sort/telemetry in sync with the
+        // latest measured eval outcome instead of leaving it perpetually 0.
+        performanceScore: passRate,
       });
 
       const caseResults = await storage.getEvalCaseResults(run.id);

@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { QueryBoundary } from "@/components/ui-vocab";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import type { Agent, Blueprint } from "@shared/schema";
@@ -143,7 +144,7 @@ export default function Blueprints() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
-  const { data: blueprints, isLoading: blueprintsLoading } = useQuery<BlueprintWithCount[]>({ queryKey: ["/api/blueprints"] });
+  const { data: blueprints, isLoading: blueprintsLoading, isError, error, refetch } = useQuery<BlueprintWithCount[]>({ queryKey: ["/api/blueprints"] });
   const { data: agents, isLoading: agentsLoading } = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
   const isLoading = blueprintsLoading || agentsLoading;
 
@@ -234,6 +235,14 @@ export default function Blueprints() {
   }
 
   const selectedAgent = newAgentId ? agentMap.get(newAgentId) : null;
+
+  if (isError) {
+    return (
+      <div className="p-6">
+        <QueryBoundary isLoading={false} isError error={error} onRetry={() => refetch()}>{null}</QueryBoundary>
+      </div>
+    );
+  }
 
   if (isLoading) return (
     <div className="flex flex-col gap-6 p-6 w-full" data-testid="page-blueprints-loading">

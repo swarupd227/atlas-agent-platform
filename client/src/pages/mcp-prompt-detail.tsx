@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useRoute, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,8 +9,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import {
   ArrowLeft, Shield, FileText, AlertCircle, RefreshCw,
-  Clock, CheckCircle2, XCircle, MessageSquare, List, User, Bot, Monitor,
+  Clock, CheckCircle2, XCircle, MessageSquare, List, User, Bot, Monitor, Pencil,
 } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useRole } from "@/components/role-provider";
@@ -46,7 +51,7 @@ const APPROVAL_VARIANT: Record<string, "default" | "secondary" | "destructive" |
 };
 
 function renderContentWithVariables(content: string) {
-  const parts = content.split(/(\{\{[^}]+\}\})/g);
+  const parts = content.split(/(\{\{[^{}]+\}\})/g);
   return parts.map((part, i) => {
     if (/^\{\{[^}]+\}\}$/.test(part)) {
       return (
@@ -90,10 +95,32 @@ export default function McpPromptDetailPage() {
   const { role } = useRole();
   const [, params] = useRoute("/integrations/mcp-prompts/:id");
   const id = params?.id || "";
+  const [editOpen, setEditOpen] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
 
   const { data: prompt, isLoading } = useQuery<McpPromptDetail>({
     queryKey: ["/api/mcp-prompts", id],
     enabled: !!id,
+  });
+
+  const editMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("PATCH", `/api/mcp-prompts/${id}`, {
+        name: editName,
+        description: editDescription || null,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/mcp-prompts", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/mcp-prompts"] });
+      toast({ title: "Prompt updated" });
+      setEditOpen(false);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to update prompt", description: err.message, variant: "destructive" });
+    },
   });
 
   const publishMutation = useMutation({
@@ -192,9 +219,21 @@ export default function McpPromptDetailPage() {
 
         <div className="flex items-start justify-between gap-4 flex-wrap">
           <div className="flex flex-col gap-2">
-            <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-prompt-name">
-              {prompt.name}
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-semibold tracking-tight" data-testid="text-prompt-name">
+                {prompt.name}
+              </h1>
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label={`Edit prompt ${prompt.name}`}
+                className="h-7 w-7"
+                onClick={() => { setEditName(prompt.name); setEditDescription(prompt.description || ""); setEditOpen(true); }}
+                data-testid="button-edit-prompt"
+              >
+                <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
+              </Button>
+            </div>
             {prompt.description && (
               <p className="text-sm text-muted-foreground" data-testid="text-prompt-description">
                 {prompt.description}
@@ -480,7 +519,7 @@ export default function McpPromptDetailPage() {
                 </Button>
               )}
 
-              {prompt.approvalStatus === "pending_approval" && (
+              {prompt.approvalStatus === "pending_approval" && (role.id === "admin" || role.id === "compliance_security") && (
                 <div className="flex flex-col gap-2 mt-2 border-t pt-3">
                   <span className="text-xs text-muted-foreground">Admin Actions</span>
                   <div className="flex items-center gap-2 flex-wrap">
@@ -517,6 +556,48 @@ export default function McpPromptDetailPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent data-testid="dialog-edit-prompt">
+          <DialogHeader>
+            <DialogTitle>Edit Prompt</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="edit-prompt-name">Name</Label>
+              <Input
+                id="edit-prompt-name"
+                value={editName}
+                onChange={(e) => setEditName(e.target.value)}
+                data-testid="input-edit-prompt-name"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="edit-prompt-description">Description</Label>
+              <Textarea
+                id="edit-prompt-description"
+                value={editDescription}
+                onChange={(e) => setEditDescription(e.target.value)}
+                rows={3}
+                data-testid="input-edit-prompt-description"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => editMutation.mutate()}
+              disabled={!editName || editMutation.isPending}
+              data-testid="button-save-edit-prompt"
+            >
+              {editMutation.isPending ? (
+                <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
+              ) : null}
+              {editMutation.isPending ? "Saving..." : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

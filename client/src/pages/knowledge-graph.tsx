@@ -942,8 +942,8 @@ export default function KnowledgeGraphIngestion() {
                             {ext.validFrom && (
                               <span className="flex items-center gap-1">
                                 <Calendar className="w-3 h-3" />
-                                {new Date(ext.validFrom).toLocaleDateString()}
-                                {ext.validTo ? ` - ${new Date(ext.validTo).toLocaleDateString()}` : " - Present"}
+                                {formatDate(ext.validFrom)}
+                                {ext.validTo ? ` - ${formatDate(ext.validTo)}` : " - Present"}
                               </span>
                             )}
                           </div>
@@ -999,8 +999,8 @@ export default function KnowledgeGraphIngestion() {
                             <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground flex-wrap">
                               <span className="flex items-center gap-1">
                                 <Calendar className="w-3 h-3" />
-                                Valid: {new Date(entry.validFrom).toLocaleDateString()}
-                                {entry.validTo ? ` - ${new Date(entry.validTo).toLocaleDateString()}` : " - Present"}
+                                Valid: {formatDate(entry.validFrom)}
+                                {entry.validTo ? ` - ${formatDate(entry.validTo)}` : " - Present"}
                               </span>
                               {entry.source && (
                                 <span className="flex items-center gap-1">

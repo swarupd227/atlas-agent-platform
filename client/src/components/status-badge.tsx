@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { humanizeEnum } from "@/lib/format";
 
 interface StatusBadgeProps {
   status: string;
@@ -29,9 +30,10 @@ const statusConfig: Record<string, { label: string; className: string }> = {
   rolled_back: { label: "Rolled Back", className: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" },
   deprecated: { label: "Deprecated", className: "bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20" },
   overdue: { label: "Overdue", className: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" },
-  HIGH: { label: "High Risk", className: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" },
+  HIGH: { label: "High Risk", className: "bg-orange-500/15 text-orange-600 dark:text-orange-400 border-orange-500/20" },
   MEDIUM: { label: "Medium Risk", className: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/20" },
   LOW: { label: "Low Risk", className: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
+  CRITICAL: { label: "Critical Risk", className: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/20" },
   autonomous: { label: "Autonomous", className: "bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/20" },
   assisted: { label: "Assisted", className: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/20" },
   manual: { label: "Manual", className: "bg-slate-500/15 text-slate-600 dark:text-slate-400 border-slate-500/20" },
@@ -41,7 +43,9 @@ const statusConfig: Record<string, { label: string; className: string }> = {
 };
 
 export function StatusBadge({ status, className }: StatusBadgeProps) {
-  const config = statusConfig[status] || { label: status, className: "bg-muted text-muted-foreground" };
+  // Unknown statuses are humanized ("pending_review" → "Pending Review") —
+  // raw enums must never reach the user (UX audit F-3).
+  const config = statusConfig[status] || { label: humanizeEnum(status), className: "bg-muted text-muted-foreground" };
 
   return (
     <Badge

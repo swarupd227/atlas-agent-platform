@@ -1,4 +1,5 @@
-import { QueryClient, QueryFunction } from "@tanstack/react-query";
+import { QueryClient, QueryFunction, QueryCache, MutationCache } from "@tanstack/react-query";
+import { toast } from "@/hooks/use-toast";
 
 let cachedSecurityMode: "demo" | "production" | null = null;
 
@@ -69,7 +70,45 @@ export const getQueryFn: <T>(options: {
     return await res.json();
   };
 
+// ── Global error feedback (UX-audit F-2) ─────────────────────────────────────
+// 95% of pages never surfaced query/mutation failures; users saw silent empty
+// UI. These cache-level handlers make "nothing fails silently" the default.
+
+// Throttle query-failure toasts: during an outage dozens of queries fail at
+// once — one message per window is signal, thirty are noise.
+let lastQueryErrorToastAt = 0;
+const QUERY_ERROR_TOAST_WINDOW_MS = 10_000;
+
+function isAbort(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
 export const queryClient = new QueryClient({
+  queryCache: new QueryCache({
+    onError: (error) => {
+      if (isAbort(error)) return;
+      const now = Date.now();
+      if (now - lastQueryErrorToastAt < QUERY_ERROR_TOAST_WINDOW_MS) return;
+      lastQueryErrorToastAt = now;
+      toast({
+        title: "Some data failed to load",
+        description: error instanceof Error ? error.message.slice(0, 140) : "Check your connection and retry.",
+        variant: "destructive",
+      });
+    },
+  }),
+  mutationCache: new MutationCache({
+    onError: (error, _variables, _context, mutation) => {
+      if (isAbort(error)) return;
+      // Pages with their own onError already give tailored feedback — don't double-toast.
+      if (mutation.options.onError) return;
+      toast({
+        title: "Action failed",
+        description: error instanceof Error ? error.message.slice(0, 140) : "The request could not be completed.",
+        variant: "destructive",
+      });
+    },
+  }),
   defaultOptions: {
     queries: {
       queryFn: getQueryFn({ on401: "throw" }),

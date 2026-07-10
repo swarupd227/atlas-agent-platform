@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { formatDate } from "@/lib/format";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { Badge } from "@/components/ui/badge";
@@ -750,7 +751,7 @@ export default function EvalAnnotate() {
                           </div>
                           <div className="flex items-center gap-1 text-muted-foreground">
                             <Clock className="h-3 w-3" />
-                            {new Date(ann.createdAt).toLocaleDateString()}
+                            {formatDate(ann.createdAt)}
                           </div>
                         </div>
                       ))}

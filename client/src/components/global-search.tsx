@@ -171,7 +171,7 @@ export function GlobalSearch() {
                         {a.owner && <span className="text-[10px] text-muted-foreground">{a.owner}</span>}
                       </div>
                       <Badge variant={statusColor(a.status)} className="text-[10px] shrink-0">{a.status}</Badge>
-                      <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0 opacity-0 group-data-[selected=true]:opacity-100" onClick={(e) => { e.stopPropagation(); go(`/agents/${a.id}`); }} data-testid={`action-view-agent-${a.id}`}>
+                      <Button variant="ghost" size="icon" aria-label={`View agent ${a.name}`} className="h-6 w-6 shrink-0 opacity-0 group-data-[selected=true]:opacity-100" onClick={(e) => { e.stopPropagation(); go(`/agents/${a.id}`); }} data-testid={`action-view-agent-${a.id}`}>
                         <Eye className="w-3 h-3" />
                       </Button>
                     </CommandItem>

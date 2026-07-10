@@ -43,6 +43,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { StatusBadge } from "@/components/status-badge";
+import { QueryBoundary } from "@/components/ui-vocab";
 import {
   ProgressRing,
   WaterfallChart,
@@ -201,7 +202,7 @@ export default function Outcomes() {
   const [showFilters, setShowFilters] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
 
-  const { data: outcomes, isLoading } = useQuery<OutcomeContract[]>({
+  const { data: outcomes, isLoading, isError, error, refetch } = useQuery<OutcomeContract[]>({
     queryKey: ["/api/outcomes"],
   });
   const { data: kpis } = useQuery<KpiDefinition[]>({
@@ -333,15 +334,20 @@ export default function Outcomes() {
   const awaitingPlanCount = outcomes?.filter((o) => o.status === "awaiting_agent_plan")?.length || 0;
 
   const allKpiStats = (kpis || []).map((k) => {
-    const attainment = k.target > 0 ? ((k.currentValue || 0) / k.target) * 100 : 0;
-    return { ...k, attainment };
+    // Unmeasured KPIs (no recorded value yet) are "awaiting data", not 0%
+    // attainment — never alarm on absence of data (UX audit F-1).
+    const measured = k.currentValue != null && k.currentValue !== 0;
+    const attainment = measured && k.target > 0 ? ((k.currentValue || 0) / k.target) * 100 : 0;
+    return { ...k, attainment, measured };
   });
-  const overallAttainment = allKpiStats.length > 0
-    ? allKpiStats.reduce((s, k) => s + k.attainment, 0) / allKpiStats.length
-    : 0;
-  const atRiskKpis = allKpiStats.filter((k) => k.attainment < 80);
-  const onTrackKpis = allKpiStats.filter((k) => k.attainment >= 80 && k.attainment < 100);
-  const exceededKpis = allKpiStats.filter((k) => k.attainment >= 100);
+  const measuredKpiStats = allKpiStats.filter((k) => k.measured);
+  const awaitingDataKpis = allKpiStats.filter((k) => !k.measured);
+  const overallAttainment = measuredKpiStats.length > 0
+    ? measuredKpiStats.reduce((s, k) => s + k.attainment, 0) / measuredKpiStats.length
+    : null;
+  const atRiskKpis = measuredKpiStats.filter((k) => k.attainment < 80);
+  const onTrackKpis = measuredKpiStats.filter((k) => k.attainment >= 80 && k.attainment < 100);
+  const exceededKpis = measuredKpiStats.filter((k) => k.attainment >= 100);
 
 
   const getAgentsForOutcome = (outcomeId: string) => {
@@ -372,6 +378,14 @@ export default function Outcomes() {
             <Card key={i}><CardContent className="p-4"><Skeleton className="h-20 w-full" /></CardContent></Card>
           ))}
         </div>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="p-6">
+        <QueryBoundary isLoading={false} isError error={error} onRetry={() => refetch()}>{null}</QueryBoundary>
       </div>
     );
   }
@@ -446,7 +460,12 @@ export default function Outcomes() {
             </div>
             <div className="flex flex-col min-w-0">
               <span className="text-xs text-muted-foreground">Overall goal attainment</span>
-              <span className="text-xl font-semibold">{overallAttainment.toFixed(0)}%</span>
+              <span className="text-xl font-semibold">
+                {overallAttainment != null ? `${overallAttainment.toFixed(0)}%` : "—"}
+              </span>
+              {overallAttainment == null && (
+                <span className="text-[10px] text-muted-foreground">Awaiting first measurements</span>
+              )}
             </div>
           </div>
         </div>
@@ -594,11 +613,11 @@ export default function Outcomes() {
         <div className="flex items-center gap-2 flex-wrap">
           {!outcomesPerm.allowed ? (
             <Button disabled title="You do not have permission to create plans" data-testid="button-create-outcome">
-              <Plus className="w-4 h-4 mr-1.5" /> New Intent
+              <Plus className="w-4 h-4 mr-1.5" /> New Outcome
             </Button>
           ) : (
             <Button onClick={() => navigate("/outcomes/discover")} data-testid="button-create-outcome">
-              <Plus className="w-4 h-4 mr-1.5" /> New Intent
+              <Plus className="w-4 h-4 mr-1.5" /> New Outcome
             </Button>
           )}
         </div>
@@ -620,12 +639,20 @@ export default function Outcomes() {
             <div className="flex items-start justify-between gap-2">
               <div className="flex flex-col gap-1">
                 <span className="text-xs text-muted-foreground">Overall KPI Attainment</span>
-                <span className="text-2xl font-semibold tracking-tight">{overallAttainment.toFixed(1)}%</span>
+                <span className="text-2xl font-semibold tracking-tight">
+                  {overallAttainment != null ? `${overallAttainment.toFixed(1)}%` : "—"}
+                </span>
                 <div className="flex items-center gap-2 flex-wrap">
-                  <Badge variant="outline" className="text-xs" data-testid="badge-exceeded">{exceededKpis.length} exceeded</Badge>
-                  <Badge variant="outline" className="text-xs" data-testid="badge-on-track">{onTrackKpis.length} on track</Badge>
+                  {overallAttainment == null && (
+                    <span className="text-[11px] text-muted-foreground">Awaiting first measurements</span>
+                  )}
+                  {exceededKpis.length > 0 && <Badge variant="outline" className="text-xs" data-testid="badge-exceeded">{exceededKpis.length} exceeded</Badge>}
+                  {onTrackKpis.length > 0 && <Badge variant="outline" className="text-xs" data-testid="badge-on-track">{onTrackKpis.length} on track</Badge>}
                   {atRiskKpis.length > 0 && (
                     <Badge variant="destructive" className="text-xs" data-testid="badge-at-risk">{atRiskKpis.length} at risk</Badge>
+                  )}
+                  {awaitingDataKpis.length > 0 && (
+                    <Badge variant="outline" className="text-xs text-muted-foreground" data-testid="badge-awaiting-data">{awaitingDataKpis.length} awaiting data</Badge>
                   )}
                 </div>
               </div>
@@ -756,7 +783,7 @@ export default function Outcomes() {
           <div className="relative flex-1 min-w-[200px] max-w-sm">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input
-              placeholder="Search contracts..."
+              placeholder="Search outcomes..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-9"
@@ -994,6 +1021,7 @@ export default function Outcomes() {
                       <Button
                         variant="ghost"
                         size="icon"
+                        aria-label={`Toggle revenue breakdown for ${outcome.name}`}
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
@@ -1001,12 +1029,13 @@ export default function Outcomes() {
                         }}
                         data-testid={`button-waterfall-toggle-${outcome.id}`}
                       >
-                        <BarChart3 className="w-3 h-3" />
+                        <BarChart3 className="w-3 h-3" aria-hidden="true" />
                       </Button>
                       {outcomesPerm.permission.access !== "denied" && (
                         <Button
                           variant="ghost"
                           size="icon"
+                          aria-label={`Delete outcome ${outcome.name}`}
                           className="text-muted-foreground hover:text-red-500"
                           onClick={(e) => {
                             e.preventDefault();
@@ -1015,7 +1044,7 @@ export default function Outcomes() {
                           }}
                           data-testid={`button-delete-outcome-${outcome.id}`}
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Trash2 className="w-3 h-3" aria-hidden="true" />
                         </Button>
                       )}
                       <ArrowRight className="w-3.5 h-3.5 text-muted-foreground" />

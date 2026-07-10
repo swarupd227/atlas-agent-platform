@@ -1,13 +1,16 @@
 import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { FileText, ShieldAlert, CheckCircle2, XCircle, Clock, Search, Server } from "lucide-react";
+import { FileText, ShieldAlert, CheckCircle2, XCircle, Clock, Search, Server, Eye, EyeOff } from "lucide-react";
 import { Link } from "wouter";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 
 interface McpResourceItem {
   id: string;
@@ -61,6 +64,7 @@ function formatSize(bytes: number | null): string {
 }
 
 export default function McpResourcesPage() {
+  const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
   const [serverFilter, setServerFilter] = useState("all");
   const [sensitivityFilter, setSensitivityFilter] = useState("all");
@@ -68,6 +72,20 @@ export default function McpResourcesPage() {
 
   const { data: resources, isLoading } = useQuery<McpResourceItem[]>({
     queryKey: ["/api/mcp-resources"],
+  });
+
+  const subscriptionMutation = useMutation({
+    mutationFn: async ({ id, subscribed }: { id: string; subscribed: boolean }) => {
+      const res = await apiRequest("PATCH", `/api/mcp-resources/${id}`, { subscribed });
+      return res.json();
+    },
+    onSuccess: (_data, { subscribed }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/mcp-resources"] });
+      toast({ title: subscribed ? "Subscribed to resource" : "Unsubscribed from resource" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to update subscription", description: err.message, variant: "destructive" });
+    },
   });
 
   const serverNames = useMemo(() => {
@@ -305,13 +323,23 @@ export default function McpResourcesPage() {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <div className="flex items-center" data-testid={`div-subscribed-${resource.id}`}>
+                      <Button
+                        size="sm"
+                        variant={resource.subscribed ? "default" : "outline"}
+                        className="h-7 text-[11px]"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          subscriptionMutation.mutate({ id: resource.id, subscribed: !resource.subscribed });
+                        }}
+                        disabled={subscriptionMutation.isPending}
+                        data-testid={`button-subscribe-${resource.id}`}
+                      >
                         {resource.subscribed ? (
-                          <CheckCircle2 className="w-4 h-4 text-green-500" data-testid={`icon-subscribed-${resource.id}`} />
+                          <><Eye className="w-3 h-3 mr-1" />On</>
                         ) : (
-                          <XCircle className="w-4 h-4 text-muted-foreground" data-testid={`icon-not-subscribed-${resource.id}`} />
+                          <><EyeOff className="w-3 h-3 mr-1" />Off</>
                         )}
-                      </div>
+                      </Button>
                     </TableCell>
                   </TableRow>
                 ))}

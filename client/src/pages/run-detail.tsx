@@ -67,6 +67,21 @@ const stepTypeConfig: Record<string, { icon: typeof Shield; label: string; color
   gateway_invoke: { icon: Globe, label: "Gateway Invoke", color: "text-cyan-600" },
 };
 
+// Dispatch error taxonomy → badge label + tone. Lets an auditor tell a gate
+// refusal from a tool crash from a dedup at a glance, instead of a generic "failed".
+const outcomeConfig: Record<string, { label: string; className: string }> = {
+  success:                { label: "Executed",        className: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20" },
+  deduplicated:           { label: "Deduplicated",    className: "bg-sky-500/10 text-sky-600 dark:text-sky-400 border-sky-500/20" },
+  gate_blocked_policy:    { label: "Blocked · Policy", className: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20" },
+  gate_blocked_skill:     { label: "Blocked · Skill",  className: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20" },
+  gate_blocked_aar:       { label: "Blocked · AAR",    className: "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20" },
+  gate_requires_approval: { label: "Needs Approval",   className: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" },
+  rate_limited:           { label: "Rate Limited",     className: "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" },
+  shadow_skipped:         { label: "Shadow · Skipped", className: "bg-violet-500/10 text-violet-600 dark:text-violet-400 border-violet-500/20" },
+  tool_error:             { label: "Tool Error",       className: "bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/20" },
+  tool_unresolved:        { label: "Unresolved",       className: "bg-muted text-muted-foreground border-border" },
+};
+
 const mcpMethodConfig: Record<string, { icon: typeof Server; label: string; color: string }> = {
   "initialize": { icon: Plug, label: "Initialize", color: "text-blue-500" },
   "tools/list": { icon: Wrench, label: "Tools List", color: "text-amber-500" },
@@ -114,8 +129,13 @@ function StepCard({ step, isLast }: { step: RunStep; isLast: boolean }) {
             {step.toolName && (
               <Badge variant="outline" className="text-[10px] font-mono">{step.toolName}</Badge>
             )}
-            {step.status === "blocked" && (
+            {step.status === "blocked" && !(step as any).outcome && (
               <Badge variant="destructive" className="text-[10px]">Blocked</Badge>
+            )}
+            {(step as any).outcome && outcomeConfig[(step as any).outcome] && (
+              <Badge variant="outline" className={`text-[10px] ${outcomeConfig[(step as any).outcome].className}`} data-testid={`step-outcome-${step.stepIndex}`}>
+                {outcomeConfig[(step as any).outcome].label}
+              </Badge>
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0">

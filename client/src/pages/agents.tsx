@@ -82,7 +82,8 @@ import { StatusBadge } from "@/components/status-badge";
 import { ErrorState } from "@/components/error-state";
 import { usePermission, PermissionGate, useRole } from "@/components/role-provider";
 import { useIndustry } from "@/components/industry-provider";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
+import { EmptyState } from "@/components/ui-vocab";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Agent, OutcomeContract, Approval } from "@shared/schema";
@@ -181,6 +182,7 @@ export default function Agents() {
   const [filterProvider, setFilterProvider] = useState<string>("all");
 
   const { toast } = useToast();
+  const [, navigate] = useLocation();
   const { role } = useRole();
   const { industry } = useIndustry();
   const blueprintPerm = usePermission("create_modify_blueprints");
@@ -333,9 +335,12 @@ export default function Agents() {
 
   const totalCost = agents?.reduce((sum, a) => sum + (a.monthlyCost || 0), 0) || 0;
   const totalRevenue = agents?.reduce((sum, a) => sum + (a.monthlyRevenue || 0), 0) || 0;
-  const avgSuccess = agents?.length
-    ? (agents.reduce((sum, a) => sum + (a.successRate || 0), 0) / agents.length * 100).toFixed(1)
-    : "0";
+  // Average only over agents that have actually run (UX audit F-1): averaging
+  // null-as-zero across never-run agents produced a misleading fleet number.
+  const agentsWithRuns = agents?.filter(a => a.successRate != null && (a.totalRuns ?? 0) > 0) ?? [];
+  const avgSuccess = agentsWithRuns.length
+    ? (agentsWithRuns.reduce((sum, a) => sum + (a.successRate || 0), 0) / agentsWithRuns.length * 100).toFixed(1)
+    : null;
 
   if (isLoading) {
     return (
@@ -381,7 +386,15 @@ export default function Agents() {
         <StatCard title="Total Agents" value={agents?.length || 0} icon={Bot} variant="default" testId="stat-total-agents" />
         <StatCard title="Teams" value={agents?.filter(a => a.agentType === "team")?.length || 0} icon={Users} variant="default" testId="stat-teams" />
         <StatCard title="Remote (A2A)" value={agents?.filter(a => a.agentType === "remote")?.length || 0} icon={Globe} variant="default" testId="stat-remote" />
-        <StatCard title="Avg Success Rate" value={`${avgSuccess}%`} icon={Activity} trend="up" trendValue="1.2%" variant="success" testId="stat-avg-success" />
+        {/* No fabricated trends (UX audit F-1): the previous "+1.2%" was hardcoded. */}
+        <StatCard
+          title="Avg Success Rate"
+          value={avgSuccess != null ? `${avgSuccess}%` : "—"}
+          icon={Activity}
+          variant={avgSuccess != null ? "success" : "default"}
+          subtitle={avgSuccess != null ? `across ${agentsWithRuns.length} agents with runs` : "No runs yet"}
+          testId="stat-avg-success"
+        />
         <StatCard title="Monthly Cost" value={`$${totalCost.toLocaleString()}`} icon={DollarSign} variant="default" subtitle={`Revenue: $${totalRevenue.toLocaleString()}`} testId="stat-monthly-cost" />
       </div>
 
@@ -418,7 +431,7 @@ export default function Agents() {
         </div>
 
         <Select value={sortBy} onValueChange={(v) => setSortBy(v as SortBy)}>
-          <SelectTrigger className="w-[150px]" data-testid="sort-by">
+          <SelectTrigger className="w-[150px]" aria-label="Sort agents" data-testid="sort-by">
             <ArrowUpDown className="w-3.5 h-3.5 mr-1.5 shrink-0" />
             <SelectValue placeholder="Sort by" />
           </SelectTrigger>
@@ -434,7 +447,7 @@ export default function Agents() {
         </Select>
 
         <Select value={filterOutcome} onValueChange={setFilterOutcome}>
-          <SelectTrigger className="w-[160px]" data-testid="filter-outcome">
+          <SelectTrigger className="w-[160px]" aria-label="Filter by outcome" data-testid="filter-outcome">
             <SelectValue placeholder="Outcome" />
           </SelectTrigger>
           <SelectContent>
@@ -446,7 +459,7 @@ export default function Agents() {
         </Select>
 
         <Select value={filterEnv} onValueChange={setFilterEnv}>
-          <SelectTrigger className="w-[140px]" data-testid="filter-environment">
+          <SelectTrigger className="w-[140px]" aria-label="Filter by environment" data-testid="filter-environment">
             <SelectValue placeholder="Environment" />
           </SelectTrigger>
           <SelectContent>
@@ -458,7 +471,7 @@ export default function Agents() {
         </Select>
 
         <Select value={filterRisk} onValueChange={setFilterRisk}>
-          <SelectTrigger className="w-[130px]" data-testid="filter-risk">
+          <SelectTrigger className="w-[130px]" aria-label="Filter by risk tier" data-testid="filter-risk">
             <SelectValue placeholder="Risk Tier" />
           </SelectTrigger>
           <SelectContent>
@@ -471,7 +484,7 @@ export default function Agents() {
         </Select>
 
         <Select value={filterAutonomy} onValueChange={setFilterAutonomy}>
-          <SelectTrigger className="w-[150px]" data-testid="filter-autonomy">
+          <SelectTrigger className="w-[150px]" aria-label="Filter by autonomy mode" data-testid="filter-autonomy">
             <SelectValue placeholder="Autonomy" />
           </SelectTrigger>
           <SelectContent>
@@ -484,7 +497,7 @@ export default function Agents() {
         </Select>
 
         <Select value={filterToolAccess} onValueChange={setFilterToolAccess}>
-          <SelectTrigger className="w-[150px]" data-testid="filter-tool-access">
+          <SelectTrigger className="w-[150px]" aria-label="Filter by tool access" data-testid="filter-tool-access">
             <SelectValue placeholder="Tool Access" />
           </SelectTrigger>
           <SelectContent>
@@ -496,7 +509,7 @@ export default function Agents() {
         </Select>
 
         <Select value={filterCompliance} onValueChange={setFilterCompliance}>
-          <SelectTrigger className="w-[160px]" data-testid="filter-compliance">
+          <SelectTrigger className="w-[160px]" aria-label="Filter by compliance tag" data-testid="filter-compliance">
             <SelectValue placeholder="Compliance" />
           </SelectTrigger>
           <SelectContent>
@@ -508,7 +521,7 @@ export default function Agents() {
         </Select>
 
         <Select value={filterProvider} onValueChange={setFilterProvider}>
-          <SelectTrigger className="w-[140px]" data-testid="filter-provider">
+          <SelectTrigger className="w-[140px]" aria-label="Filter by model provider" data-testid="filter-provider">
             <SelectValue placeholder="Provider" />
           </SelectTrigger>
           <SelectContent>
@@ -565,24 +578,28 @@ export default function Agents() {
 
       <Card>
         <CardContent className="p-0 overflow-x-auto">
-          <Table>
+          {/* Compact registry (UX audit F-11): tight cell padding, nowrap
+              headers, truncated names — a registry's job is scanning many
+              agents, not reading three-line cells. */}
+          <Table className="[&_td]:py-2 [&_th]:whitespace-nowrap">
             <TableHeader>
               <TableRow>
                 <TableHead className="w-10">
                   <Checkbox
                     checked={filtered && filtered.length > 0 && selectedIds.size === filtered.length}
                     onCheckedChange={toggleSelectAll}
+                    aria-label="Select all agents"
                     data-testid="checkbox-select-all"
                   />
                 </TableHead>
-                <TableHead>Agent</TableHead>
+                <TableHead className="min-w-[220px]">Agent</TableHead>
                 <TableHead>Industry Profile</TableHead>
                 <TableHead>Outcome</TableHead>
                 <TableHead>Version</TableHead>
                 {canSeeHealth && <TableHead>Health</TableHead>}
-                {canSeeHealth && <TableHead>Safety Score</TableHead>}
+                {canSeeHealth && <TableHead>Safety</TableHead>}
                 <TableHead>Mode</TableHead>
-                {canSeeIncidents && <TableHead>Last Incident / Approval</TableHead>}
+                {canSeeIncidents && <TableHead>Incidents</TableHead>}
                 {canSeeCostRevenue && <TableHead className="text-right">P&L</TableHead>}
                 <TableHead></TableHead>
               </TableRow>
@@ -595,8 +612,6 @@ export default function Agents() {
                 const domain = getIndustryDomain(agent);
                 const euRisk = EU_AI_ACT_MAP[agent.riskTier] || EU_AI_ACT_MAP["MEDIUM"];
                 const compTags = (agent.complianceTags as string[]) || [];
-                const shownTags = compTags.slice(0, 3);
-                const extraTags = compTags.length - 3;
                 const ontologyCount = getOntologyCount(agent);
                 const revenue = agent.monthlyRevenue || 0;
                 const cost = agent.monthlyCost || 0;
@@ -615,6 +630,7 @@ export default function Agents() {
                       <Checkbox
                         checked={selectedIds.has(agent.id)}
                         onCheckedChange={() => toggleSelect(agent.id)}
+                        aria-label={`Select ${agent.name}`}
                         data-testid={`checkbox-agent-${agent.id}`}
                       />
                     </TableCell>
@@ -626,9 +642,9 @@ export default function Agents() {
                              agent.agentType === "remote" ? <Globe className="w-3.5 h-3.5 text-primary" /> :
                              <Bot className="w-3.5 h-3.5 text-primary" />}
                           </div>
-                          <div className="flex flex-col">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="text-sm font-medium hover:underline">{agent.name}</span>
+                          <div className="flex flex-col min-w-0">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm font-medium hover:underline truncate max-w-[240px]" title={agent.name}>{agent.name}</span>
                               {agent.agentType === "team" && (
                                 <Badge variant="outline" className="text-[10px] bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/20">Team</Badge>
                               )}
@@ -642,34 +658,32 @@ export default function Agents() {
                       </Link>
                     </TableCell>
                     <TableCell data-testid={`industry-profile-${agent.id}`}>
-                      <div className="flex flex-col gap-1 max-w-[180px]">
+                      {/* One-line scannable cell (UX audit F-11): compliance
+                          tags and KG coverage moved into a tooltip — the old
+                          4-row stack limited the registry to ~2 rows/screen. */}
+                      <div className="flex items-center gap-1 flex-wrap max-w-[220px]">
                         <Badge variant="outline" className="text-[10px] w-fit bg-primary/5 border-primary/15">{domain}</Badge>
                         <Badge variant="outline" className={`text-[10px] w-fit border ${euRisk.className}`} data-testid={`eu-risk-${agent.id}`}>{euRisk.label}</Badge>
-                        {shownTags.length > 0 && (
-                          <div className="flex items-center gap-1 flex-wrap" data-testid={`compliance-tags-${agent.id}`}>
-                            {shownTags.map(tag => (
-                              <Badge key={tag} variant="secondary" className="text-[10px]">{tag}</Badge>
-                            ))}
-                            {extraTags > 0 && (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <span className="text-[10px] text-muted-foreground cursor-default" data-testid={`compliance-more-${agent.id}`}>+{extraTags} more</span>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <div className="flex flex-col gap-0.5">
-                                    {compTags.slice(3).map(t => (
-                                      <span key={t} className="text-xs">{t}</span>
-                                    ))}
-                                  </div>
-                                </TooltipContent>
-                              </Tooltip>
-                            )}
-                          </div>
-                        )}
-                        {ontologyCount > 0 && (
-                          <span className="text-[10px] text-muted-foreground flex items-center gap-1" data-testid={`ontology-count-${agent.id}`}>
-                            <Network className="w-3 h-3" /> KG: {ontologyCount} domain{ontologyCount !== 1 ? "s" : ""}
-                          </span>
+                        {(compTags.length > 0 || ontologyCount > 0) && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="text-[10px] text-muted-foreground cursor-default underline decoration-dotted" data-testid={`compliance-more-${agent.id}`}>
+                                +{compTags.length + (ontologyCount > 0 ? 1 : 0)}
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <div className="flex flex-col gap-0.5" data-testid={`compliance-tags-${agent.id}`}>
+                                {compTags.map(t => (
+                                  <span key={t} className="text-xs">{t}</span>
+                                ))}
+                                {ontologyCount > 0 && (
+                                  <span className="text-xs flex items-center gap-1" data-testid={`ontology-count-${agent.id}`}>
+                                    <Network className="w-3 h-3" /> KG: {ontologyCount} domain{ontologyCount !== 1 ? "s" : ""}
+                                  </span>
+                                )}
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
                         )}
                       </div>
                     </TableCell>
@@ -683,9 +697,15 @@ export default function Agents() {
                       <TableCell>
                         <Popover>
                           <PopoverTrigger asChild>
-                            <button className="flex items-center gap-2 cursor-pointer" data-testid={`health-detail-${agent.id}`}>
-                              <Progress value={agent.healthScore || 0} className="h-1.5 w-16" />
-                              <span className={`text-xs font-medium ${healthColor}`}>{agent.healthScore}%</span>
+                            <button className="flex items-center gap-2 cursor-pointer" aria-label={`Health details for ${agent.name}`} data-testid={`health-detail-${agent.id}`}>
+                              {agent.healthScore != null ? (
+                                <>
+                                  <Progress value={agent.healthScore} className="h-1.5 w-16" />
+                                  <span className={`text-xs font-medium ${healthColor}`}>{agent.healthScore}%</span>
+                                </>
+                              ) : (
+                                <span className="text-xs text-muted-foreground/60">—</span>
+                              )}
                             </button>
                           </PopoverTrigger>
                           <PopoverContent className="w-56 p-3" align="start">
@@ -718,7 +738,7 @@ export default function Agents() {
                       <TableCell data-testid={`safety-score-${agent.id}`}>
                         <Popover>
                           <PopoverTrigger asChild>
-                            <button className="flex items-center gap-2 cursor-pointer" data-testid={`safety-detail-${agent.id}`}>
+                            <button className="flex items-center gap-2 cursor-pointer" aria-label={`Safety score details for ${agent.name}`} data-testid={`safety-detail-${agent.id}`}>
                               <div className="relative flex items-center justify-center w-8 h-8 shrink-0">
                                 <svg viewBox="0 0 36 36" className="w-8 h-8 -rotate-90">
                                   <circle cx="18" cy="18" r="14" fill="none" stroke="currentColor" strokeWidth="3" className="text-muted/30" />
@@ -761,39 +781,44 @@ export default function Agents() {
                     </TableCell>
                     {canSeeIncidents && (
                       <TableCell>
-                        <div className="flex flex-col gap-0.5">
-                          <div className="flex items-center gap-1.5">
-                            {agent.lastIncidentAt ? (
-                              <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
-                            ) : (
-                              <CheckCircle className="w-3 h-3 text-emerald-500 shrink-0" />
-                            )}
-                            <span className="text-[11px] text-muted-foreground">
-                              {agent.lastIncidentAt ? formatTimeAgo(agent.lastIncidentAt) : "No incidents"}
-                            </span>
-                          </div>
-                          {lastApproval && (
-                            <div className="flex items-center gap-1.5">
-                              <Shield className="w-3 h-3 text-muted-foreground shrink-0" />
-                              <span className="text-[11px] text-muted-foreground">
-                                {lastApproval.type.replace(/_/g, " ")} ({lastApproval.status})
+                        {/* Single-line cell; approval detail on hover (F-11). */}
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <div className="flex items-center gap-1.5 cursor-default">
+                              {agent.lastIncidentAt ? (
+                                <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" aria-hidden="true" />
+                              ) : (
+                                <CheckCircle className="w-3 h-3 text-emerald-500 shrink-0" aria-hidden="true" />
+                              )}
+                              <span className="text-[11px] text-muted-foreground whitespace-nowrap">
+                                {agent.lastIncidentAt ? formatTimeAgo(agent.lastIncidentAt) : "No incidents"}
                               </span>
                             </div>
+                          </TooltipTrigger>
+                          {lastApproval && (
+                            <TooltipContent>
+                              <span className="text-xs">
+                                Last approval: {lastApproval.type.replace(/_/g, " ")} ({lastApproval.status})
+                              </span>
+                            </TooltipContent>
                           )}
-                        </div>
+                        </Tooltip>
                       </TableCell>
                     )}
                     {canSeeCostRevenue && (
                       <TableCell className="text-right" data-testid={`pnl-${agent.id}`}>
                         <Popover>
                           <PopoverTrigger asChild>
-                            <button className="flex flex-col items-end gap-0.5 cursor-pointer" data-testid={`pnl-detail-${agent.id}`}>
-                              <span className={`text-sm font-medium ${marginColor}`}>
-                                {margin >= 0 ? "+" : ""}${Math.abs(margin).toLocaleString()}
-                              </span>
-                              <span className="text-[11px] text-muted-foreground">
-                                ROI: <span className={marginColor}>{roi.toFixed(0)}%</span>
-                              </span>
+                            <button className="flex items-center justify-end cursor-pointer" aria-label={`Profit and loss details for ${agent.name}`} data-testid={`pnl-detail-${agent.id}`}>
+                              {/* No-data grammar (F-1): agents with no financials
+                                  show — instead of a meaningless "+$0 ROI 0%". */}
+                              {revenue > 0 || cost > 0 ? (
+                                <span className={`text-sm font-medium ${marginColor}`}>
+                                  {margin >= 0 ? "+" : "-"}${Math.abs(margin).toLocaleString()}
+                                </span>
+                              ) : (
+                                <span className="text-xs text-muted-foreground/60">—</span>
+                              )}
                             </button>
                           </PopoverTrigger>
                           <PopoverContent className="w-56 p-3" align="end">
@@ -830,8 +855,8 @@ export default function Agents() {
                       <div className="flex items-center gap-0.5">
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" data-testid={`button-agent-actions-${agent.id}`}>
-                              <MoreVertical className="w-4 h-4" />
+                            <Button variant="ghost" size="icon" aria-label={`More actions for ${agent.name}`} data-testid={`button-agent-actions-${agent.id}`}>
+                              <MoreVertical className="w-4 h-4" aria-hidden="true" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
@@ -843,8 +868,8 @@ export default function Agents() {
                           </DropdownMenuContent>
                         </DropdownMenu>
                         <Link href={`/agents/${agent.id}`}>
-                          <Button variant="ghost" size="icon" data-testid={`button-view-agent-${agent.id}`}>
-                            <ArrowRight className="w-4 h-4" />
+                          <Button variant="ghost" size="icon" aria-label={`Open ${agent.name}`} data-testid={`button-view-agent-${agent.id}`}>
+                            <ArrowRight className="w-4 h-4" aria-hidden="true" />
                           </Button>
                         </Link>
                       </div>
@@ -855,10 +880,16 @@ export default function Agents() {
             </TableBody>
           </Table>
           {filtered?.length === 0 && (
-            <div className="flex flex-col items-center justify-center py-12 gap-3">
-              <Bot className="w-10 h-10 text-muted-foreground/50" />
-              <p className="text-sm text-muted-foreground">No agents found</p>
-            </div>
+            <EmptyState
+              icon={<Bot className="w-10 h-10 text-muted-foreground/50" />}
+              title={agents?.length === 0 ? "No agents yet" : "No agents match your filters"}
+              description={agents?.length === 0
+                ? "Design your first agent to start delivering outcomes."
+                : "Try clearing a filter or broadening your search."}
+              cta={agents?.length === 0 && blueprintPerm.allowed
+                ? { label: "Design New Agent", onClick: () => navigate("/agents/wizard") }
+                : undefined}
+            />
           )}
         </CardContent>
       </Card>

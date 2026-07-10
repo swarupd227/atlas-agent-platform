@@ -1,4 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { QueryBoundary } from "@/components/ui-vocab";
+import { formatDate } from "@/lib/format";
 import { useState, useEffect, useMemo } from "react";
 import { Link } from "wouter";
 import {
@@ -251,7 +253,7 @@ export default function Billing() {
   }, [setLockedEnv]);
 
 
-  const { data: dashboard, isLoading: dashboardLoading } = useQuery<MeteringDashboard>({
+  const { data: dashboard, isLoading: dashboardLoading, isError, error, refetch } = useQuery<MeteringDashboard>({
     queryKey: ["/api/billing/metering-dashboard"],
   });
 
@@ -332,6 +334,14 @@ export default function Billing() {
     name: reason.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
     value: count,
   })) : [];
+
+  if (isError) {
+    return (
+      <div className="p-6">
+        <QueryBoundary isLoading={false} isError error={error} onRetry={() => refetch()}>{null}</QueryBoundary>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-billing">
@@ -690,8 +700,8 @@ export default function Billing() {
                       </TableCell>
                       <TableCell>
                         <span className="text-xs text-muted-foreground">
-                          {inv.periodStart ? new Date(inv.periodStart).toLocaleDateString() : "\u2014"} \u2014{" "}
-                          {inv.periodEnd ? new Date(inv.periodEnd).toLocaleDateString() : "\u2014"}
+                          {inv.periodStart ? formatDate(inv.periodStart) : "\u2014"} \u2014{" "}
+                          {inv.periodEnd ? formatDate(inv.periodEnd) : "\u2014"}
                         </span>
                       </TableCell>
                       <TableCell className="text-right">
@@ -796,7 +806,7 @@ export default function Billing() {
                         </TableCell>
                         <TableCell>
                           <span className="text-[11px] text-muted-foreground">
-                            {disp.createdAt ? new Date(disp.createdAt).toLocaleDateString() : "\u2014"}
+                            {disp.createdAt ? formatDate(disp.createdAt) : "\u2014"}
                           </span>
                         </TableCell>
                       </TableRow>
@@ -1491,8 +1501,8 @@ function InvoiceDetailView({
           <CardContent className="p-4 flex flex-col gap-1">
             <span className="text-[10px] text-muted-foreground uppercase tracking-wide">Period</span>
             <span className="text-sm font-medium">
-              {inv.periodStart ? new Date(inv.periodStart).toLocaleDateString() : "\u2014"} \u2014{" "}
-              {inv.periodEnd ? new Date(inv.periodEnd).toLocaleDateString() : "\u2014"}
+              {inv.periodStart ? formatDate(inv.periodStart) : "\u2014"} \u2014{" "}
+              {inv.periodEnd ? formatDate(inv.periodEnd) : "\u2014"}
             </span>
           </CardContent>
         </Card>

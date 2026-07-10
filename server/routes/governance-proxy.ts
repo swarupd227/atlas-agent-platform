@@ -3,172 +3,20 @@ import { storage } from "../storage";
 import { z, ZodError } from "zod";
 import { resolvePolicyBundle } from "./helpers";
 import { getOrgId } from "../auth";
+import { getToolRateLimiterSnapshot } from "../tool-dispatcher";
 
 const router = Router();
 
   // ──────────────────────────────────
-  // Tool Proxy with rate limiting, retry/backoff, shadow dry-run, audit logging
+  // Tool dispatch (gates + rate limiting + real execution) lives in
+  // server/tool-dispatcher.ts — the single dispatch path for all engines.
+  // The former simulated tool-proxy helper here was removed (it fabricated
+  // "Executed X successfully" instead of calling anything).
   // ──────────────────────────────────
-  const toolRateLimiter: Map<string, { timestamps: number[]; limit: number; windowMs: number }> = new Map();
 
-  function checkRateLimit(agentId: string, toolName: string): { allowed: boolean; remaining: number; retryAfterMs?: number } {
-    const key = `${agentId}:${toolName}`;
-    const now = Date.now();
-    const windowMs = 60_000;
-    const limit = 100;
-
-    if (!toolRateLimiter.has(key)) {
-      toolRateLimiter.set(key, { timestamps: [], limit, windowMs });
-    }
-    const bucket = toolRateLimiter.get(key)!;
-    bucket.timestamps = bucket.timestamps.filter(t => now - t < windowMs);
-
-    if (bucket.timestamps.length >= limit) {
-      const oldest = bucket.timestamps[0];
-      return { allowed: false, remaining: 0, retryAfterMs: windowMs - (now - oldest) };
-    }
-
-    bucket.timestamps.push(now);
-    return { allowed: true, remaining: limit - bucket.timestamps.length };
-  }
-
-  export async function proxyToolCall(
-    toolName: string,
-    toolInput: Record<string, unknown>,
-    policyBundle: Awaited<ReturnType<typeof resolvePolicyBundle>>,
-    options: { agentId: string; traceId?: string; environment?: string; shadow?: boolean } = { agentId: "unknown" }
-  ): Promise<{ allowed: boolean; result: Record<string, unknown>; policyCheck: Record<string, unknown>; rateLimit?: { remaining: number }; shadow?: boolean; retryAttempts?: number }> {
-    const blocked = policyBundle.blockedTools.includes(toolName);
-    const allowlistExists = policyBundle.toolAllowlist.length > 0;
-    const onAllowlist = policyBundle.toolAllowlist.includes(toolName);
-    const allowed = !blocked && (!allowlistExists || onAllowlist);
-
-    const policyCheck: Record<string, unknown> = {
-      tool: toolName,
-      allowed,
-      reason: blocked
-        ? `Tool "${toolName}" is blocked by policy`
-        : (allowlistExists && !onAllowlist)
-          ? `Tool "${toolName}" is not on the allowlist`
-          : "Allowed",
-      checkedPolicies: policyBundle.appliedPolicies.map(p => p.name),
-    };
-
-    await storage.createAuditEvent({
-      action: "tool_proxy_call",
-      objectType: "tool",
-      objectId: toolName,
-      actorId: options.agentId,
-      actorType: "agent",
-      details: `Tool proxy: ${toolName} by agent ${options.agentId}. Allowed=${allowed}, env=${options.environment || "unknown"}, shadow=${options.shadow || false}, inputKeys=[${Object.keys(toolInput).join(",")}]`,
-    });
-
-    if (!allowed) {
-      return {
-        allowed: false,
-        result: { error: policyCheck.reason, blocked: true },
-        policyCheck,
-      };
-    }
-
-    // Rate limiting check
-    const rateCheck = checkRateLimit(options.agentId, toolName);
-    if (!rateCheck.allowed) {
-      policyCheck.rateLimited = true;
-      policyCheck.retryAfterMs = rateCheck.retryAfterMs;
-      await storage.createAuditEvent({
-        action: "tool_proxy_rate_limited",
-        objectType: "tool",
-        objectId: toolName,
-        actorId: options.agentId,
-        actorType: "agent",
-        details: `Rate limit exceeded for ${toolName} by agent ${options.agentId}. Retry after ${rateCheck.retryAfterMs}ms`,
-      });
-      return {
-        allowed: false,
-        result: { error: `Rate limit exceeded for tool "${toolName}". Retry after ${rateCheck.retryAfterMs}ms`, rateLimited: true, retryAfterMs: rateCheck.retryAfterMs },
-        policyCheck,
-        rateLimit: { remaining: 0 },
-      };
-    }
-
-    // Apply redaction to input
-    let redactedInput = { ...toolInput };
-    for (const pattern of policyBundle.redactPatterns) {
-      try {
-        const re = new RegExp(pattern, "gi");
-        for (const key of Object.keys(redactedInput)) {
-          if (typeof redactedInput[key] === "string") {
-            redactedInput[key] = (redactedInput[key] as string).replace(re, "[REDACTED]");
-          }
-        }
-      } catch {}
-    }
-
-    // Shadow dry-run mode: log but don't execute
-    if (options.shadow) {
-      const dryRunResult: Record<string, unknown> = {
-        toolName,
-        status: "dry_run",
-        mode: "shadow",
-        output: `[DRY RUN] Would execute ${toolName} in shadow mode`,
-        input: redactedInput,
-        executedAt: new Date().toISOString(),
-      };
-      await storage.createAuditEvent({
-        action: "tool_proxy_shadow_dry_run",
-        objectType: "tool",
-        objectId: toolName,
-        actorId: options.agentId,
-        actorType: "agent",
-        details: `Shadow dry-run: ${toolName} for agent ${options.agentId}. Input logged but not executed.`,
-      });
-      return { allowed: true, result: dryRunResult, policyCheck, rateLimit: { remaining: rateCheck.remaining }, shadow: true };
-    }
-
-    // Simulate execution with retry/backoff logic
-    const maxRetries = 3;
-    let retryAttempts = 0;
-    let lastError: string | null = null;
-
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      try {
-        const simulatedResult: Record<string, unknown> = {
-          toolName,
-          status: "success",
-          output: `Executed ${toolName} successfully`,
-          executedAt: new Date().toISOString(),
-          redactedFields: policyBundle.redactPatterns.length > 0 ? policyBundle.redactPatterns : undefined,
-          attempt: attempt + 1,
-        };
-        return { allowed: true, result: simulatedResult, policyCheck, rateLimit: { remaining: rateCheck.remaining }, retryAttempts };
-      } catch (err: any) {
-        retryAttempts = attempt + 1;
-        lastError = err.message || "Unknown error";
-        if (attempt < maxRetries) {
-          const backoffMs = Math.min(1000 * Math.pow(2, attempt), 8000);
-          await new Promise(resolve => setTimeout(resolve, backoffMs));
-        }
-      }
-    }
-
-    return {
-      allowed: true,
-      result: { toolName, status: "failed", error: lastError, retryAttempts },
-      policyCheck,
-      rateLimit: { remaining: rateCheck.remaining },
-      retryAttempts,
-    };
-  }
-
-  // GET /api/tool-proxy/status - rate limiter and proxy status
-  router.get("/api/tool-proxy/status", async (req, res) => {
-    const entries: Array<{ key: string; callsInWindow: number; limit: number; windowMs: number }> = [];
-    const now = Date.now();
-    toolRateLimiter.forEach((bucket, key) => {
-      const active = bucket.timestamps.filter((t: number) => now - t < bucket.windowMs);
-      entries.push({ key, callsInWindow: active.length, limit: bucket.limit, windowMs: bucket.windowMs });
-    });
+  // GET /api/tool-proxy/status - rate limiter and dispatch-path status
+  router.get("/api/tool-proxy/status", async (_req, res) => {
+    const entries = getToolRateLimiterSnapshot();
     res.json({
       activeRateLimiters: entries.length,
       rateLimiters: entries,
@@ -177,10 +25,11 @@ const router = Router();
         allowlist: true,
         blocklist: true,
         rateLimiting: true,
-        retryBackoff: { maxRetries: 3, strategy: "exponential", maxBackoffMs: 8000 },
         shadowDryRun: true,
         redaction: true,
         auditLogging: true,
+        realExecution: true,
+        dispatcher: "tool-dispatcher",
       },
     });
   });

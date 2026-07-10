@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { QueryBoundary } from "@/components/ui-vocab";
 import { useState } from "react";
 import {
   CheckCircle,
@@ -115,7 +116,7 @@ export default function Approvals() {
   const { toast } = useToast();
   const approvalPerm = usePermission("approve_changes");
 
-  const { data: approvals, isLoading } = useQuery<Approval[]>({ queryKey: ["/api/approvals"] });
+  const { data: approvals, isLoading, isError, error, refetch } = useQuery<Approval[]>({ queryKey: ["/api/approvals"] });
   const { data: evalSuites } = useQuery<EvalSuite[]>({ queryKey: ["/api/evals"] });
   const { data: agents } = useQuery<Agent[]>({ queryKey: ["/api/agents"] });
   const { data: outcomes } = useQuery<OutcomeContract[]>({ queryKey: ["/api/outcomes"] });
@@ -177,6 +178,14 @@ export default function Approvals() {
   const rejected  = (approvals ?? []).filter(a => a.status === "rejected").length;
 
   const selected = approvals?.find(a => a.id === selectedId) ?? null;
+
+  if (isError) {
+    return (
+      <div className="p-6">
+        <QueryBoundary isLoading={false} isError error={error} onRetry={() => refetch()}>{null}</QueryBoundary>
+      </div>
+    );
+  }
 
   if (isLoading) {
     return (

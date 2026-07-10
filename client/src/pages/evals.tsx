@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { QueryBoundary } from "@/components/ui-vocab";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { useRole } from "@/components/role-provider";
@@ -135,7 +136,7 @@ interface EvalSummary {
 export default function Evals() {
   const { role } = useRole();
 
-  const { data: summary, isLoading: summaryLoading } = useQuery<EvalSummary>({
+  const { data: summary, isLoading: summaryLoading, isError, error, refetch } = useQuery<EvalSummary>({
     queryKey: ["/api/eval/summary"],
   });
 
@@ -387,6 +388,26 @@ export default function Evals() {
       default: return { icon: Clock, color: "text-muted-foreground" };
     }
   };
+
+  if (summaryLoading || runsLoading) {
+    return (
+      <div className="flex flex-col gap-6 p-6 max-w-[1400px] mx-auto" data-testid="page-evals-loading">
+        <Skeleton className="h-8 w-64" />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24" />)}
+        </div>
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="p-6">
+        <QueryBoundary isLoading={false} isError error={error} onRetry={() => refetch()}>{null}</QueryBoundary>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6 p-6 max-w-[1400px] mx-auto">

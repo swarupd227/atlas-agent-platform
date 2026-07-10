@@ -146,7 +146,7 @@ export function NotificationCenter() {
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative" data-testid="button-notifications">
+        <Button variant="ghost" size="icon" className="relative" aria-label={totalCount > 0 ? `Notifications (${totalCount} unread)` : "Notifications"} data-testid="button-notifications">
           <Bell className="w-4 h-4" />
           {totalCount > 0 && (
             <span className="absolute -top-0.5 -right-0.5 w-4 h-4 rounded-full bg-destructive text-destructive-foreground text-[10px] font-medium flex items-center justify-center" data-testid="badge-notification-count">

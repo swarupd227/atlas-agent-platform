@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
+import { formatDate } from "@/lib/format";
 import { useLocation, useParams } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import Editor from "@monaco-editor/react";
@@ -1340,7 +1341,7 @@ export default function EvalMetricBuilder() {
                         <span className="ml-2 text-[10px] text-muted-foreground capitalize">{v.metricType ?? "g-eval"}</span>
                       </div>
                       <span className="text-[10px] text-muted-foreground">
-                        {v.createdAt ? new Date(v.createdAt).toLocaleDateString() : "—"}
+                        {v.createdAt ? formatDate(v.createdAt) : "—"}
                       </span>
                     </button>
                   ))}

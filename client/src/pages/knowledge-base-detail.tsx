@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { formatDate } from "@/lib/format";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useRoute, Link, useLocation } from "wouter";
 import type { KnowledgeBase, KnowledgeSource, KnowledgeChunk, Agent } from "@shared/schema";
@@ -1460,7 +1461,7 @@ export default function KnowledgeBaseDetail() {
                                 <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground">
                                   <span>{source.chunkCount} chunks</span>
                                   {source.lastRetrievedAt && (
-                                    <span>Last retrieved: {new Date(source.lastRetrievedAt).toLocaleDateString()}</span>
+                                    <span>Last retrieved: {formatDate(source.lastRetrievedAt)}</span>
                                   )}
                                   {!source.lastRetrievedAt && source.processedAt && (
                                     <span>Processed {daysSinceProcessed(source.processedAt)} days ago, never retrieved</span>

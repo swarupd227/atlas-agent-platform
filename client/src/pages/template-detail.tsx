@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
+import { PageBreadcrumbs } from "@/components/page-breadcrumbs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -478,23 +479,20 @@ export default function TemplateDetail() {
     modelName: "gpt-4.1",
     defaultRiskTier: "MEDIUM",
     defaultAutonomyMode: "assisted",
+    estimatedTimeToProd: "2-4 weeks",
+    costProfile: null as null | { monthlyEstimate: string; perRunCost: string; computeTier: string; apiCallsPerMonth: string },
     tools: [{ name: "", description: "", permissions: [] }],
     workflowNodes: [{ id: "step_1", type: "llm_call", label: "" }],
     dataAccess: "",
     apiAccess: "",
     writeAccess: "",
-    vectorStore: "",
-    retrievalStrategy: "",
-    chunkSize: "",
-    embeddingModel: "",
-    topK: "",
+    memoryRagConfig: null as null | { vectorStore: string; retrievalStrategy: string; chunkSize: number; embeddingModel: string; topK: number },
     tags: [] as string[],
     complianceCertifications: [] as string[],
     newCert: "",
     policyBindings: [] as PolicyBinding[],
     evalBindings: [] as EvalBinding[],
-    triggerConditions: [""],
-    rollbackTargetVersion: "previous_stable",
+    rollbackPlan: null as null | { triggerConditions: string[]; rollbackTargetVersion: string },
     requiredSkills: [] as SkillEntry[],
     optionalSkills: [] as SkillEntry[],
   } : {});
@@ -616,14 +614,18 @@ export default function TemplateDetail() {
       const evals = Array.isArray(template.evalBindings) ? (template.evalBindings as EvalBinding[]) : [];
       const rollbackData = template.rollbackPlan as RollbackPlan;
 
+      const cp = template.costProfile as { monthlyEstimate?: string; perRunCost?: string; computeTier?: string; apiCallsPerMonth?: string } | null;
       setEditData({
         name: template.name,
         description: template.description || "",
         category: template.category,
         industry: template.industry || "cross_industry",
+        icon: template.icon || "bot",
         complexity: template.complexity || "medium",
         defaultRiskTier: template.defaultRiskTier || "MEDIUM",
         defaultAutonomyMode: template.defaultAutonomyMode || "assisted",
+        estimatedTimeToProd: template.estimatedTimeToProd || "2-4 weeks",
+        costProfile: cp ? { monthlyEstimate: cp.monthlyEstimate || "", perRunCost: cp.perRunCost || "", computeTier: cp.computeTier || "", apiCallsPerMonth: cp.apiCallsPerMonth || "" } : null,
         modelProvider: template.modelProvider || "openai",
         modelName: template.modelName || "gpt-4.1",
         tags: [...(template.tags || [])],
@@ -880,14 +882,18 @@ export default function TemplateDetail() {
     const evals = Array.isArray(template.evalBindings) ? (template.evalBindings as EvalBinding[]) : [];
     const rollback = template.rollbackPlan as RollbackPlan;
 
+    const cp = template.costProfile as { monthlyEstimate?: string; perRunCost?: string; computeTier?: string; apiCallsPerMonth?: string } | null;
     setEditData({
       name: template.name,
       description: template.description || "",
       category: template.category,
       industry: template.industry || "cross_industry",
+      icon: template.icon || "bot",
       complexity: template.complexity || "medium",
       defaultRiskTier: template.defaultRiskTier || "MEDIUM",
       defaultAutonomyMode: template.defaultAutonomyMode || "assisted",
+      estimatedTimeToProd: template.estimatedTimeToProd || "2-4 weeks",
+      costProfile: cp ? { monthlyEstimate: cp.monthlyEstimate || "", perRunCost: cp.perRunCost || "", computeTier: cp.computeTier || "", apiCallsPerMonth: cp.apiCallsPerMonth || "" } : null,
       modelProvider: template.modelProvider || "openai",
       modelName: template.modelName || "gpt-4.1",
       tags: [...(template.tags || [])],
@@ -928,9 +934,12 @@ export default function TemplateDetail() {
       description: editData.description,
       category: editData.category,
       industry: editData.industry,
+      icon: editData.icon || "bot",
       complexity: editData.complexity,
       defaultRiskTier: editData.defaultRiskTier,
       defaultAutonomyMode: editData.defaultAutonomyMode,
+      estimatedTimeToProd: editData.estimatedTimeToProd || "2-4 weeks",
+      costProfile: editData.costProfile || null,
       modelProvider: editData.modelProvider,
       modelName: editData.modelName,
       tags: editData.tags,
@@ -1062,10 +1071,11 @@ export default function TemplateDetail() {
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-template-detail">
+      <PageBreadcrumbs items={[{ label: "Templates", href: "/templates" }, { label: displayTemplate?.name || (isNew ? "New Template" : "Template") }]} />
       <div className="flex items-center gap-3 flex-wrap">
         <Link href="/templates">
-          <Button variant="ghost" size="icon" data-testid="button-back-templates">
-            <ArrowLeft className="w-4 h-4" />
+          <Button variant="ghost" size="icon" aria-label="Back to templates" data-testid="button-back-templates">
+            <ArrowLeft className="w-4 h-4" aria-hidden="true" />
           </Button>
         </Link>
         <div className="flex items-start gap-3 flex-1 min-w-0">
@@ -1192,6 +1202,29 @@ export default function TemplateDetail() {
                 </SelectContent>
               </Select>
             </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Icon</label>
+              <Select value={editData.icon || "bot"} onValueChange={(v) => setEditData({ ...editData, icon: v })}>
+                <SelectTrigger className="w-40" data-testid="select-edit-icon">
+                  <SelectValue placeholder="Icon" />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.keys(iconMap).map(k => (
+                    <SelectItem key={k} value={k}>{k}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Est. Time to Prod</label>
+              <Input
+                value={editData.estimatedTimeToProd || ""}
+                onChange={(e) => setEditData({ ...editData, estimatedTimeToProd: e.target.value })}
+                placeholder="e.g., 2-4 weeks"
+                className="w-36"
+                data-testid="input-edit-time-to-prod"
+              />
+            </div>
           </div>
         ) : (
           <>
@@ -1245,8 +1278,22 @@ export default function TemplateDetail() {
             <Button variant="outline" onClick={() => setDeleteOpen(true)} data-testid="button-delete-template">
               <Trash2 className="w-4 h-4 mr-1.5" /> Delete
             </Button>
-            <Button onClick={() => navigate(`/agents/wizard?templateId=${templateId}`)} data-testid="button-use-template">
-              Use This Template <ArrowRight className="w-4 h-4 ml-1.5" />
+            <Button
+              onClick={() => {
+                const bp = displayTemplate?.blueprintJson as any;
+                if (bp?.templateType === "team") {
+                  navigate("/agents/teams");
+                } else {
+                  navigate(`/agents/wizard?templateId=${templateId}`);
+                }
+              }}
+              data-testid="button-use-template"
+            >
+              {(() => {
+                const bp = displayTemplate?.blueprintJson as any;
+                return bp?.templateType === "team" ? "Deploy as Team" : "Use This Template";
+              })()}
+              <ArrowRight className="w-4 h-4 ml-1.5" />
             </Button>
           </div>
         )}
@@ -1509,7 +1556,7 @@ export default function TemplateDetail() {
                     <div>
                       <label className="text-xs text-muted-foreground mb-1 block">Vector Store</label>
                       <Input
-                        value={editData.memoryRagConfig.vectorStore}
+                        value={editData.memoryRagConfig.vectorStore || ""}
                         onChange={(e) => setEditData({ ...editData, memoryRagConfig: { ...editData.memoryRagConfig, vectorStore: e.target.value } })}
                         placeholder="e.g., pinecone, weaviate, chromadb"
                         data-testid="input-edit-vector-store"
@@ -1557,7 +1604,14 @@ export default function TemplateDetail() {
                     </div>
                   </div>
                 ) : (
-                  <p className="text-xs text-muted-foreground">Not configured</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setEditData({ ...editData, memoryRagConfig: { vectorStore: "", retrievalStrategy: "semantic", chunkSize: 512, embeddingModel: "text-embedding-3-small", topK: 5 } })}
+                    data-testid="button-enable-memory-rag"
+                  >
+                    <Plus className="w-4 h-4 mr-1.5" /> Enable Memory / RAG
+                  </Button>
                 )}
               </CardContent>
             </Card>
@@ -1879,7 +1933,14 @@ export default function TemplateDetail() {
                     </Button>
                   </div>
                 ) : (
-                  <p className="text-xs text-muted-foreground">Not configured</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setEditData({ ...editData, rollbackPlan: { triggerConditions: [""], rollbackTargetVersion: "previous_stable" } })}
+                    data-testid="button-enable-rollback"
+                  >
+                    <Plus className="w-4 h-4 mr-1.5" /> Enable Rollback Plan
+                  </Button>
                 )}
               </CardContent>
             </Card>
@@ -1943,6 +2004,74 @@ export default function TemplateDetail() {
                     <Plus className="w-4 h-4" />
                   </Button>
                 </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-sm font-medium flex items-center gap-2">
+                  <TrendingUp className="w-4 h-4 text-muted-foreground" /> Cost Profile
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2">
+                {editData.costProfile ? (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Monthly Estimate</label>
+                      <Input
+                        value={editData.costProfile.monthlyEstimate || ""}
+                        onChange={(e) => setEditData({ ...editData, costProfile: { ...editData.costProfile, monthlyEstimate: e.target.value } })}
+                        placeholder="e.g., $500"
+                        data-testid="input-edit-monthly-estimate"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Per-Run Cost</label>
+                      <Input
+                        value={editData.costProfile.perRunCost || ""}
+                        onChange={(e) => setEditData({ ...editData, costProfile: { ...editData.costProfile, perRunCost: e.target.value } })}
+                        placeholder="e.g., $0.05"
+                        data-testid="input-edit-per-run-cost"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">Compute Tier</label>
+                      <Input
+                        value={editData.costProfile.computeTier || ""}
+                        onChange={(e) => setEditData({ ...editData, costProfile: { ...editData.costProfile, computeTier: e.target.value } })}
+                        placeholder="e.g., standard, high"
+                        data-testid="input-edit-compute-tier"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-muted-foreground mb-1 block">API Calls / Month</label>
+                      <Input
+                        value={editData.costProfile.apiCallsPerMonth || ""}
+                        onChange={(e) => setEditData({ ...editData, costProfile: { ...editData.costProfile, apiCallsPerMonth: e.target.value } })}
+                        placeholder="e.g., 10,000"
+                        data-testid="input-edit-api-calls-per-month"
+                      />
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="col-span-2 text-destructive"
+                      onClick={() => setEditData({ ...editData, costProfile: null })}
+                      data-testid="button-remove-cost-profile"
+                    >
+                      <X className="w-3.5 h-3.5 mr-1" /> Remove Cost Profile
+                    </Button>
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setEditData({ ...editData, costProfile: { monthlyEstimate: "", perRunCost: "", computeTier: "standard", apiCallsPerMonth: "" } })}
+                    data-testid="button-add-cost-profile"
+                  >
+                    <Plus className="w-4 h-4 mr-1.5" /> Add Cost Profile
+                  </Button>
+                )}
               </CardContent>
             </Card>
 
@@ -2503,17 +2632,36 @@ export default function TemplateDetail() {
                     <span className="text-muted-foreground font-medium">Autonomy Mode: </span>
                     <span data-testid="text-autonomy-mode">{displayTemplate?.defaultAutonomyMode || "assisted"}</span>
                   </div>
-                  {rollback ? (
-                    <div className="mt-1">
-                      <div className="text-xs text-muted-foreground font-medium">Rollback Trigger Conditions:</div>
-                      {rollback.triggerConditions.map((cond, idx) => (
-                        <div key={idx} className="text-xs flex items-center gap-1.5 mt-0.5">
-                          <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
-                          <span>{cond}</span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : (
+                  {rollback ? (() => {
+                    // Tolerate both rollback-plan shapes: the edit-form shape
+                    // ({ triggerConditions: string[] }) and the seeded-template
+                    // shape ({ strategy, triggered_by, rollback_sequence, ... }).
+                    // Rendering the typed field unguarded crashed the whole page
+                    // for seeded templates.
+                    const rb = rollback as any;
+                    const conds: string[] = Array.isArray(rb.triggerConditions)
+                      ? rb.triggerConditions
+                      : Array.isArray(rb.triggered_by)
+                        ? rb.triggered_by
+                        : typeof rb.triggered_by === "string"
+                          ? [rb.triggered_by]
+                          : [];
+                    return (
+                      <div className="mt-1">
+                        <div className="text-xs text-muted-foreground font-medium">Rollback Trigger Conditions:</div>
+                        {conds.length > 0 ? conds.map((cond, idx) => (
+                          <div key={idx} className="text-xs flex items-center gap-1.5 mt-0.5">
+                            <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />
+                            <span>{String(cond)}</span>
+                          </div>
+                        )) : (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {typeof rb.strategy === "string" ? `Strategy: ${rb.strategy}` : "No trigger conditions defined"}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })() : (
                     <p className="text-xs text-muted-foreground mt-1">No rollback plan configured</p>
                   )}
                 </CardContent>

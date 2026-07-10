@@ -47,6 +47,7 @@ import {
   PenLine,
   ClipboardList,
   Store,
+  Sparkles,
 } from "lucide-react";
 import {
   Sidebar,
@@ -112,6 +113,7 @@ function FullAppSidebar() {
 
   const primaryNav: NavItem[] = [
     { title: "Overview", url: "/dashboard", icon: LayoutDashboard },
+    { title: "Workspace", url: "/workspace", icon: Sparkles },
     { title: "Outcomes", url: "/outcomes", icon: Target },
     { title: "Agents", url: "/agents", icon: Bot },
     { title: "Knowledge", url: "/knowledge-bases", icon: BookOpen },
@@ -456,6 +458,7 @@ function BusinessModeSidebar() {
 
   const navItems = [
     { title: "Home", url: "/dashboard", icon: Home },
+    { title: "Workspace", url: "/workspace", icon: Sparkles },
     { title: "Outcomes", url: "/outcomes", icon: Target },
     { title: "My Workers", url: "/my-workers", icon: Bot, badge: runningWorkersCount > 0 ? runningWorkersCount : undefined },
     { title: "Process Flows", url: "/process-flows", icon: Workflow },
@@ -472,7 +475,9 @@ function BusinessModeSidebar() {
               <Zap className="w-4 h-4 text-primary-foreground" />
             </div>
             <div className="flex flex-col">
-              <span className="text-sm font-semibold text-sidebar-foreground" data-testid="text-app-name-business">ATLAS</span>
+              {/* One brand everywhere (UX audit F-3): the builder sidebar says
+                  ASTRA — business mode must not introduce a second name. */}
+              <span className="text-sm font-semibold text-sidebar-foreground" data-testid="text-app-name-business">ASTRA</span>
               <span className="text-[10px] text-muted-foreground leading-tight">Business</span>
             </div>
           </div>

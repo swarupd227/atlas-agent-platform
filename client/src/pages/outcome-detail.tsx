@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { formatDate } from "@/lib/format";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useRoute, Link, useLocation } from "wouter";
 import {
@@ -107,6 +108,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { StatusBadge } from "@/components/status-badge";
+import { PageBreadcrumbs } from "@/components/page-breadcrumbs";
 import { StatCard } from "@/components/stat-card";
 import { ProgressRing } from "@/components/outcome-cockpit";
 import { useIndustry } from "@/components/industry-provider";
@@ -116,6 +118,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { OutcomeContract, KpiDefinition, Approval, OutcomeEvent, Agent, Policy, Skill, OntologyConcept } from "@shared/schema";
 import { normalizeToGraph, flattenGraphToSteps } from "@shared/process-flow";
 import { PolicyImpactGraph } from "@/components/policy-impact-graph";
+import { AgentPlanGraph } from "@/components/agent-plan-graph";
 
 function getIndustryBenchmark(industry: string, kpiName: string, kpiUnit: string): { benchmark: number; unit: string; source: string; comparison: string } | null {
   const nameLower = kpiName.toLowerCase();
@@ -1157,11 +1160,12 @@ export default function OutcomeDetail() {
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-outcome-detail">
+      <PageBreadcrumbs items={[{ label: "Outcomes", href: "/outcomes" }, { label: outcome.name }]} />
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-3">
           <Link href="/outcomes">
-            <Button variant="ghost" size="icon" data-testid="button-back-outcomes">
-              <ArrowLeft className="w-4 h-4" />
+            <Button variant="ghost" size="icon" aria-label="Back to outcomes" data-testid="button-back-outcomes">
+              <ArrowLeft className="w-4 h-4" aria-hidden="true" />
             </Button>
           </Link>
           <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
@@ -1719,7 +1723,10 @@ export default function OutcomeDetail() {
         </DialogContent>
       </Dialog>
 
-      {!isBusinessMode && outcome.status === "awaiting_agent_plan" && !hasAgentPlan && (
+      {/* Show the create-agent CTA for every pre-plan status: outcomes arrive here
+          as "awaiting_agent_plan" (builder), "pending_review" (quick-create form),
+          or "active" (API default) — all of them need agents if none are planned. */}
+      {!isBusinessMode && ["awaiting_agent_plan", "pending_review", "active"].includes(outcome.status) && !hasAgentPlan && (
         <Card className="border-blue-500/30 bg-blue-500/5" data-testid="banner-awaiting-agent-plan">
           <CardContent className="flex items-center gap-4 p-4">
             <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center shrink-0">
@@ -3822,6 +3829,10 @@ interface PipelineDefinition {
   agentDependencyMatrix?: AgentDependencyEntry[];
   parallelGroups?: string[][];
   executionGraph?: Array<{ stage: number; agents: string[]; waitForAll: boolean }>;
+  /** HITL gates inserted between execution stages. */
+  humanCheckpoints?: Array<{ afterStage: number; name: string; type?: "approval" | "review" | "audit" }>;
+  /** Backward retry / feedback loop edges between agents. */
+  feedbackEdges?: Array<{ from: string; to: string; label?: string; maxRetries?: number }>;
 }
 
 const PATTERN_LABELS: Record<string, { label: string; icon: string; description: string }> = {
@@ -3915,6 +3926,7 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
   const [reasoningOpen, setReasoningOpen] = useState(false);
   const [dependencyMatrixOpen, setDependencyMatrixOpen] = useState(false);
   const [integrationsOpen, setIntegrationsOpen] = useState(false);
+  const [graphView, setGraphView] = useState(false);
 
   const hasExecutionTiers = pipeline && (
     (pipeline.executionGraph && pipeline.executionGraph.length > 0) ||
@@ -3936,9 +3948,24 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
                 <p className="text-[11px] text-muted-foreground">{pipeline?.description || patternInfo.description}</p>
               </div>
             </div>
-            <Badge className="text-[10px] bg-primary/10 text-primary border-primary/20 px-2.5 py-0.5" variant="outline" data-testid="badge-pipeline-pattern">
-              {patternInfo.label}
-            </Badge>
+            <div className="flex items-center gap-2">
+              <Badge className="text-[10px] bg-primary/10 text-primary border-primary/20 px-2.5 py-0.5" variant="outline" data-testid="badge-pipeline-pattern">
+                {patternInfo.label}
+              </Badge>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-[11px] gap-1.5"
+                onClick={() => setGraphView(v => !v)}
+                data-testid="button-toggle-graph-view"
+              >
+                {graphView ? (
+                  <><LayoutGrid className="w-3 h-3" /> Diagram</>
+                ) : (
+                  <><GitBranch className="w-3 h-3" /> Graph View</>
+                )}
+              </Button>
+            </div>
           </div>
 
           {pipeline?.patternReasoning && (
@@ -3978,6 +4005,41 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
               </button>
               {dependencyMatrixOpen && (
                 <div className="px-3 pb-3 pt-0 space-y-2">
+                  {/* Data flow summary: show which outputs feed which agents */}
+                  {(() => {
+                    const flows: Array<{ from: string; to: string; data: string[] }> = [];
+                    const matrix = pipeline.agentDependencyMatrix!;
+                    for (const entry of matrix) {
+                      if (!entry.dependsOn.length || !entry.inputs.length) continue;
+                      for (const dep of entry.dependsOn) {
+                        const depEntry = matrix.find(e => e.agent === dep);
+                        if (!depEntry) continue;
+                        const shared = entry.inputs.filter(i => depEntry.outputs.includes(i));
+                        if (shared.length) flows.push({ from: dep, to: entry.agent, data: shared });
+                      }
+                    }
+                    if (!flows.length) return null;
+                    return (
+                      <div className="rounded-md border border-border/40 bg-blue-500/[0.03] p-2.5 mb-1" data-testid="dependency-flow-summary">
+                        <span className="text-[9px] text-muted-foreground uppercase tracking-wider font-medium block mb-2">Data Flow</span>
+                        <div className="space-y-1">
+                          {flows.map((f, i) => (
+                            <div key={i} className="flex items-center gap-1.5 flex-wrap text-[10px]">
+                              <span className="font-medium text-violet-600 dark:text-violet-400">{f.from}</span>
+                              <span className="text-muted-foreground">→</span>
+                              <div className="flex gap-0.5 flex-wrap">
+                                {f.data.map((d, di) => (
+                                  <span key={di} className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400">{d}</span>
+                                ))}
+                              </div>
+                              <span className="text-muted-foreground">→</span>
+                              <span className="font-medium text-violet-600 dark:text-violet-400">{f.to}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })()}
                   {pipeline.agentDependencyMatrix.map((entry, idx) => (
                     <div key={idx} className="rounded-md border border-border/40 bg-background/50 p-2.5" data-testid={`dependency-entry-${idx}`}>
                       <div className="flex items-center gap-2 mb-1.5">
@@ -3998,17 +4060,17 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
                         <div>
                           <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Inputs</span>
                           <div className="flex flex-wrap gap-1 mt-0.5">
-                            {entry.inputs.map((inp, i) => (
+                            {entry.inputs.length > 0 ? entry.inputs.map((inp, i) => (
                               <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-600 dark:text-blue-400">{inp}</span>
-                            ))}
+                            )) : <span className="text-[10px] text-muted-foreground/50">—</span>}
                           </div>
                         </div>
                         <div>
                           <span className="text-[9px] text-muted-foreground uppercase tracking-wider">Outputs</span>
                           <div className="flex flex-wrap gap-1 mt-0.5">
-                            {entry.outputs.map((out, i) => (
+                            {entry.outputs.length > 0 ? entry.outputs.map((out, i) => (
                               <span key={i} className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">{out}</span>
-                            ))}
+                            )) : <span className="text-[10px] text-muted-foreground/50">—</span>}
                           </div>
                         </div>
                       </div>
@@ -4132,6 +4194,21 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
             </div>
           )}
 
+          {graphView ? (
+            <AgentPlanGraph
+              orchestrator={orchestrator}
+              agents={agents}
+              plan={pipeline ? {
+                pattern: pipeline.pattern,
+                edges: pipeline.edges,
+                agentDependencyMatrix: pipeline.agentDependencyMatrix,
+                parallelGroups: pipeline.parallelGroups,
+                executionGraph: pipeline.executionGraph,
+                humanCheckpoints: pipeline.humanCheckpoints,
+                feedbackEdges: pipeline.feedbackEdges,
+              } : null}
+            />
+          ) : (
           <div className="flex flex-col items-center gap-0 py-2" data-testid="pipeline-flow-diagram">
             <div className="flex items-center gap-2.5 px-5 py-2.5 rounded-xl border-2 border-primary/30 bg-gradient-to-r from-primary/[0.08] to-violet-500/5 shadow-sm shadow-primary/5" data-testid="pipeline-node-orchestrator">
               <div className="w-7 h-7 rounded-lg bg-primary/15 flex items-center justify-center">
@@ -4213,6 +4290,7 @@ function PipelineVisualization({ orchestrator, agents, pipeline }: {
               </div>
             )}
           </div>
+          )}
 
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
             <div className="flex items-center gap-2 p-2.5 rounded-lg bg-muted/40 border border-border/50">
@@ -5863,6 +5941,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
           orchestrator: { ...orchestrator, suggestedKnowledgeBases: orchestrator.suggestedKnowledgeBases || [] },
           workers: selectedWorkers.map(w => ({ ...w, suggestedKnowledgeBases: w.suggestedKnowledgeBases || [] })),
           pipeline,
+          processFlowSteps: (processFlowSteps ?? []).length > 0 ? processFlowSteps : undefined,
         });
         const data = await res.json();
 
@@ -6274,7 +6353,7 @@ function AgentProposalsTab({ outcome, kpis, initialTemplateId, processFlowSteps,
                 <div className="flex items-center gap-1.5 mt-0.5" data-testid="text-plan-saved-status">
                   <CheckCircle className="w-3 h-3 text-green-500" />
                   <span className="text-[11px] text-muted-foreground">
-                    Saved {new Date(lastSaved).toLocaleDateString()} at {new Date(lastSaved).toLocaleTimeString()}
+                    Saved {formatDate(lastSaved)} at {new Date(lastSaved).toLocaleTimeString()}
                   </span>
                   {dirty && <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-4 text-amber-600 border-amber-300">Unsaved changes</Badge>}
                 </div>

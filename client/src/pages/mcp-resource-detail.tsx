@@ -10,12 +10,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   ArrowLeft, Shield, FileText, AlertCircle, RefreshCw,
-  Clock, Activity, CheckCircle2, XCircle, Eye, Link as LinkIcon,
+  Clock, Activity, CheckCircle2, XCircle, Eye, Link as LinkIcon, Copy,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useRole } from "@/components/role-provider";
 
 interface McpResourceDetail {
   id: string;
@@ -64,6 +66,7 @@ const APPROVAL_VARIANT: Record<string, "default" | "secondary" | "destructive" |
 
 export default function McpResourceDetailPage() {
   const { toast } = useToast();
+  const { role } = useRole();
   const [, params] = useRoute("/integrations/mcp-resources/:id");
   const id = params?.id || "";
 
@@ -74,9 +77,27 @@ export default function McpResourceDetailPage() {
 
   const [editOwner, setEditOwner] = useState<string | null>(null);
   const [editSensitivity, setEditSensitivity] = useState<string | null>(null);
+  const [contentOpen, setContentOpen] = useState(false);
+  const [contentText, setContentText] = useState<string | null>(null);
+  const [contentLoading, setContentLoading] = useState(false);
 
   const owner = editOwner ?? resource?.owner ?? "";
   const sensitivityLevel = editSensitivity ?? resource?.sensitivityLevel ?? "public";
+
+  const subscriptionMutation = useMutation({
+    mutationFn: async (subscribed: boolean) => {
+      const res = await apiRequest("PATCH", `/api/mcp-resources/${id}`, { subscribed });
+      return res.json();
+    },
+    onSuccess: (_data, subscribed) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/mcp-resources", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/mcp-resources"] });
+      toast({ title: subscribed ? "Subscribed to resource" : "Unsubscribed from resource" });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to update subscription", description: err.message, variant: "destructive" });
+    },
+  });
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -270,6 +291,29 @@ export default function McpResourceDetailPage() {
                     <p className="text-xs" data-testid="text-description">{resource.description}</p>
                   </div>
                 )}
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-2 w-fit"
+                  onClick={async () => {
+                    setContentOpen(true);
+                    setContentLoading(true);
+                    setContentText(null);
+                    try {
+                      const res = await apiRequest("GET", `/api/mcp-resources/${id}/content`);
+                      const data = await res.json();
+                      setContentText(typeof data.content === "string" ? data.content : JSON.stringify(data, null, 2));
+                    } catch {
+                      setContentText(null);
+                    } finally {
+                      setContentLoading(false);
+                    }
+                  }}
+                  data-testid="button-view-content"
+                >
+                  <Eye className="w-3.5 h-3.5 mr-1.5" />
+                  View Content
+                </Button>
               </CardContent>
             </Card>
 
@@ -299,13 +343,17 @@ export default function McpResourceDetailPage() {
                 </div>
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <span className="text-xs text-muted-foreground">Subscribed</span>
-                  <Badge
+                  <Button
+                    size="sm"
                     variant={resource.subscribed ? "default" : "outline"}
-                    className="text-[10px]"
-                    data-testid="badge-subscribed-detail"
+                    className="h-7 text-[11px]"
+                    onClick={() => subscriptionMutation.mutate(!resource.subscribed)}
+                    disabled={subscriptionMutation.isPending}
+                    data-testid="button-toggle-subscription"
                   >
-                    {resource.subscribed ? "Yes" : "No"}
-                  </Badge>
+                    <Eye className="w-3 h-3 mr-1" />
+                    {resource.subscribed ? "Subscribed" : "Subscribe"}
+                  </Button>
                 </div>
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <span className="text-xs text-muted-foreground">Synced At</span>
@@ -466,42 +514,82 @@ export default function McpResourceDetailPage() {
                 </Button>
               )}
 
-              <div className="flex flex-col gap-2 mt-2 border-t pt-3">
-                <span className="text-xs text-muted-foreground">Security Admin Actions</span>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <Button
-                    variant="default"
-                    onClick={() => approveMutation.mutate("approve")}
-                    disabled={approveMutation.isPending}
-                    data-testid="button-approve"
-                  >
-                    {approveMutation.isPending ? (
-                      <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
-                    ) : (
-                      <CheckCircle2 className="w-4 h-4 mr-1.5" />
-                    )}
-                    Approve
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    onClick={() => approveMutation.mutate("deny")}
-                    disabled={approveMutation.isPending}
-                    data-testid="button-deny"
-                  >
-                    {approveMutation.isPending ? (
-                      <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
-                    ) : (
-                      <XCircle className="w-4 h-4 mr-1.5" />
-                    )}
-                    Deny
-                  </Button>
+              {resource.approvalStatus === "pending" && (role.id === "admin" || role.id === "compliance_security") && (
+                <div className="flex flex-col gap-2 mt-2 border-t pt-3">
+                  <span className="text-xs text-muted-foreground">Security Admin Actions</span>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Button
+                      variant="default"
+                      onClick={() => approveMutation.mutate("approve")}
+                      disabled={approveMutation.isPending}
+                      data-testid="button-approve"
+                    >
+                      {approveMutation.isPending ? (
+                        <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="w-4 h-4 mr-1.5" />
+                      )}
+                      Approve
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      onClick={() => approveMutation.mutate("deny")}
+                      disabled={approveMutation.isPending}
+                      data-testid="button-deny"
+                    >
+                      {approveMutation.isPending ? (
+                        <RefreshCw className="w-4 h-4 mr-1.5 animate-spin" />
+                      ) : (
+                        <XCircle className="w-4 h-4 mr-1.5" />
+                      )}
+                      Deny
+                    </Button>
+                  </div>
                 </div>
-                <span className="text-[10px] text-muted-foreground">These actions are only available for users with the Security Admin role.</span>
-              </div>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={contentOpen} onOpenChange={setContentOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col" data-testid="dialog-content-preview">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="w-4 h-4" />
+              Resource Content
+            </DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-3 flex-1 overflow-hidden">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <span className="text-xs font-mono text-muted-foreground truncate" data-testid="text-content-uri">{resource?.uri}</span>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-[11px] shrink-0"
+                onClick={() => navigator.clipboard.writeText(resource?.uri || "")}
+                data-testid="button-copy-uri"
+              >
+                <Copy className="w-3 h-3 mr-1" />
+                Copy URI
+              </Button>
+            </div>
+            {contentLoading ? (
+              <Skeleton className="h-40 w-full" data-testid="skeleton-content" />
+            ) : contentText !== null ? (
+              <pre className="text-xs font-mono bg-muted/30 rounded-md p-3 overflow-auto flex-1 whitespace-pre-wrap" data-testid="text-content-preview">
+                {contentText}
+              </pre>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-8 gap-2 text-muted-foreground" data-testid="text-content-unavailable">
+                <AlertCircle className="w-6 h-6" />
+                <p className="text-sm">Content not available via server proxy.</p>
+                <p className="text-xs">Access this resource directly via its URI.</p>
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

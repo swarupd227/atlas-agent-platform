@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { formatDate } from "@/lib/format";
 import { useState } from "react";
 import { Link, useLocation } from "wouter";
 import {
@@ -31,6 +32,7 @@ import {
   Gauge,
   FileWarning,
   Loader2,
+  ChevronDown,
 } from "lucide-react";
 import { useIndustry } from "@/components/industry-provider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -39,6 +41,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { StatCard } from "@/components/stat-card";
@@ -531,6 +534,7 @@ export default function Monitor() {
   const [sourceFilter, setSourceFilter] = useState("all");
   const [expandedTraceId, setExpandedTraceId] = useState<string | null>(null);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
+  const [monitorTab, setMonitorTab] = useState("outcome-sla");
 
   const { data: agents, isLoading } = useQuery<Agent[]>({
     queryKey: ["/api/agents"],
@@ -1012,8 +1016,11 @@ export default function Monitor() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
-        <StatCard title="Success Rate" value={`${successRate}%`} icon={CheckCircle} variant="success" trend="up" trendValue="0.3%" testId="stat-success-rate" />
-        <StatCard title="Avg Latency" value={formatMs(avgLatency)} icon={Clock} variant="default" trend="down" trendValue="12ms" testId="stat-avg-latency" />
+        {/* No-data grammar (UX audit F-1): metrics without runs render "—" +
+            "No runs yet" — and never a trend. The previous trend values here
+            were HARDCODED ("+0.3%", "-12ms") regardless of actual data. */}
+        <StatCard title="Success Rate" value={totalRuns > 0 ? `${successRate}%` : "—"} icon={CheckCircle} variant={totalRuns > 0 ? "success" : "default"} subtitle={totalRuns > 0 ? `${totalRuns} runs` : "No runs yet"} testId="stat-success-rate" />
+        <StatCard title="Avg Latency" value={totalRuns > 0 ? formatMs(avgLatency) : "—"} icon={Clock} variant="default" subtitle={totalRuns > 0 ? undefined : "No runs yet"} testId="stat-avg-latency" />
         <StatCard title="Total Cost" value={`$${totalCost.toFixed(2)}`} icon={BarChart3} variant="default" testId="stat-total-cost" />
         <StatCard title="Policy Violations" value={policyViolationCount} icon={Shield} variant={policyViolationCount > 0 ? "danger" : "success"} testId="stat-policy-violations" />
         <StatCard title="Customer Impact" value={customerImpactCount} icon={Users} variant={customerImpactCount > 0 ? "warning" : "success"} subtitle="outcomes with breached KPIs" testId="stat-customer-impact" />
@@ -1021,19 +1028,56 @@ export default function Monitor() {
 
       <OutcomeKpiStrip compact />
 
-      <Tabs defaultValue="outcome-sla" className="flex flex-col gap-4">
-        <TabsList className="w-fit flex-wrap h-auto">
-          <TabsTrigger value="outcome-sla" data-testid="tab-outcome-sla">Outcome SLA Dashboard</TabsTrigger>
-          <TabsTrigger value="agent-runtime" data-testid="tab-agent-runtime">Agent Runtime</TabsTrigger>
-          <TabsTrigger value="slo-heatmap" data-testid="tab-slo-heatmap">SLO Heatmap</TabsTrigger>
-          <TabsTrigger value="violations" data-testid="tab-violations">Policy Violations</TabsTrigger>
-          <TabsTrigger value="tool-health" data-testid="tab-tool-health">Tool Health</TabsTrigger>
-          <TabsTrigger value="live" data-testid="tab-live">Trace Explorer</TabsTrigger>
-          <TabsTrigger value="drift" data-testid="tab-drift">Drift Detection</TabsTrigger>
-          <TabsTrigger value="agent-health" data-testid="tab-agent-health">Agent Health</TabsTrigger>
-          <TabsTrigger value="industry-kpis" data-testid="tab-industry-kpis">Industry KPIs</TabsTrigger>
-          <TabsTrigger value="regulatory-alerts" data-testid="tab-regulatory-alerts">Regulatory Alerts</TabsTrigger>
-        </TabsList>
+      <Tabs value={monitorTab} onValueChange={setMonitorTab} className="flex flex-col gap-4">
+        {/* IA consolidation (UX audit F-6): 10 peer tabs overwhelmed the page.
+            The five everyday views stay visible; specialist views live in a
+            "More" menu whose trigger shows the active hidden view's name. */}
+        {(() => {
+          const moreTabs = [
+            { value: "slo-heatmap", label: "SLO Heatmap" },
+            { value: "tool-health", label: "Tool Health" },
+            { value: "drift", label: "Drift Detection" },
+            { value: "industry-kpis", label: "Industry KPIs" },
+            { value: "regulatory-alerts", label: "Regulatory Alerts" },
+          ];
+          const activeMoreTab = moreTabs.find(t => t.value === monitorTab);
+          return (
+            <div className="flex items-center gap-1 flex-wrap">
+              <TabsList className="w-fit h-auto">
+                <TabsTrigger value="outcome-sla" data-testid="tab-outcome-sla">Outcome SLA</TabsTrigger>
+                <TabsTrigger value="agent-runtime" data-testid="tab-agent-runtime">Agent Runtime</TabsTrigger>
+                <TabsTrigger value="live" data-testid="tab-live">Trace Explorer</TabsTrigger>
+                <TabsTrigger value="violations" data-testid="tab-violations">Policy Violations</TabsTrigger>
+                <TabsTrigger value="agent-health" data-testid="tab-agent-health">Agent Health</TabsTrigger>
+              </TabsList>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant={activeMoreTab ? "secondary" : "outline"}
+                    size="sm"
+                    className="gap-1"
+                    data-testid="button-more-monitor-tabs"
+                  >
+                    {activeMoreTab ? activeMoreTab.label : "More"}
+                    <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" data-testid="dropdown-more-monitor-tabs">
+                  {moreTabs.map(t => (
+                    <DropdownMenuItem
+                      key={t.value}
+                      onClick={() => setMonitorTab(t.value)}
+                      className={monitorTab === t.value ? "bg-accent" : ""}
+                      data-testid={`tab-${t.value}`}
+                    >
+                      {t.label}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          );
+        })()}
 
         <TabsContent value="outcome-sla" className="mt-0">
           <div className="flex flex-col gap-4">
@@ -1630,7 +1674,7 @@ export default function Monitor() {
                             </span>
                           ))}
                         </div>
-                        <span className="text-[10px] text-muted-foreground">Detected: {new Date(diagnosis.detectedAt).toLocaleDateString()}</span>
+                        <span className="text-[10px] text-muted-foreground">Detected: {formatDate(diagnosis.detectedAt)}</span>
                       </div>
                     </div>
                   );
@@ -2244,7 +2288,7 @@ export default function Monitor() {
                           <span className="text-[11px]">{signal.suiteName}</span>
                           <span className="text-[10px] text-muted-foreground">{getMetricLabel(signal.metric)} {signal.status === "improved" ? "+" : "-"}{Math.abs(signal.driftPercent).toFixed(1)}%</span>
                         </div>
-                        <span className="text-[10px] text-muted-foreground">{new Date(signal.detectedAt).toLocaleDateString()}</span>
+                        <span className="text-[10px] text-muted-foreground">{formatDate(signal.detectedAt)}</span>
                       </div>
                     ))}
                   </div>

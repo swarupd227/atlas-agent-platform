@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useRole } from "@/components/role-provider";
 import { Shield, ShieldCheck, ShieldAlert, ExternalLink, X, Loader2, AppWindow } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -75,11 +76,12 @@ function getTrustVariant(trustLevel?: string): "default" | "secondary" | "destru
 
 export function McpAppConsentDialog({ app, open, onConsent, onDeny }: McpAppConsentDialogProps) {
   const { toast } = useToast();
+  const { role } = useRole();
 
   const consentMutation = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/mcp-apps/${app.id}/consent`, {
-        userId: "current-user",
+        userId: role.id,
         capabilities: app.capabilities || [],
       });
       return res.json();

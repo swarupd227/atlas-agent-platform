@@ -184,7 +184,6 @@ function Canvas({ initialNodes, initialEdges, onChange }: Omit<Props, "flowKey">
         >
           <Background />
           <Controls />
-          <MiniMap pannable zoomable className="!bg-muted" />
         </ReactFlow>
       </div>
 

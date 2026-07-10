@@ -1801,6 +1801,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         complianceTags: z.array(z.string()).optional(),
         systemPrompt: z.string().optional(),
         suggestedRagPipeline: z.string().nullable().optional(),
+        suggestedBlueprintId: z.string().nullable().optional(),
         outputSchema: z.object({
           type: z.string(),
           description: z.string(),
@@ -1823,12 +1824,24 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
             agents: z.array(z.string()),
             waitForAll: z.boolean().optional(),
           })).optional(),
+          agentDependencyMatrix: z.array(z.object({
+            agent: z.string(),
+            inputs: z.array(z.string()).default([]),
+            outputs: z.array(z.string()).default([]),
+            dependsOn: z.array(z.string()).default([]),
+          })).optional(),
+          humanCheckpoints: z.array(z.object({
+            agentName: z.string(),
+            type: z.string().optional(),
+            description: z.string().optional(),
+          })).optional(),
           errorHandling: z.string().optional(),
           handoffRules: z.string().optional(),
         }).nullable().optional(),
+        processFlowSteps: z.array(z.any()).optional(),
       });
 
-      const { outcomeId, industry: reqIndustry, orchestrator, workers, pipeline } = bodySchema.parse(req.body);
+      const { outcomeId, industry: reqIndustry, orchestrator, workers, pipeline, processFlowSteps } = bodySchema.parse(req.body);
 
       const outcome = await storage.getOutcome(outcomeId, getOrgId(req));
       if (!outcome) return res.status(404).json({ error: "Outcome not found" });
@@ -1969,6 +1982,7 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           complianceTags: worker.complianceTags || [],
           ontologyTags: worker.matchedOntologyConcepts?.length ? { concepts: worker.matchedOntologyConcepts } : {},
           policyBindings: worker.policyConstraints?.length ? { policies: worker.policyConstraints } : {},
+          blueprintId: worker.suggestedBlueprintId || undefined,
           runtimeConfig: {
             prompt: composeTaskPrompt(worker, false),
             kpiBindings: worker.kpiBindings || [],
@@ -2007,6 +2021,30 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         }
       }
 
+      // Inherit outcome-scoped policies into all created agents so bound governance flows into execution
+      if (outcomeId) {
+        try {
+          const outcomePolicies = await storage.getPoliciesByScope("outcome", outcomeId);
+          if (outcomePolicies.length > 0) {
+            const allCreated = [teamAgent, ...createdWorkers];
+            for (const created of allCreated) {
+              const existing = (created.policyBindings as any) || {};
+              const existingNames: string[] = Array.isArray(existing.policies) ? existing.policies : [];
+              const newNames = outcomePolicies.map(p => p.name).filter(n => !existingNames.includes(n));
+              if (newNames.length > 0) {
+                await storage.updateAgent(created.id, {
+                  policyBindings: {
+                    ...existing,
+                    policies: [...existingNames, ...newNames],
+                    outcomeBindings: outcomePolicies.map(p => ({ policyId: p.id, policyName: p.name, domain: p.domain })),
+                  },
+                });
+              }
+            }
+          }
+        } catch (_) {}
+      }
+
       const blueprint = await storage.createBlueprint({
         name: `${orchestrator.name} - Team Blueprint`,
         description: pipeline?.description || `Orchestration blueprint for ${orchestrator.name}`,
@@ -2014,9 +2052,16 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
         status: "draft",
         blueprintJson: {
           pattern: pipeline?.pattern || "supervisor",
+          patternReasoning: pipeline?.patternReasoning || "",
+          description: pipeline?.description || "",
           edges: pipeline?.edges || [],
-          errorHandling: pipeline?.errorHandling,
-          handoffRules: pipeline?.handoffRules,
+          parallelGroups: pipeline?.parallelGroups || [],
+          executionGraph: pipeline?.executionGraph || [],
+          agentDependencyMatrix: pipeline?.agentDependencyMatrix || [],
+          humanCheckpoints: pipeline?.humanCheckpoints || [],
+          errorHandling: pipeline?.errorHandling || "retry then escalate",
+          handoffRules: pipeline?.handoffRules || "pass output as input",
+          processFlowSteps: processFlowSteps || [],
         },
       });
 
@@ -2034,14 +2079,38 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
 
       const pGroups = pipeline?.parallelGroups;
       const execGraph = pipeline?.executionGraph;
-      const hasParallelInfo = (pGroups && pGroups.length > 0) || (execGraph && execGraph.length > 0);
+      const depMatrix = pipeline?.agentDependencyMatrix;
 
       let tiers: Array<{ agents: string[] }> = [];
       if (execGraph && execGraph.length > 0) {
         tiers = execGraph.map(eg => ({ agents: eg.agents }));
       } else if (pGroups && pGroups.length > 0) {
         tiers = pGroups.map(group => ({ agents: group }));
+      } else if (depMatrix && depMatrix.length > 0) {
+        // Derive wave-ordered tiers from the dependency matrix (Kahn's topological sort)
+        const stageMap = new Map<string, number>();
+        const allNames = new Set(depMatrix.map((e: any) => e.agent));
+        let changed = true;
+        while (changed) {
+          changed = false;
+          for (const entry of depMatrix) {
+            const depStages = (entry.dependsOn as string[])
+              .filter((d: string) => allNames.has(d))
+              .map((d: string) => stageMap.get(d) ?? -1);
+            const minStage = depStages.length === 0 ? 0 : Math.max(...depStages) + 1;
+            if ((stageMap.get(entry.agent) ?? -1) < minStage) {
+              stageMap.set(entry.agent, minStage);
+              changed = true;
+            }
+          }
+        }
+        const maxStage = Math.max(0, ...Array.from(stageMap.values()));
+        tiers = Array.from({ length: maxStage + 1 }, (_, s) => ({
+          agents: Array.from(stageMap.entries()).filter(([, st]) => st === s).map(([n]) => n),
+        })).filter(t => t.agents.length > 0);
       }
+
+      const hasParallelInfo = tiers.length > 0;
 
       if (hasParallelInfo && tiers.length > 0) {
         let yOffset = 150;
@@ -2218,11 +2287,20 @@ After assigning one agent to each stage, bind the following ${kpiDetails.length}
           kpiBindings: orchestrator.kpiBindings || [],
           workflowSteps: orchestrator.workflowSteps || [],
           estimatedImpact: orchestrator.estimatedImpact || "",
+          matchedSkills: orchestrator.matchedSkills || [],
+          suggestedRagPipeline: orchestrator.suggestedRagPipeline || null,
+          mcpToolBindings: orchestrator.mcpToolBindings || [],
+          processFlowSteps: processFlowSteps || [],
           orchestration: {
             pattern: pipeline?.pattern || "supervisor",
+            patternReasoning: pipeline?.patternReasoning || "",
             description: pipeline?.description || "",
             errorHandling: pipeline?.errorHandling || "retry then escalate",
             handoffRules: pipeline?.handoffRules || "pass output as input",
+            parallelGroups: pipeline?.parallelGroups || [],
+            executionGraph: pipeline?.executionGraph || [],
+            agentDependencyMatrix: pipeline?.agentDependencyMatrix || [],
+            humanCheckpoints: pipeline?.humanCheckpoints || [],
             workerIds: createdWorkers.map((w: any) => w.id),
             edges: pipeline?.edges || [],
             blueprintId: blueprint.id,
@@ -3163,6 +3241,9 @@ Respond in JSON: { "testCases": [{ "name": string, "inputData": object, "expecte
             (agent as any).industry || "technology",
             richPrompt,
             { maxToolIterations: agent.maxToolIterations ?? 5 },
+            undefined,
+            undefined,
+            getRequestRole(req),
           );
           const replayLatency = Date.now() - replayStart;
           totalReplayLatency += replayLatency;

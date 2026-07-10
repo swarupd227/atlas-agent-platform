@@ -25,6 +25,7 @@ import {
   redactPayload,
 } from "../permissions";
 import { resolveOntologyTags, handleZodError, checkPatchSafety, generateKpiAlignedEvalSuite, resolvePolicyBundle } from "./helpers";
+import { getPublicKeyInfo, signAuditPayload } from "../audit-signing";
 import billingRouter from "./billing";
 import { callClaude, stripJsonFences } from "../claude";
 
@@ -1429,7 +1430,7 @@ Ontology: ${ontologyName || "industry standard"}`,
   });
 
   // Verify hash chain integrity
-  router.get("/api/audit-events/verify-chain", async (req, res) => {
+  router.get("/api/audit-events/verify-chain", checkPermission("export_audit_bundle"), async (req, res) => {
     try {
       const crypto = await import("crypto");
       const events = await storage.getAuditEvents(getOrgId(req));
@@ -1526,7 +1527,7 @@ Ontology: ${ontologyName || "industry standard"}`,
     }
   });
 
-  router.get("/api/audit-events/export-bundle", async (req, res) => {
+  router.get("/api/audit-events/export-bundle", checkPermission("export_audit_bundle"), async (req, res) => {
     const { type, startDate, endDate, includeHashes, objectFilter, redaction } = req.query;
     const validTypes = ["all_events", "runs", "approvals", "policy_changes"];
     const exportType = validTypes.includes(type as string) ? (type as string) : "all_events";
@@ -1632,19 +1633,56 @@ Ontology: ${ontologyName || "industry standard"}`,
 
     if (includeHashes === "true") {
       const allEvents = await storage.getAuditEvents(getOrgId(req));
-      const lastEvent = allEvents[allEvents.length - 1];
+      // Real verification — replaces the former hardcoded verified:true.
+      const integrity = await storage.verifyAuditChainIntegrity();
+      const lastEvent = allEvents.reduce((acc: any, e: any) =>
+        (e.sequenceNum ?? -1) > (acc?.sequenceNum ?? -1) ? e : acc, null as any);
       bundle.integrityInfo = {
         chainLength: allEvents.length,
         lastHash: lastEvent?.eventHash || null,
         lastSequence: lastEvent?.sequenceNum || 0,
-        verified: true,
+        chainValid: integrity.valid,
+        signatureValid: integrity.signatureValid ?? null,
+        signedEvents: integrity.signedEvents ?? 0,
+        unsignedEvents: integrity.unsignedEvents ?? 0,
       };
     }
+
+    // Sign the bundle itself so a downloaded file is tamper-evident on its own:
+    // the signature covers a sha256 of the canonical bundle body. Anyone can
+    // verify it with the public key from GET /api/audit-chain/public-key.
+    const bundleBody = JSON.stringify(bundle, Object.keys(bundle).sort());
+    const bundleHash = nodeCrypto.createHash("sha256").update(bundleBody).digest("hex");
+    const { signature, signerKeyId } = await signAuditPayload(bundleHash);
+    const pub = await getPublicKeyInfo();
+    bundle.signature = { algorithm: "Ed25519", bundleHash, signature, signerKeyId, publicKeyPem: pub.publicKeyPem };
+
+    // Exporting the audit log is itself an audited action (was a blind spot).
+    await storage.createAuditEvent({
+      action: "audit_events_exported",
+      actorType: "user",
+      actorId: getRequestRole(req),
+      objectType: "audit_bundle",
+      objectId: exportType,
+      organizationId: orgId,
+      details: `Audit bundle exported: type=${exportType}, records=${redactedData.length}, redaction=${redactionProfile}, window=${start.toISOString()}..${end.toISOString()}`,
+    }).catch((e: any) => console.error("[export-bundle] failed to audit export:", e.message));
 
     res.json(bundle);
   });
 
-  router.get("/api/audit-events/verify-integrity", async (_req, res) => {
+  // Public key for OFFLINE verification of the chain / an exported bundle.
+  // Only the public key is exposed — it cannot sign, so this is safe to share
+  // with external auditors.
+  router.get("/api/audit-chain/public-key", async (_req, res) => {
+    try {
+      res.json(await getPublicKeyInfo());
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  router.get("/api/audit-events/verify-integrity", checkPermission("export_audit_bundle"), async (_req, res) => {
     const startedAt = Date.now();
     const result = await storage.verifyAuditChainIntegrity();
     const durationMs = Date.now() - startedAt;
@@ -1663,6 +1701,22 @@ Ontology: ${ontologyName || "industry standard"}`,
       const history = await storage.getAuditChainHealthChecks(20);
       const latest = history[0] ?? null;
       res.json({ latest, history });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Repair path for a broken chain (UX audit F-10 follow-through): re-links
+  // per-org hashes from genesis with current canonicalization and records the
+  // repair itself as an audit event. Gated to roles with audit authority.
+  router.post("/api/audit-chain/rebaseline", checkPermission("export_audit_bundle"), async (req, res) => {
+    try {
+      const reason = typeof req.body?.reason === "string" ? req.body.reason.slice(0, 500) : undefined;
+      const actor = (req as any).userRole || "admin";
+      const result = await storage.rebaselineAuditChain(actor, reason);
+      const integrity = await storage.verifyAuditChainIntegrity();
+      try { await storage.persistAuditChainCheckResult(integrity, 0, "manual"); } catch { /* non-fatal */ }
+      res.json({ ...result, integrity });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

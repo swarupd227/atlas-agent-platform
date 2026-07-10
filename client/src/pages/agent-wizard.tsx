@@ -3,6 +3,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { useLocation, useSearch } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useUnsavedChanges } from "@/hooks/use-unsaved-changes";
 import type { AgentTemplate, OutcomeContract, KpiDefinition } from "@shared/schema";
 import { useIndustry, type IndustryId } from "@/components/industry-provider";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -236,6 +237,8 @@ interface WizardState {
     selectedOptional: string[];
     templateId: string | null;
   };
+  mcpServerNames: string[];
+  knowledgeBaseNames: string[];
 }
 
 interface DynamicPresetAdjustment {
@@ -341,6 +344,8 @@ const defaultWizardState: WizardState = {
     selectedOptional: [],
     templateId: null,
   },
+  mcpServerNames: [],
+  knowledgeBaseNames: [],
 };
 
 const INDUSTRY_PRESETS: Record<string, {
@@ -707,6 +712,10 @@ export default function AgentWizard() {
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [aiInput, setAiInput] = useState("");
   const [aiStreaming, setAiStreaming] = useState(false);
+  const [aiDraftInput, setAiDraftInput] = useState("");
+  const [aiDrafting, setAiDrafting] = useState(false);
+  const [aiDraftConflicts, setAiDraftConflicts] = useState<Array<{ severity: "warn" | "error"; message: string }>>([]);
+  const [aiDraftReasoning, setAiDraftReasoning] = useState<string | null>(null);
   const [templateMatches, setTemplateMatches] = useState<TemplateMatch[]>([]);
   const [matchingInProgress, setMatchingInProgress] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
@@ -714,6 +723,13 @@ export default function AgentWizard() {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const [, navigate] = useLocation();
   const searchParams = useSearch();
+
+  // Guard in-progress drafts (UX audit F-8): once the user has named the agent
+  // and until creation succeeds, navigating away asks for confirmation.
+  useUnsavedChanges(
+    !!wizardState.name && !postCreationAgent,
+    "Your agent draft has not been created yet — leaving will discard it.",
+  );
   const { toast } = useToast();
 
   const [jobProgress, setJobProgress] = useState<{
@@ -1219,6 +1235,14 @@ export default function AgentWizard() {
       blueprintName: null,
       templateSystemPrompt: (template.blueprintJson as Record<string, any>)?.systemPrompt || "",
       templateInstructions: (template.blueprintJson as Record<string, any>)?.instructions || (template.blueprintJson as Record<string, any>)?.runtimeConfig?.prompt || "",
+      mcpServerNames: (() => {
+        const servers = (template.blueprintJson as Record<string, any>)?.linkedMcpServers;
+        return Array.isArray(servers) ? servers.map((s: any) => typeof s === "string" ? s : s.name || s.serverName || "").filter(Boolean) : [];
+      })(),
+      knowledgeBaseNames: (() => {
+        const kbs = (template.blueprintJson as Record<string, any>)?.linkedKnowledgeBases;
+        return Array.isArray(kbs) ? kbs.map((k: any) => typeof k === "string" ? k : k.name || k.kbName || "").filter(Boolean) : [];
+      })(),
       templateSkills: (() => {
         const reqSkills = Array.isArray(template.requiredSkills)
           ? (template.requiredSkills as any[]).map((s: any, i: number) => ({
@@ -1260,6 +1284,70 @@ export default function AgentWizard() {
       })(),
     });
     toast({ title: `Template "${template.name}" applied` });
+  }
+
+  // Prefills the wizard from a /api/ai/draft-agent response — same target
+  // shape and same updateState() call as applyTemplate, so the draft lands
+  // in the exact same editable fields a template would. Everything here is
+  // still just a proposal: nothing is created until the user reviews and
+  // hits Create on the final step.
+  function applyAiDraft(draft: any) {
+    updateState({
+      name: draft.name || wizardState.name,
+      description: draft.description || wizardState.description,
+      riskTier: draft.riskTier || wizardState.riskTier,
+      autonomyMode: draft.autonomyMode || wizardState.autonomyMode,
+      templateSystemPrompt: draft.systemPrompt || "",
+      toolsConfig: Array.isArray(draft.toolsConfig) ? draft.toolsConfig : [],
+      mcpServerNames: Array.isArray(draft.mcpServerNames) ? draft.mcpServerNames : [],
+      policyBindings: Array.isArray(draft.policyBindings)
+        ? draft.policyBindings.map((p: any) => ({
+            policyId: p.policyId || "",
+            policyName: p.policyName || p.policyId || "",
+            enforcement: p.enforcement || "monitor",
+            domain: p.domain || "",
+            description: p.description || "",
+          }))
+        : [],
+      ontologyTags: Array.isArray(draft.ontologyTags) ? draft.ontologyTags : [],
+      guardrailsConfig: {
+        ...defaultWizardState.guardrailsConfig,
+        stopConditions: Array.isArray(draft.guardrailsConfig?.stopConditions) ? draft.guardrailsConfig.stopConditions : [],
+        escalationTriggers: Array.isArray(draft.guardrailsConfig?.escalationTriggers) ? draft.guardrailsConfig.escalationTriggers : [],
+        forbiddenOutputs: Array.isArray(draft.guardrailsConfig?.forbiddenOutputs) ? draft.guardrailsConfig.forbiddenOutputs : [],
+      },
+      evalSuiteConfig: {
+        ...defaultWizardState.evalSuiteConfig,
+        customCases: Array.isArray(draft.evalSuiteConfig?.customCases)
+          ? draft.evalSuiteConfig.customCases.map((c: any) => ({ name: c.name || "", input: c.input || "", expectedOutput: c.expectedOutput || "" }))
+          : [],
+      },
+    });
+    if (draft.sourceTemplateId) setSelectedTemplateId(draft.sourceTemplateId);
+  }
+
+  async function draftAgentFromDescription() {
+    if (!aiDraftInput.trim() || aiDrafting) return;
+    setAiDrafting(true);
+    setAiDraftConflicts([]);
+    setAiDraftReasoning(null);
+    try {
+      const res = await apiRequest("POST", "/api/ai/draft-agent", {
+        description: aiDraftInput.trim(),
+        industryId: wizardState.industryId || industry || undefined,
+      });
+      const data = await res.json();
+      applyAiDraft(data.draft);
+      setAiDraftConflicts(data.policyConflicts || []);
+      setAiDraftReasoning(data.draft?.reasoning || null);
+      toast({ title: "Draft ready", description: `"${data.draft?.name || "Agent"}" drafted — review every field before creating.` });
+      setAiPanelOpen(false);
+      setCurrentStep(8); // Review & Create — everything is editable from here
+    } catch (e: any) {
+      toast({ title: "Draft failed", description: e?.message || "Could not draft an agent from that description. You can still configure manually.", variant: "destructive" });
+    } finally {
+      setAiDrafting(false);
+    }
   }
 
   async function runAiMatching() {
@@ -1396,7 +1484,7 @@ export default function AgentWizard() {
       permissionsConfig: wizardState.permissionsConfig,
       memoryRagConfig: wizardState.memoryRagEnabled ? wizardState.memoryRagConfig : null,
       blueprintId: wizardState.blueprintId || undefined,
-      blueprintJson: wizardState.blueprintId ? undefined : { nodes: wizardState.workflowNodes },
+      blueprintJson: wizardState.blueprintId ? undefined : { nodes: wizardState.workflowNodes, edges: wizardState.workflowConnections },
       policyBindings: wizardState.policyBindings,
       evalBindings: wizardState.evalBindings,
       guardrailsConfig: wizardState.guardrailsConfig,
@@ -1420,6 +1508,11 @@ export default function AgentWizard() {
       const existingRt = (payload.runtimeConfig as Record<string, any>) || {};
       payload.runtimeConfig = { ...existingRt, sourceTemplateId: selectedTemplateId };
     }
+
+    // Fix #5: Include workflowConnections as blueprint edges (already in blueprintJson above)
+    // Fix #6: Forward template-derived server/KB names for server-side link creation
+    if (wizardState.mcpServerNames.length > 0) payload.mcpServerNames = wizardState.mcpServerNames;
+    if (wizardState.knowledgeBaseNames.length > 0) payload.knowledgeBaseNames = wizardState.knowledgeBaseNames;
 
     const ts = wizardState.templateSkills;
     if (ts.required.length > 0 || ts.optional.length > 0) {
@@ -1738,6 +1831,8 @@ export default function AgentWizard() {
               onClick={() => {
                 if (step.number <= currentStep) setCurrentStep(step.number);
               }}
+              title={step.label}
+              aria-label={`Step ${step.number + 1}: ${step.label}`}
               className={`flex items-center gap-2 text-sm font-medium transition-colors ${
                 currentStep === step.number
                   ? "text-foreground"
@@ -1757,7 +1852,12 @@ export default function AgentWizard() {
               >
                 {currentStep > step.number ? <Check className="w-3.5 h-3.5" /> : step.number}
               </div>
-              <span className="hidden md:inline whitespace-nowrap">{step.label}</span>
+              {/* Only the active step carries its label — 9 nowrap labels
+                  overflowed the viewport and clipped the final steps
+                  (UX audit F-6). Inactive steps expose labels via tooltip. */}
+              {currentStep === step.number && (
+                <span className="hidden md:inline whitespace-nowrap">{step.label}</span>
+              )}
             </button>
             {idx < STEPS.length - 1 && (
               <div className={`flex-1 h-px ${currentStep > step.number ? "bg-primary/40" : "bg-border"}`} />
@@ -1844,6 +1944,8 @@ export default function AgentWizard() {
             outcomeKpis={outcomeKpis}
             isDynamicPreset={isDynamicPreset}
             dynamicAdjustmentCount={dynamicAdjustments.length}
+            aiDraftReasoning={aiDraftReasoning}
+            aiDraftConflicts={aiDraftConflicts}
             onToggleOptionalSkill={(skillId: string) => {
               setWizardState(prev => {
                 const sel = prev.templateSkills.selectedOptional;
@@ -1898,9 +2000,38 @@ export default function AgentWizard() {
               <Sparkles className="w-4 h-4" />
               AI Assistant
             </SheetTitle>
-            <SheetDescription>Get help designing your agent configuration</SheetDescription>
+            <SheetDescription>Describe what you need and get a full draft, or chat through the design</SheetDescription>
           </SheetHeader>
+          <div className="p-4 border-b bg-muted/30 flex flex-col gap-2">
+            <Label htmlFor="ai-draft-input" className="text-xs font-medium text-muted-foreground">
+              Describe the outcome — get a complete draft
+            </Label>
+            <Textarea
+              id="ai-draft-input"
+              placeholder="e.g. Triage inbound support tickets, classify by urgency, and draft a first response for the agent to review before sending."
+              value={aiDraftInput}
+              onChange={(e) => setAiDraftInput(e.target.value)}
+              disabled={aiDrafting}
+              rows={3}
+              className="text-sm resize-none"
+              data-testid="input-ai-draft-description"
+            />
+            <Button
+              onClick={draftAgentFromDescription}
+              disabled={aiDrafting || !aiDraftInput.trim()}
+              size="sm"
+              className="self-end"
+              data-testid="button-draft-agent"
+            >
+              {aiDrafting ? (
+                <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Drafting...</>
+              ) : (
+                <><Sparkles className="w-3.5 h-3.5 mr-1.5" /> Draft Agent</>
+              )}
+            </Button>
+          </div>
           <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-3">
+            <p className="text-xs text-muted-foreground uppercase tracking-wide font-medium -mb-1">Or refine by chatting</p>
             {chatMessages.length === 0 && (
               <div className="flex flex-col items-center justify-center flex-1 gap-2 text-center py-8">
                 <MessageSquare className="w-8 h-8 text-muted-foreground/40" />
@@ -5416,6 +5547,8 @@ function StepReview({
   isDynamicPreset,
   dynamicAdjustmentCount,
   onToggleOptionalSkill,
+  aiDraftReasoning,
+  aiDraftConflicts,
 }: {
   state: WizardState;
   onCreate: () => void;
@@ -5429,6 +5562,8 @@ function StepReview({
   isDynamicPreset?: boolean;
   dynamicAdjustmentCount?: number;
   onToggleOptionalSkill?: (skillId: string) => void;
+  aiDraftReasoning?: string | null;
+  aiDraftConflicts?: Array<{ severity: "warn" | "error"; message: string }>;
 }) {
   const linkedOutcome = outcomes?.find((o) => o.id === state.outcomeId);
   const [governanceOverride, setGovernanceOverride] = useState(false);
@@ -5464,6 +5599,39 @@ function StepReview({
       <p className="text-sm text-muted-foreground">
         Review your agent configuration before creating.
       </p>
+
+      {aiDraftReasoning && (
+        <Card className="border-purple-500/30 bg-purple-500/5" data-testid="card-ai-draft-reasoning">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <Sparkles className="w-4 h-4 text-purple-500" />
+              AI-drafted — review every field below
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-xs text-muted-foreground pt-0">{aiDraftReasoning}</CardContent>
+        </Card>
+      )}
+
+      {aiDraftConflicts && aiDraftConflicts.length > 0 && (
+        <Card className="border-destructive/50 bg-destructive/5" data-testid="card-ai-draft-conflicts">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 text-destructive" />
+              {aiDraftConflicts.length} policy {aiDraftConflicts.length === 1 ? "conflict" : "conflicts"} in this draft
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-1.5 pt-0">
+            {aiDraftConflicts.map((c, i) => (
+              <div key={i} className="flex items-start gap-2 text-xs" data-testid={`ai-draft-conflict-${i}`}>
+                <Badge variant={c.severity === "error" ? "destructive" : "outline"} className="text-[10px] shrink-0">
+                  {c.severity}
+                </Badge>
+                <span className="text-muted-foreground">{c.message}</span>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       {designTimeLoading && state.industryId && state.industryId !== "cross_industry" && (
         <Card data-testid="card-governance-loading">

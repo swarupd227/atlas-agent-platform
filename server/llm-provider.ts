@@ -64,6 +64,19 @@ export interface LLMProviderInfo {
   }>;
 }
 
+// ---------------------------------------------------------------------------
+// Price table — versioned so recorded costUsd values are auditable.
+// Bump PRICE_TABLE_VERSION (date-based) whenever any rate below changes; the
+// version is recorded in run provenance and exposed at
+// GET /api/llm-providers/pricing. Rates are provider list prices per 1k tokens.
+// ---------------------------------------------------------------------------
+export const PRICE_TABLE_VERSION = "2026-07-06";
+
+// Conservative fallback when a model id is missing from the table — better to
+// overestimate spend than silently record $0 (rates ~ Claude Sonnet tier).
+const FALLBACK_RATES = { costPer1kInput: 0.003, costPer1kOutput: 0.015 };
+const warnedUnknownModels = new Set<string>();
+
 const OPENAI_MODELS: LLMProviderInfo["models"] = [
   { id: "gpt-4.1", name: "GPT-4.1", contextWindow: 1047576, costPer1kInput: 0.002, costPer1kOutput: 0.008, supportsToolCalling: true, supportsJson: true },
   { id: "gpt-4.1-mini", name: "GPT-4.1 Mini", contextWindow: 1047576, costPer1kInput: 0.0004, costPer1kOutput: 0.0016, supportsToolCalling: true, supportsJson: true },
@@ -98,8 +111,28 @@ function estimateCost(
   modelId: string
 ): number {
   const model = models.find((m) => m.id === modelId);
-  if (!model) return 0;
+  if (!model) {
+    if (!warnedUnknownModels.has(modelId)) {
+      warnedUnknownModels.add(modelId);
+      console.warn(`[llm-provider] Model "${modelId}" missing from price table v${PRICE_TABLE_VERSION} — using conservative fallback rates. Add it to the table and bump the version.`);
+    }
+    return (promptTokens / 1000) * FALLBACK_RATES.costPer1kInput + (completionTokens / 1000) * FALLBACK_RATES.costPer1kOutput;
+  }
   return (promptTokens / 1000) * model.costPer1kInput + (completionTokens / 1000) * model.costPer1kOutput;
+}
+
+/** The full versioned price table — exposed for audit via /api/llm-providers/pricing. */
+export function getPriceTable() {
+  return {
+    version: PRICE_TABLE_VERSION,
+    unit: "USD per 1k tokens",
+    fallbackRates: FALLBACK_RATES,
+    providers: {
+      openai: { models: OPENAI_MODELS, embeddingModels: OPENAI_EMBEDDING_MODELS },
+      anthropic: { models: ANTHROPIC_MODELS },
+      google: { models: GOOGLE_MODELS },
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------

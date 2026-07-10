@@ -14,7 +14,6 @@ import {
 import {
   AppWindow, Shield, ShieldCheck, Server, Eye, Settings, Lock, Unlock, Package,
 } from "lucide-react";
-import { Link } from "wouter";
 import McpAppRenderer from "@/components/mcp-app-renderer";
 
 interface McpApp {
@@ -221,19 +220,14 @@ export default function McpAppsPage() {
 
                   <div className="flex items-center gap-2">
                     <Button
-                      variant="outline"
+                      variant="default"
                       size="sm"
                       onClick={() => setPreviewAppId(app.id)}
                       data-testid={`button-preview-${app.id}`}
                     >
                       <Eye className="h-3.5 w-3.5" />
-                      Preview
+                      {app.consented ? "Open App" : "Preview & Allow"}
                     </Button>
-                    <Link href={`/mcp-apps/${app.id}`}>
-                      <Button variant="outline" size="sm" data-testid={`link-details-${app.id}`}>
-                        Details
-                      </Button>
-                    </Link>
                   </div>
                 </CardContent>
               </Card>

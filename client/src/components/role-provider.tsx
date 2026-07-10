@@ -235,6 +235,9 @@ export function RoleProvider({ children }: { children: ReactNode }) {
   };
 
   const isRouteAllowed = useCallback((route: string) => {
+    // The Agent Workspace is the universal consumption surface — every role can
+    // use it. (Which agents a person sees inside it is gated separately.)
+    if (route === "/workspace" || route.startsWith("/workspace")) return true;
     const currentRole = ROLES.find((r) => r.id === roleId) || ROLES[0];
     return currentRole.allowedRoutes.some((allowed) => {
       if (allowed === "/") return route === "/";

@@ -12,6 +12,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
+import { QueryBoundary } from "@/components/ui-vocab";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -122,7 +123,7 @@ export default function KnowledgeBases() {
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const { toast } = useToast();
 
-  const { data: knowledgeBases = [], isLoading } = useQuery<KnowledgeBase[]>({
+  const { data: knowledgeBases = [], isLoading, isError, error, refetch } = useQuery<KnowledgeBase[]>({
     queryKey: ["/api/knowledge-bases"],
   });
 
@@ -177,6 +178,14 @@ export default function KnowledgeBases() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {Array(6).fill(0).map((_, i) => <Skeleton key={i} className="h-48" />)}
         </div>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="p-6">
+        <QueryBoundary isLoading={false} isError error={error} onRetry={() => refetch()}>{null}</QueryBoundary>
       </div>
     );
   }

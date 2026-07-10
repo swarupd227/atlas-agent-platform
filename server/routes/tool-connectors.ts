@@ -5,6 +5,7 @@ import { insertToolConnectorSchema } from "@shared/schema";
 import { getOrgId } from "../auth";
 import { jobEvents } from "../worker";
 import { handleZodError } from "./helpers";
+import { assertSafeOutboundUrl, UnsafeUrlError } from "../url-safety";
 
 const router = Router();
 
@@ -47,8 +48,18 @@ const router = Router();
 
     try {
       const testUrl = (connector as any).endpoint || (connector as any).url || (connector as any).baseUrl;
+      let safeUrlCheck: { ok: boolean; reason?: string } = { ok: true };
+      if (testUrl) {
+        try {
+          await assertSafeOutboundUrl(testUrl);
+        } catch (e: any) {
+          safeUrlCheck = { ok: false, reason: e instanceof UnsafeUrlError ? e.message : "That endpoint isn't reachable from this action." };
+        }
+      }
       if (!testUrl) {
         message = "No endpoint URL configured for this connector";
+      } else if (!safeUrlCheck.ok) {
+        message = safeUrlCheck.reason!;
       } else {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 10000);
@@ -512,8 +523,18 @@ router.delete("/api/admin/webhooks/:id", async (req, res) => {
 
     try {
       const webhookUrl = (webhook as any).url || (webhook as any).endpoint;
+      let safeUrlCheck: { ok: boolean; reason?: string } = { ok: true };
+      if (webhookUrl) {
+        try {
+          await assertSafeOutboundUrl(webhookUrl);
+        } catch (e: any) {
+          safeUrlCheck = { ok: false, reason: e instanceof UnsafeUrlError ? e.message : "That webhook URL isn't reachable from this action." };
+        }
+      }
       if (!webhookUrl) {
         message = "No webhook URL configured";
+      } else if (!safeUrlCheck.ok) {
+        message = safeUrlCheck.reason!;
       } else {
         const testPayload = {
           event: "webhook.test",

@@ -268,6 +268,22 @@ export default function RagPipeline() {
 
   const recentRetrievals = useMemo(() => getMockRecentRetrievals(), []);
 
+  // Quality-dashboard figures are derived from the SAMPLE retrievals above so
+  // they are internally consistent — the tab carries an explicit sample-data
+  // banner. Never present literals here as live measurements.
+  const retrievalStats = useMemo(() => {
+    const rows = recentRetrievals;
+    const latencies = rows.map(r => r.latency).sort((a, b) => a - b);
+    const pct = (p: number) => latencies.length ? latencies[Math.min(latencies.length - 1, Math.floor((p / 100) * latencies.length))] : 0;
+    return {
+      avgRelevance: rows.length ? rows.reduce((s, r) => s + r.relevanceScore, 0) / rows.length : 0,
+      p50: pct(50),
+      p95: pct(95),
+      p99: pct(99),
+      avgUtilization: rows.length ? Math.round(rows.reduce((s, r) => s + r.contextUsed, 0) / rows.length) : 0,
+    };
+  }, [recentRetrievals]);
+
   function addSource() {
     if (!newSourceName.trim()) return;
     const src: KnowledgeSource = {
@@ -525,6 +541,12 @@ export default function RagPipeline() {
           </TabsContent>
 
           <TabsContent value="quality-dashboard" className="space-y-6">
+            <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400" data-testid="banner-sample-data">
+              <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              <span>
+                <b>Illustrative sample data.</b> Live RAG quality telemetry is not yet wired for this environment — the figures below are derived from the sample retrievals table and do not reflect real measurements.
+              </span>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <Card className="hover-elevate" data-testid="card-metric-relevance">
                 <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
@@ -533,13 +555,9 @@ export default function RagPipeline() {
                 </CardHeader>
                 <CardContent>
                   <div className="flex items-end gap-2">
-                    <span className="text-3xl font-bold" data-testid="text-relevance-score">0.87</span>
-                    <span className="flex items-center text-sm text-green-600 dark:text-green-400 mb-1">
-                      <TrendingUp className="h-3 w-3 mr-0.5" />
-                      +0.03
-                    </span>
+                    <span className="text-3xl font-bold" data-testid="text-relevance-score">{retrievalStats.avgRelevance.toFixed(2)}</span>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1">Avg relevance of retrieved contexts</p>
+                  <p className="text-xs text-muted-foreground mt-1">Avg relevance of sample retrievals</p>
                 </CardContent>
               </Card>
 
@@ -552,15 +570,15 @@ export default function RagPipeline() {
                   <div className="flex flex-wrap items-end gap-3">
                     <div>
                       <span className="text-xs text-muted-foreground">P50</span>
-                      <p className="text-lg font-bold" data-testid="text-latency-p50">142ms</p>
+                      <p className="text-lg font-bold" data-testid="text-latency-p50">{retrievalStats.p50}ms</p>
                     </div>
                     <div>
                       <span className="text-xs text-muted-foreground">P95</span>
-                      <p className="text-lg font-bold" data-testid="text-latency-p95">387ms</p>
+                      <p className="text-lg font-bold" data-testid="text-latency-p95">{retrievalStats.p95}ms</p>
                     </div>
                     <div>
                       <span className="text-xs text-muted-foreground">P99</span>
-                      <p className="text-lg font-bold" data-testid="text-latency-p99">612ms</p>
+                      <p className="text-lg font-bold" data-testid="text-latency-p99">{retrievalStats.p99}ms</p>
                     </div>
                   </div>
                 </CardContent>
@@ -573,14 +591,10 @@ export default function RagPipeline() {
                 </CardHeader>
                 <CardContent>
                   <div className="flex items-end gap-2">
-                    <span className="text-3xl font-bold" data-testid="text-context-utilization">73%</span>
-                    <span className="flex items-center text-sm text-green-600 dark:text-green-400 mb-1">
-                      <TrendingUp className="h-3 w-3 mr-0.5" />
-                      +5%
-                    </span>
+                    <span className="text-3xl font-bold" data-testid="text-context-utilization">{retrievalStats.avgUtilization}%</span>
                   </div>
-                  <Progress value={73} className="h-1.5 mt-2" data-testid="progress-context-utilization" />
-                  <p className="text-xs text-muted-foreground mt-1">Context actually used by agents</p>
+                  <Progress value={retrievalStats.avgUtilization} className="h-1.5 mt-2" data-testid="progress-context-utilization" />
+                  <p className="text-xs text-muted-foreground mt-1">Avg context used in sample retrievals</p>
                 </CardContent>
               </Card>
 
@@ -591,20 +605,16 @@ export default function RagPipeline() {
                 </CardHeader>
                 <CardContent>
                   <div className="flex items-end gap-2">
-                    <span className="text-3xl font-bold" data-testid="text-hallucination-rate">0.12</span>
-                    <span className="flex items-center text-sm text-green-600 dark:text-green-400 mb-1">
-                      <ArrowDownRight className="h-3 w-3 mr-0.5" />
-                      -0.04
-                    </span>
+                    <span className="text-3xl font-bold text-muted-foreground" data-testid="text-hallucination-rate">—</span>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-1">Lower is better (inverse correlation)</p>
+                  <p className="text-xs text-muted-foreground mt-1">Not yet measured — requires eval-linked retrieval telemetry</p>
                 </CardContent>
               </Card>
             </div>
 
             <Card data-testid="card-recent-retrievals">
               <CardHeader className="pb-3">
-                <CardTitle className="text-lg font-medium">Recent Retrievals</CardTitle>
+                <CardTitle className="text-lg font-medium">Recent Retrievals (sample)</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="overflow-x-auto">

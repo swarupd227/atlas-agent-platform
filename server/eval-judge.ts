@@ -230,8 +230,20 @@ ${agentContext || "(no additional context)"}${criteriaBlock}`;
     try {
       parsed = JSON.parse(result.content);
     } catch {
-      console.warn("[eval-judge] Failed to parse judge response, defaulting to fail");
-      return { isPassed: false, confidence: 0.5, reason: "Evaluator response was not valid JSON", latencyMs };
+      // Providers without a strict JSON mode (Anthropic in particular) often wrap
+      // the object in ```json fences or add preamble text. Extract the outermost
+      // {...} before declaring the response unparseable — a false "fail" here
+      // cascades into 0% pass rates and spurious critical alerts.
+      const raw = result.content.replace(/```(?:json)?/gi, "");
+      const jsonStart = raw.indexOf("{");
+      const jsonEnd = raw.lastIndexOf("}");
+      if (jsonStart !== -1 && jsonEnd > jsonStart) {
+        try { parsed = JSON.parse(raw.slice(jsonStart, jsonEnd + 1)); } catch { /* fall through */ }
+      }
+      if (Object.keys(parsed).length === 0) {
+        console.warn("[eval-judge] Failed to parse judge response, defaulting to fail");
+        return { isPassed: false, confidence: 0.5, reason: "Evaluator response was not valid JSON", latencyMs };
+      }
     }
 
     const isPassed = parsed.passed === true;

@@ -9,10 +9,12 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
-import { Server, Plus, Shield, Activity, CheckCircle2, AlertCircle, Globe, Terminal } from "lucide-react";
+import { Server, Plus, Shield, Activity, CheckCircle2, AlertCircle, Globe, Terminal, Trash2, FileCode2 } from "lucide-react";
 import { Link } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { RiskBadge } from "@/components/ui-vocab";
+import { OpenApiImportDialog } from "@/components/openapi-import-dialog";
 import type { McpServer } from "@shared/schema";
 
 const STATUS_VARIANT: Record<string, "default" | "secondary" | "outline"> = {
@@ -29,6 +31,50 @@ function isRealMcpServer(server: McpServer): boolean {
   return !LOCALHOST_RX.some((rx) => rx.test(server.url!));
 }
 
+interface ServerTier {
+  label: string;
+  className: string;
+  description: string;
+}
+
+/**
+ * Classifies an MCP server into one of four tiers so the catalog doesn't conflate
+ * real remote MCP servers, real native vendor connectors, and synthetic demo servers:
+ *  - Real MCP: live MCP-protocol server reached over the wire.
+ *  - Native Connector: real vendor API (GitHub, Slack, …) wrapped locally; needs credentials.
+ *  - Demo / Sandbox: synthetic data for demos — not a real integration.
+ *  - REST Proxy: any other REST-wrapped tool endpoint.
+ */
+function getServerTier(server: McpServer): ServerTier {
+  if (isRealMcpServer(server)) {
+    return {
+      label: "Real MCP",
+      className: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 border-green-300 dark:border-green-700",
+      description: "Live MCP-protocol server reached over streamable-http/SSE",
+    };
+  }
+  const url = server.url || "";
+  if (/\/api\/integrations\//i.test(url)) {
+    return {
+      label: "Native Connector",
+      className: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200 border-blue-300 dark:border-blue-700",
+      description: "Real vendor API connector — requires connected credentials",
+    };
+  }
+  if (/\/api\/mock\//i.test(url)) {
+    return {
+      label: "Demo / Sandbox",
+      className: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200 border-amber-300 dark:border-amber-700",
+      description: "Synthetic data for demos — not a live integration",
+    };
+  }
+  return {
+    label: "REST Proxy",
+    className: "bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400 border-gray-300 dark:border-gray-600",
+    description: "REST-wrapped tool endpoint",
+  };
+}
+
 const HEALTH_COLOR: Record<string, string> = {
   healthy: "bg-green-500",
   degraded: "bg-yellow-500",
@@ -39,6 +85,8 @@ const HEALTH_COLOR: Record<string, string> = {
 export default function McpServersPage() {
   const { toast } = useToast();
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [openApiDialogOpen, setOpenApiDialogOpen] = useState(false);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [transportType, setTransportType] = useState("streamable-http");
@@ -50,6 +98,21 @@ export default function McpServersPage() {
 
   const { data: servers, isLoading } = useQuery<McpServer[]>({
     queryKey: ["/api/mcp-servers"],
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("DELETE", `/api/mcp-servers/${id}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/mcp-servers"] });
+      toast({ title: "MCP Server deleted" });
+      setDeleteConfirmId(null);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to delete server", description: err.message, variant: "destructive" });
+    },
   });
 
   const createMutation = useMutation({
@@ -131,10 +194,16 @@ export default function McpServersPage() {
           <h1 className="text-2xl font-semibold tracking-tight">MCP Servers</h1>
           <p className="text-sm text-muted-foreground">Manage Model Context Protocol servers for agent tool access</p>
         </div>
-        <Button onClick={() => setDialogOpen(true)} data-testid="button-add-mcp-server">
-          <Plus className="w-4 h-4 mr-1.5" />
-          Add Server
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={() => setOpenApiDialogOpen(true)} data-testid="button-import-openapi">
+            <FileCode2 className="w-4 h-4 mr-1.5" />
+            Import from OpenAPI
+          </Button>
+          <Button onClick={() => setDialogOpen(true)} data-testid="button-add-mcp-server">
+            <Plus className="w-4 h-4 mr-1.5" />
+            Add Server
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -196,7 +265,8 @@ export default function McpServersPage() {
             const dateB = new Date(b.updatedAt || b.createdAt || 0).getTime();
             return dateB - dateA;
           }).map((server) => (
-            <Link key={server.id} href={`/integrations/mcp-servers/${server.id}`}>
+            <div key={server.id} className="relative group">
+              <Link href={`/integrations/mcp-servers/${server.id}`}>
               <Card className="hover-elevate cursor-pointer" data-testid={`card-mcp-server-${server.id}`}>
                 <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pb-2">
                   <div className="flex items-center gap-3">
@@ -234,35 +304,67 @@ export default function McpServersPage() {
                     <Badge variant={STATUS_VARIANT[server.status] || "outline"} className="text-[10px]" data-testid={`badge-status-${server.id}`}>
                       {server.status}
                     </Badge>
-                    <Badge
-                      variant={server.riskTier === "CRITICAL" ? "destructive" : server.riskTier === "HIGH" ? "destructive" : "outline"}
-                      className="text-[10px]"
-                      data-testid={`badge-risk-${server.id}`}
-                    >
-                      <Shield className="w-3 h-3 mr-1" />
-                      {server.riskTier}
-                    </Badge>
+                    <RiskBadge tier={server.riskTier} className="text-[10px]" />
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
-                    {isRealMcpServer(server) ? (
-                      <Badge className="text-[10px] bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200 border-green-300 dark:border-green-700" variant="outline" data-testid={`badge-protocol-type-${server.id}`}>
-                        Real MCP
-                      </Badge>
-                    ) : (
-                      <Badge className="text-[10px] bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400 border-gray-300 dark:border-gray-600" variant="outline" data-testid={`badge-protocol-type-${server.id}`}>
-                        REST Proxy
-                      </Badge>
-                    )}
+                    {(() => {
+                      const tier = getServerTier(server);
+                      return (
+                        <Badge
+                          className={`text-[10px] ${tier.className}`}
+                          variant="outline"
+                          title={tier.description}
+                          data-testid={`badge-protocol-type-${server.id}`}
+                        >
+                          {tier.label}
+                        </Badge>
+                      );
+                    })()}
                     <span className="text-[11px] text-muted-foreground">
                       v{server.negotiatedProtocolVersion || server.expectedProtocolVersion || "N/A"}
                     </span>
                   </div>
                 </CardContent>
               </Card>
-            </Link>
+              </Link>
+              <Button
+                size="icon"
+                variant="ghost"
+                aria-label={`Delete server ${server.name}`}
+                className="absolute top-2 right-2 h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity z-10 text-destructive hover:text-destructive"
+                onClick={(e) => { e.preventDefault(); setDeleteConfirmId(server.id); }}
+                data-testid={`button-delete-server-${server.id}`}
+              >
+                <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
+              </Button>
+            </div>
           ))}
         </div>
       )}
+
+      <Dialog open={deleteConfirmId !== null} onOpenChange={(open) => { if (!open) setDeleteConfirmId(null); }}>
+        <DialogContent data-testid="dialog-delete-mcp-server">
+          <DialogHeader>
+            <DialogTitle>Delete MCP Server</DialogTitle>
+            <DialogDescription>
+              This will permanently remove the server and all its associated tools, resources, and prompts. This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConfirmId(null)} data-testid="button-cancel-delete">
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => { if (deleteConfirmId) deleteMutation.mutate(deleteConfirmId); }}
+              disabled={deleteMutation.isPending}
+              data-testid="button-confirm-delete"
+            >
+              {deleteMutation.isPending ? "Deleting..." : "Delete Server"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-lg" data-testid="dialog-add-mcp-server">
@@ -373,6 +475,8 @@ export default function McpServersPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <OpenApiImportDialog open={openApiDialogOpen} onOpenChange={setOpenApiDialogOpen} />
     </div>
   );
 }

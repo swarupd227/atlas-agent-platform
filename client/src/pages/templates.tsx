@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { QueryBoundary } from "@/components/ui-vocab";
 import {
   Select,
   SelectContent,
@@ -232,7 +233,7 @@ export default function Templates() {
   const { toast } = useToast();
   const [deleteTarget, setDeleteTarget] = useState<AgentTemplate | null>(null);
 
-  const { data: templates, isLoading } = useQuery<AgentTemplate[]>({
+  const { data: templates, isLoading, isError, error, refetch } = useQuery<AgentTemplate[]>({
     queryKey: ["/api/agent-templates"],
   });
 
@@ -245,6 +246,17 @@ export default function Templates() {
         status: "active",
         riskTier: template.defaultRiskTier || "MEDIUM",
         autonomyMode: template.defaultAutonomyMode || "assisted",
+        modelProvider: template.modelProvider || "openai",
+        modelName: template.modelName || "gpt-4.1",
+        blueprintJson: template.blueprintJson,
+        toolsConfig: template.toolsConfig,
+        permissionsConfig: template.permissionsConfig,
+        memoryRagConfig: template.memoryRagConfig,
+        policyBindings: template.policyBindings,
+        evalBindings: template.evalBindings,
+        rollbackPlan: template.rollbackPlan,
+        complianceTags: template.complianceCertifications || [],
+        sourceTemplateId: template.id,
       });
     },
     onSuccess: () => {
@@ -295,6 +307,14 @@ export default function Templates() {
 
   const categories = Array.from(new Set(templates?.map((t) => t.category) || []));
   const industries = Array.from(new Set(templates?.map((t) => t.industry || "cross_industry") || []));
+
+  if (isError) {
+    return (
+      <div className="p-6">
+        <QueryBoundary isLoading={false} isError error={error} onRetry={() => refetch()}>{null}</QueryBoundary>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-templates">

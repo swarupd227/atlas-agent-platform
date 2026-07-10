@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, lazy, Suspense } from "react";
 import { Switch, Route, useLocation } from "wouter";
 import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -28,131 +28,133 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { AuthProvider, useAuth } from "@/components/auth-provider";
+import { ErrorBoundary } from "@/components/error-boundary";
 import LoginPage from "@/pages/login";
 import NotFound from "@/pages/not-found";
 import Landing from "@/pages/landing";
-import Overview from "@/pages/overview";
-import Outcomes from "@/pages/outcomes";
-import Agents from "@/pages/agents";
-import AgentDetail from "@/pages/agent-detail";
-import Deployments from "@/pages/deployments";
-import Monitor from "@/pages/monitor";
-import Governance from "@/pages/governance";
-import Approvals from "@/pages/approvals";
-import Billing from "@/pages/billing";
-import OutcomeDetail from "@/pages/outcome-detail";
-import ReleaseDetail from "@/pages/release-detail";
-import TraceDetail from "@/pages/trace-detail";
-import AgentWizard from "@/pages/agent-wizard";
-import EvalDetail from "@/pages/eval-detail";
-import Evals from "@/pages/evals";
-import EvalMetrics from "@/pages/eval-metrics";
-import EvalMetricBuilder from "@/pages/eval-metric-builder";
-import EvalSynthesizer from "@/pages/eval-synthesizer";
-import EvalSimulator from "@/pages/eval-simulator";
-import EvalRegression from "@/pages/eval-regression";
-import EvalMonitor from "@/pages/eval-monitor";
-import EvalRedteam from "@/pages/eval-redteam";
-import EvalAnnotate from "@/pages/eval-annotate";
-import EvalReports from "@/pages/eval-reports";
-import EvalPrompts from "@/pages/eval-prompts";
-import EvalMarketplace from "@/pages/eval-marketplace";
-import EvalRuns from "@/pages/eval-runs";
-import EvalRunDetail from "@/pages/eval-run-detail";
-import EvalDatasets from "@/pages/eval-datasets";
-import EvalTraceInspector from "@/pages/eval-trace-inspector";
-import Templates from "@/pages/templates";
-import TemplateDetail from "@/pages/template-detail";
-import Improvements from "@/pages/improvements";
-import ImprovementLoop from "@/pages/improvement-loop";
-import OutcomeDiscover from "@/pages/outcome-discover";
-import Integrations from "@/pages/integrations";
-import Admin from "@/pages/admin";
-import Optimization from "@/pages/optimization";
-import ApprovalDetail from "@/pages/approval-detail";
-import Blueprints from "@/pages/blueprints";
-import BlueprintDetail from "@/pages/blueprint-detail";
-import ShadowReplay from "@/pages/shadow-replay";
-import CanaryDeployment from "@/pages/canary-deployment";
-import HealingOperations from "@/pages/healing-operations";
-import RunbookAutomation from "@/pages/runbook-automation";
-import AuditTrail from "@/pages/audit-trail";
-import RunDetail from "@/pages/run-detail";
-import McpServers from "@/pages/mcp-servers";
-import McpServerDetail from "@/pages/mcp-server-detail";
-import ToolCatalog from "@/pages/tool-catalog";
-import ToolDetail from "@/pages/tool-detail";
-import McpResources from "@/pages/mcp-resources";
-import McpResourceDetail from "@/pages/mcp-resource-detail";
-import McpPrompts from "@/pages/mcp-prompts";
-import McpPromptDetail from "@/pages/mcp-prompt-detail";
-import RemoteAgents from "@/pages/remote-agents";
-import AgentTeams from "@/pages/agent-teams";
-import ApprovalGates from "@/pages/approval-gates";
-import Marketplace from "@/pages/marketplace";
-import MarketplaceDetail from "@/pages/marketplace-detail";
-import MarketplacePublishers from "@/pages/marketplace-publishers";
-import McpApps from "@/pages/mcp-apps";
-import OntologyExplorer from "@/pages/ontology";
-import PolicyEngine from "@/pages/policy-engine";
-import SkillCatalog from "@/pages/skills";
-import SkillStudio from "@/pages/skill-studio";
-import SkillComposer from "@/pages/skill-composer";
-import GoldenDatasets from "@/pages/golden-datasets";
-import GoldenDatasetDetail from "@/pages/golden-dataset-detail";
-import ContextStudio from "@/pages/context-studio";
-import MemoryArchitecture from "@/pages/memory-architecture";
-import RagPipeline from "@/pages/rag-pipeline";
-import KnowledgeGraph from "@/pages/knowledge-graph";
-import AutonomyEngine from "@/pages/autonomy-engine";
-import OversightConsole from "@/pages/oversight-console";
-import AgentPlayground from "@/pages/agent-playground";
-import Pipelines from "@/pages/pipelines";
-import KnowledgeBasesPage from "@/pages/knowledge-bases";
-import KnowledgeBaseDetail from "@/pages/knowledge-base-detail";
-import ModelProviders from "@/pages/model-providers";
-import DeveloperPortal from "@/pages/developer-portal";
-import AgentExport from "@/pages/agent-export";
-import BlackRockDemo from "@client-shared/pages/demo/blackrock-demo";
-import BlackRock2Demo from "@client-shared/pages/demo/blackrock2-demo";
-import KinectiveDemo from "@client-shared/pages/demo/kinective-demo";
-import MoodysDemo from "@client-shared/pages/demo/moodys-demo";
-import HearstDemo from "@client-shared/pages/demo/hearst-demo";
-import FitchDemo from "@client-shared/pages/demo/fitch-demo";
-import FitchRWDemo from "@client-shared/pages/demo/fitch-rw-demo";
-import OnespanDemo from "@client-shared/pages/demo/onespan-demo";
-import BlackBookDemo from "@client-shared/pages/demo/blackbook-demo";
-import LittlerDemo from "@client-shared/pages/demo/littler-demo";
-import OtcQuoteDemo from "@client-shared/pages/demo/otc-quote-demo";
-import OtcOrderDemo from "@client-shared/pages/demo/otc-order-demo";
-import OtcFulfillmentDemo from "@client-shared/pages/demo/otc-fulfillment-demo";
-import OtcCashDemo from "@client-shared/pages/demo/otc-cash-demo";
-import OtcDisputeDemo from "@client-shared/pages/demo/otc-dispute-demo";
-import HnpGovtDemo from "@client-shared/pages/demo/hnp-govt-demo";
-import HnpSubDemo from "@client-shared/pages/demo/hnp-sub-demo";
-import McgKbDemo from "@client-shared/pages/demo/mcg-kb-demo";
-import ItTriageDemo from "@client-shared/pages/demo/it-triage-demo";
-import SolifiDealerDemo from "@client-shared/pages/demo/solifi-dealer-demo";
-import KinectiveGlSyncDemo from "@client-shared/pages/demo/kinective-gl-sync-demo";
-import PkgSchedDemo from "@client-shared/pages/demo/pkg-sched-demo";
-import SHHealthcareDemo from "@client-shared/pages/demo/sh-healthcare-demo";
-import SHFinancialDemo from "@client-shared/pages/demo/sh-financial-demo";
-import SHManufacturingDemo from "@client-shared/pages/demo/sh-manufacturing-demo";
-import SHRetailDemo from "@client-shared/pages/demo/sh-retail-demo";
-import SHEnergyDemo from "@client-shared/pages/demo/sh-energy-demo";
-import SHInsuranceDemo from "@client-shared/pages/demo/sh-insurance-demo";
-import AdvSupportDemo from "@client-shared/pages/demo/adv-support-demo";
-import EscalationDemo from "@client-shared/pages/demo/escalation-demo";
-import FpaDemo from "@client-shared/pages/demo/fpa-demo";
-import PoStatusDemo from "@client-shared/pages/demo/po-status-demo";
-import DemoCenter from "@client-shared/pages/demo/demo-center";
-import ObservabilityPage from "@/pages/observability";
-import FeedbackTracker from "@/pages/feedback";
-import ProcessFlows from "@/pages/process-flows";
-import BusinessCommandCenter from "@/pages/business-command-center";
-import MyActions from "@/pages/my-actions";
-import BusinessSettings from "@/pages/business-settings";
-import MyWorkers from "@/pages/my-workers";
+const Overview = lazy(() => import("@/pages/overview"));
+const Outcomes = lazy(() => import("@/pages/outcomes"));
+const Agents = lazy(() => import("@/pages/agents"));
+const AgentDetail = lazy(() => import("@/pages/agent-detail"));
+const Deployments = lazy(() => import("@/pages/deployments"));
+const Monitor = lazy(() => import("@/pages/monitor"));
+const Workspace = lazy(() => import("@/pages/workspace"));
+const Governance = lazy(() => import("@/pages/governance"));
+const Approvals = lazy(() => import("@/pages/approvals"));
+const Billing = lazy(() => import("@/pages/billing"));
+const OutcomeDetail = lazy(() => import("@/pages/outcome-detail"));
+const ReleaseDetail = lazy(() => import("@/pages/release-detail"));
+const TraceDetail = lazy(() => import("@/pages/trace-detail"));
+const AgentWizard = lazy(() => import("@/pages/agent-wizard"));
+const EvalDetail = lazy(() => import("@/pages/eval-detail"));
+const Evals = lazy(() => import("@/pages/evals"));
+const EvalMetrics = lazy(() => import("@/pages/eval-metrics"));
+const EvalMetricBuilder = lazy(() => import("@/pages/eval-metric-builder"));
+const EvalSynthesizer = lazy(() => import("@/pages/eval-synthesizer"));
+const EvalSimulator = lazy(() => import("@/pages/eval-simulator"));
+const EvalRegression = lazy(() => import("@/pages/eval-regression"));
+const EvalMonitor = lazy(() => import("@/pages/eval-monitor"));
+const EvalRedteam = lazy(() => import("@/pages/eval-redteam"));
+const EvalAnnotate = lazy(() => import("@/pages/eval-annotate"));
+const EvalReports = lazy(() => import("@/pages/eval-reports"));
+const EvalPrompts = lazy(() => import("@/pages/eval-prompts"));
+const EvalMarketplace = lazy(() => import("@/pages/eval-marketplace"));
+const EvalRuns = lazy(() => import("@/pages/eval-runs"));
+const EvalRunDetail = lazy(() => import("@/pages/eval-run-detail"));
+const EvalDatasets = lazy(() => import("@/pages/eval-datasets"));
+const EvalTraceInspector = lazy(() => import("@/pages/eval-trace-inspector"));
+const Templates = lazy(() => import("@/pages/templates"));
+const TemplateDetail = lazy(() => import("@/pages/template-detail"));
+const Improvements = lazy(() => import("@/pages/improvements"));
+const ImprovementLoop = lazy(() => import("@/pages/improvement-loop"));
+const OutcomeDiscover = lazy(() => import("@/pages/outcome-discover"));
+const Integrations = lazy(() => import("@/pages/integrations"));
+const Admin = lazy(() => import("@/pages/admin"));
+const Optimization = lazy(() => import("@/pages/optimization"));
+const ApprovalDetail = lazy(() => import("@/pages/approval-detail"));
+const Blueprints = lazy(() => import("@/pages/blueprints"));
+const BlueprintDetail = lazy(() => import("@/pages/blueprint-detail"));
+const ShadowReplay = lazy(() => import("@/pages/shadow-replay"));
+const CanaryDeployment = lazy(() => import("@/pages/canary-deployment"));
+const HealingOperations = lazy(() => import("@/pages/healing-operations"));
+const RunbookAutomation = lazy(() => import("@/pages/runbook-automation"));
+const AuditTrail = lazy(() => import("@/pages/audit-trail"));
+const RunDetail = lazy(() => import("@/pages/run-detail"));
+const McpServers = lazy(() => import("@/pages/mcp-servers"));
+const McpServerDetail = lazy(() => import("@/pages/mcp-server-detail"));
+const ToolCatalog = lazy(() => import("@/pages/tool-catalog"));
+const ToolDetail = lazy(() => import("@/pages/tool-detail"));
+const McpResources = lazy(() => import("@/pages/mcp-resources"));
+const McpResourceDetail = lazy(() => import("@/pages/mcp-resource-detail"));
+const McpPrompts = lazy(() => import("@/pages/mcp-prompts"));
+const McpPromptDetail = lazy(() => import("@/pages/mcp-prompt-detail"));
+const RemoteAgents = lazy(() => import("@/pages/remote-agents"));
+const AgentTeams = lazy(() => import("@/pages/agent-teams"));
+const ApprovalGates = lazy(() => import("@/pages/approval-gates"));
+const Marketplace = lazy(() => import("@/pages/marketplace"));
+const MarketplaceDetail = lazy(() => import("@/pages/marketplace-detail"));
+const MarketplacePublishers = lazy(() => import("@/pages/marketplace-publishers"));
+const McpApps = lazy(() => import("@/pages/mcp-apps"));
+const OntologyExplorer = lazy(() => import("@/pages/ontology"));
+const PolicyEngine = lazy(() => import("@/pages/policy-engine"));
+const SkillCatalog = lazy(() => import("@/pages/skills"));
+const SkillStudio = lazy(() => import("@/pages/skill-studio"));
+const SkillComposer = lazy(() => import("@/pages/skill-composer"));
+const GoldenDatasets = lazy(() => import("@/pages/golden-datasets"));
+const GoldenDatasetDetail = lazy(() => import("@/pages/golden-dataset-detail"));
+const ContextStudio = lazy(() => import("@/pages/context-studio"));
+const MemoryArchitecture = lazy(() => import("@/pages/memory-architecture"));
+const RagPipeline = lazy(() => import("@/pages/rag-pipeline"));
+const KnowledgeGraph = lazy(() => import("@/pages/knowledge-graph"));
+const AutonomyEngine = lazy(() => import("@/pages/autonomy-engine"));
+const OversightConsole = lazy(() => import("@/pages/oversight-console"));
+const AgentPlayground = lazy(() => import("@/pages/agent-playground"));
+const Pipelines = lazy(() => import("@/pages/pipelines"));
+const KnowledgeBasesPage = lazy(() => import("@/pages/knowledge-bases"));
+const KnowledgeBaseDetail = lazy(() => import("@/pages/knowledge-base-detail"));
+const ModelProviders = lazy(() => import("@/pages/model-providers"));
+const DeveloperPortal = lazy(() => import("@/pages/developer-portal"));
+const AgentExport = lazy(() => import("@/pages/agent-export"));
+const BlackRockDemo = lazy(() => import("@client-shared/pages/demo/blackrock-demo"));
+const BlackRock2Demo = lazy(() => import("@client-shared/pages/demo/blackrock2-demo"));
+const KinectiveDemo = lazy(() => import("@client-shared/pages/demo/kinective-demo"));
+const MoodysDemo = lazy(() => import("@client-shared/pages/demo/moodys-demo"));
+const HearstDemo = lazy(() => import("@client-shared/pages/demo/hearst-demo"));
+const FitchDemo = lazy(() => import("@client-shared/pages/demo/fitch-demo"));
+const FitchRWDemo = lazy(() => import("@client-shared/pages/demo/fitch-rw-demo"));
+const OnespanDemo = lazy(() => import("@client-shared/pages/demo/onespan-demo"));
+const BlackBookDemo = lazy(() => import("@client-shared/pages/demo/blackbook-demo"));
+const LittlerDemo = lazy(() => import("@client-shared/pages/demo/littler-demo"));
+const OtcQuoteDemo = lazy(() => import("@client-shared/pages/demo/otc-quote-demo"));
+const OtcOrderDemo = lazy(() => import("@client-shared/pages/demo/otc-order-demo"));
+const OtcFulfillmentDemo = lazy(() => import("@client-shared/pages/demo/otc-fulfillment-demo"));
+const OtcCashDemo = lazy(() => import("@client-shared/pages/demo/otc-cash-demo"));
+const OtcDisputeDemo = lazy(() => import("@client-shared/pages/demo/otc-dispute-demo"));
+const HnpGovtDemo = lazy(() => import("@client-shared/pages/demo/hnp-govt-demo"));
+const HnpSubDemo = lazy(() => import("@client-shared/pages/demo/hnp-sub-demo"));
+const McgKbDemo = lazy(() => import("@client-shared/pages/demo/mcg-kb-demo"));
+const ItTriageDemo = lazy(() => import("@client-shared/pages/demo/it-triage-demo"));
+const SolifiDealerDemo = lazy(() => import("@client-shared/pages/demo/solifi-dealer-demo"));
+const KinectiveGlSyncDemo = lazy(() => import("@client-shared/pages/demo/kinective-gl-sync-demo"));
+const PkgSchedDemo = lazy(() => import("@client-shared/pages/demo/pkg-sched-demo"));
+const SHHealthcareDemo = lazy(() => import("@client-shared/pages/demo/sh-healthcare-demo"));
+const SHFinancialDemo = lazy(() => import("@client-shared/pages/demo/sh-financial-demo"));
+const SHManufacturingDemo = lazy(() => import("@client-shared/pages/demo/sh-manufacturing-demo"));
+const SHRetailDemo = lazy(() => import("@client-shared/pages/demo/sh-retail-demo"));
+const SHEnergyDemo = lazy(() => import("@client-shared/pages/demo/sh-energy-demo"));
+const SHInsuranceDemo = lazy(() => import("@client-shared/pages/demo/sh-insurance-demo"));
+const AdvSupportDemo = lazy(() => import("@client-shared/pages/demo/adv-support-demo"));
+const EscalationDemo = lazy(() => import("@client-shared/pages/demo/escalation-demo"));
+const FpaDemo = lazy(() => import("@client-shared/pages/demo/fpa-demo"));
+const PoStatusDemo = lazy(() => import("@client-shared/pages/demo/po-status-demo"));
+const DemoCenter = lazy(() => import("@client-shared/pages/demo/demo-center"));
+const ObservabilityPage = lazy(() => import("@/pages/observability"));
+const FeedbackTracker = lazy(() => import("@/pages/feedback"));
+const ProcessFlows = lazy(() => import("@/pages/process-flows"));
+const BusinessCommandCenter = lazy(() => import("@/pages/business-command-center"));
+const MyActions = lazy(() => import("@/pages/my-actions"));
+const BusinessSettings = lazy(() => import("@/pages/business-settings"));
+const MyWorkers = lazy(() => import("@/pages/my-workers"));
 import { Shield, LogOut, Briefcase } from "lucide-react";
 import { useRole } from "@/components/role-provider";
 
@@ -161,22 +163,26 @@ function HeaderControls() {
 
   if (securityMode === "production") {
     return (
-      <div className="flex items-center gap-2 flex-wrap">
-        <IndustrySelector />
-        <EnvironmentSelector />
-        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-md border" data-testid="badge-security-mode">
-          <Shield className="h-3 w-3" />
-          Production
-        </span>
+      <div className="flex items-center gap-2">
+        {/* Mobile (UX audit F-12): selectors and badges collapse below md so
+            the header doesn't clip — icons and logout stay reachable. */}
+        <div className="hidden md:flex items-center gap-2 flex-wrap">
+          <IndustrySelector />
+          <EnvironmentSelector />
+          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-md border" data-testid="badge-security-mode">
+            <Shield className="h-3 w-3" />
+            Production
+          </span>
+          <span className="text-xs text-muted-foreground" data-testid="text-current-user">{user?.username} ({user?.role})</span>
+        </div>
         <NotificationCenter />
-        <span className="text-xs text-muted-foreground" data-testid="text-current-user">{user?.username} ({user?.role})</span>
         <button
           onClick={logout}
           className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive px-2 py-1 rounded-md border hover:border-destructive/50 transition-colors"
           data-testid="button-logout"
         >
           <LogOut className="h-3 w-3" />
-          Logout
+          <span className="hidden sm:inline">Logout</span>
         </button>
         <ThemeToggle />
       </div>
@@ -191,15 +197,19 @@ function HeaderControls() {
 function BusinessModeAwareHeaderControls() {
   const { isBusinessMode } = useRole();
   return (
-    <div className="flex items-center gap-2 flex-wrap">
-      <IndustrySelector />
-      <EnvironmentSelector />
-      {!isBusinessMode && <RoleSwitcher />}
-      <BusinessModeBadge />
-      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-md border" data-testid="badge-security-mode">
-        <Shield className="h-3 w-3" />
-        Demo
-      </span>
+    <div className="flex items-center gap-2">
+      {/* Mobile (UX audit F-12): selectors collapse below md; the icon
+          controls remain so the header never clips on narrow screens. */}
+      <div className="hidden md:flex items-center gap-2 flex-wrap">
+        <IndustrySelector />
+        <EnvironmentSelector />
+        {!isBusinessMode && <RoleSwitcher />}
+        <BusinessModeBadge />
+        <span className="inline-flex items-center gap-1 text-xs text-muted-foreground bg-muted/50 px-2 py-1 rounded-md border" data-testid="badge-security-mode">
+          <Shield className="h-3 w-3" />
+          Demo
+        </span>
+      </div>
       <NotificationCenter />
       <ThemeToggle />
     </div>
@@ -266,8 +276,23 @@ function BusinessOnlyRoute({ component: Comp }: { component: React.ComponentType
   return <Comp />;
 }
 
-function DashboardRouter() {
+/** Fallback while a lazily-loaded route chunk downloads (UX audit F-7). */
+function RouteFallback() {
   return (
+    <div className="flex items-center justify-center min-h-[40vh] w-full" data-testid="route-loading">
+      <div className="flex flex-col items-center gap-3">
+        <div className="w-6 h-6 rounded-full border-2 border-primary border-t-transparent animate-spin motion-reduce:animate-none" aria-hidden="true" />
+        <span className="text-xs text-muted-foreground">Loading…</span>
+      </div>
+    </div>
+  );
+}
+
+function DashboardRouter() {
+  const [location] = useLocation();
+  return (
+    <ErrorBoundary resetKey={location}>
+    <Suspense fallback={<RouteFallback />}>
     <Switch>
       <Route path="/dashboard" component={DashboardHome} />
       <Route path="/my-actions" component={MyActions} />
@@ -316,6 +341,7 @@ function DashboardRouter() {
       <Route path="/runtime/runs/:id" component={RunDetail} />
       <Route path="/agents/:agentId/runs/:id" component={RunDetail} />
       <Route path="/monitor" component={Monitor} />
+      <Route path="/workspace" component={Workspace} />
       <Route path="/observability" component={ObservabilityPage} />
       <Route path="/governance/policy-engine" component={PolicyEngine} />
       <Route path="/governance" component={Governance} />
@@ -399,6 +425,8 @@ function DashboardRouter() {
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>
+    </Suspense>
+    </ErrorBoundary>
   );
 }
 
@@ -460,10 +488,12 @@ function AuthGate() {
   }
 
   return (
-    <Switch>
-      <Route path="/agents/:id/export" component={AgentExport} />
-      <Route>{() => <DashboardLayout />}</Route>
-    </Switch>
+    <Suspense fallback={<RouteFallback />}>
+      <Switch>
+        <Route path="/agents/:id/export" component={AgentExport} />
+        <Route>{() => <DashboardLayout />}</Route>
+      </Switch>
+    </Suspense>
   );
 }
 

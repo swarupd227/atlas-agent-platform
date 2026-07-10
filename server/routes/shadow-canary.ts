@@ -1,8 +1,10 @@
-import { Router } from "express";
+import { Router, type Request, type Response } from "express";
 import { z } from "zod";
 import { storage } from "../storage";
 import { getOrgId } from "../auth";
+import { getRequestRole } from "../permissions";
 import { buildAgentSystemPrompt } from "./helpers";
+import { llmInvokeRateLimiter } from "../rate-limits";
 import {
   executePromptWithMcp,
   startAgentRuntime,
@@ -268,6 +270,9 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         industry,
         richPrompt,
         { maxToolIterations: testAgentForIter?.maxToolIterations ?? 5 },
+        undefined,
+        undefined,
+        getRequestRole(req),
       );
 
       res.json({
@@ -594,6 +599,9 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
         deployment.industry || (agent as any).industry,
         execRichPrompt,
         { maxToolIterations: agent.maxToolIterations ?? 5 },
+        undefined,
+        undefined,
+        getRequestRole(req),
       );
 
       await storage.updateAgentRuntimeRun(runtimeRun.id, {
@@ -676,7 +684,7 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
     }
   });
 
-  router.post("/api/agents/:id/run-test", async (req, res) => {
+  router.post("/api/agents/:id/run-test", llmInvokeRateLimiter, async (req: Request<{ id: string }>, res: Response) => {
     try {
       const agent = await storage.getAgent(req.params.id, getOrgId(req));
       if (!agent) return res.status(404).json({ error: "Agent not found" });
@@ -724,6 +732,9 @@ Perform semantic diff analysis with industry-specific rubrics. Return ONLY valid
           (agent as any).industry || undefined,
           richSystemPrompt,
           { ontologyLabels: agentOntologyTags.map(t => t.conceptLabel), maxToolIterations: agent.maxToolIterations ?? 5 },
+          undefined,
+          undefined,
+          getRequestRole(req),
         );
       }
 

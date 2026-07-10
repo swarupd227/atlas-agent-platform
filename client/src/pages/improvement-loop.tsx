@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { formatDate } from "@/lib/format";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -314,7 +315,7 @@ export default function ImprovementLoop() {
                           {agent && <span>{agent.name}</span>}
                           <span className="flex items-center gap-1"><ActionIcon className="w-3 h-3" /> {action.label}</span>
                           <span className="flex items-center gap-1"><TriggerIcon className="w-3 h-3" /> {trigger.label}</span>
-                          {cycle.createdAt && <span>{new Date(cycle.createdAt).toLocaleDateString()}</span>}
+                          {cycle.createdAt && <span>{formatDate(cycle.createdAt)}</span>}
                         </div>
                         <p className="text-xs text-muted-foreground mt-1 line-clamp-1">{cycle.proposedAction}</p>
                       </div>

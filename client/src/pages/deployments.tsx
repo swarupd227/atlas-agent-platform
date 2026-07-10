@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { formatDate } from "@/lib/format";
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import {
@@ -49,6 +50,7 @@ import { Switch } from "@/components/ui/switch";
 import { StatCard } from "@/components/stat-card";
 import { OutcomeKpiStrip } from "@/components/outcome-kpi-strip";
 import { StatusBadge } from "@/components/status-badge";
+import { QueryBoundary } from "@/components/ui-vocab";
 import { usePermission, PermissionGate } from "@/components/role-provider";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -267,7 +269,7 @@ function EnvironmentPanel({
                         ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20"
                         : "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20";
                     const tooltip = aarCfg
-                      ? `AAR · Bundle: ${aarCfg.policyBundleVersion} · Platform: ${aarCfg.targetPlatform} · Synced: ${aarCfg.lastSyncedAt ? new Date(aarCfg.lastSyncedAt).toLocaleDateString() : "—"} · ${active}/${total} modules active`
+                      ? `AAR · Bundle: ${aarCfg.policyBundleVersion} · Platform: ${aarCfg.targetPlatform} · Synced: ${aarCfg.lastSyncedAt ? formatDate(aarCfg.lastSyncedAt) : "—"} · ${active}/${total} modules active`
                       : "Atlas Agent Runtime (AAR) governance sidecar — view details on the agent Runtime (AAR) tab";
                     return (
                       <Badge
@@ -1224,7 +1226,7 @@ export default function Deployments() {
   const stagingPerm = usePermission("deploy_staging_pilot");
   const prodPerm = usePermission("deploy_prod");
 
-  const { data: deployments, isLoading } = useQuery<Deployment[]>({
+  const { data: deployments, isLoading, isError, error, refetch } = useQuery<Deployment[]>({
     queryKey: ["/api/deployments"],
   });
   const { data: agents } = useQuery<Agent[]>({
@@ -1276,6 +1278,14 @@ export default function Deployments() {
             </Card>
           ))}
         </div>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="p-6">
+        <QueryBoundary isLoading={false} isError error={error} onRetry={() => refetch()}>{null}</QueryBoundary>
       </div>
     );
   }

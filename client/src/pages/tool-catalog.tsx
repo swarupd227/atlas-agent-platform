@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { formatDate } from "@/lib/format";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -271,7 +272,7 @@ export default function ToolCatalogPage() {
                     </TableCell>
                     <TableCell>
                       <span className="text-xs text-muted-foreground" data-testid={`text-tool-synced-${tool.id}`}>
-                        {tool.syncedAt ? new Date(tool.syncedAt).toLocaleDateString() : "Never"}
+                        {tool.syncedAt ? formatDate(tool.syncedAt) : "Never"}
                       </span>
                     </TableCell>
                   </TableRow>
