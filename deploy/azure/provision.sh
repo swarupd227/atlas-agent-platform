@@ -168,6 +168,16 @@ az webapp config set \
   --startup-file "npm start" \
   --output none
 
+# On by default -- without this, `az webapp log tail` only shows platform-level
+# container lifecycle events (start/stop/timeout), not anything the Node
+# process itself logs, which makes diagnosing a startup failure much harder.
+az webapp log config \
+  --resource-group "$RG" --name "$APP_NAME" \
+  --application-logging filesystem \
+  --level verbose \
+  --docker-container-logging filesystem \
+  --output none
+
 echo "=== 8/8: GitHub-linked continuous deployment ==="
 # `az webapp deployment source config` has a known client-side SDK bug where a
 # 200 OK response gets misread as an unexpected status, raising "Operation

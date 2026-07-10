@@ -18,4 +18,13 @@ curl -sf "${URL}/api/auth/mode" && echo "" || {
 
 echo ""
 echo "=== Recent logs (Ctrl+C to stop tailing) ==="
+# Make sure application logging is actually on before tailing -- without it,
+# the stream only shows platform-level container lifecycle events, not
+# anything the Node process itself logs.
+az webapp log config \
+  --resource-group "$RG" --name "$APP_NAME" \
+  --application-logging filesystem \
+  --level verbose \
+  --docker-container-logging filesystem \
+  --output none
 az webapp log tail --resource-group "$RG" --name "$APP_NAME"
