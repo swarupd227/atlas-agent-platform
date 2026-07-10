@@ -26,7 +26,18 @@ done
 SECRETS_FILE=.generated-secrets.env
 
 echo "=== 1/8: Resource group ==="
-az group create --name "$RG" --location "$LOCATION" --output none
+# A resource group's location is immutable once created — passing a
+# different --location to `az group create` for an existing group is a hard
+# error (InvalidResourceGroupLocation), not a no-op. If it already exists,
+# leave it exactly where it is; the actual resources below (Postgres, App
+# Service) are created with $LOCATION independently and don't need to match
+# the resource group's own location.
+EXISTING_RG_LOCATION=$(az group show --name "$RG" --query location -o tsv 2>/dev/null || true)
+if [ -n "$EXISTING_RG_LOCATION" ]; then
+  echo "  $RG already exists in '$EXISTING_RG_LOCATION' — leaving as-is. Resources below will still be created in '$LOCATION'."
+else
+  az group create --name "$RG" --location "$LOCATION" --output none
+fi
 
 echo "=== 2/8: Generating secrets ==="
 if [ -f "$SECRETS_FILE" ]; then
