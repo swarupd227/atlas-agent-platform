@@ -1,4 +1,4 @@
-# Nous Agent Orchestrator - Product Documentation
+# Artizent Agent Orchestrator - Product Documentation
 
 **Version:** 1.0
 **Last Updated:** March 2, 2026
@@ -41,7 +41,7 @@
 
 ## 1. Executive Summary
 
-Nous Agent Orchestrator is an enterprise-grade AI agent lifecycle management platform designed for autonomous execution with expert validation. The platform integrates compliance frameworks, governance policies, and industry-specific ontologies into every stage of AI agent behavior -- from design and deployment to monitoring and continuous improvement.
+Artizent Agent Orchestrator is an enterprise-grade AI agent lifecycle management platform designed for autonomous execution with expert validation. The platform integrates compliance frameworks, governance policies, and industry-specific ontologies into every stage of AI agent behavior -- from design and deployment to monitoring and continuous improvement.
 
 The platform operates on an **80% Autonomous / 20% Expert Validation** philosophy, where AI agents handle routine operations autonomously while high-risk decisions are escalated to qualified human experts for validation.
 
@@ -1492,4 +1492,4 @@ The platform exposes 600+ REST API endpoints organized by domain. Below are the 
 
 ---
 
-*This document provides a comprehensive overview of the Nous Agent Orchestrator platform. For implementation-level details, refer to the source code and inline documentation. For deployment and operations guides, consult the platform administration documentation.*
+*This document provides a comprehensive overview of the Artizent Agent Orchestrator platform. For implementation-level details, refer to the source code and inline documentation. For deployment and operations guides, consult the platform administration documentation.*

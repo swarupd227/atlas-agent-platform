@@ -20,7 +20,7 @@ const C = {
 };
 
 prs.layout = "LAYOUT_WIDE";
-prs.author  = "Atlas Platform";
+prs.author  = "Astra Agents Platform";
 prs.company = "ASTRA Agents";
 prs.subject = "Platform Architecture";
 
@@ -91,7 +91,7 @@ function note(sld, text, x, y, w = 4, h = 0.45, color = C.orange) {
   s.addShape(prs.ShapeType.ellipse, { x: 10.5, y: 4.5, w: 3, h: 3, fill: { color: "071020" }, line: { color: "071020" } });
 
   s.addText("ASTRA AGENTS", { x: 0.6, y: 1.5, w: 8, h: 0.6, fontSize: 13, bold: true, color: C.accent, fontFace: "Calibri", charSpacing: 6 });
-  s.addText("Atlas Platform", { x: 0.6, y: 2.1, w: 9, h: 1.5, fontSize: 48, bold: true, color: C.white, fontFace: "Calibri" });
+  s.addText("Astra Agents Platform", { x: 0.6, y: 2.1, w: 9, h: 1.5, fontSize: 48, bold: true, color: C.white, fontFace: "Calibri" });
   s.addText("Architecture & Internal Working", { x: 0.6, y: 3.6, w: 9, h: 0.6, fontSize: 22, color: C.lblue, fontFace: "Calibri" });
   s.addShape(prs.ShapeType.rect, { x: 0.6, y: 4.3, w: 3.5, h: 0.05, fill: { color: C.accent }, line: { color: C.accent } });
   s.addText("Enterprise AI Agent Lifecycle Management Platform", { x: 0.6, y: 4.5, w: 9, h: 0.4, fontSize: 13, color: C.lgray, fontFace: "Calibri", italic: true });
@@ -110,14 +110,14 @@ function note(sld, text, x, y, w = 4, h = 0.45, color = C.orange) {
 
   const items = [
     ["01", "Business Problem", "The challenge of managing AI agents at enterprise scale"],
-    ["02", "What is Atlas?", "Platform overview and core value proposition"],
-    ["03", "Key Features", "Capabilities that differentiate Atlas"],
+    ["02", "What is Astra Agents?", "Platform overview and core value proposition"],
+    ["03", "Key Features", "Capabilities that differentiate Astra Agents"],
     ["04", "High-Level Architecture", "How the system is structured"],
     ["05", "Component Deep-Dive", "Roles and responsibilities of each module"],
     ["06", "End-to-End Data Flow", "How a request moves through the platform"],
     ["07", "Technology Stack", "Languages, frameworks, and tools"],
     ["08", "Security & Compliance", "Governance, PII masking, and policy enforcement"],
-    ["09", "Scalability & Resilience", "How Atlas stays reliable under load"],
+    ["09", "Scalability & Resilience", "How Astra Agents stays reliable under load"],
     ["10", "Monitoring & Observability", "Telemetry, KPIs, and self-healing"],
     ["11", "Deployment Architecture", "Environments and release strategy"],
     ["12", "Roadmap & Q&A", "Future direction and open discussion"],
@@ -178,12 +178,12 @@ function note(sld, text, x, y, w = 4, h = 0.45, color = C.orange) {
   const s = slide();
   bg(s, C.navy);
   divider(s);
-  title(s, "What is Atlas?");
+  title(s, "What is Astra Agents?");
   subtitle(s, "An enterprise AI agent lifecycle management platform");
 
   s.addShape(prs.ShapeType.rect, { x: 0.4, y: 1.3, w: 12.5, h: 1.5, fill: { color: "0D1F3C" }, line: { color: C.blue, width: 1.5 } });
   s.addText(
-    "Atlas (ASTRA Agents) is a full-lifecycle platform that helps enterprises design, test, govern, deploy, and monitor AI agents at scale — with built-in compliance, multi-tenancy, and business-outcome alignment baked in from the ground up.",
+    "Astra Agents is a full-lifecycle platform that helps enterprises design, test, govern, deploy, and monitor AI agents at scale — with built-in compliance, multi-tenancy, and business-outcome alignment baked in from the ground up.",
     { x: 0.6, y: 1.4, w: 12.1, h: 1.3, fontSize: 13.5, color: C.white, fontFace: "Calibri", valign: "middle" }
   );
 
@@ -225,14 +225,14 @@ function note(sld, text, x, y, w = 4, h = 0.45, color = C.orange) {
   bg(s, C.navy);
   divider(s);
   title(s, "Key Features");
-  subtitle(s, "Capabilities that make Atlas enterprise-ready");
+  subtitle(s, "Capabilities that make Astra Agents enterprise-ready");
 
   const features = [
     { hdr: "Blueprint Studio", body: "Visual drag-and-drop agent designer. Define system prompts, tools, MCP bindings, skills, LLM provider selection, and trigger conditions before a single line runs.", color: C.blue },
     { hdr: "Shadow Replay Studio", body: "Replay historical production conversations against new agent versions in a safe sandbox — catch regressions before they hit users.", color: C.teal },
     { hdr: "Canary Deployment Console", body: "Graduate agents from Dev → Staging → Prod with configurable traffic splits (1% → 10% → 100%) and automatic rollback on KPI breach.", color: C.green },
     { hdr: "Eval Studio & Golden Datasets", body: "Automated evaluation using DeepEval metrics: Faithfulness, Hallucination, Toxicity, Bias, Answer Relevance. Supports bulk CSV/JSONL import.", color: C.accent },
-    { hdr: "Compliance & Policy Engine", body: "Distributes policy bundles to Atlas Agent Runtime (AAR) sidecars. Enforces data-handling, access, and behavioral policies at inference time.", color: C.orange },
+    { hdr: "Compliance & Policy Engine", body: "Distributes policy bundles to Astra Agents Agent Runtime (AAR) sidecars. Enforces data-handling, access, and behavioral policies at inference time.", color: C.orange },
     { hdr: "Knowledge Base (RAG)", body: "Vector-embedded document collections with web-crawl and structured-data import. Agents retrieve context at runtime via the MCP Semantic Layer.", color: C.lblue },
     { hdr: "PII Masking Engine", body: "Automatically detects and masks sensitive data before it reaches LLMs. Rehydrates after inference so downstream consumers see original values.", color: C.red },
     { hdr: "Outcome Contracts & KPIs", body: "Business goals are codified as contracts with measurable SLA thresholds. Agents report progress against these contracts in real time.", color: C.teal },
@@ -298,7 +298,7 @@ function note(sld, text, x, y, w = 4, h = 0.45, color = C.orange) {
   });
 
   // Runtime layer
-  [["Atlas Agent Runtime (AAR)\nGovernance Sidecar", 0.35, 5.0, C.green], ["DeepEval Service\nPython / FastAPI", 5.5, 3.5, C.lblue], ["MCP Integration Layer\nModel Context Protocol", 9.2, 3.5, C.accent]].forEach(([lbl, x, w, color]) => {
+  [["Astra Agents Agent Runtime (AAR)\nGovernance Sidecar", 0.35, 5.0, C.green], ["DeepEval Service\nPython / FastAPI", 5.5, 3.5, C.lblue], ["MCP Integration Layer\nModel Context Protocol", 9.2, 3.5, C.accent]].forEach(([lbl, x, w, color]) => {
     label(s, lbl, x, 4.12, w, 0.78, { bg: "0A200A", fg: C.white, fontSize: 10, bold: false });
     s.addShape(prs.ShapeType.rect, { x, y: 4.12, w, h: 0.05, fill: { color }, line: { color } });
   });
@@ -327,7 +327,7 @@ function note(sld, text, x, y, w = 4, h = 0.45, color = C.orange) {
   const comps = [
     { name: "React SPA Frontend", role: "User interface for all roles. Routes, state, and API calls. Uses Wouter for routing, TanStack Query for data fetching, shadcn/ui for components.", color: C.blue },
     { name: "Express.js Backend", role: "RESTful API server. Thin routes delegate to storage interface. Handles auth middleware, request validation (Zod), and response shaping.", color: C.lblue },
-    { name: "Atlas Agent Runtime (AAR)", role: "Governance sidecar that wraps every agent execution. Enforces policy bundles, captures telemetry, manages credentials, and emits audit events.", color: C.green },
+    { name: "Astra Agents Agent Runtime (AAR)", role: "Governance sidecar that wraps every agent execution. Enforces policy bundles, captures telemetry, manages credentials, and emits audit events.", color: C.green },
     { name: "DeepEval Service", role: "Standalone Python/FastAPI microservice. Scores agent outputs against AI quality metrics: Faithfulness, Hallucination Score, Toxicity, Bias, Answer Relevance.", color: C.teal },
     { name: "MCP Integration Layer", role: "Implements Model Context Protocol. Standardises how agents call tools, access resources, and retrieve prompt templates. Supports mock servers in dev.", color: C.accent },
     { name: "Policy & Compliance Engine", role: "Compiles policy bundles distributed to AARs. Evaluates rules at inference time. Flags violations, triggers approval gates, and writes audit trails.", color: C.orange },
@@ -497,7 +497,7 @@ function note(sld, text, x, y, w = 4, h = 0.45, color = C.orange) {
   bg(s, C.navy);
   divider(s);
   title(s, "Technology Stack");
-  subtitle(s, "Languages, frameworks, and tools powering Atlas");
+  subtitle(s, "Languages, frameworks, and tools powering Astra Agents");
 
   const cats = [
     { cat: "Frontend", items: ["React 18", "TypeScript", "Vite", "Tailwind CSS", "shadcn/ui", "TanStack Query", "Wouter", "Recharts"], color: C.blue },
@@ -563,11 +563,11 @@ function note(sld, text, x, y, w = 4, h = 0.45, color = C.orange) {
   bg(s, C.navy);
   divider(s, { color: C.green });
   title(s, "Scalability & Resilience");
-  subtitle(s, "How Atlas stays reliable under load and recovers from failures");
+  subtitle(s, "How Astra Agents stays reliable under load and recovers from failures");
 
   const items2 = [
     { icon: "⚡", hdr: "Stateless API Layer", body: "Express.js backend is stateless — horizontal scaling is straightforward. Session state is stored in the database, not in-memory.", color: C.blue },
-    { icon: "🔁", hdr: "Circuit Breakers", body: "LLM provider calls have built-in circuit breakers. If a provider degrades, Atlas falls back to a secondary LLM automatically.", color: C.orange },
+    { icon: "🔁", hdr: "Circuit Breakers", body: "LLM provider calls have built-in circuit breakers. If a provider degrades, Astra Agents falls back to a secondary LLM automatically.", color: C.orange },
     { icon: "🐤", hdr: "Canary Deployments", body: "New agent versions receive 1% → 10% → 100% traffic. KPI threshold breach triggers automatic rollback to the previous version.", color: C.green },
     { icon: "🗄️", hdr: "Database Resilience", body: "PostgreSQL with Drizzle ORM migrations. Org-level data isolation prevents blast radius from cross-tenant failures.", color: C.accent },
     { icon: "🔄", hdr: "Self-Healing Loop", body: "Monitoring detects KPI regressions and triggers the Optimization / Patch Center which can autonomously propose and deploy patches.", color: C.teal },
@@ -599,7 +599,7 @@ function note(sld, text, x, y, w = 4, h = 0.45, color = C.orange) {
 
   // Left panel — what is collected
   s.addShape(prs.ShapeType.rect, { x: 0.35, y: 1.3, w: 5.8, h: 5.6, fill: { color: "0A1628" }, line: { color: C.teal, width: 1 } });
-  s.addText("What Atlas Collects", { x: 0.5, y: 1.4, w: 5.5, h: 0.38, fontSize: 13, bold: true, color: C.teal, fontFace: "Calibri" });
+  s.addText("What Astra Agents Collects", { x: 0.5, y: 1.4, w: 5.5, h: 0.38, fontSize: 13, bold: true, color: C.teal, fontFace: "Calibri" });
 
   const collected = ["Run traces — full input/output history per agent", "KPI deltas — contract outcome progress", "Latency per stage (LLM, tool, policy check)", "LLM token usage & cost per run", "Policy violation counts & approval queue length", "Eval scores (Faithfulness, Hallucination…)", "Error rates and circuit-breaker state", "PII masking events and audit log entries"];
   collected.forEach((c, i) => {
@@ -687,10 +687,10 @@ function note(sld, text, x, y, w = 4, h = 0.45, color = C.orange) {
   bg(s, C.navy);
   divider(s, { color: C.accent });
   title(s, "External Integrations");
-  subtitle(s, "How Atlas connects to third-party systems via MCP and REST");
+  subtitle(s, "How Astra Agents connects to third-party systems via MCP and REST");
 
   // Atlas box (center)
-  label(s, "Atlas\nPlatform", 5.5, 3.1, 2.33, 1.1, { bg: C.blue, fg: C.white, fontSize: 14, bold: true });
+  label(s, "Astra Agents\nPlatform", 5.5, 3.1, 2.33, 1.1, { bg: C.blue, fg: C.white, fontSize: 14, bold: true });
 
   const integrations = [
     { name: "Salesforce", cat: "CRM", x: 0.4, y: 1.3, color: C.blue },
@@ -735,7 +735,7 @@ function note(sld, text, x, y, w = 4, h = 0.45, color = C.orange) {
 
   const steps2 = [
     { actor: "Member", action: "Submits new address via credit union web portal", color: C.blue },
-    { actor: "Atlas API", action: "Trigger received → agent 'COA-CreditUnion' resolved → run initiated", color: C.lblue },
+    { actor: "Astra Agents API", action: "Trigger received → agent 'COA-CreditUnion' resolved → run initiated", color: C.lblue },
     { actor: "AAR", action: "Policy check: address-change requires identity verification + BSA watchlist screening", color: C.green },
     { actor: "PII Engine", action: "SSN and DOB in payload masked before passing to LLM", color: C.red },
     { actor: "LLM", action: "Address extraction agent parses and normalises the new address from member input", color: C.accent },
@@ -765,7 +765,7 @@ function note(sld, text, x, y, w = 4, h = 0.45, color = C.orange) {
   bg(s, C.navy);
   divider(s);
   title(s, "Future Enhancements & Roadmap");
-  subtitle(s, "Where Atlas is heading next");
+  subtitle(s, "Where Astra Agents is heading next");
 
   const horizons = [
     {
@@ -840,7 +840,7 @@ function note(sld, text, x, y, w = 4, h = 0.45, color = C.orange) {
   s.addShape(prs.ShapeType.rect, { x: 0.6, y: 4.25, w: 3.5, h: 0.05, fill: { color: C.blue }, line: { color: C.blue } });
   s.addText("We're happy to deep-dive into any component.", { x: 0.6, y: 4.4, w: 9, h: 0.45, fontSize: 14, color: C.lgray, fontFace: "Calibri", italic: true });
 
-  const contacts = ["Platform: ASTRA Agents — Atlas", "GitHub: github.com/swarupd227/Astra-Agents", "Deployed: atlas-agent-platform.replit.app"];
+  const contacts = ["Platform: ASTRA Agents", "GitHub: github.com/swarupd227/Astra-Agents", "Deployed: atlas-agent-platform.replit.app"];
   contacts.forEach((c, i) => {
     s.addText("▸  " + c, { x: 0.6, y: 5.3 + i * 0.42, w: 8, h: 0.38, fontSize: 11, color: C.gray, fontFace: "Calibri" });
   });

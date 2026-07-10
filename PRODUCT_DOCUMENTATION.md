@@ -388,7 +388,7 @@ The Agent Cockpit is a comprehensive dashboard for a single agent, organized int
 - "Time travel" capability to see agent state at any historical point.
 
 **Runtime (AAR) Tab**
-- Full Atlas Agent Runtime (AAR) governance sidecar status for this agent (see Section 43).
+- Full Astra Agents Agent Runtime (AAR) governance sidecar status for this agent (see Section 43).
 - 7-module health grid (PolicyEngine, MCPProxy, ProvenanceStore, TelemetryEmitter, AutonomyEnforcer, CredentialManager, HealthMonitor) with live metrics per module.
 - Policy bundle panel: current bundle version, last sync timestamp, distribution mode.
 - Target platform selector: free-text combobox with suggestions (atlas-native, aws-bedrock, gcp-vertex, azure-ai-foundry, kubernetes, on-prem, custom). Persists to the AAR config and regenerates platform-specific deployment hints in the package manifest.
@@ -1725,7 +1725,7 @@ The platform uses a comprehensive PostgreSQL schema managed by Drizzle ORM. Key 
 
 ## 42. Demo Environments
 
-Dedicated interactive demonstration environments showcasing specific ALMP capabilities with live Anthropic Claude agent execution, real-time SSE streaming, and pre-run state management. All demo agents deployed in these environments are automatically provisioned with Atlas Agent Runtime (AAR) governance sidecars (see Section 43); their AAR status is visible on the Runtime (AAR) tab of each agent's cockpit.
+Dedicated interactive demonstration environments showcasing specific ALMP capabilities with live Anthropic Claude agent execution, real-time SSE streaming, and pre-run state management. All demo agents deployed in these environments are automatically provisioned with Astra Agents Agent Runtime (AAR) governance sidecars (see Section 43); their AAR status is visible on the Runtime (AAR) tab of each agent's cockpit.
 
 ### Hearst / Black Book Demo (`/demo/blackbook`)
 
@@ -1800,9 +1800,9 @@ The demo uses four dedicated mock REST servers (see Section 37 for full endpoint
 
 ---
 
-## 43. Atlas Agent Runtime (AAR) — Governance Sidecar
+## 43. Astra Agents Agent Runtime (AAR) — Governance Sidecar
 
-The **Atlas Agent Runtime (AAR)** is a lightweight, platform-agnostic governance sidecar deployed alongside every ALMP-managed agent. It enforces Atlas policies, intercepts MCP tool calls, captures provenance, emits telemetry, and reports health — all without requiring changes to the host agent binary.
+The **Astra Agents Agent Runtime (AAR)** is a lightweight, platform-agnostic governance sidecar deployed alongside every ALMP-managed agent. It enforces Astra Agents policies, intercepts MCP tool calls, captures provenance, emits telemetry, and reports health — all without requiring changes to the host agent binary.
 
 ### Overview
 
@@ -1814,7 +1814,7 @@ AAR is **agent-scoped**: one AAR config row exists per deployed agent, automatic
 |---|---|
 | **PolicyEngine** | Evaluate policies against action requests. Return BLOCK / ALERT / LOG. |
 | **MCPProxy** | Intercept, authorize, rate-limit, and forward MCP tool calls. Behavior fingerprinting. |
-| **ProvenanceStore** | Capture, hash-chain, queue, and stream provenance events to Atlas Telemetry Collector. |
+| **ProvenanceStore** | Capture, hash-chain, queue, and stream provenance events to Astra Agents Telemetry Collector. |
 | **TelemetryEmitter** | Emit structured metrics, traces, and logs in OpenTelemetry (OTLP) format. |
 | **AutonomyEnforcer** | Enforce current autonomy level. Route high-risk actions for approval without Control Plane round-trip. |
 | **CredentialManager** | Manage X.509 certificates and API keys. Rotate on schedule. Inject credentials into MCP calls. |

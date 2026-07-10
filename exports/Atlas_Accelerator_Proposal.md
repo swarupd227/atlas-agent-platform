@@ -1,4 +1,4 @@
-# Atlas as an AI Accelerator
+# Astra Agents as an AI Accelerator
 ## Proposal for Packaging Industry Platform Integration
 
 **Prepared for:** Customer Engagement — Paper Packaging Distribution  
@@ -9,21 +9,21 @@
 
 ## 1. Executive Summary
 
-Atlas is a production-grade AI agent orchestration platform built on a modern full-stack architecture (React, Node.js, PostgreSQL). Rather than positioning it as a standalone product to replace the customer's unified portal, Atlas is proposed as an **invisible infrastructure accelerator** — running behind the customer's existing platform, callable via REST, and progressively embedding richer capabilities into the portal over an 18-month journey.
+Astra Agents is a production-grade AI agent orchestration platform built on a modern full-stack architecture (React, Node.js, PostgreSQL). Rather than positioning it as a standalone product to replace the customer's unified portal, Astra Agents is proposed as an **invisible infrastructure accelerator** — running behind the customer's existing platform, callable via REST, and progressively embedding richer capabilities into the portal over an 18-month journey.
 
 The delivery follows a **Crawl → Walk → Run** model:
 
-- **Crawl (0–6 months):** Professional services engineers deploy Atlas Light and build the first 4–6 agents against the customer's Kong-managed product APIs. The portal calls agent results via REST. Clients see value without any self-service.
+- **Crawl (0–6 months):** Professional services engineers deploy Astra Agents Light and build the first 4–6 agents against the customer's Kong-managed product APIs. The portal calls agent results via REST. Clients see value without any self-service.
 - **Walk (6–12 months):** More products onboarded, richer portal surfaces (command centre, insight feed, config panels). Larger clients can configure — but not build — agents.
 - **Run (12–18 months+):** A constrained workflow designer is embedded in the portal. End-customers build their own alert, insight, and data intelligence agents within controlled guardrails.
 
 ---
 
-## 2. Atlas Platform — Capability Inventory
+## 2. Astra Agents Platform — Capability Inventory
 
 ### 2.1 Core Components (Built and Production-Ready)
 
-The following components exist in Atlas today and are immediately applicable to the customer engagement. Strength ratings reflect architectural maturity and extractability.
+The following components exist in Astra Agents today and are immediately applicable to the customer engagement. Strength ratings reflect architectural maturity and extractability.
 
 ---
 
@@ -45,7 +45,7 @@ Full create → configure → deploy → run → monitor → retire lifecycle fo
 #### ★★★ Agent Creation — Blueprint Studio and Wizard
 **Strength: HIGH — full authoring pipeline built**
 
-Atlas has a complete end-to-end agent authoring pipeline covering blueprint design, structural validation, signing, and deployment. This is the capability PS engineers use to build agents during the Crawl phase, and which can be progressively exposed to client builders in the Run phase.
+Astra Agents has a complete end-to-end agent authoring pipeline covering blueprint design, structural validation, signing, and deployment. This is the capability PS engineers use to build agents during the Crawl phase, and which can be progressively exposed to client builders in the Run phase.
 
 **Nine-step Agent Wizard:**
 
@@ -116,7 +116,7 @@ A wave-based parallel directed acyclic graph (DAG) execution engine with typed s
 #### ★★★ Outcome Contracts and ROI Measurement
 **Strength: HIGH — production-built, enterprise-differentiating**
 
-Atlas has a full outcome contract system that links agents to business KPIs, tracks attainment over time, and generates ROI estimates. This is one of the most differentiated capabilities for a customer pitch.
+Astra Agents has a full outcome contract system that links agents to business KPIs, tracks attainment over time, and generates ROI estimates. This is one of the most differentiated capabilities for a customer pitch.
 
 **Output Contract Enforcement** (per-agent, per-run):
 - Every agent can declare a typed JSON output schema — the enforcer validates every response before it reaches the caller
@@ -136,7 +136,7 @@ Atlas has a full outcome contract system that links agents to business KPIs, tra
   - `at_risk`: attainment < 80%
   - `on_track`: attainment 80–100%
   - `exceeded`: attainment > 100%
-- Outcome versioning — when an outcome changes (risk tier, SLA thresholds, KPI targets), Atlas automatically identifies non-compliant agents and writes audit events requiring reconfiguration
+- Outcome versioning — when an outcome changes (risk tier, SLA thresholds, KPI targets), Astra Agents automatically identifies non-compliant agents and writes audit events requiring reconfiguration
 
 **ROI Estimation** (Outcome Discover flow):
 - The Outcome Discover UI generates a proposal containing a structured ROI estimate:
@@ -164,8 +164,8 @@ A complete knowledge ingestion, embedding, retrieval, and governance pipeline. T
 
 | Prerequisite | Detail |
 |---|---|
-| PostgreSQL with pgvector extension | Required for semantic (vector) search. Atlas calls `ensurePgVector()` on startup and creates the `vector(1536)` column automatically if pgvector is available. |
-| OpenAI API key (for embeddings) | Required for generating chunk embeddings using `text-embedding-3-small`. Without it, Atlas falls back to lexical ordering — functional but lower quality retrieval. |
+| PostgreSQL with pgvector extension | Required for semantic (vector) search. Astra Agents calls `ensurePgVector()` on startup and creates the `vector(1536)` column automatically if pgvector is available. |
+| OpenAI API key (for embeddings) | Required for generating chunk embeddings using `text-embedding-3-small`. Without it, Astra Agents falls back to lexical ordering — functional but lower quality retrieval. |
 | Source documents or URLs | Files up to 50MB per upload; URLs for web crawl. |
 
 **Supported ingestion formats:**
@@ -249,7 +249,7 @@ Organisation-level data isolation enforced throughout storage, routes, and gover
 - Storage methods are filtered at query level, not application level — isolation holds even under code changes
 - Org provisioning can be scripted and later API-driven for automated client onboarding
 
-**Why it's adaptable:** The multi-tier model (Atlas platform → customer → their clients) is supported structurally. Each paper packaging distribution company gets their own org with isolated agents, KB bundles, and audit logs.
+**Why it's adaptable:** The multi-tier model (Astra Agents platform → customer → their clients) is supported structurally. Each paper packaging distribution company gets their own org with isolated agents, KB bundles, and audit logs.
 
 ---
 
@@ -305,7 +305,7 @@ A simplified operator-facing interface for non-technical users.
 
 ---
 
-### 2.2 What Atlas Does NOT Currently Have (Honest Gap Assessment)
+### 2.2 What Astra Agents Does NOT Currently Have (Honest Gap Assessment)
 
 | Gap | Impact | Phase to address |
 |---|---|---|
@@ -322,17 +322,17 @@ A simplified operator-facing interface for non-technical users.
 
 ## 3. Agent Creation — Full Prerequisites Checklist
 
-Before a functional agent can be built and deployed in Atlas, the following must be in place. This is the onboarding checklist for each new customer tenant.
+Before a functional agent can be built and deployed in Astra Agents, the following must be in place. This is the onboarding checklist for each new customer tenant.
 
 ### Infrastructure Prerequisites
 
 | Prerequisite | Required for | Notes |
 |---|---|---|
-| PostgreSQL database | All storage | Already part of Atlas stack |
-| pgvector extension | KB semantic search | Auto-enabled by Atlas on startup if available |
+| PostgreSQL database | All storage | Already part of Astra Agents stack |
+| pgvector extension | KB semantic search | Auto-enabled by Astra Agents on startup if available |
 | OpenAI API key | KB embeddings | Falls back to lexical retrieval without it — functional but lower quality |
 | LLM provider credentials | Agent runtime | Anthropic (Claude) and/or OpenAI — per-agent selection |
-| Atlas org provisioned | Multi-tenancy | One org per client; scriptable |
+| Astra Agents org provisioned | Multi-tenancy | One org per client; scriptable |
 
 ### Knowledge Base Prerequisites (before first agent run)
 
@@ -365,7 +365,7 @@ Step 8: Deploy                        →  canary or full rollout; runtime start
 ```
 Step 1: Kong route registered         →  product API accessible via Kong
 Step 2: Auth configured in Kong       →  API key, bearer, or OAuth2 per product
-Step 3: Tool definition created       →  HTTP tool definition in Atlas referencing Kong URL
+Step 3: Tool definition created       →  HTTP tool definition in Astra Agents referencing Kong URL
 Step 4: Tool added to blueprint       →  tool_call node in blueprint graph
 Step 5: Test run                      →  PS engineer validates tool call in sandbox
 Step 6: Published to catalogue        →  connector available to other agents and blueprints
@@ -375,14 +375,14 @@ Step 6: Published to catalogue        →  connector available to other agents a
 
 ## 4. Integration Architecture
 
-### 4.1 Kong ↔ Atlas Integration Pattern
+### 4.1 Kong ↔ Astra Agents Integration Pattern
 
 ```
 Customer's Unified Portal
   │
-  │ REST (Atlas API Gateway — per-agent endpoint, API key auth)
+  │ REST (Astra Agents API Gateway — per-agent endpoint, API key auth)
   ▼
-Atlas Agent Runtime
+Astra Agents Agent Runtime
   │
   │ HTTP tool calls (typed REST definitions in blueprint, configured per agent)
   ▼
@@ -396,7 +396,7 @@ Kong API Gateway
   └── Log aggregation APIs       (product event logs, error feeds)
 ```
 
-**Key design principle:** Tenant identity (org ID) flows from portal → Atlas invocation context → Kong consumer header. Every agent call to Kong is scoped to the requesting client's tenant.
+**Key design principle:** Tenant identity (org ID) flows from portal → Astra Agents invocation context → Kong consumer header. Every agent call to Kong is scoped to the requesting client's tenant.
 
 ### 4.2 Three Agent Classes
 
@@ -442,7 +442,7 @@ Kong API Gateway
 ### Phase 1 — Crawl (Months 0–6)
 **Theme: Prove agent ROI on known, bounded workflows**
 
-#### Atlas Light — what gets stood up
+#### Astra Agents Light — what gets stood up
 
 | Included | Deferred |
 |---|---|
@@ -464,7 +464,7 @@ Kong API Gateway
 - Starter KB bundles for each onboarded product (ingested, QA-checked, promoted)
 - Output contracts defined for each agent — portal always receives validated structured JSON
 - Outcome contracts with KPI targets defined — baseline for ROI tracking
-- Portal integration shim — portal calls Atlas API gateway, Atlas returns structured JSON
+- Portal integration shim — portal calls Astra Agents API gateway, Astra Agents returns structured JSON
 - Per-client org provisioning script
 
 #### What the portal gets
@@ -485,7 +485,7 @@ Kong API Gateway
 ### Phase 2 — Walk (Months 6–12)
 **Theme: Expand across products. Richer portal surfaces. Clients configure, not build.**
 
-#### Atlas platform additions
+#### Astra Agents platform additions
 
 | New capability | Description |
 |---|---|
@@ -514,7 +514,7 @@ Kong API Gateway
 ### Phase 3 — Run (Months 12–18+)
 **Theme: Client self-service. Embedded workflow designer. Data intelligence at scale.**
 
-#### Atlas platform additions
+#### Astra Agents platform additions
 
 | New capability | Description |
 |---|---|
@@ -546,7 +546,7 @@ Node types available to client builders:
 
 ## 6. Component Extraction Map
 
-For the embedded model — Atlas components extracted and run as services behind the customer's portal:
+For the embedded model — Astra Agents components extracted and run as services behind the customer's portal:
 
 | Component | Extraction form | Phase | Strength |
 |---|---|---|---|
@@ -562,7 +562,7 @@ For the embedded model — Atlas components extracted and run as services behind
 | **Workflow Designer** | New build (portal-embedded) | Run | ★ Does not exist yet |
 | **Connector Catalogue** | New build (portal-embedded) | Walk | ★ Management layer |
 
-**Keep in Atlas (access via API, not embedded):**
+**Keep in Astra Agents (access via API, not embedded):**
 - Blueprint builder — PS engineers use it directly
 - Full observability and trace viewer — internal tooling for PS and platform support teams
 - Policy management UI — managed by the customer's platform admin team
@@ -575,7 +575,7 @@ For the embedded model — Atlas components extracted and run as services behind
 
 ```
 Portal (client logged in)
-  → Atlas API gateway (org ID in request context)
+  → Astra Agents API gateway (org ID in request context)
   → Agent runtime (org ID in execution context)
   → HTTP tool call (org ID as Kong consumer header)
   → Kong (enforces tenant-scoped API access)
@@ -586,18 +586,18 @@ Design once, correctly, before any agent is built. All agents across all product
 
 ### Decision 2 — Agent output contract for the portal
 
-Each agent class needs a defined JSON output schema. Portal UI team designs rendering components against the schema. Atlas's output contract enforcer validates every agent response before it reaches the portal. Schemas defined first; agents built to match.
+Each agent class needs a defined JSON output schema. Portal UI team designs rendering components against the schema. Astra Agents's output contract enforcer validates every agent response before it reaches the portal. Schemas defined first; agents built to match.
 
 ### Decision 3 — Outcome contract baseline before go-live
 
-For ROI measurement to be credible, outcome contracts and KPI baselines must be established before agents go live — not after. The pre-agent baseline (manual process metrics: resolution times, error rates, escalation volumes) becomes the comparison point. Atlas's outcome contract system captures both the estimate and the realised values.
+For ROI measurement to be credible, outcome contracts and KPI baselines must be established before agents go live — not after. The pre-agent baseline (manual process metrics: resolution times, error rates, escalation volumes) becomes the comparison point. Astra Agents's outcome contract system captures both the estimate and the realised values.
 
 ---
 
 ## 8. Pitch Framing — Key Messages
 
 **"Your portal, enhanced — not a new tool to learn"**
-Atlas runs behind the customer's unified portal. Their clients see their familiar interface. The AI layer is invisible infrastructure.
+Astra Agents runs behind the customer's unified portal. Their clients see their familiar interface. The AI layer is invisible infrastructure.
 
 **"We build the first agents; your clients build the next ones"**
 Phase 1 is professional services. Phase 2 and 3 open a guided builder so larger clients can create agents within guardrails the customer controls.
@@ -612,7 +612,7 @@ The connector catalogue model means each new product adds to a shared library. T
 
 ## 9. Summary Scorecard
 
-| Capability | Atlas Readiness | Adaptability | Delivery Priority |
+| Capability | Astra Agents Readiness | Adaptability | Delivery Priority |
 |---|---|---|---|
 | Agent lifecycle management | ★★★ Production | High | Day 1 |
 | Agent creation wizard (9-step) | ★★★ Production | High — PS use in Crawl, client use in Run | Day 1 |
@@ -637,5 +637,5 @@ The connector catalogue model means each new product adds to a shared library. T
 
 ---
 
-*Document prepared from Atlas platform codebase analysis and customer engagement sessions — May 2026*  
+*Document prepared from Astra Agents platform codebase analysis and customer engagement sessions — May 2026*  
 *Version 2 — updated to include Agent Creation capability, Outcome Contract / ROI system, and Knowledge Base prerequisites*
