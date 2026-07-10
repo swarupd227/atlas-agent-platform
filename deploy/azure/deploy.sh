@@ -24,6 +24,10 @@ source config.env
 
 REPO_ROOT="$(cd ../.. && pwd)"
 ZIP_PATH=$(mktemp --suffix=.zip)
+# mktemp creates the file empty -- `zip` treats an existing file as an
+# archive to append to and chokes on it being empty/invalid, so remove the
+# placeholder and let `zip` create a fresh archive at the same path.
+rm -f "$ZIP_PATH"
 
 echo "Zipping $REPO_ROOT (excluding .git, node_modules, dist, deploy secrets)..."
 (
