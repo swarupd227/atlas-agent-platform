@@ -26,6 +26,7 @@ export interface NodePlanConfig {
   retryPolicy: { max_attempts: number; backoff_ms: number[] };
   nodeType: string;
   refTeamAgentId: string | null;
+  refSkillId: string | null;
   label: string;
 }
 
@@ -152,6 +153,7 @@ export function computeWaves(
       retryPolicy: (node.retryPolicy as any) || { max_attempts: 2, backoff_ms: [1000, 2000] },
       nodeType: node.nodeType,
       refTeamAgentId: node.refTeamAgentId || null,
+      refSkillId: (node as any).refSkillId || null,
       label: node.label,
     };
   }
@@ -376,6 +378,10 @@ export class DAGExecutionEngine {
 
     const start = Date.now();
 
+    if (nc.nodeType === "skill" && nc.refSkillId) {
+      return this.executeSkillNode(nodeId, nc, start);
+    }
+
     if (nc.refTeamAgentId) {
       return this.executeTeamReferenceNode(nodeId, nc, currentState, config, start);
     }
@@ -436,6 +442,53 @@ export class DAGExecutionEngine {
       promptTokens: workerResult.promptTokens || 0,
       completionTokens: workerResult.completionTokens || 0,
       traceId: workerResult.traceId || "",
+    };
+  }
+
+  /**
+   * Execute a "skill" node. Skills are prompt-content overlays in this codebase
+   * (agents.preloadedSkills works the same way for a whole agent — see
+   * agent-runtime.ts's skill gate) rather than standalone runnable units, so
+   * "executing" one means resolving its content and merging it into shared DAG
+   * state under the node's stateKey. buildAgentInput already dumps every state
+   * key into downstream agent nodes' prompts, so no changes are needed there —
+   * a skill node placed before an agent node in the graph makes its content
+   * appear in that agent's context automatically. This is advisory content
+   * injection only: unlike the whole-agent skill gate, allowedTools from a
+   * skill node is not enforced as a hard tool-call allowlist here.
+   */
+  private async executeSkillNode(
+    nodeId: string,
+    nc: NodePlanConfig,
+    start: number,
+  ): Promise<NodeExecutionResult> {
+    const skill = await storage.getSkill(nc.refSkillId!);
+    if (!skill) {
+      return {
+        nodeId,
+        agentId: "",
+        status: "failed",
+        output: {},
+        error: `Skill ${nc.refSkillId} not found`,
+        durationMs: Date.now() - start,
+        promptTokens: 0,
+        completionTokens: 0,
+        traceId: "",
+      };
+    }
+
+    const toolsNote = skill.allowedTools?.length ? `\n\nAllowed tools: ${skill.allowedTools.join(", ")}` : "";
+    const content = `# ${skill.name}\n${skill.description}${toolsNote}\n\n${skill.markdownBody || ""}`.trim();
+
+    return {
+      nodeId,
+      agentId: "",
+      status: "completed",
+      output: { [nc.stateKey]: content },
+      durationMs: Date.now() - start,
+      promptTokens: 0,
+      completionTokens: 0,
+      traceId: "",
     };
   }
 

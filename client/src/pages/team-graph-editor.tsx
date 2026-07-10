@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useEffect } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import type { TeamBlueprintNode, TeamBlueprintEdge, Agent, RemoteAgent, Policy, DagStateSchema } from "@shared/schema";
+import type { TeamBlueprintNode, TeamBlueprintEdge, Agent, RemoteAgent, Policy, DagStateSchema, Skill } from "@shared/schema";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,10 +10,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Brain, Wrench, ShieldCheck, Globe, Plus, X, Link2, MousePointer,
   FileText, Database, Type, Link as LinkIcon, Network, AlertTriangle, Eye,
-  Save,
+  Save, Sparkles, Play, Loader2, CheckCircle2, XCircle,
 } from "lucide-react";
 
 interface McpServerTool {
@@ -38,6 +39,7 @@ const TEAM_NODE_TYPES = [
   { type: "tool_set", label: "Tool Set", icon: Wrench, color: "bg-amber-500" },
   { type: "edge_gate", label: "Edge Gate", icon: ShieldCheck, color: "bg-orange-500" },
   { type: "remote_agent", label: "Remote Agent", icon: Globe, color: "bg-purple-500" },
+  { type: "skill", label: "Skill", icon: Sparkles, color: "bg-teal-500" },
 ] as const;
 
 const NODE_COLOR_MAP: Record<string, string> = {
@@ -45,6 +47,7 @@ const NODE_COLOR_MAP: Record<string, string> = {
   tool_set: "bg-amber-500",
   edge_gate: "bg-orange-500",
   remote_agent: "bg-purple-500",
+  skill: "bg-teal-500",
 };
 
 const NODE_ICON_MAP: Record<string, typeof Brain> = {
@@ -52,6 +55,7 @@ const NODE_ICON_MAP: Record<string, typeof Brain> = {
   tool_set: Wrench,
   edge_gate: ShieldCheck,
   remote_agent: Globe,
+  skill: Sparkles,
 };
 
 const PART_TYPE_OPTIONS = [
@@ -73,6 +77,7 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId }: TeamGraphE
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
   const [edgeMode, setEdgeMode] = useState<string | null>(null);
+  const [runDialogOpen, setRunDialogOpen] = useState(false);
 
   const graphQueryKey = ["/api/blueprints", blueprintId, "team-graph"];
 
@@ -85,6 +90,7 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId }: TeamGraphE
   const { data: remoteAgents } = useQuery<RemoteAgent[]>({ queryKey: ["/api/remote-agents"] });
   const { data: mcpTools } = useQuery<McpServerTool[]>({ queryKey: ["/api/mcp-tools"] });
   const { data: policies } = useQuery<Policy[]>({ queryKey: ["/api/policies"] });
+  const { data: skills } = useQuery<Skill[]>({ queryKey: ["/api/skills"] });
 
   const nodes = graphData?.nodes || [];
   const edges = graphData?.edges || [];
@@ -267,8 +273,24 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId }: TeamGraphE
           >
             <Link2 className="w-3.5 h-3.5 mr-1.5" /> {edgeMode ? "Cancel Edge Mode" : "Add Edge"}
           </Button>
+          {teamAgentId && (
+            <Button
+              variant="default"
+              size="sm"
+              className="w-full mt-2"
+              disabled={nodes.length === 0}
+              onClick={() => setRunDialogOpen(true)}
+              data-testid="button-run-team-graph"
+            >
+              <Play className="w-3.5 h-3.5 mr-1.5" /> Run Team Graph
+            </Button>
+          )}
         </div>
       </div>
+
+      {teamAgentId && runDialogOpen && (
+        <RunDagDialog teamAgentId={teamAgentId} open={runDialogOpen} onClose={() => setRunDialogOpen(false)} />
+      )}
 
       {/* Center Panel - Graph Canvas */}
       <div className="flex-1 flex flex-col min-w-0">
@@ -304,6 +326,7 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId }: TeamGraphE
                   const refAgent = node.refAgentId ? (agents || []).find(a => a.id === node.refAgentId) : null;
                   const refTeamAgentOnCard = node.refTeamAgentId ? (agents || []).find(a => a.id === node.refTeamAgentId) : null;
                   const refRemoteAgent = node.refRemoteAgentId ? (remoteAgents || []).find(ra => ra.id === node.refRemoteAgentId) : null;
+                  const refSkill = (node as any).refSkillId ? (skills || []).find(s => s.id === (node as any).refSkillId) : null;
                   const toolCount = (node.refToolIds || []).length;
 
                   return (
@@ -373,6 +396,11 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId }: TeamGraphE
                           {node.nodeType === "edge_gate" && node.gateType && (
                             <Badge variant="outline" className="text-[10px] shrink-0 bg-orange-500/10">{node.gateType}</Badge>
                           )}
+                          {node.nodeType === "skill" && refSkill && (
+                            <Badge variant="outline" className="text-[10px] shrink-0 bg-teal-500/10 border-teal-500/30 text-teal-700 dark:text-teal-300 flex items-center gap-1" data-testid={`badge-skill-ref-${node.id}`}>
+                              <Sparkles className="w-2.5 h-2.5" />{refSkill.name}
+                            </Badge>
+                          )}
                           {stateKeyConflictIds.has(node.id) && (
                             <Badge variant="outline" className="text-[9px] shrink-0 text-amber-600 border-amber-500/40 bg-amber-500/10 flex items-center gap-0.5 px-1" data-testid={`badge-canvas-state-key-conflict-${node.id}`}>
                               <AlertTriangle className="w-2.5 h-2.5" /> key conflict
@@ -411,6 +439,7 @@ export default function TeamGraphEditor({ blueprintId, teamAgentId }: TeamGraphE
                 remoteAgents={remoteAgents || []}
                 mcpTools={mcpTools || []}
                 policies={policies || []}
+                skills={skills || []}
                 onUpdate={(updates) => updateNodeMutation.mutate({ id: selectedNode.id, updates })}
                 isPending={updateNodeMutation.isPending}
               />
@@ -504,6 +533,113 @@ function WavePlanDialog({ teamAgentId, open, onClose }: { teamAgentId: string; o
   );
 }
 
+interface DagRunResult {
+  dagRunId: string;
+  success: boolean;
+  finalState: Record<string, any>;
+  waveResults: Array<{
+    waveNumber: number;
+    durationMs: number;
+    nodes: Array<{ nodeId: string; status: string; error?: string; durationMs: number; output: Record<string, any> }>;
+  }>;
+  totalPromptTokens: number;
+  totalCompletionTokens: number;
+}
+
+function RunDagDialog({ teamAgentId, open, onClose }: { teamAgentId: string; open: boolean; onClose: () => void }) {
+  const { toast } = useToast();
+  const [request, setRequest] = useState("");
+  const [result, setResult] = useState<DagRunResult | null>(null);
+
+  const runMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/team-agents/${teamAgentId}/run-dag`, { request });
+      return res.json() as Promise<DagRunResult>;
+    },
+    onSuccess: (data) => {
+      setResult(data);
+      toast({ title: data.success ? "Run completed" : "Run completed with failures" });
+    },
+    onError: (err: Error) => toast({ title: "Run failed", description: err.message, variant: "destructive" }),
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={v => { if (!v) onClose(); }}>
+      <DialogContent className="max-w-lg" data-testid="dialog-run-dag">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Play className="w-4 h-4 text-primary" /> Run Team Graph
+          </DialogTitle>
+        </DialogHeader>
+        {!result && !runMutation.isPending && (
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Request (optional)</label>
+              <Textarea
+                value={request}
+                onChange={e => setRequest(e.target.value)}
+                placeholder="What should this team work on? Available to nodes as state.request."
+                className="text-xs min-h-[70px]"
+                data-testid="textarea-run-request"
+              />
+            </div>
+            <Button onClick={() => runMutation.mutate()} data-testid="button-confirm-run-dag">
+              <Play className="w-3.5 h-3.5 mr-1.5" /> Run
+            </Button>
+          </div>
+        )}
+        {runMutation.isPending && (
+          <div className="flex flex-col items-center justify-center gap-2 py-8">
+            <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+            <span className="text-xs text-muted-foreground">Executing waves...</span>
+          </div>
+        )}
+        {result && (
+          <div className="flex flex-col gap-3">
+            <div className="flex items-center gap-2 flex-wrap text-xs">
+              {result.success ? (
+                <Badge variant="outline" className="bg-emerald-500/10 border-emerald-500/30 text-emerald-700 dark:text-emerald-300 flex items-center gap-1" data-testid="badge-run-success">
+                  <CheckCircle2 className="w-3 h-3" /> Success
+                </Badge>
+              ) : (
+                <Badge variant="outline" className="bg-red-500/10 border-red-500/30 text-red-700 dark:text-red-300 flex items-center gap-1" data-testid="badge-run-failed">
+                  <XCircle className="w-3 h-3" /> Failed
+                </Badge>
+              )}
+              <span className="text-muted-foreground">{result.totalPromptTokens + result.totalCompletionTokens} tokens</span>
+            </div>
+            <ScrollArea className="max-h-[320px]">
+              <div className="flex flex-col gap-2 pr-3">
+                {result.waveResults.map(wave => (
+                  <div key={wave.waveNumber} className="flex flex-col gap-1.5 p-2.5 rounded-md border bg-muted/30" data-testid={`run-wave-${wave.waveNumber}`}>
+                    <span className="text-[10px] font-medium text-muted-foreground uppercase">Wave {wave.waveNumber} · {wave.durationMs}ms</span>
+                    <div className="flex flex-col gap-1">
+                      {wave.nodes.map(n => (
+                        <div key={n.nodeId} className="flex items-center gap-1.5 text-xs">
+                          {n.status === "completed" ? (
+                            <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
+                          ) : (
+                            <XCircle className="w-3 h-3 text-red-500 shrink-0" />
+                          )}
+                          <span className="truncate">{n.nodeId}</span>
+                          {n.error && <span className="text-[10px] text-red-500 truncate">— {n.error}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
+            <Button variant="outline" size="sm" onClick={() => { setResult(null); setRequest(""); }} data-testid="button-run-again">
+              Run Again
+            </Button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function NodeConfigPanel({
   node,
   allNodes,
@@ -512,6 +648,7 @@ function NodeConfigPanel({
   remoteAgents,
   mcpTools,
   policies,
+  skills,
   onUpdate,
   isPending,
 }: {
@@ -522,14 +659,16 @@ function NodeConfigPanel({
   remoteAgents: RemoteAgent[];
   mcpTools: McpServerTool[];
   policies: Policy[];
+  skills: Skill[];
   onUpdate: (updates: Partial<TeamBlueprintNode>) => void;
   isPending: boolean;
 }) {
   const autoStateKey = (label: string) => label.trim().toLowerCase().replace(/[\s-]+/g, "_").replace(/[^a-z0-9_]/g, "");
+  const nodeTypeUsesStateKey = (t: string) => t === "internal_agent" || t === "skill";
 
   const initialStateKey = (node.stateKey && node.stateKey.length > 0)
     ? node.stateKey
-    : (node.nodeType === "internal_agent" ? autoStateKey(node.label) : "");
+    : (nodeTypeUsesStateKey(node.nodeType) ? autoStateKey(node.label) : "");
 
   const [localLabel, setLocalLabel] = useState(node.label);
   const [localStateKey, setLocalStateKey] = useState(initialStateKey);
@@ -543,7 +682,7 @@ function NodeConfigPanel({
     setLocalLabel(node.label);
     const nextStateKey = (node.stateKey && node.stateKey.length > 0)
       ? node.stateKey
-      : (node.nodeType === "internal_agent" ? autoStateKey(node.label) : "");
+      : (nodeTypeUsesStateKey(node.nodeType) ? autoStateKey(node.label) : "");
     setLocalStateKey(nextStateKey);
     setLocalTimeoutMs(node.timeoutMs != null ? String(node.timeoutMs) : "30000");
     setNodeKind(node.refTeamAgentId ? "team_reference" : "agent");
@@ -551,7 +690,7 @@ function NodeConfigPanel({
   }
 
   useEffect(() => {
-    if (node.nodeType === "internal_agent" && (!node.stateKey || node.stateKey.length === 0) && initialStateKey) {
+    if (nodeTypeUsesStateKey(node.nodeType) && (!node.stateKey || node.stateKey.length === 0) && initialStateKey) {
       onUpdate({ stateKey: initialStateKey });
     }
   }, [node.id]);
@@ -559,7 +698,7 @@ function NodeConfigPanel({
   const handleLabelBlur = () => {
     if (localLabel !== node.label) {
       const updates: Partial<TeamBlueprintNode> = { label: localLabel };
-      if (!localStateKey && node.nodeType === "internal_agent") {
+      if (!localStateKey && nodeTypeUsesStateKey(node.nodeType)) {
         const auto = autoStateKey(localLabel);
         setLocalStateKey(auto);
         updates.stateKey = auto;
@@ -577,6 +716,7 @@ function NodeConfigPanel({
   const selectedTeamAgent = node.refTeamAgentId ? teamAgentsList.find(a => a.id === node.refTeamAgentId) : null;
   const selectedRemoteAgent = node.refRemoteAgentId ? remoteAgents.find(ra => ra.id === node.refRemoteAgentId) : null;
   const selectedPolicy = node.refPolicyId ? policies.find(p => p.id === node.refPolicyId) : null;
+  const selectedSkill = (node as any).refSkillId ? skills.find(s => s.id === (node as any).refSkillId) : null;
   const selectedToolIds = new Set(node.refToolIds || []);
 
   return (
@@ -845,6 +985,68 @@ function NodeConfigPanel({
               </CardContent>
             </Card>
           )}
+        </>
+      )}
+
+      {node.nodeType === "skill" && (
+        <>
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground">Skill</label>
+            <select
+              className="h-8 w-full rounded-md border bg-background px-2 text-xs"
+              value={(node as any).refSkillId || ""}
+              onChange={e => onUpdate({ refSkillId: e.target.value || null } as any)}
+              data-testid="select-ref-skill"
+            >
+              <option value="">-- Select Skill --</option>
+              {skills.map(s => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+            <p className="text-[10px] text-muted-foreground">
+              At runtime, this skill's content is merged into shared DAG state under State Key — any agent node reached afterward picks it up automatically.
+            </p>
+          </div>
+          {selectedSkill && (
+            <Card className="border-teal-500/30">
+              <CardContent className="p-3 flex flex-col gap-1.5">
+                <div className="flex items-center gap-1.5">
+                  <Sparkles className="w-3 h-3 text-teal-500 shrink-0" />
+                  <span className="text-xs font-medium">{selectedSkill.name}</span>
+                </div>
+                {selectedSkill.description && <p className="text-xs text-muted-foreground">{selectedSkill.description}</p>}
+                {selectedSkill.allowedTools && selectedSkill.allowedTools.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {selectedSkill.allowedTools.map(t => (
+                      <Badge key={t} variant="outline" className="text-[9px]">{t}</Badge>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+              State Key
+              {stateKeyConflict && (
+                <Badge variant="outline" className="text-[9px] px-1 py-0 text-amber-600 border-amber-500/40 bg-amber-500/10 flex items-center gap-0.5">
+                  <AlertTriangle className="w-2.5 h-2.5" /> conflict
+                </Badge>
+              )}
+            </label>
+            <Input
+              value={localStateKey}
+              onChange={e => setLocalStateKey(e.target.value)}
+              onBlur={() => {
+                const val = localStateKey || autoStateKey(localLabel);
+                if (!localStateKey) setLocalStateKey(val);
+                if (val !== (node.stateKey || "")) onUpdate({ stateKey: val || null });
+              }}
+              placeholder={autoStateKey(localLabel) || "e.g. compliance_context"}
+              data-testid="input-skill-state-key"
+            />
+          </div>
         </>
       )}
 
