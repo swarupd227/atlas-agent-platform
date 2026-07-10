@@ -99,6 +99,13 @@ az postgres flexible-server parameter set \
   --name azure.extensions --value VECTOR \
   --output none
 
+# `postgres flexible-server execute` ships in the rdbms-connect extension, not
+# core az CLI -- not installed by default on Cloud Shell.
+if ! az extension show --name rdbms-connect --output none 2>/dev/null; then
+  echo "  Installing the rdbms-connect CLI extension (needed to run CREATE EXTENSION)..."
+  az extension add --name rdbms-connect --only-show-errors
+fi
+
 az postgres flexible-server execute \
   --name "$DB_SERVER" --admin-user "$DB_ADMIN" --admin-password "$DB_PASSWORD" \
   --database-name "$DB_NAME" \
