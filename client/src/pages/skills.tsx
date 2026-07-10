@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { QueryBoundary } from "@/components/ui-vocab";
 import { useIndustry } from "@/components/industry-provider";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
@@ -103,6 +104,7 @@ export default function SkillCatalog() {
     }
   }, [currentIndustry?.id]);
   const [trustFilter, setTrustFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [compatFilter, setCompatFilter] = useState("all");
   const [brokenDepFilter, setBrokenDepFilter] = useState(false);
   const [sortBy, setSortBy] = useState<"name" | "performance" | "activations">("activations");
@@ -120,7 +122,7 @@ export default function SkillCatalog() {
   const [generateDescription, setGenerateDescription] = useState("");
   const [showGeneratePanel, setShowGeneratePanel] = useState(false);
 
-  const { data: skills = [], isLoading } = useQuery<Skill[]>({
+  const { data: skills = [], isLoading, isError, error, refetch } = useQuery<Skill[]>({
     queryKey: ["/api/skills"],
   });
 
@@ -276,6 +278,9 @@ export default function SkillCatalog() {
     if (industryFilter !== "all") result = result.filter((s) => s.industry === industryFilter);
     if (domainFilter !== "all") result = result.filter((s) => s.domain === domainFilter);
     if (trustFilter !== "all") result = result.filter((s) => s.trustTier === trustFilter);
+    // Status matters: only "active" skills are injected at runtime — surface
+    // draft/deprecated explicitly instead of silently mixing them in.
+    if (statusFilter !== "all") result = result.filter((s) => (s.status || "active") === statusFilter);
     if (compatFilter !== "all")
       result = result.filter((s) => (s.agentTypeCompatibility as string[] | null)?.includes(compatFilter));
     if (brokenDepFilter)
@@ -287,7 +292,7 @@ export default function SkillCatalog() {
       return b.activationCount - a.activationCount;
     });
     return result;
-  }, [skills, search, industryFilter, domainFilter, trustFilter, compatFilter, brokenDepFilter, skillHasBrokenDeps, sortBy]);
+  }, [skills, search, industryFilter, domainFilter, trustFilter, statusFilter, compatFilter, brokenDepFilter, skillHasBrokenDeps, sortBy]);
 
   const groupedByIndustry = useMemo(() => {
     const grouped: Record<string, Record<string, Skill[]>> = {};
@@ -334,6 +339,14 @@ export default function SkillCatalog() {
             <Skeleton key={i} className="h-48" />
           ))}
         </div>
+      </div>
+    );
+  }
+
+  if (isError) {
+    return (
+      <div className="p-6">
+        <QueryBoundary isLoading={false} isError error={error} onRetry={() => refetch()}>{null}</QueryBoundary>
       </div>
     );
   }
@@ -428,6 +441,17 @@ export default function SkillCatalog() {
                   <SelectItem value="platform-provided">Platform Provided</SelectItem>
                   <SelectItem value="customer-created">Customer Created</SelectItem>
                   <SelectItem value="marketplace">Marketplace</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-[150px]" data-testid="select-status-filter">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Statuses</SelectItem>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="draft">Draft</SelectItem>
+                  <SelectItem value="deprecated">Deprecated</SelectItem>
                 </SelectContent>
               </Select>
               <Select value={compatFilter} onValueChange={setCompatFilter}>

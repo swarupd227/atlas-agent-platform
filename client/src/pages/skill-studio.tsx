@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import { formatDate } from "@/lib/format";
 import { useQuery } from "@tanstack/react-query";
 import { useRoute, useLocation, Link } from "wouter";
 import type { Skill, SkillVersion } from "@shared/schema";
@@ -616,6 +617,7 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
     try {
       const [withRes, withoutRes] = await Promise.all([
         apiRequest("POST", "/api/ai/skill-test-sandbox", {
+          skillId: id, // enables real knowledge-graph query execution server-side
           skillName: name,
           description,
           markdownBody,
@@ -659,6 +661,18 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
       toast({ title: "Failed to save version", description: e.message, variant: "destructive" });
     } finally {
       setSavingVersion(false);
+    }
+  };
+
+  const handlePromote = async (ver: SkillVersion) => {
+    try {
+      await apiRequest("POST", `/api/skill-versions/${ver.id}/promote`);
+      queryClient.invalidateQueries({ queryKey: ["/api/skills", id, "versions"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/skills", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/skills"] });
+      toast({ title: `Version v${ver.version} promoted to production` });
+    } catch (e: any) {
+      toast({ title: "Failed to promote version", description: e.message, variant: "destructive" });
     }
   };
 
@@ -1515,7 +1529,7 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                         <span className="text-sm font-medium flex-1">{ver.changeLog || "No changelog"}</span>
                         <span className="text-xs text-muted-foreground">{ver.author}</span>
                         <span className="text-xs text-muted-foreground">
-                          {ver.createdAt ? new Date(ver.createdAt).toLocaleDateString() : ""}
+                          {ver.createdAt ? formatDate(ver.createdAt) : ""}
                         </span>
                         {ver.promotedToProduction && <Badge variant="secondary" className="text-[10px]">Production</Badge>}
                         {(ver.shadowReplayResults as any) && <Badge variant="outline" className="text-[10px]">Shadow Results</Badge>}
@@ -1530,9 +1544,19 @@ function SkillStudioEditor({ skillId: id }: { skillId: string }) {
                   <CardHeader>
                     <div className="flex items-center justify-between gap-3 flex-wrap">
                       <CardTitle className="text-sm">Version Diff: v{selectedVersion.version}</CardTitle>
-                      <Button variant="outline" size="sm" onClick={() => handleRollback(selectedVersion)} data-testid="button-rollback">
-                        <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Rollback
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          onClick={() => handlePromote(selectedVersion)}
+                          disabled={!!selectedVersion.promotedToProduction}
+                          data-testid="button-promote-version"
+                        >
+                          {selectedVersion.promotedToProduction ? "In Production" : "Promote to Production"}
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => handleRollback(selectedVersion)} data-testid="button-rollback">
+                          <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Rollback
+                        </Button>
+                      </div>
                     </div>
                   </CardHeader>
                   <CardContent>
@@ -1797,7 +1821,7 @@ function SkillEvalResultsPanel({ skillId }: { skillId: string }) {
               <p className="text-xs text-muted-foreground">Run Date</p>
               <p className="text-sm flex items-center gap-1" data-testid="text-eval-date">
                 <Clock className="w-3 h-3" />
-                {new Date(run.completedAt || run.startedAt || run.createdAt).toLocaleDateString()}
+                {formatDate(run.completedAt || run.startedAt || run.createdAt)}
               </p>
             </div>
           </div>

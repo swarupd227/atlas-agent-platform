@@ -168,6 +168,21 @@ function ConnectorDetailDialog({ connector, open, onOpenChange }: { connector: T
     },
   });
 
+  // Live 24h health from the enterprise-integration telemetry (real call/error
+  // counts), fetched only while the dialog is open. Fails soft: an integration
+  // with no telemetry simply shows "No calls in the last 24h".
+  const { data: health } = useQuery<{
+    status?: string;
+    metrics?: { totalCalls: number; totalErrors: number; errorRate: number; successRate: number };
+    lastTestedAt?: string | null;
+    lastError?: string | null;
+    tokenExpiresAt?: string | null;
+  }>({
+    queryKey: [`/api/integrations/${connector?.id}/health`],
+    enabled: open && !!connector?.id,
+    retry: false,
+  });
+
   if (!connector) return null;
 
   const IconComp = (connector.icon && ICON_MAP[connector.icon]) || Plug;
@@ -202,6 +217,44 @@ function ConnectorDetailDialog({ connector, open, onOpenChange }: { connector: T
             {connector.lastTestedAt && (
               <span className="text-[11px] text-muted-foreground" data-testid="text-last-tested">
                 Last tested: {new Date(connector.lastTestedAt).toLocaleString()}
+              </span>
+            )}
+          </div>
+
+          {/* Live 24h connector health — real call/error telemetry. */}
+          <div className="rounded-md border p-3 flex flex-col gap-2" data-testid="panel-connector-health">
+            <div className="flex items-center gap-1.5">
+              <Activity className="w-4 h-4 text-muted-foreground" />
+              <h3 className="text-sm font-medium">Health · last 24 hours</h3>
+            </div>
+            {health?.metrics && health.metrics.totalCalls > 0 ? (
+              <div className="grid grid-cols-3 gap-3">
+                <div className="flex flex-col">
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Calls</span>
+                  <span className="text-lg font-semibold" data-testid="health-total-calls">{health.metrics.totalCalls}</span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Success</span>
+                  <span className={`text-lg font-semibold ${health.metrics.successRate >= 0.99 ? "text-emerald-600 dark:text-emerald-400" : health.metrics.successRate >= 0.9 ? "text-amber-600 dark:text-amber-400" : "text-red-600 dark:text-red-400"}`} data-testid="health-success-rate">
+                    {Math.round(health.metrics.successRate * 100)}%
+                  </span>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Errors</span>
+                  <span className={`text-lg font-semibold ${health.metrics.totalErrors === 0 ? "text-muted-foreground" : "text-red-600 dark:text-red-400"}`} data-testid="health-total-errors">{health.metrics.totalErrors}</span>
+                </div>
+              </div>
+            ) : (
+              <span className="text-[11px] text-muted-foreground" data-testid="health-no-data">No calls in the last 24 hours.</span>
+            )}
+            {health?.tokenExpiresAt && (
+              <span className="text-[11px] text-muted-foreground" data-testid="health-token-expiry">
+                Token expires: {new Date(health.tokenExpiresAt).toLocaleString()}
+              </span>
+            )}
+            {health?.lastError && (
+              <span className="text-[11px] text-red-600 dark:text-red-400 truncate" data-testid="health-last-error" title={health.lastError}>
+                Last error: {health.lastError}
               </span>
             )}
           </div>

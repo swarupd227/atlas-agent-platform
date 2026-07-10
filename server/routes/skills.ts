@@ -1050,7 +1050,7 @@ Return ONLY a valid JSON object with a "skills" array.`,
     res.json(skill);
   });
 
-  router.post("/api/skills", async (req, res) => {
+  router.post("/api/skills", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const data = insertSkillSchema.omit({ organizationId: true }).parse(req.body);
       const skill = await storage.createSkill({ ...data, organizationId: getOrgId(req) ?? getDefaultOrgId() ?? undefined });
@@ -1090,7 +1090,7 @@ Return ONLY a valid JSON object with a "skills" array.`,
     }
   });
 
-  router.patch("/api/skills/:id", async (req, res) => {
+  router.patch("/api/skills/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const patchSchema = insertSkillSchema.partial();
       const data = patchSchema.parse(req.body);
@@ -1173,9 +1173,33 @@ Return ONLY a valid JSON object with a "skills" array.`,
     }
   });
 
-  router.delete("/api/skills/:id", async (req, res) => {
-    await storage.deleteSkill(req.params.id as string, getOrgId(req));
-    res.json({ success: true });
+  router.delete("/api/skills/:id", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const skillId = req.params.id as string;
+      const force = req.query.force === "true";
+      // Referential integrity: agents may preload this skill; deleting it
+      // silently orphans those references and the runtime then drops the skill
+      // with no signal. Block unless the caller explicitly cascades.
+      const allAgents = await storage.getAgents(getOrgId(req));
+      const referencing = allAgents.filter(a =>
+        Array.isArray((a as any).preloadedSkills) &&
+        ((a as any).preloadedSkills as any[]).some((p: any) => p?.skillId === skillId)
+      );
+      if (referencing.length > 0 && !force) {
+        return res.status(409).json({
+          error: `Skill is preloaded by ${referencing.length} agent(s). Re-run with ?force=true to detach it from those agents and delete.`,
+          agents: referencing.map(a => ({ id: a.id, name: a.name })),
+        });
+      }
+      for (const a of referencing) {
+        const cleaned = ((a as any).preloadedSkills as any[]).filter((p: any) => p?.skillId !== skillId);
+        await storage.updateAgent(a.id, { preloadedSkills: cleaned } as any);
+      }
+      await storage.deleteSkill(skillId, getOrgId(req));
+      res.json({ success: true, detachedFromAgents: referencing.length });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || "Failed to delete skill" });
+    }
   });
 
   // Skill Versions
@@ -1184,7 +1208,7 @@ Return ONLY a valid JSON object with a "skills" array.`,
     res.json(versions);
   });
 
-  router.post("/api/skills/:skillId/versions", async (req, res) => {
+  router.post("/api/skills/:skillId/versions", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const data = insertSkillVersionSchema.parse({ ...req.body, skillId: req.params.skillId as string });
       const version = await storage.createSkillVersion(data);
@@ -1205,6 +1229,36 @@ Return ONLY a valid JSON object with a "skills" array.`,
     }
   });
 
+  // Promote a saved version snapshot to be the skill's live definition.
+  // Applies the snapshot's content back onto the skill record and maintains a
+  // single promotedToProduction pointer across the skill's versions — the
+  // promotedToProduction flag previously existed but nothing ever set it.
+  router.post("/api/skill-versions/:id/promote", checkPermission("create_modify_blueprints"), async (req, res) => {
+    try {
+      const version = await storage.getSkillVersion(req.params.id as string);
+      if (!version) return res.status(404).json({ error: "Skill version not found" });
+
+      const snapshot = (version.snapshotData as Record<string, any> | null) ?? {};
+      const updated = await storage.updateSkill(version.skillId, {
+        version: version.version,
+        ...(version.markdownBody != null ? { markdownBody: version.markdownBody } : {}),
+        ...(version.yamlFrontmatter != null ? { yamlFrontmatter: version.yamlFrontmatter } : {}),
+        ...(Array.isArray(snapshot.allowedTools) ? { allowedTools: snapshot.allowedTools } : {}),
+        ...(Array.isArray(snapshot.requiredMcpServers) ? { requiredMcpServers: snapshot.requiredMcpServers } : {}),
+      } as any);
+      if (!updated) return res.status(404).json({ error: "Skill not found for this version" });
+
+      const siblings = await storage.getSkillVersions(version.skillId);
+      await Promise.all(siblings.map(v =>
+        storage.updateSkillVersion(v.id, { promotedToProduction: v.id === version.id } as any)
+      ));
+
+      res.json({ promoted: true, versionId: version.id, version: version.version, skill: updated });
+    } catch (e: any) {
+      res.status(500).json({ error: e.message || "Failed to promote skill version" });
+    }
+  });
+
   // Knowledge Graph Query Templates for Skills
   router.get("/api/skills/:skillId/knowledge-queries", async (req, res) => {
     try {
@@ -1217,7 +1271,7 @@ Return ONLY a valid JSON object with a "skills" array.`,
     }
   });
 
-  router.post("/api/skills/:skillId/knowledge-queries", async (req, res) => {
+  router.post("/api/skills/:skillId/knowledge-queries", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const skill = await storage.getSkill(req.params.skillId as string);
       if (!skill) return res.status(404).json({ error: "Skill not found" });
@@ -1242,7 +1296,7 @@ Return ONLY a valid JSON object with a "skills" array.`,
     }
   });
 
-  router.patch("/api/skills/:skillId/knowledge-queries/:queryId", async (req, res) => {
+  router.patch("/api/skills/:skillId/knowledge-queries/:queryId", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const skill = await storage.getSkill(req.params.skillId as string);
       if (!skill) return res.status(404).json({ error: "Skill not found" });
@@ -1257,7 +1311,7 @@ Return ONLY a valid JSON object with a "skills" array.`,
     }
   });
 
-  router.delete("/api/skills/:skillId/knowledge-queries/:queryId", async (req, res) => {
+  router.delete("/api/skills/:skillId/knowledge-queries/:queryId", checkPermission("create_modify_blueprints"), async (req, res) => {
     try {
       const skill = await storage.getSkill(req.params.skillId as string);
       if (!skill) return res.status(404).json({ error: "Skill not found" });
@@ -1424,33 +1478,73 @@ ${naturalLanguageInput}`,
       if (!process.env.AI_INTEGRATIONS_ANTHROPIC_API_KEY && !process.env.ANTHROPIC_API_KEY) {
         return res.status(503).json({ error: "AI service not configured" });
       }
-      const { skillName, description, markdownBody, testScenario, withSkill } = req.body;
+      const { skillId, skillName, description, markdownBody, testScenario, withSkill } = req.body;
       if (!testScenario) return res.status(400).json({ error: "testScenario is required" });
 
-      const skillContext = withSkill ? `
-The agent has this skill active:
-Name: ${skillName}
-Description: ${description}
-Instructions:
-${markdownBody || "No instructions defined"}` : "The agent has NO specific skill active and must rely on general knowledge.";
+      // REAL execution — not a simulation. The scenario runs against the live
+      // model with the exact skill-context block the agent runtime injects
+      // (including the skill's real knowledge-graph queries). Tool dispatch is
+      // not exercised here; that limitation is reported in the response.
+      const contextInjected: string[] = [];
+      let skillSection = "";
+      if (withSkill) {
+        const lines: string[] = ["## AGENT SKILLS (capabilities you have)"];
+        lines.push(`- ${skillName || "Unnamed skill"}: ${description || ""}`);
+        if (markdownBody && String(markdownBody).trim()) {
+          lines.push(String(markdownBody));
+          contextInjected.push(`Skill instructions (${String(markdownBody).length} chars)`);
+        }
+        if (skillId) {
+          try {
+            const skill = await storage.getSkill(skillId);
+            const kgQueries = (skill?.knowledgeQueries as any[]) || [];
+            for (const q of kgQueries.slice(0, 5)) {
+              const vars: Record<string, string> = {};
+              for (const v of ((q.variables || []) as string[])) vars[v] = skill?.industry || "general";
+              const kg = await executeKGQueryTemplate(q.queryPattern, vars, skill?.industry || "general");
+              if (kg.resultCount > 0) {
+                lines.push(`\n### KNOWLEDGE GRAPH — query "${q.name}" (${kg.resultCount} results)`);
+                kg.results.slice(0, 5).forEach((c: any) => lines.push(`- ${c.label} (${c.category}): ${c.description}`));
+                contextInjected.push(`KG query "${q.name}" (${kg.resultCount} results)`);
+              }
+            }
+          } catch { /* KG unavailable — proceed with instructions only */ }
+        }
+        skillSection = lines.join("\n");
+      }
 
-      const sandboxRaw = await callClaude({
-        system: `You are simulating an AI agent's behavior when given a scenario. ${skillContext}
-
-Simulate how the agent would handle the scenario. Return JSON:
-- "activationTriggered": boolean (would the skill activate?)
-- "activationReason": string (why/why not)
-- "contextInjected": string[] (what context the skill provides)
-- "steps": Array of { "step": number, "action": string, "reasoning": string, "toolsUsed": string[] }
-- "output": string (the agent's final output/response)
-- "qualityScore": number (0-100, how well the agent handled it)
-- "issues": string[] (potential problems or gaps)
-- "recommendations": string[] (how to improve the skill for this scenario)`,
-        user: `Test Scenario:\n${testScenario}`,
-        jsonMode: true,
-        maxTokens: 2048,
+      const executionOutput = await callClaude({
+        system: withSkill
+          ? `You are an operational AI agent. Apply the skills below when they are relevant to the request.\n\n${skillSection}`
+          : "You are an operational AI agent with no specialized skills configured. Rely on general knowledge only.",
+        user: testScenario,
+        maxTokens: 1500,
       });
-      res.json(JSON.parse(stripJsonFences(sandboxRaw)));
+
+      // Grade the REAL output with a lightweight judge call.
+      let judge: Record<string, any> = {};
+      try {
+        const judgeRaw = await callClaude({
+          system: `You are grading a real AI agent execution. Return JSON with keys: "activationTriggered" (boolean — does the response visibly apply the skill named "${skillName || "n/a"}"?), "activationReason" (string), "qualityScore" (number 0-100), "issues" (string[]), "recommendations" (string[]).`,
+          user: `Scenario:\n${testScenario}\n\nSkill active: ${withSkill ? "yes" : "no"}\n\nAgent's REAL output:\n${String(executionOutput).slice(0, 4000)}`,
+          jsonMode: true,
+          maxTokens: 800,
+        });
+        judge = JSON.parse(stripJsonFences(judgeRaw));
+      } catch { /* grading is best-effort; the real output still returns */ }
+
+      res.json({
+        realExecution: true,
+        limitations: ["Tool dispatch is not exercised in the sandbox — deploy to a staging agent to validate tool usage."],
+        activationTriggered: withSkill ? Boolean(judge.activationTriggered) : false,
+        activationReason: judge.activationReason || (withSkill ? "Judged from the real model output" : "No skill context was injected"),
+        contextInjected,
+        steps: [],
+        output: executionOutput,
+        qualityScore: typeof judge.qualityScore === "number" ? Math.max(0, Math.min(100, judge.qualityScore)) : null,
+        issues: Array.isArray(judge.issues) ? judge.issues : [],
+        recommendations: Array.isArray(judge.recommendations) ? judge.recommendations : [],
+      });
     } catch (e: any) {
       console.error("AI sandbox test error:", e);
       res.status(500).json({ error: e.message || "Failed to run sandbox test" });

@@ -7,10 +7,12 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import {
   Store, Search, Download, Star, Shield, CheckCircle2, Globe, Terminal,
   Package, ArrowRight, Filter, TrendingUp, Wrench, Brain, Database,
-  MessageSquare, BookOpen, AlertTriangle, ShieldCheck, Users,
+  MessageSquare, BookOpen, AlertTriangle, ShieldCheck, Users, Loader2, KeyRound,
 } from "lucide-react";
 import { Link } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -63,23 +65,47 @@ export default function MarketplacePage() {
     queryKey: ["/api/marketplace/install-requests"],
   });
 
+  const [installDialogServer, setInstallDialogServer] = useState<MarketplaceServer | null>(null);
+  const [installAuthType, setInstallAuthType] = useState<"none" | "api_key" | "bearer" | "basic">("none");
+  const [installAuthValue, setInstallAuthValue] = useState("");
+  const [installAuthUser, setInstallAuthUser] = useState("");
+  const [installResult, setInstallResult] = useState<{
+    status: string;
+    initialize?: { ok: boolean; isRealProtocol?: boolean; catalogs?: { tools: number }; message?: string };
+  } | null>(null);
+
   const installMutation = useMutation({
-    mutationFn: async (serverId: string) => {
-      const res = await apiRequest("POST", `/api/marketplace/servers/${serverId}/install`, { requestedBy: "current_user" });
+    mutationFn: async ({ serverId, auth }: { serverId: string; auth?: Record<string, unknown> }) => {
+      const res = await apiRequest("POST", `/api/marketplace/servers/${serverId}/install`, { requestedBy: "current_user", auth });
       return res.json();
     },
-    onSuccess: (data: { autoApproved?: boolean }) => {
+    onSuccess: (data: { status: string; initialize?: { ok: boolean; isRealProtocol?: boolean; catalogs?: { tools: number }; message?: string } }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/marketplace/servers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/marketplace/install-requests"] });
-      toast({
-        title: data.autoApproved ? "Server installed" : "Install request submitted",
-        description: data.autoApproved ? "Server auto-approved and ready to use" : "Awaiting Security Admin approval",
-      });
+      setInstallResult(data);
     },
     onError: (err: Error) => {
       toast({ title: "Install failed", description: err.message, variant: "destructive" });
+      setInstallDialogServer(null);
     },
   });
+
+  function openInstallDialog(server: MarketplaceServer) {
+    setInstallAuthType("none");
+    setInstallAuthValue("");
+    setInstallAuthUser("");
+    setInstallResult(null);
+    setInstallDialogServer(server);
+  }
+
+  function confirmInstall() {
+    if (!installDialogServer) return;
+    const auth = installAuthType === "none" ? undefined
+      : installAuthType === "basic" ? { authType: "basic", config: { username: installAuthUser, password: installAuthValue } }
+      : installAuthType === "bearer" ? { authType: "bearer", config: { token: installAuthValue } }
+      : { authType: "api_key", config: { value: installAuthValue } };
+    installMutation.mutate({ serverId: installDialogServer.id, auth });
+  }
 
   const categories = useMemo(() => {
     if (!servers) return [];
@@ -347,7 +373,7 @@ export default function MarketplacePage() {
                             disabled={installMutation.isPending || server.installStatus === "pending"}
                             onClick={(e) => {
                               e.stopPropagation();
-                              installMutation.mutate(server.id);
+                              openInstallDialog(server);
                             }}
                             data-testid={`button-install-${server.id}`}
                           >
@@ -416,6 +442,83 @@ export default function MarketplacePage() {
           <InstallRequestsList requests={installRequests || []} />
         </TabsContent>
       </Tabs>
+
+      <Dialog open={!!installDialogServer} onOpenChange={(open) => { if (!open) setInstallDialogServer(null); }}>
+        <DialogContent className="sm:max-w-md" data-testid="dialog-install-server">
+          {installResult ? (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  {installResult.initialize?.ok ? (
+                    <CheckCircle2 className="w-4 h-4 text-green-500" />
+                  ) : (
+                    <AlertTriangle className="w-4 h-4 text-amber-500" />
+                  )}
+                  {installResult.status === "auto_approved" ? "Server installed" : "Install request submitted"}
+                </DialogTitle>
+                <DialogDescription>
+                  {installResult.status !== "auto_approved"
+                    ? "Awaiting Security Admin approval — tool discovery will run automatically once approved."
+                    : installResult.initialize?.ok
+                    ? installResult.initialize.isRealProtocol
+                      ? `Connected — ${installResult.initialize.catalogs?.tools ?? 0} tools discovered from a live handshake.`
+                      : `Installed with ${installResult.initialize.catalogs?.tools ?? 0} placeholder tools — this catalog entry has no reachable endpoint configured, so a real handshake couldn't run.`
+                    : `Installed, but tool discovery failed: ${installResult.initialize?.message || "unknown error"}. You can retry from the server's detail page.`}
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button onClick={() => setInstallDialogServer(null)} data-testid="button-close-install-result">Done</Button>
+              </DialogFooter>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle>Install {installDialogServer?.name}</DialogTitle>
+                <DialogDescription>
+                  {installDialogServer?.transportType === "stdio"
+                    ? "This connector launches via a local command — one-click install will register it, but tool discovery falls back to a generic catalog until a real process-launch integration exists."
+                    : "We'll connect and discover its tools right after installing. If this server needs credentials, configure them below."}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-col gap-3 py-2">
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs text-muted-foreground">Authentication (optional)</Label>
+                  <Select value={installAuthType} onValueChange={(v) => setInstallAuthType(v as typeof installAuthType)}>
+                    <SelectTrigger data-testid="select-install-auth-type"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None</SelectItem>
+                      <SelectItem value="api_key">API Key</SelectItem>
+                      <SelectItem value="bearer">Bearer Token</SelectItem>
+                      <SelectItem value="basic">Username / Password</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {installAuthType === "basic" ? (
+                  <>
+                    <Input placeholder="Username" value={installAuthUser} onChange={(e) => setInstallAuthUser(e.target.value)} data-testid="input-install-auth-username" />
+                    <Input placeholder="Password" type="password" value={installAuthValue} onChange={(e) => setInstallAuthValue(e.target.value)} data-testid="input-install-auth-password" />
+                  </>
+                ) : installAuthType !== "none" ? (
+                  <Input
+                    placeholder={installAuthType === "api_key" ? "API key" : "Bearer token"}
+                    type="password"
+                    value={installAuthValue}
+                    onChange={(e) => setInstallAuthValue(e.target.value)}
+                    data-testid="input-install-auth-value"
+                  />
+                ) : null}
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setInstallDialogServer(null)} data-testid="button-cancel-install">Cancel</Button>
+                <Button onClick={confirmInstall} disabled={installMutation.isPending} data-testid="button-confirm-install">
+                  {installMutation.isPending ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <KeyRound className="w-3.5 h-3.5 mr-1.5" />}
+                  Install
+                </Button>
+              </DialogFooter>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

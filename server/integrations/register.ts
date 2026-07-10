@@ -191,3 +191,19 @@ export async function registerEnterpriseIntegrations(): Promise<{ servers: any[]
 }
 
 export { salesforceMcpServer, hubspotMcpServer, serviceNowMcpServer, jiraMcpServer, githubMcpServer, slackMcpServer, microsoftGraphMcpServer, snowflakeMcpServer, workdayMcpServer, sapMcpServer };
+
+// ── In-process enterprise connector registry ──────────────────────────────────
+// Maps integrationId → connector singleton so the agent runtime can dispatch tool
+// calls directly (with the agent's own orgId) instead of making a credential-less
+// HTTP self-call that would silently resolve to the default org.
+const ENTERPRISE_SERVER_BY_ID = new Map<string, RealMcpBase>(
+  [
+    salesforceMcpServer, hubspotMcpServer, serviceNowMcpServer, jiraMcpServer,
+    githubMcpServer, slackMcpServer, microsoftGraphMcpServer, snowflakeMcpServer,
+    workdayMcpServer, sapMcpServer,
+  ].map((s) => [s.integrationId, s]),
+);
+
+export function getEnterpriseServerById(integrationId: string): RealMcpBase | undefined {
+  return ENTERPRISE_SERVER_BY_ID.get(integrationId);
+}

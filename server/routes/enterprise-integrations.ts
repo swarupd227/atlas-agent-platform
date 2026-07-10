@@ -513,6 +513,17 @@ async function refreshExpiringTokens(aheadMs: number): Promise<void> {
         oauthScopes: conn.oauthScopes ?? [],
       });
 
+      // Credential rotation is a credential change — audit it (was a blind spot).
+      storage.createAuditEvent({
+        actorType: "system",
+        actorId: "token-refresh",
+        action: "credential_rotated",
+        objectType: "integration",
+        objectId: conn.integrationId,
+        organizationId: conn.organizationId,
+        details: `OAuth token auto-refreshed for '${conn.integrationId}'${expiresAt ? `, expires ${expiresAt.toISOString()}` : ""}`,
+      }).catch(() => {});
+
       console.log(`[token-refresh] Refreshed token for ${conn.integrationId} (org: ${conn.organizationId})`);
     } catch (err: any) {
       console.warn(`[token-refresh] Error refreshing ${conn.integrationId}:`, err?.message);
