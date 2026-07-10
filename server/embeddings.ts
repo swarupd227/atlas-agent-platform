@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
+import { getAllowedKbSensitivityLevels, type RoleId } from "./permissions";
 
 const embeddingsApiKey = process.env.OPENAI_API_KEY;
 const openai = embeddingsApiKey
@@ -77,19 +78,37 @@ export async function storeChunkEmbedding(chunkId: string, embedding: number[]):
   return true;
 }
 
+/**
+ * Permissions-aware retrieval: joins each chunk to its source's
+ * sensitivityLevel and excludes anything the caller's role isn't allowed to
+ * see (server/permissions.ts's canAccessKbSensitivity / R0-R1-R2 grouping).
+ * Filtering happens in the WHERE clause, before LIMIT — post-filtering after
+ * topK would silently under-fill the result set whenever a blocked chunk
+ * would otherwise have ranked in the top K.
+ *
+ * callerRole is optional for backward compatibility with any caller that
+ * hasn't been updated to pass it yet, but omitting it means "no requester
+ * identity" and falls back to getAllowedKbSensitivityLevels(undefined) —
+ * the safe "internal and below" default, never full access.
+ */
 export async function searchKnowledgeBaseChunks(
   knowledgeBaseId: string,
   query: string,
   topK: number = 5,
   scoreThreshold: number = 0.3,
+  callerRole?: RoleId | null,
 ): Promise<Array<{ id: string; content: string; similarity: number; metadata: any }>> {
   const available = await ensurePgVector();
+  const allowedLevels = getAllowedKbSensitivityLevels(callerRole);
 
   if (!available) {
     const fallback = await db.execute(sql`
-      SELECT id, content, chunk_index, metadata, token_count, source_id, 0.5 as similarity
-      FROM knowledge_chunks WHERE knowledge_base_id = ${knowledgeBaseId}
-      ORDER BY created_at DESC LIMIT ${topK}
+      SELECT c.id, c.content, c.chunk_index, c.metadata, c.token_count, c.source_id, 0.5 as similarity
+      FROM knowledge_chunks c
+      LEFT JOIN knowledge_sources s ON s.id = c.source_id
+      WHERE c.knowledge_base_id = ${knowledgeBaseId}
+        AND COALESCE(s.sensitivity_level, 'public') IN (${sql.join(allowedLevels.map(l => sql`${l}`), sql`, `)})
+      ORDER BY c.created_at DESC LIMIT ${topK}
     `);
     return (fallback.rows || []) as any[];
   }
@@ -99,13 +118,15 @@ export async function searchKnowledgeBaseChunks(
   const embeddingStr = `[${queryEmbedding.join(",")}]`;
 
   const results = await db.execute(sql`
-    SELECT id, content, chunk_index, metadata, token_count, source_id,
-           1 - (embedding <=> ${embeddingStr}::vector) as similarity
-    FROM knowledge_chunks
-    WHERE knowledge_base_id = ${knowledgeBaseId}
-      AND embedding IS NOT NULL
-      AND 1 - (embedding <=> ${embeddingStr}::vector) > ${scoreThreshold}
-    ORDER BY embedding <=> ${embeddingStr}::vector
+    SELECT c.id, c.content, c.chunk_index, c.metadata, c.token_count, c.source_id,
+           1 - (c.embedding <=> ${embeddingStr}::vector) as similarity
+    FROM knowledge_chunks c
+    LEFT JOIN knowledge_sources s ON s.id = c.source_id
+    WHERE c.knowledge_base_id = ${knowledgeBaseId}
+      AND c.embedding IS NOT NULL
+      AND 1 - (c.embedding <=> ${embeddingStr}::vector) > ${scoreThreshold}
+      AND COALESCE(s.sensitivity_level, 'public') IN (${sql.join(allowedLevels.map(l => sql`${l}`), sql`, `)})
+    ORDER BY c.embedding <=> ${embeddingStr}::vector
     LIMIT ${topK}
   `);
 

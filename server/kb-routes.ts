@@ -7,6 +7,8 @@ import { sql, eq, desc, and, inArray } from "drizzle-orm";
 import OpenAI from "openai";
 import { generateEmbeddings, storeChunkEmbedding } from "./embeddings";
 import { getOrgId, getDefaultOrgId } from "./auth";
+import { getRequestRole } from "./permissions";
+import { assertSafeOutboundUrl, UnsafeUrlError } from "./url-safety";
 
 interface OntologyAlignmentResult {
   score: number;
@@ -112,15 +114,15 @@ const SENSITIVITY_TERMS: Record<string, { terms: string[]; regulation: string; r
   },
 };
 
-async function performSensitivityScan(
-  text: string,
-  kbId: string,
-  industryId: string,
-  orgId?: string,
-): Promise<SensitivityWarning[]> {
-  const textLower = text.toLowerCase();
-  const detectedClasses: Array<{ sensitivityClass: string; termsFound: string[]; regulation: string; requiredPolicyDomain: string }> = [];
+type DetectedSensitivityClass = { sensitivityClass: string; termsFound: string[]; regulation: string; requiredPolicyDomain: string };
 
+/** Pure term-detection — the same keyword scan performSensitivityScan has
+ *  always run, extracted so a classification level can be derived from ALL
+ *  detections (regardless of whether a covering policy exists) without
+ *  duplicating the scan or changing performSensitivityScan's own return shape. */
+function detectSensitivityClasses(text: string): DetectedSensitivityClass[] {
+  const textLower = text.toLowerCase();
+  const detectedClasses: DetectedSensitivityClass[] = [];
   for (const [sensitivityClass, config] of Object.entries(SENSITIVITY_TERMS)) {
     const found = config.terms.filter(term => textLower.includes(term.toLowerCase()));
     if (found.length >= 2) {
@@ -130,6 +132,37 @@ async function performSensitivityScan(
         regulation: config.regulation,
         requiredPolicyDomain: config.requiredPolicyDomain,
       });
+    }
+  }
+  return detectedClasses;
+}
+
+/** Maps detected term classes to the 4-tier scale stored on
+ *  knowledgeSources.sensitivityLevel. Regulated-data classes (PHI/PCI/
+ *  financial) always outrank plain PII, which outranks "nothing detected".
+ *  Deliberately never auto-assigns "internal" — that tier is for a human to
+ *  set explicitly; keyword matching can't distinguish "internal but
+ *  ordinary" from "public", so undetected content stays "public". */
+function classifySensitivityLevel(detected: DetectedSensitivityClass[]): "public" | "confidential" | "restricted" {
+  if (detected.some(d => d.sensitivityClass === "PHI" || d.sensitivityClass === "PCI" || d.sensitivityClass === "FINANCIAL_RESTRICTED")) return "restricted";
+  if (detected.some(d => d.sensitivityClass === "PII")) return "confidential";
+  return "public";
+}
+
+async function performSensitivityScan(
+  text: string,
+  kbId: string,
+  industryId: string,
+  orgId?: string,
+  sourceId?: string,
+): Promise<SensitivityWarning[]> {
+  const detectedClasses = detectSensitivityClasses(text);
+
+  if (sourceId) {
+    try {
+      await storage.updateKnowledgeSource(sourceId, { sensitivityLevel: classifySensitivityLevel(detectedClasses) });
+    } catch (err: any) {
+      console.log("[kb] Failed to persist sensitivity classification (non-blocking):", err.message);
     }
   }
 
@@ -469,6 +502,11 @@ async function fetchWebContent(url: string): Promise<string> {
 }
 
 async function fetchWebContentWithLinks(url: string): Promise<{ text: string; links: string[] }> {
+  // SSRF guard: resolves the hostname and refuses private/loopback/link-local
+  // targets before the real request is made. Applied to every page fetched
+  // (root ingestion AND each crawled link), since a same-domain link can
+  // still be re-pointed at an internal address via DNS.
+  await assertSafeOutboundUrl(url);
   const response = await fetch(url, {
     headers: { "User-Agent": "NousAgent-KB/1.0" },
     signal: AbortSignal.timeout(15000),
@@ -755,7 +793,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
         let sensitivityWarnings: SensitivityWarning[] = [];
         try {
-          sensitivityWarnings = await performSensitivityScan(combinedText, req.params.id as string, kb.industry, getOrgId(req));
+          sensitivityWarnings = await performSensitivityScan(combinedText, req.params.id as string, kb.industry, getOrgId(req), source.id);
         } catch (err: any) {
           console.log("[kb] Sensitivity scan failed (non-blocking):", err.message);
         }
@@ -782,7 +820,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
       let sensitivityWarnings: SensitivityWarning[] = [];
       try {
-        sensitivityWarnings = await performSensitivityScan(text, req.params.id as string, kb.industry, getOrgId(req));
+        sensitivityWarnings = await performSensitivityScan(text, req.params.id as string, kb.industry, getOrgId(req), source.id);
       } catch (err: any) {
         console.log("[kb] Sensitivity scan failed (non-blocking):", err.message);
       }
@@ -801,6 +839,11 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
       const { url, name, crawl, crawlDepth: rawDepth, maxPages: rawMax } = req.body;
       if (!url) return res.status(400).json({ message: "URL is required" });
+      try {
+        await assertSafeOutboundUrl(url);
+      } catch (e: any) {
+        return res.status(400).json({ message: e instanceof UnsafeUrlError ? e.message : "That URL isn't reachable from this action." });
+      }
 
       const enableCrawl = crawl === true;
       const crawlDepth = Math.min(Math.max(parseInt(rawDepth) || 1, 1), 3);
@@ -864,7 +907,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
       let sensitivityWarnings: SensitivityWarning[] = [];
       try {
-        sensitivityWarnings = await performSensitivityScan(content, req.params.id as string, kb.industry, getOrgId(req));
+        sensitivityWarnings = await performSensitivityScan(content, req.params.id as string, kb.industry, getOrgId(req), source.id);
       } catch (err: any) {
         console.log("[kb] Sensitivity scan failed (non-blocking):", err.message);
       }
@@ -909,7 +952,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
 
       let sensitivityWarnings: SensitivityWarning[] = [];
       try {
-        sensitivityWarnings = await performSensitivityScan(combinedText, req.params.id as string, kb.industry, getOrgId(req));
+        sensitivityWarnings = await performSensitivityScan(combinedText, req.params.id as string, kb.industry, getOrgId(req), source.id);
       } catch (err: any) {
         console.log("[kb] Sensitivity scan failed (non-blocking):", err.message);
       }
@@ -1061,7 +1104,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       if (!query) return res.status(400).json({ message: "Query is required" });
 
       const { searchKnowledgeBaseChunks } = await import("./embeddings");
-      const results = await searchKnowledgeBaseChunks(req.params.id as string, query, topK, scoreThreshold);
+      const results = await searchKnowledgeBaseChunks(req.params.id as string, query, topK, scoreThreshold, getRequestRole(req));
       res.json(results);
     } catch (error: any) {
       res.status(500).json({ message: error.message });
@@ -1242,7 +1285,7 @@ export function registerKnowledgeBaseRoutes(app: Express) {
       if (!question) return res.status(400).json({ message: "Question is required" });
 
       const { searchKnowledgeBaseChunks } = await import("./embeddings");
-      const searchResults = await searchKnowledgeBaseChunks(req.params.id as string, question, topK, 0.3);
+      const searchResults = await searchKnowledgeBaseChunks(req.params.id as string, question, topK, 0.3, getRequestRole(req));
 
       const context = searchResults.map((r: any) => r.content).join("\n\n");
 

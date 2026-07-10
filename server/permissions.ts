@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from "express";
 import { getSecurityMode } from "./auth";
 
-type RoleId =
+export type RoleId =
   | "admin"
   | "outcome_owner"
   | "agent_engineer"
@@ -203,6 +203,47 @@ export function getRedactionLevel(role: RoleId): RedactionLevel {
     default:
       return "R2";
   }
+}
+
+// ─── Permissions-aware retrieval ────────────────────────────────────────────
+// Knowledge-base chunks carry a sensitivityLevel (see shared/schema.ts
+// knowledgeSources); this maps the caller's role to the highest tier they
+// may retrieve, reusing the existing R0/R1/R2 redaction grouping for
+// consistency rather than inventing a parallel role taxonomy just for KB
+// access. Used by searchKnowledgeBaseChunks (server/embeddings.ts) to filter
+// results before they ever reach a prompt.
+export type KbSensitivityLevel = "public" | "internal" | "confidential" | "restricted";
+const KB_SENSITIVITY_RANK: Record<KbSensitivityLevel, number> = { public: 0, internal: 1, confidential: 2, restricted: 3 };
+
+/** Highest sensitivity tier this role may retrieve. Fail-safe: an absent
+ *  role (e.g. a scheduled run with no requesting user) gets "internal" —
+ *  never "restricted" — rather than defaulting to full access. Never widen
+ *  this to "no role → restricted"; that would silently leak regulated
+ *  content into unattended runs nobody explicitly authorized. */
+export function getMaxKbSensitivity(role: RoleId | undefined | null): KbSensitivityLevel {
+  if (!role) return "internal";
+  const level = getRedactionLevel(role);
+  if (level === "R0") return "restricted";
+  if (level === "R1") return "confidential";
+  return "internal";
+}
+
+/** All sensitivity tiers this role may retrieve, at or below its max — for
+ *  callers that need a SQL `WHERE level IN (...)` list rather than a
+ *  per-row boolean check (e.g. filtering before LIMIT so a topK result set
+ *  isn't short-counted by post-hoc filtering). */
+export function getAllowedKbSensitivityLevels(role: RoleId | undefined | null): KbSensitivityLevel[] {
+  const max = KB_SENSITIVITY_RANK[getMaxKbSensitivity(role)];
+  return (Object.keys(KB_SENSITIVITY_RANK) as KbSensitivityLevel[]).filter(l => KB_SENSITIVITY_RANK[l] <= max);
+}
+
+/** True if the given role may see a chunk/source classified at `sensitivity`.
+ *  Unrecognized/missing sensitivity values are treated as "public" (the
+ *  default every knowledgeSources row has) so pre-existing, unclassified
+ *  content isn't accidentally hidden from everyone. */
+export function canAccessKbSensitivity(role: RoleId | undefined | null, sensitivity: string | null | undefined): boolean {
+  const docLevel: KbSensitivityLevel = sensitivity && sensitivity in KB_SENSITIVITY_RANK ? (sensitivity as KbSensitivityLevel) : "public";
+  return KB_SENSITIVITY_RANK[docLevel] <= KB_SENSITIVITY_RANK[getMaxKbSensitivity(role)];
 }
 
 export function getTraceRedactionLevel(role: RoleId): "full" | "less_redaction" | "redacted" | "denied" {
