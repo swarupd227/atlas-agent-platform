@@ -19,3 +19,7 @@ database_export.sql
 database_export.sql.gz
 *.pptx
 scripts/generate_pptx.mjs
+
+# Azure deployment secrets (filled-in config + generated keys — never commit)
+deploy/azure/config.env
+deploy/azure/.generated-secrets.env
