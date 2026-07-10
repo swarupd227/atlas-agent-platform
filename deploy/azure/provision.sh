@@ -87,11 +87,17 @@ else
     --output none
 fi
 
-az postgres flexible-server db create \
-  --resource-group "$RG" \
-  --server-name "$DB_SERVER" \
-  --database-name "$DB_NAME" \
-  --output none 2>/dev/null || echo "  Database $DB_NAME already exists — skipping."
+if az postgres flexible-server db show \
+    --resource-group "$RG" --server-name "$DB_SERVER" --database-name "$DB_NAME" \
+    --output none 2>/dev/null; then
+  echo "  Database $DB_NAME already exists — skipping."
+else
+  az postgres flexible-server db create \
+    --resource-group "$RG" \
+    --server-name "$DB_SERVER" \
+    --database-name "$DB_NAME" \
+    --output none
+fi
 
 echo "=== 4/8: Enabling pgvector ==="
 az postgres flexible-server parameter set \
