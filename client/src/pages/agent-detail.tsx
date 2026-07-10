@@ -1,4 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { formatDate } from "@/lib/format";
 import { useRoute, Link, useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -88,6 +89,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { StatusBadge } from "@/components/status-badge";
+import { PageBreadcrumbs } from "@/components/page-breadcrumbs";
+import { RiskBadge } from "@/components/ui-vocab";
+import { ContextProfileTab } from "./agent-detail-tabs/context-profile-tab";
+import { WorkspaceAccessCard } from "@/components/workspace-access-card";
 import { StatCard } from "@/components/stat-card";
 import { usePermission, PermissionGate } from "@/components/role-provider";
 import { InlineDiff } from "@/components/config-diff";
@@ -99,9 +104,9 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import type { Agent, RunTrace, EvalSuite, OutcomeContract, ImprovementRecommendation, AutonomousActionLog, AgentVersion, Deployment, Policy, Approval, PolicyException, ToolConnector, RemoteAgent, AgentTeam, Skill, McpServer, McpServerTool, McpServerResource, AgentMcpServer, OntologyConcept, Blueprint, KnowledgeBase, AgentKnowledgeBase, AgentTrigger, Runbook } from "@shared/schema";
-import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck, ChevronDown, ChevronUp, HeartPulse } from "lucide-react";
+import { Wifi, WifiOff, Crown, Brain, Sparkles, ShieldAlert, Layers3, BookMarked, Binary, ScrollText, FileCheck, ChevronDown, ChevronUp, HeartPulse, MoreHorizontal } from "lucide-react";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { useIndustry } from "@/components/industry-provider";
 import { formatMs } from "@/components/shared-utils";
@@ -518,9 +523,7 @@ function McpServerLinkCard({ link, server, onUnlink, unlinking }: {
               </Badge>
             )}
             {server?.riskTier && (
-              <Badge variant={server.riskTier === "HIGH" || server.riskTier === "CRITICAL" ? "destructive" : "outline"} className="text-[10px]">
-                <Shield className="w-3 h-3 mr-0.5" /> {server.riskTier}
-              </Badge>
+              <RiskBadge tier={server.riskTier} className="text-[10px]" />
             )}
           </div>
           <Button
@@ -1192,7 +1195,10 @@ function AgentDetailInner() {
         ? `${parts[0]}.${parts[1]}.${parseInt(parts[2] || "0") + 1}`
         : "1.0.0";
 
-      const useCanary = opts?.useRecommended && deployRecommendation && !deployRecommendation.allowDirectDeploy;
+      // Honor an explicit canary request even if the recommendation query is
+      // still in flight — otherwise the dialog's "canary" button silently
+      // downgrades to a full rollout when clicked early.
+      const useCanary = !!opts?.useRecommended;
       const res = await apiRequest("POST", "/api/deployments", {
         agentId,
         agentName: agent?.name || "Agent",
@@ -1220,7 +1226,12 @@ function AgentDetailInner() {
   });
 
   const handleDeployClick = () => {
-    if (deployRecommendation && !deployRecommendation.allowDirectDeploy) {
+    // Fail CLOSED: the strategy gate must not be bypassable by clicking Deploy
+    // before the recommendation query resolves (or when it errors). If the
+    // recommendation says no direct deploy — or it hasn't loaded yet for a
+    // high-risk agent — route through the strategy dialog.
+    const highRiskAgent = agent?.riskTier === "HIGH" || agent?.riskTier === "CRITICAL";
+    if ((deployRecommendation && !deployRecommendation.allowDirectDeploy) || (!deployRecommendation && highRiskAgent)) {
       setDeployStrategyDialogOpen(true);
     } else {
       deployMutation.mutate(undefined as any);
@@ -1425,10 +1436,11 @@ function AgentDetailInner() {
 
   return (
     <div className="flex flex-col gap-6 p-6" data-testid="page-agent-detail">
+      <PageBreadcrumbs items={[{ label: "Agents", href: "/agents" }, { label: agent.name }]} />
       <div className="flex items-center gap-3">
         <Link href="/agents">
-          <Button variant="ghost" size="icon" data-testid="button-back-agents">
-            <ArrowLeft className="w-4 h-4" />
+          <Button variant="ghost" size="icon" aria-label="Back to agents" data-testid="button-back-agents">
+            <ArrowLeft className="w-4 h-4" aria-hidden="true" />
           </Button>
         </Link>
         <div className="flex flex-col gap-0.5 flex-1 min-w-0">
@@ -1671,25 +1683,16 @@ function AgentDetailInner() {
           </Badge>
         ))}
         <div className="flex-1" />
+        {/* Action hierarchy (UX audit F-5): one primary release action, two
+            everyday actions, everything else grouped in an overflow menu.
+            Previously 11 peer buttons — including BOTH "Deploy" and
+            "Deploy & Run" side by side, and a dead "Rollback" button with no
+            handler (removed). */}
         <Link href={`/agents/${agentId}/playground`}>
           <Button variant="outline" size="sm" data-testid="button-open-playground">
             <MessageSquare className="w-3.5 h-3.5 mr-1.5" /> Playground
           </Button>
         </Link>
-        <Button
-          size="sm"
-          onClick={() => deployAndRunMutation.mutate()}
-          disabled={deployAndRunMutation.isPending || !runtimeStatus?.readiness?.canRun}
-          data-testid="button-deploy-and-run"
-        >
-          {deployAndRunMutation.isPending ? (
-            <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Deploying...</>
-          ) : runtimeStatus?.isActive ? (
-            <><Zap className="w-3.5 h-3.5 mr-1.5" /> Re-deploy & Run</>
-          ) : (
-            <><Rocket className="w-3.5 h-3.5 mr-1.5" /> Deploy & Run</>
-          )}
-        </Button>
         <Button variant="outline" size="sm" data-testid="button-run-test" onClick={() => runTestMutation.mutate()} disabled={runTestMutation.isPending}>
           {runTestMutation.isPending ? (
             <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Running...</>
@@ -1697,37 +1700,13 @@ function AgentDetailInner() {
             <><Play className="w-3.5 h-3.5 mr-1.5" /> Run Test</>
           )}
         </Button>
-        <Button variant="outline" size="sm" data-testid="button-run-shadow-replay" onClick={() => { setShadowReplayOpen(true); setShadowResult(null); }}>
-          <RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Run Shadow Replay
-        </Button>
-        <Button variant="outline" size="sm" data-testid="button-request-approval" onClick={() => requestApprovalMutation.mutate()} disabled={!approvalPerm.allowed || requestApprovalMutation.isPending} title={!approvalPerm.allowed ? "You do not have permission to request approvals" : undefined}>
-          {requestApprovalMutation.isPending ? (
-            <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Submitting...</>
-          ) : (
-            <><Shield className="w-3.5 h-3.5 mr-1.5" /> Request Approval</>
-          )}
-          {approvalPerm.allowed && approvalPerm.permission.access === "conditional" && approvalPerm.permission.annotation && (
-            <Badge variant="secondary" className="text-[10px] ml-1">{approvalPerm.permission.annotation}</Badge>
-          )}
-        </Button>
-        <Button variant="outline" size="sm" data-testid="button-rollback">
-          <RotateCcw className="w-3.5 h-3.5 mr-1.5" /> Rollback
-        </Button>
-        <Button variant="outline" size="sm" onClick={() => navigate(`/agents/${agentId}/export`)} data-testid="button-header-export-code">
-          <Download className="w-3.5 h-3.5 mr-1.5" /> Export as Code
-        </Button>
         {agentDeployments.length > 0 ? (
-          <div className="flex items-center gap-1">
-            <Button size="sm" data-testid="button-view-deployment" onClick={() => {
-              const latest = agentDeployments.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())[0];
-              if (latest) navigate(`/deployments/${latest.id}`);
-            }}>
-              <Rocket className="w-3.5 h-3.5 mr-1.5" /> View Deployment
-            </Button>
-            <Button variant="outline" size="sm" data-testid="button-new-deployment-version" disabled={!deployPerm.allowed || deployMutation.isPending} onClick={handleDeployClick} title="Create a new deployment version">
-              <Plus className="w-3.5 h-3.5" />
-            </Button>
-          </div>
+          <Button size="sm" data-testid="button-view-deployment" onClick={() => {
+            const latest = agentDeployments.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())[0];
+            if (latest) navigate(`/deployments/${latest.id}`);
+          }}>
+            <Rocket className="w-3.5 h-3.5 mr-1.5" /> View Deployment
+          </Button>
         ) : (
           <Button size="sm" data-testid="button-deploy" disabled={!deployPerm.allowed || deployMutation.isPending} onClick={handleDeployClick} title={!deployPerm.allowed ? "You do not have permission to deploy" : undefined}>
             <Rocket className="w-3.5 h-3.5 mr-1.5" /> {deployMutation.isPending ? "Creating..." : "Deploy"}
@@ -1739,19 +1718,64 @@ function AgentDetailInner() {
             )}
           </Button>
         )}
-        {agent.status !== "retired" && (
-          <Button variant="outline" size="sm" onClick={() => setRetireDialogOpen(true)} data-testid="button-retire-agent">
-            <Archive className="w-3.5 h-3.5 mr-1.5" /> Retire
-          </Button>
-        )}
-        {agent.status === "retired" && (
-          <Button variant="outline" size="sm" onClick={() => retireMutation.mutate({ status: "active" })} data-testid="button-reactivate-agent">
-            <Power className="w-3.5 h-3.5 mr-1.5" /> Reactivate
-          </Button>
-        )}
-        <Button variant="outline" size="sm" data-testid="button-save-as-template" onClick={() => navigate(`/templates/new?sourceAgent=${agentId}`)}>
-          <Copy className="w-3.5 h-3.5 mr-1.5" /> Save as Template
-        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" aria-label="More actions" data-testid="button-more-actions">
+              <MoreHorizontal className="w-3.5 h-3.5" aria-hidden="true" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-60" data-testid="menu-more-actions">
+            <DropdownMenuLabel className="text-[11px] uppercase tracking-wider text-muted-foreground">Run &amp; Validate</DropdownMenuLabel>
+            <DropdownMenuItem
+              onClick={() => deployAndRunMutation.mutate()}
+              disabled={deployAndRunMutation.isPending || !runtimeStatus?.readiness?.canRun}
+              data-testid="button-deploy-and-run"
+            >
+              <Zap className="w-3.5 h-3.5 mr-2" />
+              {runtimeStatus?.isActive ? "Re-deploy & Run Runtime" : "Deploy & Run Runtime"}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => { setShadowReplayOpen(true); setShadowResult(null); }} data-testid="button-run-shadow-replay">
+              <RefreshCw className="w-3.5 h-3.5 mr-2" /> Run Shadow Replay
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => requestApprovalMutation.mutate()}
+              disabled={!approvalPerm.allowed || requestApprovalMutation.isPending}
+              data-testid="button-request-approval"
+            >
+              <Shield className="w-3.5 h-3.5 mr-2" /> Request Approval
+            </DropdownMenuItem>
+            {agentDeployments.length > 0 && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="text-[11px] uppercase tracking-wider text-muted-foreground">Release</DropdownMenuLabel>
+                <DropdownMenuItem
+                  onClick={handleDeployClick}
+                  disabled={!deployPerm.allowed || deployMutation.isPending}
+                  data-testid="button-new-deployment-version"
+                >
+                  <Plus className="w-3.5 h-3.5 mr-2" /> New Deployment Version
+                </DropdownMenuItem>
+              </>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="text-[11px] uppercase tracking-wider text-muted-foreground">Lifecycle</DropdownMenuLabel>
+            <DropdownMenuItem onClick={() => navigate(`/agents/${agentId}/export`)} data-testid="button-header-export-code">
+              <Download className="w-3.5 h-3.5 mr-2" /> Export as Code
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate(`/templates/new?sourceAgent=${agentId}`)} data-testid="button-save-as-template">
+              <Copy className="w-3.5 h-3.5 mr-2" /> Save as Template
+            </DropdownMenuItem>
+            {agent.status !== "retired" ? (
+              <DropdownMenuItem onClick={() => setRetireDialogOpen(true)} className="text-destructive focus:text-destructive" data-testid="button-retire-agent">
+                <Archive className="w-3.5 h-3.5 mr-2" /> Retire Agent
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem onClick={() => retireMutation.mutate({ status: "active" })} data-testid="button-reactivate-agent">
+                <Power className="w-3.5 h-3.5 mr-2" /> Reactivate Agent
+              </DropdownMenuItem>
+            )}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col gap-4">
@@ -1823,6 +1847,7 @@ function AgentDetailInner() {
 
 
         <TabsContent value="summary" className="flex flex-col gap-4 mt-0">
+          <WorkspaceAccessCard agentId={agent.id} initialAudience={(agent as any).workspaceAudience} />
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             {statsLoading ? (
               <>
@@ -2749,7 +2774,7 @@ function AgentDetailInner() {
                                 </span>
                               )}
                               <span className="text-[11px] text-muted-foreground">
-                                {version.createdAt ? new Date(version.createdAt).toLocaleDateString() : ""}
+                                {version.createdAt ? formatDate(version.createdAt) : ""}
                               </span>
                             </div>
                             {versionAny.changelog && (
@@ -2806,7 +2831,7 @@ function AgentDetailInner() {
                                 variant="outline"
                                 className="text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20 cursor-pointer"
                                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveTab("aar"); }}
-                                title={`AAR v${aarData.aarConfig.policyBundleVersion} · Platform: ${aarData.aarConfig.targetPlatform} · Synced: ${aarData.aarConfig.lastSyncedAt ? new Date(aarData.aarConfig.lastSyncedAt).toLocaleDateString() : "—"}`}
+                                title={`AAR v${aarData.aarConfig.policyBundleVersion} · Platform: ${aarData.aarConfig.targetPlatform} · Synced: ${aarData.aarConfig.lastSyncedAt ? formatDate(aarData.aarConfig.lastSyncedAt) : "—"}`}
                                 data-testid={`badge-aar-${dep.id}`}
                               >
                                 <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mr-1" />
@@ -2826,7 +2851,7 @@ function AgentDetailInner() {
                           </div>
                           <div className="flex items-center justify-between">
                             <span className="text-[11px] text-muted-foreground">
-                              {dep.createdAt ? new Date(dep.createdAt).toLocaleDateString() : ""}
+                              {dep.createdAt ? formatDate(dep.createdAt) : ""}
                             </span>
                             <div className="flex items-center gap-1.5">
                               {isRunning && (
@@ -3164,7 +3189,7 @@ function AgentDetailInner() {
                 </div>
                 <div className="flex flex-col gap-1">
                   <span className="text-xs text-muted-foreground">Created</span>
-                  <span className="text-sm font-medium">{agent.createdAt ? new Date(agent.createdAt).toLocaleDateString() : "\u2014"}</span>
+                  <span className="text-sm font-medium">{agent.createdAt ? formatDate(agent.createdAt) : "\u2014"}</span>
                 </div>
                 <div className="flex flex-col gap-1">
                   <span className="text-xs text-muted-foreground">Current Version</span>
@@ -4154,7 +4179,7 @@ function AgentDetailInner() {
                       <div className="flex items-center gap-2 shrink-0">
                         {exception.expiresAt && (
                           <span className="text-[10px] text-muted-foreground">
-                            Expires {new Date(exception.expiresAt).toLocaleDateString()}
+                            Expires {formatDate(exception.expiresAt)}
                           </span>
                         )}
                         <StatusBadge status={exception.status} />
@@ -4507,15 +4532,19 @@ function AgentDetailInner() {
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
                       <div className="flex flex-col gap-1">
                         <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Concepts Mapped</span>
-                        <span className="text-lg font-semibold">{(domainConceptMap[agentDomain] || []).length || 3}</span>
+                        <span className="text-lg font-semibold">
+                          {Array.isArray((agent as any).ontologyTags) && (agent as any).ontologyTags.length > 0
+                            ? (agent as any).ontologyTags.length
+                            : (domainConceptMap[agentDomain] || []).length}
+                        </span>
                       </div>
                       <div className="flex flex-col gap-1">
                         <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Coverage Score</span>
-                        <span className="text-lg font-semibold text-emerald-600 dark:text-emerald-400">87%</span>
+                        <span className="text-lg font-semibold text-muted-foreground" title="Awaiting measurement — coverage requires interaction-to-concept telemetry">—</span>
                       </div>
                       <div className="flex flex-col gap-1">
                         <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Last Synced</span>
-                        <span className="text-sm font-medium">2 days ago</span>
+                        <span className="text-sm font-medium text-muted-foreground">—</span>
                       </div>
                       <div className="flex flex-col gap-1">
                         <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Graph Version</span>
@@ -4830,133 +4859,7 @@ function AgentDetailInner() {
         </TabsContent>
 
         {/* Context Profile Tab */}
-        <TabsContent value="context-profile" className="flex flex-col gap-4 mt-0" data-testid="tab-content-context-profile">
-          {(() => {
-            const contextCategories = [
-              { key: "system", label: "System Instructions", icon: Settings, tokens: 2048, pct: 25, color: "bg-blue-500" },
-              { key: "ontology", label: "Industry Ontology", icon: Brain, tokens: 1536, pct: 19, color: "bg-purple-500" },
-              { key: "regulatory", label: "Regulatory Context", icon: ShieldAlert, tokens: 1024, pct: 12, color: "bg-red-500" },
-              { key: "skills", label: "Skill Instructions", icon: Sparkles, tokens: 1280, pct: 16, color: "bg-amber-500" },
-              { key: "history", label: "Conversation History", icon: History, tokens: 1024, pct: 12, color: "bg-green-500" },
-              { key: "rag", label: "Retrieved Knowledge", icon: Database, tokens: 768, pct: 9, color: "bg-cyan-500" },
-              { key: "tools", label: "Tool Descriptions", icon: Wrench, tokens: 512, pct: 6, color: "bg-orange-500" },
-            ];
-            const totalTokens = contextCategories.reduce((sum, c) => sum + c.tokens, 0);
-            const budgetLimit = 8192;
-            const utilization = Math.round((totalTokens / budgetLimit) * 100);
-            const industryLabel = industry?.label || "General";
-            const memoryConfig = (agent.memoryRagConfig as any) || {};
-
-            return (
-              <>
-                <div className="flex items-center justify-between gap-4 flex-wrap">
-                  <div>
-                    <h3 className="text-base font-semibold flex items-center gap-2">
-                      <Layers3 className="w-4 h-4" /> Context Profile
-                    </h3>
-                    <p className="text-sm text-muted-foreground">
-                      How context is allocated across source categories for this agent ({industryLabel})
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="text-[11px]" data-testid="badge-token-budget">
-                      {totalTokens.toLocaleString()} / {budgetLimit.toLocaleString()} tokens
-                    </Badge>
-                    <Badge variant="outline" className={`text-[11px] ${
-                      utilization > 90 ? "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20" :
-                      utilization > 70 ? "bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20" :
-                      "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20"
-                    }`} data-testid="badge-utilization">
-                      {utilization}% utilized
-                    </Badge>
-                  </div>
-                </div>
-
-                <Card data-testid="card-context-budget">
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm">Token Budget Allocation</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex h-6 rounded-md overflow-hidden mb-4" data-testid="context-budget-bar">
-                      {contextCategories.map((cat) => (
-                        <div
-                          key={cat.key}
-                          className={`${cat.color} transition-all`}
-                          style={{ width: `${cat.pct}%` }}
-                          title={`${cat.label}: ${cat.tokens} tokens (${cat.pct}%)`}
-                        />
-                      ))}
-                    </div>
-                    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                      {contextCategories.map((cat) => {
-                        const Icon = cat.icon;
-                        return (
-                          <div key={cat.key} className="flex items-center gap-2 p-2 rounded-md bg-muted/30" data-testid={`context-source-${cat.key}`}>
-                            <div className={`w-2.5 h-2.5 rounded-full ${cat.color} shrink-0`} />
-                            <div className="flex flex-col gap-0 min-w-0">
-                              <div className="flex items-center gap-1">
-                                <Icon className="w-3 h-3 text-muted-foreground" />
-                                <span className="text-[11px] font-medium truncate">{cat.label}</span>
-                              </div>
-                              <span className="text-[10px] text-muted-foreground">{cat.tokens.toLocaleString()} tokens ({cat.pct}%)</span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </CardContent>
-                </Card>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <Card data-testid="card-context-priority">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm">Context Priority Order</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-1.5">
-                      {contextCategories.sort((a, b) => b.tokens - a.tokens).map((cat, idx) => {
-                        const Icon = cat.icon;
-                        return (
-                          <div key={cat.key} className="flex items-center justify-between gap-2 p-2 rounded-md border" data-testid={`priority-${idx}`}>
-                            <div className="flex items-center gap-2">
-                              <span className="text-[10px] text-muted-foreground font-mono w-4">#{idx + 1}</span>
-                              <Icon className="w-3.5 h-3.5 text-muted-foreground" />
-                              <span className="text-sm">{cat.label}</span>
-                            </div>
-                            <Progress value={cat.pct * 4} className="h-1 w-16" />
-                          </div>
-                        );
-                      })}
-                    </CardContent>
-                  </Card>
-
-                  <Card data-testid="card-context-config">
-                    <CardHeader className="pb-2">
-                      <CardTitle className="text-sm">Configuration Details</CardTitle>
-                    </CardHeader>
-                    <CardContent className="space-y-3">
-                      <div className="flex items-center justify-between gap-2 p-2.5 rounded-md border">
-                        <span className="text-sm">Max Context Window</span>
-                        <span className="text-sm font-medium">{budgetLimit.toLocaleString()} tokens</span>
-                      </div>
-                      <div className="flex items-center justify-between gap-2 p-2.5 rounded-md border">
-                        <span className="text-sm">Memory Strategy</span>
-                        <span className="text-sm font-medium capitalize">{memoryConfig.strategy || "sliding-window"}</span>
-                      </div>
-                      <div className="flex items-center justify-between gap-2 p-2.5 rounded-md border">
-                        <span className="text-sm">RAG Retrieval</span>
-                        <span className="text-sm font-medium">{memoryConfig.ragEnabled ? "Enabled" : "Configured"}</span>
-                      </div>
-                      <div className="flex items-center justify-between gap-2 p-2.5 rounded-md border">
-                        <span className="text-sm">Industry Preset</span>
-                        <Badge variant="outline" className="text-[10px]">{industryLabel}</Badge>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              </>
-            );
-          })()}
-        </TabsContent>
+        <ContextProfileTab agent={agent} />
 
         {agent.agentType === "remote" && (() => {
           const ra = remoteAgents?.find(r => r.agentId === agentId);
@@ -5421,7 +5324,7 @@ function AgentDetailInner() {
                     <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
                       <span>Bundle: <span className="font-mono font-medium text-foreground">{aar.policyBundleVersion}</span></span>
                       <span>Platform: <span className="font-medium text-foreground">{aar.targetPlatform}</span></span>
-                      <span>Synced: {aar.lastSyncedAt ? new Date(aar.lastSyncedAt).toLocaleDateString() : "—"}</span>
+                      <span>Synced: {aar.lastSyncedAt ? formatDate(aar.lastSyncedAt) : "—"}</span>
                     </div>
                   </CardContent>
                 </Card>
@@ -5535,7 +5438,7 @@ function AgentDetailInner() {
                         </div>
                         <div className="flex items-center justify-between">
                           <span className="text-[11px] text-muted-foreground">Last synced</span>
-                          <span className="text-xs">{aar.lastSyncedAt ? new Date(aar.lastSyncedAt).toLocaleDateString() : "—"}</span>
+                          <span className="text-xs">{aar.lastSyncedAt ? formatDate(aar.lastSyncedAt) : "—"}</span>
                         </div>
                         <div className="flex items-center justify-between">
                           <span className="text-[11px] text-muted-foreground">Distribution</span>
@@ -7034,7 +6937,7 @@ function BlueprintMemoryRag({ config }: { config: any }) {
                     <div className="flex items-center gap-3 shrink-0">
                       {src.docCount != null && <span className="text-[10px] text-muted-foreground">{src.docCount.toLocaleString()} docs</span>}
                       {src.lastSynced && (
-                        <span className="text-[10px] text-muted-foreground">{new Date(src.lastSynced).toLocaleDateString()}</span>
+                        <span className="text-[10px] text-muted-foreground">{formatDate(src.lastSynced)}</span>
                       )}
                     </div>
                   </div>
@@ -7776,7 +7679,7 @@ print(result["output"])`;
                   </div>
                   {k.lastUsedAt && (
                     <span className="text-[10px] text-muted-foreground shrink-0">
-                      Last used {new Date(k.lastUsedAt).toLocaleDateString()}
+                      Last used {formatDate(k.lastUsedAt)}
                     </span>
                   )}
                   <Button
@@ -8241,6 +8144,20 @@ function AgentEventTriggers({ agent, triggers, onRefresh, allAgents, allMcpServe
   const [sourceAgentId, setSourceAgentId] = useState("");
   const [mcpServerId, setMcpServerId] = useState("");
   const [mcpResourceUri, setMcpResourceUri] = useState("");
+  const [pollQuery, setPollQuery] = useState("");
+  const [pollIntervalMs, setPollIntervalMs] = useState("300000");
+
+  // Only Jira and Salesforce have a "changed since X" query primitive wired up for
+  // polling today (JQL `updated >=` / SOQL `LastModifiedDate >=`), and only the real
+  // enterprise-registered servers (server/integrations/register.ts, catalog names
+  // ending "(Enterprise)") carry the tool annotation the poller resolves against —
+  // demo/mock Salesforce servers with similar names don't. Matching on that suffix
+  // (rather than just "jira"/"salesforce" in the name) keeps mock entries like
+  // "Salesforce CRM" or "Salesforce Financial Services Cloud" out of this list
+  // rather than offering a server that would 400 on save or silently never fire.
+  const pollableMcpServers = allMcpServers.filter(s => /jira|salesforce/i.test(s.name) && /\(Enterprise\)\s*$/i.test(s.name.trim()));
+  const selectedPollServer = pollableMcpServers.find(s => s.id === mcpServerId);
+  const isSalesforcePoll = !!selectedPollServer && /salesforce/i.test(selectedPollServer.name);
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -8253,7 +8170,9 @@ function AgentEventTriggers({ agent, triggers, onRefresh, allAgents, allMcpServe
         config.sourceAgentId = sourceAgentId;
       } else if (triggerType === "mcp_resource_change") {
         config.mcpServerId = mcpServerId;
-        config.resourceUri = mcpResourceUri;
+        if (mcpResourceUri) config.resourceUri = mcpResourceUri;
+        config.query = pollQuery;
+        config.pollIntervalMs = Number(pollIntervalMs);
       }
       return apiRequest("POST", `/api/agents/${agent.id}/triggers`, {
         triggerType,
@@ -8302,13 +8221,22 @@ function AgentEventTriggers({ agent, triggers, onRefresh, allAgents, allMcpServe
     setSourceAgentId("");
     setMcpServerId("");
     setMcpResourceUri("");
+    setPollQuery("");
+    setPollIntervalMs("300000");
   }
+
+  const pollIntervalLabels: Record<string, string> = {
+    "60000": "Every minute",
+    "300000": "Every 5 minutes",
+    "900000": "Every 15 minutes",
+    "3600000": "Every hour",
+  };
 
   const triggerTypeLabels: Record<string, { label: string; icon: any; description: string }> = {
     webhook: { label: "Webhook", icon: Globe, description: "Receive HTTP POST requests from external systems" },
     schedule: { label: "Schedule", icon: Clock, description: "Run on a cron schedule" },
     agent_completion: { label: "Agent Completion", icon: CheckCircle, description: "Fire when another agent completes a run" },
-    mcp_resource_change: { label: "MCP Resource Change", icon: Database, description: "Fire when an MCP server resource changes" },
+    mcp_resource_change: { label: "MCP Resource Change", icon: Database, description: "Poll a connector (Jira, Salesforce) and fire when matching records change" },
   };
 
   function cronToHuman(cron: string): string {
@@ -8323,6 +8251,14 @@ function AgentEventTriggers({ agent, triggers, onRefresh, allAgents, allMcpServe
     if (min === "*/30") return "Every 30 minutes";
     if (hour !== "*" && min !== "*" && dom === "*" && mon === "*" && dow === "*") return `Daily at ${hour.padStart(2, "0")}:${min.padStart(2, "0")}`;
     return cron;
+  }
+
+  function pollIntervalHuman(ms: any): string {
+    const n = Number(ms);
+    if (!n || n <= 0) return "every 5 minutes"; // matches server-side DEFAULT_POLL_INTERVAL_MS
+    if (n < 60000) return `every ${Math.round(n / 1000)}s`;
+    if (n < 3600000) return `every ${Math.round(n / 60000)} min`;
+    return `every ${Math.round(n / 3600000)}h`;
   }
 
   const webhookBaseUrl = typeof window !== "undefined" ? window.location.origin : "";
@@ -8407,7 +8343,7 @@ function AgentEventTriggers({ agent, triggers, onRefresh, allAgents, allMcpServe
                     )}
                     {trigger.createdAt && (
                       <span>
-                        Created: {new Date(trigger.createdAt).toLocaleDateString()}
+                        Created: {formatDate(trigger.createdAt)}
                       </span>
                     )}
                   </div>
@@ -8459,12 +8395,23 @@ function AgentEventTriggers({ agent, triggers, onRefresh, allAgents, allMcpServe
                   )}
 
                   {trigger.triggerType === "mcp_resource_change" && (
-                    <div className="flex flex-col gap-0.5">
-                      <span className="text-[10px] text-muted-foreground uppercase tracking-wider">MCP Resource</span>
-                      <span className="text-xs">
-                        {allMcpServers.find(s => s.id === config.mcpServerId)?.name || config.mcpServerId}
-                        {config.resourceUri && <span className="ml-1 font-mono text-muted-foreground">({config.resourceUri})</span>}
-                      </span>
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex flex-col gap-0.5">
+                        <span className="text-[10px] text-muted-foreground uppercase tracking-wider">Connector</span>
+                        <span className="text-xs">
+                          {allMcpServers.find(s => s.id === config.mcpServerId)?.name || config.mcpServerId}
+                          {config.resourceUri && <span className="ml-1 text-muted-foreground">({config.resourceUri})</span>}
+                        </span>
+                      </div>
+                      {config.query && (
+                        <code className="text-[11px] bg-muted/40 px-2 py-1 rounded-md font-mono whitespace-pre-wrap" data-testid={`text-poll-query-${trigger.id}`}>
+                          {config.query}
+                        </code>
+                      )}
+                      <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[10px] text-muted-foreground">
+                        <span>Polls {pollIntervalHuman(config.pollIntervalMs)}</span>
+                        {config.lastPolledAt && <span>Last polled: {new Date(config.lastPolledAt).toLocaleString()}</span>}
+                      </div>
                     </div>
                   )}
                 </CardContent>
@@ -8558,22 +8505,53 @@ function AgentEventTriggers({ agent, triggers, onRefresh, allAgents, allMcpServe
                       <SelectValue placeholder="Select MCP server..." />
                     </SelectTrigger>
                     <SelectContent>
-                      {allMcpServers.map(s => (
+                      {pollableMcpServers.map(s => (
                         <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                  {pollableMcpServers.length === 0 && (
+                    <p className="text-[10px] text-amber-500">Connect Jira or Salesforce under Integrations to use this trigger type.</p>
+                  )}
                 </div>
                 <div className="flex flex-col gap-1.5">
-                  <Label className="text-xs">Resource URI</Label>
+                  <Label className="text-xs">Label (optional)</Label>
                   <Input
                     value={mcpResourceUri}
                     onChange={(e) => setMcpResourceUri(e.target.value)}
-                    placeholder="e.g., salesforce://leads/new"
-                    className="text-sm font-mono"
+                    placeholder="e.g., Open ENG issues"
+                    className="text-sm"
                     data-testid="input-mcp-resource-uri"
                   />
-                  <p className="text-[10px] text-muted-foreground">The resource URI to watch for changes.</p>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs">{isSalesforcePoll ? "SOQL Query" : "JQL Filter (optional)"}</Label>
+                  <Textarea
+                    value={pollQuery}
+                    onChange={(e) => setPollQuery(e.target.value)}
+                    placeholder={isSalesforcePoll ? "SELECT Id, Name, StageName FROM Opportunity WHERE StageName = 'Closed Won'" : 'project = "ENG" AND status = "Open"'}
+                    className="text-xs font-mono min-h-[70px]"
+                    data-testid="textarea-poll-query"
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    {isSalesforcePoll
+                      ? "Full SOQL SELECT statement. A change filter (LastModifiedDate) is appended automatically."
+                      : "JQL filter for issues to watch. A change filter (updated) is appended automatically. Leave blank to watch all issues."}
+                  </p>
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label className="text-xs">Poll Interval</Label>
+                  <Select value={pollIntervalMs} onValueChange={setPollIntervalMs}>
+                    <SelectTrigger data-testid="select-poll-interval">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(pollIntervalLabels).map(([ms, label]) => (
+                        <SelectItem key={ms} value={ms}>{label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[10px] text-muted-foreground">The first poll establishes a baseline and does not fire; the agent runs on subsequent changes.</p>
                 </div>
               </div>
             )}
@@ -8587,7 +8565,7 @@ function AgentEventTriggers({ agent, triggers, onRefresh, allAgents, allMcpServe
               disabled={
                 createMutation.isPending ||
                 (triggerType === "agent_completion" && !sourceAgentId) ||
-                (triggerType === "mcp_resource_change" && (!mcpServerId || !mcpResourceUri))
+                (triggerType === "mcp_resource_change" && (!mcpServerId || (isSalesforcePoll && !pollQuery.trim())))
               }
               data-testid="button-save-trigger"
             >
@@ -8937,7 +8915,7 @@ function AgentConfigRollback({ agent }: { agent: any }) {
                 <div className="flex flex-col">
                   <span className="text-sm font-medium">Version {entry.version}</span>
                   <span className="text-xs text-muted-foreground">
-                    {entry.signedAt ? new Date(entry.signedAt).toLocaleDateString() : entry.snapshotAt ? new Date(entry.snapshotAt).toLocaleDateString() : "—"}
+                    {entry.signedAt ? formatDate(entry.signedAt) : entry.snapshotAt ? formatDate(entry.snapshotAt) : "—"}
                     {entry.signedBy ? ` by ${entry.signedBy}` : ""}
                   </span>
                 </div>
@@ -9442,7 +9420,7 @@ function AgentChannels({ agent }: { agent: any }) {
                           <span className="text-[11px] text-muted-foreground">{meta?.label || channel.channelType}</span>
                           <span className="text-[11px] text-muted-foreground">{channel.messageCount || 0} messages</span>
                           {channel.lastMessageAt && (
-                            <span className="text-[11px] text-muted-foreground">Last: {new Date(channel.lastMessageAt).toLocaleDateString()}</span>
+                            <span className="text-[11px] text-muted-foreground">Last: {formatDate(channel.lastMessageAt)}</span>
                           )}
                         </div>
                       </div>

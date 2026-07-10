@@ -14,6 +14,7 @@ import { OTC_AGT_005_NAME, OTC_AGT_007_NAME, OTC_AGT_012_NAME, OTC_EVAL_SUITE_NA
 import nodemailer from "nodemailer";
 import { runMeetingTranscription } from "./meeting-transcription";
 import { readFile, unlink } from "fs/promises";
+import { pollDueResourceChangeTriggers } from "./connector-poller";
 
 // ── Meeting transcription (async long-meeting path) ─────────────────────────────
 async function processMeetingTranscription(job: Job): Promise<Record<string, unknown>> {
@@ -806,6 +807,57 @@ export async function enqueueAuditChainCheck() {
   }
 }
 
+// ─── Connector Resource-Change Polling (mcp_resource_change triggers) ────────
+
+const MCP_RESOURCE_CHANGE_SCAN_INTERVAL_MS = 60 * 1000; // scan every minute; each trigger has its own poll interval
+
+async function processMcpResourceChangeScan(job: Job): Promise<Record<string, unknown>> {
+  let scanResult: { checked: number; fired: number; errors: number } | undefined;
+  let jobError: Error | undefined;
+
+  try {
+    scanResult = await pollDueResourceChangeTriggers();
+  } catch (err: any) {
+    jobError = err;
+    console.error("[worker] Connector resource-change scan failed:", err.message);
+  } finally {
+    // Always re-enqueue so polling continues even after a transient failure.
+    const nextRunAt = new Date(Date.now() + MCP_RESOURCE_CHANGE_SCAN_INTERVAL_MS);
+    try {
+      await storage.createJob({
+        type: "mcp_resource_change_scan",
+        status: "queued",
+        payload: { triggeredBy: "scheduled" },
+        scheduledFor: nextRunAt,
+      });
+    } catch (enqueueErr: any) {
+      console.error("[worker] Failed to re-enqueue connector resource-change scan:", enqueueErr.message);
+    }
+  }
+
+  if (jobError) throw jobError;
+  return { ...scanResult, completedAt: new Date().toISOString() };
+}
+
+export async function enqueueMcpResourceChangeScan() {
+  try {
+    const hasPending = await storage.hasPendingJobOfType("mcp_resource_change_scan");
+    if (hasPending) {
+      console.log("[startup] Connector resource-change scan already queued, skipping initial enqueue");
+      return;
+    }
+    await storage.createJob({
+      type: "mcp_resource_change_scan",
+      status: "queued",
+      payload: { triggeredBy: "scheduled" },
+      scheduledFor: new Date(),
+    });
+    console.log("[startup] Enqueued initial connector resource-change scan");
+  } catch (err: any) {
+    console.error("[startup] Failed to enqueue connector resource-change scan:", err.message);
+  }
+}
+
 // ─── OTC Fulfillment Smoke Test ───────────────────────────────────────────────
 
 const OTC_SMOKE_TEST_INTERVAL_MS = 7 * 24 * 60 * 60 * 1000; // weekly
@@ -1562,6 +1614,8 @@ export function startWorker(intervalMs = 2000) {
             result = await processReportScheduleRun(job);
           } else if (job.type === "meeting_transcription") {
             result = await processMeetingTranscription(job);
+          } else if (job.type === "mcp_resource_change_scan") {
+            result = await processMcpResourceChangeScan(job);
           } else {
             result = { message: `Unknown job type: ${job.type}` };
           }

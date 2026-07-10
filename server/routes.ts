@@ -1,10 +1,14 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
-import { startWorker, enqueueAuditChainCheck, enqueueOtcSmokeTest, enqueueOtcSmokeTestNow, enqueueReportScheduleCheck } from "./worker";
+import { startWorker, enqueueAuditChainCheck, enqueueOtcSmokeTest, enqueueOtcSmokeTestNow, enqueueReportScheduleCheck, enqueueMcpResourceChangeScan } from "./worker";
 import { runStartupMigrations } from "./db";
 import authRouter from "./routes/auth";
 import toolConnectorsRouter from "./routes/tool-connectors";
 import governanceProxyRouter from "./routes/governance-proxy";
+import workspaceRouter from "./routes/workspace";
+import workspaceSlackRouter from "./routes/workspace-slack";
+import workspaceTeamsRouter from "./routes/workspace-teams";
+import openapiConnectorsRouter from "./routes/openapi-connectors";
 import llmProvidersRouter from "./routes/llm-providers";
 import publicApiRouter from "./routes/public-api";
 import demoRouter from "./routes/demo";
@@ -347,6 +351,10 @@ export async function registerRoutes(
   app.use(governanceRouter);    // includes billingRouter + governance domain routes
   app.use(improvementsRouter);
   app.use(runtimeRouter);
+  app.use(workspaceRouter);
+  app.use(workspaceSlackRouter);
+  app.use(workspaceTeamsRouter);
+  app.use(openapiConnectorsRouter);
   app.use(playgroundRouter);
   app.use(aarRouter);
   app.use(observabilityRouter);
@@ -406,6 +414,9 @@ export async function registerRoutes(
 
   // Enqueue compliance report schedule checker (runs hourly, idempotent).
   await enqueueReportScheduleCheck();
+
+  // Enqueue connector resource-change poll scan (mcp_resource_change triggers, idempotent).
+  await enqueueMcpResourceChangeScan();
 
   // Ensure Hearst NBA agents + MCP servers are registered
   ensureHearstAgents().catch((err: any) => console.error("[startup] ensureHearstAgents:", err?.message));

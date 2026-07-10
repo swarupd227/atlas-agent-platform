@@ -1,10 +1,12 @@
 import { Router } from "express";
 import { storage } from "../storage";
 import { z, ZodError } from "zod";
-import { getProvider, getAvailableProviders } from "../llm-provider";
+import { getProvider, getAvailableProviders, getPriceTable } from "../llm-provider";
 import { getOrgId } from "../auth";
 import { insertAgentTriggerSchema } from "@shared/schema";
 import { runtimeEvents } from "../agent-runtime";
+import { resolveIntegrationIdForMcpServer } from "../connector-poller";
+import { isPollableIntegration, MIN_POLL_INTERVAL_MS } from "../connector-poll-query";
 
 const router = Router();
 
@@ -17,6 +19,12 @@ const router = Router();
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to get providers" });
     }
+  });
+
+  // Versioned price table used by estimateCost — recorded costUsd values on
+  // traces are auditable against the version in effect.
+  router.get("/api/llm-providers/pricing", async (_req, res) => {
+    res.json(getPriceTable());
   });
 
   router.get("/api/llm-providers/health", async (req, res) => {
@@ -77,6 +85,25 @@ const router = Router();
         ...req.body,
         agentId: req.params.agentId,
       });
+      if (parsed.triggerType === "mcp_resource_change") {
+        const config = (parsed.config || {}) as Record<string, any>;
+        const mcpServerId = config.mcpServerId as string | undefined;
+        if (!mcpServerId) {
+          return res.status(400).json({ error: "config.mcpServerId is required for mcp_resource_change triggers" });
+        }
+        const integrationId = await resolveIntegrationIdForMcpServer(mcpServerId);
+        if (!isPollableIntegration(integrationId)) {
+          return res.status(400).json({
+            error: `Connector polling isn't supported for '${integrationId ?? "this"}' yet. Supported: Jira, Salesforce.`,
+          });
+        }
+        if (integrationId === "salesforce" && !/\bFROM\b/i.test((config.query as string) ?? "")) {
+          return res.status(400).json({ error: "config.query must be a full SOQL SELECT statement (with a FROM clause) for Salesforce polling" });
+        }
+        if (config.pollIntervalMs !== undefined && Number(config.pollIntervalMs) < MIN_POLL_INTERVAL_MS) {
+          return res.status(400).json({ error: `config.pollIntervalMs must be at least ${MIN_POLL_INTERVAL_MS}ms` });
+        }
+      }
       const trigger = await storage.createAgentTrigger(parsed);
       await storage.createAuditEvent({
         actorType: "user",
