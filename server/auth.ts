@@ -121,10 +121,14 @@ export async function comparePassword(password: string, hash: string): Promise<b
   });
 }
 
+// authMiddleware is mounted with app.use("/api", authMiddleware), so
+// Express strips the "/api" prefix from req.path inside it -- these must be
+// mount-relative (e.g. "/auth/mode", not "/api/auth/mode") or the exemption
+// never matches and login/register/mode end up requiring auth themselves.
 const AUTH_EXEMPT_PATHS = [
-  "/api/auth/login",
-  "/api/auth/register",
-  "/api/auth/mode",
+  "/auth/login",
+  "/auth/register",
+  "/auth/mode",
 ];
 
 export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
