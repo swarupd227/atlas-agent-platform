@@ -13,7 +13,7 @@ const ok = (data: unknown): McpToolResult => ({
 
 /** Append Atlas agent attribution footer to messages */
 function withAttribution(text: string, agentName?: string): string {
-  const byLine = agentName ? `Sent by *${agentName}* via Atlas` : "Sent via Atlas Agent Orchestrator";
+  const byLine = agentName ? `Sent by *${agentName}* via Astra Agents` : "Sent via Astra Agents Agent Orchestrator";
   return `${text}\n\n_${byLine}_`;
 }
 
@@ -44,7 +44,7 @@ export async function slack_post_message(
 
   let finalBlocks = blocks;
   if (blocks && !text) {
-    const byLine = agent_name ? `Sent by *${agent_name}* via Atlas` : "Sent via Atlas Agent Orchestrator";
+    const byLine = agent_name ? `Sent by *${agent_name}* via Astra Agents` : "Sent via Astra Agents Agent Orchestrator";
     finalBlocks = [
       ...blocks,
       {
@@ -56,7 +56,7 @@ export async function slack_post_message(
 
   const result = await client.postMessage({
     channel,
-    text: attributedText ?? (blocks ? "Atlas agent message" : ""),
+    text: attributedText ?? (blocks ? "Astra Agents agent message" : ""),
     blocks: finalBlocks,
     mrkdwn: true,
   });

@@ -15,8 +15,8 @@ It supports both **production** (`login.salesforce.com`) and **sandbox** (`test.
 
 1. In Salesforce Setup → **App Manager** → **New Connected App**
 2. Fill in:
-   - **Connected App Name**: `Nous Atlas Integration`
-   - **API Name**: `Nous_Atlas_Integration`
+   - **Connected App Name**: `Artizent Astra Agents Integration`
+   - **API Name**: `Artizent_Astra_Agents_Integration`
    - **Contact Email**: your admin email
 3. Under **API (Enable OAuth Settings)**:
    - ✅ Enable OAuth Settings
@@ -42,9 +42,9 @@ OAUTH_SALESFORCE_CLIENT_SECRET=<Consumer Secret>
 
 ---
 
-## Step 3 — Connect via Atlas Integration UI
+## Step 3 — Connect via Astra Agents Integration UI
 
-1. Navigate to **Integrations** in the Atlas sidebar
+1. Navigate to **Integrations** in the Astra Agents sidebar
 2. Find **Salesforce** → click **Connect**
 3. Complete the OAuth flow — you'll be redirected to Salesforce to authorize
 4. After redirect, your `access_token`, `refresh_token`, and `instance_url` are stored in the encrypted credential vault
@@ -53,7 +53,7 @@ OAUTH_SALESFORCE_CLIENT_SECRET=<Consumer Secret>
 
 ## Step 4 — Sandbox Support
 
-For sandbox orgs, credentials must include `sandbox: "true"`. The Atlas OAuth flow
+For sandbox orgs, credentials must include `sandbox: "true"`. The Astra Agents OAuth flow
 automatically handles this when `test.salesforce.com` is used as the authorization endpoint.
 
 To override: update the integration connection with `credentials.sandbox = "true"`.
@@ -117,7 +117,7 @@ in the **Sample Data** app. Enable it via Setup → Sample Data → **Add Sample
 
 ## Credential Vault Fields
 
-When stored in the Atlas credential vault, the Salesforce connection uses:
+When stored in the Astra Agents credential vault, the Salesforce connection uses:
 
 | Field | Description |
 |-------|-------------|

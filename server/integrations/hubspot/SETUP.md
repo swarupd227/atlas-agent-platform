@@ -17,8 +17,8 @@ companies, deals, notes, and pipeline management.
 1. In HubSpot → **Settings** (gear icon) → **Integrations** → **Private Apps**
 2. Click **Create a private app**
 3. Fill in:
-   - **Name**: `Nous Atlas Integration`
-   - **Description**: `Agent orchestration via Nous Atlas platform`
+   - **Name**: `Artizent Astra Agents Integration`
+   - **Description**: `Agent orchestration via Artizent Astra Agents platform`
 4. Under **Scopes** → select the following:
    - `crm.objects.contacts.read`
    - `crm.objects.contacts.write`
@@ -33,14 +33,14 @@ companies, deals, notes, and pipeline management.
 
 ---
 
-## Step 2 — Connect via Atlas Integration UI
+## Step 2 — Connect via Astra Agents Integration UI
 
-1. Navigate to **Integrations** in the Atlas sidebar
+1. Navigate to **Integrations** in the Astra Agents sidebar
 2. Find **HubSpot** → click **Connect**
 3. Enter:
    - **Private App Token**: `pat-na1-...` (from Step 1)
    - **Portal ID**: Your HubSpot Portal ID (numeric, e.g. `12345678`)
-4. Click **Save** — credentials are stored in the Atlas AES-256-GCM vault
+4. Click **Save** — credentials are stored in the Astra Agents AES-256-GCM vault
 
 ---
 
@@ -66,7 +66,7 @@ POST /api/integrations/hubspot/tools/hs_search_contacts
 2. **hs_get_contact** — `contactId: "<found ID>"`, `includeDeals: true` → get full context + associated deals
 3. **hs_get_deal** — `dealId: "<associated deal ID>"` → check current stage and amount
 4. **hs_update_deal_stage** — `dealId: "<deal ID>"`, `dealStage: "qualifiedtobuy"` → advance the deal
-5. **hs_create_note** — `objectType: "deals"`, `objectId: "<deal ID>"`, `body: "Qualified via Nous Agent — ICP match score: 0.87"` → log the qualification
+5. **hs_create_note** — `objectType: "deals"`, `objectId: "<deal ID>"`, `body: "Qualified via Artizent Agent — ICP match score: 0.87"` → log the qualification
 
 ### Sample deal stage IDs (default pipeline):
 | Stage | ID |
@@ -109,7 +109,7 @@ or create test contacts/deals manually. All writes in test mode use a separate p
 
 ## Credential Vault Fields
 
-When stored in the Atlas credential vault, the HubSpot connection uses:
+When stored in the Astra Agents credential vault, the HubSpot connection uses:
 
 | Field | Description |
 |-------|-------------|
@@ -125,7 +125,7 @@ HubSpot enforces the following limits for Private App tokens:
 - **Daily limit**: 250,000 API calls/day (varies by hub tier)
 - **Search API**: 4 requests/second, 10,000 results/query
 
-The Atlas integration handles rate-limit (`429`) responses with exponential backoff
+The Astra Agents integration handles rate-limit (`429`) responses with exponential backoff
 via `RealMcpBase.fetchWithAuth()`. Retry-After headers are respected.
 
 ---

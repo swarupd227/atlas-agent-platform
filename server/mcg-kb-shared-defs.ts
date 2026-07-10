@@ -13,7 +13,7 @@ export const MCG_KB_AGENT_NAME = "MCG-KB-INGEST-001 Knowledge Base Ingestion Age
 
 export const MCG_KB_MCP_SERVER_NAMES = {
   knowledgeBase: "MCG Knowledge Base MCP",
-  bundleStore:   "Atlas Bundle Store MCP",
+  bundleStore:   "Astra Agents Bundle Store MCP",
 } as const;
 
 // ─── MCP server definitions ──────────────────────────────────────────────────
@@ -95,9 +95,9 @@ export function makeMcgKbMcpServerDefs(baseUrl: string): McgMcpServerDef[] {
     },
     {
       name:        MCG_KB_MCP_SERVER_NAMES.bundleStore,
-      description: "Atlas Bundle Store — governed KB bundle creation, semantic versioning, QA validation, and human promotion workflow. All bundles are in DRAFT status until promoted by an authorized human reviewer.",
+      description: "Astra Agents Bundle Store — governed KB bundle creation, semantic versioning, QA validation, and human promotion workflow. All bundles are in DRAFT status until promoted by an authorized human reviewer.",
       url:         `${baseUrl}/api/mock/mcg-bundle-store`,
-      vendor:      "Atlas Platform / Bundle Store",
+      vendor:      "Astra Agents Platform / Bundle Store",
       tools: [
         {
           name:        "produce_bundle",

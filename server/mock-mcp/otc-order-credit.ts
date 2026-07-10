@@ -47,7 +47,7 @@ const CREDIT_ANALYSIS = {
     rationale: "Meridian A+ rating, 7-year relationship, $28.4M annual spend, zero late payments in 12 months, zero NSF. Projected inbound AR $200,600 due within 30 days (reduces exposure to $688,600 within 30 days). Risk committee pre-authorization threshold: $1M for A/A+ customers. No escalation required.",
     riskScore: "LOW",
     approvalLevel: "AUTOMATED",
-    approvedBy: "Atlas OTC-AGT-003 (automated — within pre-auth threshold)",
+    approvedBy: "Astra Agents OTC-AGT-003 (automated — within pre-auth threshold)",
   },
   checkId: "VAL-002",
   newStatus: "PASS",

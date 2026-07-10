@@ -70,7 +70,7 @@ export function makeOnespanMcpServerDefs(baseUrl: string) {
       tools: [
         { name: "get_client_profile",          description: "Retrieve CRM profile for a client: tier (VIP/Standard), relationship manager, AUM, open deals, and KYC status.", endpoint: "client-profile",           method: "GET",  inputSchema: { type: "object", properties: { client_id: { type: "string" }, txn_id: { type: "string" } } } },
         { name: "update_crm_record",           description: "Update CRM record for a transaction with status change, notes, and agent attribution for audit trail.", endpoint: "update-crm-record",            method: "POST", inputSchema: { type: "object", properties: { txn_id: { type: "string" }, client_id: { type: "string" }, update_type: { type: "string" }, notes: { type: "string" }, status: { type: "string" } }, required: ["txn_id"] } },
-        { name: "notify_relationship_manager", description: "Send escalation notification to the relationship manager via email and platform inbox with transaction context and ATLAS-initiated actions.", endpoint: "notify-relationship-manager",  method: "POST", inputSchema: { type: "object", properties: { txn_id: { type: "string" }, rm_email: { type: "string" }, rm_name: { type: "string" }, client_name: { type: "string" }, priority: { type: "string" }, subject: { type: "string" }, message: { type: "string" }, resend_initiated: { type: "boolean" } }, required: ["txn_id"] } },
+        { name: "notify_relationship_manager", description: "Send escalation notification to the relationship manager via email and platform inbox with transaction context and Astra Agents-initiated actions.", endpoint: "notify-relationship-manager", method: "POST", inputSchema: { type: "object", properties: { txn_id: { type: "string" }, rm_email: { type: "string" }, rm_name: { type: "string" }, client_name: { type: "string" }, priority: { type: "string" }, subject: { type: "string" }, message: { type: "string" }, resend_initiated: { type: "boolean" } }, required: ["txn_id"] } },
       ],
     },
     {
@@ -162,7 +162,7 @@ export const ONESPAN_SKILLS = [
     domain: "digital_agreements", industry: "financial_services", version: "1.0.0",
     tags: ["crm", "record", "audit_trail", "deal_lifecycle"],
     yamlFrontmatter: { skillId: "onespan-crm-update", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["update_crm_record", "get_client_profile"] },
-    markdownBody: `## CRM Record Management\n\nCRM Record Management ensures that every ATLAS intervention action on a digital agreement is immediately reflected in the CRM system with a timestamped, agent-attributed audit entry. When AGR-003 initiates a corrective resend, the CRM record must be updated with status INTERVENTION_ACTIVE and a note including: the triggering exception code, the correction action taken, the new envelope ID, and the expected completion timeline. For VIP clients, the CRM update must also trigger a deal activity log entry visible to the RM's dashboard so they are aware of the automated action without requiring a separate notification (the RM notification is a parallel action). CRM note length is capped at 500 characters to ensure display compatibility with CRM mobile apps. The skill verifies that the CRM client tier matches the transaction priority before writing the update — a VIP-tier client with a "normal" priority transaction indicates a data inconsistency that must be flagged. All CRM update confirmations (update_id, status_updated_to, audit_entry) must be captured in the output JSON.`,
+    markdownBody: `## CRM Record Management\n\nCRM Record Management ensures that every Astra Agents intervention action on a digital agreement is immediately reflected in the CRM system with a timestamped, agent-attributed audit entry. When AGR-003 initiates a corrective resend, the CRM record must be updated with status INTERVENTION_ACTIVE and a note including: the triggering exception code, the correction action taken, the new envelope ID, and the expected completion timeline. For VIP clients, the CRM update must also trigger a deal activity log entry visible to the RM's dashboard so they are aware of the automated action without requiring a separate notification (the RM notification is a parallel action). CRM note length is capped at 500 characters to ensure display compatibility with CRM mobile apps. The skill verifies that the CRM client tier matches the transaction priority before writing the update — a VIP-tier client with a "normal" priority transaction indicates a data inconsistency that must be flagged. All CRM update confirmations (update_id, status_updated_to, audit_entry) must be captured in the output JSON.`,
   },
   {
     name: "RM Escalation Protocol",
@@ -170,7 +170,7 @@ export const ONESPAN_SKILLS = [
     domain: "digital_agreements", industry: "financial_services", version: "1.0.0",
     tags: ["escalation", "rm", "vip", "notification"],
     yamlFrontmatter: { skillId: "onespan-rm-escalation", trustTier: "platform-provided", complexity: "intermediate", contextMode: "summary", allowedTools: ["notify_relationship_manager"] },
-    markdownBody: `## RM Escalation Protocol\n\nRM Escalation Protocol governs the content, timing, and channel selection for relationship manager notifications triggered by ATLAS agent interventions on VIP digital agreement transactions. For a corrective resend after a VIP decline, the RM notification must include: the transaction ID, client name and tier, decline reason in plain language, the corrective action ATLAS took, the new expected completion timeline, and a clear instruction for the RM to follow up with the client directly. The notification subject line must indicate urgency: "[ATLAS] VIP Agreement Action Required — [Client Name]" for pending items, or "[ATLAS] VIP Agreement — Automated Correction Initiated" when resend is already done. Primary channel is email to the RM's registered address; secondary channel is platform inbox. For VIP transactions the RM notification SLA is 2 hours for a response acknowledgment. All notification confirmations (notification_id, delivery_status, channels) must be captured in the output JSON.`,
+    markdownBody: `## RM Escalation Protocol\n\nRM Escalation Protocol governs the content, timing, and channel selection for relationship manager notifications triggered by Astra Agents agent interventions on VIP digital agreement transactions. For a corrective resend after a VIP decline, the RM notification must include: the transaction ID, client name and tier, decline reason in plain language, the corrective action Astra Agents took, the new expected completion timeline, and a clear instruction for the RM to follow up with the client directly. The notification subject line must indicate urgency: "[Astra Agents] VIP Agreement Action Required — [Client Name]" for pending items, or "[Astra Agents] VIP Agreement — Automated Correction Initiated" when resend is already done. Primary channel is email to the RM's registered address; secondary channel is platform inbox. For VIP transactions the RM notification SLA is 2 hours for a response acknowledgment. All notification confirmations (notification_id, delivery_status, channels) must be captured in the output JSON.`,
   },
   // AGR-004: Agreement Operations Intelligence
   {
@@ -353,7 +353,7 @@ TONE GUIDANCE — STRICTLY FOLLOW:
 
 ---
 ONESPAN DIGITAL AGREEMENTS — PORTFOLIO INTELLIGENCE REPORT
-As of: [today's date] | Period: Rolling 30 Days | Generated by: ATLAS AGR-004
+As of: [today's date] | Period: Rolling 30 Days | Generated by: Astra Agents AGR-004
 
 PORTFOLIO PERFORMANCE OVERVIEW:
 [2-3 sentences citing specific KPI values and benchmark position — lead with a positive observation, then note the opportunity area with measured, professional language]
@@ -401,7 +401,7 @@ export const ONESPAN_POLICY_DEFS = [
     policyJson: { enforcement: "hard", rules: [
       { name: "Max Re-Sends Per Envelope",  description: "No more than 3 re-send attempts per envelope within 7 days — 4th attempt requires human approval" },
       { name: "Re-Send Cooldown Window",    description: "Minimum 4h cooldown between re-send attempts to the same signer to prevent notification fatigue" },
-      { name: "Automated Re-Send Cap",      description: "ATLAS agents may auto-resend up to 2 times; 3rd attempt and beyond require RM or ops lead approval" },
+      { name: "Automated Re-Send Cap",      description: "Astra Agents agents may auto-resend up to 2 times; 3rd attempt and beyond require RM or ops lead approval" },
     ]},
   },
   {
@@ -417,7 +417,7 @@ export const ONESPAN_POLICY_DEFS = [
   {
     name: "Data Minimisation Policy",
     domain: "compliance",
-    description: "Ensures only necessary signer and transaction data is collected, retained, and processed by ATLAS agents during digital agreements operations, per GDPR Article 5(1)(c).",
+    description: "Ensures only necessary signer and transaction data is collected, retained, and processed by Astra Agents agents during digital agreements operations, per GDPR Article 5(1)(c).",
     policyJson: { enforcement: "hard", rules: [
       { name: "Signer PII Scope Limit",  description: "Agents may access only name, email, and role — no access to financial history, credit score, or identity documents beyond signing context" },
       { name: "Retention Window",        description: "Signer session event data purged after 90 days unless subject to active regulatory hold or litigation freeze" },

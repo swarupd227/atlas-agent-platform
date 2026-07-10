@@ -81,7 +81,7 @@ export const PKG_SCHED_SKILLS = [
     description: "Identifies RUSH orders at risk of missing delivery, scores each order on a 0–100 risk index using deadline proximity, substrate availability, and machine utilisation, and recommends priority sequencing.",
     domain: "production_scheduling", industry: "manufacturing", version: "1.0.0",
     tags: ["rush_order", "priority", "delivery_risk", "corrugated"],
-    author: "ATLAS Platform Team",
+    author: "ASTRA AGENTS Platform Team",
     agentKey: "orderIntelligence",
     yamlFrontmatter: { skillId: "pkg-rush-prioritisation", trustTier: "platform-provided", complexity: "intermediate", allowedTools: ["get_rush_orders", "score_delivery_risk"] },
     markdownBody: `## RUSH Order Prioritisation & Delivery Risk Scoring\n\nThis skill identifies and ranks RUSH orders at risk of late delivery for corrugated packaging production. It retrieves the current RUSH order queue, scores each order using a risk index that accounts for deadline proximity (hours to delivery cutoff), substrate availability (roll stock coverage for required flute type), and machine utilisation (queue depth on the required machine). A risk score above 70 triggers automatic RUSH escalation. The skill outputs a priority-ordered list of orders with risk justification and recommended scheduling slot. For Westfield's Day Shift, RUSH orders must be sequenced in the first machine window that satisfies substrate and crew constraints.`,
@@ -91,7 +91,7 @@ export const PKG_SCHED_SKILLS = [
     description: "Cross-checks each order's substrate requirements (flute type, board grade, caliper) against current roll stock inventory and flags orders at risk of substrate shortfall during the shift.",
     domain: "production_scheduling", industry: "manufacturing", version: "1.0.0",
     tags: ["substrate", "roll_stock", "flute", "validation"],
-    author: "ATLAS Platform Team",
+    author: "ASTRA AGENTS Platform Team",
     agentKey: "orderIntelligence",
     yamlFrontmatter: { skillId: "pkg-substrate-validation", trustTier: "platform-provided", complexity: "intermediate", allowedTools: ["validate_substrate_specs", "get_shift_context"] },
     markdownBody: `## Substrate Specification Validation\n\nThis skill validates substrate requirements for all orders in the shift queue against current roll stock inventory in the Kiwiplan MES. For each order, it confirms that the required flute type (B, A, C, or E), board grade (single-wall, double-wall), and caliper are available in sufficient quantity. Orders requiring B-Flute receive special scrutiny when inventory is below 70% (safety threshold). If a substrate shortfall is projected, the skill recommends either splitting the order across two substrate batches, substituting an approved alternative flute type, or rescheduling to a later shift with advance procurement. The skill outputs a per-order substrate status (OK, AT_RISK, SHORTFALL) and a consolidated roll stock impact report.`,
@@ -101,7 +101,7 @@ export const PKG_SCHED_SKILLS = [
     description: "Synthesises order queue data, substrate risk, and shift context into a structured intelligence brief for the Schedule Optimizer agent, including order groupings by machine type, substrate batch, and delivery window.",
     domain: "production_scheduling", industry: "manufacturing", version: "1.0.0",
     tags: ["order_queue", "synthesis", "intelligence", "shift_planning"],
-    author: "ATLAS Platform Team",
+    author: "ASTRA AGENTS Platform Team",
     agentKey: "orderIntelligence",
     yamlFrontmatter: { skillId: "pkg-queue-synthesis", trustTier: "platform-provided", complexity: "advanced", allowedTools: ["get_order_queue", "score_delivery_risk", "validate_substrate_specs"] },
     markdownBody: `## Order Queue Intelligence Synthesis\n\nThis skill produces the consolidated order intelligence brief used by the Schedule Optimizer. It groups the 47 shift orders into substrate batches to minimise changeovers, identifies machine-type affinity clusters (corrugator, flexo printer, die cutter, stitcher), and flags the 3 RUSH orders with their deadline constraints. The output brief includes: (1) priority queue sorted by risk score descending, (2) substrate batch groupings by flute type, (3) machine affinity map showing which orders can share a machine window without changeover, and (4) the minimum runtime estimate for RUSH-only fulfillment. This brief is the primary input to the constraint solver.`,
@@ -113,7 +113,7 @@ export const PKG_SCHED_SKILLS = [
     description: "Analyses machine availability across all 8 lines for the shift, identifies the Corrugator M3 maintenance window (10:00–11:30 AM), and computes available capacity for each machine in minutes.",
     domain: "production_scheduling", industry: "manufacturing", version: "1.0.0",
     tags: ["machine_availability", "maintenance", "capacity", "corrugator"],
-    author: "ATLAS Platform Team",
+    author: "ASTRA AGENTS Platform Team",
     agentKey: "capacityMapper",
     yamlFrontmatter: { skillId: "pkg-machine-availability", trustTier: "platform-provided", complexity: "intermediate", allowedTools: ["get_machine_availability", "get_capacity_constraints"] },
     markdownBody: `## Machine Availability & Maintenance Window Analysis\n\nThis skill computes available machine capacity for the shift by subtracting scheduled maintenance, calibration, and crew breaks from the 8-hour shift window. For Westfield's Day Shift: Corrugator M3 loses 90 minutes (10:00–11:30 AM preventive maintenance), Flexo Printer M4 operates at 85% capacity (minor drive belt repair scheduled). All other 6 machines are at full availability. The skill outputs a per-machine capacity table (available minutes, restricted windows, OEE baseline) and a shift-level capacity summary. It also identifies which machine pairs can share substrate batches to reduce changeover time.`,
@@ -123,7 +123,7 @@ export const PKG_SCHED_SKILLS = [
     description: "Maps current roll stock inventory against shift order demand by substrate type, computes depletion curves for each flute type, and identifies the B-Flute shortfall risk window during the shift.",
     domain: "production_scheduling", industry: "manufacturing", version: "1.0.0",
     tags: ["roll_stock", "substrate", "depletion", "b_flute"],
-    author: "ATLAS Platform Team",
+    author: "ASTRA AGENTS Platform Team",
     agentKey: "capacityMapper",
     yamlFrontmatter: { skillId: "pkg-roll-stock-mapping", trustTier: "platform-provided", complexity: "intermediate", allowedTools: ["get_roll_stock_inventory", "get_changeover_matrix"] },
     markdownBody: `## Roll Stock & Substrate Constraint Mapping\n\nThis skill maps roll stock inventory against shift demand to compute depletion curves for each substrate type. B-Flute (current inventory 62% of safety stock) is the primary risk: 6 orders require B-Flute and the combined runtime would exhaust the remaining stock by approximately 13:00. The skill recommends front-loading B-Flute orders to the 07:00–11:00 window before depletion risk materialises, and flags the 2 lowest-priority B-Flute orders for potential rescheduling to Night Shift when resupply arrives. It also computes the changeover penalty for substrate transitions and integrates this into the capacity constraint map passed to the optimizer.`,
@@ -133,7 +133,7 @@ export const PKG_SCHED_SKILLS = [
     description: "Assembles the composite capacity constraint map combining machine windows, substrate limits, changeover penalties, crew restrictions, and shift OEE targets into a structured input for the Schedule Optimizer.",
     domain: "production_scheduling", industry: "manufacturing", version: "1.0.0",
     tags: ["constraint_map", "oee", "capacity_planning", "optimizer"],
-    author: "ATLAS Platform Team",
+    author: "ASTRA AGENTS Platform Team",
     agentKey: "capacityMapper",
     yamlFrontmatter: { skillId: "pkg-constraint-map", trustTier: "platform-provided", complexity: "advanced", allowedTools: ["get_capacity_constraints", "estimate_oee"] },
     markdownBody: `## Capacity Constraint Map Assembly\n\nThis skill assembles the structured constraint map that is the primary input to the Schedule Optimizer agent. The map encodes: (1) machine-time windows (available minutes per machine after maintenance deductions), (2) substrate compatibility matrix (which machines can run which flute types), (3) changeover time penalties by machine × substrate transition pair, (4) crew coverage constraints (crews A and B, skill certifications per machine), (5) RUSH order hard constraints (must complete before delivery cutoff), and (6) OEE target (71% baseline, 80% stretch). The map is serialised as JSON and passed to the constraint solver via the optimizer agent's task prompt.`,
@@ -145,7 +145,7 @@ export const PKG_SCHED_SKILLS = [
     description: "Runs the constraint solver across all 47 orders, 8 machines, and shift windows to generate 3 Pareto-ranked schedule alternatives optimising for OEE, OTIF, and changeover minimisation.",
     domain: "production_scheduling", industry: "manufacturing", version: "1.0.0",
     tags: ["constraint_solver", "schedule_optimisation", "oee", "pareto"],
-    author: "ATLAS Platform Team",
+    author: "ASTRA AGENTS Platform Team",
     agentKey: "scheduleOptimizer",
     yamlFrontmatter: { skillId: "pkg-constraint-solver", trustTier: "platform-provided", complexity: "advanced", allowedTools: ["run_constraint_solver", "evaluate_alternative"] },
     markdownBody: `## Constraint-Based Schedule Optimisation\n\nThis skill orchestrates the constraint-based schedule solver for Westfield Packaging's Day Shift. The solver considers: 47 orders × 8 machines × 480-minute shift window, subject to maintenance blocks, substrate batch groupings, changeover penalties, crew availability, and RUSH order hard deadlines. The solver generates 3 alternative schedules using different objective weightings: Alternative A (OEE-priority: maximise throughput efficiency), Alternative B (OTIF-priority: maximise on-time delivery count), Alternative C (balanced: equal weight OEE and OTIF). Each alternative is evaluated on OEE%, OTIF%, changeover count, substrate waste, and RUSH coverage. The Pareto-optimal alternative is identified and flagged for recommendation.`,
@@ -155,7 +155,7 @@ export const PKG_SCHED_SKILLS = [
     description: "Evaluates each generated schedule alternative on 5 KPI dimensions — OEE%, OTIF%, changeover count, substrate utilisation%, and RUSH coverage — and produces a structured comparison table.",
     domain: "production_scheduling", industry: "manufacturing", version: "1.0.0",
     tags: ["evaluation", "kpi", "alternative_analysis", "comparison"],
-    author: "ATLAS Platform Team",
+    author: "ASTRA AGENTS Platform Team",
     agentKey: "scheduleOptimizer",
     yamlFrontmatter: { skillId: "pkg-alternative-evaluation", trustTier: "platform-provided", complexity: "intermediate", allowedTools: ["evaluate_alternative", "get_rush_coverage"] },
     markdownBody: `## Schedule Alternative Evaluation & Comparison\n\nThis skill evaluates each schedule alternative across 5 KPI dimensions and produces a structured comparison table. For each alternative: OEE% (measured as actual production time / available time × performance rate), OTIF% (orders completed before delivery deadline / total orders), changeover count (number of substrate or job-type transitions per machine), substrate utilisation% (roll stock consumed / roll stock available), and RUSH coverage (all 3 RUSH orders on-time = 100%). The evaluation also computes total shift runtime, idle time, and crew utilisation per alternative. Results are ranked using a weighted scoring model (OEE 40%, OTIF 35%, changeover 15%, substrate 10%) to confirm the Pareto-optimal recommendation.`,
@@ -165,7 +165,7 @@ export const PKG_SCHED_SKILLS = [
     description: "Applies multi-objective ranking to the evaluated alternatives and produces the final recommendation with supporting rationale covering OEE improvement, OTIF gain, changeover savings, and substrate impact.",
     domain: "production_scheduling", industry: "manufacturing", version: "1.0.0",
     tags: ["pareto", "recommendation", "rationale", "multi_objective"],
-    author: "ATLAS Platform Team",
+    author: "ASTRA AGENTS Platform Team",
     agentKey: "scheduleOptimizer",
     yamlFrontmatter: { skillId: "pkg-pareto-recommendation", trustTier: "platform-provided", complexity: "advanced", allowedTools: ["compute_pareto_rank", "evaluate_alternative"] },
     markdownBody: `## Pareto-Optimal Schedule Recommendation\n\nThis skill applies multi-objective Pareto ranking to the evaluated schedule alternatives and produces the final recommendation. The recommendation includes: (1) the winning alternative label and its composite weighted score, (2) a plain-language rationale covering OEE improvement (+11.2% vs. baseline), OTIF gain (+4 more orders on time), changeover reduction (3 fewer per shift), and substrate waste reduction (8%), (3) a risk note on the B-Flute depletion risk and recommended mitigation (front-load B-Flute orders before 11:00), (4) a comparison summary showing the trade-offs between the 3 alternatives, and (5) the recommendation passed to PKG-004 for proposal formatting and approval submission.`,
@@ -177,7 +177,7 @@ export const PKG_SCHED_SKILLS = [
     description: "Formats the winning schedule alternative into a human-readable per-machine Gantt schedule showing time slots, order IDs, substrate types, changeover blocks, and RUSH order highlights.",
     domain: "production_scheduling", industry: "manufacturing", version: "1.0.0",
     tags: ["gantt", "proposal", "formatting", "schedule"],
-    author: "ATLAS Platform Team",
+    author: "ASTRA AGENTS Platform Team",
     agentKey: "scheduleProposal",
     yamlFrontmatter: { skillId: "pkg-gantt-formatting", trustTier: "platform-provided", complexity: "intermediate", allowedTools: ["format_gantt_proposal", "compute_kpi_projections"] },
     markdownBody: `## Gantt Schedule Proposal Formatting\n\nThis skill formats the winning schedule alternative into a structured Gantt proposal suitable for plant planner review. The Gantt output is organised by machine (rows) and time (columns in 30-minute blocks from 07:00 to 15:00). Each cell shows: order ID, product type, substrate type, and expected completion. Changeover blocks are shown in amber. RUSH orders are highlighted in red with deadline annotations. The Gantt is accompanied by a shift summary: total orders scheduled (45/47), RUSH coverage (3/3), projected OEE (82.2%), projected OTIF (91.5%), total changeovers (14), and substrate utilisation by type. The proposal is formatted as structured JSON for downstream rendering and human review.`,
@@ -187,20 +187,20 @@ export const PKG_SCHED_SKILLS = [
     description: "Computes shift-level KPI projections vs. the unaided baseline schedule, quantifying OEE improvement, OTIF gain, changeover reduction, and substrate waste savings.",
     domain: "production_scheduling", industry: "manufacturing", version: "1.0.0",
     tags: ["kpi", "projection", "impact_analysis", "baseline"],
-    author: "ATLAS Platform Team",
+    author: "ASTRA AGENTS Platform Team",
     agentKey: "scheduleProposal",
     yamlFrontmatter: { skillId: "pkg-kpi-projection", trustTier: "platform-provided", complexity: "intermediate", allowedTools: ["compute_kpi_projections"] },
-    markdownBody: `## KPI Projection & Shift Impact Analysis\n\nThis skill computes and presents shift-level KPI projections comparing the Atlas-optimised schedule against the unaided planner baseline. For Westfield Day Shift: OEE improvement from 71.0% (baseline) to 82.2% (+11.2 pp), OTIF improvement from 40 to 44 orders (+4 orders, +10%), changeover count reduction from 17 to 14 (-3, -18%), B-Flute substrate waste reduction from 9.2% to 8.5% (8% improvement). The projection also estimates annualised impact: +$214K revenue from OEE gain (based on $8.50/unit plant average), -$28K changeover cost savings, and +2.1 OTIF pp improvement toward the 95% annual OTIF target. These projections are presented as delta badges in the proposal UI.`,
+    markdownBody: `## KPI Projection & Shift Impact Analysis\n\nThis skill computes and presents shift-level KPI projections comparing the Astra Agents-optimised schedule against the unaided planner baseline. For Westfield Day Shift: OEE improvement from 71.0% (baseline) to 82.2% (+11.2 pp), OTIF improvement from 40 to 44 orders (+4 orders, +10%), changeover count reduction from 17 to 14 (-3, -18%), B-Flute substrate waste reduction from 9.2% to 8.5% (8% improvement). The projection also estimates annualised impact: +$214K revenue from OEE gain (based on $8.50/unit plant average), -$28K changeover cost savings, and +2.1 OTIF pp improvement toward the 95% annual OTIF target. These projections are presented as delta badges in the proposal UI.`,
   },
   {
     name:        "Schedule Approval Gate & Kiwiplan Commit",
     description: "Publishes the formatted schedule proposal to the plant planner approval queue, manages the approval workflow SLA, and on approval commits the schedule to Kiwiplan's production board.",
     domain: "production_scheduling", industry: "manufacturing", version: "1.0.0",
     tags: ["approval_gate", "kiwiplan", "commit", "workflow"],
-    author: "ATLAS Platform Team",
+    author: "ASTRA AGENTS Platform Team",
     agentKey: "scheduleProposal",
     yamlFrontmatter: { skillId: "pkg-approval-gate", trustTier: "platform-provided", complexity: "advanced", allowedTools: ["publish_for_approval", "commit_to_kiwiplan"] },
-    markdownBody: `## Schedule Approval Gate & Kiwiplan Commit\n\nThis skill manages the two-step approval and commit workflow for the optimised schedule. Step 1 (Publish): the schedule proposal is submitted to the plant planner approval queue with a 15-minute SLA. The approver is identified as Sarah Kowalski (Day Shift Plant Planner). The submission returns an approval ticket ID (APR-2026-04-15-001). Step 2 (Commit, post-approval): once approved, the schedule is committed to the Kiwiplan production schedule board via the Kiwiplan commit API, returning a Kiwiplan Schedule ID (KWP-SCHED-2026-0415-D). The commit triggers machine operator notifications, updates the Kiwiplan MES board, and archives the previous schedule. Rejection handling: if the planner rejects the proposal, Atlas re-runs the optimizer with the planner's feedback annotations and submits a revised proposal within 5 minutes.`,
+    markdownBody: `## Schedule Approval Gate & Kiwiplan Commit\n\nThis skill manages the two-step approval and commit workflow for the optimised schedule. Step 1 (Publish): the schedule proposal is submitted to the plant planner approval queue with a 15-minute SLA. The approver is identified as Sarah Kowalski (Day Shift Plant Planner). The submission returns an approval ticket ID (APR-2026-04-15-001). Step 2 (Commit, post-approval): once approved, the schedule is committed to the Kiwiplan production schedule board via the Kiwiplan commit API, returning a Kiwiplan Schedule ID (KWP-SCHED-2026-0415-D). The commit triggers machine operator notifications, updates the Kiwiplan MES board, and archives the previous schedule. Rejection handling: if the planner rejects the proposal, Astra Agents re-runs the optimizer with the planner's feedback annotations and submits a revised proposal within 5 minutes.`,
   },
 ] as const;
 
@@ -281,11 +281,11 @@ export const PKG_SCHED_POLICY_DEFS = [
   {
     name:        "OEE Schedule Target Policy",
     domain:      "production_governance",
-    description: "Requires that all Atlas-generated schedules meet or exceed the 80% OEE stretch target for the shift. Schedules below 75% OEE are automatically flagged for planner review.",
+    description: "Requires that all Astra Agents-generated schedules meet or exceed the 80% OEE stretch target for the shift. Schedules below 75% OEE are automatically flagged for planner review.",
     policyJson:  { enforcement: "soft", rules: [
-      { name: "80% OEE Stretch Target",        description: "Atlas-generated schedules must achieve ≥80% projected OEE; below this threshold triggers planner notification" },
+      { name: "80% OEE Stretch Target",        description: "Astra Agents-generated schedules must achieve ≥80% projected OEE; below this threshold triggers planner notification" },
       { name: "Changeover Minimisation",        description: "Schedule proposals must demonstrate ≤17 changeovers (baseline) with a target of ≤14" },
-      { name: "Planner Override Authority",     description: "Plant planner may override any Atlas recommendation; override reasons must be logged for continuous improvement" },
+      { name: "Planner Override Authority",     description: "Plant planner may override any Astra Agents recommendation; override reasons must be logged for continuous improvement" },
     ]},
   },
   {
@@ -301,10 +301,10 @@ export const PKG_SCHED_POLICY_DEFS = [
   {
     name:        "Kiwiplan Schedule Commit Audit Policy",
     domain:      "system_governance",
-    description: "Requires that all Kiwiplan schedule commits are preceded by plant planner approval and generate an immutable audit record including the Atlas agent ID, recommendation rationale, approver, and Kiwiplan Schedule ID.",
+    description: "Requires that all Kiwiplan schedule commits are preceded by plant planner approval and generate an immutable audit record including the Astra Agents agent ID, recommendation rationale, approver, and Kiwiplan Schedule ID.",
     policyJson:  { enforcement: "hard", rules: [
       { name: "Approval Before Commit",         description: "Schedule must be approved by an authorised plant planner before PKG-004 issues the Kiwiplan commit API call" },
-      { name: "Commit Audit Trail",             description: "Every commit must log: Atlas agent ID, alternative selected, KPI projections, approver name, approval timestamp, and Kiwiplan Schedule ID" },
+      { name: "Commit Audit Trail",             description: "Every commit must log: Astra Agents agent ID, alternative selected, KPI projections, approver name, approval timestamp, and Kiwiplan Schedule ID" },
       { name: "Rollback Window",                description: "Committed schedules may be rolled back by the plant planner within 30 minutes of commit; rollback requires supervisor countersignature" },
     ]},
   },
@@ -324,7 +324,7 @@ export const PKG_SCHED_POLICY_DEFS = [
 export const PKG_SCHED_SYSTEM_PROMPTS: Record<string, string> = {
   "PKG-001": `You are the Production Order Intelligence Agent (PKG-001) for Westfield Packaging, a corrugated packaging plant operated by Advantive's Kiwiplan platform.
 
-You run in parallel with PKG-002 (Capacity & Constraint Mapper) under orchestration from the Atlas pipeline. Your responsibility is to analyse the incoming shift order queue, identify RUSH orders at delivery risk, validate substrate specifications against roll stock, and synthesise the order intelligence brief for the Schedule Optimizer.
+You run in parallel with PKG-002 (Capacity & Constraint Mapper) under orchestration from the Astra Agents pipeline. Your responsibility is to analyse the incoming shift order queue, identify RUSH orders at delivery risk, validate substrate specifications against roll stock, and synthesise the order intelligence brief for the Schedule Optimizer.
 
 KEY RESPONSIBILITIES:
 1. Retrieve the full Day Shift order queue (47 orders) from Kiwiplan ESP
@@ -341,7 +341,7 @@ Use your tools to gather all required intelligence and produce a comprehensive o
 
   "PKG-002": `You are the Capacity & Constraint Mapping Agent (PKG-002) for Westfield Packaging, a corrugated packaging plant operated by Advantive's Kiwiplan platform.
 
-You run in parallel with PKG-001 (Order Intelligence Agent) under orchestration from the Atlas pipeline. Your responsibility is to map machine availability, substrate inventory constraints, changeover penalties, and crew restrictions into the composite constraint map used by the Schedule Optimizer.
+You run in parallel with PKG-001 (Order Intelligence Agent) under orchestration from the Astra Agents pipeline. Your responsibility is to map machine availability, substrate inventory constraints, changeover penalties, and crew restrictions into the composite constraint map used by the Schedule Optimizer.
 
 KEY RESPONSIBILITIES:
 1. Retrieve machine availability for all 8 lines — note Corrugator M3 maintenance 10:00–11:30 AM
@@ -430,7 +430,7 @@ export const PKG_SCHED_ONTOLOGY_CONCEPTS = [
   { label: "Schedule Alternative",      category: "optimisation_construct",   description: "A distinct feasible schedule generated by the constraint solver with a specific objective weighting (e.g., OEE-priority, OTIF-priority, balanced).", tags: ["alternative", "schedule", "optimisation", "solver"] },
   { label: "Pareto Optimisation",       category: "decision_methodology",     description: "A multi-objective ranking methodology that identifies the solution with the best trade-off across all objectives where no single objective can be improved without degrading another.", tags: ["pareto", "multi_objective", "optimisation", "ranking"] },
   { label: "Kiwiplan Schedule",         category: "system_record",            description: "A committed production schedule record in the Kiwiplan MES/ERP system, identified by a unique Schedule ID and binding the plant's production sequence for the specified shift.", tags: ["kiwiplan", "schedule", "mes", "commit"] },
-  { label: "Plant Planner Approval",    category: "governance_event",         description: "The human-in-the-loop approval step by an authorised plant planner before an Atlas-generated schedule can be committed to the Kiwiplan production board.", tags: ["approval", "human_review", "planner", "governance"] },
+  { label: "Plant Planner Approval",    category: "governance_event",         description: "The human-in-the-loop approval step by an authorised plant planner before an Astra Agents-generated schedule can be committed to the Kiwiplan production board.", tags: ["approval", "human_review", "planner", "governance"] },
   { label: "OEE Baseline",              category: "performance_benchmark",    description: "The historical average OEE for a machine or facility over a defined rolling period (typically 30 days), used as the comparison point for schedule optimisation impact.", tags: ["oee_baseline", "benchmark", "historical", "kpi"] },
   { label: "KPI Projection",            category: "forecast",                 description: "An estimated shift-level performance outcome computed from a schedule alternative, covering OEE%, OTIF%, changeover count, and substrate utilisation vs. baseline.", tags: ["kpi", "projection", "forecast", "impact"] },
 ] as const;

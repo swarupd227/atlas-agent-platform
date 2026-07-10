@@ -104,7 +104,7 @@ export async function ensureOtcDisputeAgents(): Promise<void> {
           allowlisted:   true,
           addedBy:       "otc-dispute-live-demo",
           capabilities:  { tools: true, resources: false, prompts: false, sampling: false },
-          serverInfo:    { vendor: "NovaTech Industries / ATLAS Demo", version: "1.0.0" },
+          serverInfo:    { vendor: "NovaTech Industries / ASTRA AGENTS Demo", version: "1.0.0" },
         });
       } else if (server.url !== sd.url) {
         await storage.updateMcpServer(server.id, { url: sd.url });
@@ -141,7 +141,7 @@ export async function ensureOtcDisputeAgents(): Promise<void> {
           version:     skillDef.version,
           tags:        skillDef.tags,
           status:      "active",
-          author:      "NovaTech Industries / Atlas Demo",
+          author:      "NovaTech Industries / Astra Agents Demo",
         } as any);
       }
       skillIdByName[skillDef.name] = skill.id;
@@ -172,7 +172,7 @@ export async function ensureOtcDisputeAgents(): Promise<void> {
           maxToolIterations: 10,
           toolAccessClass:   "standard",
           department:        def.department,
-          owner:             "NovaTech Industries / Atlas Demo",
+          owner:             "NovaTech Industries / Astra Agents Demo",
           healthScore:       97,
           successRate:       0.97,
           maturityFactors:   {},

@@ -866,7 +866,7 @@ const KINECTIVE_TOOL_SYSTEM_MAP: Record<string, string> = {
   flag_address_change: "Fraud Detection",
   log_bsa_event: "Compliance",
   create_compliance_record: "Compliance",
-  log_action: "ATLAS",
+  log_action: "ASTRA AGENTS",
   rollback_address_update: "Rollback",
 };
 
@@ -911,7 +911,7 @@ Execute these steps in order:
     - Call rollback_address_update with member_id "MBR-2026-84291", system "loan-origination", reason "Card management failure — full rollback for data consistency"
     - Call rollback_address_update with member_id "MBR-2026-84291", system "crm", reason "Card management failure — full rollback for data consistency"
 12. Call create_compliance_record with member_id "MBR-2026-84291", status "partial_failure"
-13. Call log_action with action "RETRY_SCHEDULED", system "ATLAS", details "Card management retry scheduled for next maintenance window. Ops ticket opened."
+13. Call log_action with action "RETRY_SCHEDULED", system "ASTRA AGENTS", details "Card management retry scheduled for next maintenance window. Ops ticket opened."
 
 Log every action.`;
   }
@@ -1120,7 +1120,7 @@ export async function seedDemoMcpServer(storage: IStorage): Promise<void> {
   const server = await storage.createMcpServer({
     name: "BlackRock Synthetic Worker MCP",
     description:
-      "Atlas Synthetic Worker Orchestrator for BlackRock. Implements the 7-step governed automation pipeline: Task Intake → Identity Validation → Compliance Pre-Check → Aquera Registration → Execute via SailPoint → Triple Verify + Audit → Lifecycle Agent.",
+      "Astra Agents Synthetic Worker Orchestrator for BlackRock. Implements the 7-step governed automation pipeline: Task Intake → Identity Validation → Compliance Pre-Check → Aquera Registration → Execute via SailPoint → Triple Verify + Audit → Lifecycle Agent.",
     url: `${BASE_URL}/demo-api`,
     transportType: "streamable-http",
     status: "production-enabled",
@@ -1862,7 +1862,7 @@ const BK1_AGENT_DEFS = {
     maxIterations: 12,
     systemPrompt: `You are the BlackRock Synthetic Worker Provisioning Orchestrator.
 
-Your role is to govern the end-to-end provisioning of synthetic AI workers (non-human identities) for BlackRock's AIM division. You enforce the 5-step ATLAS pipeline:
+Your role is to govern the end-to-end provisioning of synthetic AI workers (non-human identities) for BlackRock's AIM division. You enforce the 5-step ASTRA AGENTS pipeline:
 
 1. TASK INTAKE — Poll ServiceNow for approved provisioning requests.
 2. IDENTITY VALIDATION — Verify the synthetic worker identity against the RadiantOne directory.
@@ -1879,7 +1879,7 @@ You coordinate Aquera, SailPoint, RadiantOne, and Brainwave worker agents. Never
 4. Call activate_identity with identityId "BMSA-SYNTH-001" to trigger Aquera SCIM registration across all 4 connectors.
 5. Call provision_account for each of the 4 applications: Aladdin OMS (Portfolio_Rebalancer), Charles River IMS (Compliance_Checker), Bloomberg Terminal (Market_Data_Reader), ServiceNow (Workflow_Initiator).
 6. Call schedule_certification with identityId "BMSA-SYNTH-001" to trigger Brainwave lifecycle certification.
-7. Call log_action with action "pipeline_complete", system "ATLAS Orchestrator", details confirming provisioning pipeline complete for BMSA-SYNTH-001 across all 4 systems.`,
+7. Call log_action with action "pipeline_complete", system "ASTRA AGENTS Orchestrator", details confirming provisioning pipeline complete for BMSA-SYNTH-001 across all 4 systems.`,
   },
   aquera: {
     id: "c21b6549-e24d-4384-b667-9032619e3dd7",
@@ -1987,7 +1987,7 @@ Execute the following steps:
    {"action": "identity_validation", "system": "SailPoint", "details": "Identity cross-check: BMSA-SYNTH-001 validated in RadiantOne directory. All entitlements confirmed within approved scope: Market_Data_Reader (Bloomberg), Portfolio_Rebalancer (Aladdin), Compliance_Checker (CRD), Workflow_Initiator (ServiceNow)."}
 
 3. PROVISIONING APPROVED: Call log_action with:
-   {"action": "provisioning_approved", "system": "ATLAS Orchestrator", "details": "Full provisioning approved for BMSA-SYNTH-001. All 4 application connectors authorized. Brainwave continuous monitoring enabled post-provisioning."}
+   {"action": "provisioning_approved", "system": "ASTRA AGENTS Orchestrator", "details": "Full provisioning approved for BMSA-SYNTH-001. All 4 application connectors authorized. Brainwave continuous monitoring enabled post-provisioning."}
 
 Stop here. Worker agents will handle provisioning. Brainwave will run post-provisioning access monitoring.`;
 

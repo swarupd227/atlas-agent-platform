@@ -57,7 +57,7 @@ Customer requesting: 12% — NOT yet eligible under current contract.
 Running in parallel with OTC-AGT-001 RFQ parsing. Report:
 1. Current discount tier: Standard 8%
 2. Pricing authority needed for requested 12%: Regional VP (VP authority, max 15%)
-3. Atlas pricing insight: $6M upsell opportunity to unlock Gold tier for future orders
+3. Astra Agents pricing insight: $6M upsell opportunity to unlock Gold tier for future orders
 4. Credit status: A+ — AR current — no credit hold issues
 
 Confirm contract context loaded. OTC-AGT-001 is extracting line items in parallel.`,
@@ -73,11 +73,11 @@ Configure the 47-SKU equipment package for Meridian Manufacturing.
 
 PRIOR CONTEXT: RFQ parsed — 47 SKUs across Turbines (12), Filtration (30), Control Electronics (5). Total list: $487,200.
 
-KEY SUBSTITUTIONS APPLIED BY ATLAS:
+KEY SUBSTITUTIONS APPLIED BY ASTRA AGENTS:
 1. TX-7200-A/B (7 units) → TX-7250-A/B: X-7200 discontinued in APAC supply chain. X-7250 is spec-equivalent, same price, shorter 6-week lead (vs 8-week for X-7200). 2 substitutions applied.
 2. CE-CX440-STD → CE-CX450-ENH: CX-440 not certified for X-7250 firmware v3.2+. CX-450 fully certified, same price, 6-week lead. 1 substitution applied.
 
-COMPATIBILITY RESULT: 44/47 native OK, 3 Atlas substitutions — all substitutions maintain price parity and improve lead time.
+COMPATIBILITY RESULT: 44/47 native OK, 3 Astra Agents substitutions — all substitutions maintain price parity and improve lead time.
 
 BUNDLE P-220: TX-7250-* + FK-S-* qualifies for Package Discount P-220 (+2% bundle discount after volume discount).
 
@@ -107,7 +107,7 @@ PRICING WATERFALL:
 
 COMPARISON:
 - Customer Requested:  $428,736 (12% off list)
-- Atlas Optimised:     $429,711 (11.8% via bundle mechanism)
+- Astra Agents Optimised:     $429,711 (11.8% via bundle mechanism)
 - Delta:               $975 in NovaTech's favour — achieved customer economics without breaching tier
 
 APPROVAL ROUTING:
@@ -146,7 +146,7 @@ DELIVERY SCHEDULE (4 plants):
 - Portland, OR: 8 SKUs, $72,411, Sep 26, 2026
 
 KEY CALL-OUTS IN DOCUMENT:
-- Atlas substitutions: TX-7200→TX-7250 (improved lead time) + CX-440→CX-450 (X-7250 compatibility)
+- Astra Agents substitutions: TX-7200→TX-7250 (improved lead time) + CX-440→CX-450 (X-7250 compatibility)
 - AI-added spare: FK-ACS-SPR ($950) for maintenance efficiency
 - Win probability: 78% (Meridian 82% historical win rate on quotes >$300K)
 - Upsell: $6M additional spend unlocks Gold tier (12%) for future orders
@@ -461,7 +461,7 @@ export async function otcQuoteLiveRunHandler(req: Request, res: Response): Promi
 function getFallbackMessage(role: string): string {
   const msgs: Record<string, string> = {
     rfq_intake: "OTC-AGT-001: RFQ parsed — 47 SKUs across 3 families. 2 substitutions flagged (X-7200→X-7250, CX-440→CX-450). Pricing authority gap noted: customer at $21.7M YTD, needs $35M for 12% tier. Escalation required.",
-    product_config: "OTC-AGT-001: 47 SKUs configured. Compatibility: 44/47 native OK, 3 Atlas substitutions (TX-7250-A/B replaces TX-7200, CE-CX450-ENH replaces CE-CX440-STD). Bundle P-220 qualified. AI-added FK-ACS-SPR ($950). Total: 48 SKUs.",
+    product_config: "OTC-AGT-001: 47 SKUs configured. Compatibility: 44/47 native OK, 3 Astra Agents substitutions (TX-7250-A/B replaces TX-7200, CE-CX450-ENH replaces CE-CX440-STD). Bundle P-220 qualified. AI-added FK-ACS-SPR ($950). Total: 48 SKUs.",
     pricing_optimisation: "OTC-AGT-011: Waterfall complete. List $487,200 → Vol-10% -$48,720 → Bundle-2% -$8,769 → Net $429,711 (11.8%). Customer requested $428,736 (12%); delta $975 NovaTech favour. Approval routed: Sarah Chen, Regional VP. ASC 606 compliant. Robinson-Patman documented.",
     quote_generation: "OTC-AGT-001: Quote Q-78432 generated. 48 SKUs, $429,711 net, 30-day validity. 4-plant delivery (Detroit Aug 15, Houston Aug 29, Phoenix Sep 12, Portland Sep 26). Approved by Sarah Chen, Regional VP. Win probability: 78%. Upsell: $6M to Gold tier.",
   };

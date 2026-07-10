@@ -192,7 +192,7 @@ function createInitialState(): DemoState {
         owner: "Alexandra Moore, BMSA Operations Lead",
         sponsor: "Daniel Okafor, Managing Director, Multi-Asset Strategies",
         authMethod: "X.509 Certificate (90-day rotation)",
-        platform: "Atlas Agent Orchestrator",
+        platform: "Astra Agents Agent Orchestrator",
       },
       riskAssessment: {
         dataSensitivity: "Medium (MNPI via Aladdin)",
@@ -283,7 +283,7 @@ export function resolveSodViolation(path: "revoke" | "exception", resolvedBy?: s
       delete aladdin.sodBlock;
     }
     auditCounter++;
-    state.auditLog.push({ id: auditCounter, timestamp: now, action: "SOD_RESOLVED_EXCEPTION", system: "ATLAS Orchestrator", details: `Resolution path B selected: Exception approved with dual sign-off — ${resolver} + Daniel Okafor (Managing Director). Compensating controls: enhanced monitoring, 30-day review cycle, Brainwave alert threshold lowered to HIGH.` });
+    state.auditLog.push({ id: auditCounter, timestamp: now, action: "SOD_RESOLVED_EXCEPTION", system: "ASTRA AGENTS Orchestrator", details: `Resolution path B selected: Exception approved with dual sign-off — ${resolver} + Daniel Okafor (Managing Director). Compensating controls: enhanced monitoring, 30-day review cycle, Brainwave alert threshold lowered to HIGH.` });
     auditCounter++;
     state.auditLog.push({ id: auditCounter, timestamp: new Date().toISOString(), action: "AUDIT_SOX_S404", system: "Brainwave", details: "SOX §404 audit record updated: SoD exception granted with dual-approver sign-off. Compensating control package attached. Incident INC-SOD-20260313 closed — exception tracked." });
   }
@@ -328,9 +328,9 @@ export function resolvePrivEsc(path: "revoke_reissue" | "forensic", resolvedBy?:
 
   auditCounter++;
   if (path === "revoke_reissue") {
-    state.auditLog.push({ id: auditCounter, timestamp: now, action: "CERT_REVOKED_REISSUED", system: "ATLAS Orchestrator", details: `CERT_REVOKED_REISSUED | X.509 certificate BMSA-SYNTH-001-X509 revoked by ${resolver}. New certificate issued with tighter scope (Market_Data_Reader only, Bloomberg read-only endpoint whitelist). Enhanced monitoring enabled. Incident ${state.privEscViolation.incidentId} resolved.` });
+    state.auditLog.push({ id: auditCounter, timestamp: now, action: "CERT_REVOKED_REISSUED", system: "ASTRA AGENTS Orchestrator", details: `CERT_REVOKED_REISSUED | X.509 certificate BMSA-SYNTH-001-X509 revoked by ${resolver}. New certificate issued with tighter scope (Market_Data_Reader only, Bloomberg read-only endpoint whitelist). Enhanced monitoring enabled. Incident ${state.privEscViolation.incidentId} resolved.` });
   } else {
-    state.auditLog.push({ id: auditCounter, timestamp: now, action: "FORENSIC_INVESTIGATION", system: "ATLAS Orchestrator", details: `FORENSIC_INVESTIGATION | Full audit freeze initiated by ${resolver}. Credential forensics package sent to AI Risk Operating Committee. BMSA-SYNTH-001 remains Suspended_Pending_Review. Incident ${state.privEscViolation.incidentId} under active investigation.` });
+    state.auditLog.push({ id: auditCounter, timestamp: now, action: "FORENSIC_INVESTIGATION", system: "ASTRA AGENTS Orchestrator", details: `FORENSIC_INVESTIGATION | Full audit freeze initiated by ${resolver}. Credential forensics package sent to AI Risk Operating Committee. BMSA-SYNTH-001 remains Suspended_Pending_Review. Incident ${state.privEscViolation.incidentId} under active investigation.` });
   }
 
   return { success: true, privEscViolation: state.privEscViolation };

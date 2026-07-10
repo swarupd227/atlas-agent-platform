@@ -212,7 +212,7 @@ export function finalizeKinectiveSystemUpdates(scenario: KinectiveScenario): voi
       }
     }
     if (!state.auditLog.find((e) => e.action === "FULL_ROLLBACK")) {
-      addKinectiveAudit("FULL_ROLLBACK", "ATLAS Engine", "Card Management (PSCU) failure triggered full rollback across all 7 updated systems (Kinective Gateway, Digital Banking, Statement Vendor, Bill Pay, Fraud Detection, Loan Origination, CRM). COA-2026-00412 fully reverted — all systems restored to a consistent pre-change state.");
+      addKinectiveAudit("FULL_ROLLBACK", "Astra Agents Engine", "Card Management (PSCU) failure triggered full rollback across all 7 updated systems (Kinective Gateway, Digital Banking, Statement Vendor, Bill Pay, Fraud Detection, Loan Origination, CRM). COA-2026-00412 fully reverted — all systems restored to a consistent pre-change state.");
     }
     state.finalized = true;
     return;
@@ -226,7 +226,7 @@ export function finalizeKinectiveSystemUpdates(scenario: KinectiveScenario): voi
   }
   if (!state.auditLog.find((e) => e.action === "COA_COMPLETE")) {
     const updatedCount = state.systemUpdates.filter((s) => s.status === "success").length;
-    addKinectiveAudit("COA_COMPLETE", "ATLAS Engine", `COA-2026-00412 complete. All ${updatedCount} systems synchronized successfully. Member notified via email and SMS. Signed form archived in SignPlus.`);
+    addKinectiveAudit("COA_COMPLETE", "Astra Agents Engine", `COA-2026-00412 complete. All ${updatedCount} systems synchronized successfully. Member notified via email and SMS. Signed form archived in SignPlus.`);
   }
   state.finalized = true;
 }

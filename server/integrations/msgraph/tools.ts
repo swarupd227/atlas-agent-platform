@@ -14,8 +14,8 @@ const ok = (data: unknown): McpToolResult => ({
 /** Append Atlas agent attribution footer to email HTML/text */
 function withEmailAttribution(body: string, contentType: "Text" | "HTML", agentName?: string): string {
   const byLine = agentName
-    ? `Sent by ${agentName} via Atlas Agent Orchestrator`
-    : "Sent via Atlas Agent Orchestrator";
+    ? `Sent by ${agentName} via Astra Agents Agent Orchestrator`
+    : "Sent via Astra Agents Agent Orchestrator";
   if (contentType === "HTML") {
     return `${body}<br/><hr/><small style="color:#888">${byLine}</small>`;
   }

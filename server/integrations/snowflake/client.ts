@@ -27,7 +27,7 @@ export function guardReadOnly(sql: string): void {
     const match = sql.match(BLOCKED_KEYWORDS)?.[0]?.toUpperCase() ?? "DML/DDL";
     throw new Error(
       `Read-only enforcement: ${match} statements are blocked. ` +
-      "Snowflake via Atlas is configured for read-only access. Use SELECT queries only."
+      "Snowflake via Astra Agents is configured for read-only access. Use SELECT queries only."
     );
   }
 }

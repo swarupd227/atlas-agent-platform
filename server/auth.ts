@@ -233,7 +233,7 @@ export async function seedDefaultAdmin(defaultOrgId?: string) {
     await db.insert(users).values({
       username: "admin",
       password: hashed,
-      email: "admin@nous.ai",
+      email: "admin@artizent.ai",
       role: "admin",
       organizationId: defaultOrgId,
     });

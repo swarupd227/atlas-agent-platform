@@ -43,7 +43,7 @@ export const INTEGRATION_REGISTRY: IntegrationDef[] = [
   {
     id: "n8n",
     name: "n8n",
-    description: "Workflow automation — trigger Nous from n8n and call n8n workflows from a Nous step (bidirectional)",
+    description: "Workflow automation — trigger Artizent from n8n and call n8n workflows from a Artizent step (bidirectional)",
     category: "devops",
     logoColor: "#EA4B71",
     authMethod: "apikey",

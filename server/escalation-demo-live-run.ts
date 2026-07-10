@@ -262,7 +262,7 @@ async function runEscalationDemo(): Promise<void> {
   updateStep(5, { status: "running" });
   const t5 = Date.now();
   const emailSubject = `[URGENT] ${ticketKey} — ${ticketSummary.slice(0, 80)}`;
-  const emailBody = `Hi,\n\nThis is an automated escalation from the Atlas Agent Orchestrator.\n\nTicket: ${ticketKey}\nSummary: ${ticketSummary}\nPriority: Critical\n\nAssignee: ${assigneeEmail}\nAvailable from: ${availableStr}\n\nPlease join the incident bridge and coordinate a resolution immediately.\n\nTicket link: https://jira.acme.com/browse/${ticketKey}`;
+  const emailBody = `Hi,\n\nThis is an automated escalation from the Astra Agents Agent Orchestrator.\n\nTicket: ${ticketKey}\nSummary: ${ticketSummary}\nPriority: Critical\n\nAssignee: ${assigneeEmail}\nAvailable from: ${availableStr}\n\nPlease join the incident bridge and coordinate a resolution immediately.\n\nTicket link: https://jira.acme.com/browse/${ticketKey}`;
   try {
     const r5 = await microsoftGraphMcpServer.callTool("graph_send_email", {
       subject:    emailSubject,

@@ -68,7 +68,7 @@ export function makeAdvSupportMcpServerDefs(baseUrl: string) {
         { name: "create_salesforce_case",     description: "Creates a Salesforce case via Advantive ONE Salesforce MCP with full context pre-populated: account, contact, product, version, severity, summary, diagnostic steps, and T2 routing recommendation.",             endpoint: "create-sf-case",      method: "POST" },
         { name: "recommend_t2_owner",         description: "Recommends the optimal T2 specialist queue based on product line, error pattern, and current queue load. Returns recommended_team, queue_depth, estimated_response_time_hours, and named_specialist if applicable.", endpoint: "recommend-t2",        method: "POST" },
         { name: "notify_account_manager",     description: "Sends escalation notification to the customer's account manager with the Salesforce case URL, severity, and estimated response time. Returns notification status and AM contact details.",                          endpoint: "notify-am",           method: "POST" },
-        { name: "log_escalation_audit",       description: "Logs the full escalation event to the Atlas audit trail: case_id, classification, diagnostic steps, T2 routing, resolution_gap, timestamp, and agent IDs involved in the pipeline.",                              endpoint: "log-audit",           method: "POST" },
+        { name: "log_escalation_audit",       description: "Logs the full escalation event to the Astra Agents audit trail: case_id, classification, diagnostic steps, T2 routing, resolution_gap, timestamp, and agent IDs involved in the pipeline.",                              endpoint: "log-audit",           method: "POST" },
       ],
     },
   ] as const;
@@ -242,7 +242,7 @@ export const ADV_SUPPORT_POLICY_DEFS = [
   {
     name:        "Confidence Gate Policy",
     domain:      "support_governance",
-    description: "Any resolution with confidence score <0.75 is escalated or flagged for human review. Atlas never delivers uncertain answers as confident responses to customers. Confidence thresholds: >0.80 = direct resolve, 0.65–0.80 = additional search pass, <0.65 = Diagnostic or Escalation.",
+    description: "Any resolution with confidence score <0.75 is escalated or flagged for human review. Astra Agents never delivers uncertain answers as confident responses to customers. Confidence thresholds: >0.80 = direct resolve, 0.65–0.80 = additional search pass, <0.65 = Diagnostic or Escalation.",
     policyJson: { enforcement: "hard", rules: [
       { name: "High Confidence Resolution Gate",   description: "Answers with confidence >0.80 may be delivered directly to the customer as autonomous resolutions without human review" },
       { name: "Medium Confidence Search Expansion", description: "Answers with confidence 0.65–0.80 must trigger a second search pass before delivery; single-pass answers in this range are prohibited" },

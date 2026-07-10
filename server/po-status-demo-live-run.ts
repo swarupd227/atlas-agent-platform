@@ -108,7 +108,7 @@ async function runPoDemo(orgId: string): Promise<void> {
         `Material: ${DEMO_MATERIAL} (Plant: ${DEMO_PLANT})\n` +
         `Days Overdue: 15\n\n` +
         `*Stock Status:* Current stock on hand is below reorder point. Immediate vendor follow-up required.\n\n` +
-        `_Auto-escalated by Atlas PO Status Agent via SAP integration._`,
+        `_Auto-escalated by Astra Agents PO Status Agent via SAP integration._`,
     }),
   ];
   _state.steps = steps;

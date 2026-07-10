@@ -3272,7 +3272,7 @@ export const marketplaceAssets = pgTable("marketplace_assets", {
   assetType: text("asset_type").notNull().default("metric_pack"),
   industryTags: text("industry_tags").array().default(sql`'{}'::text[]`),
   author: text("author").notNull().default("nous"),
-  authorDisplayName: text("author_display_name").notNull().default("Nous"),
+  authorDisplayName: text("author_display_name").notNull().default("Artizent"),
   version: text("version").notNull().default("1.0.0"),
   contentsJson: jsonb("contents_json").notNull().default(sql`'{}'::jsonb`),
   contentsSummary: text("contents_summary"),

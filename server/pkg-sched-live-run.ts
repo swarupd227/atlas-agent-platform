@@ -164,7 +164,7 @@ export async function ensurePackagingSchedAgents(): Promise<void> {
         allowlisted:   true,
         addedBy:       "pkg-sched-live-demo",
         capabilities:  { tools: true, resources: false, prompts: false, sampling: false },
-        serverInfo:    { vendor: "Advantive / Kiwiplan / ATLAS Demo", version: "1.0.0" },
+        serverInfo:    { vendor: "Advantive / Kiwiplan / ASTRA AGENTS Demo", version: "1.0.0" },
       });
     } else if (server.url !== serverDef.url) {
       await storage.updateMcpServer(server.id, { url: serverDef.url });
@@ -614,7 +614,7 @@ export async function pkgSchedLiveRunHandler(req: Request, res: Response) {
   // (OTC Order pattern: event name = "agent_execution", step type check = "api_call")
   const onRuntimeEvent = (evt: { deploymentId: string; agentId: string; runId: string; result: any }) => {
     if (aborted || !activeDeploymentIds.has(evt.deploymentId)) return;
-    const agentName = deploymentIdToName.get(evt.deploymentId) ?? "Atlas PKG Agent";
+    const agentName = deploymentIdToName.get(evt.deploymentId) ?? "Astra Agents PKG Agent";
     const agentCode = deploymentIdToCode.get(evt.deploymentId) ?? "PKG";
     const steps: any[] = evt.result?.steps ?? [];
     for (const step of steps) {

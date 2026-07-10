@@ -316,7 +316,7 @@ router.post("/apply-resolution", async (_req: Request, res: Response) => {
         overpayment: { amount: 38_100.00, action: "credit_to_account", credit_memo: "CM-2026-0328-GT", customer_instruction: "Per EDI 820 — apply as credit" },
       },
       ar_impact: { globaltech_ar_before: 3_100_000.00, amount_being_closed: 2_370_000.00, globaltech_ar_after: 730_000.00, invoices_closed: 47, remaining_open: 3 },
-      talking_point: "That $2.3M payment covering 47 invoices with 3 deductions and an overpayment? The current team takes 4–6 hours. Atlas matched all 47 invoices in seconds, validated two deductions automatically, flagged one for investigation with evidence, and presented a one-click resolution.",
+      talking_point: "That $2.3M payment covering 47 invoices with 3 deductions and an overpayment? The current team takes 4–6 hours. Astra Agents matched all 47 invoices in seconds, validated two deductions automatically, flagged one for investigation with evidence, and presented a one-click resolution.",
     },
   });
 });

@@ -290,7 +290,7 @@ export async function ensureOtcCashAgents(): Promise<void> {
         allowlisted:   true,
         addedBy:       "otc-cash-application-live-demo",
         capabilities:  { tools: true, resources: false, prompts: false, sampling: false },
-        serverInfo:    { vendor: "NovaTech Industries / ATLAS Demo", version: "1.0.0" },
+        serverInfo:    { vendor: "NovaTech Industries / ASTRA AGENTS Demo", version: "1.0.0" },
       });
     } else if (server.url !== sd.url) {
       await storage.updateMcpServer(server.id, { url: sd.url });
@@ -684,7 +684,7 @@ export async function otcCashLiveRunHandler(req: Request, res: Response): Promis
 
   try {
     sse("run_start", {
-      message:     `Initiating Atlas Cash Application — Scenario: ${scenario.label}`,
+      message:     `Initiating Astra Agents Cash Application — Scenario: ${scenario.label}`,
       scenario:    scenarioKey,
       scenarioLabel: scenario.label,
       period:      "March 2026",
