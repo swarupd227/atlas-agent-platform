@@ -203,6 +203,13 @@ if ! az webapp deployment source config \
 fi
 rm -f "$DEPLOY_ERR_LOG"
 
+# `--manual-integration` links the repo but does NOT set up a webhook and does
+# NOT pull/build automatically -- without an explicit sync, the container has
+# no `dist/` to run and just idles on Azure's own platform bootstrap forever
+# (looks like a plain startup timeout, with no application-level log output).
+echo "  Triggering initial deployment sync (pulls the repo + runs the Oryx build)..."
+az webapp deployment source sync --resource-group "$RG" --name "$APP_NAME" --output none
+
 echo ""
 echo "Done. https://${APP_NAME}.azurewebsites.net"
 echo "Next: ./migrate.sh to push the DB schema, then ./verify.sh to confirm it's up."
