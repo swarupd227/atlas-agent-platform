@@ -13,6 +13,19 @@ export function getSecurityMode(): SecurityMode {
   return mode === "demo" ? "demo" : "production";
 }
 
+// Demo-mode fallback secret: generated once per process, never persisted or
+// logged. A hardcoded fallback would let anyone who reads the source forge a
+// token against any demo deployment; a random per-process secret means the
+// only thing forgeable is a token for *this* running process, and it dies
+// with the process. Never used in production (see getJwtSecret below).
+let _demoJwtSecret: string | null = null;
+function getDemoJwtSecret(): string {
+  if (!_demoJwtSecret) {
+    _demoJwtSecret = crypto.randomBytes(48).toString("hex");
+  }
+  return _demoJwtSecret;
+}
+
 function getJwtSecret(): string {
   const secret = process.env.JWT_SECRET;
   if (secret) return secret;
@@ -21,7 +34,7 @@ function getJwtSecret(): string {
     throw new Error("[auth] JWT_SECRET must be set in production mode");
   }
   // Demo / local only.
-  return "nous-dev-secret-change-in-production";
+  return getDemoJwtSecret();
 }
 
 const TOKEN_EXPIRY = "24h";

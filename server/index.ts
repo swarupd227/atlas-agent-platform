@@ -1,5 +1,6 @@
 import express, { type Request, Response, NextFunction } from "express";
 import cookieParser from "cookie-parser";
+import helmet from "helmet";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
@@ -53,6 +54,34 @@ declare module "http" {
   }
 }
 
+// Security headers. Content-Security-Policy is scoped to the production
+// static build only: Vite's dev middleware (used by run-dev.ps1 / local
+// testing) needs unsafe-eval + inline scripts for its HMR client and module
+// transforms, and a strict CSP there would break the dev inner loop rather
+// than protect anything (dev mode isn't internet-facing). The other headers
+// (frameguard, noSniff, referrer policy, etc.) are safe and applied always.
+const isProdBuild = process.env.NODE_ENV === "production";
+app.use(
+  helmet({
+    contentSecurityPolicy: isProdBuild
+      ? {
+          directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'"],
+            styleSrc: ["'self'", "'unsafe-inline'"], // Tailwind/shadcn inject inline styles at runtime.
+            imgSrc: ["'self'", "data:", "blob:"],
+            fontSrc: ["'self'", "data:"],
+            connectSrc: ["'self'"],
+            objectSrc: ["'none'"],
+            frameAncestors: ["'none'"],
+            baseUri: ["'self'"],
+          },
+        }
+      : false,
+    crossOriginEmbedderPolicy: false, // would block the Vite dev client / third-party embeds we don't control.
+  }),
+);
+
 app.use(
   express.json({
     limit: "5mb",
@@ -62,7 +91,14 @@ app.use(
   }),
 );
 
-app.use(express.urlencoded({ extended: false }));
+app.use(
+  express.urlencoded({
+    extended: false,
+    verify: (req, _res, buf) => {
+      req.rawBody = buf;
+    },
+  }),
+);
 app.use(cookieParser());
 
 // Liveness & readiness probes (public, no auth, registered before the SPA catch-all).

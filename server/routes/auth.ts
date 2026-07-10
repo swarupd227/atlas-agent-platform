@@ -11,6 +11,7 @@ import {
   clearAuthCookie,
 } from "../auth";
 import { storage } from "../storage";
+import { authRateLimiter } from "../rate-limits";
 
 const router = Router();
 
@@ -29,7 +30,7 @@ router.get("/api/auth/mode", (_req, res) => {
   res.json({ mode: getSecurityMode() });
 });
 
-router.post("/api/auth/login", async (req, res) => {
+router.post("/api/auth/login", authRateLimiter, async (req, res) => {
   if (getSecurityMode() === "demo") {
     return res.json({ success: true, user: { username: "demo", role: "admin", email: null } });
   }
@@ -54,7 +55,7 @@ router.post("/api/auth/login", async (req, res) => {
   }
 });
 
-router.post("/api/auth/register", async (req, res) => {
+router.post("/api/auth/register", authRateLimiter, async (req, res) => {
   if (getSecurityMode() === "demo") {
     return res.json({ success: true, user: { username: "demo", role: "admin", email: null } });
   }
