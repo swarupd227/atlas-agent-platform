@@ -51,6 +51,7 @@ else
   JWT_SECRET=$(openssl rand -base64 48)
   INTEGRATION_VAULT_KEY=$(openssl rand -base64 32)
   ASTRA_PUBLIC_API_KEY="astra_$(openssl rand -hex 32)"
+  BOOTSTRAP_ADMIN_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 20)
 
   AUDIT_KEY_PEM_FILE=$(mktemp)
   openssl genpkey -algorithm ed25519 -out "$AUDIT_KEY_PEM_FILE"
@@ -64,9 +65,19 @@ JWT_SECRET='$JWT_SECRET'
 INTEGRATION_VAULT_KEY='$INTEGRATION_VAULT_KEY'
 AUDIT_SIGNING_PRIVATE_KEY='$AUDIT_SIGNING_PRIVATE_KEY'
 ASTRA_PUBLIC_API_KEY='$ASTRA_PUBLIC_API_KEY'
+BOOTSTRAP_ADMIN_PASSWORD='$BOOTSTRAP_ADMIN_PASSWORD'
 EOF
   chmod 600 "$SECRETS_FILE"
   echo "  Wrote new secrets to $SECRETS_FILE (chmod 600). Back this up somewhere safe — the audit signing key in particular can't be regenerated without invalidating past signed audit events."
+fi
+
+# Top up BOOTSTRAP_ADMIN_PASSWORD for secrets files generated before this
+# variable existed, without touching the rest (regenerating JWT_SECRET etc.
+# for no reason would just invalidate anything already using them).
+if [ -z "${BOOTSTRAP_ADMIN_PASSWORD:-}" ]; then
+  BOOTSTRAP_ADMIN_PASSWORD=$(openssl rand -base64 24 | tr -d '/+=' | head -c 20)
+  echo "BOOTSTRAP_ADMIN_PASSWORD='$BOOTSTRAP_ADMIN_PASSWORD'" >> "$SECRETS_FILE"
+  echo "  Added BOOTSTRAP_ADMIN_PASSWORD to $SECRETS_FILE."
 fi
 
 DATABASE_URL="postgresql://${DB_ADMIN}:${DB_PASSWORD}@${DB_SERVER}.postgres.database.azure.com:5432/${DB_NAME}?sslmode=require"
@@ -161,6 +172,7 @@ az webapp config appsettings set \
     INTEGRATION_VAULT_KEY="$INTEGRATION_VAULT_KEY" \
     AUDIT_SIGNING_PRIVATE_KEY="$AUDIT_SIGNING_PRIVATE_KEY" \
     ASTRA_PUBLIC_API_KEY="$ASTRA_PUBLIC_API_KEY" \
+    BOOTSTRAP_ADMIN_PASSWORD="$BOOTSTRAP_ADMIN_PASSWORD" \
     DEFAULT_LLM_PROVIDER=anthropic \
     ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
     OPENAI_API_KEY="$OPENAI_API_KEY" \
@@ -189,6 +201,9 @@ az webapp log config \
 echo ""
 echo "Done. https://${APP_NAME}.azurewebsites.net"
 echo "Next: ./deploy.sh to push the app code, then ./migrate.sh to push the DB schema, then ./verify.sh to confirm it's up."
+echo ""
+echo "First login: username 'admin', password is BOOTSTRAP_ADMIN_PASSWORD in $SECRETS_FILE."
+echo "(Only seeded once, on the app's first-ever startup with no users in the DB.)"
 echo ""
 echo "NOTE: the Postgres firewall above is open to all IPs (0.0.0.0-255.255.255.255) so this"
 echo "script runs end-to-end without extra steps. Tighten it once you're past initial setup:"
