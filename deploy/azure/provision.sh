@@ -169,12 +169,29 @@ az webapp config set \
   --output none
 
 echo "=== 8/8: GitHub-linked continuous deployment ==="
-az webapp deployment source config \
-  --resource-group "$RG" --name "$APP_NAME" \
-  --repo-url "$GITHUB_REPO_URL" \
-  --branch "$GITHUB_BRANCH" \
-  --manual-integration \
-  --output none
+# `az webapp deployment source config` has a known client-side SDK bug where a
+# 200 OK response gets misread as an unexpected status, raising "Operation
+# returned an invalid status 'OK'" even when the config actually applied
+# correctly. Don't trust the command's exit code alone -- verify against the
+# real state before deciding whether this genuinely failed.
+DEPLOY_ERR_LOG=$(mktemp)
+if ! az webapp deployment source config \
+    --resource-group "$RG" --name "$APP_NAME" \
+    --repo-url "$GITHUB_REPO_URL" \
+    --branch "$GITHUB_BRANCH" \
+    --manual-integration \
+    --output none 2>"$DEPLOY_ERR_LOG"; then
+  ACTUAL_REPO_URL=$(az webapp deployment source show --resource-group "$RG" --name "$APP_NAME" --query repoUrl -o tsv 2>/dev/null || true)
+  if [ "$ACTUAL_REPO_URL" = "$GITHUB_REPO_URL" ]; then
+    echo "  (Hit the known 'invalid status OK' client-side error here, but verified the deployment source was actually configured correctly -- safe to ignore.)"
+  else
+    echo "Deployment source config failed for real (repoUrl is '$ACTUAL_REPO_URL', expected '$GITHUB_REPO_URL'):" >&2
+    cat "$DEPLOY_ERR_LOG" >&2
+    rm -f "$DEPLOY_ERR_LOG"
+    exit 1
+  fi
+fi
+rm -f "$DEPLOY_ERR_LOG"
 
 echo ""
 echo "Done. https://${APP_NAME}.azurewebsites.net"
