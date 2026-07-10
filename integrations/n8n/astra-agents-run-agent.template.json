@@ -1,5 +1,5 @@
 {
-  "name": "Nous — Run Agent (inbound: n8n → Nous)",
+  "name": "Astra Agents — Run Agent (inbound: n8n → Astra Agents)",
   "nodes": [
     {
       "parameters": {},
@@ -25,7 +25,7 @@
         "options": {}
       },
       "id": "b2222222-2222-4222-8222-222222222222",
-      "name": "Start Nous Run",
+      "name": "Start Astra Agents Run",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [460, 300]
@@ -58,10 +58,10 @@
     }
   ],
   "connections": {
-    "When clicking Test": { "main": [[{ "node": "Start Nous Run", "type": "main", "index": 0 }]] },
-    "Start Nous Run": { "main": [[{ "node": "Wait for run", "type": "main", "index": 0 }]] },
+    "When clicking Test": { "main": [[{ "node": "Start Astra Agents Run", "type": "main", "index": 0 }]] },
+    "Start Astra Agents Run": { "main": [[{ "node": "Wait for run", "type": "main", "index": 0 }]] },
     "Wait for run": { "main": [[{ "node": "Get Run Result", "type": "main", "index": 0 }]] }
   },
   "settings": {},
-  "meta": { "templateDescription": "Triggers a Nous agent run via the public API, waits, then fetches the result." }
+  "meta": { "templateDescription": "Triggers an Astra Agents agent run via the public API, waits, then fetches the result." }
 }

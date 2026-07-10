@@ -4,9 +4,9 @@ import type {
   INodeProperties,
 } from 'n8n-workflow';
 
-export class NousApi implements ICredentialType {
-  name = 'nousApi';
-  displayName = 'Nous API';
+export class AstraAgentsApi implements ICredentialType {
+  name = 'astraAgentsApi';
+  displayName = 'Astra Agents API';
   documentationUrl = 'https://github.com/swarupd227/atlas-agent-platform/tree/main/integrations/n8n';
   properties: INodeProperties[] = [
     {
@@ -15,7 +15,7 @@ export class NousApi implements ICredentialType {
       type: 'string',
       default: 'http://host.docker.internal:5000',
       placeholder: 'http://host.docker.internal:5000',
-      description: 'Base URL of the Nous server. From an n8n Docker container, the host is host.docker.internal.',
+      description: 'Base URL of the Astra Agents server. From an n8n Docker container, the host is host.docker.internal.',
     },
     {
       displayName: 'API Key',
@@ -23,7 +23,7 @@ export class NousApi implements ICredentialType {
       type: 'string',
       typeOptions: { password: true },
       default: '',
-      description: 'Value of NOUS_PUBLIC_API_KEY on the Nous server.',
+      description: 'Value of ASTRA_PUBLIC_API_KEY on the Astra Agents server.',
     },
   ];
 

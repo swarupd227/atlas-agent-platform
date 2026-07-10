@@ -8,19 +8,19 @@ import type {
 } from 'n8n-workflow';
 import { NodeOperationError } from 'n8n-workflow';
 
-export class Nous implements INodeType {
+export class AstraAgents implements INodeType {
   description: INodeTypeDescription = {
-    displayName: 'Nous',
-    name: 'nous',
-    icon: 'file:nous.svg',
+    displayName: 'Astra Agents',
+    name: 'astraAgents',
+    icon: 'file:astra-agents.svg',
     group: ['transform'],
     version: 1,
     subtitle: '={{$parameter["operation"]}}',
-    description: 'Run Nous (Astra Agents) agents and fetch results',
-    defaults: { name: 'Nous' },
+    description: 'Run Astra Agents agents and fetch results',
+    defaults: { name: 'Astra Agents' },
     inputs: ['main' as any],
     outputs: ['main' as any],
-    credentials: [{ name: 'nousApi', required: true }],
+    credentials: [{ name: 'astraAgentsApi', required: true }],
     properties: [
       {
         displayName: 'Operation',
@@ -40,7 +40,7 @@ export class Nous implements INodeType {
         default: '',
         required: true,
         displayOptions: { show: { operation: ['runAgent'] } },
-        description: 'ID of the Nous agent to run',
+        description: 'ID of the Astra Agents agent to run',
       },
       {
         displayName: 'Input',
@@ -82,11 +82,11 @@ export class Nous implements INodeType {
   async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
     const items = this.getInputData();
     const returnData: INodeExecutionData[] = [];
-    const creds = await this.getCredentials('nousApi');
+    const creds = await this.getCredentials('astraAgentsApi');
     const baseUrl = String(creds.baseUrl || '').replace(/\/$/, '');
 
     const request = async (method: IHttpRequestMethods, path: string, body?: IDataObject) => {
-      return this.helpers.httpRequestWithAuthentication.call(this, 'nousApi', {
+      return this.helpers.httpRequestWithAuthentication.call(this, 'astraAgentsApi', {
         method,
         url: `${baseUrl}${path}`,
         body,
