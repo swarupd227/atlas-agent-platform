@@ -125,6 +125,7 @@ else
   az appservice plan create \
     --resource-group "$RG" \
     --name "$PLAN" \
+    --location "$LOCATION" \
     --is-linux \
     --sku B1 \
     --output none
