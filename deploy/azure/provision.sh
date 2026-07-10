@@ -145,12 +145,12 @@ else
 fi
 
 echo "=== 6/7: App settings ==="
-# NPM_CONFIG_PRODUCTION=false: Oryx's build-time `npm install` inherits
-# NODE_ENV=production from these app settings, which makes npm skip
-# devDependencies -- but the build itself (tsx script/build.ts -> Vite)
-# needs devDependencies like @vitejs/plugin-react. This forces npm to
-# install them at build time without touching the app's own runtime
-# NODE_ENV=production.
+# SCM_DO_BUILD_DURING_DEPLOYMENT=false: deploy.sh builds locally and zips up
+# an already-built artifact (see its header comment for why -- Oryx's
+# server-side build kept failing to resolve devDependencies during
+# `npm run build` for reasons that didn't respond to the documented
+# NPM_CONFIG_PRODUCTION=false fix). Azure should just run `npm start`
+# against exactly what's in the zip, not try to build it again.
 az webapp config appsettings set \
   --resource-group "$RG" --name "$APP_NAME" \
   --settings \
@@ -164,9 +164,8 @@ az webapp config appsettings set \
     DEFAULT_LLM_PROVIDER=anthropic \
     ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
     OPENAI_API_KEY="$OPENAI_API_KEY" \
-    SCM_DO_BUILD_DURING_DEPLOYMENT=true \
+    SCM_DO_BUILD_DURING_DEPLOYMENT=false \
     WEBSITE_NODE_DEFAULT_VERSION=~22 \
-    NPM_CONFIG_PRODUCTION=false \
   --output none
 
 echo "=== 7/7: WebSockets + Always On (needed for SSE streaming + the in-process job worker) ==="

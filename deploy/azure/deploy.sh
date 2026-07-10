@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
-# Zip-deploys the current repo to the already-provisioned Web App.
+# Builds the app locally (wherever this script runs -- Cloud Shell, WSL, Git
+# Bash) and zip-deploys the already-built artifact to the Web App.
 #
-# The GitHub-linked continuous deployment set up by provision.sh
-# (--manual-integration + deployment source sync) has proven unreliable in
-# practice -- the SCM container's git fetch from GitHub fails silently and
-# near-instantly, leaving wwwroot empty and the container stuck retrying
-# `npm start` against a missing package.json until it hits the platform's
-# 230s startup timeout. Zip deploy pushes the exact bytes directly over the
-# same authenticated Kudu/SCM channel used for log/VFS access (which does
-# work), then lets Oryx run its normal npm install + build on extraction --
-# same build Oryx would have run from a successful git fetch.
+# We build locally instead of relying on Azure's server-side Oryx build.
+# Oryx's build kept failing on `npm run build` with
+# "Cannot find package '@vitejs/plugin-react'" (a devDependency) even after
+# setting NPM_CONFIG_PRODUCTION=false (the documented fix for Oryx skipping
+# devDependencies) -- the installed package count didn't change at all with
+# that setting, so something about Oryx's build container/npm resolution
+# specifically was the problem, not our devDependencies list or app
+# settings. The exact same `npm install` + `npm run build` already runs
+# clean locally (this is the same install migrate.sh uses), so build here
+# and ship the result instead of continuing to debug Oryx's environment.
+# provision.sh sets SCM_DO_BUILD_DURING_DEPLOYMENT=false so Azure just runs
+# `npm start` against exactly what's in this zip, no server-side build step.
 #
 # Run this after every commit you want live. Safe to re-run any time.
 set -euo pipefail
@@ -23,27 +27,34 @@ fi
 source config.env
 
 REPO_ROOT="$(cd ../.. && pwd)"
+cd "$REPO_ROOT"
+
+echo "Installing dependencies (npm install)..."
+npm install
+
+echo "Building (npm run build)..."
+npm run build
+
+# server/index.ts is bundled into dist/index.cjs with most dependencies
+# inlined (see script/build.ts's allowlist) -- what's left as "external" and
+# actually needed at runtime is a real production dependency, never a
+# devDependency (nothing at runtime imports vite/tsx/esbuild/etc). Safe to
+# prune devDependencies out of node_modules before zipping to keep the
+# upload small; the next run's `npm install` above restores them for the
+# build step.
+echo "Pruning devDependencies for a smaller deploy artifact..."
+npm prune --omit=dev
+
 ZIP_PATH=$(mktemp --suffix=.zip)
 # mktemp creates the file empty -- `zip` treats an existing file as an
 # archive to append to and chokes on it being empty/invalid, so remove the
 # placeholder and let `zip` create a fresh archive at the same path.
 rm -f "$ZIP_PATH"
 
-echo "Zipping $REPO_ROOT (excluding .git, node_modules, dist, deploy secrets)..."
-(
-  cd "$REPO_ROOT"
-  zip -rq "$ZIP_PATH" . \
-    -x '.git/*' \
-    -x 'node_modules/*' \
-    -x 'dist/*' \
-    -x 'deploy/azure/config.env' \
-    -x 'deploy/azure/.generated-secrets.env' \
-    -x 'deploy/azure/logs/*' \
-    -x 'deploy/azure/*.zip' \
-    -x '*.zip'
-)
+echo "Zipping build artifact (package.json, package-lock.json, dist/, node_modules/)..."
+zip -rq "$ZIP_PATH" package.json package-lock.json dist node_modules
 
-echo "Deploying via zip (Oryx runs npm install + npm run build server-side on extraction)..."
+echo "Deploying via zip (SCM_DO_BUILD_DURING_DEPLOYMENT=false -- Azure just runs npm start against this)..."
 az webapp deployment source config-zip \
   --resource-group "$RG" --name "$APP_NAME" \
   --src "$ZIP_PATH" \
@@ -51,4 +62,4 @@ az webapp deployment source config-zip \
 
 rm -f "$ZIP_PATH"
 echo ""
-echo "Done. Run ./verify.sh to confirm the app comes up (the build takes a minute or two)."
+echo "Done. Run ./verify.sh (from deploy/azure) to confirm the app comes up."

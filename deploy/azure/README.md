@@ -44,7 +44,7 @@ cp config.env.example config.env   # fill in your values
 
 - `config.env.example` — copy to `config.env` and fill in (resource group, region, app name, LLM keys). `config.env` is gitignored — never commit it, it ends up holding real API keys once filled in.
 - `provision.sh` — creates the resource group, Postgres Flexible Server (+ pgvector), App Service plan + Web App, generates the three production-required secrets (`JWT_SECRET`, `INTEGRATION_VAULT_KEY`, `AUDIT_SIGNING_PRIVATE_KEY`), wires up all app settings, and enables WebSockets/Always On. Safe to re-run — every step uses idempotent `az` commands (`create` calls no-op or update in place if the resource already exists).
-- `deploy.sh` — zips the repo and pushes it straight to the Web App via `az webapp deployment source config-zip`, which triggers the same Oryx `npm install` + build server-side. **This is the actual deploy mechanism** — run it after every commit you want live.
+- `deploy.sh` — builds the app locally (`npm install` + `npm run build`), prunes devDependencies, and zips the built artifact (`package.json`, `package-lock.json`, `dist/`, `node_modules/`) straight to the Web App via `az webapp deployment source config-zip`. **This is the actual deploy mechanism** — run it after every commit you want live.
 - `migrate.sh` — runs `npm run db:push` against the deployed database. Installs `node_modules` first if missing (so it works on a fresh Cloud Shell clone) and warns if the active Node is older than 18. Re-run this after every commit that changes `shared/schema.ts`.
 - `verify.sh` — opens the app URL, curls the health endpoint, and tails the last few minutes of App Service logs.
 
@@ -58,7 +58,7 @@ cd deploy/azure
 ./deploy.sh
 ```
 
-(GitHub-linked continuous deployment via `--manual-integration` was tried first but turned out unreliable in practice — the SCM container's git fetch from GitHub failed silently and near-instantly on every attempt, leaving `wwwroot` empty and the container stuck retrying `npm start` against a missing `package.json` until the platform's 230s startup timeout. Zip deploy pushes the same bytes over the same authenticated Kudu/SCM channel that log/VFS access already uses successfully, so it sidesteps that failure mode entirely.)
+(GitHub-linked continuous deployment via `--manual-integration` was tried first but turned out unreliable in practice — the SCM container's git fetch from GitHub failed silently and near-instantly on every attempt, leaving `wwwroot` empty and the container stuck retrying `npm start` against a missing `package.json` until the platform's 230s startup timeout. Zip deploy with a server-side Oryx build was tried next, but Oryx's build kept failing to resolve devDependencies during `npm run build` (`Cannot find package '@vitejs/plugin-react'`) even with the documented `NPM_CONFIG_PRODUCTION=false` fix applied — the installed package count didn't change at all with that setting. `deploy.sh` now builds locally instead and ships the finished artifact, so Azure just runs `npm start` against it with no server-side build step at all.)
 
 ## What you'll be asked to fill in
 
