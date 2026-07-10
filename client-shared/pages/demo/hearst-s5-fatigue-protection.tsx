@@ -54,12 +54,12 @@ export default function Screen5FatigueProtection() {
               <button
                 onClick={() => setViewMode("pre-atlas")}
                 className={`px-3 py-1 text-[11px] rounded-md transition-colors ${viewMode === "pre-atlas" ? "bg-red-500/20 text-red-300 border border-red-500/30" : "bg-muted/30 text-muted-foreground border border-transparent hover:bg-muted/50"}`}>
-                Before Atlas
+                Before Astra Agents
               </button>
               <button
                 onClick={() => setViewMode("with-atlas")}
                 className={`px-3 py-1 text-[11px] rounded-md transition-colors ${viewMode === "with-atlas" ? "bg-green-500/20 text-green-300 border border-green-500/30" : "bg-muted/30 text-muted-foreground border border-transparent hover:bg-muted/50"}`}>
-                With Atlas
+                With Astra Agents
               </button>
             </div>
           </div>
@@ -178,7 +178,7 @@ export default function Screen5FatigueProtection() {
           <div className="flex items-center justify-between">
             <div>
               <CardTitle className="text-sm font-medium">Unsubscribe Prevention Tracker</CardTitle>
-              <p className="text-[11px] text-muted-foreground">12-week unsubscribe rate — Atlas activation at week 7</p>
+              <p className="text-[11px] text-muted-foreground">12-week unsubscribe rate — Astra Agents activation at week 7</p>
             </div>
             <div className="flex gap-3">
               <div className="text-right">
@@ -202,9 +202,9 @@ export default function Screen5FatigueProtection() {
               <YAxis tickFormatter={v => `${v}%`} tick={{ fontSize: 9 }} domain={[0, 0.3]} width={36} />
               <Tooltip formatter={(v: any) => [`${v}%`, "Unsub Rate"]} />
               <Legend iconSize={10} wrapperStyle={{ fontSize: 10 }} />
-              <ReferenceLine x="Wk 7" stroke="#6366F1" strokeDasharray="3 3" label={{ value: "Atlas active", position: "top", fontSize: 10, fill: "#6366F1" }} />
-              <Line type="monotone" dataKey="preAtlas" stroke="#EF4444" strokeWidth={2} dot={{ r: 3 }} name="Pre-Atlas unsub %" connectNulls={false} />
-              <Line type="monotone" dataKey="withAtlas" stroke="#10B981" strokeWidth={2} dot={{ r: 3 }} name="With Atlas unsub %" connectNulls={false} />
+              <ReferenceLine x="Wk 7" stroke="#6366F1" strokeDasharray="3 3" label={{ value: "Astra Agents active", position: "top", fontSize: 10, fill: "#6366F1" }} />
+              <Line type="monotone" dataKey="preAtlas" stroke="#EF4444" strokeWidth={2} dot={{ r: 3 }} name="Pre-Astra Agents unsub %" connectNulls={false} />
+              <Line type="monotone" dataKey="withAtlas" stroke="#10B981" strokeWidth={2} dot={{ r: 3 }} name="With Astra Agents unsub %" connectNulls={false} />
             </LineChart>
           </ResponsiveContainer>
         </CardContent>

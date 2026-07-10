@@ -61,7 +61,7 @@ const ASSET_TYPE_OPTIONS = [
 
 const AUTHOR_OPTIONS = [
   { value: "all", label: "All Authors" },
-  { value: "nous", label: "Nous" },
+  { value: "nous", label: "Artizent" },
   { value: "partner", label: "Partner" },
   { value: "tenant", label: "Tenant" },
 ];
@@ -275,7 +275,7 @@ export default function EvalMarketplace() {
                 <Store className="w-5 h-5 text-primary" />
                 Eval Marketplace
               </h1>
-              <p className="text-sm text-muted-foreground mt-0.5">Nous-curated metric packs, dataset templates, persona libraries, and report templates</p>
+              <p className="text-sm text-muted-foreground mt-0.5">Artizent-curated metric packs, dataset templates, persona libraries, and report templates</p>
             </div>
             <div className="flex items-center gap-4 text-sm">
               <div className="text-center">

@@ -367,7 +367,7 @@ export default function OtcQuoteS4Document() {
         <Card className="border-border/20 bg-muted/5 shrink-0">
           <CardContent className="p-3">
             <p className="text-[9px] text-muted-foreground/80 leading-relaxed italic">
-              "A 47-SKU multi-site quote with compatibility checks, tiered pricing, bundle optimisation, discount approval, and professional document generation — done in 90 seconds. Manual process: 4–6 hours with 3–5% error rate. Atlas eliminated errors, optimised the deal ($975 incremental margin), and identified a $6M upsell path."
+              "A 47-SKU multi-site quote with compatibility checks, tiered pricing, bundle optimisation, discount approval, and professional document generation — done in 90 seconds. Manual process: 4–6 hours with 3–5% error rate. Astra Agents eliminated errors, optimised the deal ($975 incremental margin), and identified a $6M upsell path."
             </p>
           </CardContent>
         </Card>

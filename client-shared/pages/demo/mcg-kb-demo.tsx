@@ -55,7 +55,7 @@ const TOOL_LABELS: Record<string, string> = {
 };
 const SERVER_LABELS: Record<string, string> = {
   "mcg-knowledge-base": "MCG Knowledge Base",
-  "mcg-bundle-store":   "Atlas Bundle Store",
+  "mcg-bundle-store":   "Astra Agents Bundle Store",
 };
 function labelTool(t?: string)   { return t ? (TOOL_LABELS[t]   ?? t) : ""; }
 function labelServer(s?: string) { return s ? (SERVER_LABELS[s] ?? s) : ""; }

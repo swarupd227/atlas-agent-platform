@@ -380,12 +380,12 @@ export function useLittlerPipeline(): { state: LittlerPipelineState; trigger: ()
 
     es.addEventListener("run_start", (e: MessageEvent) => {
       const d = JSON.parse(e.data);
-      addLog("SYSTEM", "Atlas Orchestrator", d.message, "info");
+      addLog("SYSTEM", "Astra Agents Orchestrator", d.message, "info");
     });
 
     es.addEventListener("setup", (e: MessageEvent) => {
       const d = JSON.parse(e.data);
-      addLog("SYSTEM", "Atlas Orchestrator", d.message, "info");
+      addLog("SYSTEM", "Astra Agents Orchestrator", d.message, "info");
     });
 
     es.addEventListener("agent_start", (e: MessageEvent) => {
@@ -435,7 +435,7 @@ export function useLittlerPipeline(): { state: LittlerPipelineState; trigger: ()
       _cache.completedAt = new Date().toISOString();
       _cache.gapCount = d.gapCount || 7;
       if (_timerInterval) clearInterval(_timerInterval);
-      addLog("SYSTEM", "Atlas Orchestrator", `Analysis complete — ${d.gapCount || 7} compliance gaps identified across MN, ME, IL`, "complete");
+      addLog("SYSTEM", "Astra Agents Orchestrator", `Analysis complete — ${d.gapCount || 7} compliance gaps identified across MN, ME, IL`, "complete");
       es.close();
       notify();
     });
@@ -446,7 +446,7 @@ export function useLittlerPipeline(): { state: LittlerPipelineState; trigger: ()
       _cache.status = "error";
       _cache.error = msg;
       if (_timerInterval) clearInterval(_timerInterval);
-      addLog("SYSTEM", "Atlas Orchestrator", `Error: ${msg}`, "error");
+      addLog("SYSTEM", "Astra Agents Orchestrator", `Error: ${msg}`, "error");
       es.close();
       notify();
     });
@@ -454,7 +454,7 @@ export function useLittlerPipeline(): { state: LittlerPipelineState; trigger: ()
     es.onerror = () => {
       if (_cache.status === "running") {
         _cache.status = "error";
-        _cache.error = "Connection to Atlas agents lost";
+        _cache.error = "Connection to Astra Agents agents lost";
         if (_timerInterval) clearInterval(_timerInterval);
         notify();
       }

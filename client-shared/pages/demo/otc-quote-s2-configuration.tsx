@@ -287,7 +287,7 @@ export default function OtcQuoteS2Configuration({ onScreenChange }: Props) {
           </CardHeader>
           <CardContent className="flex-1 overflow-y-auto p-2 font-mono">
             {state.logEntries.length === 0 && (
-              <p className="text-[9px] text-muted-foreground/50 italic">Waiting for Atlas…</p>
+              <p className="text-[9px] text-muted-foreground/50 italic">Waiting for Astra Agents…</p>
             )}
             {state.logEntries.map((log, i) => (
               <div key={i} className={`text-[9px] leading-relaxed ${

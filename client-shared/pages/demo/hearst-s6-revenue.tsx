@@ -111,7 +111,7 @@ export default function Screen6Revenue() {
               </BarChart>
             </ResponsiveContainer>
             <div className="mt-2 p-2 rounded-lg bg-muted/20 text-[10px] text-muted-foreground">
-              <span className="font-medium text-foreground">Country Living</span> generates 2.1× more revenue per email than Cosmopolitan. Atlas has automatically increased CL's share of daily sends by 15%.
+              <span className="font-medium text-foreground">Country Living</span> generates 2.1× more revenue per email than Cosmopolitan. Astra Agents has automatically increased CL's share of daily sends by 15%.
             </div>
           </CardContent>
         </Card>

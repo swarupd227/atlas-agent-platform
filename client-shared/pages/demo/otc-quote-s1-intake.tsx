@@ -78,7 +78,7 @@ export default function OtcQuoteS1Intake({ onRunAndNavigate }: Props) {
                     <span className={l.type === "complete" ? "text-green-400" : l.type === "error" ? "text-red-400" : ""}>{l.message}</span>
                   </span>
                 ))
-              : <span className="text-[9px] font-mono text-orange-400/70">Atlas orchestration initiated — OTC-AGT-001 + OTC-AGT-011 starting…</span>
+              : <span className="text-[9px] font-mono text-orange-400/70">Astra Agents orchestration initiated — OTC-AGT-001 + OTC-AGT-011 starting…</span>
             }
           </div>
           {isRunning && <Badge className="text-[8px] shrink-0 animate-pulse" style={{ background: "rgba(255,107,53,0.12)", borderColor: "rgba(255,107,53,0.3)", color: "#FF6B35" }}>⬤ Live</Badge>}
@@ -278,7 +278,7 @@ export default function OtcQuoteS1Intake({ onRunAndNavigate }: Props) {
             <div className="flex gap-2">
               <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
               <div>
-                <p className="text-[11px] font-semibold text-amber-300 mb-1">Atlas Pricing Insight</p>
+                <p className="text-[11px] font-semibold text-amber-300 mb-1">Astra Agents Pricing Insight</p>
                 <p className="text-[10px] text-muted-foreground leading-relaxed">
                   At current trajectory, Meridian is{" "}
                   <span className="text-amber-300 font-semibold">${MERIDIAN_CONTEXT.insightGapLabel} short</span> of the 12% tier.
@@ -300,7 +300,7 @@ export default function OtcQuoteS1Intake({ onRunAndNavigate }: Props) {
                 <p className="text-[11px] font-semibold text-red-300 mb-1">Discount Authority Check</p>
                 <p className="text-[10px] text-muted-foreground">
                   Customer requests <span className="text-red-300 font-semibold">12%</span> — your authority is{" "}
-                  <span className="font-semibold text-foreground">8%</span>. Atlas will route for approval once pricing is generated.
+                  <span className="font-semibold text-foreground">8%</span>. Astra Agents will route for approval once pricing is generated.
                 </p>
               </div>
             </div>

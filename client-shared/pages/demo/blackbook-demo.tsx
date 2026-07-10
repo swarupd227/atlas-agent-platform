@@ -64,7 +64,7 @@ const SCENARIOS: {
     label: "Feed Outage + Self-Healing",
     sub: "Manheim SE offline — watch live recovery",
     tags: ["Operational", "Live Demo", "Automated Recovery"],
-    description: "Manheim Southeast data feed goes offline mid-run. Watch Atlas self-healing pipeline animate through 5 stages in real time: Detect → Diagnose → Remediate → Backfill → Validate.",
+    description: "Manheim Southeast data feed goes offline mid-run. Watch Astra Agents self-healing pipeline animate through 5 stages in real time: Detect → Diagnose → Remediate → Backfill → Validate.",
     defaultScreen: "self-healing",
   },
   {
@@ -151,7 +151,7 @@ const SCREEN_PREVIEWS: Record<ScreenId, { description: string; bullets: string[]
     bullets: [
       "5-stage autonomous pipeline: Detect → Diagnose → Remediate → Backfill → Validate",
       "8,200 transactions recovered without analyst intervention",
-      "Comparison: 247 minutes vs 4 minutes without / with ATLAS",
+      "Comparison: 247 minutes vs 4 minutes without / with ASTRA AGENTS",
       "All 5 data feed health scores restored to 99%+",
     ],
   },
@@ -570,7 +570,7 @@ export default function BlackBookDemo() {
           <div>
             <h1 className="text-sm font-bold leading-none">Black Book Valuation Intelligence</h1>
             <p className="text-[11px] text-muted-foreground mt-0.5">
-              Atlas AI Agent Platform · {scenario === "odometer-fraud" ? "5 agents" : "4 agents"} · 142K+ daily auction transactions
+              Astra Agents AI Agent Platform · {scenario === "odometer-fraud" ? "5 agents" : "4 agents"} · 142K+ daily auction transactions
             </p>
           </div>
           <Badge className="text-[10px] bg-green-500/20 text-green-400 border-green-500/30 ml-2">Live</Badge>

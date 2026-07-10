@@ -106,7 +106,7 @@ export default function Landing() {
             <Bot className="w-5 h-5 text-primary-foreground" />
           </div>
           <div>
-            <div className="text-sm font-semibold leading-tight" data-testid="text-brand-name">Nous</div>
+            <div className="text-sm font-semibold leading-tight" data-testid="text-brand-name">Artizent</div>
             <div className="text-xs text-muted-foreground leading-tight">Agent Orchestrator</div>
           </div>
         </div>

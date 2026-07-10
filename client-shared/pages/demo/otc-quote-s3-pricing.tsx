@@ -81,7 +81,7 @@ function ComparisonBars() {
       </div>
       <div>
         <div className="flex justify-between text-[9px] mb-0.5">
-          <span className="text-muted-foreground">Atlas Optimised (11.8%)</span>
+          <span className="text-muted-foreground">Astra Agents Optimised (11.8%)</span>
           <span className="text-green-400 font-semibold">${pw.netPrice.toLocaleString()}</span>
         </div>
         <div className="h-3 rounded-full bg-muted/20 overflow-hidden">
@@ -182,7 +182,7 @@ export default function OtcQuoteS3Pricing({ onScreenChange }: Props) {
           <CardContent className="p-3">
             <ComparisonBars />
             <div className="mt-2 rounded border border-green-500/20 bg-green-500/5 p-2">
-              <p className="text-[9px] text-green-300 font-semibold">Atlas Insight</p>
+              <p className="text-[9px] text-green-300 font-semibold">Astra Agents Insight</p>
               <p className="text-[9px] text-muted-foreground mt-0.5 leading-relaxed">
                 Bundle P-220 achieves equivalent economics to 12% without exceeding contract tier.
                 Effective discount 11.8% — customer goal met, NovaTech saves $975.

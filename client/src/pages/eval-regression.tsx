@@ -184,14 +184,14 @@ function buildCiSnippet(provider: string, agentId: string): string {
           echo "Eval gate passed (status: $(echo "$TAGS" | grep -oE 'gate:[a-z]+'  | head -1))"`;
 
   if (provider === "github") {
-    return `name: Atlas Eval Gate
+    return `name: Astra Agents Eval Gate
 on: [push, pull_request]
 
 jobs:
   eval-gate:
     runs-on: ubuntu-latest
     steps:
-      - name: Run Atlas Eval Gate
+      - name: Run Astra Agents Eval Gate
         env:
           ATLAS_API_KEY: \${{ secrets.ATLAS_API_KEY }}
         run: |
@@ -226,7 +226,7 @@ jobs:
     POLL_BASE     = '${pollBase}'
   }
   stages {
-    stage('Atlas Eval Gate') {
+    stage('Astra Agents Eval Gate') {
       steps {
         script {
           def run = sh(returnStdout: true, script: """
@@ -265,7 +265,7 @@ jobs:
       - image: cimg/base:stable
     steps:
       - run:
-          name: Run Atlas Eval Gate
+          name: Run Astra Agents Eval Gate
           command: |
             RUN=$(curl -sf -X POST "${triggerUrl}" \\
               -H "Authorization: Bearer $ATLAS_API_KEY" \\
@@ -288,7 +288,7 @@ pool:
 
 steps:
   - task: Bash@3
-    displayName: 'Atlas Eval Gate'
+    displayName: 'Astra Agents Eval Gate'
     inputs:
       targetType: inline
       script: |

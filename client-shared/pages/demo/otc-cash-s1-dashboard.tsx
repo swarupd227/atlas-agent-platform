@@ -297,7 +297,7 @@ export default function OtcCashS1Dashboard({ state, onDeepDive }: Props) {
                 ))}
               </div>
               <div className="text-xs text-amber-300 bg-amber-500/10 border border-amber-500/20 rounded-lg p-2.5">
-                ⚠ Without AI: 4–6 hours manual research. With Atlas: resolution in seconds.
+                ⚠ Without AI: 4–6 hours manual research. With Astra Agents: resolution in seconds.
               </div>
               {(hasResolution || phase === "complete") && (
                 <button

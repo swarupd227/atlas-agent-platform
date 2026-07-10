@@ -1444,7 +1444,7 @@ function ConnectDialog({
           <DialogHeader>
             <DialogTitle>Connect {integration.name}</DialogTitle>
             <DialogDescription>
-              You will be redirected to {integration.name} to authorize Atlas access.
+              You will be redirected to {integration.name} to authorize Astra Agents access.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-3 py-2">
@@ -1455,7 +1455,7 @@ function ConnectDialog({
               </span>
             </div>
             <p className="text-xs text-muted-foreground">
-              After authorization, Atlas will securely store your tokens in an AES-256-GCM encrypted vault. Tokens are never logged.
+              After authorization, Astra Agents will securely store your tokens in an AES-256-GCM encrypted vault. Tokens are never logged.
             </p>
           </div>
           <DialogFooter>

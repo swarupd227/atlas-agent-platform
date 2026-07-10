@@ -194,7 +194,7 @@ const DEMOS: Demo[] = [
     title: "Multi-State Compliance Engine",
     client: "Littler Mendelson",
     description:
-      "AI-powered compliance gap analysis across 50-state employment law. Identifies jurisdiction-specific obligations, cross-references ATLAS policy rules, and produces actionable remediation plans.",
+      "AI-powered compliance gap analysis across 50-state employment law. Identifies jurisdiction-specific obligations, cross-references ASTRA AGENTS policy rules, and produces actionable remediation plans.",
     industry: "Legal Services",
     industryId: "legal_services",
     route: "/demo/littler",
@@ -209,7 +209,7 @@ const DEMOS: Demo[] = [
     title: "Intelligent Quote & Configuration",
     client: "NovaTech Industries",
     description:
-      "Pre-Order stage of the Order-to-Cash cycle. Two Atlas agents run in parallel — OTC-AGT-001 (Quote & Configuration) and OTC-AGT-011 (Contract & Pricing Compliance) — to parse a 47-SKU RFQ, apply compatibility substitutions (X-7200→X-7250), run waterfall pricing, route for VP approval, and generate Quote Q-78432 in under 90 seconds.",
+      "Pre-Order stage of the Order-to-Cash cycle. Two Astra Agents agents run in parallel — OTC-AGT-001 (Quote & Configuration) and OTC-AGT-011 (Contract & Pricing Compliance) — to parse a 47-SKU RFQ, apply compatibility substitutions (X-7200→X-7250), run waterfall pricing, route for VP approval, and generate Quote Q-78432 in under 90 seconds.",
     industry: "Manufacturing",
     industryId: "manufacturing",
     stage: "Pre-Order",
@@ -225,7 +225,7 @@ const DEMOS: Demo[] = [
     title: "Order Validation & Promise Engine",
     client: "NovaTech Industries",
     description:
-      "Order Processing stage of the Order-to-Cash cycle. Meridian Manufacturing submits RUSH order ORD-2026-78432 ($429K). Three Atlas agents run in parallel — OTC-AGT-002 (Order Validation), OTC-AGT-003 (Credit & Risk), OTC-AGT-004 (Inventory Promise) — to resolve credit exposure at 92%, inventory split across Chicago & Atlanta, and ship-to address mismatch. Order released in under 4 minutes.",
+      "Order Processing stage of the Order-to-Cash cycle. Meridian Manufacturing submits RUSH order ORD-2026-78432 ($429K). Three Astra Agents agents run in parallel — OTC-AGT-002 (Order Validation), OTC-AGT-003 (Credit & Risk), OTC-AGT-004 (Inventory Promise) — to resolve credit exposure at 92%, inventory split across Chicago & Atlanta, and ship-to address mismatch. Order released in under 4 minutes.",
     industry: "Manufacturing",
     industryId: "manufacturing",
     stage: "Order Processing",
@@ -242,7 +242,7 @@ const DEMOS: Demo[] = [
     title: "Fulfillment Exception Command Center",
     client: "NovaTech Industries",
     description:
-      "Fulfillment stage of the Order-to-Cash cycle. Winter Storm Stella hits the Midwest, suspending outbound operations at Chicago DC, Indianapolis DC, and St. Louis DC — 847 shipments affected. Three Atlas agents run sequentially: OTC-AGT-005 (Fulfillment & Exception) detects the disruption, assesses 312 priority SLA-committed shipments, and executes Smart Reroute ($47.2K) to Dallas, Atlanta, and Philadelphia DCs. OTC-AGT-007 (Delivery Tracking) confirms carrier signals, updates routing records, and validates 289 of 312 SLA-compliant ETAs. OTC-AGT-012 (Customer Comms) notifies all 847 customers with tier-personalised messages before a single one calls. 92.6% SLA protection in under 8 minutes.",
+      "Fulfillment stage of the Order-to-Cash cycle. Winter Storm Stella hits the Midwest, suspending outbound operations at Chicago DC, Indianapolis DC, and St. Louis DC — 847 shipments affected. Three Astra Agents agents run sequentially: OTC-AGT-005 (Fulfillment & Exception) detects the disruption, assesses 312 priority SLA-committed shipments, and executes Smart Reroute ($47.2K) to Dallas, Atlanta, and Philadelphia DCs. OTC-AGT-007 (Delivery Tracking) confirms carrier signals, updates routing records, and validates 289 of 312 SLA-compliant ETAs. OTC-AGT-012 (Customer Comms) notifies all 847 customers with tier-personalised messages before a single one calls. 92.6% SLA protection in under 8 minutes.",
     industry: "Manufacturing",
     industryId: "manufacturing",
     stage: "Fulfillment",
@@ -259,7 +259,7 @@ const DEMOS: Demo[] = [
     title: "AI-Powered Cash Application",
     client: "NovaTech Industries",
     description:
-      "Financial stage of the Order-to-Cash cycle. Month-end: $42.3M in payments received across 387 transactions. OTC-AGT-009 (Cash Application) runs first — ingests all channels (wire/ACH/check/EDI 820), achieves 94.1% auto-match rate, and identifies 14 exceptions. Top exception: GlobalTech Corp's $2.3M wire covering 47 invoices with 3 deductions and a $38.1K overpayment. In Step 2, OTC-AGT-009 parses the EDI 820 remittance, matches all 47 invoices at 99.2% confidence, validates the freight claim and early pay discount, and flags the quantity short for investigation. OTC-AGT-006 (Billing & Collections) then validates deduction policy, posts journal entries, issues credit memo CM-2026-0328-GT, closes all 47 invoices, and reduces GlobalTech's AR balance from $3.1M to $0.73M. Exception sub-scenarios include Vertex Systems ACH reference mismatch (auto-resolved) and Regional Supply Co no-remittance check. Traditional processing time: 4–6 hours. Atlas: under 2 minutes.",
+      "Financial stage of the Order-to-Cash cycle. Month-end: $42.3M in payments received across 387 transactions. OTC-AGT-009 (Cash Application) runs first — ingests all channels (wire/ACH/check/EDI 820), achieves 94.1% auto-match rate, and identifies 14 exceptions. Top exception: GlobalTech Corp's $2.3M wire covering 47 invoices with 3 deductions and a $38.1K overpayment. In Step 2, OTC-AGT-009 parses the EDI 820 remittance, matches all 47 invoices at 99.2% confidence, validates the freight claim and early pay discount, and flags the quantity short for investigation. OTC-AGT-006 (Billing & Collections) then validates deduction policy, posts journal entries, issues credit memo CM-2026-0328-GT, closes all 47 invoices, and reduces GlobalTech's AR balance from $3.1M to $0.73M. Exception sub-scenarios include Vertex Systems ACH reference mismatch (auto-resolved) and Regional Supply Co no-remittance check. Traditional processing time: 4–6 hours. Astra Agents: under 2 minutes.",
     industry: "Manufacturing",
     industryId: "manufacturing",
     stage: "Cash Application",
@@ -310,7 +310,7 @@ const DEMOS: Demo[] = [
     title: "Digital Agreements Intelligence",
     client: "OneSpan",
     description:
-      "VIP deal TXN-2026-00847 — Meridian Capital Partners $1.2M Commercial Loan — declined by signer Sarah Keating (VP Treasury) due to document version mismatch (v1.2 sent vs v1.4 required, AML attestation gap). 4 ATLAS agents run sequentially: AGR-001 detects VIP decline from portfolio health scan → AGR-002 classifies exception as CORRECTABLE (98% confidence) → AGR-003 resends envelope with v1.4, updates CRM, notifies RM David Okafor → AGR-004 generates ops report with peer benchmarks and systemic recommendations.",
+      "VIP deal TXN-2026-00847 — Meridian Capital Partners $1.2M Commercial Loan — declined by signer Sarah Keating (VP Treasury) due to document version mismatch (v1.2 sent vs v1.4 required, AML attestation gap). 4 ASTRA AGENTS agents run sequentially: AGR-001 detects VIP decline from portfolio health scan → AGR-002 classifies exception as CORRECTABLE (98% confidence) → AGR-003 resends envelope with v1.4, updates CRM, notifies RM David Okafor → AGR-004 generates ops report with peer benchmarks and systemic recommendations.",
     industry: "Financial Services / Legal Tech",
     industryId: "financial_services",
     stage: "Agreement Operations",
@@ -327,7 +327,7 @@ const DEMOS: Demo[] = [
     title: "Clinical Data Integrity Self-Healing",
     client: "SH-HEALTH-001",
     description:
-      "FHIR R4 EHR feed drops the MedicationStatement resource type, silently breaking drug-interaction validation for 847 inpatient records. Atlas detects the schema drift, re-routes flagged records, and restores HIPAA-compliant validation — all before a single pharmacist is notified.",
+      "FHIR R4 EHR feed drops the MedicationStatement resource type, silently breaking drug-interaction validation for 847 inpatient records. Astra Agents detects the schema drift, re-routes flagged records, and restores HIPAA-compliant validation — all before a single pharmacist is notified.",
     industry: "Healthcare",
     industryId: "self_healing",
     route: "/demo/sh-healthcare",
@@ -343,7 +343,7 @@ const DEMOS: Demo[] = [
     title: "Fraud Model Recovery Agent",
     client: "SH-FIN-001",
     description:
-      "BNPL merchant-category population shift causes fraud model precision to collapse from 94.2% to 71.8%, generating 340 false positives in 6 hours. Atlas detects the drift, activates a shadow challenger model, validates with 30-day hold-out data, and executes a zero-downtime model swap — all within SR 11-7 guardrails.",
+      "BNPL merchant-category population shift causes fraud model precision to collapse from 94.2% to 71.8%, generating 340 false positives in 6 hours. Astra Agents detects the drift, activates a shadow challenger model, validates with 30-day hold-out data, and executes a zero-downtime model swap — all within SR 11-7 guardrails.",
     industry: "Financial Services",
     industryId: "self_healing",
     route: "/demo/sh-financial",
@@ -359,7 +359,7 @@ const DEMOS: Demo[] = [
     title: "Factory Floor Anomaly Recovery",
     client: "SH-MFG-001",
     description:
-      "CNC Mill #7 bearing vibration crosses ISO 10816-3 Zone C at 14.7 mm/s RMS — a 340% surge from baseline — indicating imminent bearing failure. Atlas predicts 4-hour MTBF window, pre-stages spare parts, schedules an emergency 90-minute maintenance window, and reroutes production orders to preserve $2.1M weekly output.",
+      "CNC Mill #7 bearing vibration crosses ISO 10816-3 Zone C at 14.7 mm/s RMS — a 340% surge from baseline — indicating imminent bearing failure. Astra Agents predicts 4-hour MTBF window, pre-stages spare parts, schedules an emergency 90-minute maintenance window, and reroutes production orders to preserve $2.1M weekly output.",
     industry: "Manufacturing",
     industryId: "self_healing",
     route: "/demo/sh-manufacturing",
@@ -375,7 +375,7 @@ const DEMOS: Demo[] = [
     title: "Order Fulfillment Recovery Agent",
     client: "SH-RETAIL-001",
     description:
-      "Primary WMS API goes down during peak shopping, error rate hitting 87% with 1,847 orders queued including 312 same-day delivery commitments — $340K SLA exposure. Atlas detects in 4 minutes, preserves every order, reroutes to 3 alternates, and notifies 312 customers in 22 minutes.",
+      "Primary WMS API goes down during peak shopping, error rate hitting 87% with 1,847 orders queued including 312 same-day delivery commitments — $340K SLA exposure. Astra Agents detects in 4 minutes, preserves every order, reroutes to 3 alternates, and notifies 312 customers in 22 minutes.",
     industry: "Retail / E-Commerce",
     industryId: "self_healing",
     route: "/demo/sh-retail",
@@ -391,7 +391,7 @@ const DEMOS: Demo[] = [
     title: "Grid Operations Stability Agent",
     client: "SH-ENERGY-001",
     description:
-      "Offshore-Alpha wind farm trips offline — 847 MW generation shortfall creates grid frequency deviation of −0.38 Hz against a NERC CIP-014 limit of ±0.5 Hz. Atlas redispatches 892 MW across 4 gas peakers in 8 minutes, preventing cascading failure across 3 balancing areas.",
+      "Offshore-Alpha wind farm trips offline — 847 MW generation shortfall creates grid frequency deviation of −0.38 Hz against a NERC CIP-014 limit of ±0.5 Hz. Astra Agents redispatches 892 MW across 4 gas peakers in 8 minutes, preventing cascading failure across 3 balancing areas.",
     industry: "Energy / Utilities",
     industryId: "self_healing",
     route: "/demo/sh-energy",
@@ -407,7 +407,7 @@ const DEMOS: Demo[] = [
     title: "Claims Workflow Recovery Agent",
     client: "SH-INS-001",
     description:
-      "Claims fraud triage model FPR spikes from 3.2% to 22.7% after biased retrain — 620 claims misclassified, 47 vulnerable claimants with delayed payouts, 12 state regulators triggered. Atlas isolates the model, routes claims to human review, and prepares state filings in 5 hours.",
+      "Claims fraud triage model FPR spikes from 3.2% to 22.7% after biased retrain — 620 claims misclassified, 47 vulnerable claimants with delayed payouts, 12 state regulators triggered. Astra Agents isolates the model, routes claims to human review, and prepares state filings in 5 hours.",
     industry: "Insurance",
     industryId: "self_healing",
     route: "/demo/sh-insurance",
@@ -440,7 +440,7 @@ const DEMOS: Demo[] = [
     title: "Knowledge Base Onboarding",
     client: "MCG Health",
     description:
-      "SCN-MCG-1 — One live agent (MCG-KB-INGEST-001) on real Claude ingests the MCG Brand Style Guide + Clinical Dictionary via 7 sequential extraction nodes (extract_brand_policy → extract_language_policy → extract_segment_lexicon → extract_naming_aliases → extract_dictionary_index → extract_theme_tokens → derive_qa_rules). Produces a 12-artifact typed JSON bundle via Atlas Bundle Store. QA gate enforces prohibited-term detection (hard block) and missing-hash warnings. Human promotion gate required before any proposal agent can be bound. Happy path (97.4 QA score) + 2 exception sub-scenarios: prohibited term 'Milliman Care Guidelines' blocks bundle; missing SHA-256 hashes trigger QA_WARN at 71.2.",
+      "SCN-MCG-1 — One live agent (MCG-KB-INGEST-001) on real Claude ingests the MCG Brand Style Guide + Clinical Dictionary via 7 sequential extraction nodes (extract_brand_policy → extract_language_policy → extract_segment_lexicon → extract_naming_aliases → extract_dictionary_index → extract_theme_tokens → derive_qa_rules). Produces a 12-artifact typed JSON bundle via Astra Agents Bundle Store. QA gate enforces prohibited-term detection (hard block) and missing-hash warnings. Human promotion gate required before any proposal agent can be bound. Happy path (97.4 QA score) + 2 exception sub-scenarios: prohibited term 'Milliman Care Guidelines' blocks bundle; missing SHA-256 hashes trigger QA_WARN at 71.2.",
     industry: "Healthcare",
     industryId: "healthcare",
     stage: "Knowledge Management",
@@ -491,7 +491,7 @@ const DEMOS: Demo[] = [
     title: "AI-First Tier 1 Support Intelligence",
     client: "Advantive ONE",
     description:
-      "Cascade Polymers Inc. (Enterprise, $248K ACV) reports InfinityQS v9.3 SQL timeout IQS-SQL-TMO-7891 — 47 Xbar-R control charts blocked with ISO 9001 audit 26 hours away. 4 Atlas agents run sequentially: SUP-001 (Triage) classifies P1 technical_troubleshooting (0.97 confidence) → SUP-002 (Knowledge) searches 18,400 tickets, confidence 0.58 — below gate, routes to Diagnostic → SUP-003 (Diagnostic) queries Product Log Intelligence, confirms IQS-BUG-930-0042 (migration script silently skipped), builds 5-step resolution path → SUP-004 (Escalation) auto-creates Salesforce Case #00074821 with 18 fields pre-populated, routes to Marcus Chen (InfinityQS DB Team), notifies AM James Whitfield — ISO audit fully covered.",
+      "Cascade Polymers Inc. (Enterprise, $248K ACV) reports InfinityQS v9.3 SQL timeout IQS-SQL-TMO-7891 — 47 Xbar-R control charts blocked with ISO 9001 audit 26 hours away. 4 Astra Agents agents run sequentially: SUP-001 (Triage) classifies P1 technical_troubleshooting (0.97 confidence) → SUP-002 (Knowledge) searches 18,400 tickets, confidence 0.58 — below gate, routes to Diagnostic → SUP-003 (Diagnostic) queries Product Log Intelligence, confirms IQS-BUG-930-0042 (migration script silently skipped), builds 5-step resolution path → SUP-004 (Escalation) auto-creates Salesforce Case #00074821 with 18 fields pre-populated, routes to Marcus Chen (InfinityQS DB Team), notifies AM James Whitfield — ISO audit fully covered.",
     industry: "Technology / SaaS",
     industryId: "technology_saas",
     stage: "Customer Support Operations",

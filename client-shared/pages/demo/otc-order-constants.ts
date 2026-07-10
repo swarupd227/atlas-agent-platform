@@ -444,12 +444,12 @@ export function useOtcOrderPipeline(): OtcOrderPipelineHook {
 
     es.addEventListener("run_start", (e: MessageEvent) => {
       const d = JSON.parse(e.data);
-      addLog("SYSTEM", "Atlas Orchestrator", d.message, "info");
+      addLog("SYSTEM", "Astra Agents Orchestrator", d.message, "info");
     });
 
     es.addEventListener("setup", (e: MessageEvent) => {
       const d = JSON.parse(e.data);
-      addLog("SYSTEM", "Atlas Orchestrator", d.message, "info");
+      addLog("SYSTEM", "Astra Agents Orchestrator", d.message, "info");
     });
 
     es.addEventListener("parallel_start", (e: MessageEvent) => {
@@ -457,7 +457,7 @@ export function useOtcOrderPipeline(): OtcOrderPipelineHook {
       _cache.currentRole = "parallel_validation";
       _cache.currentStep = 1;
       _cache.parallelAgentsRunning = ["OTC-AGT-002", "OTC-AGT-003", "OTC-AGT-004"];
-      addLog("SYSTEM", "Atlas Orchestrator", d.message, "info");
+      addLog("SYSTEM", "Astra Agents Orchestrator", d.message, "info");
       notify();
     });
 
@@ -563,7 +563,7 @@ export function useOtcOrderPipeline(): OtcOrderPipelineHook {
         _cache.inventoryPanel = { optionSelected: "OPT-A", atpDate: "2026-05-02", splitShipAvoided: true, savingsAmount: 840, pickTickets: ["PT-CHI-7842-A", "PT-CHI-7842-B", "PT-CHI-7842-C"] };
       if (!_cache.addressPanel.confirmed)
         _cache.addressPanel = { confirmed: true, originalAddress: "2847 Industrial Parkway, Suite 110, Detroit, MI 48210", correctedAddress: "2847 Industrial Parkway, Detroit, MI 48210", confidenceScore: 96 };
-      addLog("SYSTEM", "Atlas Orchestrator", d.message, "complete");
+      addLog("SYSTEM", "Astra Agents Orchestrator", d.message, "complete");
       notify();
     });
 
@@ -573,7 +573,7 @@ export function useOtcOrderPipeline(): OtcOrderPipelineHook {
       _cache.completedAt = new Date().toISOString();
       _cache.currentStep = 3;
       if (_timerInterval) clearInterval(_timerInterval);
-      addLog("SYSTEM", "Atlas Orchestrator", `ORD-2026-78432 RELEASED — $429,711 — ship May 2–3, 2026 — all 8 checks cleared in ${_cache.elapsedSeconds}s`, "complete");
+      addLog("SYSTEM", "Astra Agents Orchestrator", `ORD-2026-78432 RELEASED — $429,711 — ship May 2–3, 2026 — all 8 checks cleared in ${_cache.elapsedSeconds}s`, "complete");
       es.close();
       notify();
     });
@@ -584,7 +584,7 @@ export function useOtcOrderPipeline(): OtcOrderPipelineHook {
       _cache.status = "error";
       _cache.error = msg;
       if (_timerInterval) clearInterval(_timerInterval);
-      addLog("SYSTEM", "Atlas Orchestrator", `Error: ${msg}`, "error");
+      addLog("SYSTEM", "Astra Agents Orchestrator", `Error: ${msg}`, "error");
       es.close();
       notify();
     });
@@ -592,7 +592,7 @@ export function useOtcOrderPipeline(): OtcOrderPipelineHook {
     es.onerror = () => {
       if (_cache.status === "running") {
         _cache.status = "error";
-        _cache.error = "Connection to Atlas agents lost";
+        _cache.error = "Connection to Astra Agents agents lost";
         if (_timerInterval) clearInterval(_timerInterval);
         notify();
       }

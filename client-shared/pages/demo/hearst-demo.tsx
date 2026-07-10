@@ -307,11 +307,11 @@ export default function XYZDemo() {
 
     es.addEventListener("run_start", (e) => {
       const d = JSON.parse(e.data);
-      addEvent("run_start", "Atlas Runtime", d.message || "Starting pipeline…");
+      addEvent("run_start", "Astra Agents Runtime", d.message || "Starting pipeline…");
     });
     es.addEventListener("setup", (e) => {
       const d = JSON.parse(e.data);
-      addEvent("setup", "Atlas Runtime", d.message || "Setting up…");
+      addEvent("setup", "Astra Agents Runtime", d.message || "Setting up…");
     });
     es.addEventListener("agent_start", (e) => {
       const d = JSON.parse(e.data);
@@ -339,7 +339,7 @@ export default function XYZDemo() {
     });
     es.addEventListener("run_complete", (e) => {
       const d = JSON.parse(e.data);
-      addEvent("run_complete", "Atlas Runtime", "All 5 NBA pipeline agents completed — traces available in Runs & Traces", undefined, true);
+      addEvent("run_complete", "Astra Agents Runtime", "All 5 NBA pipeline agents completed — traces available in Runs & Traces", undefined, true);
       es.close();
       esRef.current = null;
       setLiveRunning(false);
@@ -354,7 +354,7 @@ export default function XYZDemo() {
     });
     es.addEventListener("error", (e: any) => {
       const d = e.data ? JSON.parse(e.data) : {};
-      addEvent("error", "Atlas Runtime", `Error: ${d.message || "Pipeline error"}`);
+      addEvent("error", "Astra Agents Runtime", `Error: ${d.message || "Pipeline error"}`);
       es.close();
       esRef.current = null;
       setLiveRunning(false);
@@ -397,7 +397,7 @@ export default function XYZDemo() {
           </div>
           <div>
             <h1 className="text-sm font-bold leading-none">XYZ NBA Email Orchestration</h1>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Atlas AI Agent Platform · 8 brands · 6.2M subscribers</p>
+            <p className="text-[11px] text-muted-foreground mt-0.5">Astra Agents AI Agent Platform · 8 brands · 6.2M subscribers</p>
           </div>
           <Badge className="text-[10px] bg-green-500/20 text-green-400 border-green-500/30 ml-2">Live</Badge>
           {liveComplete && (

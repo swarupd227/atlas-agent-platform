@@ -241,7 +241,7 @@ function IdleView({ onTrigger, isPending }: { onTrigger: () => void; isPending: 
           <h3 className="text-base font-semibold mb-1">Simulate EHR Schema Drift Incident</h3>
           <p className="text-sm text-muted-foreground max-w-md mx-auto mb-4">
             Inject a FHIR RxNorm value set version mismatch — the same class of incident that leaves
-            drug-interaction checks offline for hours at typical hospitals. Watch Atlas detect and
+            drug-interaction checks offline for hours at typical hospitals. Watch Astra Agents detect and
             heal it in under 2 minutes.
           </p>
           <Button
@@ -280,7 +280,7 @@ function RunningView({ state }: { state: DemoState }) {
   // Build progressive action log from all completed stage data
   const actionLog: Array<{ ts: number; text: string; type: "atlas" | "block" | "info" }> = [];
   const base = new Date(triggeredAt).getTime();
-  actionLog.push({ ts: 0,  text: "Atlas monitoring detected FHIR ingestion anomaly — error rate 18.4%",   type: "atlas" });
+  actionLog.push({ ts: 0,  text: "Astra Agents monitoring detected FHIR ingestion anomaly — error rate 18.4%",   type: "atlas" });
   actionLog.push({ ts: 4,  text: "Anomaly classified: schema_change pattern, confidence 0.94",              type: "atlas" });
   if (cur >= 1) {
     actionLog.push({ ts: 8,  text: "FHIR Schema Validation Skill invoked — scanning 1,847 resources",       type: "atlas" });
@@ -485,7 +485,7 @@ function RunningView({ state }: { state: DemoState }) {
                   </div>
                 ))}
                 {visibleActions.length === 0 && (
-                  <p className="text-[11px] text-muted-foreground">Incident triggered — Atlas is assessing...</p>
+                  <p className="text-[11px] text-muted-foreground">Incident triggered — Astra Agents is assessing...</p>
                 )}
               </div>
             </CardContent>
@@ -569,7 +569,7 @@ function CompleteView({ state, onReset }: { state: DemoState; onReset: () => voi
           <CardHeader className="pb-2 pt-3 px-4">
             <div className="flex items-center gap-2">
               <Zap className="h-4 w-4 text-green-600" />
-              <span className="text-sm font-semibold text-green-700 dark:text-green-400">With Atlas</span>
+              <span className="text-sm font-semibold text-green-700 dark:text-green-400">With Astra Agents</span>
             </div>
           </CardHeader>
           <CardContent className="px-4 pb-4 space-y-2">
@@ -592,7 +592,7 @@ function CompleteView({ state, onReset }: { state: DemoState; onReset: () => voi
           <CardHeader className="pb-2 pt-3 px-4">
             <div className="flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-red-600" />
-              <span className="text-sm font-semibold text-red-700 dark:text-red-400">Without Atlas</span>
+              <span className="text-sm font-semibold text-red-700 dark:text-red-400">Without Astra Agents</span>
             </div>
           </CardHeader>
           <CardContent className="px-4 pb-4 space-y-2">
@@ -618,7 +618,7 @@ function CompleteView({ state, onReset }: { state: DemoState; onReset: () => voi
           <CardHeader className="pb-2 pt-3 px-4">
             <div className="flex items-center gap-2">
               <Zap className="h-4 w-4 text-blue-600" />
-              <span className="text-sm font-semibold">Atlas Acted Autonomously</span>
+              <span className="text-sm font-semibold">Astra Agents Acted Autonomously</span>
               <Badge variant="outline" className="ml-auto text-[10px]">{atlasActions.length} actions</Badge>
             </div>
           </CardHeader>
@@ -648,7 +648,7 @@ function CompleteView({ state, onReset }: { state: DemoState; onReset: () => voi
               </div>
             ))}
             <p className="text-[11px] text-muted-foreground mt-1">
-              Atlas handled 87% of the response autonomously. Clinical judgment stays with humans.
+              Astra Agents handled 87% of the response autonomously. Clinical judgment stays with humans.
             </p>
           </CardContent>
         </Card>

@@ -183,7 +183,7 @@ function ExceptionSubscenarios({ visible }: { visible: boolean }) {
               <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400">AUTO-RESOLVED</span>
             </div>
             <div className="text-xs text-white/60">
-              ACH memo contained customer PO ref "VS-2026-MAR". Atlas fuzzy-matched to invoices INV-47210 through INV-47214 using customer PO cross-reference (91% confidence). Auto-confirm triggered — no manual intervention required.
+              ACH memo contained customer PO ref "VS-2026-MAR". Astra Agents fuzzy-matched to invoices INV-47210 through INV-47214 using customer PO cross-reference (91% confidence). Auto-confirm triggered — no manual intervention required.
             </div>
           </div>
 
@@ -286,14 +286,14 @@ function ResolutionBanner({ visible }: { visible: boolean }) {
           <div className="text-sm font-semibold text-white">GlobalTech $2.3M Payment — Fully Resolved</div>
           <div className="text-xs text-white/60 leading-relaxed">
             That $2.3M payment covering 47 invoices with 3 deductions and an overpayment? The current team takes 4–6 hours.
-            Atlas matched all 47 invoices in seconds, validated two deductions automatically (freight claim $28.5K + early pay $14.2K),
+            Astra Agents matched all 47 invoices in seconds, validated two deductions automatically (freight claim $28.5K + early pay $14.2K),
             flagged one for investigation with carrier evidence ($7.4K quantity short), issued a $38.1K credit memo,
             posted all journal entries, and reduced GlobalTech's AR from $3.1M to $0.73M — all with one-click controller confirmation.
           </div>
           <div className="flex flex-wrap items-center gap-2 mt-1">
             <div className="flex items-center gap-1.5 text-[10px] text-emerald-400">
               <Clock className="w-3 h-3" />
-              Traditional: 4–6 hours → Atlas: &lt;2 minutes
+              Traditional: 4–6 hours → Astra Agents: &lt;2 minutes
             </div>
           </div>
         </div>

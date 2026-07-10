@@ -227,7 +227,7 @@ export default function LittlerS2Orchestration({ onScreenChange }: Props) {
             </div>
           )}
           {isIdle && (
-            <p className="text-[11px] text-muted-foreground">Click ▶ to invoke LIT-AGT-001 &amp; LIT-AGT-010 on Atlas</p>
+            <p className="text-[11px] text-muted-foreground">Click ▶ to invoke LIT-AGT-001 &amp; LIT-AGT-010 on Astra Agents</p>
           )}
         </div>
         <div className="flex items-center gap-2">

@@ -5270,7 +5270,7 @@ function AgentDetailInner() {
                 </div>
                 <div>
                   <p className="text-sm font-medium">No AAR attached yet</p>
-                  <p className="text-xs text-muted-foreground mt-1">Deploy this agent to automatically generate its Atlas Agent Runtime governance sidecar.</p>
+                  <p className="text-xs text-muted-foreground mt-1">Deploy this agent to automatically generate its Astra Agents Agent Runtime governance sidecar.</p>
                 </div>
               </CardContent>
             </Card>
@@ -7563,7 +7563,7 @@ print(result["output"])`;
             </div>
           )}
           <p className="text-xs text-muted-foreground">
-            Trigger this agent from an n8n workflow: install the native node or import the template, then use an API key from the API Keys card below. From an n8n container the Nous host is <code className="text-[10px] bg-muted/50 px-1 py-0.5 rounded">host.docker.internal</code>.
+            Trigger this agent from an n8n workflow: install the native node or import the template, then use an API key from the API Keys card below. From an n8n container the Artizent host is <code className="text-[10px] bg-muted/50 px-1 py-0.5 rounded">host.docker.internal</code>.
           </p>
           <div className="flex flex-col gap-1.5">
             <span className="text-[11px] font-medium text-muted-foreground">Run Endpoint (async)</span>
@@ -7575,10 +7575,10 @@ print(result["output"])`;
           <div className="flex flex-col gap-1.5">
             <span className="text-[11px] font-medium text-muted-foreground">Native node</span>
             <div className="flex items-center gap-2">
-              <code className="flex-1 text-xs font-mono bg-muted/50 px-3 py-2 rounded-md overflow-x-auto">npm i n8n-nodes-nous</code>
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => copyToClipboard("npm i n8n-nodes-nous")} data-testid="btn-copy-n8n-node"><Copy className="w-3.5 h-3.5" /></Button>
+              <code className="flex-1 text-xs font-mono bg-muted/50 px-3 py-2 rounded-md overflow-x-auto">npm i n8n-nodes-artizent</code>
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => copyToClipboard("npm i n8n-nodes-artizent")} data-testid="btn-copy-n8n-node"><Copy className="w-3.5 h-3.5" /></Button>
             </div>
-            <span className="text-[10px] text-muted-foreground">Or in n8n → Settings → Community Nodes → install <code className="text-[10px] bg-muted/50 px-1 py-0.5 rounded">n8n-nodes-nous</code>, then drag the "Nous" node.</span>
+            <span className="text-[10px] text-muted-foreground">Or in n8n → Settings → Community Nodes → install <code className="text-[10px] bg-muted/50 px-1 py-0.5 rounded">n8n-nodes-artizent</code>, then drag the "Artizent" node.</span>
           </div>
           <Button
             variant="outline"
@@ -7588,16 +7588,16 @@ print(result["output"])`;
             onClick={() => {
               const n8nBase = baseUrl.replace(/localhost|127\.0\.0\.1/, "host.docker.internal");
               const tpl = {
-                name: `Nous — Run ${agent.name}`,
+                name: `Astra Agents — Run ${agent.name}`,
                 nodes: [
                   { parameters: {}, id: "a1111111-1111-4111-8111-111111111111", name: "When clicking Test", type: "n8n-nodes-base.manualTrigger", typeVersion: 1, position: [220, 300] },
-                  { parameters: { method: "POST", url: `${n8nBase}/api/v1/runs`, sendHeaders: true, headerParameters: { parameters: [{ name: "x-api-key", value: "YOUR_API_KEY" }] }, sendBody: true, specifyBody: "json", jsonBody: `={\n  "agentId": "${agent.id}",\n  "input": "Hello from n8n"\n}`, options: {} }, id: "b2222222-2222-4222-8222-222222222222", name: "Start Nous Run", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [460, 300] },
+                  { parameters: { method: "POST", url: `${n8nBase}/api/v1/runs`, sendHeaders: true, headerParameters: { parameters: [{ name: "x-api-key", value: "YOUR_API_KEY" }] }, sendBody: true, specifyBody: "json", jsonBody: `={\n  "agentId": "${agent.id}",\n  "input": "Hello from n8n"\n}`, options: {} }, id: "b2222222-2222-4222-8222-222222222222", name: "Start Astra Agents Run", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [460, 300] },
                   { parameters: { amount: 4 }, id: "c3333333-3333-4333-8333-333333333333", name: "Wait", type: "n8n-nodes-base.wait", typeVersion: 1.1, position: [680, 300], webhookId: "d4444444-4444-4444-8444-444444444444" },
                   { parameters: { url: `=${n8nBase}/api/v1/runs/{{ $json.runId }}`, sendHeaders: true, headerParameters: { parameters: [{ name: "x-api-key", value: "YOUR_API_KEY" }] }, options: {} }, id: "e5555555-5555-4555-8555-555555555555", name: "Get Run Result", type: "n8n-nodes-base.httpRequest", typeVersion: 4.2, position: [900, 300] },
                 ],
                 connections: {
-                  "When clicking Test": { main: [[{ node: "Start Nous Run", type: "main", index: 0 }]] },
-                  "Start Nous Run": { main: [[{ node: "Wait", type: "main", index: 0 }]] },
+                  "When clicking Test": { main: [[{ node: "Start Astra Agents Run", type: "main", index: 0 }]] },
+                  "Start Astra Agents Run": { main: [[{ node: "Wait", type: "main", index: 0 }]] },
                   "Wait": { main: [[{ node: "Get Run Result", type: "main", index: 0 }]] },
                 },
               };

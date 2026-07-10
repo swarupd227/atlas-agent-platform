@@ -268,10 +268,10 @@ export default function OtcFulfillmentS3Comms({ state }: Props) {
           </div>
           <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
             <div className="text-sm font-semibold text-emerald-400 mb-1">
-              "Within 8 minutes, Atlas assessed 847 shipments, protected 93% of SLA commitments for $47K, and notified every customer before a single one called."
+              "Within 8 minutes, Astra Agents assessed 847 shipments, protected 93% of SLA commitments for $47K, and notified every customer before a single one called."
             </div>
             <div className="text-xs text-muted-foreground">
-              Without Atlas: 3–5 days of manual triage, emergency escalation calls, and a 40% spike in customer complaints.
+              Without Astra Agents: 3–5 days of manual triage, emergency escalation calls, and a 40% spike in customer complaints.
             </div>
           </div>
         </div>

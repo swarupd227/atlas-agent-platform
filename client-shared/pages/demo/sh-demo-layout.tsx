@@ -498,13 +498,13 @@ function AtlasComparisonCard({ pipeline }: { pipeline: HealingPipeline }) {
   if (!withAtlas && !withoutAtlas) return null;
 
   return (
-    <Panel title="With Atlas vs Without Atlas" icon={Activity}>
+    <Panel title="With Astra Agents vs Without Astra Agents" icon={Activity}>
       <div className="space-y-2">
         {withAtlas && (
           <div className="rounded-lg bg-green-50 dark:bg-green-950/20 border border-green-200 dark:border-green-800 p-3">
             <div className="flex items-center gap-1.5 mb-1">
               <TrendingUp className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
-              <span className="text-[11px] font-bold text-green-700 dark:text-green-300 uppercase tracking-wide">With Atlas</span>
+              <span className="text-[11px] font-bold text-green-700 dark:text-green-300 uppercase tracking-wide">With Astra Agents</span>
             </div>
             <p className="text-xs text-green-800 dark:text-green-200 leading-relaxed">{withAtlas}</p>
           </div>
@@ -513,7 +513,7 @@ function AtlasComparisonCard({ pipeline }: { pipeline: HealingPipeline }) {
           <div className="rounded-lg bg-red-50 dark:bg-red-950/20 border border-red-200 dark:border-red-800 p-3">
             <div className="flex items-center gap-1.5 mb-1">
               <TrendingDown className="h-3.5 w-3.5 text-red-600 dark:text-red-400" />
-              <span className="text-[11px] font-bold text-red-700 dark:text-red-300 uppercase tracking-wide">Without Atlas</span>
+              <span className="text-[11px] font-bold text-red-700 dark:text-red-300 uppercase tracking-wide">Without Astra Agents</span>
             </div>
             <p className="text-xs text-red-800 dark:text-red-200 leading-relaxed">{withoutAtlas}</p>
           </div>
@@ -593,7 +593,7 @@ function PersistentResolutionTimeline({ pipeline }: { pipeline: HealingPipeline 
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">
-          Resolution timeline populates after remediation completes. Atlas autonomous actions
+          Resolution timeline populates after remediation completes. Astra Agents autonomous actions
           and any required human steps will appear here.
         </p>
       )}
@@ -612,7 +612,7 @@ function EmptyState({ config }: { config: SHScenarioConfig }) {
       <h2 className="text-lg font-semibold">No Healing Pipeline Data</h2>
       <p className="text-sm text-muted-foreground leading-relaxed max-w-md mx-auto">
         No active healing pipeline found for <strong>{config.title}</strong>.
-        Atlas will automatically create and populate this pipeline when an incident is detected in the{" "}
+        Astra Agents will automatically create and populate this pipeline when an incident is detected in the{" "}
         <strong>{config.domain}</strong> environment.
       </p>
       <div className="flex justify-center pt-2">

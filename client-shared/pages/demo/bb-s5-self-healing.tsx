@@ -255,7 +255,7 @@ function LiveSelfHealingDemo() {
               <h3 className="text-sm font-semibold">Simulate a Data Feed Outage</h3>
               <p className="text-[11px] text-muted-foreground mt-1 leading-relaxed max-w-lg">
                 Trigger a simulated Manheim Southeast authentication failure — the same scenario that happens in production.
-                Watch the Atlas self-healing pipeline run live through 5 automated stages: Detect → Diagnose → Remediate → Backfill → Validate.
+                Watch the Astra Agents self-healing pipeline run live through 5 automated stages: Detect → Diagnose → Remediate → Backfill → Validate.
               </p>
               <div className="flex items-center gap-3 mt-4">
                 <button

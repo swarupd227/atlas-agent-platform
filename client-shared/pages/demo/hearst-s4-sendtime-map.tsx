@@ -192,7 +192,7 @@ export default function Screen4SendTimeMap() {
       <div className="grid grid-cols-2 gap-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Before Atlas — All sends at 9–10 AM ET</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Before Astra Agents — All sends at 9–10 AM ET</CardTitle>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={140}>
@@ -208,7 +208,7 @@ export default function Screen4SendTimeMap() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">With Atlas — Distributed across optimal windows</CardTitle>
+            <CardTitle className="text-sm font-medium">With Astra Agents — Distributed across optimal windows</CardTitle>
             <Badge className="text-[10px] bg-indigo-500/20 text-indigo-300 w-fit">AI-Personalized</Badge>
           </CardHeader>
           <CardContent>

@@ -338,7 +338,7 @@ function IdleView({ onTrigger, isPending }: { onTrigger: () => void; isPending: 
           <h3 className="text-base font-semibold mb-1">Simulate Offshore Wind Farm Outage</h3>
           <p className="text-sm text-muted-foreground max-w-md mx-auto mb-4">
             Inject an unplanned circuit breaker trip on Offshore Wind Array W-12 — 847 MW lost
-            instantly. Watch Atlas detect the frequency deviation in under 4 seconds, activate
+            instantly. Watch Astra Agents detect the frequency deviation in under 4 seconds, activate
             350 MW demand response, dispatch three combustion turbine peaker units, and restore
             grid frequency within the mandatory NERC BAL-003 10-minute window.
           </p>
@@ -601,7 +601,7 @@ function RunningView({ state }: { state: DemoState }) {
                   </div>
                 ))}
                 {visibleActions.length === 0 && (
-                  <p className="text-[11px] text-muted-foreground">Grid frequency deviation detected — Atlas is activating recovery...</p>
+                  <p className="text-[11px] text-muted-foreground">Grid frequency deviation detected — Astra Agents is activating recovery...</p>
                 )}
               </div>
             </CardContent>
@@ -685,7 +685,7 @@ function CompleteView({ state, onReset }: { state: DemoState; onReset: () => voi
           <CardHeader className="pb-2 pt-3 px-4">
             <div className="flex items-center gap-2">
               <Zap className="h-4 w-4 text-green-600" />
-              <span className="text-sm font-semibold text-green-700 dark:text-green-400">With Atlas</span>
+              <span className="text-sm font-semibold text-green-700 dark:text-green-400">With Astra Agents</span>
             </div>
           </CardHeader>
           <CardContent className="px-4 pb-4 space-y-2">
@@ -711,7 +711,7 @@ function CompleteView({ state, onReset }: { state: DemoState; onReset: () => voi
           <CardHeader className="pb-2 pt-3 px-4">
             <div className="flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-red-600" />
-              <span className="text-sm font-semibold text-red-700 dark:text-red-400">Without Atlas</span>
+              <span className="text-sm font-semibold text-red-700 dark:text-red-400">Without Astra Agents</span>
             </div>
           </CardHeader>
           <CardContent className="px-4 pb-4 space-y-2">
@@ -737,7 +737,7 @@ function CompleteView({ state, onReset }: { state: DemoState; onReset: () => voi
           <CardHeader className="pb-2 pt-3 px-4">
             <div className="flex items-center gap-2">
               <Zap className="h-4 w-4 text-sky-600" />
-              <span className="text-sm font-semibold">Atlas Acted Autonomously</span>
+              <span className="text-sm font-semibold">Astra Agents Acted Autonomously</span>
               <Badge variant="outline" className="ml-auto text-[10px]">{atlasActions.length} actions</Badge>
             </div>
           </CardHeader>
@@ -767,7 +767,7 @@ function CompleteView({ state, onReset }: { state: DemoState; onReset: () => voi
               </div>
             ))}
             <p className="text-[11px] text-muted-foreground mt-1">
-              Atlas handled all detection, DR activation, peaker dispatch, and interchange autonomously. Regulatory certification of the mandatory NERC event report and grid restoration planning require qualified human operators.
+              Astra Agents handled all detection, DR activation, peaker dispatch, and interchange autonomously. Regulatory certification of the mandatory NERC event report and grid restoration planning require qualified human operators.
             </p>
           </CardContent>
         </Card>

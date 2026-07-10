@@ -181,7 +181,7 @@ export default function LittlerS4Deliverable({ onScreenChange }: Props) {
                 <div className="flex items-center gap-3 mt-1 flex-wrap">
                   <div className="flex items-center gap-1 text-[10px] text-muted-foreground/60">
                     <User className="w-2.5 h-2.5" />
-                    <span>Prepared by: Littler Mendelson P.C. via ATLAS LIT-AGT-001/010</span>
+                    <span>Prepared by: Littler Mendelson P.C. via ASTRA AGENTS LIT-AGT-001/010</span>
                   </div>
                   <div className="flex items-center gap-1 text-[10px] text-muted-foreground/60">
                     <Calendar className="w-2.5 h-2.5" />

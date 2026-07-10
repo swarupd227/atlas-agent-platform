@@ -40,7 +40,7 @@ export interface RfqEntity {
 
 export const NOVATECH_RFQ_SEGMENTS: Array<{ text: string; entity?: RfqEntity["type"] }> = [
   { text: "From: Jim Davis, Procurement Director\nMeridian Manufacturing\n\nTo: NovaTech Industries — Sales\nDate: April 8, 2026\nSubject: Request for Quotation — Capital Equipment Package\n\nDear NovaTech Team,\n\nPlease provide a formal quotation for the following capital equipment package in support of our FY26 plant expansion programme.\n\n" },
-  { text: "REQUIRED EQUIPMENT:\n• Model X-7200 Turbine Assembly x 4 (Series A) + x 3 (Series B) + additional accessories [Atlas note: X-7200 → X-7250 substitution applied due to supply discontinuation]\n• Series K Filtration Units — full package (30 line items)\n• Control Electronics Package including CX-series controllers and HMI panels", entity: "product" },
+  { text: "REQUIRED EQUIPMENT:\n• Model X-7200 Turbine Assembly x 4 (Series A) + x 3 (Series B) + additional accessories [Astra Agents note: X-7200 → X-7250 substitution applied due to supply discontinuation]\n• Series K Filtration Units — full package (30 line items)\n• Control Electronics Package including CX-series controllers and HMI panels", entity: "product" },
   { text: "\n\nPRICING REQUIREMENT:\nMeridian is ", },
   { text: "requesting 12% off current list pricing", entity: "pricing" },
   { text: " across all line items, consistent with our projected FY26 spend. We have a long-standing MSA (contract MSA-2024-0892) and believe our relationship warrants this tier.\n\nDELIVERY REQUIREMENTS:\nSplit delivery across ", },
@@ -152,7 +152,7 @@ export const COMPATIBILITY_RULES = [
     id: "COMP-01",
     status: "substitution",
     title: "Turbine Model Substitution",
-    detail: "X-7200 Series A/B (7 units) discontinued in APAC supply chain. Atlas recommends X-7250 Series A/B — identical performance spec, same price, shorter 6-week lead time vs 8-week for X-7200.",
+    detail: "X-7200 Series A/B (7 units) discontinued in APAC supply chain. Astra Agents recommends X-7250 Series A/B — identical performance spec, same price, shorter 6-week lead time vs 8-week for X-7200.",
     item: "TX-7200-A/B → TX-7250-A/B",
     severity: "amber" as const,
   },
@@ -160,7 +160,7 @@ export const COMPATIBILITY_RULES = [
     id: "COMP-02",
     status: "substitution",
     title: "Controller Compatibility",
-    detail: "CE-CX440-STD is not certified for X-7250 firmware v3.2+. Atlas substitutes CX-450-ENH (same price, fully certified for X-7250, 6-week lead time).",
+    detail: "CE-CX440-STD is not certified for X-7250 firmware v3.2+. Astra Agents substitutes CX-450-ENH (same price, fully certified for X-7250, 6-week lead time).",
     item: "CE-CX440-STD → CE-CX450-ENH",
     severity: "amber" as const,
   },
@@ -369,12 +369,12 @@ export function useOtcQuotePipeline(): OtcQuotePipelineHook {
 
     es.addEventListener("run_start", (e: MessageEvent) => {
       const d = JSON.parse(e.data);
-      addLog("SYSTEM", "Atlas Orchestrator", d.message, "info");
+      addLog("SYSTEM", "Astra Agents Orchestrator", d.message, "info");
     });
 
     es.addEventListener("setup", (e: MessageEvent) => {
       const d = JSON.parse(e.data);
-      addLog("SYSTEM", "Atlas Orchestrator", d.message, "info");
+      addLog("SYSTEM", "Astra Agents Orchestrator", d.message, "info");
     });
 
     es.addEventListener("agent_start", (e: MessageEvent) => {
@@ -418,7 +418,7 @@ export function useOtcQuotePipeline(): OtcQuotePipelineHook {
       _cache.currentRole = null;
       _cache.completedAt = new Date().toISOString();
       if (_timerInterval) clearInterval(_timerInterval);
-      addLog("SYSTEM", "Atlas Orchestrator", `Quote Q-78432 generated — $${(d.totalPrice || 429711).toLocaleString()} net — ready for delivery`, "complete");
+      addLog("SYSTEM", "Astra Agents Orchestrator", `Quote Q-78432 generated — $${(d.totalPrice || 429711).toLocaleString()} net — ready for delivery`, "complete");
       es.close();
       notify();
     });
@@ -429,7 +429,7 @@ export function useOtcQuotePipeline(): OtcQuotePipelineHook {
       _cache.status = "error";
       _cache.error = msg;
       if (_timerInterval) clearInterval(_timerInterval);
-      addLog("SYSTEM", "Atlas Orchestrator", `Error: ${msg}`, "error");
+      addLog("SYSTEM", "Astra Agents Orchestrator", `Error: ${msg}`, "error");
       es.close();
       notify();
     });
@@ -437,7 +437,7 @@ export function useOtcQuotePipeline(): OtcQuotePipelineHook {
     es.onerror = () => {
       if (_cache.status === "running") {
         _cache.status = "error";
-        _cache.error = "Connection to Atlas agents lost";
+        _cache.error = "Connection to Astra Agents agents lost";
         if (_timerInterval) clearInterval(_timerInterval);
         notify();
       }

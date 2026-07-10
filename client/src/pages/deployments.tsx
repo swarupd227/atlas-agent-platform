@@ -270,7 +270,7 @@ function EnvironmentPanel({
                         : "bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20";
                     const tooltip = aarCfg
                       ? `AAR · Bundle: ${aarCfg.policyBundleVersion} · Platform: ${aarCfg.targetPlatform} · Synced: ${aarCfg.lastSyncedAt ? formatDate(aarCfg.lastSyncedAt) : "—"} · ${active}/${total} modules active`
-                      : "Atlas Agent Runtime (AAR) governance sidecar — view details on the agent Runtime (AAR) tab";
+                      : "Astra Agents Agent Runtime (AAR) governance sidecar — view details on the agent Runtime (AAR) tab";
                     return (
                       <Badge
                         variant="outline"

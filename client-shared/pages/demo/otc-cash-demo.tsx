@@ -129,7 +129,7 @@ function VertexResultView({ phase, metrics }: { phase: string; metrics: any }) {
             <div className="text-xs text-white/50 mt-1 leading-relaxed">
               ACH reference mismatch resolved via PO cross-reference fuzzy matching. 5 invoices closed. $487.2K AR posted. Exception cleared.
             </div>
-            <div className="text-[10px] text-indigo-400 mt-2">Traditional: queued for manual review all day → Atlas: &lt;30 seconds</div>
+            <div className="text-[10px] text-indigo-400 mt-2">Traditional: queued for manual review all day → Astra Agents: &lt;30 seconds</div>
           </div>
         </div>
       )}
@@ -211,7 +211,7 @@ function RegionalResultView({ phase, agents }: { phase: string; agents: any[] })
             <div className="text-xs text-white/50 mt-1 leading-relaxed">
               $127K check provisionally applied to oldest invoices. Customer automatically notified — 3-day response window. Both 30-day overdue invoices cleared from aging.
             </div>
-            <div className="text-[10px] text-amber-400 mt-2">No remittance → Atlas provisionally clears aging, contacts customer automatically, escalates if no response</div>
+            <div className="text-[10px] text-amber-400 mt-2">No remittance → Astra Agents provisionally clears aging, contacts customer automatically, escalates if no response</div>
           </div>
         </div>
       )}
@@ -385,7 +385,7 @@ export default function OtcCashDemo() {
           </div>
           <div className="flex items-center gap-2 text-xs text-white/30 mt-2">
             <ChevronRight className="w-3.5 h-3.5" />
-            All scenarios use real LLM agents (Atlas Runtime) with mock enterprise MCP tool servers — realistic API latency included
+            All scenarios use real LLM agents (Astra Agents Runtime) with mock enterprise MCP tool servers — realistic API latency included
           </div>
         </div>
       )}

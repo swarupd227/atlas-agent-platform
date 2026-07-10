@@ -41,14 +41,14 @@ function AgentLogPanel({ entries, open }: { entries: OrderLogEntry[]; open: bool
     >
       <div className="px-4 py-2 flex items-center gap-2 border-b border-border/20 sticky top-0 bg-black/80">
         <Terminal className="w-3 h-3 text-muted-foreground/60" />
-        <span className="text-[10px] font-mono text-muted-foreground/70 uppercase tracking-widest">Atlas Agent Log Stream</span>
+        <span className="text-[10px] font-mono text-muted-foreground/70 uppercase tracking-widest">Astra Agents Agent Log Stream</span>
         {entries.length > 0 && (
           <span className="ml-auto text-[9px] font-mono text-muted-foreground/40">{entries.length} events</span>
         )}
       </div>
       {entries.length === 0 ? (
         <div className="px-4 py-3 text-[10px] font-mono text-muted-foreground/30 italic">
-          Waiting for Atlas agents… press ▶ Run Atlas to begin.
+          Waiting for Astra Agents agents… press ▶ Run Astra Agents to begin.
         </div>
       ) : (
         <div className="px-4 py-2 flex flex-col gap-0.5">
@@ -191,7 +191,7 @@ export default function OtcOrderDemo() {
             {isRunning && (
               <Badge className="text-[9px] border animate-pulse"
                 style={{ background: "rgba(255,107,53,0.12)", borderColor: "rgba(255,107,53,0.3)", color: OTC_COLOR }}>
-                ⬤ Atlas Running
+                ⬤ Astra Agents Running
               </Badge>
             )}
             {isRunning && state.parallelAgentsRunning.length > 0 && (
@@ -216,7 +216,7 @@ export default function OtcOrderDemo() {
                 className="flex items-center gap-1.5 text-[10px] h-7 px-3 rounded-lg font-semibold text-white"
                 style={{ background: OTC_COLOR }}
               >
-                ▶ Run Atlas
+                ▶ Run Astra Agents
               </button>
             )}
             {(isRunning || isComplete) && (

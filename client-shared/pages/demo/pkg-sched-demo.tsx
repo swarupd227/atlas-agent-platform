@@ -56,7 +56,7 @@ function AgentLogPanel({
       >
         <Terminal className="w-3 h-3 text-muted-foreground/50 shrink-0" />
         <span className="text-[10px] font-mono text-muted-foreground/60 uppercase tracking-widest">
-          Atlas Agent Log Stream
+          Astra Agents Agent Log Stream
         </span>
         {entries.length > 0 && (
           <span className="text-[9px] font-mono rounded px-1.5 py-px ml-1"
@@ -79,7 +79,7 @@ function AgentLogPanel({
         >
           {entries.length === 0 ? (
             <div className="px-4 py-3 text-[10px] font-mono text-muted-foreground/30 italic">
-              Waiting for Atlas agents… press ▶ Run Atlas to begin.
+              Waiting for Astra Agents agents… press ▶ Run Astra Agents to begin.
             </div>
           ) : (
             <div className="px-4 py-2 flex flex-col gap-0.5">
@@ -188,7 +188,7 @@ export default function PkgSchedDemo() {
                 className="flex items-center gap-1.5 text-[10px] h-7 px-3 rounded-lg font-semibold text-white"
                 style={{ background: PKG_COLOR }}
               >
-                ▶ Run Atlas
+                ▶ Run Astra Agents
               </button>
             )}
 
@@ -199,7 +199,7 @@ export default function PkgSchedDemo() {
                   style={{ background: "rgba(0,131,143,0.12)", borderColor: "rgba(0,131,143,0.30)", color: PKG_COLOR }}>
                   {state.parallelRunning.length > 0
                     ? "⬤ PKG-001 ∥ PKG-002 parallel"
-                    : "⬤ Atlas Running"}
+                    : "⬤ Astra Agents Running"}
                 </Badge>
                 <span className="text-[10px] text-muted-foreground/50 font-mono tabular-nums">{state.elapsedSeconds}s</span>
               </>

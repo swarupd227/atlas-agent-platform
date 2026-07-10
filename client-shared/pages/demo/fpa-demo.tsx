@@ -193,7 +193,7 @@ export default function FpaDemo() {
 
         {/* Attribution */}
         <div className="text-xs text-zinc-600 text-center border-t border-zinc-800 pt-4">
-          Atlas Agent Orchestrator — FP&amp;A Financial Variance Agent — Wave 4 Data &amp; ERP
+          Astra Agents Agent Orchestrator — FP&amp;A Financial Variance Agent — Wave 4 Data &amp; ERP
         </div>
       </div>
     </div>

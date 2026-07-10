@@ -114,7 +114,7 @@ export default function Screen2BrandDeepdive() {
               <CardHeader className="pb-2">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-indigo-400" />
-                  <CardTitle className="text-sm font-medium">Atlas Optimized Plan</CardTitle>
+                  <CardTitle className="text-sm font-medium">Astra Agents Optimized Plan</CardTitle>
                   <Badge className="text-[10px] bg-indigo-500/20 text-indigo-300 border-indigo-500/30">AI-Driven</Badge>
                 </div>
               </CardHeader>
@@ -194,7 +194,7 @@ export default function Screen2BrandDeepdive() {
                 <CardTitle className="text-sm font-medium">7-Day Performance Trend</CardTitle>
                 <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
                   <div className="w-2 h-0.5 bg-indigo-400 rounded" />
-                  <span>Atlas active period highlighted</span>
+                  <span>Astra Agents active period highlighted</span>
                 </div>
               </div>
             </CardHeader>

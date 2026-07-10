@@ -314,7 +314,7 @@ function generateRegulatoryExport(events: AuditEvent[], format: string, industry
     case "sar": {
       const sarReport = {
         reportType: "SAR",
-        filingInstitution: "Nous Agent Orchestrator",
+        filingInstitution: "Artizent Agent Orchestrator",
         reportDate: new Date().toISOString(),
         suspiciousActivity: records.filter((r) => r.action.toLowerCase().includes("violation") || r.action.toLowerCase().includes("blocked") || r.action.toLowerCase().includes("alert")),
         allActivity: records,
@@ -325,9 +325,9 @@ function generateRegulatoryExport(events: AuditEvent[], format: string, industry
     }
     case "xbrl": {
       const xbrl = `<?xml version="1.0" encoding="UTF-8"?>
-<xbrl xmlns="http://www.xbrl.org/2003/instance" xmlns:audit="http://nous.ai/audit/2024">
+<xbrl xmlns="http://www.xbrl.org/2003/instance" xmlns:audit="http://artizent.ai/audit/2024">
   <context id="audit-context">
-    <entity><identifier scheme="http://nous.ai">NousAgentOrchestrator</identifier></entity>
+    <entity><identifier scheme="http://artizent.ai">ArtizentAgentOrchestrator</identifier></entity>
     <period><startDate>${records[0]?.timestamp?.split("T")[0] || date}</startDate><endDate>${date}</endDate></period>
   </context>
 ${records.map((r) => `  <audit:event contextRef="audit-context">
@@ -356,7 +356,7 @@ ${records.map((r) => `  <audit:event contextRef="audit-context">
             outcome: r.action.toLowerCase().includes("fail") ? "4" : "0",
             agent: [{ type: { text: r.actorType }, who: { display: r.actorId } }],
             entity: [{ what: { reference: `${r.objectType}/${r.objectId}` }, type: { display: r.objectType } }],
-            source: { observer: { display: "Nous Agent Orchestrator" } },
+            source: { observer: { display: "Artizent Agent Orchestrator" } },
           },
         })),
       };
@@ -393,7 +393,7 @@ ${records.map((r) => `  <audit:event contextRef="audit-context">
     case "naic-report": {
       const naicReport = {
         reportType: "NAIC_Model_Audit",
-        reportingEntity: "Nous Agent Orchestrator",
+        reportingEntity: "Artizent Agent Orchestrator",
         reportDate: new Date().toISOString(),
         auditPeriod: { start: records[0]?.timestamp || "", end: records[records.length - 1]?.timestamp || "" },
         totalEvents: records.length,
@@ -3282,7 +3282,7 @@ export default function Governance() {
                           <TableHead>Description</TableHead>
                           <TableHead className="w-[100px]">Severity</TableHead>
                           <TableHead className="w-[200px]">Implementing Policy</TableHead>
-                          <TableHead className="w-[160px]">ATLAS Control</TableHead>
+                          <TableHead className="w-[160px]">ASTRA AGENTS Control</TableHead>
                           <TableHead className="w-[80px]">Status</TableHead>
                         </TableRow>
                       </TableHeader>

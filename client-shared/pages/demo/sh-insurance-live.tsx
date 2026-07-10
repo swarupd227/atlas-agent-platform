@@ -340,7 +340,7 @@ function IdleView({ onTrigger, isPending }: { onTrigger: () => void; isPending: 
           <h3 className="text-base font-semibold mb-1">Simulate Fraud Model FPR Spike</h3>
           <p className="text-sm text-muted-foreground max-w-md mx-auto mb-4">
             Inject a biased training data incident — Zone 7 geographic over-representation
-            causes the fraud triage model FPR to spike from 3.2% to 22.7%. Watch Atlas detect
+            causes the fraud triage model FPR to spike from 3.2% to 22.7%. Watch Astra Agents detect
             the drift in 2 hours using CUSUM analysis, isolate the model, route 620 misclassified
             claims to human review, and file 12 state regulator packages — all while enforcing
             NAIC, GDPR Article 22, and SOX guardrails autonomously.
@@ -608,7 +608,7 @@ function RunningView({ state }: { state: DemoState }) {
                   </div>
                 ))}
                 {visibleActions.length === 0 && (
-                  <p className="text-[11px] text-muted-foreground">FPR spike detected — Atlas is analyzing claim triage patterns...</p>
+                  <p className="text-[11px] text-muted-foreground">FPR spike detected — Astra Agents is analyzing claim triage patterns...</p>
                 )}
               </div>
             </CardContent>
@@ -692,7 +692,7 @@ function CompleteView({ state, onReset }: { state: DemoState; onReset: () => voi
           <CardHeader className="pb-2 pt-3 px-4">
             <div className="flex items-center gap-2">
               <HeartHandshake className="h-4 w-4 text-green-600" />
-              <span className="text-sm font-semibold text-green-700 dark:text-green-400">With Atlas</span>
+              <span className="text-sm font-semibold text-green-700 dark:text-green-400">With Astra Agents</span>
             </div>
           </CardHeader>
           <CardContent className="px-4 pb-4 space-y-2">
@@ -718,7 +718,7 @@ function CompleteView({ state, onReset }: { state: DemoState; onReset: () => voi
           <CardHeader className="pb-2 pt-3 px-4">
             <div className="flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-red-600" />
-              <span className="text-sm font-semibold text-red-700 dark:text-red-400">Without Atlas</span>
+              <span className="text-sm font-semibold text-red-700 dark:text-red-400">Without Astra Agents</span>
             </div>
           </CardHeader>
           <CardContent className="px-4 pb-4 space-y-2">
@@ -744,7 +744,7 @@ function CompleteView({ state, onReset }: { state: DemoState; onReset: () => voi
           <CardHeader className="pb-2 pt-3 px-4">
             <div className="flex items-center gap-2">
               <Scale className="h-4 w-4 text-rose-600" />
-              <span className="text-sm font-semibold">Atlas Acted Autonomously</span>
+              <span className="text-sm font-semibold">Astra Agents Acted Autonomously</span>
               <Badge variant="outline" className="ml-auto text-[10px]">{atlasActions.length} actions</Badge>
             </div>
           </CardHeader>
@@ -774,7 +774,7 @@ function CompleteView({ state, onReset }: { state: DemoState; onReset: () => voi
               </div>
             ))}
             <p className="text-[11px] text-muted-foreground mt-1">
-              Atlas handled detection, model isolation, priority queue routing, letter generation, and regulator package preparation. Payment disbursements, regulatory filings, and new model deployment require authorized human sign-off.
+              Astra Agents handled detection, model isolation, priority queue routing, letter generation, and regulator package preparation. Payment disbursements, regulatory filings, and new model deployment require authorized human sign-off.
             </p>
           </CardContent>
         </Card>

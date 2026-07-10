@@ -337,7 +337,7 @@ function _agentCodeFromRole(role: string): string {
   if (role === "capacity_mapping")    return PKG_AGT_002_CODE;
   if (role === "schedule_optimization") return PKG_AGT_003_CODE;
   if (role === "schedule_proposal")   return PKG_AGT_004_CODE;
-  return "ATLAS";
+  return "ASTRA AGENTS";
 }
 
 function _agentNameFromRole(role: string): string {
@@ -345,7 +345,7 @@ function _agentNameFromRole(role: string): string {
   if (role === "capacity_mapping")    return PKG_AGT_002_NAME;
   if (role === "schedule_optimization") return PKG_AGT_003_NAME;
   if (role === "schedule_proposal")   return PKG_AGT_004_NAME;
-  return "Atlas Orchestrator";
+  return "Astra Agents Orchestrator";
 }
 
 // ─── Hook ────────────────────────────────────────────────────────────────────
@@ -397,19 +397,19 @@ export function usePkgSchedPipeline(): PkgSchedPipelineHook {
 
     es.addEventListener("run_start", (e: MessageEvent) => {
       const d = JSON.parse(e.data);
-      addLog("ATLAS", "Atlas Orchestrator", d.message, "info");
+      addLog("ASTRA AGENTS", "Astra Agents Orchestrator", d.message, "info");
     });
 
     es.addEventListener("setup", (e: MessageEvent) => {
       const d = JSON.parse(e.data);
-      addLog("ATLAS", "Atlas Orchestrator", d.message, "info");
+      addLog("ASTRA AGENTS", "Astra Agents Orchestrator", d.message, "info");
     });
 
     es.addEventListener("parallel_start", (e: MessageEvent) => {
       const d = JSON.parse(e.data);
       _cache.phase = 1;
       _cache.parallelRunning = [PKG_AGT_001_CODE, PKG_AGT_002_CODE];
-      addLog("ATLAS", "Atlas Orchestrator", d.message, "info");
+      addLog("ASTRA AGENTS", "Astra Agents Orchestrator", d.message, "info");
       _notify();
     });
 
@@ -427,8 +427,8 @@ export function usePkgSchedPipeline(): PkgSchedPipelineHook {
 
     es.addEventListener("agent_event", (e: MessageEvent) => {
       const d = JSON.parse(e.data);
-      const code = d.agentCode || "ATLAS";
-      const name = d.agentName || "Atlas";
+      const code = d.agentCode || "ASTRA AGENTS";
+      const name = d.agentName || "Astra Agents";
       const msg  = d.label ?? (d.type === "tool_call_result" ? `${d.tool || "tool"} → ok` : "Processing…");
       addLog(code, name, msg, "progress");
     });
@@ -462,7 +462,7 @@ export function usePkgSchedPipeline(): PkgSchedPipelineHook {
 
     es.addEventListener("parallel_complete", (e: MessageEvent) => {
       const d = JSON.parse(e.data);
-      addLog("ATLAS", "Atlas Orchestrator", d.message, "info");
+      addLog("ASTRA AGENTS", "Astra Agents Orchestrator", d.message, "info");
       _cache.phase1Done = true;
       _cache.parallelRunning = [];
       _notify();
@@ -476,7 +476,7 @@ export function usePkgSchedPipeline(): PkgSchedPipelineHook {
       _cache.phase2Done   = true;
       _cache.phase3Done   = true;
       _cache.parallelRunning = [];
-      addLog("ATLAS", "Atlas Orchestrator", `Pipeline complete — Kiwiplan ${d.kiwiplanScheduleId} · OEE ${d.kpiSummary?.oee || "82.2%"}`, "complete");
+      addLog("ASTRA AGENTS", "Astra Agents Orchestrator", `Pipeline complete — Kiwiplan ${d.kiwiplanScheduleId} · OEE ${d.kpiSummary?.oee || "82.2%"}`, "complete");
       if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
       _notify();
       es.close();
@@ -486,7 +486,7 @@ export function usePkgSchedPipeline(): PkgSchedPipelineHook {
       const d = JSON.parse(e.data);
       _cache.status = "error";
       _cache.error  = d.message || "Pipeline error";
-      addLog("ATLAS", "Atlas Orchestrator", `✗ ${_cache.error}`, "error");
+      addLog("ASTRA AGENTS", "Astra Agents Orchestrator", `✗ ${_cache.error}`, "error");
       if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
       _notify();
       es.close();
@@ -496,7 +496,7 @@ export function usePkgSchedPipeline(): PkgSchedPipelineHook {
       if (_cache.status === "running") {
         _cache.status = "error";
         _cache.error  = "SSE connection lost";
-        addLog("ATLAS", "Atlas Orchestrator", "✗ Connection to agent stream lost", "error");
+        addLog("ASTRA AGENTS", "Astra Agents Orchestrator", "✗ Connection to agent stream lost", "error");
         if (_timerInterval) { clearInterval(_timerInterval); _timerInterval = null; }
         _notify();
       }

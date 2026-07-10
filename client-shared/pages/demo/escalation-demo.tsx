@@ -455,7 +455,7 @@ export default function EscalationDemo() {
         {/* Agent attribution note */}
         <div className="mt-4 text-[10px] text-slate-700 border-t border-slate-800/50 pt-3">
           Outbound communications (Teams + Email) include an agent attribution footer:
-          <span className="text-slate-600 italic"> "Sent by Escalation Agent via Atlas Agent Orchestrator"</span>
+          <span className="text-slate-600 italic"> "Sent by Escalation Agent via Astra Agents Agent Orchestrator"</span>
           — ensuring transparency to human recipients.
           Audit events of type <code className="font-mono">agent_communication</code> are emitted for each outbound message.
         </div>

@@ -1701,7 +1701,7 @@ function PrivEscContextView({ onTrigger, isPending }: { onTrigger: () => void; i
             ))}
           </div>
           <p className="text-xs text-muted-foreground mt-3">
-            A human analyst monitoring Bloomberg Terminal API logs would need to correlate SCIM provisioning records, X.509 certificate usage, and entitlement matrices — across 4 systems — before spotting this call pattern. ATLAS detects and suspends in seconds.
+            A human analyst monitoring Bloomberg Terminal API logs would need to correlate SCIM provisioning records, X.509 certificate usage, and entitlement matrices — across 4 systems — before spotting this call pattern. ASTRA AGENTS detects and suspends in seconds.
           </p>
         </CardContent>
       </Card>
@@ -1899,7 +1899,7 @@ function PrivEscResponseView({ privEsc, onNext }: { privEsc: PrivEscState; onNex
       {/* ATLAS response timeline */}
       <Card className="border-border/40">
         <CardHeader className="py-3 px-4">
-          <CardTitle className="text-xs text-muted-foreground uppercase tracking-wider">ATLAS Response Timeline</CardTitle>
+          <CardTitle className="text-xs text-muted-foreground uppercase tracking-wider">ASTRA AGENTS Response Timeline</CardTitle>
         </CardHeader>
         <CardContent className="px-4 pb-4">
           <div className="grid grid-cols-3 gap-3 text-sm text-center">
@@ -2145,11 +2145,11 @@ export default function BlackRockDemo() {
 
     es.addEventListener("run_start", (e) => {
       const d = JSON.parse(e.data);
-      addEvent("run_start", "Atlas Runtime", `Live run started — scenario: ${d.scenario}`);
+      addEvent("run_start", "Astra Agents Runtime", `Live run started — scenario: ${d.scenario}`);
     });
     es.addEventListener("setup", (e) => {
       const d = JSON.parse(e.data);
-      addEvent("setup", "Atlas Runtime", d.message);
+      addEvent("setup", "Astra Agents Runtime", d.message);
     });
     es.addEventListener("agent_start", (e) => {
       const d = JSON.parse(e.data);
@@ -2171,7 +2171,7 @@ export default function BlackRockDemo() {
       addEvent("agent_complete", d.agentName, `${d.success ? "✓ Complete" : "✗ Failed"}: ${d.message}`);
     });
     es.addEventListener("run_complete", () => {
-      addEvent("run_complete", "Atlas Runtime", "All agents completed — traces available in Runs & Traces");
+      addEvent("run_complete", "Astra Agents Runtime", "All agents completed — traces available in Runs & Traces");
       es.close();
       esRef.current = null;
       setLiveRunning(false);
@@ -2179,7 +2179,7 @@ export default function BlackRockDemo() {
     });
     es.addEventListener("error", (e: any) => {
       const d = e.data ? JSON.parse(e.data) : {};
-      addEvent("error", "Atlas Runtime", `Error: ${d.message || "Connection error"}`);
+      addEvent("error", "Astra Agents Runtime", `Error: ${d.message || "Connection error"}`);
       es.close();
       esRef.current = null;
       setLiveRunning(false);

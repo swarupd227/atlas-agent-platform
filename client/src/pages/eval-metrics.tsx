@@ -72,7 +72,7 @@ const CATEGORIES = [
 const SOURCES = [
   { value: "all", label: "All Sources" },
   { value: "deepeval", label: "DeepEval Stock" },
-  { value: "atlas-native", label: "Atlas-Native" },
+  { value: "atlas-native", label: "Astra Agents-Native" },
   { value: "tenant-private", label: "Tenant-Private" },
 ];
 
@@ -104,7 +104,7 @@ const SOURCE_COLORS: Record<string, string> = {
 
 const SOURCE_LABELS: Record<string, string> = {
   deepeval: "DeepEval",
-  "atlas-native": "Atlas",
+  "atlas-native": "Astra Agents",
   "tenant-private": "Custom",
 };
 

@@ -43,9 +43,9 @@ export default function PkgSchedS1Orders({ pipelineState, onRun }: Props) {
           <Zap className="w-4 h-4" style={{ color: PKG_COLOR }} />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="text-sm font-bold text-foreground">What is Atlas doing?</div>
+          <div className="text-sm font-bold text-foreground">What is Astra Agents doing?</div>
           <div className="text-[11px] text-muted-foreground/80 mt-0.5">
-            Atlas is running <span className="font-semibold text-foreground">4 AI agents</span> to automatically build today's production schedule for Westfield Packaging.
+            Astra Agents is running <span className="font-semibold text-foreground">4 AI agents</span> to automatically build today's production schedule for Westfield Packaging.
             It will analyse <span className="font-semibold text-foreground">47 orders</span>, resolve a <span className="font-semibold text-amber-400">B-Flute stock constraint</span>, cover <span className="font-semibold text-red-400">3 RUSH deadlines</span>, then generate and commit an optimised schedule directly to <span className="font-semibold text-foreground">Kiwiplan</span> — all without manual planner intervention.
           </div>
         </div>
@@ -73,7 +73,7 @@ export default function PkgSchedS1Orders({ pipelineState, onRun }: Props) {
             className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-[11px] font-bold text-white shrink-0"
             style={{ background: PKG_COLOR }}
           >
-            ▶ Run Atlas
+            ▶ Run Astra Agents
           </button>
         )}
         {isRunning && (

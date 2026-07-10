@@ -125,7 +125,7 @@ export default function OtcQuoteDemo() {
             {isRunning && (
               <Badge className="text-[9px] border animate-pulse"
                 style={{ background: "rgba(255,107,53,0.12)", borderColor: "rgba(255,107,53,0.3)", color: "#FF6B35" }}>
-                ⬤ Atlas Running
+                ⬤ Astra Agents Running
               </Badge>
             )}
             {isComplete && (
@@ -141,7 +141,7 @@ export default function OtcQuoteDemo() {
                 className="text-[10px] h-7 px-3 font-semibold text-white"
                 style={{ background: "#FF6B35" }}
               >
-                ▶ Run Atlas
+                ▶ Run Astra Agents
               </Button>
             )}
             {(isRunning || isComplete) && (

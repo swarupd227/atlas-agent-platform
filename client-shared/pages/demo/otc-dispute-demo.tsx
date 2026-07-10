@@ -32,7 +32,7 @@ const SCENARIOS: { key: ScenarioKey; label: string; badge?: string; description:
   {
     key:         "happy",
     label:       "Systemic Pricing Dispute — Full Resolution",
-    description: "Apex Industries 12 disputes / $380K. Atlas detects pattern, confirms pricing error (MSA-2025-1104), finds 3 more affected customers, issues $165K in bulk credits.",
+    description: "Apex Industries 12 disputes / $380K. Astra Agents detects pattern, confirms pricing error (MSA-2025-1104), finds 3 more affected customers, issues $165K in bulk credits.",
   },
   {
     key:         "legal-hold",
@@ -250,7 +250,7 @@ function PreRunPlaceholder({ screen, onRun }: { screen: ScreenId; onRun: () => v
       </div>
       <div>
         <p className="text-white/60 text-sm">Select a scenario and click <strong>Run Demo</strong> to start the pipeline.</p>
-        <p className="text-white/30 text-xs mt-1">Atlas will invoke OTC-AGT-008 → 011 → 006 via live SSE.</p>
+        <p className="text-white/30 text-xs mt-1">Astra Agents will invoke OTC-AGT-008 → 011 → 006 via live SSE.</p>
       </div>
       <button
         onClick={onRun}
@@ -325,11 +325,11 @@ export default function OtcDisputeDemo() {
 
     es.addEventListener("run_start", (e: MessageEvent) => {
       const d = JSON.parse(e.data);
-      addEvent("run_start", "Atlas Runtime", d.message || "Starting dispute resolution pipeline…");
+      addEvent("run_start", "Astra Agents Runtime", d.message || "Starting dispute resolution pipeline…");
     });
     es.addEventListener("setup", (e: MessageEvent) => {
       const d = JSON.parse(e.data);
-      addEvent("setup", "Atlas Runtime", d.message || "Agents verified");
+      addEvent("setup", "Astra Agents Runtime", d.message || "Agents verified");
     });
     es.addEventListener("agent_start", (e: MessageEvent) => {
       const d = JSON.parse(e.data);
@@ -357,7 +357,7 @@ export default function OtcDisputeDemo() {
     });
     es.addEventListener("run_complete", (e: MessageEvent) => {
       const d = e.data ? JSON.parse(e.data) : {};
-      addEvent("run_complete", "Atlas Runtime", d.message || "Dispute resolution pipeline complete — traces available in Runs & Traces", undefined, true);
+      addEvent("run_complete", "Astra Agents Runtime", d.message || "Dispute resolution pipeline complete — traces available in Runs & Traces", undefined, true);
       if (d.summaries) {
         setResultSummaries(prev => ({ ...prev, ...d.summaries }));
       }
@@ -370,7 +370,7 @@ export default function OtcDisputeDemo() {
     });
     es.addEventListener("error", (e: MessageEvent) => {
       const d = e.data ? JSON.parse(e.data) : {};
-      addEvent("error", "Atlas Runtime", `Error: ${d.message || "Pipeline error"}`);
+      addEvent("error", "Astra Agents Runtime", `Error: ${d.message || "Pipeline error"}`);
       es.close();
       esRef.current = null;
       setLiveRunning(false);
@@ -458,7 +458,7 @@ export default function OtcDisputeDemo() {
           {liveRunning && (
             <div className="flex items-center gap-1.5 text-xs" style={{ color: DISPUTE_COLOR }}>
               <div className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ background: DISPUTE_COLOR }} />
-              Atlas Running
+              Astra Agents Running
             </div>
           )}
         </div>

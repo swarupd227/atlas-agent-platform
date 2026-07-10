@@ -25,7 +25,7 @@ const DEMO_SLIDES: DemoSlide[] = [
       "Self-healing with full audit trails",
     ],
     narration:
-      "Every enterprise is racing to deploy AI agents. But here's the problem: building an agent takes a week. Running it safely in production — with compliance, governance, and reliability — takes months. And when it breaks at 3 AM? That's when the real cost hits. Nouse Agent Orchestrator solves this. It's the only platform where AI agents understand your industry from the first login, deploy from battle-tested templates in hours, and heal themselves when something goes wrong — with a full audit trail. Let me show you what this looks like for a real SaaS company running autonomous customer support.",
+      "Every enterprise is racing to deploy AI agents. But here's the problem: building an agent takes a week. Running it safely in production — with compliance, governance, and reliability — takes months. And when it breaks at 3 AM? That's when the real cost hits. Artizent Agent Orchestrator solves this. It's the only platform where AI agents understand your industry from the first login, deploy from battle-tested templates in hours, and heal themselves when something goes wrong — with a full audit trail. Let me show you what this looks like for a real SaaS company running autonomous customer support.",
     isOpening: true,
   },
   {
@@ -39,7 +39,7 @@ const DEMO_SLIDES: DemoSlide[] = [
       "GDPR and CCPA policies turned on by default",
     ],
     narration:
-      "The very first thing Nouse Agent Orchestrator asks is: what's your industry? This isn't a settings page — it's an intelligence layer. When NovaBill selected Technology / SaaS, the platform auto-loaded 35 industry-specific agent skills, activated 38 SOC 2 controls, turned on GDPR and CCPA policies, and configured industry-standard terminology throughout the entire interface. No other platform does this. On AWS Bedrock, you start with a blank canvas. On LangChain, you start with code. On Nouse, you start with your industry already understood.",
+      "The very first thing Artizent Agent Orchestrator asks is: what's your industry? This isn't a settings page — it's an intelligence layer. When NovaBill selected Technology / SaaS, the platform auto-loaded 35 industry-specific agent skills, activated 38 SOC 2 controls, turned on GDPR and CCPA policies, and configured industry-standard terminology throughout the entire interface. No other platform does this. On AWS Bedrock, you start with a blank canvas. On LangChain, you start with code. On Artizent, you start with your industry already understood.",
   },
   {
     image: "/demo-screenshots/08-outcomes.png",
@@ -143,7 +143,7 @@ const DEMO_SLIDES: DemoSlide[] = [
       "$340K quarterly revenue protected while everyone slept",
     ],
     narration:
-      "Let me bring this together. In eight screens, you've seen a platform that understands your industry from the first login, deploys production-ready agents in hours from battle-tested templates, shows business results not infrastructure metrics, knows when to act and when to ask a human, heals itself and validates the fix through the same safety pipeline as any human-authored change, and generates a tamper-proof, SOC 2-compliant audit trail as a byproduct. For NovaBill, that meant $972,000 in annualized cost savings, 84% margins, and $340,000 in quarterly revenue protected while everyone slept. That's Nouse Agent Orchestrator. Not just a platform to build agents — but the platform to run them in production, safely, at scale, in your industry.",
+      "Let me bring this together. In eight screens, you've seen a platform that understands your industry from the first login, deploys production-ready agents in hours from battle-tested templates, shows business results not infrastructure metrics, knows when to act and when to ask a human, heals itself and validates the fix through the same safety pipeline as any human-authored change, and generates a tamper-proof, SOC 2-compliant audit trail as a byproduct. For NovaBill, that meant $972,000 in annualized cost savings, 84% margins, and $340,000 in quarterly revenue protected while everyone slept. That's Artizent Agent Orchestrator. Not just a platform to build agents — but the platform to run them in production, safely, at scale, in your industry.",
     isClosing: true,
   },
 ];

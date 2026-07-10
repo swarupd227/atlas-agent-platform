@@ -153,7 +153,7 @@ export function useOtcCashPipeline() {
     setState({
       phase:        "setup",
       scenarioKey,
-      log:          [{ timestamp: Date.now(), agentCode: "ATLAS", type: "info", message: `Starting: ${info.label}` }],
+      log:          [{ timestamp: Date.now(), agentCode: "ASTRA AGENTS", type: "info", message: `Starting: ${info.label}` }],
       agents:       initialAgents,
       metrics:      seedMetrics,
       agentSummaries: {},
@@ -174,12 +174,12 @@ export function useOtcCashPipeline() {
     es.addEventListener("run_start", (e) => {
       const d = JSON.parse(e.data);
       setState(prev => ({ ...prev, phase: "running" }));
-      addLog("ATLAS", "info", d.message);
+      addLog("ASTRA AGENTS", "info", d.message);
     });
 
     es.addEventListener("setup", (e) => {
       const d = JSON.parse(e.data);
-      addLog("ATLAS", "info", d.message);
+      addLog("ASTRA AGENTS", "info", d.message);
     });
 
     es.addEventListener("agent_start", (e) => {
@@ -245,7 +245,7 @@ export function useOtcCashPipeline() {
     es.addEventListener("agent_error", (e) => {
       const d = JSON.parse(e.data);
       setState(prev => ({ ...prev, phase: "error", error: d.message }));
-      addLog(d.agentCode ?? "ATLAS", "error", `✗ ${d.message}`);
+      addLog(d.agentCode ?? "ASTRA AGENTS", "error", `✗ ${d.message}`);
     });
 
     es.addEventListener("pipeline_complete", (e) => {
@@ -257,7 +257,7 @@ export function useOtcCashPipeline() {
         elapsed_secs: Math.round((Date.now() - startRef.current) / 1000),
         metrics:     { ...prev.metrics, ...(d.metrics ?? {}) },
       }));
-      addLog("ATLAS", "complete", `✓ ${d.message}`);
+      addLog("ASTRA AGENTS", "complete", `✓ ${d.message}`);
       es.close();
     });
 
@@ -267,7 +267,7 @@ export function useOtcCashPipeline() {
         ? JSON.parse((e as MessageEvent).data)?.message
         : "SSE connection error";
       setState(prev => ({ ...prev, phase: "error", error: msg }));
-      addLog("ATLAS", "error", `✗ ${msg}`);
+      addLog("ASTRA AGENTS", "error", `✗ ${msg}`);
       es.close();
     });
 

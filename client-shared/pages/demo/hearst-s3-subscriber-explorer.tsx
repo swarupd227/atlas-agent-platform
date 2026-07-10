@@ -746,7 +746,7 @@ export default function Screen3SubscriberExplorer() {
           <DialogHeader>
             <DialogTitle>Override NBA Decision</DialogTitle>
             <DialogDescription>
-              Manually select an email for {data?.name}. This override will be logged and Atlas will learn from it to improve future recommendations.
+              Manually select an email for {data?.name}. This override will be logged and Astra Agents will learn from it to improve future recommendations.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-3 py-2">
@@ -771,7 +771,7 @@ export default function Screen3SubscriberExplorer() {
           </div>
           <div className="flex items-start gap-2 p-3 rounded-lg bg-indigo-500/10 border border-indigo-500/20">
             <AlertTriangle className="w-3.5 h-3.5 text-indigo-400 shrink-0 mt-0.5" />
-            <p className="text-[10px] text-indigo-300">Atlas will record this override as a training signal. Model weights update weekly to incorporate marketer feedback.</p>
+            <p className="text-[10px] text-indigo-300">Astra Agents will record this override as a training signal. Model weights update weekly to incorporate marketer feedback.</p>
           </div>
         </DialogContent>
       </Dialog>

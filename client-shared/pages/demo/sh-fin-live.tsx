@@ -257,7 +257,7 @@ function IdleView({ onTrigger, isPending }: { onTrigger: () => void; isPending: 
           <h3 className="text-base font-semibold mb-1">Simulate BNPL Population Shift Incident</h3>
           <p className="text-sm text-muted-foreground max-w-md mx-auto mb-4">
             Inject a BNPL merchant category (MCC 6012) population shift that causes fraud model
-            precision to collapse from 95.2% to 87.1%. Watch Atlas detect the drift, validate a
+            precision to collapse from 95.2% to 87.1%. Watch Astra Agents detect the drift, validate a
             challenger model via shadow traffic, and prepare the SR 11-7 change package —
             autonomously, in under 2 minutes.
           </p>
@@ -510,7 +510,7 @@ function RunningView({ state }: { state: DemoState }) {
                   </div>
                 ))}
                 {visibleActions.length === 0 && (
-                  <p className="text-[11px] text-muted-foreground">Model drift detected — Atlas is analysing...</p>
+                  <p className="text-[11px] text-muted-foreground">Model drift detected — Astra Agents is analysing...</p>
                 )}
               </div>
             </CardContent>
@@ -593,7 +593,7 @@ function CompleteView({ state, onReset }: { state: DemoState; onReset: () => voi
           <CardHeader className="pb-2 pt-3 px-4">
             <div className="flex items-center gap-2">
               <Zap className="h-4 w-4 text-green-600" />
-              <span className="text-sm font-semibold text-green-700 dark:text-green-400">With Atlas</span>
+              <span className="text-sm font-semibold text-green-700 dark:text-green-400">With Astra Agents</span>
             </div>
           </CardHeader>
           <CardContent className="px-4 pb-4 space-y-2">
@@ -616,7 +616,7 @@ function CompleteView({ state, onReset }: { state: DemoState; onReset: () => voi
           <CardHeader className="pb-2 pt-3 px-4">
             <div className="flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-red-600" />
-              <span className="text-sm font-semibold text-red-700 dark:text-red-400">Without Atlas</span>
+              <span className="text-sm font-semibold text-red-700 dark:text-red-400">Without Astra Agents</span>
             </div>
           </CardHeader>
           <CardContent className="px-4 pb-4 space-y-2">
@@ -642,7 +642,7 @@ function CompleteView({ state, onReset }: { state: DemoState; onReset: () => voi
           <CardHeader className="pb-2 pt-3 px-4">
             <div className="flex items-center gap-2">
               <Zap className="h-4 w-4 text-blue-600" />
-              <span className="text-sm font-semibold">Atlas Acted Autonomously</span>
+              <span className="text-sm font-semibold">Astra Agents Acted Autonomously</span>
               <Badge variant="outline" className="ml-auto text-[10px]">{atlasActions.length} actions</Badge>
             </div>
           </CardHeader>
@@ -672,7 +672,7 @@ function CompleteView({ state, onReset }: { state: DemoState; onReset: () => voi
               </div>
             ))}
             <p className="text-[11px] text-muted-foreground mt-1">
-              Atlas handled all validation autonomously. Material model changes require human sign-off per SR 11-7 — Atlas prepared every document needed.
+              Astra Agents handled all validation autonomously. Material model changes require human sign-off per SR 11-7 — Astra Agents prepared every document needed.
             </p>
           </CardContent>
         </Card>
