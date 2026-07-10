@@ -35,6 +35,7 @@ and `git pull` to pick up new commits.
 cd deploy/azure
 cp config.env.example config.env   # fill in your values
 ./provision.sh                     # one-time: create every resource + secrets + app settings
+./deploy.sh                        # push the app code (run again after every commit you want live)
 ./migrate.sh                       # run once now, and again after every schema change
 ./verify.sh                        # confirm it's actually up
 ```
@@ -42,18 +43,22 @@ cp config.env.example config.env   # fill in your values
 ## Files
 
 - `config.env.example` — copy to `config.env` and fill in (resource group, region, app name, LLM keys). `config.env` is gitignored — never commit it, it ends up holding real API keys once filled in.
-- `provision.sh` — creates the resource group, Postgres Flexible Server (+ pgvector), App Service plan + Web App, generates the three production-required secrets (`JWT_SECRET`, `INTEGRATION_VAULT_KEY`, `AUDIT_SIGNING_PRIVATE_KEY`), wires up all app settings, enables WebSockets/Always On, points the Web App at this GitHub repo for continuous deployment, and triggers the initial deployment sync. Safe to re-run — every step uses idempotent `az` commands (`create` calls no-op or update in place if the resource already exists).
+- `provision.sh` — creates the resource group, Postgres Flexible Server (+ pgvector), App Service plan + Web App, generates the three production-required secrets (`JWT_SECRET`, `INTEGRATION_VAULT_KEY`, `AUDIT_SIGNING_PRIVATE_KEY`), wires up all app settings, and enables WebSockets/Always On. Safe to re-run — every step uses idempotent `az` commands (`create` calls no-op or update in place if the resource already exists).
+- `deploy.sh` — zips the repo and pushes it straight to the Web App via `az webapp deployment source config-zip`, which triggers the same Oryx `npm install` + build server-side. **This is the actual deploy mechanism** — run it after every commit you want live.
 - `migrate.sh` — runs `npm run db:push` against the deployed database. Installs `node_modules` first if missing (so it works on a fresh Cloud Shell clone) and warns if the active Node is older than 18. Re-run this after every commit that changes `shared/schema.ts`.
 - `verify.sh` — opens the app URL, curls the health endpoint, and tails the last few minutes of App Service logs.
 
 ## Deploying future changes
 
-The GitHub link is set up with `--manual-integration`, which means Azure does **not** auto-deploy on every `git push` (no webhook is registered). After pushing new commits to `GITHUB_BRANCH`, pull the latest code and trigger a sync yourself:
+Pull the latest code, then re-run `deploy.sh`:
 
 ```bash
-source config.env
-az webapp deployment source sync --resource-group "$RG" --name "$APP_NAME"
+git pull
+cd deploy/azure
+./deploy.sh
 ```
+
+(GitHub-linked continuous deployment via `--manual-integration` was tried first but turned out unreliable in practice — the SCM container's git fetch from GitHub failed silently and near-instantly on every attempt, leaving `wwwroot` empty and the container stuck retrying `npm start` against a missing `package.json` until the platform's 230s startup timeout. Zip deploy pushes the same bytes over the same authenticated Kudu/SCM channel that log/VFS access already uses successfully, so it sidesteps that failure mode entirely.)
 
 ## What you'll be asked to fill in
 

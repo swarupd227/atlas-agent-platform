@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Provisions everything needed to run Astra Agents on Azure App Service:
 # resource group, Postgres Flexible Server (+ pgvector), App Service plan +
-# Web App, the three production-required secrets, app settings, WebSockets/
-# Always On, and GitHub-linked continuous deployment.
+# Web App, the three production-required secrets, app settings, and
+# WebSockets/Always On. Run ./deploy.sh after this to actually push the code
+# (zip deploy — see deploy.sh's header comment for why this isn't wired up
+# via GitHub continuous deployment).
 #
 # Safe to re-run — every `az ... create` call below is idempotent (no-ops or
 # updates in place if the resource already exists).
@@ -16,7 +18,7 @@ fi
 # shellcheck disable=SC1091
 source config.env
 
-for v in RG LOCATION DB_SERVER DB_NAME DB_ADMIN PLAN APP_NAME GITHUB_REPO_URL GITHUB_BRANCH ANTHROPIC_API_KEY OPENAI_API_KEY; do
+for v in RG LOCATION DB_SERVER DB_NAME DB_ADMIN PLAN APP_NAME ANTHROPIC_API_KEY OPENAI_API_KEY; do
   if [ -z "${!v:-}" ] || [[ "${!v}" == *REPLACE_ME* ]]; then
     echo "config.env: $v is not set (or still has its placeholder value) — fill it in and re-run." >&2
     exit 1
@@ -25,7 +27,7 @@ done
 
 SECRETS_FILE=.generated-secrets.env
 
-echo "=== 1/8: Resource group ==="
+echo "=== 1/7: Resource group ==="
 # A resource group's location is immutable once created — passing a
 # different --location to `az group create` for an existing group is a hard
 # error (InvalidResourceGroupLocation), not a no-op. If it already exists,
@@ -39,7 +41,7 @@ else
   az group create --name "$RG" --location "$LOCATION" --output none
 fi
 
-echo "=== 2/8: Generating secrets ==="
+echo "=== 2/7: Generating secrets ==="
 if [ -f "$SECRETS_FILE" ]; then
   echo "  $SECRETS_FILE already exists — reusing it (delete it first if you want fresh secrets)."
   # shellcheck disable=SC1090
@@ -69,7 +71,7 @@ fi
 
 DATABASE_URL="postgresql://${DB_ADMIN}:${DB_PASSWORD}@${DB_SERVER}.postgres.database.azure.com:5432/${DB_NAME}?sslmode=require"
 
-echo "=== 3/8: Postgres Flexible Server (this step can take several minutes) ==="
+echo "=== 3/7: Postgres Flexible Server (this step can take several minutes) ==="
 if az postgres flexible-server show --resource-group "$RG" --name "$DB_SERVER" --output none 2>/dev/null; then
   echo "  $DB_SERVER already exists — skipping create."
 else
@@ -99,7 +101,7 @@ else
     --output none
 fi
 
-echo "=== 4/8: Enabling pgvector ==="
+echo "=== 4/7: Enabling pgvector ==="
 az postgres flexible-server parameter set \
   --resource-group "$RG" --server-name "$DB_SERVER" \
   --name azure.extensions --value VECTOR \
@@ -118,7 +120,7 @@ az postgres flexible-server execute \
   --querytext "CREATE EXTENSION IF NOT EXISTS vector;" \
   --output none
 
-echo "=== 5/8: App Service plan + Web App ==="
+echo "=== 5/7: App Service plan + Web App ==="
 if az appservice plan show --resource-group "$RG" --name "$PLAN" --output none 2>/dev/null; then
   echo "  $PLAN already exists — skipping."
 else
@@ -142,7 +144,7 @@ else
     --output none
 fi
 
-echo "=== 6/8: App settings ==="
+echo "=== 6/7: App settings ==="
 az webapp config appsettings set \
   --resource-group "$RG" --name "$APP_NAME" \
   --settings \
@@ -160,7 +162,7 @@ az webapp config appsettings set \
     WEBSITE_NODE_DEFAULT_VERSION=~22 \
   --output none
 
-echo "=== 7/8: WebSockets + Always On (needed for SSE streaming + the in-process job worker) ==="
+echo "=== 7/7: WebSockets + Always On (needed for SSE streaming + the in-process job worker) ==="
 az webapp config set \
   --resource-group "$RG" --name "$APP_NAME" \
   --web-sockets-enabled true \
@@ -178,41 +180,9 @@ az webapp log config \
   --docker-container-logging filesystem \
   --output none
 
-echo "=== 8/8: GitHub-linked continuous deployment ==="
-# `az webapp deployment source config` has a known client-side SDK bug where a
-# 200 OK response gets misread as an unexpected status, raising "Operation
-# returned an invalid status 'OK'" even when the config actually applied
-# correctly. Don't trust the command's exit code alone -- verify against the
-# real state before deciding whether this genuinely failed.
-DEPLOY_ERR_LOG=$(mktemp)
-if ! az webapp deployment source config \
-    --resource-group "$RG" --name "$APP_NAME" \
-    --repo-url "$GITHUB_REPO_URL" \
-    --branch "$GITHUB_BRANCH" \
-    --manual-integration \
-    --output none 2>"$DEPLOY_ERR_LOG"; then
-  ACTUAL_REPO_URL=$(az webapp deployment source show --resource-group "$RG" --name "$APP_NAME" --query repoUrl -o tsv 2>/dev/null || true)
-  if [ "$ACTUAL_REPO_URL" = "$GITHUB_REPO_URL" ]; then
-    echo "  (Hit the known 'invalid status OK' client-side error here, but verified the deployment source was actually configured correctly -- safe to ignore.)"
-  else
-    echo "Deployment source config failed for real (repoUrl is '$ACTUAL_REPO_URL', expected '$GITHUB_REPO_URL'):" >&2
-    cat "$DEPLOY_ERR_LOG" >&2
-    rm -f "$DEPLOY_ERR_LOG"
-    exit 1
-  fi
-fi
-rm -f "$DEPLOY_ERR_LOG"
-
-# `--manual-integration` links the repo but does NOT set up a webhook and does
-# NOT pull/build automatically -- without an explicit sync, the container has
-# no `dist/` to run and just idles on Azure's own platform bootstrap forever
-# (looks like a plain startup timeout, with no application-level log output).
-echo "  Triggering initial deployment sync (pulls the repo + runs the Oryx build)..."
-az webapp deployment source sync --resource-group "$RG" --name "$APP_NAME" --output none
-
 echo ""
 echo "Done. https://${APP_NAME}.azurewebsites.net"
-echo "Next: ./migrate.sh to push the DB schema, then ./verify.sh to confirm it's up."
+echo "Next: ./deploy.sh to push the app code, then ./migrate.sh to push the DB schema, then ./verify.sh to confirm it's up."
 echo ""
 echo "NOTE: the Postgres firewall above is open to all IPs (0.0.0.0-255.255.255.255) so this"
 echo "script runs end-to-end without extra steps. Tighten it once you're past initial setup:"
