@@ -110,7 +110,7 @@ function CodeBlock({ code, language }: { code: string; language: string }) {
 function generateCurl(baseUrl: string, method: string, path: string, operation: PathOperation): string {
   let resolvedPath = path.replace(/\{(\w+)\}/g, (_, name) => `<${name.toUpperCase()}>`);
   const lines = [`curl -X ${method.toUpperCase()} "${baseUrl}${resolvedPath}"`];
-  lines.push(`  -H "Authorization: Bearer nous_YOUR_API_KEY"`);
+  lines.push(`  -H "Authorization: Bearer astra_YOUR_API_KEY"`);
 
   const bodySchema = operation.requestBody?.content?.["application/json"]?.schema;
   if (bodySchema && (method === "post" || method === "patch" || method === "put")) {
@@ -127,7 +127,7 @@ function generatePython(baseUrl: string, method: string, path: string, operation
   const lines = [
     `import requests`,
     ``,
-    `API_KEY = "nous_YOUR_API_KEY"`,
+    `API_KEY = "astra_YOUR_API_KEY"`,
     `BASE_URL = "${baseUrl}"`,
     ``,
   ];
@@ -169,7 +169,7 @@ function generateTypeScript(baseUrl: string, method: string, path: string, opera
   const pathParams = (path.match(/\{(\w+)\}/g) || []).map((p) => p.slice(1, -1));
   let resolvedPath = path.replace(/\{(\w+)\}/g, (_, p) => `\${${p}}`);
   const lines = [
-    `const API_KEY = "nous_YOUR_API_KEY";`,
+    `const API_KEY = "astra_YOUR_API_KEY";`,
     `const BASE_URL = "${baseUrl}";`,
     ``,
   ];
@@ -398,7 +398,7 @@ function EndpointCard({ entry, baseUrl }: { entry: EndpointEntry; baseUrl: strin
                   </label>
                   <Input
                     className="h-8 text-xs font-mono"
-                    placeholder="nous_YOUR_API_KEY"
+                    placeholder="astra_YOUR_API_KEY"
                     type="password"
                     value={tryItApiKey}
                     onChange={(e) => setTryItApiKey(e.target.value)}
@@ -502,7 +502,7 @@ import requests
 from typing import Optional, Dict, Any, List
 
 
-class NousClient:
+class AstraClient:
     """Client for the ASTRA Agents API."""
 
     def __init__(self, base_url: str = "${baseUrl}", api_key: str = ""):
@@ -685,9 +685,9 @@ class NousClient:
 
 # --- Usage Example ---
 if __name__ == "__main__":
-    client = NousClient(
+    client = AstraClient(
         base_url="${baseUrl}",
-        api_key="nous_YOUR_API_KEY",
+        api_key="astra_YOUR_API_KEY",
     )
 
     # List agents
@@ -714,7 +714,7 @@ interface RequestOptions {
   params?: Record<string, string>;
 }
 
-export class NousClient {
+export class AstraClient {
   private baseUrl: string;
   private apiKey: string;
 
@@ -899,7 +899,7 @@ interface RuntimeResult {
 }
 
 // --- Usage Example ---
-// const client = new NousClient("${baseUrl}", "nous_YOUR_API_KEY");
+// const client = new AstraClient("${baseUrl}", "astra_YOUR_API_KEY");
 // const agents = await client.listAgents();
 // const result = await client.runAgent(agents[0].id, "Analyze performance");
 `;
@@ -1024,7 +1024,7 @@ export default function DeveloperPortal() {
                       Navigate to any agent's detail page, open the "API Gateway" tab, and click "Generate Key". 
                       Store the key securely — it's only shown once.
                     </p>
-                    <CodeBlock code={`# Your API key looks like:\nnous_k7x9m2p4q8r1...`} language="bash" />
+                    <CodeBlock code={`# Your API key looks like:\nastra_k7x9m2p4q8r1...`} language="bash" />
                   </div>
                 </div>
 
@@ -1035,7 +1035,7 @@ export default function DeveloperPortal() {
                     <p className="text-sm text-muted-foreground">
                       Use the API key to invoke an agent. You can use either the <code>Authorization</code> header or the <code>X-API-Key</code> header.
                     </p>
-                    <CodeBlock code={`curl -X POST "${baseUrl}/api/gateway/v1/invoke/YOUR_AGENT_ID" \\\n  -H "Authorization: Bearer nous_YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"input": "Analyze the latest sales data"}'`} language="bash" />
+                    <CodeBlock code={`curl -X POST "${baseUrl}/api/gateway/v1/invoke/YOUR_AGENT_ID" \\\n  -H "Authorization: Bearer astra_YOUR_API_KEY" \\\n  -H "Content-Type: application/json" \\\n  -d '{"input": "Analyze the latest sales data"}'`} language="bash" />
                   </div>
                 </div>
 
@@ -1055,10 +1055,10 @@ export default function DeveloperPortal() {
                 <h3 className="font-semibold mb-2">Other Common Operations</h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {[
-                    { label: "List all agents", code: `curl "${baseUrl}/api/agents" -H "Authorization: Bearer nous_KEY"` },
-                    { label: "Get execution trace", code: `curl "${baseUrl}/api/agent-runtime/runs/RUN_ID" -H "Authorization: Bearer nous_KEY"` },
-                    { label: "Run policy check", code: `curl -X POST "${baseUrl}/api/policy-check" -H "Authorization: Bearer nous_KEY" -d '{"agentId":"...","content":"..."}'` },
-                    { label: "List deployments", code: `curl "${baseUrl}/api/deployments" -H "Authorization: Bearer nous_KEY"` },
+                    { label: "List all agents", code: `curl "${baseUrl}/api/agents" -H "Authorization: Bearer astra_KEY"` },
+                    { label: "Get execution trace", code: `curl "${baseUrl}/api/agent-runtime/runs/RUN_ID" -H "Authorization: Bearer astra_KEY"` },
+                    { label: "Run policy check", code: `curl -X POST "${baseUrl}/api/policy-check" -H "Authorization: Bearer astra_KEY" -d '{"agentId":"...","content":"..."}'` },
+                    { label: "List deployments", code: `curl "${baseUrl}/api/deployments" -H "Authorization: Bearer astra_KEY"` },
                   ].map((item) => (
                     <div key={item.label} className="space-y-1">
                       <span className="text-xs font-medium">{item.label}</span>
@@ -1080,7 +1080,7 @@ export default function DeveloperPortal() {
               <div className="space-y-3">
                 <h3 className="font-semibold">API Key Authentication</h3>
                 <p className="text-sm text-muted-foreground">
-                  All programmatic API access uses API keys. Keys are scoped to individual agents and prefixed with <code className="bg-muted px-1 rounded">nous_</code> for easy identification.
+                  All programmatic API access uses API keys. Keys are scoped to individual agents and prefixed with <code className="bg-muted px-1 rounded">astra_</code> for easy identification.
                 </p>
               </div>
 
@@ -1092,14 +1092,14 @@ export default function DeveloperPortal() {
                       <Badge>Recommended</Badge>
                       <code className="text-xs font-mono">Authorization</code>
                     </div>
-                    <CodeBlock code={`Authorization: Bearer nous_abc123def456...`} language="http" />
+                    <CodeBlock code={`Authorization: Bearer astra_abc123def456...`} language="http" />
                   </div>
                   <div className="border rounded-lg p-4 space-y-2">
                     <div className="flex items-center gap-2">
                       <Badge variant="outline">Alternative</Badge>
                       <code className="text-xs font-mono">X-API-Key</code>
                     </div>
-                    <CodeBlock code={`X-API-Key: nous_abc123def456...`} language="http" />
+                    <CodeBlock code={`X-API-Key: astra_abc123def456...`} language="http" />
                   </div>
                 </div>
               </div>
@@ -1232,14 +1232,14 @@ export default function DeveloperPortal() {
                       const url = URL.createObjectURL(blob);
                       const a = document.createElement("a");
                       a.href = url;
-                      a.download = "nous_client.py";
+                      a.download = "astra_client.py";
                       a.click();
                       URL.revokeObjectURL(url);
                     }}
                     data-testid="button-download-python"
                   >
                     <Download className="h-3 w-3" />
-                    Download nous_client.py
+                    Download astra_client.py
                   </Button>
                 </div>
                 <ScrollArea className="h-[500px]">
@@ -1270,14 +1270,14 @@ export default function DeveloperPortal() {
                       const url = URL.createObjectURL(blob);
                       const a = document.createElement("a");
                       a.href = url;
-                      a.download = "nous-client.ts";
+                      a.download = "astra-client.ts";
                       a.click();
                       URL.revokeObjectURL(url);
                     }}
                     data-testid="button-download-typescript"
                   >
                     <Download className="h-3 w-3" />
-                    Download nous-client.ts
+                    Download astra-client.ts
                   </Button>
                 </div>
                 <ScrollArea className="h-[500px]">
@@ -1313,7 +1313,7 @@ export default function DeveloperPortal() {
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement("a");
                     a.href = url;
-                    a.download = "nous-openapi.json";
+                    a.download = "astra-openapi.json";
                     a.click();
                     URL.revokeObjectURL(url);
                   }}

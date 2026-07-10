@@ -1,11 +1,11 @@
 // Public, API-key-authenticated surface for external automation platforms
-// (n8n, Make, Zapier, etc.) to integrate with Nous bidirectionally:
-//   • Inbound  (n8n → Nous):  POST /api/v1/runs        — run an agent, poll result
-//   • Outbound (Nous → n8n):  POST /api/v1/integrations/n8n/call — invoke an n8n workflow
+// (n8n, Make, Zapier, etc.) to integrate with Astra Agents bidirectionally:
+//   • Inbound  (n8n → Astra Agents):  POST /api/v1/runs        — run an agent, poll result
+//   • Outbound (Astra Agents → n8n):  POST /api/v1/integrations/n8n/call — invoke an n8n workflow
 //
 // Auth: X-API-Key (or Authorization: Bearer). Accepts a managed per-agent key
 // (minted in the agent's API Gateway tab) or, as an admin fallback, the
-// NOUS_PUBLIC_API_KEY env value.
+// ASTRA_PUBLIC_API_KEY env value.
 import crypto from "crypto";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { storage } from "../storage";
@@ -40,12 +40,12 @@ async function requireApiKey(req: Request, res: Response, next: NextFunction) {
   } catch { /* fall through to env key */ }
 
   // 2) Admin fallback: shared env key.
-  if (process.env.NOUS_PUBLIC_API_KEY && provided === process.env.NOUS_PUBLIC_API_KEY) return next();
+  if (process.env.ASTRA_PUBLIC_API_KEY && provided === process.env.ASTRA_PUBLIC_API_KEY) return next();
 
   return res.status(401).json({ error: "Invalid or missing API key" });
 }
 
-// ── Inbound: n8n → Nous ─────────────────────────────────────────────────────
+// ── Inbound: n8n → Astra Agents ─────────────────────────────────────────────
 // Start an agent run. Returns a runId to poll. Mirrors the webhook trigger path
 // (queues an agent_run job for the worker), but as a clean, documented surface.
 router.post("/api/v1/runs", requireApiKey, async (req: Request, res: Response) => {
@@ -63,7 +63,7 @@ router.post("/api/v1/runs", requireApiKey, async (req: Request, res: Response) =
     const agent = await storage.getAgent(agentId);
     if (!agent) return res.status(404).json({ error: "Agent not found" });
 
-    // Detect n8n as source via X-Source header (sent by n8n-nodes-nous package)
+    // Detect n8n as source via X-Source header (sent by n8n-nodes-astra-agents package)
     const xSource = req.headers["x-source"];
     const triggeredBy = xSource === "n8n" ? "n8n" : "api";
 
@@ -100,7 +100,7 @@ router.get("/api/v1/runs/:id", requireApiKey, async (req: Request, res: Response
   }
 });
 
-// ── Outbound: Nous → n8n ────────────────────────────────────────────────────
+// ── Outbound: Astra Agents → n8n ────────────────────────────────────────────
 // Invoke an n8n workflow by its webhook URL and return its response.
 router.post("/api/v1/integrations/n8n/call", requireApiKey, async (req: Request, res: Response) => {
   try {

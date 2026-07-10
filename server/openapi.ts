@@ -2,11 +2,11 @@ export function generateOpenAPISpec(baseUrl: string): object {
   return {
     openapi: "3.0.3",
     info: {
-      title: "ASTRA Agents API",
+      title: "Astra Agents API",
       version: "1.0.0",
-      description: "Complete REST API for the ASTRA Agents platform — an AI agent lifecycle management system covering agent creation, governance, evaluation, deployment, monitoring, and execution across industry verticals.",
+      description: "Complete REST API for the Astra Agents platform — an AI agent lifecycle management system covering agent creation, governance, evaluation, deployment, monitoring, and execution across industry verticals.",
       contact: {
-        name: "Nous Platform Team",
+        name: "Artizent Platform Team",
       },
     },
     servers: [
@@ -25,13 +25,13 @@ export function generateOpenAPISpec(baseUrl: string): object {
         ApiKeyBearer: {
           type: "http",
           scheme: "bearer",
-          description: "API key authentication using Authorization header. Keys are prefixed with `nous_` and generated per-agent. Usage: `Authorization: Bearer nous_xxxxxxxx...`",
+          description: "API key authentication using Authorization header. Keys are prefixed with `astra_` and generated per-agent. Usage: `Authorization: Bearer astra_xxxxxxxx...`",
         },
         ApiKeyHeader: {
           type: "apiKey",
           in: "header",
           name: "X-API-Key",
-          description: "Alternative API key header. Same key format (`nous_` prefix). Usage: `X-API-Key: nous_xxxxxxxx...`",
+          description: "Alternative API key header. Same key format (`astra_` prefix). Usage: `X-API-Key: astra_xxxxxxxx...`",
         },
         CookieAuth: {
           type: "apiKey",
@@ -177,7 +177,7 @@ export function generateOpenAPISpec(baseUrl: string): object {
             id: { type: "integer" },
             agentId: { type: "string", format: "uuid" },
             name: { type: "string" },
-            keyPrefix: { type: "string", example: "nous_abc123..." },
+            keyPrefix: { type: "string", example: "astra_abc123..." },
             scopes: { type: "array", items: { type: "string" } },
             isActive: { type: "boolean" },
             createdAt: { type: "string", format: "date-time" },
@@ -401,7 +401,7 @@ export function generateOpenAPISpec(baseUrl: string): object {
             content: { "application/json": { schema: { type: "object", required: ["name"], properties: { name: { type: "string", example: "Production Key" }, scopes: { type: "array", items: { type: "string" }, default: ["invoke"] }, expiresInDays: { type: "integer", example: 90 } } } } },
           },
           responses: {
-            "201": { description: "API key created", content: { "application/json": { schema: { type: "object", properties: { id: { type: "integer" }, key: { type: "string", example: "nous_abc123def456..." }, name: { type: "string" } } } } } },
+            "201": { description: "API key created", content: { "application/json": { schema: { type: "object", properties: { id: { type: "integer" }, key: { type: "string", example: "astra_abc123def456..." }, name: { type: "string" } } } } } },
           },
         },
       },
