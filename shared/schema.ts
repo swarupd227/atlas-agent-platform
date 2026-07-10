@@ -110,6 +110,9 @@ export const agents = pgTable("agents", {
   evalBindings: jsonb("eval_bindings"),
   rollbackPlan: jsonb("rollback_plan"),
   toolAccessClass: text("tool_access_class").default("standard"),
+  // Which roles may USE this agent in the Agent Workspace. Empty/null = every
+  // role (public in the workspace). Non-empty = only the listed role ids.
+  workspaceAudience: text("workspace_audience").array().default(sql`'{}'::text[]`),
   complianceTags: text("compliance_tags").array().default(sql`'{}'::text[]`),
   ontologyTags: jsonb("ontology_tags"),
   runtimeConfig: jsonb("runtime_config"),
@@ -125,6 +128,10 @@ export const agents = pgTable("agents", {
   maturityFactors: jsonb("maturity_factors").notNull().default(sql`'{}'::jsonb`),
   maxToolIterations: integer("max_tool_iterations").default(5),
   blueprintId: varchar("blueprint_id"),
+  // Template provenance: which agent template this agent was created from.
+  // First-class column so "agents derived from template X" is queryable —
+  // previously this only lived inside runtimeConfig and was lost on most paths.
+  sourceTemplateId: varchar("source_template_id"),
   preloadedSkills: jsonb("preloaded_skills").default(sql`'[]'::jsonb`),
   linkedSkillChainId: varchar("linked_skill_chain_id"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -134,6 +141,31 @@ export const agents = pgTable("agents", {
 export const insertAgentSchema = createInsertSchema(agents).omit({ id: true, createdAt: true, updatedAt: true }).extend({ organizationId: z.string().optional() });
 export type InsertAgent = z.infer<typeof insertAgentSchema>;
 export type Agent = typeof agents.$inferSelect;
+
+// PATCH /api/agents/:id body — a strict subset of insertAgentSchema. Excludes
+// organizationId (tenant reassignment must never happen through a generic
+// config edit) and every system-computed/telemetry column (healthScore,
+// successRate, avgLatencyMs, costPerRun, monthlyCost, monthlyRevenue,
+// totalRuns, maturityScore, maturityFactors, lastIncidentAt) — those are
+// written only by the runtime/trace pipeline, and letting a client set them
+// directly would let it fake governance signals (e.g. report a fabricated
+// health score) or corrupt billing math. Route handlers must validate
+// against this and pass the parsed result to storage, never raw req.body.
+export const updateAgentSchema = insertAgentSchema
+  .omit({
+    organizationId: true,
+    healthScore: true,
+    successRate: true,
+    avgLatencyMs: true,
+    costPerRun: true,
+    monthlyCost: true,
+    monthlyRevenue: true,
+    totalRuns: true,
+    maturityScore: true,
+    maturityFactors: true,
+    lastIncidentAt: true,
+  })
+  .partial();
 
 export const agentVersions = pgTable("agent_versions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -206,6 +238,10 @@ export const runTraces = pgTable("run_traces", {
   tokenUsage: jsonb("token_usage"),
   provenanceSnapshot: jsonb("provenance_snapshot"),
   provenanceHash: text("provenance_hash"),
+  // OTLP-compatible span tree for the run: root → step → tool_dispatch →
+  // wire call (connector HTTP / MCP / LLM), with parent/child ids + timings.
+  // Lets any run be audited down to the wire.
+  spansJson: jsonb("spans_json"),
   auditEventId: varchar("audit_event_id"),
   softPolicyViolations: jsonb("soft_policy_violations"),
   triggeredBy: text("triggered_by").default("manual"),
@@ -305,6 +341,12 @@ export const auditEvents = pgTable("audit_events", {
   sequenceNum: integer("sequence_num"),
   previousHash: text("previous_hash"),
   eventHash: text("event_hash"),
+  // Ed25519 signature over the canonical payload (prevHash + action + actor +
+  // object + details + seq + timestamp + org). Makes the chain tamper-RESISTANT:
+  // forging history requires the signing key, not just the (public) hash algo.
+  // signerKeyId identifies which key signed, so keys can rotate.
+  signature: text("signature"),
+  signerKeyId: text("signer_key_id"),
   complianceFrameworks: jsonb("compliance_frameworks"),
   retentionPolicy: jsonb("retention_policy"),
   correlationId: varchar("correlation_id"),
@@ -313,6 +355,48 @@ export const auditEvents = pgTable("audit_events", {
   ontologyTags: jsonb("ontology_tags"),
   createdAt: timestamp("created_at").defaultNow(),
 });
+
+// Persisted cryptographic keys. In PRODUCTION the audit signing private key
+// comes from AUDIT_SIGNING_PRIVATE_KEY (env / KMS) and is never stored here;
+// this table only holds the auto-generated DEV keypair so signatures survive
+// restarts in demo/local mode.
+export const cryptoKeys = pgTable("crypto_keys", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  purpose: text("purpose").notNull(),
+  keyId: text("key_id").notNull(),
+  privateKeyPem: text("private_key_pem").notNull(),
+  publicKeyPem: text("public_key_pem").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+export type CryptoKey = typeof cryptoKeys.$inferSelect;
+
+// Agent Workspace — a resumable, human-in-the-loop agent run. Unlike a fire-
+// and-forget trace, a workspace run can SUSPEND at an approval gate (status
+// = awaiting_approval), persist its full conversation state in `checkpoint`,
+// and RESUME when a human responds. Every tool call still flows through the
+// shared governed dispatcher.
+export const workspaceRuns = pgTable("workspace_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id"),
+  agentId: varchar("agent_id").notNull(),
+  // running | awaiting_approval | completed | denied | failed
+  status: text("status").notNull().default("running"),
+  requestText: text("request_text").notNull(),
+  actorId: varchar("actor_id"),
+  // Serialized loop state: { messages, iterationsUsed, pendingToolIndex, steps, tokens, costUsd, mcpServerIds, industry, skillAllowlist }
+  checkpoint: jsonb("checkpoint"),
+  pendingApprovalId: varchar("pending_approval_id"),
+  // Human-readable "the agent wants to <tool> with <args>" for the approval card.
+  pendingSummary: text("pending_summary"),
+  outputSummary: text("output_summary"),
+  costUsd: real("cost_usd").default(0),
+  traceId: varchar("trace_id"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+export const insertWorkspaceRunSchema = createInsertSchema(workspaceRuns).omit({ id: true, createdAt: true, updatedAt: true }).extend({ organizationId: z.string().optional() });
+export type InsertWorkspaceRun = z.infer<typeof insertWorkspaceRunSchema>;
+export type WorkspaceRun = typeof workspaceRuns.$inferSelect;
 
 export const insertAuditEventSchema = createInsertSchema(auditEvents).omit({ id: true, createdAt: true }).extend({ organizationId: z.string().optional() });
 export type InsertAuditEvent = z.infer<typeof insertAuditEventSchema>;
@@ -823,6 +907,12 @@ export const runSteps = pgTable("run_steps", {
   durationMs: integer("duration_ms").default(0),
   tokenUsage: jsonb("token_usage"),
   error: text("error"),
+  // Dispatch error taxonomy for tool steps: success | deduplicated |
+  // gate_blocked_policy | gate_blocked_skill | gate_blocked_aar |
+  // gate_requires_approval | rate_limited | shadow_skipped | tool_error.
+  // Makes every run auditable: a gate refusal is distinguishable from a tool
+  // crash from a dedup — never conflated under generic "failed".
+  outcome: text("outcome"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -1054,6 +1144,13 @@ export const teamBlueprintNodes = pgTable("team_blueprint_nodes", {
   retryPolicy: jsonb("retry_policy"),
   refTeamAgentId: varchar("ref_team_agent_id"),
   outputContractId: varchar("output_contract_id"),
+  // Unified visual canvas: a "skill" node references a Skill (skills.id) instead of
+  // an agent. At execution time (server/dag-execution-engine.ts) its markdown content
+  // is merged into shared DAG state under the node's stateKey, so any downstream agent
+  // node picks it up automatically via buildAgentInput's state dump — the same content-
+  // injection mechanism agents.preloadedSkills already uses, just scoped to the nodes
+  // that come after it in the graph instead of the whole agent.
+  refSkillId: varchar("ref_skill_id"),
 });
 
 export const insertTeamBlueprintNodeSchema = createInsertSchema(teamBlueprintNodes).omit({ id: true, createdAt: true });
@@ -2184,6 +2281,13 @@ export const knowledgeSources = pgTable("knowledge_sources", {
   lastFreshnessCheckAt: timestamp("last_freshness_check_at"),
   retrievalCount: integer("retrieval_count").default(0),
   lastRetrievedAt: timestamp("last_retrieved_at"),
+  // Permissions-aware retrieval: same 4-tier scale as mcpServerResources.sensitivityLevel,
+  // for consistency across the platform's two "resource" concepts. Populated from
+  // performSensitivityScan's PHI/PCI/PII/FINANCIAL_RESTRICTED detections at ingestion
+  // (server/kb-routes.ts) — previously that scan only logged transient audit warnings
+  // and never persisted a queryable classification. Filtered against the caller's role
+  // in searchKnowledgeBaseChunks (server/embeddings.ts) via canAccessKbSensitivity.
+  sensitivityLevel: text("sensitivity_level").default("public"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

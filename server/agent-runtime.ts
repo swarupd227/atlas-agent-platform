@@ -2,13 +2,15 @@ import { storage } from "./storage";
 import { db } from "./db";
 import { EventEmitter } from "events";
 import OpenAI from "openai";
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { sql } from "drizzle-orm";
 import { searchKnowledgeBaseChunks, generateEmbeddings, isPgvectorAvailable } from "./embeddings";
-import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
+import { canAccessKbSensitivity, type RoleId } from "./permissions";
+import { getProvider, completeWithFallback, streamCompleteWithFallback, buildCanonicalTools, PRICE_TABLE_VERSION, type LLMMessage, type LLMProvider, type CanonicalToolCall } from "./llm-provider";
 import { outputContractEnforcer, StructuredOutputValidationError } from "./services/output-contract-enforcer";
-import { isRealMcpServer, mcpListTools, mcpCallTool as mcpSdkCallTool } from "./mcp-client";
 import { resolvePolicyBundle } from "./routes/helpers";
+import { dispatchToolCall, gatherAvailableTools, type AvailableTool } from "./tool-dispatcher";
+import { RunSpanCollector } from "./run-spans";
 
 export function canonicalJsonStringify(obj: any): string {
   if (obj === null || obj === undefined) return JSON.stringify(obj);
@@ -105,6 +107,9 @@ export interface RuntimeAgent {
   maxToolIterations?: number;
   orgId?: string | null;
   triggeredBy?: string;
+  costCapUsd?: number | null;
+  rateLimitPerHour?: number | null;
+  timeoutSeconds?: number | null;
 }
 
 export interface ContextSectionMetric {
@@ -614,65 +619,6 @@ async function buildRuntimeContext(agent: RuntimeAgent): Promise<BuildRuntimeCon
 
 const activeAgents = new Map<string, { agent: RuntimeAgent }>();
 
-interface AvailableTool {
-  serverId: string;
-  serverName: string;
-  serverUrl: string;
-  toolName: string;
-  toolDescription: string;
-  toolInputSchema: any;
-  toolEndpoint?: string;
-  toolMethod?: string;
-  isRealMcp?: boolean;
-}
-
-async function gatherAvailableTools(mcpServerIds: string[]): Promise<AvailableTool[]> {
-  const availableTools: AvailableTool[] = [];
-  for (const serverId of mcpServerIds) {
-    const server = await storage.getMcpServer(serverId);
-    if (!server || !server.url) continue;
-
-    const realServer = isRealMcpServer(server);
-
-    if (realServer) {
-      try {
-        const liveDefs = await mcpListTools(server);
-        for (const def of liveDefs) {
-          availableTools.push({
-            serverId,
-            serverName: server.name,
-            serverUrl: server.url,
-            toolName: def.name,
-            toolDescription: def.description,
-            toolInputSchema: def.inputSchema,
-            isRealMcp: true,
-          });
-        }
-        continue;
-      } catch (err: any) {
-        console.warn(`[gatherAvailableTools] Live tools/list failed for ${server.name}, falling back to DB cache: ${err.message}`);
-      }
-    }
-
-    const tools = await storage.getMcpServerTools(serverId);
-    for (const tool of tools) {
-      const ann = (tool.annotations && typeof tool.annotations === "object") ? tool.annotations as Record<string, any> : {};
-      availableTools.push({
-        serverId,
-        serverName: server.name,
-        serverUrl: server.url,
-        toolName: tool.name,
-        toolDescription: tool.description || "",
-        toolInputSchema: tool.inputSchema || {},
-        toolEndpoint: ann.endpoint || undefined,
-        toolMethod: ann.method || undefined,
-        isRealMcp: realServer,
-      });
-    }
-  }
-  return availableTools;
-}
-
 function buildOpenAITools(availableTools: AvailableTool[]): OpenAI.ChatCompletionTool[] {
   return availableTools.map((t, idx) => ({
     type: "function" as const,
@@ -684,135 +630,6 @@ function buildOpenAITools(availableTools: AvailableTool[]): OpenAI.ChatCompletio
         : { type: "object", properties: {}, additionalProperties: true },
     },
   }));
-}
-
-async function evaluateActionPolicy(
-  agentId: string,
-  toolName: string,
-  serverId: string | undefined,
-): Promise<{ decision: string; reason: string; approvalId?: string }> {
-  const agent = await storage.getAgent(agentId);
-  const aarConfig = await storage.getAarConfig(agentId);
-
-  const riskLevel: string = agent?.riskTier ?? "MEDIUM";
-  const autonomyMode: string = agent?.autonomyMode ?? "supervised";
-
-  const allowedTools: string[] = (aarConfig?.allowedTools as string[] | null) ?? [];
-  const deniedTools: string[] = (aarConfig?.deniedTools as string[] | null) ?? [];
-  const requireApprovalTools: string[] = (aarConfig?.requireApprovalTools as string[] | null) ?? [];
-
-  const policiesEvaluated = ["constraint-list-policy", "autonomy-policy"];
-  const rulesTriggered: string[] = [];
-
-  let decision = "ALLOW";
-  let reason = "Action passed all constraint checks";
-  let approvalId: string | undefined;
-
-  if (deniedTools.length > 0 && deniedTools.includes(toolName)) {
-    rulesTriggered.push("denied-tool-list");
-    decision = "BLOCK";
-    reason = `Tool '${toolName}' is in the denied tools list`;
-  } else if (allowedTools.length > 0 && !allowedTools.includes(toolName)) {
-    rulesTriggered.push("not-in-allowed-list");
-    decision = "BLOCK";
-    reason = `Tool '${toolName}' is not in the allowed tools list`;
-  } else if (requireApprovalTools.length > 0 && requireApprovalTools.includes(toolName)) {
-    rulesTriggered.push("require-approval-tool-list");
-    decision = "REQUIRE_APPROVAL";
-    reason = `Tool '${toolName}' requires explicit approval before invocation`;
-  } else if ((riskLevel === "high" || riskLevel === "HIGH") && autonomyMode === "supervised") {
-    rulesTriggered.push("high-risk-supervised-alert");
-    decision = "ALERT_AND_ALLOW";
-    reason = `Tool '${toolName}' invocation logged — agent is high-risk in supervised mode`;
-  }
-
-  if (decision === "REQUIRE_APPROVAL" && agent) {
-    const approval = await storage.createApproval({
-      organizationId: agent.organizationId ?? null,
-      type: "tool-invocation",
-      objectType: "mcp-tool",
-      objectId: serverId ?? agentId,
-      objectName: toolName,
-      riskScore: 0.7,
-      status: "pending",
-      requestedBy: agentId,
-      requesterType: "agent",
-      description: `AAR policy gate: agent '${agent.name}' requires approval to call tool '${toolName}'`,
-    });
-    approvalId = approval.id;
-  }
-
-  // Persist the decision (best-effort — do not let persistence failure block policy enforcement)
-  try {
-    await storage.createAarActionDecision({
-      agentId,
-      orgId: agent?.organizationId ?? null,
-      toolName,
-      serverId: serverId ?? null,
-      decision,
-      reason,
-      policiesEvaluated,
-      rulesTriggered,
-      riskLevel,
-      approvalId: approvalId ?? null,
-      evaluationTimeUs: 0,
-    });
-  } catch (persistErr: any) {
-    console.error(`[AAR] evaluateActionPolicy: failed to persist decision (non-fatal): ${persistErr.message}`);
-  }
-
-  if (decision === "ALERT_AND_ALLOW") {
-    console.warn(`[AAR] ALERT_AND_ALLOW: agent=${agentId} tool=${toolName} reason=${reason}`);
-  }
-
-  return { decision, reason, approvalId };
-}
-
-async function callMcpTool(tool: AvailableTool, args: Record<string, any>): Promise<any> {
-  if (tool.isRealMcp) {
-    const server = await storage.getMcpServer(tool.serverId);
-    if (server) {
-      return mcpSdkCallTool(server, tool.toolName, args);
-    }
-  }
-
-  const baseUrl = tool.serverUrl.replace(/\/$/, "");
-  let endpointPath = tool.toolEndpoint ? `/${tool.toolEndpoint.replace(/^\//, "")}` : "";
-  const method = (tool.toolMethod || "GET").toUpperCase();
-
-  const remainingArgs = { ...args };
-  const missingPathParams: string[] = [];
-  endpointPath = endpointPath.replace(/\{(\w+)\}/g, (_match, paramName) => {
-    const val = remainingArgs[paramName];
-    if (val == null) {
-      missingPathParams.push(paramName);
-      return paramName;
-    }
-    delete remainingArgs[paramName];
-    return String(val);
-  });
-  if (missingPathParams.length > 0) {
-    throw new Error(`MCP tool ${tool.toolName} missing required path params: ${missingPathParams.join(", ")}`);
-  }
-
-  let fetchUrl = `${baseUrl}${endpointPath}`;
-  const fetchOpts: RequestInit = { method };
-
-  if (method === "POST" || method === "PUT" || method === "PATCH") {
-    fetchOpts.headers = { "Content-Type": "application/json" };
-    fetchOpts.body = JSON.stringify(remainingArgs);
-  } else {
-    const qs = new URLSearchParams(
-      Object.fromEntries(Object.entries(remainingArgs).map(([k, v]) => [k, String(v)]))
-    ).toString();
-    if (qs) fetchUrl += `?${qs}`;
-  }
-
-  const res = await fetch(fetchUrl, fetchOpts);
-  if (!res.ok) throw new Error(`MCP API ${tool.serverName}/${tool.toolName} returned ${res.status}`);
-  const contentType = res.headers.get("content-type") || "";
-  if (contentType.includes("application/json")) return res.json();
-  return { status: res.status, message: await res.text() };
 }
 
 export interface OntologyComplianceResult {
@@ -1141,10 +958,18 @@ export async function executePromptWithMcp(
   options?: { conversational?: boolean; ontologyLabels?: string[]; runtimeConfig?: Record<string, any>; modelProvider?: string; modelName?: string; maxToolIterations?: number },
   onProgress?: (event: RuntimeProgressEvent) => void,
   orgId?: string | null,
-): Promise<{ steps: any[]; success: boolean; summary: any; promptInputs?: any; provenanceSnapshot?: any; provenanceHash?: string; retrievedDocs?: any; conversationalResponse?: string; contextSectionMetrics?: ContextSectionMetric[]; softPolicyViolations?: SoftPolicyComplianceResult[]; hardViolations?: Array<{ toolName: string; reason: string; policyIds: string[]; enforcementMode: string; iteration: number; blockedAt: string }> }> {
+  callerRole?: RoleId | null,
+): Promise<{ steps: any[]; success: boolean; summary: any; spans?: { traceId: string; spans: any[] }; promptInputs?: any; provenanceSnapshot?: any; provenanceHash?: string; retrievedDocs?: any; conversationalResponse?: string; contextSectionMetrics?: ContextSectionMetric[]; softPolicyViolations?: SoftPolicyComplianceResult[]; hardViolations?: Array<{ toolName: string; reason: string; policyIds: string[]; enforcementMode: string; iteration: number; blockedAt: string }> }> {
   const startTime = Date.now();
   const steps: any[] = [];
   const promptSectionMetrics: ContextSectionMetric[] = [];
+  // One scope per run: identical side-effectful tool calls within this run are
+  // deduplicated by the dispatcher (retry cannot double-post).
+  const idempotencyScope = `run-${randomUUID()}`;
+  // Span tree — run → step → tool_dispatch → wire. Returned to callers so the
+  // trace writer can persist it (spans_json) for wire-level auditability.
+  const runSpans = new RunSpanCollector();
+  runSpans.start(`run ${agentId}`, "run", null, { agentId, "engine": "executePromptWithMcp" });
 
   const emitProgress = (type: RuntimeProgressEvent["type"], data: Record<string, any>) => {
     if (onProgress) {
@@ -1194,6 +1019,57 @@ export async function executePromptWithMcp(
       summary: { totalSteps: 1, passedSteps: 0, failedSteps: 1, error: errMsg },
       hardViolations: [],
     };
+  }
+
+  // ── Skill gate ──────────────────────────────────────────────────────────────
+  // Skills GRANT tool capabilities: when the agent has preloaded skills that
+  // explicitly declare allowedTools, the union of those tools is enforced as an
+  // additional allowlist. Previously allowedTools was advisory prompt text only.
+  // Also records skill attribution on the trace and bumps activation telemetry.
+  let dispatchSkillAllowlist: Set<string> | null = null;
+  try {
+    const agentRec = await storage.getAgent(agentId);
+    const rawPre = (agentRec as any)?.preloadedSkills;
+    const skillIds: string[] = Array.isArray(rawPre)
+      ? rawPre.map((p: any) => p?.skillId).filter(Boolean)
+      : [];
+    if (skillIds.length > 0) {
+      const activeSkills = (await storage.getSkillsByIds(skillIds)).filter(s => s.status === "active");
+      const skillAllow = new Set<string>();
+      let allowDeclared = false;
+      for (const s of activeSkills) {
+        const at = (s.allowedTools as string[] | null) || [];
+        if (at.length > 0) { allowDeclared = true; at.forEach(t => skillAllow.add(t.toLowerCase())); }
+      }
+      const beforeSkillGate = availableTools.length;
+      if (allowDeclared) {
+        availableTools = availableTools.filter(t => skillAllow.has(t.toolName.toLowerCase()));
+        dispatchSkillAllowlist = skillAllow;
+        console.log(`[skill-gate] Agent ${agentId}: ${activeSkills.length} active skill(s) enforce allowedTools — ${beforeSkillGate - availableTools.length} tool(s) filtered, ${availableTools.length} remain`);
+      }
+      steps.push({
+        id: `step_${steps.length + 1}`,
+        name: "Resolve Agent Skills",
+        type: "skill_resolution",
+        status: "completed",
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        output: {
+          skillIds: activeSkills.map(s => s.id),
+          skillNames: activeSkills.map(s => s.name),
+          allowedToolsEnforced: allowDeclared,
+          toolsFiltered: allowDeclared ? beforeSkillGate - availableTools.length : 0,
+        },
+      });
+      // Activation telemetry — fire-and-forget; counter races are acceptable.
+      for (const s of activeSkills) {
+        storage.updateSkill(s.id, { activationCount: (s.activationCount ?? 0) + 1 } as any).catch(() => {});
+      }
+    }
+  } catch (sgErr: any) {
+    // Skills grant capability; failure to resolve them degrades to the policy-
+    // gated tool set rather than aborting the run.
+    console.warn(`[skill-gate] skill enforcement skipped (non-fatal): ${sgErr.message}`);
   }
 
   if (availableTools.length === 0 && !hasKnowledgeBases) {
@@ -1263,7 +1139,7 @@ export async function executePromptWithMcp(
           const linkConfig = (link.retrievalConfig as any) || {};
           const topK = Math.max(3, Math.floor(effectiveKbBudget / AVG_CHUNK_TOKENS));
           const scoreThreshold = typeof linkConfig.scoreThreshold === "number" ? linkConfig.scoreThreshold : 0.3;
-          const chunks = await searchKnowledgeBaseChunks(link.knowledgeBaseId, augmentedQuery, topK, scoreThreshold);
+          const chunks = await searchKnowledgeBaseChunks(link.knowledgeBaseId, augmentedQuery, topK, scoreThreshold, callerRole);
           if (chunks.length > 0) {
             kbChunks.push(`--- Knowledge Base: ${link.knowledgeBaseId} ---\n${chunks.map((c: any) => c.content).join("\n\n")}`);
             kbRetrievals.push({
@@ -1279,7 +1155,18 @@ export async function executePromptWithMcp(
             });
           }
         } catch {
-          const fallbackChunks = await storage.getKnowledgeChunks(link.knowledgeBaseId);
+          // This is a second-level fallback (searchKnowledgeBaseChunks already
+          // has its own internal !pgvector fallback and only throws on a
+          // genuine error, e.g. the embeddings API being down) — it calls
+          // storage directly rather than through the permission-aware search,
+          // so it must apply the same sensitivity filter itself or it would
+          // silently bypass permissions-aware retrieval on error paths.
+          const [rawFallbackChunks, kbSources] = await Promise.all([
+            storage.getKnowledgeChunks(link.knowledgeBaseId),
+            storage.getKnowledgeSources(link.knowledgeBaseId),
+          ]);
+          const sourceSensitivity = new Map(kbSources.map(s => [s.id, s.sensitivityLevel]));
+          const fallbackChunks = rawFallbackChunks.filter(c => canAccessKbSensitivity(callerRole, sourceSensitivity.get(c.sourceId)));
           if (fallbackChunks.length > 0) {
             const fallbackTopK = Math.max(3, Math.floor(effectiveKbBudget / AVG_CHUNK_TOKENS));
             const selectedFallback = fallbackChunks.slice(0, fallbackTopK);
@@ -1653,113 +1540,66 @@ After receiving tool results, provide a structured analysis with key findings, s
         }
 
         try {
-          // Policy bundle gate: enforcement-mode-aware blocklist / allowlist from resolvePolicyBundle
-          // strict/block enforcement → hard block (dispatch prevented, hard_violation audit event logged)
-          // monitor enforcement → log-only (dispatch proceeds, soft violation recorded)
-          if (policyBundle) {
-            const toolNameLower = matchedTool.toolName.toLowerCase();
-            // Hard block: strict/block-mode policies only
-            const isHardBlocked = policyBundle.blockedTools.some(b => b.toLowerCase() === toolNameLower);
-            const allowlistActive = policyBundle.toolAllowlist.length > 0;
-            const isAllowed = !allowlistActive || policyBundle.toolAllowlist.some(a => a.toLowerCase() === toolNameLower);
-            if (isHardBlocked || (!isAllowed && allowlistActive)) {
-              const blockReason = isHardBlocked
-                ? `Tool "${matchedTool.toolName}" is blocked by a strict/block-enforcement policy`
-                : `Tool "${matchedTool.toolName}" is not in the policy tool allowlist (strict enforcement)`;
-              const lastStep = steps[steps.length - 1];
-              lastStep.status = "failed";
-              lastStep.error = `[POLICY-GATE] BLOCK: ${blockReason}`;
-              lastStep.completedAt = new Date().toISOString();
-              toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: null, error: `[POLICY-GATE] BLOCK: ${blockReason}` });
-              emitProgress("tool_call_result", { tool: matchedTool.toolName, server: matchedTool.serverName, success: false, error: `[POLICY-GATE] BLOCK: ${blockReason}`, iteration: iterationsUsed });
+          // Single gated dispatch path — policy bundle, AAR, skill allowlist,
+          // rate limit, and execution all live in tool-dispatcher.ts. Audit
+          // events for gate decisions are emitted by the dispatcher.
+          const dispatchStepSpanId = runSpans.start(`step ${matchedTool.toolName}`, "step", runSpans.rootId, { "tool.name": matchedTool.toolName });
+          const dispatch = await dispatchToolCall({
+            agentId,
+            orgId,
+            tool: matchedTool,
+            args,
+            policyBundle,
+            skillAllowlist: dispatchSkillAllowlist,
+            deploymentId,
+            iteration: iterationsUsed,
+            idempotencyScope,
+            spanCollector: runSpans,
+            parentSpanId: dispatchStepSpanId,
+          });
+          runSpans.end(dispatchStepSpanId, dispatch.ok ? "ok" : "error", { "dispatch.outcome": dispatch.outcome });
+
+          if (dispatch.ok) {
+            // success, or deduplicated (identical side-effectful call already
+            // succeeded in this run — cached result reused, not re-executed).
+            const lastStep = steps[steps.length - 1];
+            lastStep.status = "completed";
+            lastStep.completedAt = new Date().toISOString();
+            lastStep.outcome = dispatch.outcome;
+            lastStep.output = { source: "mcp_integration", mcpServer: matchedTool.serverName, mcpTool: matchedTool.toolName, data: dispatch.result, ...(dispatch.deduplicated ? { deduplicated: true } : {}) };
+            lastStep.latencyMs = dispatch.durationMs;
+            lastStep.executionMs = dispatch.executionMs;
+            toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: dispatch.result });
+            emitProgress("tool_call_result", { tool: matchedTool.toolName, server: matchedTool.serverName, success: true, result: dispatch.result, iteration: iterationsUsed });
+          } else {
+            const label =
+              dispatch.outcome === "gate_blocked_policy" ? `[POLICY-GATE] BLOCK: ${dispatch.reason}` :
+              dispatch.outcome === "gate_blocked_skill" ? `[SKILL-GATE] BLOCK: ${dispatch.reason}` :
+              dispatch.outcome === "gate_blocked_aar" ? `[AAR] BLOCK: ${dispatch.reason}` :
+              dispatch.outcome === "gate_requires_approval" ? `[AAR] REQUIRE_APPROVAL: ${dispatch.reason} (approval_id: ${dispatch.approvalId ?? "n/a"})` :
+              dispatch.outcome === "rate_limited" ? `[RATE-LIMIT] ${dispatch.reason}` :
+              dispatch.error ?? "Tool dispatch failed";
+            const lastStep = steps[steps.length - 1];
+            lastStep.status = "failed";
+            lastStep.error = label;
+            lastStep.outcome = dispatch.outcome;
+            lastStep.completedAt = new Date().toISOString();
+            const resultError = dispatch.outcome === "gate_requires_approval" ? `[AAR] REQUIRE_APPROVAL: pending approval` : label;
+            toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: null, error: resultError });
+            emitProgress("tool_call_result", { tool: matchedTool.toolName, server: matchedTool.serverName, success: false, error: label, approvalId: dispatch.approvalId, iteration: iterationsUsed });
+
+            if (dispatch.outcome === "gate_blocked_policy") {
               // Collect violation for trace-level policyChecks.violations persistence.
-              // Use blockedToolsToPolicyIds for precise causative-policy attribution:
-              // only the specific policies that declared this tool blocked are recorded,
-              // not all strict/block policies in the bundle.
-              const causativePolicyIds =
-                policyBundle.blockedToolsToPolicyIds?.[toolNameLower] ??
-                policyBundle.appliedPolicies
-                  .filter(p => p.enforcement === "strict" || p.enforcement === "block")
-                  .map(p => p.id);
               runtimeHardViolations.push({
                 toolName: matchedTool.toolName,
-                reason: blockReason,
-                policyIds: causativePolicyIds,
+                reason: dispatch.reason ?? "Blocked by policy",
+                policyIds: dispatch.policyIds ?? [],
                 enforcementMode: "strict/block",
                 iteration: iterationsUsed,
                 blockedAt: new Date().toISOString(),
               });
-              // Log hard violation audit event for deterministic blocks
-              storage.createAuditEvent({
-                actorType: "system",
-                actorId: "policy-gate",
-                action: "hard_violation",
-                objectType: "agent",
-                objectId: agentId,
-                details: JSON.stringify({
-                  blockReason,
-                  toolName: matchedTool.toolName,
-                  serverName: matchedTool.serverName,
-                  enforcementMode: "strict/block",
-                  policyCount: policyBundle.appliedPolicies.length,
-                  appliedPolicies: policyBundle.appliedPolicies.map(p => ({ id: p.id, name: p.name, version: p.version, enforcement: p.enforcement })),
-                  iteration: iterationsUsed,
-                  deploymentId,
-                }),
-              }).catch(() => {});
-              continue;
-            }
-            // Monitor block: log violation but allow dispatch to proceed
-            const isMonitorBlocked = policyBundle.monitorBlockedTools?.some(b => b.toLowerCase() === toolNameLower);
-            if (isMonitorBlocked) {
-              const monitorReason = `Tool "${matchedTool.toolName}" is flagged by a monitor-mode policy (dispatch allowed)`;
-              storage.createAuditEvent({
-                actorType: "system",
-                actorId: "policy-gate",
-                action: "policy_violation",
-                objectType: "agent",
-                objectId: agentId,
-                details: JSON.stringify({
-                  blockReason: monitorReason,
-                  toolName: matchedTool.toolName,
-                  serverName: matchedTool.serverName,
-                  enforcementMode: "monitor",
-                  iteration: iterationsUsed,
-                  deploymentId,
-                }),
-              }).catch(() => {});
-              // Dispatch still proceeds — fall through
             }
           }
-
-          // AAR policy gate
-          const policyResult = await evaluateActionPolicy(agentId, matchedTool.toolName, matchedTool.serverId);
-          if (policyResult.decision === "BLOCK") {
-            const lastStep = steps[steps.length - 1];
-            lastStep.status = "failed";
-            lastStep.error = `[AAR] BLOCK: ${policyResult.reason}`;
-            lastStep.completedAt = new Date().toISOString();
-            toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: null, error: `[AAR] BLOCK: ${policyResult.reason}` });
-            emitProgress("tool_call_result", { tool: matchedTool.toolName, server: matchedTool.serverName, success: false, error: `[AAR] BLOCK: ${policyResult.reason}`, iteration: iterationsUsed });
-            continue;
-          }
-          if (policyResult.decision === "REQUIRE_APPROVAL") {
-            const lastStep = steps[steps.length - 1];
-            lastStep.status = "failed";
-            lastStep.error = `[AAR] REQUIRE_APPROVAL: ${policyResult.reason} (approval_id: ${policyResult.approvalId ?? "n/a"})`;
-            lastStep.completedAt = new Date().toISOString();
-            toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result: null, error: `[AAR] REQUIRE_APPROVAL: pending approval` });
-            emitProgress("tool_call_result", { tool: matchedTool.toolName, server: matchedTool.serverName, success: false, error: `[AAR] REQUIRE_APPROVAL`, approvalId: policyResult.approvalId, iteration: iterationsUsed });
-            continue;
-          }
-
-          const result = await callMcpTool(matchedTool, args);
-          const lastStep = steps[steps.length - 1];
-          lastStep.status = "completed";
-          lastStep.completedAt = new Date().toISOString();
-          lastStep.output = { source: "mcp_integration", mcpServer: matchedTool.serverName, mcpTool: matchedTool.toolName, data: result };
-          toolCallResults.push({ toolName: matchedTool.toolName, serverName: matchedTool.serverName, args, result });
-          emitProgress("tool_call_result", { tool: matchedTool.toolName, server: matchedTool.serverName, success: true, result, iteration: iterationsUsed });
         } catch (err: any) {
           const lastStep = steps[steps.length - 1];
           lastStep.status = "failed";
@@ -2388,9 +2228,12 @@ After receiving tool results, provide a structured analysis with key findings, s
     .update(canonicalJsonStringify(provenanceSnapshot))
     .digest("hex");
 
+  if (runSpans.rootId) runSpans.end(runSpans.rootId, failedSteps.length === 0 ? "ok" : "error", { "run.failed_steps": failedSteps.length });
+
   return {
     steps,
     success: failedSteps.length === 0,
+    spans: runSpans.toJSON(),
     summary: {
       totalSteps: steps.length,
       passedSteps: steps.filter(s => s.status === "completed").length,
@@ -2446,7 +2289,63 @@ After receiving tool results, provide a structured analysis with key findings, s
 interface ExecutionTier {
   tierIndex: number;
   agents: Array<{ agentId: string; nodeId?: string; agentName?: string }>;
-  gates: Array<{ nodeId: string; label: string; gateType?: string }>;
+  gates: Array<{ nodeId: string; label: string; gateType?: string; timeoutMs?: number; failureMode?: string }>;
+}
+
+// ── HITL gate: create approval record in DB and poll until resolved or timeout ─
+async function waitForApproval(
+  agentId: string,
+  gateName: string,
+  gateType: string,
+  context: string,
+  timeoutMs: number = 30 * 60 * 1000,
+): Promise<{ approved: boolean; decidedBy?: string; reason?: string }> {
+  const approval = await storage.createApproval({
+    type: "hitl_gate",
+    objectType: "pipeline_gate",
+    objectName: gateName,
+    status: "pending",
+    requestedBy: agentId,
+    requesterType: "agent",
+    agentId,
+    description: `Pipeline HITL checkpoint: ${gateName}\n\nContext:\n${context.slice(0, 2000)}`,
+    riskScore: gateType === "approval" ? 0.7 : 0.4,
+  });
+
+  console.log(`[agent-runtime] HITL gate "${gateName}" waiting for approval (id=${approval.id}, timeout=${Math.round(timeoutMs / 60000)}min)`);
+
+  const pollInterval = 10_000;
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, pollInterval));
+    const updated = await storage.getApproval(approval.id);
+    if (!updated) break;
+    if (updated.status === "approved") {
+      console.log(`[agent-runtime] HITL gate "${gateName}" approved by ${updated.decidedBy}`);
+      return { approved: true, decidedBy: updated.decidedBy || "human", reason: "Approved" };
+    }
+    if (updated.status === "rejected") {
+      console.log(`[agent-runtime] HITL gate "${gateName}" rejected by ${updated.decidedBy}`);
+      return { approved: false, decidedBy: updated.decidedBy || "human", reason: updated.description || "Rejected" };
+    }
+  }
+  await storage.updateApproval(approval.id, { status: "expired" } as any);
+  console.log(`[agent-runtime] HITL gate "${gateName}" timed out`);
+  return { approved: false, reason: `Gate timed out after ${Math.round(timeoutMs / 60000)} minutes` };
+}
+
+// ── Conditional edge: use LLM to evaluate condition string against worker output
+async function evaluateCondition(condition: string, workerOutput: string): Promise<boolean> {
+  if (!condition || condition.trim().length === 0) return true;
+  try {
+    const result = await completeWithFallback([{
+      role: "user",
+      content: `You are evaluating a pipeline routing condition.\n\nCondition: "${condition}"\n\nWorker output:\n${workerOutput.slice(0, 3000)}\n\nRespond with ONLY "true" or "false".`,
+    }], { maxTokens: 10 });
+    return (result.content?.trim().toLowerCase() || "").startsWith("true");
+  } catch {
+    return true; // default open: don't silently block on LLM errors
+  }
 }
 
 function computeExecutionTiers(
@@ -2709,6 +2608,8 @@ export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ st
   });
 
   let executionTiers: ExecutionTier[] = [];
+  // Full edge list with conditions — built from blueprint and used for routing
+  let conditionalEdgeMap = new Map<string, Array<{ targetNodeId: string; condition: string | null; label: string | null; failureMode: string | null }>>();
 
   if (blueprintId) {
     try {
@@ -2728,6 +2629,18 @@ export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ st
             targetNodeId: e.targetNodeId,
           })),
         );
+        // Build conditional edge map for runtime routing
+        for (const edge of edges) {
+          if (!conditionalEdgeMap.has(edge.sourceNodeId)) {
+            conditionalEdgeMap.set(edge.sourceNodeId, []);
+          }
+          conditionalEdgeMap.get(edge.sourceNodeId)!.push({
+            targetNodeId: edge.targetNodeId,
+            condition: edge.condition ?? null,
+            label: edge.label ?? null,
+            failureMode: edge.failureMode ?? null,
+          });
+        }
       }
     } catch (err: any) {
       console.log(`[agent-runtime] Could not load blueprint graph: ${err.message}`);
@@ -2816,38 +2729,121 @@ export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ st
   let totalWorkersExecuted = 0;
   let shouldHalt = false;
 
-  for (const tier of executionTiers) {
+  // Track per-tier outputs keyed by nodeId for condition evaluation
+  const tierNodeOutputs = new Map<string, string>();
+
+  for (let tierLoopIdx = 0; tierLoopIdx < executionTiers.length; tierLoopIdx++) {
+    const tier = executionTiers[tierLoopIdx];
     if (shouldHalt) break;
 
+    // ── HITL gates: block pipeline until human approves or timeout ────────────
     for (const gate of tier.gates) {
+      const gateStart = new Date().toISOString();
+      const gateTimeoutMs = gate.timeoutMs || 30 * 60 * 1000;
+      const approvalResult = await waitForApproval(
+        teamAgent.agentId,
+        gate.label || "Approval Gate",
+        gate.gateType || "approval",
+        previousContext,
+        gateTimeoutMs,
+      );
       allSteps.push({
         id: `team_gate_${gate.nodeId}`,
         name: `Approval Gate: ${gate.label}`,
         type: "approval_gate",
-        status: "completed",
-        startedAt: new Date().toISOString(),
+        status: approvalResult.approved ? "completed" : "failed",
+        startedAt: gateStart,
         completedAt: new Date().toISOString(),
-        output: { gateType: gate.gateType || "manual", autoApproved: true, reason: "Runtime auto-approval for pipeline execution" },
+        output: {
+          gateType: gate.gateType || "approval",
+          approved: approvalResult.approved,
+          decidedBy: approvalResult.decidedBy,
+          reason: approvalResult.reason,
+        },
       });
+      if (!approvalResult.approved) {
+        allSuccess = false;
+        shouldHalt = true;
+        allSteps.push({
+          id: `team_gate_halt_${gate.nodeId}`,
+          name: `Pipeline halted: gate "${gate.label}" not approved`,
+          type: "escalation",
+          status: "completed",
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          output: { reason: approvalResult.reason, gate: gate.label },
+        });
+        break;
+      }
+    }
+    if (shouldHalt) break;
+
+    // ── Conditional edge filtering: resolve which agents in this tier should run
+    // based on conditions on edges from the PREVIOUS tier's nodes
+    let activeAgents = tier.agents;
+    if (tierLoopIdx > 0 && conditionalEdgeMap.size > 0 && tierNodeOutputs.size > 0) {
+      const filtered: typeof tier.agents = [];
+      for (const agent of tier.agents) {
+        if (!agent.nodeId) { filtered.push(agent); continue; }
+        // Find all edges from previous-tier nodes pointing to this agent's node
+        const incomingConditional: Array<{ condition: string; output: string }> = [];
+        for (const prevAgent of executionTiers[tierLoopIdx - 1].agents) {
+          if (!prevAgent.nodeId) continue;
+          const outEdges = conditionalEdgeMap.get(prevAgent.nodeId) || [];
+          for (const edge of outEdges) {
+            if (edge.targetNodeId === agent.nodeId && edge.condition) {
+              incomingConditional.push({
+                condition: edge.condition,
+                output: tierNodeOutputs.get(prevAgent.nodeId) || previousContext,
+              });
+            }
+          }
+        }
+        // If no conditional edges point here, always include
+        if (incomingConditional.length === 0) { filtered.push(agent); continue; }
+        // Evaluate each condition — include agent if ANY condition passes
+        const evaluations = await Promise.all(
+          incomingConditional.map(ec => evaluateCondition(ec.condition, ec.output))
+        );
+        const passes = evaluations.some(Boolean);
+        if (passes) {
+          filtered.push(agent);
+        } else {
+          allSteps.push({
+            id: `team_condition_skip_${agent.nodeId}`,
+            name: `Condition: skipped "${agent.agentName || agent.agentId}"`,
+            type: "condition_skip",
+            status: "completed",
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            output: {
+              agentId: agent.agentId,
+              reason: `Conditional edges evaluated false — agent skipped`,
+              conditionsChecked: incomingConditional.map(ec => ec.condition),
+            },
+          });
+        }
+      }
+      activeAgents = filtered;
     }
 
-    if (tier.agents.length === 0) continue;
+    if (activeAgents.length === 0) continue;
 
-    const isParallelTier = tier.agents.length > 1;
+    const isParallelTier = activeAgents.length > 1;
 
     if (isParallelTier) {
       allSteps.push({
         id: `team_tier_${tier.tierIndex}_fork`,
-        name: `Tier ${tier.tierIndex + 1}: Fork (${tier.agents.length} agents in parallel)`,
+        name: `Tier ${tier.tierIndex + 1}: Fork (${activeAgents.length} agents in parallel)`,
         type: "parallel_fork",
         status: "completed",
         startedAt: new Date().toISOString(),
         completedAt: new Date().toISOString(),
-        output: { agentCount: tier.agents.length, tierIndex: tier.tierIndex },
+        output: { agentCount: activeAgents.length, tierIndex: tier.tierIndex },
       });
     }
 
-    const workerPromises = tier.agents.map((agentEntry, idx) =>
+    const workerPromises = activeAgents.map((agentEntry, idx) =>
       executeWorkerAgent(agentEntry.agentId, teamAgent, previousContext, totalWorkersExecuted + idx)
     );
 
@@ -2903,13 +2899,19 @@ export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ st
       );
     }
 
-    for (const result of results) {
+    for (let ri = 0; ri < results.length; ri++) {
+      const result = results[ri];
       result.step.parallel = isParallelTier;
       result.step.tierIndex = tier.tierIndex;
       allSteps.push(result.step);
+      // Store per-node output for conditional edge evaluation in the next tier
+      const nodeId = activeAgents[ri]?.nodeId;
+      if (nodeId && result.output) {
+        tierNodeOutputs.set(nodeId, result.output);
+      }
     }
 
-    totalWorkersExecuted += tier.agents.length;
+    totalWorkersExecuted += activeAgents.length;
 
     const tierFailed = results.some(r => !r.success);
     if (tierFailed) {
@@ -2961,7 +2963,7 @@ export async function executeTeamPipeline(teamAgent: RuntimeAgent): Promise<{ st
 
       allSteps.push({
         id: `team_tier_${tier.tierIndex}_join`,
-        name: `Tier ${tier.tierIndex + 1}: Join (merged ${results.filter(r => r.success).length}/${results.length} outputs)`,
+        name: `Tier ${tier.tierIndex + 1}: Join (merged ${results.filter(r => r.success).length}/${activeAgents.length} outputs)`,
         type: "parallel_join",
         status: "completed",
         startedAt: new Date().toISOString(),
@@ -3028,6 +3030,32 @@ async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: Runti
     return;
   }
 
+  // Rate limit guard: count executions in the last rolling hour
+  const rateLimitPerHour = agent.rateLimitPerHour ?? (agent.runtimeConfig?.rateLimitPerHour as number | undefined);
+  if (rateLimitPerHour && rateLimitPerHour > 0) {
+    const allTraces = await storage.getTracesByAgent(agent.agentId);
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    const recentCount = allTraces.filter(t => t.startedAt && new Date(t.startedAt).getTime() > oneHourAgo).length;
+    if (recentCount >= rateLimitPerHour) {
+      console.warn(`[agent-runtime] ${agent.agentName}: Rate limit reached (${recentCount}/${rateLimitPerHour}/hr). Skipping cycle.`);
+      return;
+    }
+  }
+
+  // Daily cost cap guard: sum trace costs from the last 24h
+  const costCapUsd = agent.costCapUsd ?? (agent.runtimeConfig?.costCapUsd as number | undefined);
+  if (costCapUsd && costCapUsd > 0) {
+    const allTraces = await storage.getTracesByAgent(agent.agentId);
+    const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+    const todayCost = allTraces
+      .filter(t => t.startedAt && new Date(t.startedAt).getTime() > oneDayAgo)
+      .reduce((sum, t) => sum + (t.costUsd || 0), 0);
+    if (todayCost >= costCapUsd) {
+      console.warn(`[agent-runtime] ${agent.agentName}: Daily cost cap reached ($${todayCost.toFixed(4)}/$${costCapUsd}). Skipping cycle.`);
+      return;
+    }
+  }
+
   const isTeam = agent.agentType === "team" && agent.runtimeConfig?.orchestration?.workerIds?.length > 0;
   const contextResult = isTeam ? undefined : await buildRuntimeContext(agent);
   const enrichedContext = contextResult?.context;
@@ -3044,9 +3072,10 @@ async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: Runti
   });
 
   try {
-    const result = isTeam
-      ? await executeTeamPipeline(agent)
-      : await executePromptWithMcp(
+    const timeoutSeconds = agent.timeoutSeconds ?? (agent.runtimeConfig?.timeoutSeconds as number | undefined);
+    const execPromise: Promise<any> = isTeam
+      ? executeTeamPipeline(agent)
+      : executePromptWithMcp(
           agent.agentId,
           agent.deploymentId,
           agent.blueprintId,
@@ -3058,6 +3087,14 @@ async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: Runti
           onProgress,
           agent.orgId ?? undefined,
         );
+    const result = timeoutSeconds && timeoutSeconds > 0
+      ? await Promise.race([
+          execPromise,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error(`Execution timed out after ${timeoutSeconds}s`)), timeoutSeconds * 1000)
+          ),
+        ])
+      : await execPromise;
 
     await storage.updateAgentRuntimeRun(runtimeRun.id, {
       status: result.success ? "completed" : "failed",
@@ -3145,6 +3182,8 @@ async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: Runti
       contextProfileId,
       contextProfileVersion,
       contextBudgets,
+      // Cost figures on this trace were computed under this price table version.
+      priceTableVersion: PRICE_TABLE_VERSION,
       contextLayerUsage: allSectionMetricsForProvenance.map(m => {
         const budgetKey = SECTION_TO_BUDGET_KEY[m.category] ?? m.category;
         const effectiveBudgets = (contextBudgets as Record<string, number> | null);
@@ -3184,6 +3223,7 @@ async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: Runti
       retrievedDocs: (result as any).retrievedDocs || null,
       provenanceSnapshot: fullProvenanceSnapshot,
       provenanceHash: fullProvenanceHash,
+      spansJson: (result as any).spans || null,
       // policyChecks: complete audit record of which policy version governed this run,
       // including any hard violations encountered during dispatch (never left empty when blocks occurred)
       policyChecks: {
@@ -3339,6 +3379,30 @@ async function executeAgentCycle(agent: RuntimeAgent, onProgress?: (event: Runti
       completedAt: new Date(),
     });
     console.error(`[agent-runtime] ${agent.agentName} execution failed:`, err.message);
+
+    // Auto-create incident after 3+ consecutive failures with no open incident already
+    try {
+      const recentTraces = await storage.getTracesByAgent(agent.agentId);
+      const recent = recentTraces.slice(0, 5);
+      const firstSuccessIdx = recent.findIndex(t => t.status === "completed");
+      const failCount = firstSuccessIdx === -1 ? recent.length : firstSuccessIdx;
+      if (failCount >= 3) {
+        const existingIncidents = await storage.getIncidentsByAgent(agent.agentId);
+        const hasOpenIncident = existingIncidents.some(i => i.status === "open" && i.sourceMetric === "consecutive_failures");
+        if (!hasOpenIncident) {
+          await storage.createIncident({
+            agentId: agent.agentId,
+            agentName: agent.agentName,
+            severity: failCount >= 5 ? "high" : "medium",
+            status: "open",
+            sourceMetric: "consecutive_failures",
+            sourceDetails: { failCount, lastError: err.message, deploymentId: agent.deploymentId },
+            deploymentId: agent.deploymentId,
+          });
+          console.warn(`[agent-runtime] ${agent.agentName}: ${failCount} consecutive failures — incident auto-created`);
+        }
+      }
+    } catch (_) {}
   }
 }
 
@@ -3543,6 +3607,9 @@ export async function startAgentRuntime(deploymentId: string, agentSystemPrompt?
     modelName: (agent as any).modelName || "gpt-4.1",
     maxToolIterations: agent.maxToolIterations ?? 5,
     orgId: agent.organizationId ?? null,
+    costCapUsd: rtConfig.costCapUsd ?? null,
+    rateLimitPerHour: rtConfig.rateLimitPerHour ?? null,
+    timeoutSeconds: rtConfig.timeoutSeconds ?? null,
   };
 
   activeAgents.set(deploymentId, { agent: runtimeAgent });
@@ -3698,12 +3765,54 @@ export async function isRuntimeActive(deploymentId: string): Promise<boolean> {
   return job != null;
 }
 
+export async function enforceApprovalSLAs(defaultSlaHours = 24): Promise<void> {
+  try {
+    const allApprovals = await storage.getApprovals();
+    const pending = allApprovals.filter(a => a.status === "pending");
+    const slaMs = defaultSlaHours * 60 * 60 * 1000;
+
+    for (const approval of pending) {
+      const createdMs = approval.createdAt ? new Date(approval.createdAt).getTime() : 0;
+      const age = Date.now() - createdMs;
+      if (age < slaMs) continue;
+      const hoursOverdue = Math.round((age - slaMs) / (60 * 60 * 1000));
+
+      if (hoursOverdue >= defaultSlaHours) {
+        // Double the SLA has passed — auto-expire
+        await storage.updateApproval(approval.id, {
+          status: "expired",
+          description: `${approval.description || ""}\n\n[Auto-expired: SLA of ${defaultSlaHours}h exceeded by ${hoursOverdue}h]`,
+        } as any);
+        console.warn(`[approval-sla] Approval ${approval.id} (${approval.objectName}) auto-expired after ${hoursOverdue}h overdue`);
+      } else {
+        // Past first SLA window — escalate
+        const currentLevel = approval.escalationLevel || 0;
+        await storage.updateApproval(approval.id, { escalationLevel: currentLevel + 1 } as any);
+        await storage.createAuditEvent({
+          actorType: "system",
+          actorId: "approval_sla_enforcer",
+          action: "approval.sla_breach",
+          objectType: "approval",
+          objectId: approval.id,
+          details: JSON.stringify({ approvalType: approval.type, objectName: approval.objectName, hoursOverdue, slaHours: defaultSlaHours, escalationLevel: currentLevel + 1 }),
+        });
+        console.warn(`[approval-sla] Approval ${approval.id} (${approval.objectName}) is ${hoursOverdue}h past SLA — escalated to level ${currentLevel + 1}`);
+      }
+    }
+  } catch (err: any) {
+    console.error(`[approval-sla] SLA enforcement failed:`, err.message);
+  }
+}
+
 export async function autoResumeRuntimes(): Promise<void> {
   try {
     const recovered = await storage.recoverStaleScheduledRuns();
     if (recovered > 0) {
       console.log(`[agent-runtime] Recovered ${recovered} stale scheduled job(s) from prior crash`);
     }
+
+    // Enforce approval SLAs on every startup sweep
+    await enforceApprovalSLAs();
 
     const deployments = await storage.getDeployments();
     const deployed = deployments.filter(d => d.status === "deployed");

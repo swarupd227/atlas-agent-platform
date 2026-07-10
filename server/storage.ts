@@ -2,6 +2,7 @@ import { eq, desc, inArray, and, like, or, sql, isNull, lte, asc, lt } from "dri
 import { createHash } from "crypto";
 import { db } from "./db";
 import { getDefaultOrgId } from "./auth";
+import { buildCanonicalAuditPayload, computeEventHash, signAuditPayload, verifyAuditSignature } from "./audit-signing";
 import {
   integrationConnections,
   type IntegrationConnection, type InsertIntegrationConnection,
@@ -337,7 +338,8 @@ export interface IStorage {
   getComplianceReports(): Promise<ComplianceReport[]>;
   createComplianceReport(report: InsertComplianceReport): Promise<ComplianceReport>;
 
-  verifyAuditChainIntegrity(): Promise<{ valid: boolean; totalEvents: number; verifiedEvents: number; brokenAt?: number }>;
+  verifyAuditChainIntegrity(): Promise<{ valid: boolean; totalEvents: number; verifiedEvents: number; brokenAt?: number; signatureValid?: boolean; signatureBrokenAt?: number; signedEvents?: number; unsignedEvents?: number }>;
+  rebaselineAuditChain(actorId: string, reason?: string): Promise<{ relinked: number; repairedOrgs: number }>;
 
   createAuditChainHealthCheck(record: InsertAuditChainHealthCheck): Promise<AuditChainHealthCheck>;
   getAuditChainHealthChecks(limit: number): Promise<AuditChainHealthCheck[]>;
@@ -1004,6 +1006,21 @@ function resolveOrgId(providedOrgId: string | null | undefined): string {
   throw new Error("organizationId is required");
 }
 
+/**
+ * Read-path tenant guard. A caller that omits orgId must NEVER see every
+ * org's rows by default — that was the cross-tenant leak flagged in the
+ * production security review (a route that forgets to pass orgId, or a demo
+ * client that omits the header, previously got the entire table back). If no
+ * orgId is supplied, fall back to the platform's own default org (the same
+ * tenant every CREATE already resolves to) rather than "all of them". A
+ * `undefined` result only occurs when there is no org model at all (no
+ * default org configured) — in that single-tenant-no-orgs shape there is
+ * nothing to leak across, so returning unfiltered is correct.
+ */
+function resolveOrgIdForRead(orgId?: string | null): string | undefined {
+  return orgId || getDefaultOrgId();
+}
+
 export class DatabaseStorage implements IStorage {
   async getUser(id: string) {
     const [user] = await db.select().from(users).where(eq(users.id, id));
@@ -1022,8 +1039,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getAgents(orgId?: string) {
-    if (orgId) {
-      return db.select().from(agents).where(eq(agents.organizationId, orgId)).orderBy(desc(agents.updatedAt), desc(agents.createdAt));
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    if (scopedOrgId) {
+      return db.select().from(agents).where(eq(agents.organizationId, scopedOrgId)).orderBy(desc(agents.updatedAt), desc(agents.createdAt));
     }
     return db.select().from(agents).orderBy(desc(agents.updatedAt), desc(agents.createdAt));
   }
@@ -1049,8 +1067,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getOutcomes(orgId?: string) {
-    if (orgId) {
-      return db.select().from(outcomeContracts).where(eq(outcomeContracts.organizationId, orgId));
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    if (scopedOrgId) {
+      return db.select().from(outcomeContracts).where(eq(outcomeContracts.organizationId, scopedOrgId));
     }
     return db.select().from(outcomeContracts);
   }
@@ -1115,8 +1134,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getDeployments(orgId?: string) {
-    if (orgId) {
-      return db.select().from(deployments).where(eq(deployments.organizationId, orgId));
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    if (scopedOrgId) {
+      return db.select().from(deployments).where(eq(deployments.organizationId, scopedOrgId));
     }
     return db.select().from(deployments);
   }
@@ -1155,8 +1175,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getTraces(orgId?: string) {
-    if (orgId) {
-      return db.select().from(runTraces).where(eq(runTraces.organizationId, orgId));
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    if (scopedOrgId) {
+      return db.select().from(runTraces).where(eq(runTraces.organizationId, scopedOrgId));
     }
     return db.select().from(runTraces);
   }
@@ -1209,8 +1230,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getPolicies(orgId?: string) {
-    if (orgId) {
-      return db.select().from(policies).where(eq(policies.organizationId, orgId));
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    if (scopedOrgId) {
+      return db.select().from(policies).where(eq(policies.organizationId, scopedOrgId));
     }
     return db.select().from(policies);
   }
@@ -1241,8 +1263,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getApprovals(orgId?: string) {
-    if (orgId) {
-      return db.select().from(approvals).where(eq(approvals.organizationId, orgId));
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    if (scopedOrgId) {
+      return db.select().from(approvals).where(eq(approvals.organizationId, scopedOrgId));
     }
     return db.select().from(approvals);
   }
@@ -1266,49 +1289,68 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getAuditEvents(orgId?: string) {
-    if (orgId) {
-      return db.select().from(auditEvents).where(eq(auditEvents.organizationId, orgId));
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    if (scopedOrgId) {
+      return db.select().from(auditEvents).where(eq(auditEvents.organizationId, scopedOrgId));
     }
     return db.select().from(auditEvents);
   }
 
   async createAuditEvent(event: InsertAuditEvent) {
     const orgId = resolveOrgId(event.organizationId);
-    const [lastEvent] = await db.select({
-      sequenceNum: auditEvents.sequenceNum,
-      eventHash: auditEvents.eventHash,
-    }).from(auditEvents)
-      .where(eq(auditEvents.organizationId, orgId))
-      .orderBy(desc(auditEvents.sequenceNum)).limit(1);
+    // The read-last → compute-hash → insert sequence is not atomic: concurrent
+    // writers minted duplicate sequenceNums (observed in live data), making
+    // the hash-chain order ambiguous. A per-org transaction-scoped advisory
+    // lock serializes writers; it releases automatically on commit/rollback.
+    return db.transaction(async (tx) => {
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${orgId ?? "__no_org__"}))`);
 
-    const prevHash = lastEvent?.eventHash || "GENESIS";
-    const seqNum = (lastEvent?.sequenceNum || 0) + 1;
+      const [lastEvent] = await tx.select({
+        sequenceNum: auditEvents.sequenceNum,
+        eventHash: auditEvents.eventHash,
+      }).from(auditEvents)
+        .where(eq(auditEvents.organizationId, orgId))
+        .orderBy(desc(auditEvents.sequenceNum)).limit(1);
 
-    const canonicalObj: Record<string, unknown> = {
-      action: event.action,
-      actorId: event.actorId,
-      actorType: event.actorType,
-      details: event.details,
-      objectId: event.objectId,
-      objectType: event.objectType,
-      sequenceNum: seqNum,
-    };
-    const canonicalPayload = JSON.stringify(canonicalObj, Object.keys(canonicalObj).sort());
-    const eventHash = createHash("sha256").update(prevHash + canonicalPayload).digest("hex");
+      const prevHash = lastEvent?.eventHash || "GENESIS";
+      const seqNum = (lastEvent?.sequenceNum || 0) + 1;
 
-    const [created] = await db.insert(auditEvents).values({
-      ...event,
-      organizationId: orgId,
-      sequenceNum: seqNum,
-      previousHash: prevHash,
-      eventHash,
-    }).returning();
-    return created;
+      // createdAt is set explicitly (not the DB default) so the signed value
+      // exactly matches the stored value — the timestamp is now integrity-protected.
+      const createdAt = new Date();
+      const canonicalPayload = buildCanonicalAuditPayload({
+        action: event.action,
+        actorId: event.actorId,
+        actorType: event.actorType,
+        details: event.details,
+        objectId: event.objectId,
+        objectType: event.objectType,
+        sequenceNum: seqNum,
+        organizationId: orgId,
+        createdAt: createdAt.toISOString(),
+      });
+      const eventHash = computeEventHash(prevHash, canonicalPayload);
+      // Sign the eventHash (which binds prevHash + every canonical field).
+      const { signature, signerKeyId } = await signAuditPayload(eventHash);
+
+      const [created] = await tx.insert(auditEvents).values({
+        ...event,
+        organizationId: orgId,
+        sequenceNum: seqNum,
+        previousHash: prevHash,
+        eventHash,
+        signature,
+        signerKeyId,
+        createdAt,
+      }).returning();
+      return created;
+    });
   }
 
   async getInvoices(orgId?: string) {
-    if (orgId) {
-      return db.select().from(invoices).where(eq(invoices.organizationId, orgId));
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    if (scopedOrgId) {
+      return db.select().from(invoices).where(eq(invoices.organizationId, scopedOrgId));
     }
     return db.select().from(invoices);
   }
@@ -1336,8 +1378,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getOutcomeEvents(orgId?: string) {
-    if (orgId) {
-      return db.select().from(outcomeEvents).where(eq(outcomeEvents.organizationId, orgId));
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    if (scopedOrgId) {
+      return db.select().from(outcomeEvents).where(eq(outcomeEvents.organizationId, scopedOrgId));
     }
     return db.select().from(outcomeEvents);
   }
@@ -1526,6 +1569,14 @@ export class DatabaseStorage implements IStorage {
     await db.delete(agentTeams).where(
       or(eq(agentTeams.teamAgentId, id), eq(agentTeams.memberAgentId, id))
     );
+    // AAR tables live outside the drizzle schema (created via raw startup
+    // migrations) and hard-reference agents(id) — without this cleanup, any
+    // agent that has ever run cannot be deleted (FK violation → 500).
+    await db.execute(sql`DELETE FROM aar_action_decisions WHERE agent_id = ${id}`);
+    await db.execute(sql`DELETE FROM aar_agent_state_reports WHERE agent_id = ${id}`);
+    await db.execute(sql`DELETE FROM aar_configs WHERE agent_id = ${id}`);
+    // Runbooks reference agents but are user content — detach, don't delete.
+    await db.execute(sql`UPDATE runbooks SET agent_id = NULL WHERE agent_id = ${id}`);
     const [deleted] = await db.delete(agents).where(eq(agents.id, id)).returning();
     return !!deleted;
   }
@@ -1641,26 +1692,134 @@ export class DatabaseStorage implements IStorage {
 
   async verifyAuditChainIntegrity() {
     const events = await db.select().from(auditEvents);
-    const sorted = events
-      .filter(e => e.sequenceNum !== null)
-      .sort((a, b) => (a.sequenceNum || 0) - (b.sequenceNum || 0));
+    const withSeq = events.filter(e => e.sequenceNum !== null);
 
-    if (sorted.length === 0) {
+    if (withSeq.length === 0) {
       return { valid: true, totalEvents: events.length, verifiedEvents: 0 };
+    }
+
+    // The chain is WRITTEN per organization (createAuditEvent links each event
+    // to the last event of the same org) — so it must be VERIFIED per
+    // organization too. The previous implementation verified one globally
+    // interleaved sequence, which reports false breaks whenever more than one
+    // org (or org-less events) exist.
+    const byOrg = new Map<string, typeof withSeq>();
+    for (const e of withSeq) {
+      const key = e.organizationId ?? "__none__";
+      if (!byOrg.has(key)) byOrg.set(key, []);
+      byOrg.get(key)!.push(e);
     }
 
     let valid = true;
     let brokenAt: number | undefined;
+    let signatureValid = true;
+    let signatureBrokenAt: number | undefined;
+    let signedEvents = 0;
+    let unsignedEvents = 0;
 
-    for (let i = 1; i < sorted.length; i++) {
-      if (sorted[i].previousHash !== sorted[i - 1].eventHash) {
-        valid = false;
-        brokenAt = sorted[i].sequenceNum || i;
-        break;
+    for (const group of Array.from(byOrg.values())) {
+      // Deterministic order: concurrent writes can produce duplicate
+      // sequenceNums (createAuditEvent read-then-increment race) — tie-break
+      // on the immutable id so verify and re-baseline agree on one ordering.
+      group.sort((a, b) => ((a.sequenceNum || 0) - (b.sequenceNum || 0)) || a.id.localeCompare(b.id));
+      for (let i = 0; i < group.length; i++) {
+        const e = group[i];
+        // 1. Chain linkage (ordering integrity).
+        if (i > 0 && e.previousHash !== group[i - 1].eventHash) {
+          if (valid) { valid = false; brokenAt = e.sequenceNum ?? i; }
+        }
+        // 2. Signature (authenticity + field/timestamp integrity). Recompute the
+        //    canonical payload + eventHash from stored fields and verify the
+        //    Ed25519 signature over it — a tampered field or forged row fails.
+        if (e.signature && e.signerKeyId) {
+          signedEvents++;
+          const canonical = buildCanonicalAuditPayload({
+            action: e.action, actorId: e.actorId, actorType: e.actorType,
+            details: e.details, objectId: e.objectId, objectType: e.objectType,
+            sequenceNum: e.sequenceNum!, organizationId: e.organizationId,
+            createdAt: (e.createdAt instanceof Date ? e.createdAt : new Date(e.createdAt as any)).toISOString(),
+          });
+          const expectedHash = computeEventHash(e.previousHash ?? "GENESIS", canonical);
+          const hashOk = expectedHash === e.eventHash;
+          const sigOk = hashOk && await verifyAuditSignature(e.eventHash!, e.signature, e.signerKeyId);
+          if (!sigOk && signatureValid) { signatureValid = false; signatureBrokenAt = e.sequenceNum ?? i; }
+        } else {
+          // Events written before signing was introduced are unsigned — tracked,
+          // not treated as a signature break (legacy baseline).
+          unsignedEvents++;
+        }
       }
     }
 
-    return { valid, totalEvents: events.length, verifiedEvents: sorted.length, brokenAt };
+    return {
+      valid, totalEvents: events.length, verifiedEvents: withSeq.length, brokenAt,
+      signatureValid, signatureBrokenAt, signedEvents, unsignedEvents,
+    };
+  }
+
+  /**
+   * Re-baseline the audit chain: re-links previousHash/eventHash per org from
+   * the genesis forward using the current canonicalization. This RESETS the
+   * tamper-evidence baseline — it does not restore trust in events written
+   * before the break. The re-baseline itself is appended as an audit event so
+   * the repair is on the record.
+   */
+  async rebaselineAuditChain(actorId: string, reason?: string) {
+    const events = await db.select().from(auditEvents);
+    const withSeq = events.filter(e => e.sequenceNum !== null);
+
+    const byOrg = new Map<string, typeof withSeq>();
+    for (const e of withSeq) {
+      const key = e.organizationId ?? "__none__";
+      if (!byOrg.has(key)) byOrg.set(key, []);
+      byOrg.get(key)!.push(e);
+    }
+
+    let relinked = 0;
+    let repairedOrgs = 0;
+    for (const group of Array.from(byOrg.values())) {
+      // Must match verifyAuditChainIntegrity's ordering exactly (see note there).
+      group.sort((a, b) => ((a.sequenceNum || 0) - (b.sequenceNum || 0)) || a.id.localeCompare(b.id));
+      let prevHash = "GENESIS";
+      let orgRelinked = 0;
+      for (const e of group) {
+        const canonicalPayload = buildCanonicalAuditPayload({
+          action: e.action, actorId: e.actorId, actorType: e.actorType,
+          details: e.details, objectId: e.objectId, objectType: e.objectType,
+          sequenceNum: e.sequenceNum!, organizationId: e.organizationId,
+          createdAt: (e.createdAt instanceof Date ? e.createdAt : new Date(e.createdAt as any)).toISOString(),
+        });
+        const expectedHash = computeEventHash(prevHash, canonicalPayload);
+        if (e.previousHash !== prevHash || e.eventHash !== expectedHash) {
+          // Re-link AND re-sign: the new eventHash needs a fresh signature under
+          // the current key, otherwise the re-based event would fail signature
+          // verification. Re-baseline re-establishes a clean SIGNED baseline.
+          const { signature, signerKeyId } = await signAuditPayload(expectedHash);
+          await db.update(auditEvents)
+            .set({ previousHash: prevHash, eventHash: expectedHash, signature, signerKeyId })
+            .where(eq(auditEvents.id, e.id));
+          orgRelinked++;
+        }
+        prevHash = expectedHash;
+      }
+      if (orgRelinked > 0) { relinked += orgRelinked; repairedOrgs++; }
+    }
+
+    await this.createAuditEvent({
+      actorType: "user",
+      actorId,
+      action: "audit_chain_rebaselined",
+      objectType: "audit_chain",
+      objectId: "global",
+      details: JSON.stringify({
+        relinked,
+        repairedOrgs,
+        reason: reason || "Manual re-baseline from Governance",
+        note: "Tamper-evidence baseline reset; prior history re-linked with current canonicalization.",
+      }),
+    });
+
+    return { relinked, repairedOrgs };
   }
 
   async createAuditChainHealthCheck(record: InsertAuditChainHealthCheck) {
@@ -1761,8 +1920,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getIncidents(orgId?: string) {
-    if (orgId) {
-      return db.select().from(incidents).where(eq(incidents.organizationId, orgId));
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    if (scopedOrgId) {
+      return db.select().from(incidents).where(eq(incidents.organizationId, scopedOrgId));
     }
     return db.select().from(incidents);
   }
@@ -2682,8 +2842,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getSkills(orgId?: string) {
-    if (orgId) {
-      return db.select().from(skills).where(eq(skills.organizationId, orgId));
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    if (scopedOrgId) {
+      return db.select().from(skills).where(eq(skills.organizationId, scopedOrgId));
     }
     return db.select().from(skills);
   }
@@ -3391,8 +3552,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getKnowledgeBases(orgId?: string): Promise<KnowledgeBase[]> {
-    if (orgId) {
-      return db.select().from(knowledgeBases).where(eq(knowledgeBases.organizationId, orgId)).orderBy(desc(knowledgeBases.createdAt));
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    if (scopedOrgId) {
+      return db.select().from(knowledgeBases).where(eq(knowledgeBases.organizationId, scopedOrgId)).orderBy(desc(knowledgeBases.createdAt));
     }
     return db.select().from(knowledgeBases).orderBy(desc(knowledgeBases.createdAt));
   }
@@ -3697,9 +3859,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getAllAarConfigs(orgId?: string): Promise<AarConfig[]> {
-    if (orgId) {
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    if (scopedOrgId) {
       // Only return configs for agents belonging to this org
-      const orgAgents = await this.getAgents(orgId);
+      const orgAgents = await this.getAgents(scopedOrgId);
       const agentIds = orgAgents.map(a => a.id);
       if (agentIds.length === 0) return [];
       return db.select().from(aarConfigs).where(inArray(aarConfigs.agentId, agentIds));
@@ -4366,8 +4529,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getEvalAnnotationsByOrg(orgId?: string): Promise<EvalAnnotation[]> {
-    if (orgId) {
-      return db.select().from(evalAnnotations).where(eq(evalAnnotations.organizationId, orgId)).orderBy(desc(evalAnnotations.createdAt));
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    if (scopedOrgId) {
+      return db.select().from(evalAnnotations).where(eq(evalAnnotations.organizationId, scopedOrgId)).orderBy(desc(evalAnnotations.createdAt));
     }
     return db.select().from(evalAnnotations).where(sql`${evalAnnotations.organizationId} IS NULL`).orderBy(desc(evalAnnotations.createdAt));
   }
@@ -4375,8 +4539,9 @@ export class DatabaseStorage implements IStorage {
   // ── Eval Report Schedules ────────────────────────────────────────────────────
 
   async getEvalReportSchedules(orgId?: string): Promise<EvalReportSchedule[]> {
-    if (orgId) {
-      return db.select().from(evalReportSchedules).where(eq(evalReportSchedules.organizationId, orgId)).orderBy(desc(evalReportSchedules.createdAt));
+    const scopedOrgId = resolveOrgIdForRead(orgId);
+    if (scopedOrgId) {
+      return db.select().from(evalReportSchedules).where(eq(evalReportSchedules.organizationId, scopedOrgId)).orderBy(desc(evalReportSchedules.createdAt));
     }
     return db.select().from(evalReportSchedules).where(sql`${evalReportSchedules.organizationId} IS NULL`).orderBy(desc(evalReportSchedules.createdAt));
   }
@@ -4403,8 +4568,9 @@ export class DatabaseStorage implements IStorage {
   // ── Eval Report Artifacts ────────────────────────────────────────────────────
 
   async getEvalReportArtifacts(orgId?: string, scheduleId?: string): Promise<EvalReportArtifact[]> {
+    const scopedOrgId = resolveOrgIdForRead(orgId);
     const conditions: any[] = [];
-    if (orgId) conditions.push(eq(evalReportArtifacts.organizationId, orgId));
+    if (scopedOrgId) conditions.push(eq(evalReportArtifacts.organizationId, scopedOrgId));
     if (scheduleId) conditions.push(eq(evalReportArtifacts.scheduleId, scheduleId));
     return conditions.length > 0
       ? db.select().from(evalReportArtifacts).where(and(...conditions)).orderBy(desc(evalReportArtifacts.generatedAt))
@@ -4812,8 +4978,9 @@ export class DatabaseStorage implements IStorage {
 
   // ── Eval Report Templates ────────────────────────────────────────────────────
   async getEvalReportTemplates(orgId?: string): Promise<EvalReportTemplate[]> {
+    const scopedOrgId = resolveOrgIdForRead(orgId);
     return db.select().from(evalReportTemplates)
-      .where(orgId ? or(eq(evalReportTemplates.organizationId, orgId), isNull(evalReportTemplates.organizationId)) : undefined)
+      .where(scopedOrgId ? or(eq(evalReportTemplates.organizationId, scopedOrgId), isNull(evalReportTemplates.organizationId)) : undefined)
       .orderBy(desc(evalReportTemplates.createdAt));
   }
 
@@ -4824,8 +4991,9 @@ export class DatabaseStorage implements IStorage {
 
   // ── Eval Personas ────────────────────────────────────────────────────────────
   async getEvalPersonas(orgId?: string): Promise<EvalPersona[]> {
+    const scopedOrgId = resolveOrgIdForRead(orgId);
     return db.select().from(evalPersonas)
-      .where(orgId ? eq(evalPersonas.organizationId, orgId) : undefined)
+      .where(scopedOrgId ? eq(evalPersonas.organizationId, scopedOrgId) : undefined)
       .orderBy(desc(evalPersonas.createdAt));
   }
 

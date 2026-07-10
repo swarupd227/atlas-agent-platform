@@ -3,6 +3,7 @@ import * as crypto from "crypto";
 import { storage } from "../storage";
 import { db } from "../db";
 import { fireInterrupt, resumeInterrupt } from "../services/interrupt-manager";
+import { llmInvokeRateLimiter } from "../rate-limits";
 import { computeWaves, DAGExecutionEngine, DAGExecutionError } from "../dag-execution-engine";
 import type { StateFieldDef } from "../dag-execution-engine";
 import { mergeIntoWorkflowState, sanitizeForCheckpoint, writeStageCompleteCheckpoint } from "../workflow-state-helpers";
@@ -64,7 +65,8 @@ import {
   extractResponseText,
   runParameterMatching,
 } from "./helpers";
-import { proxyToolCall } from "./governance-proxy";
+import { dispatchToolCall, gatherAvailableTools } from "../tool-dispatcher";
+import { RunSpanCollector, exportSpansOtlp } from "../run-spans";
 import { isRealMcpServer, mcpInitialize, mcpListTools, mcpListResources, mcpListPrompts } from "../mcp-client";
 import { runLlmJudge, runAgentOnInput, buildAgentContext } from "../eval-judge";
 import {
@@ -541,7 +543,7 @@ function hashCode(str: string): number {
 
   // POST /api/runtime/run
   // ──────────────────────────────────
-  router.post("/api/runtime/run", async (req, res) => {
+  router.post("/api/runtime/run", llmInvokeRateLimiter, async (req, res) => {
     const startTime = Date.now();
     try {
       const schema = z.object({
@@ -566,6 +568,10 @@ function hashCode(str: string): number {
         policyChecks: policyBundle.appliedPolicies,
         organizationId: getOrgId(req) ?? undefined,
       });
+
+      // Span tree for wire-level auditability: run → step → tool_dispatch → wire.
+      const spans = new RunSpanCollector();
+      const runSpanId = spans.start(`run ${agent.name}`, "run", null, { agentId, environment, "run.trace_id": trace.id });
 
       let stepIndex = 0;
 
@@ -593,6 +599,46 @@ function hashCode(str: string): number {
         output: { traceId: trace.id },
         durationMs: 0,
       });
+
+      // ── Skill gate (mirrors agent-runtime.executePromptWithMcp) ─────────────
+      // Preloaded skills grant tool capabilities: when any active skill declares
+      // allowedTools, their union is enforced as an allowlist on this run's tool
+      // calls. Also records skill attribution on the trace and bumps telemetry.
+      let skillAllowlist: Set<string> | null = null;
+      try {
+        const rawPre = (agent as any)?.preloadedSkills;
+        const skillIds: string[] = Array.isArray(rawPre)
+          ? rawPre.map((p: any) => p?.skillId).filter(Boolean)
+          : [];
+        if (skillIds.length > 0) {
+          const activeSkills = (await storage.getSkillsByIds(skillIds)).filter(s => s.status === "active");
+          const allow = new Set<string>();
+          let declared = false;
+          for (const s of activeSkills) {
+            const at = (s.allowedTools as string[] | null) || [];
+            if (at.length > 0) { declared = true; at.forEach(t => allow.add(t.toLowerCase())); }
+          }
+          if (declared) skillAllowlist = allow;
+          await storage.createRunStep({
+            runId: trace.id,
+            stepIndex: stepIndex++,
+            type: "skill_resolution",
+            status: "completed",
+            input: { skillIds },
+            output: {
+              skillNames: activeSkills.map(s => s.name),
+              allowedToolsEnforced: declared,
+              allowedTools: declared ? Array.from(allow) : [],
+            },
+            durationMs: 0,
+          });
+          for (const s of activeSkills) {
+            storage.updateSkill(s.id, { activationCount: (s.activationCount ?? 0) + 1 } as any).catch(() => {});
+          }
+        }
+      } catch (sgErr: any) {
+        console.warn(`[skill-gate] runtime/run enforcement skipped (non-fatal): ${(sgErr as any).message}`);
+      }
 
       let plan = "";
       let planTokens = { prompt_tokens: 0, completion_tokens: 0 };
@@ -636,36 +682,107 @@ function hashCode(str: string): number {
       const toolCalls: Array<Record<string, unknown>> = [];
       const policyCheckResults: Array<Record<string, unknown>> = [];
 
+      // Real tool surface: configured tool names execute only if they resolve
+      // to a tool on one of the agent's linked MCP servers/connectors. This
+      // path previously simulated execution ("Executed X successfully") — every
+      // dispatch is now real and goes through the shared gated dispatcher.
+      const runMcpLinks = await storage.getAgentMcpServers(agentId);
+      const runAvailableTools = await gatherAvailableTools(runMcpLinks.map((l: any) => l.serverId));
+
       const agentTools = (agent.toolsConfig as Array<{ name: string; input?: Record<string, unknown> }>) || [];
-      const toolsToCall = agentTools.length > 0
-        ? agentTools.slice(0, 3)
-        : [{ name: "knowledge_search", input: { query: input.slice(0, 100) } }];
+      const toolsToCall = agentTools
+        .slice(0, 3)
+        .filter(t => !skillAllowlist || skillAllowlist.has(t.name.toLowerCase()));
+
+      if (agentTools.length === 0) {
+        await storage.createRunStep({
+          runId: trace.id,
+          stepIndex: stepIndex++,
+          type: "tool_phase_skipped",
+          status: "completed",
+          input: { reason: "No tools configured for this agent" },
+          output: { message: "Tool phase skipped — agent has no toolsConfig entries", availableToolCount: runAvailableTools.length },
+          durationMs: 0,
+        });
+      }
 
       for (const tool of toolsToCall) {
         const toolStart = Date.now();
-        const toolInput = (tool as any).input || { query: input.slice(0, 100) };
+        const toolInput = ((tool as any).input || { query: input.slice(0, 100) }) as Record<string, any>;
         const isShadow = environment === "shadow";
-        const proxyResult = await proxyToolCall(tool.name, toolInput, policyBundle, { agentId, traceId: trace.id, environment, shadow: isShadow });
+
+        const matched = runAvailableTools.find(t => t.toolName.toLowerCase() === tool.name.toLowerCase());
+        if (!matched) {
+          // Truthful failure — never fabricate a success for a tool that
+          // doesn't exist on any linked server.
+          const reason = `Tool "${tool.name}" is not available on any linked MCP server/connector (${runAvailableTools.length} tool(s) available)`;
+          toolCalls.push({ tool: tool.name, input: toolInput, output: { error: reason }, allowed: false, outcome: "tool_unresolved", durationMs: Date.now() - toolStart });
+          policyCheckResults.push({ tool: tool.name, allowed: false, reason });
+          await storage.createRunStep({
+            runId: trace.id,
+            stepIndex: stepIndex++,
+            type: "tool_unresolved",
+            status: "failed",
+            toolName: tool.name,
+            input: toolInput,
+            output: { error: reason },
+            outcome: "tool_unresolved",
+            durationMs: Date.now() - toolStart,
+          });
+          spans.record(`tool_unresolved ${tool.name}`, "tool_dispatch", runSpanId, toolStart, Date.now() - toolStart, "error", { "tool.name": tool.name });
+          continue;
+        }
+
+        const stepSpanId = spans.start(`step ${tool.name}`, "step", runSpanId, { "tool.name": tool.name });
+        const dispatch = await dispatchToolCall({
+          agentId,
+          orgId: getOrgId(req),
+          tool: matched,
+          args: toolInput,
+          policyBundle,
+          skillAllowlist,
+          environment,
+          shadow: isShadow,
+          traceId: trace.id,
+          idempotencyScope: trace.id,
+          spanCollector: spans,
+          parentSpanId: stepSpanId,
+        });
+        spans.end(stepSpanId, dispatch.ok ? "ok" : "error", { "dispatch.outcome": dispatch.outcome });
+
+        const executedOrDryRun = dispatch.ok || dispatch.outcome === "shadow_skipped";
+        const policyCheck = {
+          tool: tool.name,
+          allowed: executedOrDryRun,
+          outcome: dispatch.outcome,
+          reason: dispatch.reason ?? "Allowed",
+          checkedPolicies: policyBundle.appliedPolicies.map(p => p.name),
+        };
+        const stepOutput = executedOrDryRun
+          ? dispatch.result
+          : { error: dispatch.error, outcome: dispatch.outcome };
 
         toolCalls.push({
           tool: tool.name,
-          input: toolInput,
-          output: proxyResult.result,
-          allowed: proxyResult.allowed,
-          durationMs: Date.now() - toolStart,
+          input: dispatch.redactedArgs,
+          output: stepOutput,
+          allowed: executedOrDryRun,
+          outcome: dispatch.outcome,
+          durationMs: dispatch.durationMs,
         });
-        policyCheckResults.push(proxyResult.policyCheck);
+        policyCheckResults.push(policyCheck);
 
         await storage.createRunStep({
           runId: trace.id,
           stepIndex: stepIndex++,
-          type: proxyResult.allowed ? "tool_call" : "tool_blocked",
-          status: proxyResult.allowed ? "completed" : "blocked",
+          type: executedOrDryRun || dispatch.outcome === "tool_error" ? "tool_call" : "tool_blocked",
+          status: executedOrDryRun ? "completed" : dispatch.outcome === "tool_error" ? "failed" : "blocked",
           toolName: tool.name,
-          input: toolInput,
-          output: proxyResult.result,
-          policyResult: proxyResult.policyCheck,
-          durationMs: Date.now() - toolStart,
+          input: dispatch.redactedArgs,
+          output: stepOutput,
+          policyResult: policyCheck,
+          outcome: dispatch.outcome,
+          durationMs: dispatch.durationMs,
         });
       }
 
@@ -726,6 +843,8 @@ function hashCode(str: string): number {
         durationMs: latencyMs,
       });
 
+      spans.end(runSpanId, "ok", { "run.status": "completed", "run.cost_usd": costUsd });
+
       await storage.updateTrace(trace.id, {
         status: "completed",
         outputSummary: finalOutput.slice(0, 500),
@@ -735,8 +854,11 @@ function hashCode(str: string): number {
         policyChecks: policyCheckResults,
         tokenUsage: totalTokens,
         stepsJson: { stepCount: stepIndex },
+        spansJson: spans.toJSON(),
         endedAt: new Date(),
       });
+      // OTLP forwarding is best-effort and no-ops without a collector endpoint.
+      exportSpansOtlp(spans, { "agent.id": agentId, "run.trace_id": trace.id }).catch(() => {});
 
       await storage.updateAgent(agentId, {
         totalRuns: (agent.totalRuns || 0) + 1,
@@ -800,6 +922,26 @@ function hashCode(str: string): number {
       ...trace,
       steps: sortedSteps,
     });
+  });
+
+  // GET /api/runtime/runs/:id/spans — wire-level span tree for a run.
+  // ?format=otlp returns an OTLP ExportTraceServiceRequest for any OTel backend.
+  router.get("/api/runtime/runs/:id/spans", async (req, res) => {
+    const trace = await storage.getTrace(req.params.id, getOrgId(req));
+    if (!trace) return res.status(404).json({ message: "Run not found" });
+    const stored = (trace as any).spansJson as { traceId: string; spans: any[] } | null;
+    if (!stored || !Array.isArray(stored.spans) || stored.spans.length === 0) {
+      return res.json({ traceId: null, spans: [], note: "No span tree recorded for this run (predates span instrumentation or no tool phase)." });
+    }
+    if (req.query.format === "otlp") {
+      // Rebuild an OTLP payload from the persisted flat span list.
+      const collector = new RunSpanCollector(stored.traceId);
+      for (const s of stored.spans) {
+        collector.record(s.name, s.kind, s.parentSpanId ?? null, s.startMs, (s.endMs ?? s.startMs) - s.startMs, s.status === "error" ? "error" : "ok", s.attributes || {});
+      }
+      return res.json(collector.toOtlp({ "run.trace_id": req.params.id, "agent.id": trace.agentId }));
+    }
+    res.json(stored);
   });
 
   // ══════════════════════════════════════════════════════
@@ -1012,6 +1154,9 @@ function hashCode(str: string): number {
         (agent as any).industry || "technology",
         richPrompt,
         { conversational: true, maxToolIterations: agent.maxToolIterations ?? 5 },
+        undefined,
+        undefined,
+        getRequestRole(req),
       );
 
       await storage.updateAgentChannel(channel.id, {
@@ -1112,6 +1257,13 @@ function hashCode(str: string): number {
         (agent as any).industry || "technology",
         richPrompt,
         { conversational: true, maxToolIterations: agent.maxToolIterations ?? 5 },
+        undefined,
+        undefined,
+        // Inbound external webhook (Slack/Teams/etc) — no authenticated
+        // dashboard role for whoever sent this message. Omit callerRole so
+        // KB retrieval falls back to getMaxKbSensitivity(undefined)'s safe
+        // "internal" ceiling instead of demo-mode's admin default.
+        undefined,
       );
 
       await storage.updateAgentChannel(channel.id, {
@@ -1208,6 +1360,12 @@ function hashCode(str: string): number {
         (agent as any).industry || "technology",
         richPrompt,
         { conversational: true, maxToolIterations: agent.maxToolIterations ?? 5 },
+        undefined,
+        undefined,
+        // Anonymous public web-widget visitor (CORS-enabled, no auth at
+        // all) — omit callerRole so retrieval uses the safe "internal"
+        // ceiling rather than any admin-default.
+        undefined,
       );
 
       await storage.updateAgentChannel(channel.id, {
@@ -1327,6 +1485,11 @@ function hashCode(str: string): number {
         richPrompt,
         { conversational: true, maxToolIterations: agent.maxToolIterations ?? 5 },
         onProgress,
+        undefined,
+        // Anonymous public web-widget visitor (streaming variant) — same
+        // reasoning as the non-streaming widget endpoint above: omit
+        // callerRole so retrieval uses the safe "internal" ceiling.
+        undefined,
       );
 
       let fullResponse = "";
@@ -1498,6 +1661,12 @@ function hashCode(str: string): number {
           (agent as any).industry,
           richAgentPrompt,
           { maxToolIterations: agent.maxToolIterations ?? 5 },
+          undefined,
+          undefined,
+          // API-key-authenticated external gateway caller — no dashboard
+          // role/user concept exists for this auth mechanism. Omit
+          // callerRole so retrieval uses the safe "internal" ceiling.
+          undefined,
         );
 
         const summary = mcpResult.summary || {};
@@ -9597,132 +9766,158 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
     }
   });
 
-  router.post("/api/mcp-servers/:id/initialize", checkPermission("manage_mcp_servers"), async (req, res) => {
+/**
+ * Core MCP-server initialize handshake — connects (real streamable-http/SSE
+ * protocol, or a canned fallback catalog for stdio/unreachable servers),
+ * stores the discovered tools/resources/prompts, and runs parameter
+ * matching. Extracted from the /initialize route so the marketplace
+ * one-click install flow can chain it automatically instead of leaving a
+ * newly-installed server with zero tools until a human separately clicks
+ * "Initialize" — see performOneClickInstallInitialize below.
+ */
+async function performMcpServerInitialize(serverId: string): Promise<
+  | { ok: true; negotiatedVersion: string; capabilities: Record<string, unknown>; serverInfo: unknown; isRealProtocol: boolean; catalogs: { tools: number; resources: number; prompts: number }; parameterMatching: { totalParams: number; matched: number; partial: number; unmatched: number; alignmentScore: number } | null }
+  | { ok: false; status: number; message: string }
+> {
+  const server = await storage.getMcpServer(serverId);
+  if (!server) return { ok: false, status: 404, message: "MCP server not found" };
+
+  let negotiatedVersion: string;
+  let capabilities: Record<string, unknown>;
+  let serverInfo: { name: string; version: string; protocolVersion?: string };
+  let toolsToStore: Array<{ serverId: string; name: string; description?: string; inputSchema?: object }>;
+  let resourcesToStore: Array<{ serverId: string; uri: string; name: string; description?: string; mimeType?: string; sensitivityLevel?: string; approvalStatus?: string; freshnessStatus?: string; subscribed?: boolean; contentType?: string }>;
+  let promptsToStore: InsertMcpServerPrompt[];
+  let isRealProtocol = false;
+
+  if (isRealMcpServer(server)) {
     try {
-      const server = await storage.getMcpServer(req.params.id as string);
-      if (!server) return res.status(404).json({ message: "MCP server not found" });
+      const initResult = await mcpInitialize(server);
+      negotiatedVersion = initResult.protocolVersion;
+      capabilities = initResult.capabilities;
+      serverInfo = { name: initResult.serverInfo.name, version: initResult.serverInfo.version, protocolVersion: initResult.protocolVersion };
+      isRealProtocol = true;
 
-      let negotiatedVersion: string;
-      let capabilities: Record<string, unknown>;
-      let serverInfo: { name: string; version: string; protocolVersion?: string };
-      let toolsToStore: Array<{ serverId: string; name: string; description?: string; inputSchema?: object }>;
-      let resourcesToStore: Array<{ serverId: string; uri: string; name: string; description?: string; mimeType?: string; sensitivityLevel?: string; approvalStatus?: string; freshnessStatus?: string; subscribed?: boolean; contentType?: string }>;
-      let promptsToStore: InsertMcpServerPrompt[];
-      let isRealProtocol = false;
-
-      if (isRealMcpServer(server)) {
-        try {
-          const initResult = await mcpInitialize(server);
-          negotiatedVersion = initResult.protocolVersion;
-          capabilities = initResult.capabilities;
-          serverInfo = { name: initResult.serverInfo.name, version: initResult.serverInfo.version, protocolVersion: initResult.protocolVersion };
-          isRealProtocol = true;
-
-          toolsToStore = initResult.tools.map(t => ({
-            serverId: server.id,
-            name: t.name,
-            description: t.description,
-            inputSchema: t.inputSchema as object,
-          }));
-          resourcesToStore = initResult.resources.map(r => ({
-            serverId: server.id,
-            uri: r.uri,
-            name: r.name,
-            description: r.description,
-            mimeType: r.mimeType,
-            sensitivityLevel: "public",
-            approvalStatus: "auto_approved",
-            freshnessStatus: "fresh",
-            subscribed: false,
-            contentType: "text",
-          }));
-          promptsToStore = initResult.prompts.map(p => ({
-            serverId: server.id,
-            name: p.name,
-            description: p.description,
-            arguments: JSON.parse(JSON.stringify(p.arguments ?? null)),
-            publishedStatus: "published",
-            approvalStatus: "not_required",
-          }));
-        } catch (realErr: any) {
-          console.error(`[mcp-initialize] Real MCP handshake failed for ${server.name}: ${realErr.message}`);
-          await storage.createAuditEvent({
-            action: "mcp_server.initialize_failed",
-            objectType: "mcp_server",
-            objectId: server.id,
-            actorId: "system",
-            details: JSON.stringify({ error: realErr.message, serverName: server.name }),
-          });
-          return res.status(502).json({ message: `Real MCP handshake failed: ${realErr.message}` });
-        }
-      } else {
-        negotiatedVersion = server.expectedProtocolVersion || "2025-03-26";
-        capabilities = { tools: { listChanged: true }, resources: { subscribe: true, listChanged: true }, prompts: { listChanged: true }, logging: {} };
-        serverInfo = { name: server.name, version: "1.0.0", protocolVersion: negotiatedVersion };
-        toolsToStore = [
-          { serverId: server.id, name: "search", description: "Search across documents and knowledge bases", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
-          { serverId: server.id, name: "execute_query", description: "Execute a database query", inputSchema: { type: "object", properties: { sql: { type: "string" }, params: { type: "array" } }, required: ["sql"] } },
-        ];
-        resourcesToStore = [
-          { serverId: server.id, uri: `docs://runbooks/incident-response`, name: "Incident Response Runbook", description: "Standard operating procedures for incident response", mimeType: "text/markdown", sensitivityLevel: "public", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: false, contentType: "text" },
-          { serverId: server.id, uri: `docs://faq/platform-usage`, name: "Platform FAQ", description: "Frequently asked questions about the platform", mimeType: "text/markdown", sensitivityLevel: "public", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: true, contentType: "text" },
-          { serverId: server.id, uri: `repo://api/openapi-spec.yaml`, name: "API Specification", description: "OpenAPI specification for internal services", mimeType: "application/yaml", sensitivityLevel: "internal", approvalStatus: "approved", freshnessStatus: "fresh", subscribed: true, contentType: "text" },
-          { serverId: server.id, uri: `db://exports/customer-data`, name: "Customer Data Export", description: "Aggregated customer data export for analytics", mimeType: "application/json", sensitivityLevel: "confidential", approvalStatus: "pending", freshnessStatus: "stale", subscribed: false, contentType: "blob" },
-          { serverId: server.id, uri: `db://tables/users-pii`, name: "PII Database Access", description: "Direct access to user personally identifiable information", mimeType: "application/json", sensitivityLevel: "restricted", approvalStatus: "denied", freshnessStatus: "unknown", subscribed: false, contentType: "blob" },
-          { serverId: server.id, uri: `docs://guides/deployment-checklist`, name: "Deployment Guide", description: "Step-by-step deployment checklist and procedures", mimeType: "text/markdown", sensitivityLevel: "internal", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: false, contentType: "text" },
-        ];
-        promptsToStore = [
-          { serverId: server.id, name: "summarize", description: "Summarize a document or dataset into key points", arguments: [{ name: "content", description: "Content to summarize", required: true }, { name: "format", description: "Output format: bullets, paragraph, or executive", required: false }], messages: [{ role: "system", content: "You are a concise summarizer. Extract the key points from the provided content." }, { role: "user", content: "Summarize the following:\n\n{{content}}\n\nFormat: {{format}}" }], publishedStatus: "published", approvalStatus: "not_required" },
-          { serverId: server.id, name: "classify-ticket", description: "Classify a support ticket by priority and category", arguments: [{ name: "subject", required: true }, { name: "body", required: true }, { name: "customer_tier", required: false }], messages: [{ role: "system", content: "You are a ticket classification agent. Determine priority (P0-P3) and category (billing, technical, account, feature_request)." }, { role: "user", content: "Subject: {{subject}}\nBody: {{body}}\nCustomer Tier: {{customer_tier}}" }], publishedStatus: "published", approvalStatus: "not_required" },
-          { serverId: server.id, name: "generate-response", description: "Generate a customer-facing response using knowledge base context", arguments: [{ name: "query", required: true }, { name: "kb_context", required: true }, { name: "tone", required: false }], messages: [{ role: "system", content: "You are a support agent. Draft a response using the knowledge base context. Never fabricate information." }, { role: "user", content: "Customer query: {{query}}\n\nKnowledge base context:\n{{kb_context}}\n\nTone: {{tone}}" }], publishedStatus: "published", approvalStatus: "approved" },
-          { serverId: server.id, name: "analyze-sentiment", description: "Analyze customer sentiment from interaction history", arguments: [{ name: "messages", required: true }], messages: [{ role: "system", content: "Analyze the sentiment of the customer interaction. Return: overall_sentiment (positive/neutral/negative), confidence (0-1), escalation_recommended (boolean)." }, { role: "user", content: "Analyze sentiment for:\n{{messages}}" }], publishedStatus: "draft", approvalStatus: "not_required" },
-          { serverId: server.id, name: "pii-redaction-check", description: "Scan draft responses for PII before sending to customers", arguments: [{ name: "draft", required: true }, { name: "redaction_level", required: true }], messages: [{ role: "system", content: "Scan the text for PII (SSN, credit cards, addresses, phone numbers). Apply the specified redaction level. Return redacted text and a list of findings." }, { role: "user", content: "Redaction level: {{redaction_level}}\n\nDraft:\n{{draft}}" }], publishedStatus: "draft", approvalStatus: "pending_approval" },
-          { serverId: server.id, name: "escalation-decision", description: "Decide whether a ticket should be escalated to a human agent", arguments: [{ name: "ticket_summary", required: true }, { name: "confidence_score", required: true }, { name: "policy_violations", required: false }], messages: [{ role: "system", content: "Determine if this ticket requires human escalation. Consider: confidence below 0.7, policy violations, customer tier, and issue severity." }, { role: "user", content: "Ticket: {{ticket_summary}}\nConfidence: {{confidence_score}}\nViolations: {{policy_violations}}" }], publishedStatus: "published", approvalStatus: "not_required" },
-        ];
-      }
-
-      await storage.updateMcpServer(req.params.id as string, {
-        negotiatedProtocolVersion: negotiatedVersion,
-        capabilities,
-        serverInfo,
-        status: "verified",
-        healthStatus: "healthy",
-        lastHealthCheck: new Date(),
-      });
-
-      await storage.deleteMcpServerToolsByServer(server.id);
-      await storage.deleteMcpServerResourcesByServer(server.id);
-      await storage.deleteMcpServerPromptsByServer(server.id);
-
-      for (const t of toolsToStore) await storage.createMcpServerTool({ ...t, enabled: true, riskClassification: "low" });
-      for (const r of resourcesToStore) await storage.createMcpServerResource(r);
-      for (const p of promptsToStore) await storage.createMcpServerPrompt(p);
-
+      toolsToStore = initResult.tools.map(t => ({
+        serverId: server.id,
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema as object,
+      }));
+      resourcesToStore = initResult.resources.map(r => ({
+        serverId: server.id,
+        uri: r.uri,
+        name: r.name,
+        description: r.description,
+        mimeType: r.mimeType,
+        sensitivityLevel: "public",
+        approvalStatus: "auto_approved",
+        freshnessStatus: "fresh",
+        subscribed: false,
+        contentType: "text",
+      }));
+      promptsToStore = initResult.prompts.map(p => ({
+        serverId: server.id,
+        name: p.name,
+        description: p.description,
+        arguments: JSON.parse(JSON.stringify(p.arguments ?? null)),
+        publishedStatus: "published",
+        approvalStatus: "not_required",
+      }));
+    } catch (realErr: any) {
+      console.error(`[mcp-initialize] Real MCP handshake failed for ${server.name}: ${realErr.message}`);
       await storage.createAuditEvent({
-        action: "mcp_server.initialized",
+        action: "mcp_server.initialize_failed",
         objectType: "mcp_server",
         objectId: server.id,
         actorId: "system",
-        details: JSON.stringify({ negotiatedVersion, capabilities: Object.keys(capabilities), toolCount: toolsToStore.length, resourceCount: resourcesToStore.length, promptCount: promptsToStore.length, isRealProtocol }),
+        details: JSON.stringify({ error: realErr.message, serverName: server.name }),
       });
+      return { ok: false, status: 502, message: `Real MCP handshake failed: ${realErr.message}` };
+    }
+  } else {
+    negotiatedVersion = server.expectedProtocolVersion || "2025-03-26";
+    capabilities = { tools: { listChanged: true }, resources: { subscribe: true, listChanged: true }, prompts: { listChanged: true }, logging: {} };
+    serverInfo = { name: server.name, version: "1.0.0", protocolVersion: negotiatedVersion };
+    toolsToStore = [
+      { serverId: server.id, name: "search", description: "Search across documents and knowledge bases", inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] } },
+      { serverId: server.id, name: "execute_query", description: "Execute a database query", inputSchema: { type: "object", properties: { sql: { type: "string" }, params: { type: "array" } }, required: ["sql"] } },
+    ];
+    resourcesToStore = [
+      { serverId: server.id, uri: `docs://runbooks/incident-response`, name: "Incident Response Runbook", description: "Standard operating procedures for incident response", mimeType: "text/markdown", sensitivityLevel: "public", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: false, contentType: "text" },
+      { serverId: server.id, uri: `docs://faq/platform-usage`, name: "Platform FAQ", description: "Frequently asked questions about the platform", mimeType: "text/markdown", sensitivityLevel: "public", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: true, contentType: "text" },
+      { serverId: server.id, uri: `repo://api/openapi-spec.yaml`, name: "API Specification", description: "OpenAPI specification for internal services", mimeType: "application/yaml", sensitivityLevel: "internal", approvalStatus: "approved", freshnessStatus: "fresh", subscribed: true, contentType: "text" },
+      { serverId: server.id, uri: `db://exports/customer-data`, name: "Customer Data Export", description: "Aggregated customer data export for analytics", mimeType: "application/json", sensitivityLevel: "confidential", approvalStatus: "pending", freshnessStatus: "stale", subscribed: false, contentType: "blob" },
+      { serverId: server.id, uri: `db://tables/users-pii`, name: "PII Database Access", description: "Direct access to user personally identifiable information", mimeType: "application/json", sensitivityLevel: "restricted", approvalStatus: "denied", freshnessStatus: "unknown", subscribed: false, contentType: "blob" },
+      { serverId: server.id, uri: `docs://guides/deployment-checklist`, name: "Deployment Guide", description: "Step-by-step deployment checklist and procedures", mimeType: "text/markdown", sensitivityLevel: "internal", approvalStatus: "auto_approved", freshnessStatus: "fresh", subscribed: false, contentType: "text" },
+    ];
+    promptsToStore = [
+      { serverId: server.id, name: "summarize", description: "Summarize a document or dataset into key points", arguments: [{ name: "content", description: "Content to summarize", required: true }, { name: "format", description: "Output format: bullets, paragraph, or executive", required: false }], messages: [{ role: "system", content: "You are a concise summarizer. Extract the key points from the provided content." }, { role: "user", content: "Summarize the following:\n\n{{content}}\n\nFormat: {{format}}" }], publishedStatus: "published", approvalStatus: "not_required" },
+      { serverId: server.id, name: "classify-ticket", description: "Classify a support ticket by priority and category", arguments: [{ name: "subject", required: true }, { name: "body", required: true }, { name: "customer_tier", required: false }], messages: [{ role: "system", content: "You are a ticket classification agent. Determine priority (P0-P3) and category (billing, technical, account, feature_request)." }, { role: "user", content: "Subject: {{subject}}\nBody: {{body}}\nCustomer Tier: {{customer_tier}}" }], publishedStatus: "published", approvalStatus: "not_required" },
+      { serverId: server.id, name: "generate-response", description: "Generate a customer-facing response using knowledge base context", arguments: [{ name: "query", required: true }, { name: "kb_context", required: true }, { name: "tone", required: false }], messages: [{ role: "system", content: "You are a support agent. Draft a response using the knowledge base context. Never fabricate information." }, { role: "user", content: "Customer query: {{query}}\n\nKnowledge base context:\n{{kb_context}}\n\nTone: {{tone}}" }], publishedStatus: "published", approvalStatus: "approved" },
+      { serverId: server.id, name: "analyze-sentiment", description: "Analyze customer sentiment from interaction history", arguments: [{ name: "messages", required: true }], messages: [{ role: "system", content: "Analyze the sentiment of the customer interaction. Return: overall_sentiment (positive/neutral/negative), confidence (0-1), escalation_recommended (boolean)." }, { role: "user", content: "Analyze sentiment for:\n{{messages}}" }], publishedStatus: "draft", approvalStatus: "not_required" },
+      { serverId: server.id, name: "pii-redaction-check", description: "Scan draft responses for PII before sending to customers", arguments: [{ name: "draft", required: true }, { name: "redaction_level", required: true }], messages: [{ role: "system", content: "Scan the text for PII (SSN, credit cards, addresses, phone numbers). Apply the specified redaction level. Return redacted text and a list of findings." }, { role: "user", content: "Redaction level: {{redaction_level}}\n\nDraft:\n{{draft}}" }], publishedStatus: "draft", approvalStatus: "pending_approval" },
+      { serverId: server.id, name: "escalation-decision", description: "Decide whether a ticket should be escalated to a human agent", arguments: [{ name: "ticket_summary", required: true }, { name: "confidence_score", required: true }, { name: "policy_violations", required: false }], messages: [{ role: "system", content: "Determine if this ticket requires human escalation. Consider: confidence below 0.7, policy violations, customer tier, and issue severity." }, { role: "user", content: "Ticket: {{ticket_summary}}\nConfidence: {{confidence_score}}\nViolations: {{policy_violations}}" }], publishedStatus: "published", approvalStatus: "not_required" },
+    ];
+  }
 
-      let parameterMatching: { totalParams: number; matched: number; partial: number; unmatched: number; alignmentScore: number } | null = null;
-      const effectiveIndustryId = server.industryId || null;
-      try {
-        const matchResult = await runParameterMatching(server.id, effectiveIndustryId || undefined);
-        parameterMatching = { totalParams: matchResult.totalParams, matched: matchResult.matched, partial: matchResult.partial, unmatched: matchResult.unmatched, alignmentScore: matchResult.alignmentScore };
-      } catch (matchErr: any) {
-        console.warn("[mcp-initialize] Parameter matching failed:", matchErr.message);
-      }
+  await storage.updateMcpServer(server.id, {
+    negotiatedProtocolVersion: negotiatedVersion,
+    capabilities,
+    serverInfo,
+    status: "verified",
+    healthStatus: "healthy",
+    lastHealthCheck: new Date(),
+  });
 
+  await storage.deleteMcpServerToolsByServer(server.id);
+  await storage.deleteMcpServerResourcesByServer(server.id);
+  await storage.deleteMcpServerPromptsByServer(server.id);
+
+  for (const t of toolsToStore) await storage.createMcpServerTool({ ...t, enabled: true, riskClassification: "low" });
+  for (const r of resourcesToStore) await storage.createMcpServerResource(r);
+  for (const p of promptsToStore) await storage.createMcpServerPrompt(p);
+
+  await storage.createAuditEvent({
+    action: "mcp_server.initialized",
+    objectType: "mcp_server",
+    objectId: server.id,
+    actorId: "system",
+    details: JSON.stringify({ negotiatedVersion, capabilities: Object.keys(capabilities), toolCount: toolsToStore.length, resourceCount: resourcesToStore.length, promptCount: promptsToStore.length, isRealProtocol }),
+  });
+
+  let parameterMatching: { totalParams: number; matched: number; partial: number; unmatched: number; alignmentScore: number } | null = null;
+  const effectiveIndustryId = server.industryId || null;
+  try {
+    const matchResult = await runParameterMatching(server.id, effectiveIndustryId || undefined);
+    parameterMatching = { totalParams: matchResult.totalParams, matched: matchResult.matched, partial: matchResult.partial, unmatched: matchResult.unmatched, alignmentScore: matchResult.alignmentScore };
+  } catch (matchErr: any) {
+    console.warn("[mcp-initialize] Parameter matching failed:", matchErr.message);
+  }
+
+  return {
+    ok: true,
+    negotiatedVersion,
+    capabilities,
+    serverInfo,
+    isRealProtocol,
+    catalogs: { tools: toolsToStore.length, resources: resourcesToStore.length, prompts: promptsToStore.length },
+    parameterMatching,
+  };
+}
+
+  router.post("/api/mcp-servers/:id/initialize", checkPermission("manage_mcp_servers"), async (req, res) => {
+    try {
+      const result = await performMcpServerInitialize(req.params.id as string);
+      if (!result.ok) return res.status(result.status).json({ message: result.message });
       res.json({
         success: true,
-        negotiatedVersion,
-        capabilities,
-        serverInfo,
-        isRealProtocol,
-        catalogs: { tools: toolsToStore.length, resources: resourcesToStore.length, prompts: promptsToStore.length },
-        parameterMatching: parameterMatching || { note: "No industry context available, matching attempted with all concepts" },
+        negotiatedVersion: result.negotiatedVersion,
+        capabilities: result.capabilities,
+        serverInfo: result.serverInfo,
+        isRealProtocol: result.isRealProtocol,
+        catalogs: result.catalogs,
+        parameterMatching: result.parameterMatching || { note: "No industry context available, matching attempted with all concepts" },
       });
     } catch (e) {
       console.error("[mcp-initialize] Error:", e);
@@ -9806,9 +10001,9 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
     }
   });
 
-  router.post("/api/mcp-servers/:id/tools", async (req, res) => {
+  router.post("/api/mcp-servers/:id/tools", checkPermission("manage_mcp_servers"), async (req, res) => {
     try {
-      const server = await storage.getMcpServer(req.params.id);
+      const server = await storage.getMcpServer(req.params.id as string);
       if (!server) return res.status(404).json({ message: "MCP server not found" });
 
       const parsed = insertMcpServerToolSchema.safeParse({
@@ -11937,6 +12132,36 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
     res.status(204).send();
   });
 
+  /**
+   * One-click install's second half: capture credentials (if the caller
+   * supplied any — most catalog entries like filesystem/memory need none)
+   * and chain the same handshake the manual "Initialize" button on
+   * mcp-server-detail.tsx triggers, so a freshly-installed server isn't left
+   * with zero tools until a human finds and clicks that button separately.
+   * Never lets a failed handshake fail the install itself — the mcpServers
+   * row this function is called with already exists either way; a failed
+   * handshake is surfaced to the caller so the UI can be honest about it
+   * ("installed, but tool discovery failed: <reason> — retry from the
+   * server's detail page") rather than silently leaving it broken.
+   */
+  async function finishOneClickInstall(mcpServerId: string, authInput: unknown): Promise<{
+    auth: { configured: boolean; error?: string };
+    initialize: Awaited<ReturnType<typeof performMcpServerInitialize>>;
+  }> {
+    let authResult: { configured: boolean; error?: string } = { configured: false };
+    if (authInput && typeof authInput === "object") {
+      try {
+        const parsed = insertMcpServerAuthSchema.parse({ ...(authInput as Record<string, unknown>), serverId: mcpServerId });
+        await storage.upsertMcpServerAuth(parsed);
+        authResult = { configured: true };
+      } catch (authErr: any) {
+        authResult = { configured: false, error: authErr.message };
+      }
+    }
+    const initializeResult = await performMcpServerInitialize(mcpServerId);
+    return { auth: authResult, initialize: initializeResult };
+  }
+
   // ── Marketplace: Install Flow ────────────────────────────
   router.post("/api/marketplace/servers/:id/install", async (req, res) => {
     try {
@@ -11979,7 +12204,8 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
           ontologyTags: resolveOntologyTags("marketplace_server", "marketplace.install_auto_approved"),
         });
 
-        return res.status(201).json({ status: "auto_approved", mcpServer, installRequest: null });
+        const { auth, initialize } = await finishOneClickInstall(mcpServer.id, req.body.auth);
+        return res.status(201).json({ status: "auto_approved", mcpServer, installRequest: null, auth, initialize });
       }
 
       const installRequest = await storage.createMarketplaceInstallRequest({
@@ -12062,7 +12288,12 @@ ${perms.length > 0 ? `\n# Required permissions: ${perms.join(", ")}` : ""}
         ontologyTags: resolveOntologyTags("marketplace_server", "marketplace.install_approved"),
       });
 
-      res.json({ request: await storage.getMarketplaceInstallRequest(req.params.id as string), mcpServer });
+      const { auth, initialize } = await finishOneClickInstall(mcpServer.id, req.body.auth);
+      await storage.updateMarketplaceInstallRequest(req.params.id as string, {
+        handshakeStatus: initialize.ok ? "succeeded" : "failed",
+        handshakeResult: initialize as any,
+      });
+      res.json({ request: await storage.getMarketplaceInstallRequest(req.params.id as string), mcpServer, auth, initialize });
     } catch (e) {
       handleZodError(res, e);
     }
@@ -17648,6 +17879,98 @@ Include 5-8 steps with at least one approval gate. Make steps industry-specific 
       res.json(wavePlan);
     } catch (e: any) {
       console.error("[dag-waves] compute error:", e);
+      res.status(500).json({ error: e.message });
+    }
+  });
+
+  // ── Run a team blueprint standalone (unified visual canvas "Run" action) ───
+  // Previously a team blueprint could only execute as a nested step inside an
+  // agentPipelines "composite" stage (see the simulate-stage route above) — there
+  // was no way to run one directly. This mirrors that same wave-by-wave
+  // DAGExecutionEngine flow without a pipeline wrapper, persisting a
+  // dagExecutionRuns row (pipelineRunId left null) so the run is still auditable.
+  router.post("/api/team-agents/:teamAgentId/run-dag", checkPermission("manage_agents"), async (req, res) => {
+    try {
+      const teamAgentId = req.params.teamAgentId as string;
+      const teamAgent = await storage.getAgent(teamAgentId, getOrgId(req));
+      if (!teamAgent) return res.status(404).json({ error: "Team agent not found" });
+      const blueprintId: string | undefined = (teamAgent as any).blueprintId;
+      if (!blueprintId) return res.status(400).json({ error: "Agent has no blueprintId" });
+
+      const [nodes, edges] = await Promise.all([
+        storage.getTeamBlueprintNodes(blueprintId),
+        storage.getTeamBlueprintEdges(blueprintId),
+      ]);
+      if (nodes.length === 0) return res.status(400).json({ error: "Blueprint has no nodes to run" });
+
+      const wavePlan = computeWaves(nodes, edges);
+
+      const existingSchema = await storage.getDagStateSchemaByTeamAgent(teamAgentId);
+      const stateSchema: Record<string, StateFieldDef> = existingSchema
+        ? (existingSchema.fields as Record<string, StateFieldDef>)
+        : {};
+
+      const initialState: Record<string, any> = { request: req.body?.request || "" };
+
+      const dagRun = await storage.createDagExecutionRun({
+        pipelineRunId: null,
+        pipelineStageId: null,
+        executionPlanId: null,
+        stateSchemaId: existingSchema?.id || null,
+        initialState,
+        currentState: initialState,
+        finalState: null,
+        status: "running",
+        currentWave: 0,
+        totalWaves: wavePlan.totalWaves,
+        startedAt: new Date(),
+        waveResults: [],
+        totalPromptTokens: 0,
+        totalCompletionTokens: 0,
+      });
+
+      const engine = new DAGExecutionEngine();
+      try {
+        const dagResult = await engine.execute({
+          executionPlan: wavePlan,
+          stateSchema,
+          initialState,
+          errorStrategy: (req.body?.errorStrategy as "fail_fast" | "best_effort") || "best_effort",
+          onWaveComplete: async (waveNum: number, state: Record<string, any>) => {
+            await storage.updateDagExecutionRun(dagRun.id, { currentWave: waveNum, currentState: state });
+          },
+        });
+
+        await storage.updateDagExecutionRun(dagRun.id, {
+          status: dagResult.success ? "completed" : "failed",
+          finalState: dagResult.finalState,
+          currentState: dagResult.finalState,
+          waveResults: dagResult.waveResults as any,
+          totalPromptTokens: dagResult.totalPromptTokens,
+          totalCompletionTokens: dagResult.totalCompletionTokens,
+          completedAt: new Date(),
+        });
+
+        res.json({
+          dagRunId: dagRun.id,
+          success: dagResult.success,
+          finalState: dagResult.finalState,
+          waveResults: dagResult.waveResults,
+          totalPromptTokens: dagResult.totalPromptTokens,
+          totalCompletionTokens: dagResult.totalCompletionTokens,
+        });
+      } catch (execErr: any) {
+        const isDagError = execErr instanceof DAGExecutionError;
+        await storage.updateDagExecutionRun(dagRun.id, {
+          status: "failed",
+          error: execErr.message,
+          waveResults: isDagError ? (execErr.context.waveResults as any) : [],
+          completedAt: new Date(),
+        });
+        res.status(500).json({ error: execErr.message, dagRunId: dagRun.id });
+      }
+    } catch (e: any) {
+      console.error("[run-dag] error:", e);
       res.status(500).json({ error: e.message });
     }
   });
