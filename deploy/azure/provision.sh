@@ -119,19 +119,27 @@ az postgres flexible-server execute \
   --output none
 
 echo "=== 5/8: App Service plan + Web App ==="
-az appservice plan create \
-  --resource-group "$RG" \
-  --name "$PLAN" \
-  --is-linux \
-  --sku B1 \
-  --output none 2>/dev/null || echo "  $PLAN already exists — skipping."
+if az appservice plan show --resource-group "$RG" --name "$PLAN" --output none 2>/dev/null; then
+  echo "  $PLAN already exists — skipping."
+else
+  az appservice plan create \
+    --resource-group "$RG" \
+    --name "$PLAN" \
+    --is-linux \
+    --sku B1 \
+    --output none
+fi
 
-az webapp create \
-  --resource-group "$RG" \
-  --plan "$PLAN" \
-  --name "$APP_NAME" \
-  --runtime "NODE:22-lts" \
-  --output none 2>/dev/null || echo "  $APP_NAME already exists — skipping."
+if az webapp show --resource-group "$RG" --name "$APP_NAME" --output none 2>/dev/null; then
+  echo "  $APP_NAME already exists — skipping."
+else
+  az webapp create \
+    --resource-group "$RG" \
+    --plan "$PLAN" \
+    --name "$APP_NAME" \
+    --runtime "NODE:22-lts" \
+    --output none
+fi
 
 echo "=== 6/8: App settings ==="
 az webapp config appsettings set \
