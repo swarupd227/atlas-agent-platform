@@ -48,17 +48,28 @@ with open(settings_file) as f:
 db_url = urlparse(settings["DATABASE_URL"])
 db_server = db_url.hostname.split(".")[0]
 db_name = db_url.path.lstrip("/").split("?")[0]
+# Azure's `location` property sometimes comes back as a display name
+# ("Central US") instead of the canonical slug ("centralus") the rest of
+# these scripts expect (az ... --location, and it must exactly match what
+# --location accepts). Normalize the same way Azure does internally.
+location_slug = location.replace(" ", "").lower()
+
+def q(v):
+    # Quote every value -- a display name with a space (e.g. "Central US")
+    # unquoted in config.env makes `source config.env` try to execute the
+    # second word as a command.
+    return "'" + str(v).replace("'", "'\\''") + "'"
 
 with open("config.env", "w") as f:
-    f.write(f"""RG={rg}
-LOCATION={location}
-DB_SERVER={db_server}
-DB_NAME={db_name}
-DB_ADMIN={db_url.username}
-PLAN={plan}
-APP_NAME={app_name}
-ANTHROPIC_API_KEY={settings.get('ANTHROPIC_API_KEY', '')}
-OPENAI_API_KEY={settings.get('OPENAI_API_KEY', '')}
+    f.write(f"""RG={q(rg)}
+LOCATION={q(location_slug)}
+DB_SERVER={q(db_server)}
+DB_NAME={q(db_name)}
+DB_ADMIN={q(db_url.username)}
+PLAN={q(plan)}
+APP_NAME={q(app_name)}
+ANTHROPIC_API_KEY={q(settings.get('ANTHROPIC_API_KEY', ''))}
+OPENAI_API_KEY={q(settings.get('OPENAI_API_KEY', ''))}
 """)
 
 with open(".generated-secrets.env", "w") as f:
