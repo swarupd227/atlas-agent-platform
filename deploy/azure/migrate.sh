@@ -5,6 +5,14 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+# Cloud Shell sessions restart often and never auto-pull -- do it here so a
+# fresh session never migrates against a stale shared/schema.ts just because
+# you forgot the manual `git pull` step first.
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "Pulling latest from git..."
+  git pull --ff-only || { echo "git pull failed -- resolve manually (uncommitted changes / diverged branch?) before continuing." >&2; exit 1; }
+fi
+
 if [ ! -f config.env ] || [ ! -f .generated-secrets.env ]; then
   echo "Missing config.env or .generated-secrets.env — run ./provision.sh first." >&2
   exit 1

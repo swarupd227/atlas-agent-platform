@@ -21,6 +21,13 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+# Keep this in sync with the other deploy/azure scripts, which pull first
+# because Cloud Shell sessions restart often and never auto-update.
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "Pulling latest from git..."
+  git pull --ff-only || { echo "git pull failed -- resolve manually (uncommitted changes / diverged branch?) before continuing." >&2; exit 1; }
+fi
+
 if [ ! -f config.env ]; then
   echo "Missing config.env — copy config.env.example to config.env and fill it in first." >&2
   exit 1

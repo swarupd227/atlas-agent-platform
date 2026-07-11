@@ -19,6 +19,14 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
+# Cloud Shell sessions restart often and never auto-pull -- do it here so a
+# fresh session never builds/deploys stale code just because you forgot the
+# manual `git pull` step first.
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "Pulling latest from git..."
+  git pull --ff-only || { echo "git pull failed -- resolve manually (uncommitted changes / diverged branch?) before continuing." >&2; exit 1; }
+fi
+
 if [ ! -f config.env ]; then
   echo "Missing config.env — copy config.env.example to config.env and fill it in first." >&2
   exit 1
