@@ -48,6 +48,20 @@ cp config.env.example config.env   # fill in your values
 - `migrate.sh` — runs `npm run db:push` against the deployed database. Installs `node_modules` first if missing (so it works on a fresh Cloud Shell clone) and warns if the active Node is older than 18. Re-run this after every commit that changes `shared/schema.ts`.
 - `verify.sh` — opens the app URL, curls the health endpoint, and tails the last few minutes of App Service logs.
 - `sync-local-data.sh` — copies data from your local Docker Postgres (`atlas-postgres`, used by `npm run dev`) into the Azure database, replacing whatever's there. Run this **locally** (Git Bash on your machine, not Cloud Shell) — it needs the local Docker container.
+- `recover-secrets.sh` — rebuilds `config.env` and `.generated-secrets.env` from the live Azure app settings of an already-deployed app. Use this if a Cloud Shell session loses `$HOME` (or you're setting up a fresh machine) and you need to reconnect to an existing deployment — see "Recovering after losing local state" below.
+
+## Recovering after losing local state
+
+Cloud Shell's `$HOME` normally persists, but if a session ever comes up with no `atlas-agent-platform` directory at all (not just a stale working directory — the whole clone is gone), **do not just re-clone and run `provision.sh`**. Its secrets step only generates fresh values when `.generated-secrets.env` is missing, and a freshly generated `DB_PASSWORD`/`JWT_SECRET`/etc. won't match what's actually on the live Postgres server or already-issued sessions — pushing those as app settings breaks the working deployment. Instead:
+
+```bash
+cd ~
+git clone https://github.com/swarupd227/atlas-agent-platform.git
+cd atlas-agent-platform/deploy/azure
+./recover-secrets.sh <resource-group> <app-name>
+```
+
+This reads the real secrets back out of the Web App's own app settings (which persist independently of Cloud Shell, since they live in Azure) and reconstructs `config.env`/`.generated-secrets.env` from them. Don't know your resource group/app name? `az webapp list --query "[].{name:name, rg:resourceGroup}" -o table`. After this, `deploy.sh`/`migrate.sh`/`verify.sh` work normally.
 
 ## Copying local data to the cloud
 
