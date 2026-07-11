@@ -8,7 +8,13 @@
  * Target: local build (E2E_BASE_URL=http://localhost:5000, demo mode).
  * WS-1/WS-3 use a real LLM, so they retry where the model's tool choice varies.
  */
-import { test, expect, type Page, type APIRequestContext } from "@playwright/test";
+import { test, expect, request as apiRequestFactory, type Page, type APIRequestContext } from "@playwright/test";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const BASE_URL = process.env.E2E_BASE_URL || "https://atlas-agent-platform.replit.app";
+const ADMIN_STORAGE_STATE = path.join(__dirname, ".auth", "admin.json");
 
 async function primePage(page: Page) {
   await page.addInitScript(() => {
@@ -35,6 +41,43 @@ async function getJson(request: APIRequestContext, url: string, role = "admin"):
 async function firstRunnableAgent(request: APIRequestContext): Promise<any | null> {
   const list = await getJson(request, "/api/workspace/agents").catch(() => null);
   return Array.isArray(list) && list.length > 0 ? list[0] : null;
+}
+
+/**
+ * In production security mode, getRequestRole() ignores the X-Role header
+ * whenever a real session is present and uses the authenticated user's own
+ * role instead (correct, secure behavior -- a header can't spoof a role on
+ * top of a real login). So exercising "as role X" against a production
+ * target needs an actual logged-in user with that role, not a header.
+ *
+ * Fixed, reused usernames (not timestamped) so repeated runs don't pile up
+ * throwaway accounts -- there's no user-delete endpoint to clean these up,
+ * so register() tolerates 409 (already exists from a prior run) and just
+ * logs in as the existing one.
+ */
+async function seenByRealRole(role: string, agentId: string): Promise<boolean> {
+  const adminCtx = await apiRequestFactory.newContext({ baseURL: BASE_URL, storageState: ADMIN_STORAGE_STATE });
+  const username = `e2e-role-${role}`;
+  const password = "E2E-fixed-test-pw-1!";
+  try {
+    const reg = await adminCtx.post("/api/auth/register", { data: { username, password, role } });
+    if (!reg.ok() && reg.status() !== 409) {
+      throw new Error(`register failed for role ${role}: ${reg.status()} ${await reg.text()}`);
+    }
+  } finally {
+    await adminCtx.dispose();
+  }
+
+  const userCtx = await apiRequestFactory.newContext({ baseURL: BASE_URL });
+  try {
+    const login = await userCtx.post("/api/auth/login", { data: { username, password } });
+    if (!login.ok()) throw new Error(`login failed for role ${role}: ${login.status()} ${await login.text()}`);
+    const list = await userCtx.get("/api/workspace/agents");
+    const body = await list.json();
+    return Array.isArray(body) && body.some((a: any) => a.id === agentId);
+  } finally {
+    await userCtx.dispose();
+  }
 }
 
 // ─── WS-1 — Ask → watch it work → outcome (real streamed run) ─────────────────
@@ -77,7 +120,10 @@ test("WS-2. Workspace: two roles see different agents (audience gating)", async 
   expect(patch.ok()).toBeTruthy();
 
   try {
+    const modeRes = await request.get("/api/auth/mode");
+    const { mode } = await modeRes.json();
     const seenBy = async (role: string) => {
+      if (mode === "production") return seenByRealRole(role, target);
       const list = await getJson(request, "/api/workspace/agents", role);
       return Array.isArray(list) && list.some((a: any) => a.id === target);
     };

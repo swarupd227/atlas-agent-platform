@@ -137,6 +137,18 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
   }
 
   if (AUTH_EXEMPT_PATHS.some(p => req.path === p)) {
+    // Best-effort: attach req.authUser if a valid session happens to be
+    // present (e.g. an already-logged-in admin hitting /auth/register to
+    // invite a new user, which checks req.authUser?.role itself), but never
+    // require or reject on one -- these paths must stay reachable with no
+    // session at all (anonymous login, bootstrap registration).
+    const token = req.cookies?.[COOKIE_NAME];
+    if (token) {
+      const payload = verifyToken(token);
+      if (payload?.organizationId) {
+        req.authUser = payload;
+      }
+    }
     return next();
   }
 

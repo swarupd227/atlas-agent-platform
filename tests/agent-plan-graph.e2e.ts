@@ -24,7 +24,7 @@
 
 import { test, expect } from "@playwright/test";
 
-const BASE = "http://localhost:5000";
+const BASE = process.env.E2E_BASE_URL || "https://atlas-agent-platform.replit.app";
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
