@@ -47,6 +47,18 @@ cp config.env.example config.env   # fill in your values
 - `deploy.sh` — builds the app locally (`npm install` + `npm run build`), prunes devDependencies, and zips the built artifact (`package.json`, `package-lock.json`, `dist/`, `node_modules/`) straight to the Web App via `az webapp deployment source config-zip`. **This is the actual deploy mechanism** — run it after every commit you want live.
 - `migrate.sh` — runs `npm run db:push` against the deployed database. Installs `node_modules` first if missing (so it works on a fresh Cloud Shell clone) and warns if the active Node is older than 18. Re-run this after every commit that changes `shared/schema.ts`.
 - `verify.sh` — opens the app URL, curls the health endpoint, and tails the last few minutes of App Service logs.
+- `sync-local-data.sh` — copies data from your local Docker Postgres (`atlas-postgres`, used by `npm run dev`) into the Azure database, replacing whatever's there. Run this **locally** (Git Bash on your machine, not Cloud Shell) — it needs the local Docker container.
+
+## Copying local data to the cloud
+
+If you've built up demo data locally (via `npm run dev` against the `atlas-postgres` Docker container) and want the Azure deployment to have the same data:
+
+```bash
+cd deploy/azure
+./sync-local-data.sh
+```
+
+This dumps the local database and restores it into Azure, replacing all existing cloud data (it prompts for confirmation first — this can't be undone). It uses `pg_dump`/`pg_restore` from inside the local Postgres container itself, so no Postgres client tools are needed on the host. Requires Docker Desktop running with the `atlas-postgres` container up, and the Azure Postgres firewall still open to your connection (the default `0.0.0.0-255.255.255.255` rule from `provision.sh`, or your current IP if you've since tightened it).
 
 ## Deploying future changes
 
