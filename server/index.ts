@@ -68,9 +68,9 @@ app.use(
           directives: {
             defaultSrc: ["'self'"],
             scriptSrc: ["'self'"],
-            styleSrc: ["'self'", "'unsafe-inline'"], // Tailwind/shadcn inject inline styles at runtime.
+            styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"], // Tailwind/shadcn inject inline styles at runtime; googleapis.com serves the @font-face CSS.
             imgSrc: ["'self'", "data:", "blob:"],
-            fontSrc: ["'self'", "data:"],
+            fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"], // actual font files Google Fonts CSS points at.
             connectSrc: ["'self'"],
             objectSrc: ["'none'"],
             frameAncestors: ["'none'"],

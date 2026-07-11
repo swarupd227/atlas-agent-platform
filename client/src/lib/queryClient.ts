@@ -57,7 +57,8 @@ export const getQueryFn: <T>(options: {
 }) => QueryFunction<T> =
   ({ on401: unauthorizedBehavior }) =>
   async ({ queryKey }) => {
-    const res = await fetch(queryKey.join("/") as string, {
+    const url = queryKey.join("/") as string;
+    const res = await fetch(url, {
       credentials: "include",
       headers: getHeaders(),
     });
@@ -67,7 +68,18 @@ export const getQueryFn: <T>(options: {
     }
 
     await throwIfResNotOk(res);
-    return await res.json();
+    try {
+      return await res.json();
+    } catch (err) {
+      // A response that's ok (2xx) but isn't valid JSON almost always means
+      // the request actually hit the SPA's index.html fallback rather than
+      // a real API route -- usually because `url` came out malformed (e.g.
+      // a non-string queryKey element). Surface the URL so this is
+      // diagnosable from the error toast alone, not just server logs (which
+      // won't show it either, since it never reached an /api handler).
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(`Invalid JSON from ${url}: ${message}`);
+    }
   };
 
 // ── Global error feedback (UX-audit F-2) ─────────────────────────────────────

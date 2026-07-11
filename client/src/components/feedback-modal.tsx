@@ -268,14 +268,13 @@ export function FeedbackTrigger() {
           <MessageSquarePlus className="w-3.5 h-3.5 shrink-0" />
           <span>Feedback</span>
         </button>
-        <Link href="/feedback">
-          <a
-            className="flex items-center justify-center w-6 h-6 rounded-md text-muted-foreground/50 hover:text-muted-foreground hover:bg-sidebar-accent/40 transition-colors shrink-0"
-            title="Open feedback tracker"
-            data-testid="link-feedback-tracker"
-          >
-            <ExternalLink className="w-3 h-3" />
-          </a>
+        <Link
+          href="/feedback"
+          className="flex items-center justify-center w-6 h-6 rounded-md text-muted-foreground/50 hover:text-muted-foreground hover:bg-sidebar-accent/40 transition-colors shrink-0"
+          title="Open feedback tracker"
+          data-testid="link-feedback-tracker"
+        >
+          <ExternalLink className="w-3 h-3" />
         </Link>
       </div>
       <FeedbackModal open={open} onOpenChange={setOpen} />
