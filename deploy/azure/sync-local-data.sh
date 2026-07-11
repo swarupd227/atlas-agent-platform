@@ -58,19 +58,24 @@ if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
   exit 1
 fi
 
+# Git Bash on Windows (MSYS) auto-converts Unix-looking absolute paths like
+# /tmp/... in command arguments into Windows paths before `docker` ever sees
+# them, which breaks a path meant to be resolved *inside* the Linux
+# container. MSYS_NO_PATHCONV=1 disables that conversion for these calls; it
+# has no effect on Linux/macOS, so this is safe everywhere this script runs.
 echo "Dumping local database '$LOCAL_DB_NAME' from container '$LOCAL_CONTAINER'..."
-docker exec "$LOCAL_CONTAINER" pg_dump \
+MSYS_NO_PATHCONV=1 docker exec "$LOCAL_CONTAINER" pg_dump \
   -U "$LOCAL_DB_USER" -d "$LOCAL_DB_NAME" \
   --no-owner --no-privileges --clean --if-exists -Fc \
   -f /tmp/local-data-sync.dump
 
 echo "Restoring into Azure database '$DB_NAME' on '$DB_SERVER'..."
-docker exec "$LOCAL_CONTAINER" pg_restore \
+MSYS_NO_PATHCONV=1 docker exec "$LOCAL_CONTAINER" pg_restore \
   --no-owner --no-privileges --clean --if-exists \
   -d "$AZURE_DATABASE_URL" \
   /tmp/local-data-sync.dump
 
-docker exec "$LOCAL_CONTAINER" rm -f /tmp/local-data-sync.dump
+MSYS_NO_PATHCONV=1 docker exec "$LOCAL_CONTAINER" rm -f /tmp/local-data-sync.dump
 
 echo ""
 echo "Done. The Azure database now mirrors local. Restart the app so any"
