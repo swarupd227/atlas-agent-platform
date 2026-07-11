@@ -1,4 +1,8 @@
 import { defineConfig, devices } from "@playwright/test";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
  * Playwright configuration — hybrid API + browser E2E tests.
@@ -57,9 +61,24 @@ export default defineConfig({
   },
   projects: [
     {
+      // Logs in once (real login against production-mode targets, no-op
+      // against demo-mode ones) and saves the session for every *.e2e.ts
+      // spec to reuse -- see tests/global.setup.ts.
+      name: "setup",
+      testMatch: /global\.setup\.ts/,
+      use: {
+        launchOptions: {
+          env: { LD_LIBRARY_PATH: CHROMIUM_LIB_PATH },
+          args: ["--no-sandbox", "--disable-setuid-sandbox"],
+        },
+      },
+    },
+    {
       name: "chromium",
+      dependencies: ["setup"],
       use: {
         ...devices["Desktop Chrome"],
+        storageState: path.join(__dirname, "tests/.auth/admin.json"),
         launchOptions: {
           env: { LD_LIBRARY_PATH: CHROMIUM_LIB_PATH },
           args: ["--no-sandbox", "--disable-setuid-sandbox"],

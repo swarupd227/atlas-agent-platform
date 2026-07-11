@@ -13,6 +13,7 @@ vite.config.ts.*
 test-results/
 playwright-report/
 .local/.last-run.json
+tests/.auth/
 
 # Generated exports & presentations (not for version control)
 database_export.sql
