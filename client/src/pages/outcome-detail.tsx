@@ -603,10 +603,6 @@ export default function OutcomeDetail() {
     enabled: !!outcomeId && activeTab === "governance",
   });
 
-  const { data: invoices } = useQuery<Array<{id: string; status: string; totalAmount: number; periodStart: string; periodEnd: string; lineItems: any[]}>>({
-    queryKey: ["/api/billing/invoices"],
-  });
-
   const { data: allApprovals } = useQuery<Approval[]>({
     queryKey: ["/api/approvals"],
   });
